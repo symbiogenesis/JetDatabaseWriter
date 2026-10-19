@@ -13,7 +13,8 @@ using JetDatabaseWriter.Pages.Paging;
 /// <summary>Observes bounded raw index-tree references and canonical keys without trusting allocation hints.</summary>
 /// <remarks>
 /// Completion covers one root's intermediate-entry children, intermediate tails, in-page key order
-/// and inclusive entry-edge-only separator fences. Observed leaf links are checked for decreasing keys;
+/// and inclusive entry-edge-only separator fences. Separate flags describe bookmark-inclusive ordering and key routing.
+/// Observed leaf links are checked for decreasing keys;
 /// a separate terminal flag identifies one closed reciprocal chain containing every observed leaf.
 /// Header references and ordering proofs do not establish ownership. This does not validate bookmark target rows,
 /// shared roots, allocation maps or opaque incoming references. Every observation remains pinned.
@@ -56,7 +57,7 @@ internal static class CompactIndexAudit
         }
 
         // Include dictionary/list capacity growth, per-page graph state, pending
-        // and DFS stacks, every navigable edge, one pooled page, and key scratch.
+        // DFS/topological stacks and routing envelopes, every navigable edge, one pooled page, and key scratch.
         // Each stored entry consumes at least one payload byte even when its
         // prefix includes the complete pointer trailer; each page adds one tail.
         long pageAllowance = Math.Min(budget.MaxTreePages, pageCount - 1);
@@ -108,6 +109,28 @@ internal static class CompactIndexAudit
         private long graphSteps;
         private long records;
         private long retainedKeyBytes;
+        private ReadOnlyMemory<byte>? leafMinimum;
+        private ReadOnlyMemory<byte>? leafMaximum;
+        private bool emptyLeafObserved;
+        private bool bookmarkOrderValidated = true;
+
+        private static int CompareKeys(ReadOnlyMemory<byte> left, ReadOnlyMemory<byte> right)
+            => left.Span[..^4].SequenceCompareTo(right.Span[..^4]);
+
+        private static int CompareEntries(ReadOnlyMemory<byte> left, ReadOnlyMemory<byte> right)
+        {
+            int key = CompareKeys(left, right);
+            return key != 0 ? key : left.Span[^4..].SequenceCompareTo(right.Span[^4..]);
+        }
+
+        private static bool IsEmptyRange(ReadOnlyMemory<byte>? lower, ReadOnlyMemory<byte>? upper)
+            => lower.HasValue && upper.HasValue && CompareKeys(lower.Value, upper.Value) >= 0;
+
+        private static ReadOnlyMemory<byte>? MaximumLower(ReadOnlyMemory<byte>? left, ReadOnlyMemory<byte>? right)
+            => !left.HasValue || (right.HasValue && CompareKeys(left.Value, right.Value) < 0) ? right : left;
+
+        private static ReadOnlyMemory<byte>? MinimumUpper(ReadOnlyMemory<byte>? left, ReadOnlyMemory<byte>? right)
+            => !left.HasValue || (right.HasValue && CompareKeys(left.Value, right.Value) > 0) ? right : left;
 
         private static bool IsBitSet(IndexPageLayout layout, byte[] page, int bit)
             => (page[layout.BitmaskOffset + (bit / 8)] & (1 << (bit % 8))) != 0;
@@ -133,8 +156,9 @@ internal static class CompactIndexAudit
                 }
             }
 
-            this.ValidateGraph(cancellationToken);
+            List<Node> postorder = this.ValidateGraph(cancellationToken);
             bool observedLeafChainOrdered = this.ValidateLeafLinks(cancellationToken);
+            bool observedKeyRoutingValidated = observedLeafChainOrdered && this.ValidateRouting(postorder, cancellationToken);
 
             await this.EmitAsync(
                 this.Record("index-terminal", root) with
@@ -142,7 +166,9 @@ internal static class CompactIndexAudit
                     NavigableGraphAcyclic = true,
                     EntryEdgeFencesValidated = true,
                     ObservedLeafChainOrdered = observedLeafChainOrdered,
-                    Coverage = "One root's entry-child/intermediate-tail graph is acyclic with no repeated entry children. Stored keys satisfy in-page order and inclusive separator fences along entry-edge-only paths; all tail edges are excluded, including paths not proven to be aliases. Observed leaf links do not decrease keys; ObservedLeafChainOrdered additionally identifies one closed reciprocal chain containing every observed leaf. Bookmark targets, missing leaves, shared roots, allocation and incoming-reference ownership remain unverified.",
+                    ObservedKeyRoutingValidated = observedKeyRoutingValidated,
+                    BookmarkInclusiveOrderValidated = observedLeafChainOrdered && this.bookmarkOrderValidated,
+                    Coverage = "One root's entry-child/intermediate-tail graph is acyclic with no repeated entry children. Stored keys satisfy in-page order and inclusive separator fences along entry-edge-only paths; all tail edges are excluded from these fences, including paths not proven to be aliases. ObservedLeafChainOrdered identifies one closed reciprocal chain containing every observed leaf in key order. BookmarkInclusiveOrderValidated additionally certifies bookmark tie breakers for in-page order, entry-edge-only fences and that chain; false withholds that proof without rejecting uncertain native duplicate ordering. ObservedKeyRoutingValidated separately certifies that separator/tail descent for each encoded key present in the observed leaves can start at or before its first matching leaf and continue along that chain; false means this conservative routing proof is incomplete. Bookmark target coverage is identified separately by BookmarkTargetsValidated. Stored-key/row correspondence, missing leaves, shared roots, allocation and incoming-reference ownership remain unverified.",
                 },
                 cancellationToken).ConfigureAwait(false);
         }
@@ -211,17 +237,25 @@ internal static class CompactIndexAudit
                     prefix = canonical.AsSpan(0, prefixLength).ToArray();
                 }
 
-                if (previous is { } previousEntry && previousEntry.AsSpan(0, previousEntry.Length - trailer).SequenceCompareTo(canonical.AsSpan(0, length - trailer)) > 0)
+                int childBytes = intermediate ? 4 : 0;
+                if (previous is { } previousEntry)
                 {
-                    throw Corrupt(current, "Stored canonical index keys decrease within a page.");
+                    ReadOnlyMemory<byte> previousStored = previousEntry.AsMemory(0, previousEntry.Length - childBytes);
+                    ReadOnlyMemory<byte> currentStored = canonical.AsMemory(0, length - childBytes);
+                    if (CompareKeys(previousStored, currentStored) > 0)
+                    {
+                        throw Corrupt(current, "Stored canonical index keys decrease within a page.");
+                    }
+
+                    this.bookmarkOrderValidated &= CompareEntries(previousStored, currentStored) <= 0;
                 }
 
                 if (!intermediate)
                 {
-                    long released = ordinal > 1 ? node.Maximum!.Value.Length + trailer : 0;
+                    long released = ordinal > 1 ? node.Maximum!.Value.Length : 0;
                     this.RetainKey(current, canonical.Length, released);
-                    node.Minimum ??= canonical.AsMemory(0, length - trailer);
-                    node.Maximum = canonical.AsMemory(0, length - trailer);
+                    node.Minimum ??= canonical.AsMemory();
+                    node.Maximum = canonical.AsMemory();
                 }
 
                 await this.EntryAsync(current, ordinal, canonical, intermediate, cancellationToken).ConfigureAwait(false);
@@ -286,7 +320,7 @@ internal static class CompactIndexAudit
             {
                 await this.EmitAsync(this.Record("index-reference", current) with { Role = "child", EntryIndex = ordinal, TargetPageNumber = child }, cancellationToken).ConfigureAwait(false);
                 this.RetainKey(current, canonical.Length, 0);
-                this.Schedule(current, child.Value, isChild: true, canonical.AsMemory(0, keyLength));
+                this.Schedule(current, child.Value, isChild: true, canonical.AsMemory(0, keyLength + 4));
             }
         }
 
@@ -352,12 +386,13 @@ internal static class CompactIndexAudit
             this.discovered[current].Targets.Add(node);
         }
 
-        private void ValidateGraph(CancellationToken cancellationToken)
+        private List<Node> ValidateGraph(CancellationToken cancellationToken)
         {
             // A first-discovery parent chain cannot prove this graph acyclic:
             // a tail may alias a node discovered in a different branch. Retain
             // every navigable edge and use iterative gray/black DFS instead.
             var stack = new List<Node> { this.discovered[root] };
+            List<Node> postorder = [];
             while (stack.Count > 0)
             {
                 Node current = stack[^1];
@@ -372,6 +407,7 @@ internal static class CompactIndexAudit
                 {
                     this.ValidateFences(current, cancellationToken);
                     current.State = 2;
+                    postorder.Add(current);
                     stack.RemoveAt(stack.Count - 1);
                     continue;
                 }
@@ -388,6 +424,8 @@ internal static class CompactIndexAudit
                     stack.Add(target);
                 }
             }
+
+            return postorder;
         }
 
         private void ValidateFences(Node node, CancellationToken cancellationToken)
@@ -405,11 +443,14 @@ internal static class CompactIndexAudit
                 }
             }
 
-            if ((node.Minimum.HasValue && node.LowerBound.HasValue && node.Minimum.Value.Span.SequenceCompareTo(node.LowerBound.Value.Span) < 0)
-                || (node.Maximum.HasValue && node.UpperBound.HasValue && node.Maximum.Value.Span.SequenceCompareTo(node.UpperBound.Value.Span) > 0))
+            if ((node.Minimum.HasValue && node.LowerBound.HasValue && CompareKeys(node.Minimum.Value, node.LowerBound.Value) < 0)
+                || (node.Maximum.HasValue && node.UpperBound.HasValue && CompareKeys(node.Maximum.Value, node.UpperBound.Value) > 0))
             {
                 throw Corrupt(node.Page, "Stored entry-edge-only subtree keys exceed their inclusive separator fences.");
             }
+
+            this.bookmarkOrderValidated &= (!node.Minimum.HasValue || !node.LowerBound.HasValue || CompareEntries(node.Minimum.Value, node.LowerBound.Value) >= 0)
+                && (!node.Maximum.HasValue || !node.UpperBound.HasValue || CompareEntries(node.Maximum.Value, node.UpperBound.Value) <= 0);
         }
 
         private bool ValidateLeafLinks(CancellationToken cancellationToken)
@@ -434,7 +475,7 @@ internal static class CompactIndexAudit
                 }
 
                 if (node.NextPage != 0 && this.discovered.TryGetValue(node.NextPage, out Node? next) && !next.IsIntermediate
-                    && node.Maximum.HasValue && next.Minimum.HasValue && node.Maximum.Value.Span.SequenceCompareTo(next.Minimum.Value.Span) > 0)
+                    && node.Maximum.HasValue && next.Minimum.HasValue && CompareKeys(node.Maximum.Value, next.Minimum.Value) > 0)
                 {
                     throw Corrupt(node.Page, "Stored canonical keys decrease across an observed leaf sibling link.");
                 }
@@ -449,11 +490,16 @@ internal static class CompactIndexAudit
                 this.GraphStep(current.Page);
 
                 // Empty leaves cannot hide a decrease between their nonempty neighbors.
-                if (previousMaximum.HasValue && current.Minimum.HasValue && previousMaximum.Value.Span.SequenceCompareTo(current.Minimum.Value.Span) > 0)
+                if (previousMaximum.HasValue && current.Minimum.HasValue && CompareKeys(previousMaximum.Value, current.Minimum.Value) > 0)
                 {
                     throw Corrupt(current.Page, "Stored canonical keys decrease along the observed leaf sibling chain.");
                 }
 
+                this.bookmarkOrderValidated &= !previousMaximum.HasValue || !current.Minimum.HasValue || CompareEntries(previousMaximum.Value, current.Minimum.Value) <= 0;
+
+                current.PreviousLeafMaximum = previousMaximum;
+                this.leafMinimum ??= current.Minimum;
+                this.emptyLeafObserved |= !current.Minimum.HasValue;
                 previousMaximum = current.Maximum ?? previousMaximum;
                 visited++;
                 if (current.NextPage == 0)
@@ -470,8 +516,70 @@ internal static class CompactIndexAudit
                 }
             }
 
+            this.leafMaximum = previousMaximum;
             return complete && current is null && visited == leaves && leaves > 0;
         }
+
+        private bool ValidateRouting(List<Node> postorder, CancellationToken cancellationToken)
+        {
+            // Search ranges are (lower, upper], comparing encoded keys only:
+            // native exact-key descent does not include a bookmark. The hull of
+            // incoming ranges over-approximates aliases, so it can withhold a
+            // proof but cannot certify a gap by discarding an incoming path.
+            this.discovered[root].HasRoutingRange = true;
+            bool proven = !this.emptyLeafObserved || !this.leafMaximum.HasValue;
+            for (int i = postorder.Count - 1; i >= 0; i--)
+            {
+                Node node = postorder[i];
+                this.CheckSource(node.Page, cancellationToken);
+                this.GraphStep(node.Page);
+                if (!node.HasRoutingRange)
+                {
+                    continue;
+                }
+
+                if (!node.IsIntermediate)
+                {
+                    // Landing after any earlier matching key would skip it.
+                    // No assertion of corruption follows from a failed proof:
+                    // the admitted hull may contain gaps with no stored keys.
+                    if (node.PreviousLeafMaximum.HasValue && !this.ContainsNoObservedKeys(node.RoutingLower, node.RoutingUpper)
+                        && (!node.RoutingLower.HasValue || CompareKeys(node.PreviousLeafMaximum.Value, node.RoutingLower.Value) > 0))
+                    {
+                        proven = false;
+                    }
+
+                    continue;
+                }
+
+                for (int childIndex = 0; childIndex < node.Targets.Count; childIndex++)
+                {
+                    this.CheckSource(node.Page, cancellationToken);
+                    this.GraphStep(node.Page);
+                    Node target = node.Targets[childIndex];
+                    bool tail = childIndex == node.EntryChildCount;
+                    ReadOnlyMemory<byte>? lower = MaximumLower(node.RoutingLower, tail ? node.LastSeparator : target.LowerBound);
+                    ReadOnlyMemory<byte>? upper = MinimumUpper(node.RoutingUpper, tail ? null : target.UpperBound);
+                    if (!IsEmptyRange(lower, upper))
+                    {
+                        target.MergeRoutingRange(lower, upper);
+                    }
+                }
+
+                if (node.Targets.Count == node.EntryChildCount)
+                {
+                    ReadOnlyMemory<byte>? lower = MaximumLower(node.RoutingLower, node.LastSeparator);
+                    proven &= IsEmptyRange(lower, node.RoutingUpper) || this.ContainsNoObservedKeys(lower, node.RoutingUpper);
+                }
+            }
+
+            return proven;
+        }
+
+        private bool ContainsNoObservedKeys(ReadOnlyMemory<byte>? lower, ReadOnlyMemory<byte>? upper)
+            => !this.leafMaximum.HasValue
+                || (lower.HasValue && CompareKeys(this.leafMaximum.Value, lower.Value) <= 0)
+                || (upper.HasValue && this.leafMinimum.HasValue && CompareKeys(this.leafMinimum.Value, upper.Value) > 0);
 
         private void RetainKey(long current, int length, long released)
         {
@@ -562,6 +670,28 @@ internal static class CompactIndexAudit
             internal ReadOnlyMemory<byte>? Minimum { get; set; }
 
             internal ReadOnlyMemory<byte>? Maximum { get; set; }
+
+            internal ReadOnlyMemory<byte>? PreviousLeafMaximum { get; set; }
+
+            internal bool HasRoutingRange { get; set; }
+
+            internal ReadOnlyMemory<byte>? RoutingLower { get; set; }
+
+            internal ReadOnlyMemory<byte>? RoutingUpper { get; set; }
+
+            internal void MergeRoutingRange(ReadOnlyMemory<byte>? lower, ReadOnlyMemory<byte>? upper)
+            {
+                if (!this.HasRoutingRange)
+                {
+                    this.RoutingLower = lower;
+                    this.RoutingUpper = upper;
+                    this.HasRoutingRange = true;
+                    return;
+                }
+
+                this.RoutingLower = !this.RoutingLower.HasValue || !lower.HasValue ? null : MinimumUpper(this.RoutingLower, lower);
+                this.RoutingUpper = !this.RoutingUpper.HasValue || !upper.HasValue ? null : MaximumLower(this.RoutingUpper, upper);
+            }
         }
     }
 }

@@ -87,10 +87,10 @@ in the corresponding TODO item.
 
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
-| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map ownership inspection and refusal of catalog-map/physical-owner contradictions; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/LVAL/index work and simultaneous storage through local-table orchestration | S1: complete remaining public-scan accounting and recover catalog identities when physical ownership is damaged, including missing or damaged map hints; qualify runtime/pool and caller-owned memory separately |
-| Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory and calculated-slot refusal; bounded raw row and LVAL streaming; complete defined LVAL-chain observations including trailing storage | S3/F8 and the bounded raw-copy part of I6: distinguish native error envelopes, Null and damaged values; preserve raw unassigned row fields; integrate streamed rows and LVALs into compact copy |
+| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map ownership inspection and refusal of catalog-map/physical-owner contradictions; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/field/LVAL/index work and simultaneous storage through local-table orchestration | S1: complete remaining public-scan accounting and recover catalog identities when physical ownership is damaged, including missing or damaged map hints; qualify runtime/pool and caller-owned memory separately |
+| Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory and calculated-slot refusal; bounded raw row and field streaming with retained assignment states; automatic complete defined LVAL-chain observations for known storage types, including trailing storage | S3/F8 and the bounded raw-copy part of I6: hydrate calculated ResultType through bounded catalog-property reads before automatic LVAL discovery; interpret native error envelopes independently of Null and damaged values without losing their raw representation; integrate streamed rows, raw fields and LVALs into compact copy |
 | Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; retained continuation headers and original trailing padding during chain writes | S7/S9: complete schema-rewrite descriptor/header/trailer preservation and inventory application, security, replication and unknown objects |
-| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key observations with graph-cycle, inclusive entry-edge-only fence and observed leaf-chain order checks; explicit bounded same-owner bookmark-target validation; bounded stored-key staging with disk-backed fences | I2: prove shared-root/cross-TDEF and incoming-reference ownership, complete tail/separator and stored-key/row correspondence validation, and connect staging to relocation/maps; F9 only where keys must be regenerated |
+| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key observations with graph-cycle, inclusive entry-edge-only fence and observed leaf-chain order checks; separate conservative observed-key routing and bookmark-inclusive order proofs; explicit bounded same-owner bookmark-target validation; bounded cross-root declared-owner and incoming-reference observations; bounded stored-key staging with disk-backed fences | I2: prove safe sharing and complete incoming-reference ownership beyond known declarations, complete tail/separator and stored-key/row correspondence validation, and connect staging to relocation/maps; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
 | Replace the source safely | Private staging, flushed backups and process-interruption tests | E4/F6 and the file-recovery part of I15: coordination, recovery discovery, namespace persistence and actual power-interruption evidence |
 
@@ -129,7 +129,7 @@ index references with bounded collections and entry bytes. It validates page
 geometry/type/owner, in-page key order and inclusive entry-edge-only key ranges
 without regenerating collation-sensitive keys. Its terminal record separates
 the range and sibling-chain proofs from acyclicity and retains pinned storage.
-Bookmark targets, complete tail routing, shared roots and incoming-reference
+Bookmark targets, missing leaves, shared roots and incoming-reference
 ownership remain unverified.
 Every cycle in the observed entry-child/intermediate-tail graph is rejected by a
 bounded iterative walk, including cycles crossing tail aliases in separate
@@ -139,7 +139,20 @@ Standalone budgets apply to one root. A successful terminal separately records
 inclusive entry-edge-only fence checks and whether every observed leaf belongs to
 one reciprocal, closed, ordered sibling chain. All tail paths remain outside
 the entry-edge-only fences, including tails not proven to be aliases. Missing sibling observations do not establish global order.
-These internal primitives do not extend the CLI inventory's completion contract.
+
+`ObservedKeyRoutingValidated` separately certifies that separator/tail descent
+for each encoded key present in the observed leaves can start at or before its
+first matching leaf
+and continue through the observed closed, ordered sibling chain. A bounded
+iterative DAG pass propagates conservative key-range hulls through entry and
+tail aliases. Incomplete chains, empty-leaf uncertainty, uncovered routing gaps
+or over-approximation can withhold this proof without declaring corruption.
+`BookmarkInclusiveOrderValidated` separately checks bookmark tie breakers for
+in-page order, entry-edge-only fences and that chain. Uncertain native duplicate
+bookmark ordering remains readable when this optional proof is false. Neither
+flag establishes missing-leaf coverage, stored-key/row correspondence or safe
+relocation. These internal primitives do not extend the CLI inventory's
+completion contract.
 
 `CompactIndexBookmarkAudit` composes raw index observations with an explicit
 target check for each leaf and intermediate entry. It verifies a same-owner
@@ -176,10 +189,35 @@ the session. `ScanDatabaseAsync` visits each discovered local definition, its
 raw rows and nonzero physical index roots with bookmark-target verification,
 including the catalog and hidden
 local tables. Inventory reservations remain held through those callbacks.
-Linked metadata stays pinned and is not followed. Long-value discovery remains
-explicit work in the awaited row visitor. A damaged owner can still hide an
-object; this orchestration does not prove complete database coverage or validate
-a compact result. Cumulative allowances persist after failures and repeated scans.
+Linked metadata stays pinned and is not followed. `ScanDatabaseFieldsAsync` uses
+`CompactRawFieldReader` to validate each row's complete variable-offset table and
+stream its original field slots with absent, Null, Boolean and assigned-storage
+states. Null fields retain any physical slot bytes. Calculated envelopes remain
+opaque; they are neither decoded nor recalculated. An assigned calculated field
+without a hydrated persisted ResultType is emitted raw and then explicitly
+refused: its TDEF storage discriminator alone cannot identify an external MEMO
+or OLE cached result. Bounded catalog-property hydration remains required. Each
+assigned field with a verified MEMO/OLE value type is automatically passed through the complete raw LVAL audit with the original
+table, column and row identities. Field observations have their own cumulative
+allowance and also consume the shared observation allowance. No field collection
+or table snapshot is retained. The raw-row entry point still allows explicit
+value work in its awaited visitor.
+
+Both database entry points hold a `CompactIndexOwnershipAudit` through all
+physical descriptor/root scans. Declarations, observed pages and known incoming
+child, tail and sibling references are cross-checked for contradictory expected
+TDEF owners. Same-owner shared roots/pages and unobserved reference targets are
+streamed explicitly. The tracker bounds retained coordinates, descriptor attempts,
+references, inspection work and observations; its conservative storage reservation
+remains held alongside inventory and per-root storage. Incoming counts describe
+observations, including repeated scans, rather than distinct physical edges.
+Its terminal proves only consistency of supplied known observations. Opaque or
+missing incoming references and native sharing semantics remain unverified, so
+all observed storage stays pinned.
+
+A damaged owner can still hide an object; this orchestration does not prove
+complete database coverage or validate a compact result. Cumulative allowances
+persist after failures and repeated scans.
 
 Logical TDEF chain writes retain the first four bytes of existing continuation
 headers on the same physical pages, while rewriting their next-page pointers.

@@ -48,6 +48,8 @@ public sealed class CompactIndexAuditTests
         Assert.True(terminal.NavigableGraphAcyclic);
         Assert.True(terminal.EntryEdgeFencesValidated);
         Assert.True(terminal.ObservedLeafChainOrdered);
+        Assert.True(terminal.ObservedKeyRoutingValidated);
+        Assert.True(terminal.BookmarkInclusiveOrderValidated);
         Assert.False(terminal.TreeCompletenessProven);
         Assert.NotNull(terminal.Coverage);
         for (int i = 0; i < original.Length; i++)
@@ -305,11 +307,11 @@ public sealed class CompactIndexAuditTests
     {
         var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
         MemoryPages source = CreateAliasGraph(format, cycle: false);
-        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await ScanAsync(source, format, new() { MaxGraphSteps = 19 }));
+        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await ScanAsync(source, format, new() { MaxGraphSteps = 27 }));
         Assert.Equal(4, source.Reads);
         Assert.Contains("MaxGraphSteps", error.ErrorInfo.Reason, StringComparison.Ordinal);
         source = CreateAliasGraph(format, cycle: false);
-        List<CompactIndexRecord> records = await ScanAsync(source, format, new() { MaxGraphSteps = 20 });
+        List<CompactIndexRecord> records = await ScanAsync(source, format, new() { MaxGraphSteps = 28 });
         Assert.True(Assert.Single(records, static record => record.Kind == "index-terminal").NavigableGraphAcyclic);
     }
 
@@ -505,6 +507,74 @@ public sealed class CompactIndexAuditTests
         CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
         Assert.True(terminal.EntryEdgeFencesValidated);
         Assert.True(terminal.ObservedLeafChainOrdered);
+        Assert.True(terminal.ObservedKeyRoutingValidated);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TailRouting_OnlyCertifiesDescentThatCannotSkipAnObservedEarlierKey(bool skipsEarlierKey)
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        var source = new MemoryPages(format.PageSize, new()
+        {
+            [3] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1], 9, 0), 4), new(new([3], 9, 2), 8)], 0, 0, 6),
+            [4] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1], 9, 0), 7)], 0, 8, 5),
+            [8] = skipsEarlierKey
+                ? IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([3], 9, 2), 6)], 4, 0, 5)
+                : TailIntermediate(format, 5),
+            [7] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([1], 9, 0)], 0, 5, 0, true),
+            [5] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([2], 9, 1)], 7, 6, 0, true),
+            [6] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([3], 9, 2)], 5, 0, 0, true),
+        });
+        var cursor = new IndexCursor(format.IndexPage, (page, _) => ValueTask.FromResult(source.Images[page]), format.PageSize);
+        Assert.Equal(!skipsEarlierKey, await cursor.ContainsKeyAsync(3, [2], Ct));
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
+        Assert.True(terminal.NavigableGraphAcyclic);
+        Assert.True(terminal.EntryEdgeFencesValidated);
+        Assert.True(terminal.ObservedLeafChainOrdered);
+        Assert.Equal(!skipsEarlierKey, terminal.ObservedKeyRoutingValidated);
+        Assert.False(terminal.TreeCompletenessProven);
+        Assert.Equal(6, source.Reads);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task TailOnlyDuplicateKeyLeaf_ProvesKeyRoutingWithoutTreatingBookmarksAsSeekBounds(DatabaseFormat kind)
+    {
+        var format = JetFormat.ForNewDatabase(kind);
+        var source = new MemoryPages(format.PageSize, new()
+        {
+            [3] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1], 9, 0), 4)], 0, 0, 5),
+            [4] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([1], 9, 0)], 0, 5, 0, true),
+            [5] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([1], 9, 1)], 4, 0, 0, true),
+        });
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        Assert.True(Assert.Single(records, static record => record.Kind == "index-terminal").ObservedKeyRoutingValidated);
+    }
+
+    [Fact]
+    public async Task RoutingProof_CoversLeafKeysWithoutRequiringFenceOnlySeparatorsToExistInLeaves()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        var source = new MemoryPages(format.PageSize, new()
+        {
+            [3] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([2], 9, 2), 4)], 0, 0, 5),
+            [4] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([1], 9, 0)], 0, 5, 0, true),
+            [5] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([3], 9, 1)], 4, 0, 0, true),
+        });
+        var cursor = new IndexCursor(format.IndexPage, (page, _) => ValueTask.FromResult(source.Images[page]), format.PageSize);
+        Assert.True(await cursor.ContainsKeyAsync(3, [1], Ct));
+        Assert.True(await cursor.ContainsKeyAsync(3, [3], Ct));
+        Assert.False(await cursor.ContainsKeyAsync(3, [2], Ct));
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
+        Assert.True(terminal.ObservedKeyRoutingValidated);
+        Assert.False(terminal.TreeCompletenessProven);
+        Assert.Contains("present in the observed leaves", terminal.Coverage, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -529,6 +599,7 @@ public sealed class CompactIndexAuditTests
         {
             List<CompactIndexRecord> records = await ScanAsync(source, format);
             Assert.True(Assert.Single(records, static record => record.Kind == "index-terminal").ObservedLeafChainOrdered);
+            Assert.False(Assert.Single(records, static record => record.Kind == "index-terminal").ObservedKeyRoutingValidated);
         }
     }
 
@@ -542,7 +613,56 @@ public sealed class CompactIndexAuditTests
         CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
         Assert.True(terminal.EntryEdgeFencesValidated);
         Assert.False(terminal.ObservedLeafChainOrdered);
+        Assert.False(terminal.ObservedKeyRoutingValidated);
         Assert.False(terminal.TreeCompletenessProven);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EqualKeysWithDecreasingBookmarks_PreserveObservationsAndWithholdBookmarkProof(bool acrossPages)
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        Dictionary<long, byte[]> images = acrossPages
+            ? new()
+            {
+                [3] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1], 9, 2), 4)], 0, 0, 5),
+                [4] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([1], 9, 2)], 0, 5, 0, true),
+                [5] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([1], 9, 1)], 4, 0, 0, true),
+            }
+            : new() { [3] = Leaf(format, [new([1], 9, 2), new([1], 9, 1)]) };
+        var source = new MemoryPages(format.PageSize, images);
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
+        Assert.True(terminal.ObservedLeafChainOrdered);
+        Assert.True(terminal.ObservedKeyRoutingValidated);
+        Assert.False(terminal.BookmarkInclusiveOrderValidated);
+        Assert.Equal<byte?>([2, 1], records.Where(static record => record.Kind == "leaf-entry").Select(static record => record.TargetRowIndex));
+    }
+
+    [Fact]
+    public async Task EqualKeyBookmarkBeyondEntrySeparator_WithholdsBookmarkFenceProof()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        var source = new MemoryPages(format.PageSize, new()
+        {
+            [3] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1], 9, 1), 4)], 0, 0, 0),
+            [4] = Leaf(format, [new([1], 9, 2)]),
+        });
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
+        Assert.True(terminal.EntryEdgeFencesValidated);
+        Assert.True(terminal.ObservedKeyRoutingValidated);
+        Assert.False(terminal.BookmarkInclusiveOrderValidated);
+    }
+
+    [Fact]
+    public async Task KeyBeforeBookmarkComparison_PreservesVariableLengthKeyOrder()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        var source = new MemoryPages(format.PageSize, new() { [3] = Leaf(format, [new([1], 10, 0), new([1, 0], 9, 0)]) });
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        Assert.Equal(2, records.Count(static record => record.Kind == "leaf-entry"));
     }
 
     [Fact]

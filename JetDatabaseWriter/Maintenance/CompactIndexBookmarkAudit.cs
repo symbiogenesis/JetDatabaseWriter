@@ -88,7 +88,7 @@ internal static class CompactIndexBookmarkAudit
                         record = record with
                         {
                             BookmarkTargetsValidated = true,
-                            Coverage = record.Coverage?.Replace("Bookmark targets, missing leaves", "Missing leaves", StringComparison.Ordinal) + " Observed leaf and intermediate bookmarks identify live same-owner row headers and bounded readable payload chains. Key/value correspondence, missing index entries and incoming row aliases remain unverified.",
+                            Coverage = record.Coverage + " Observed leaf and intermediate bookmarks identify live same-owner row headers and bounded readable payload chains. Key/value correspondence, missing index entries and incoming row aliases remain unverified.",
                         };
                     }
 

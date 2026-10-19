@@ -26,6 +26,7 @@ internal enum CompactDiscoveryCharge
     SchemaBytes = 15,
     MapSteps = 16,
     Diagnostics = 17,
+    Fields = 18,
 }
 
 /// <summary>Owns cumulative counters and simultaneous working-storage admission for one discovery session.</summary>
@@ -36,7 +37,7 @@ internal sealed class CompactDiscoveryAccounting
 #else
     private readonly object sync = new();
 #endif
-    private readonly long[] counts = new long[18];
+    private readonly long[] counts = new long[19];
     private readonly long[] limits;
     private readonly long maxWorkingBytes;
     private long activeWorkingBytes;
@@ -46,7 +47,7 @@ internal sealed class CompactDiscoveryAccounting
     internal CompactDiscoveryAccounting(CompactDiscoveryBudget budget)
     {
         Guard.NotNull(budget, nameof(budget));
-        this.limits = [budget.MaxPageReads, budget.MaxObjects, budget.MaxRows, budget.MaxDirectorySlots, budget.MaxLongValues, budget.MaxLongValueBytes, budget.MaxLongValuePayloadBytes, budget.MaxLongValueRows, budget.MaxIndexPages, budget.MaxIndexEntries, budget.MaxIndexCanonicalBytes, budget.MaxReferences, budget.MaxGraphSteps, budget.MaxRecords, budget.MaxCatalogObjects, budget.MaxSchemaBytes, budget.MaxMapSteps, budget.MaxDiagnostics];
+        this.limits = [budget.MaxPageReads, budget.MaxObjects, budget.MaxRows, budget.MaxDirectorySlots, budget.MaxLongValues, budget.MaxLongValueBytes, budget.MaxLongValuePayloadBytes, budget.MaxLongValueRows, budget.MaxIndexPages, budget.MaxIndexEntries, budget.MaxIndexCanonicalBytes, budget.MaxReferences, budget.MaxGraphSteps, budget.MaxRecords, budget.MaxCatalogObjects, budget.MaxSchemaBytes, budget.MaxMapSteps, budget.MaxDiagnostics, budget.MaxFields];
         foreach (long limit in this.limits)
         {
             Guard.InRange(limit, 1L, long.MaxValue, nameof(budget));

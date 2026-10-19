@@ -96,6 +96,7 @@ internal sealed class CompactDiscoverySession
     /// <param name="rowVisitor">Consumes each borrowed row with its owning definition; it may audit or copy identified long values before returning.</param>
     /// <param name="indexVisitor">The awaited raw-index observation consumer.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="ownershipVisitor">Optionally consumes known cross-root ownership and sharing evidence.</param>
     /// <returns>A task completing after all discovered local tables and defined index roots have been scanned.</returns>
     /// <remarks>
     /// Catalog-only links and opaque objects remain pinned and are never executed. The caller identifies long-value fields in the borrowed rows.
@@ -107,7 +108,8 @@ internal sealed class CompactDiscoverySession
         Func<CompactStorageRecord, CancellationToken, ValueTask> storageVisitor,
         Func<long, RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> rowVisitor,
         Func<CompactIndexRecord, CancellationToken, ValueTask> indexVisitor,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask>? ownershipVisitor = null)
     {
         Guard.NotNull(storageVisitor, nameof(storageVisitor));
         Guard.NotNull(rowVisitor, nameof(rowVisitor));
@@ -115,21 +117,82 @@ internal sealed class CompactDiscoverySession
         this.EnterScan(cancellationToken);
         try
         {
-            await this.ScanInventoryCoreAsync(
+            await this.ScanDatabaseCoreAsync(
                 storageVisitor,
-                cancellationToken,
-                async (root, image, token) =>
-                {
-                    await this.ScanRowsCoreAsync(root, (location, bytes, rowToken) => rowVisitor(root, location, bytes, rowToken), token).ConfigureAwait(false);
-                    foreach (TDefIndexDescriptor index in image.RealIndexes)
+                (root, _, location, bytes, token) => rowVisitor(root, location, bytes, token),
+                indexVisitor,
+                ownershipVisitor ?? IgnoreOwnership,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref this.activeScan, 0);
+        }
+    }
+
+    /// <summary>Discovers stored fields and automatically audits each non-null long value in every discovered local table.</summary>
+    /// <param name="storageVisitor">The awaited inventory observation consumer.</param>
+    /// <param name="fieldVisitor">Consumes each borrowed field with its table identity, including null and absent fields.</param>
+    /// <param name="longValueVisitor">Consumes borrowed raw long-value observations with their original field and table identities.</param>
+    /// <param name="indexVisitor">The awaited raw-index observation consumer.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="ownershipVisitor">Optionally consumes known cross-root ownership and sharing evidence.</param>
+    /// <returns>A task completing after the discovered fields, long values and index bookmarks have been audited.</returns>
+    /// <remarks>
+    /// Stored bytes are never converted or recalculated. Native envelope semantics, hidden catalog identities and incoming ownership remain unproven.
+    /// Assigned calculated storage without a hydrated result type is retained as a raw observation and then explicitly refused.
+    /// Visitors borrow memory only until their awaited call returns. All operations share cumulative work and simultaneous storage limits.
+    /// Successful discovery does not authorize relocation, reclamation or publication.
+    /// </remarks>
+    internal async ValueTask ScanDatabaseFieldsAsync(
+        Func<CompactStorageRecord, CancellationToken, ValueTask> storageVisitor,
+        Func<long, CompactRawField, CancellationToken, ValueTask> fieldVisitor,
+        Func<long, CompactRawField, CompactLongValueRecord, CancellationToken, ValueTask> longValueVisitor,
+        Func<CompactIndexRecord, CancellationToken, ValueTask> indexVisitor,
+        CancellationToken cancellationToken,
+        Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask>? ownershipVisitor = null)
+    {
+        Guard.NotNull(storageVisitor, nameof(storageVisitor));
+        Guard.NotNull(fieldVisitor, nameof(fieldVisitor));
+        Guard.NotNull(longValueVisitor, nameof(longValueVisitor));
+        Guard.NotNull(indexVisitor, nameof(indexVisitor));
+        this.EnterScan(cancellationToken);
+        try
+        {
+            await this.ScanDatabaseCoreAsync(
+                storageVisitor,
+                (root, image, location, bytes, token) => CompactRawFieldReader.ScanAsync(
+                    this.format,
+                    image,
+                    location,
+                    bytes,
+                    async (field, fieldToken) =>
                     {
-                        token.ThrowIfCancellationRequested();
-                        if (index.RootPage != 0)
+                        this.Accounting.Charge(CompactDiscoveryCharge.Fields, 1, location.PageNumber);
+                        this.Accounting.Charge(CompactDiscoveryCharge.Records, 1, location.PageNumber);
+                        await fieldVisitor(root, field, fieldToken).ConfigureAwait(false);
+                        this.pages.CheckGeometry(location.PageNumber, fieldToken);
+                        if (field.Kind == CompactRawFieldKind.Stored && !field.IsStorageTypeKnown)
                         {
-                            await this.ScanIndexBookmarksCoreAsync(root, index.RootPage, indexVisitor, token).ConfigureAwait(false);
+                            const string reason = "Automatic long-value discovery requires bounded hydration of the calculated column's persisted ResultType; its stored bytes remain opaque and pinned.";
+                            throw new JetLimitationException(
+                                JetErrorCode.FeatureNotSupported,
+                                reason,
+                                new JetErrorInfo { ColumnName = field.Column.Name, PageNumber = location.DataPageNumber, Reason = reason });
                         }
-                    }
-                }).ConfigureAwait(false);
+
+                        if (field.IsLongValue && field.Kind == CompactRawFieldKind.Stored)
+                        {
+                            await this.AuditLongValueAsync(
+                                field.RawBytes,
+                                (record, valueToken) => longValueVisitor(root, field, record, valueToken),
+                                fieldToken).ConfigureAwait(false);
+                        }
+                    },
+                    token),
+                indexVisitor,
+                ownershipVisitor ?? IgnoreOwnership,
+                cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -292,6 +355,12 @@ internal sealed class CompactDiscoverySession
     private static JetCorruptDataException Corrupt(long page, string reason)
         => new(JetErrorCode.MalformedValue, reason, new JetErrorInfo { PageNumber = page, Reason = reason });
 
+    private static ValueTask IgnoreOwnership(CompactIndexOwnershipRecord record, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return default;
+    }
+
     private async ValueTask ScanInventoryCoreAsync(Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor = null)
     {
         int schemaBytes = checked((int)Math.Min(int.MaxValue, this.budget.MaxSchemaBytes));
@@ -316,6 +385,55 @@ internal sealed class CompactDiscoverySession
             visitor,
             cancellationToken,
             definitionVisitor).ConfigureAwait(false);
+        this.pages.CheckGeometry(0, cancellationToken);
+    }
+
+    private async ValueTask ScanDatabaseCoreAsync(
+        Func<CompactStorageRecord, CancellationToken, ValueTask> storageVisitor,
+        Func<long, TDefImage, RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> rowVisitor,
+        Func<CompactIndexRecord, CancellationToken, ValueTask> indexVisitor,
+        Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask> ownershipVisitor,
+        CancellationToken cancellationToken)
+    {
+        using var ownership = new CompactIndexOwnershipAudit(
+            this.pages.PageCount,
+            new()
+            {
+                Accounting = this.Accounting,
+                MaxTrackedPages = checked((int)Math.Min(int.MaxValue, this.budget.MaxIndexPages)),
+                MaxRootDescriptors = this.budget.MaxObjects,
+                MaxReferences = this.budget.MaxReferences,
+                MaxGraphSteps = this.budget.MaxGraphSteps,
+                MaxRecords = this.budget.MaxRecords,
+                MaxWorkingBytes = this.budget.MaxWorkingBytes,
+            });
+        await this.ScanInventoryCoreAsync(
+            storageVisitor,
+            cancellationToken,
+            async (root, image, token) =>
+            {
+                await this.ScanRowsCoreAsync(root, (location, bytes, rowToken) => rowVisitor(root, image, location, bytes, rowToken), token).ConfigureAwait(false);
+                for (int ordinal = 0; ordinal < image.RealIndexes.Count; ordinal++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    TDefIndexDescriptor index = image.RealIndexes[ordinal];
+                    if (index.RootPage != 0)
+                    {
+                        await ownership.DeclareRootAsync(root, index.RootPage, ordinal, ownershipVisitor, token).ConfigureAwait(false);
+                        await this.ScanIndexBookmarksCoreAsync(
+                            root,
+                            index.RootPage,
+                            async (record, indexToken) =>
+                            {
+                                await ownership.ObserveAsync(record, ownershipVisitor, indexToken).ConfigureAwait(false);
+                                await indexVisitor(record, indexToken).ConfigureAwait(false);
+                                this.pages.CheckGeometry(record.PageNumber, indexToken);
+                            },
+                            token).ConfigureAwait(false);
+                    }
+                }
+            }).ConfigureAwait(false);
+        await ownership.CompleteAsync(ownershipVisitor, cancellationToken).ConfigureAwait(false);
         this.pages.CheckGeometry(0, cancellationToken);
     }
 

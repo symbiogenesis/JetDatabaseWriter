@@ -31,6 +31,9 @@ internal sealed class CompactDiscoveryBudget
     /// <summary>Gets the total delivered live-row allowance.</summary>
     public long MaxRows { get; init; } = 8_388_608;
 
+    /// <summary>Gets the total raw-field observation allowance, including null and absent fields.</summary>
+    public long MaxFields { get; init; } = 67_108_864;
+
     /// <summary>Gets the total raw-row, inventory and long-value directory slots admitted, including repeated inspections.</summary>
     public long MaxDirectorySlots { get; init; } = 268_435_456;
 

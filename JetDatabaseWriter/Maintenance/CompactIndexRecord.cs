@@ -61,6 +61,14 @@ internal sealed record CompactIndexRecord
     /// <remarks>This covers observed leaves only; missing ownership or incoming references remain unverified.</remarks>
     public bool ObservedLeafChainOrdered { get; init; }
 
+    /// <summary>Gets a value indicating whether bookmark tie breakers also satisfy in-page order, inclusive entry-edge-only fences and the complete observed leaf chain's order.</summary>
+    /// <remarks>False withholds this proof without treating uncertain native duplicate bookmark ordering as corruption.</remarks>
+    public bool BookmarkInclusiveOrderValidated { get; init; }
+
+    /// <summary>Gets a value indicating whether separator/tail descent for each encoded key present in the observed leaves can reach its first matching leaf through one closed, ordered sibling chain.</summary>
+    /// <remarks>False means the conservative bounded proof is incomplete. Missing leaves, key/row correspondence and incoming-reference ownership remain unverified.</remarks>
+    public bool ObservedKeyRoutingValidated { get; init; }
+
     /// <summary>Gets a value indicating whether complete tree validity and incoming-reference ownership have been proven.</summary>
     public bool TreeCompletenessProven { get; }
 

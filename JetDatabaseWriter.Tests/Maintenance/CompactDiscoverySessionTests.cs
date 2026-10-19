@@ -56,13 +56,22 @@ public sealed class CompactDiscoverySessionTests
         var source = new MemoryPages();
         source.Images[3] = IndexPageCodec.BuildLeafPage(source.Format.IndexPage, source.PageSize, 2, [new([1], 4, 0)], enablePrefixCompression: false);
         source.Images[4] = IndexPageCodec.BuildLeafPage(source.Format.IndexPage, source.PageSize, 2, [new([2], 3, 0)], enablePrefixCompression: false);
+        long graphAllowance = long.MaxValue;
+        if (limit == "graph")
+        {
+            var measured = new CompactDiscoverySession(source, source.Format, new());
+            await measured.ScanIndexAsync(2, 3, IgnoreIndex, Ct);
+            graphAllowance = measured.Accounting.ReadCount(CompactDiscoveryCharge.GraphSteps);
+            Assert.True(graphAllowance > 0);
+        }
+
         CompactDiscoveryBudget budget = limit switch
         {
             "pages" => new() { MaxIndexPages = 1 },
             "entries" => new() { MaxIndexEntries = 1 },
             "canonical" => new() { MaxIndexCanonicalBytes = 5 },
             "references" => new() { MaxReferences = 1 },
-            "graph" => new() { MaxGraphSteps = 4 },
+            "graph" => new() { MaxGraphSteps = graphAllowance },
             _ => new() { MaxRecords = 3 },
         };
         var session = new CompactDiscoverySession(source, source.Format, budget);
