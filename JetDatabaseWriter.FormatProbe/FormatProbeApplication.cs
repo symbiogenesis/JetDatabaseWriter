@@ -10,7 +10,6 @@ using System.Collections.Generic;
 using System.CommandLine;
 using System.Globalization;
 using System.Text;
-using System.Threading;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
@@ -683,9 +682,12 @@ internal static class FormatProbeApplication
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"Probed the unencrypted `.mdb` / `.accdb` corpus under `JetDatabaseWriter.Tests/Databases/` ({fixturePaths.Length} files), excluding `Databases/Encrypted/` and including the upstream Jackcess corpus (`Databases/Jackcess/V1997/` … `V2019/`).");
         _ = sb.AppendLine();
 
-        using var catalogScanThrottle = new SemaphoreSlim(GetCatalogProbeDegreeOfParallelism());
-        CatalogScanResult[] scans = await Task.WhenAll(
-            fixturePaths.Select(path => ScanCatalogFixtureAsync(fixturesDir, path, catalogScanThrottle)));
+        var scans = new CatalogScanResult[fixturePaths.Length];
+        await Parallel.ForAsync(
+            0,
+            fixturePaths.Length,
+            new ParallelOptions { MaxDegreeOfParallelism = GetCatalogProbeDegreeOfParallelism() },
+            async (index, _) => scans[index] = await ScanCatalogFixtureAsync(fixturesDir, fixturePaths[index]));
 
         var verdicts = scans
             .Select(scan => (scan.RelPath, scan.Format, scan.CatalogRows, scan.HasIndexes, scan.HasIndexColumns, scan.HasRelationships, scan.AnyIndexNamed, scan.Error))
@@ -857,11 +859,9 @@ internal static class FormatProbeApplication
 
     private static async Task<CatalogScanResult> ScanCatalogFixtureAsync(
         string fixturesDir,
-        string fixturePath,
-        SemaphoreSlim throttle)
+        string fixturePath)
     {
         string relPath = Path.GetRelativePath(fixturesDir, fixturePath).Replace('\\', '/');
-        await throttle.WaitAsync();
         try
         {
             Console.WriteLine($"Probing {relPath} ...");
@@ -914,10 +914,6 @@ internal static class FormatProbeApplication
                 null,
                 [],
                 []);
-        }
-        finally
-        {
-            _ = throttle.Release();
         }
     }
 
