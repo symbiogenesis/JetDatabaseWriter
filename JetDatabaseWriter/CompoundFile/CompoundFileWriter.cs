@@ -74,8 +74,20 @@ internal static class CompoundFileWriter
         }
 
         var orderedStreams = new List<KeyValuePair<string, byte[]>>(streams);
-        orderedStreams.Sort(static (left, right) =>
-            StringComparer.OrdinalIgnoreCase.Compare(left.Key, right.Key));
+        foreach (KeyValuePair<string, byte[]> stream in orderedStreams)
+        {
+            ValidateStreamName(stream.Key);
+        }
+
+        orderedStreams.Sort(static (left, right) => CompareNames(left.Key, right.Key));
+        for (int i = 1; i < orderedStreams.Count; i++)
+        {
+            if (CompareNames(orderedStreams[i - 1].Key, orderedStreams[i].Key) == 0)
+            {
+                throw new ArgumentException("Compound file stream names must be unique under native name comparison.", nameof(streams));
+            }
+        }
+
         streams = orderedStreams;
 
         int entriesPerFatSector = sectorSize / 4;
@@ -204,22 +216,11 @@ internal static class CompoundFileWriter
 
         // ── Directory entries ─────────────────────────────────────────
         // Layout: index 0 = Root Entry, indices 1..N = streams in sorted order.
-        // Red-black tree: root.child = 1; each stream entry's right sibling
-        // points at the next greater name. The last entry's right sibling = FREESECT.
+        // MS-CFB permits all-black trees. A median split balances this immutable tree
+        // without insertion rotations or per-node storage.
         int dirOffset = SectorOffset(0, sectorSize);
-        WriteRootEntry(file, dirOffset, child: 1);
-        for (int i = 0; i < streams.Count; i++)
-        {
-            uint right = (i == streams.Count - 1) ? Constants.CompoundFile.FreeSect : (uint)(i + 2);
-            WriteStreamEntry(
-                file,
-                dirOffset + ((i + 1) * Constants.CompoundFile.DirEntrySize),
-                streams[i].Key,
-                startSector: unchecked((uint)streamStart[i]),
-                size: streams[i].Value?.Length ?? 0,
-                leftSibling: Constants.CompoundFile.FreeSect,
-                rightSibling: right);
-        }
+        uint child = WriteStreamTree(file, dirOffset, streams, streamStart, 0, streams.Count);
+        WriteRootEntry(file, dirOffset, child);
 
         // Zero-fill any leftover directory entries (unused slots).
         int totalDirEntries = numDirSectors * entriesPerDirSector;
@@ -271,6 +272,77 @@ internal static class CompoundFileWriter
         }
 
         return file;
+    }
+
+    private static void ValidateStreamName(string name)
+    {
+        if (string.IsNullOrEmpty(name) || name.Length > 31)
+        {
+            throw new ArgumentException("Stream names must contain 1 to 31 UTF-16 code units.", nameof(name));
+        }
+
+        for (int i = 0; i < name.Length; i++)
+        {
+            char value = name[i];
+            if (value is '\0' or '/' or '\\' or ':' or '!')
+            {
+                throw new ArgumentException("Stream names cannot contain NUL, '/', '\\', ':' or '!'.", nameof(name));
+            }
+
+            if (char.IsSurrogate(value)
+                && (!char.IsHighSurrogate(value) || i + 1 == name.Length || !char.IsLowSurrogate(name[++i])))
+            {
+                throw new ArgumentException("Stream names must contain well-formed UTF-16.", nameof(name));
+            }
+        }
+    }
+
+    private static int CompareNames(string left, string right)
+    {
+        // MS-CFB 2.6.4 compares name length before simple uppercase UTF-16 code units.
+        int result = left.Length.CompareTo(right.Length);
+        for (int i = 0; result == 0 && i < left.Length; i++)
+        {
+            result = UppercaseNameCodeUnit(left[i]).CompareTo(UppercaseNameCodeUnit(right[i]));
+        }
+
+        return result;
+    }
+
+    private static char UppercaseNameCodeUnit(char value) => value switch
+    {
+        // MS-CFB Appendix A specifies these representatives for Windows Vista and later.
+        '\u023A' or '\u2C65' => '\u2C65',
+        '\u023E' or '\u2C66' => '\u2C66',
+        '\u1FC3' or '\u1FCC' => '\u1FC3',
+        _ => char.ToUpperInvariant(value),
+    };
+
+    private static uint WriteStreamTree(
+        byte[] file,
+        int dirOffset,
+        IReadOnlyList<KeyValuePair<string, byte[]>> streams,
+        int[] streamStart,
+        int first,
+        int end)
+    {
+        if (first == end)
+        {
+            return Constants.CompoundFile.FreeSect;
+        }
+
+        int middle = first + ((end - first) / 2);
+        uint left = WriteStreamTree(file, dirOffset, streams, streamStart, first, middle);
+        uint right = WriteStreamTree(file, dirOffset, streams, streamStart, middle + 1, end);
+        WriteStreamEntry(
+            file,
+            dirOffset + ((middle + 1) * Constants.CompoundFile.DirEntrySize),
+            streams[middle].Key,
+            startSector: unchecked((uint)streamStart[middle]),
+            size: streams[middle].Value?.Length ?? 0,
+            leftSibling: left,
+            rightSibling: right);
+        return checked((uint)(middle + 1));
     }
 
     private static void ChainSectors(uint[] fat, int startSector, int sectorCount)
