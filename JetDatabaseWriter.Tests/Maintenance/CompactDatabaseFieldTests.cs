@@ -6,10 +6,14 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Maintenance;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema.Models;
 using Xunit;
 
 public sealed class CompactDatabaseFieldTests
@@ -239,11 +243,87 @@ public sealed class CompactDatabaseFieldTests
         Assert.Equal(damaged, SHA256.HashData(bytes));
     }
 
-    [Fact]
-    public async Task DatabaseFields_CalculatedFixtureHydratesResultTypesAndDiscoversMemoStorage()
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    public async Task DatabaseFields_CalculatedFixtureHydratesResultTypesAndDiscoversMemoStorage(bool recoverCatalog, bool conflictingOwner, bool moved)
     {
         string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "Jackcess", "V2010", "calcFieldTestV2010.accdb");
         byte[] bytes = await File.ReadAllBytesAsync(path, Ct);
+        if (recoverCatalog)
+        {
+            await using DatabaseFile intact = Open(bytes);
+            TDefImage catalog = Assert.IsType<TDefImage>(await intact.TableDefs.ReadImageAsync(2, Ct));
+            var decoder = new CatalogRowReader(intact.Format, intact.TableDefs, intact.OwnedPages);
+            bool damaged = false;
+            foreach (CatalogRow row in await decoder.GetCatalogRowsAsync(catalog.Definition, Ct, scanPhysicalPages: true))
+            {
+                if (row.ObjectType != Constants.SystemObjects.UserTableType || row.TDefPage <= 2)
+                {
+                    continue;
+                }
+
+                TDefImage image = Assert.IsType<TDefImage>(await intact.TableDefs.ReadImageAsync(row.TDefPage, Ct));
+                foreach (ColumnInfo column in image.Columns)
+                {
+                    if (column.IsCalculated)
+                    {
+                        int offset = checked(((int)row.PageNumber * intact.Format.PageSize) + intact.Format.DataPage.TDefOff);
+                        uint owner = conflictingOwner ? checked((uint)row.TDefPage) : 0;
+                        if (moved)
+                        {
+                            byte[] payload = [];
+                            RowLocation location = default;
+                            var discovery = new CompactDiscoverySession(intact.Pages, intact.Format, new());
+                            await discovery.ScanRowsAsync(
+                                2,
+                                (candidate, data, _) =>
+                                {
+                                    if (candidate.PageNumber == row.PageNumber && candidate.RowIndex == row.RowIndex)
+                                    {
+                                        location = candidate;
+                                        payload = data.ToArray();
+                                    }
+
+                                    return ValueTask.CompletedTask;
+                                },
+                                Ct);
+                            Assert.NotEmpty(payload);
+                            Assert.False(location.IsOverflow);
+                            int target = bytes.Length / intact.Format.PageSize;
+                            Array.Resize(ref bytes, bytes.Length + intact.Format.PageSize);
+                            int dataOffset = ((target + 1) * intact.Format.PageSize) - payload.Length;
+                            payload.CopyTo(bytes, dataOffset);
+                            bytes[target * intact.Format.PageSize] = Constants.PageTypes.Data;
+                            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan((target * intact.Format.PageSize) + intact.Format.DataPage.TDefOff, sizeof(uint)), 2);
+                            BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan((target * intact.Format.PageSize) + intact.Format.DataPage.NumRows, sizeof(ushort)), 1);
+                            BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan((target * intact.Format.PageSize) + intact.Format.DataPage.RowsStart, sizeof(ushort)), checked((ushort)((intact.Format.PageSize - payload.Length) | Constants.DataPage.DeletedRowFlag)));
+                            int headerOffset = checked(((int)row.PageNumber * intact.Format.PageSize) + location.RowStart);
+                            bytes[headerOffset] = 0;
+                            bytes[headerOffset + 1] = unchecked((byte)target);
+                            bytes[headerOffset + 2] = unchecked((byte)(target >> 8));
+                            bytes[headerOffset + 3] = unchecked((byte)(target >> 16));
+                            BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(checked(((int)row.PageNumber * intact.Format.PageSize) + intact.Format.DataPage.RowsStart + (row.RowIndex * 2)), sizeof(ushort)), checked((ushort)(location.RowStart | Constants.DataPage.OverflowRowFlag)));
+                        }
+
+                        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(offset, sizeof(uint)), owner);
+                        damaged = true;
+                        break;
+                    }
+                }
+
+                if (damaged)
+                {
+                    break;
+                }
+            }
+
+            Assert.True(damaged);
+        }
+
         byte[] original = SHA256.HashData(bytes);
         await using DatabaseFile file = Open(bytes);
         var session = new CompactDiscoverySession(file.Pages, file.Format, new());
@@ -251,6 +331,8 @@ public sealed class CompactDatabaseFieldTests
         int memoTerminals = 0;
         int memoExternalRows = 0;
         bool ownershipCompleted = false;
+        int recoveredTargets = 0;
+        int recoveredTerminals = 0;
         await session.ScanDatabaseFieldsAsync(
             (_, _) => ValueTask.CompletedTask,
             (_, field, _) =>
@@ -280,13 +362,31 @@ public sealed class CompactDatabaseFieldTests
 
                 return ValueTask.CompletedTask;
             },
-            (_, _) => ValueTask.CompletedTask,
+            (record, _) =>
+            {
+                if (record.BookmarkTargetRecovered)
+                {
+                    recoveredTargets++;
+                    Assert.False(record.BookmarkTargetValidated);
+                }
+
+                if (record.BookmarkTargetsRecovered)
+                {
+                    recoveredTerminals++;
+                    Assert.False(record.BookmarkTargetsValidated);
+                    Assert.Contains("same-owner proof is withheld", record.Coverage, StringComparison.Ordinal);
+                }
+
+                return ValueTask.CompletedTask;
+            },
             Ct,
             (record, _) =>
             {
                 ownershipCompleted |= record.Kind == "ownership-terminal";
                 return ValueTask.CompletedTask;
             });
+        Assert.Equal(recoverCatalog, recoveredTargets > 0);
+        Assert.Equal(recoverCatalog, recoveredTerminals > 0);
         Assert.True(calculated > 4);
         Assert.Equal(4, memoTerminals);
         Assert.Equal(3, memoExternalRows);

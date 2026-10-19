@@ -39,14 +39,20 @@ internal sealed record CompactIndexRecord
     /// <summary>Gets a value indicating whether this entry's bookmark names a live same-owner row header and readable stored payload chain.</summary>
     public bool BookmarkTargetValidated { get; init; }
 
-    /// <summary>Gets the resolved stored-payload page when this entry's bookmark target was validated.</summary>
+    /// <summary>Gets a value indicating whether this entry used exact independently recovered catalog evidence; physical ownership remains ambiguous.</summary>
+    public bool BookmarkTargetRecovered { get; init; }
+
+    /// <summary>Gets the resolved stored-payload page when this entry's bookmark target was validated or independently recovered.</summary>
     public long? BookmarkDataPageNumber { get; init; }
 
-    /// <summary>Gets the resolved stored-payload slot when this entry's bookmark target was validated.</summary>
+    /// <summary>Gets the resolved stored-payload slot when this entry's bookmark target was validated or independently recovered.</summary>
     public int? BookmarkDataRowIndex { get; init; }
 
-    /// <summary>Gets a value indicating whether every observed leaf and intermediate bookmark target was validated; true only on a composed scan's successful terminal.</summary>
+    /// <summary>Gets a value indicating whether every observed leaf and intermediate bookmark has the ordinary live same-owner target proof; true only on a composed scan's successful terminal without recovered targets.</summary>
     public bool BookmarkTargetsValidated { get; init; }
+
+    /// <summary>Gets a value indicating whether the successful terminal includes recovered catalog bookmarks and withholds the same-owner proof.</summary>
+    public bool BookmarkTargetsRecovered { get; init; }
 
     /// <summary>Gets the explicit observation coverage on the terminal record.</summary>
     public string? Coverage { get; init; }

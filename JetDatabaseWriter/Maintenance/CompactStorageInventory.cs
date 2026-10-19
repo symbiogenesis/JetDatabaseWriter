@@ -29,10 +29,11 @@ internal static class CompactStorageInventory
     /// <param name="visitor">Consumes each observation before traversal continues.</param>
     /// <param name="cancellationToken">Cancels traversal.</param>
     /// <param name="definitionVisitor">Optionally consumes each discovered local definition while inventory storage remains admitted.</param>
+    /// <param name="recoveredCatalogVisitor">Optionally consumes accepted indexed catalog recovery evidence before any definition callback.</param>
     /// <returns>A task that completes only when this inventory phase succeeds.</returns>
     /// <exception cref="JetLimitationException">A traversal or schema-reader limit is exceeded.</exception>
     /// <exception cref="JetCorruptDataException">A known structural reference is malformed.</exception>
-    internal static ValueTask ScanAsync(IPageSource pages, JetFormat format, TableDefReader tableDefs, CompactTraversalBudget budget, Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor = null)
+    internal static ValueTask ScanAsync(IPageSource pages, JetFormat format, TableDefReader tableDefs, CompactTraversalBudget budget, Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor = null, Func<CompactCatalogRecovery.RecoveredRow, CancellationToken, ValueTask>? recoveredCatalogVisitor = null)
     {
         Guard.NotNull(pages, nameof(pages));
         Guard.NotNull(format, nameof(format));
@@ -73,7 +74,7 @@ internal static class CompactStorageInventory
         ReserveWorkingStorage(ref remainingWorkingBytes, budget.MaxObjects, 1024);
         ReserveWorkingStorage(ref remainingWorkingBytes, Math.Min(tableDefs.MaxLogicalBytes, budget.MaxSchemaBytes), 16);
         long reservation = budget.MaxWorkingBytes - remainingWorkingBytes;
-        return RunOwnedAsync(pages, format, tableDefs.MaxLogicalBytes, budget, visitor, reservation, definitionVisitor, cancellationToken);
+        return RunOwnedAsync(pages, format, tableDefs.MaxLogicalBytes, budget, visitor, reservation, definitionVisitor, recoveredCatalogVisitor, cancellationToken);
     }
 
     private static void ReserveWorkingStorage(ref long remaining, long count, int bytesPerItem)
@@ -86,14 +87,14 @@ internal static class CompactStorageInventory
         remaining -= count * bytesPerItem;
     }
 
-    private static async ValueTask RunOwnedAsync(IPageSource pages, JetFormat format, int maxLogicalBytes, CompactTraversalBudget budget, Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, long reservation, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor, CancellationToken cancellationToken)
+    private static async ValueTask RunOwnedAsync(IPageSource pages, JetFormat format, int maxLogicalBytes, CompactTraversalBudget budget, Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, long reservation, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor, Func<CompactCatalogRecovery.RecoveredRow, CancellationToken, ValueTask>? recoveredCatalogVisitor, CancellationToken cancellationToken)
     {
         using IDisposable? admission = budget.Accounting?.ReserveWorkingBytes(reservation);
         var bounded = new CompactInventoryPageSource(pages, format, budget.MaxPageReads, budget.Accounting);
         using var definitions = new TableDefReader(bounded, format, cacheResults: false, Math.Min(maxLogicalBytes, budget.MaxSchemaBytes), budget.MaxSchemaBytes);
         using var owned = new OwnedDataPages(bounded, format, cacheResults: false);
         var catalog = new CatalogRowReader(format, definitions, owned);
-        await new Scanner(bounded, format, definitions, catalog, budget, visitor, definitionVisitor, reservation).RunAsync(cancellationToken).ConfigureAwait(false);
+        await new Scanner(bounded, format, definitions, catalog, budget, visitor, definitionVisitor, recoveredCatalogVisitor, reservation).RunAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static JetLimitationException Limit(string reason, long? page = null)
@@ -102,7 +103,7 @@ internal static class CompactStorageInventory
     private static JetCorruptDataException Corrupt(long page, string reason)
         => new(JetErrorCode.CorruptTableDefinition, reason, new JetErrorInfo { PageNumber = page, Reason = reason });
 
-    private sealed class Scanner(IPageSource pages, JetFormat format, TableDefReader tableDefs, CatalogRowReader catalogRows, CompactTraversalBudget budget, Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor, long inventoryReservation)
+    private sealed class Scanner(IPageSource pages, JetFormat format, TableDefReader tableDefs, CatalogRowReader catalogRows, CompactTraversalBudget budget, Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor, Func<CompactCatalogRecovery.RecoveredRow, CancellationToken, ValueTask>? recoveredCatalogVisitor, long inventoryReservation)
     {
         private readonly HashSet<long> recoveredCatalogPages = [];
         private long references;
@@ -135,7 +136,7 @@ internal static class CompactStorageInventory
                 admitRow: location => budget.Accounting?.Charge(CompactDiscoveryCharge.CatalogObjects, 1, location.PageNumber)).ConfigureAwait(false);
             CompactCatalogRecovery.Result recovered = await CompactCatalogRecovery.ScanAsync(pages, format, catalog, catalogRows, budget, rows, budget.MaxReferences - this.references, budget.MaxMapSteps - this.mapSteps, budget.MaxWorkingBytes - inventoryReservation, cancellationToken).ConfigureAwait(false);
             this.references += recovered.References;
-            this.mapSteps += recovered.DirectorySlots;
+            this.mapSteps += recovered.DirectorySlots + recovered.OverflowHops;
             var recoveredCounts = new Dictionary<long, int>();
             foreach (CompactCatalogRecovery.RecoveredRow evidence in recovered.Rows)
             {
@@ -167,9 +168,14 @@ internal static class CompactStorageInventory
                         TargetPageNumber = identity.PageNumber,
                         TargetRowIndex = identity.RowIndex,
                         ObjectId = identity.Id,
-                        Detail = "Reconstructed native Id-index bookmark and matching direct live-row Id; the compressed bookmark does not have a single physical byte offset. The physical owner header is unchanged and ownership remains ambiguous.",
+                        Detail = "Reconstructed native Id-index bookmark and matching stored row Id, with verified intact catalog owner headers on moved-payload pages; the compressed bookmark does not have a single physical byte offset. The physical owner header is unchanged and ownership remains ambiguous.",
                     },
                     cancellationToken).ConfigureAwait(false);
+                if (recoveredCatalogVisitor is not null)
+                {
+                    await recoveredCatalogVisitor(evidence, cancellationToken).ConfigureAwait(false);
+                    pages.ThrowIfDisposedOrCancelled(cancellationToken);
+                }
             }
 
             foreach ((long page, string reason) in recovered.Diagnostics)

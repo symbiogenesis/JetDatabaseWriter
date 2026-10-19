@@ -63,12 +63,15 @@ These conservative allowances include collection capacity and simultaneous
 definition representations. Catalog discovery scans physical owner headers
 without constructing a whole-file ownership index or relying on map hints.
 Catalog discovery also independently audits the native Id index and compares
-its stored keys with direct live rows' full stored Ids. Matching bookmarks can
+its stored keys with resolved live rows' full stored Ids. Matching bookmarks can
 retain catalog identities despite damaged physical owners and absent or corrupt
-map hints. Recovery observations and diagnostics retain that ambiguity; they
-do not repair page headers or prove exclusive ownership. Positive map conflicts
+map hints. Bounded moved-row recovery additionally requires deleted payload slots,
+intact catalog ownership along the moved chain and a matching stored Id; cycles,
+live payload aliases and conflicting recovered bookmarks refuse that recovery.
+Recovery observations and diagnostics retain that ambiguity; they do not repair
+page headers or prove exclusive ownership. Positive map conflicts
 without sufficient independent evidence still refuse. Damaged Id indexes,
-unproven moved-row ownership and missing independent references can still hide
+unproven moved-payload ownership and missing independent references can still hide
 identities. This scan does not prove catalog completeness or authorize
 reclaiming any page.
 Admission excludes caller/visitor allocations, runtime overhead and shared buffer-pool
@@ -89,8 +92,8 @@ in the corresponding TODO item.
 
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
-| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map inspection; independent catalog Id-index/direct-row identity recovery despite damaged owners and map hints; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/field/LVAL/index work and simultaneous storage through local-table orchestration | S1: complete remaining public-scan accounting and catalog recovery when independent index evidence or moved-row ownership is unavailable; qualify runtime/pool and caller-owned memory separately |
-| Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory refusal; bounded raw row and field streaming with retained assignment states; bounded calculated ResultType hydration and complete defined LVAL-chain observations, including trailing storage; private dense raw-row packing with original-header bookmark mappings | S3/F8 and the bounded raw-copy part of I6: hydrate properties from safely recovered catalog rows too; interpret native error envelopes independently of Null and damaged values without losing their raw representation; relocate streamed fields and LVAL references into a complete compact copy |
+| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map inspection; independent catalog Id-index identity recovery despite damaged headers and map hints, including bounded moved chains with intact catalog owner headers on moved-payload pages; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/field/LVAL/index work and simultaneous storage through local-table orchestration | S1: complete remaining public-scan accounting and catalog recovery when independent index evidence or moved-payload ownership is unavailable; qualify runtime/pool and caller-owned memory separately |
+| Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory refusal; bounded raw row and field streaming with retained assignment states; bounded calculated ResultType hydration and complete defined LVAL-chain observations, including trailing storage; private dense raw-row packing with original-header bookmark mappings and independent reopened raw-allocation/ledger comparison; complete raw LVAL staging with retargeted descriptor/chain pointers installed in verified packed rows and per-column allocation observations | S3/F8 and the bounded raw-copy part of I6: interpret native error envelopes independently of Null and damaged values without losing their raw representation; assemble relocated fields and LVAL allocations with catalog/TDEF/maps into a complete compact copy |
 | Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; retained continuation headers and original trailing padding during chain writes | S7/S9: complete schema-rewrite descriptor/header/trailer preservation and inventory application, security, replication and unknown objects |
 | Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key graph, entry-edge fence and observed leaf-chain checks; separate complete observed-edge key-envelope, conservative key-routing and bookmark-inclusive order proofs; bounded same-owner bookmark-target validation; cross-root declared-owner and incoming-reference observations; stored-key staging with disk-backed fences and monotone disk-backed row-bookmark lookup | I2: prove safe sharing and complete incoming-reference ownership beyond known declarations, complete native separator/alias and stored-key/row correspondence validation, and assemble relocated data/index allocations with maps and metadata; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
@@ -164,11 +167,12 @@ an envelope and withhold this proof even when conservative key routing succeeds.
 The flag is therefore not a universal native-tree acceptance requirement.
 
 `CompactIndexBookmarkAudit` composes raw index observations with an explicit
-target check for each leaf and intermediate entry. It verifies a same-owner
-live row header, complete row-directory geometry and bounded moved-row chains
-through deleted payload slots. Verified entries identify the resolved payload
-page and slot; only successful completion marks all observed bookmark targets
-validated. Repeated target reads, directory slots and simultaneous scratch
+target check for each leaf and intermediate entry. Its ordinary path verifies a
+same-owner live row header, complete row-directory geometry and bounded moved-row
+chains through deleted payload slots. Verified entries identify the resolved
+payload page and slot; successful completion marks all observed bookmark targets
+validated only when no target used accepted recovered catalog evidence. Recovered
+targets and terminals have separate flags and withhold the same-owner proof. Repeated target reads, directory slots and simultaneous scratch
 storage are bounded and can share discovery-session accounting through
 `ScanIndexBookmarksAsync`. Raw-only scans retain separate coverage. Neither
 target validity nor a matching owner proves that the stored key describes that
@@ -209,10 +213,15 @@ admission. Every repeated ResultType declaration must agree on one supported
 type; conflicting, malformed or unsupported declarations remain unknown.
 An absent or unknown ResultType still emits the raw assigned
 field and refuses automatic discovery rather than guessing from its TDEF storage
-discriminator. Hydration currently scans physical-owner catalog rows; properties
-available only through recovered damaged-owner rows remain a dependency. Each
-assigned field with a verified MEMO/OLE value type is automatically passed through the complete raw LVAL audit with the original
-table, column and row identities. Field observations have their own cumulative
+discriminator. Hydration consumes both physical catalog rows and final accepted
+recovered bookmarks. Recovered payload coordinates and complete signed Ids are rechecked
+through bounded reads before field discovery and property hydration. Only exact
+accepted catalog bookmarks can bypass the physical-owner check in catalog index
+audits; recovered flags disclose this evidence while withholding the ordinary
+same-owner bookmark proof. These rows remain pinned and do not establish complete
+catalog coverage or exclusive incoming ownership. Each assigned field with a
+verified MEMO/OLE value type is automatically passed through the complete raw LVAL
+audit with the original table, column and row identities. Field observations have their own cumulative
 allowance and also consume the shared observation allowance. No field collection
 or table snapshot is retained. The raw-row entry point still allows explicit
 value work in its awaited visitor.
@@ -268,10 +277,47 @@ bookmarks with fixed storage, then performs serial disk-backed binary searches
 under a cumulative I/O allowance. Stored index keys remain verbatim; monotone
 relocation preserves bookmark tie order. Missing mappings refuse. The caller
 keeps the ledger immutable and distinct from the source and destination.
-Raw packing plus rebuilt index bookmarks is tested together, but LVAL pointers,
-catalog/TDEF references, maps and opaque metadata still require preservation or
-retargeting. These internal components neither produce a complete database nor
+Raw packing, rebuilt index bookmarks and per-table LVAL pointer staging have
+focused composition checks. Catalog/TDEF references, maps and opaque metadata
+still require preservation or retargeting. These internal components neither produce a complete database nor
 authorize source replacement.
+
+`CompactRawDataValidator` independently scans the immutable source and a reopened
+private data allocation/ledger with one destination page and a fixed record buffer.
+It compares every original header identity and exact raw payload against the next
+dense destination slot, verifies direct-row geometry, native owner and free-space
+counts, and requires every declared row, page and ledger record to be covered.
+Cumulative read admission includes partial-read retries; real I/O errors propagate.
+This validates raw packing before reference patches, not LVAL relocation, maps,
+constraints, metadata or the complete destination database.
+
+`CompactRawLongValueBuilder` stages complete referenced external rows into private
+LVAL pages and replaces only defined descriptor and chain pointers. It retains
+column tokens, raw payloads, whole row slices and storage beyond the declared
+payload, including zero-length external values and trailing chain rows. One
+pending output page retains a predecessor until its successor's destination
+bookmark is known, avoiding whole-value collections and random patch writes.
+Output, row, raw-byte and working-storage admission combines with the discovery
+session's cumulative traversal limits. Only successful traversal and flush return
+an unvalidated allocation. The returned descriptor requires installation in its
+staged raw row; native maps and metadata require separate assembly. Incoming ownership,
+unreferenced storage and opaque padding remain separate preservation dependencies.
+
+`CompactRawDataLongValueRelocator` composes those primitives for a known table
+with verified definitions and persisted calculated result types. It requires a
+successful raw data allocation and its validated immutable matching ledger. Each
+mapped dense destination row must exactly match its complete source bytes before
+that row is patched. Assigned raw long values append to the private destination;
+only defined four-byte external descriptor pointers change. Unassigned raw slots,
+tokens, envelopes and other bytes remain intact. An awaited allocation visitor
+exposes original field/header identities and appended ranges for disk-backed
+allocation ledgers or future per-column map assembly without retaining a table.
+Aggregate rows, values, output, raw bytes, destination read requests and pointer
+writes have limits alongside the session's work and simultaneous storage limits.
+Partial reads are bounded; I/O, cancellation, visitor and flush failures return
+no completion result. This pass must precede other row-reference patches. It
+does not prove incoming ownership, deduplicate shared storage, construct maps or
+validate the complete database; source storage remains pinned.
 
 Individual attachment editing/history (R8), query planning, cache performance,
 benchmarks and the custom-stream recovery contract are not prerequisites for a

@@ -24,6 +24,7 @@ internal static class CompactRawRowReader
     /// <param name="budget">Limits for this invocation, including repeated overflow reads.</param>
     /// <param name="visitor">Consumes the payload before returning; it must not retain the borrowed memory.</param>
     /// <param name="cancellationToken">Cancels reads, directory traversal and visitor delivery.</param>
+    /// <param name="excludeRow">Optionally excludes exact original bookmarks already accepted by independent catalog recovery, after directory validation and before payload traversal.</param>
     /// <returns>A task completing after the last row visitor and all scan checks succeed.</returns>
     /// <exception cref="JetLimitationException">Storage admission or traversal exceeds its allowance.</exception>
     /// <exception cref="JetCorruptDataException">A matching page or reachable row cannot be traversed faithfully.</exception>
@@ -33,7 +34,8 @@ internal static class CompactRawRowReader
         long ownerTDefPage,
         CompactRawRowBudget budget,
         Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> visitor,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<RowLocation, bool>? excludeRow = null)
     {
         Guard.NotNull(pages, nameof(pages));
         Guard.NotNull(format, nameof(format));
@@ -68,7 +70,7 @@ internal static class CompactRawRowReader
             throw Limit(0, "The fixed raw-row storage reservation exceeds MaxWorkingBytes.");
         }
 
-        return RunAdmittedAsync(pages, format, pageCount, ownerTDefPage, budget, visitor, capacity, reservation, cancellationToken);
+        return RunAdmittedAsync(pages, format, pageCount, ownerTDefPage, budget, visitor, capacity, reservation, excludeRow, cancellationToken);
     }
 
     private static async ValueTask RunAdmittedAsync(
@@ -80,10 +82,11 @@ internal static class CompactRawRowReader
         Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> visitor,
         int capacity,
         long reservation,
+        Func<RowLocation, bool>? excludeRow,
         CancellationToken cancellationToken)
     {
         using IDisposable? admission = budget.Accounting?.ReserveWorkingBytes(reservation, ownerTDefPage);
-        await new Scanner(pages, format, pageCount, ownerTDefPage, budget, visitor, capacity, reservation).RunAsync(cancellationToken).ConfigureAwait(false);
+        await new Scanner(pages, format, pageCount, ownerTDefPage, budget, visitor, capacity, reservation, excludeRow).RunAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static JetLimitationException Limit(long page, string reason)
@@ -100,7 +103,8 @@ internal static class CompactRawRowReader
         CompactRawRowBudget budget,
         Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> visitor,
         int capacity,
-        long reservation)
+        long reservation,
+        Func<RowLocation, bool>? excludeRow)
     {
         private readonly long pageCount = admittedPageCount;
         private readonly Directory physicalDirectory = new(capacity);
@@ -155,6 +159,12 @@ internal static class CompactRawRowReader
                             continue;
                         }
 
+                        RowBound bound = this.physicalDirectory.GetBound(row, format.PageSize);
+                        if (excludeRow?.Invoke(new(number, row, bound.RowStart, bound.RowSize)) == true)
+                        {
+                            continue;
+                        }
+
                         if (this.rows >= budget.MaxRows)
                         {
                             throw Limit(number, "The live-row count exceeds MaxRows.");
@@ -162,7 +172,6 @@ internal static class CompactRawRowReader
 
                         budget.Accounting?.Charge(CompactDiscoveryCharge.Rows, 1, number);
                         this.rows++;
-                        RowBound bound = this.physicalDirectory.GetBound(row, format.PageSize);
                         if ((raw & Constants.DataPage.OverflowRowFlag) != 0)
                         {
                             await this.VisitOverflowAsync(number, page, bound, overflowTargets, cancellationToken).ConfigureAwait(false);

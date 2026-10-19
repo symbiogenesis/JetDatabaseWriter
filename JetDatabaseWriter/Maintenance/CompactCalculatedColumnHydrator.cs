@@ -16,7 +16,7 @@ using JetDatabaseWriter.Schema.Models;
 /// <param name="format">The verified format.</param>
 /// <param name="budget">The session limits.</param>
 /// <param name="accounting">The persistent session accounting.</param>
-/// <param name="scanRows">Scans raw catalog rows using the same session.</param>
+/// <param name="scanRows">Scans intact-owner and independently accepted recovered raw catalog rows using the same session.</param>
 /// <param name="auditValue">Audits every defined property-chain reference using the same session.</param>
 internal sealed class CompactCalculatedColumnHydrator(
     JetFormat format,

@@ -12,6 +12,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Maintenance;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using Xunit;
 
@@ -69,6 +70,47 @@ public sealed class CompactIndexBookmarkAuditTests
         Assert.True(Assert.Single(records, static record => record.Kind == "intermediate-entry").BookmarkTargetValidated);
         Assert.True(Assert.Single(records, static record => record.Kind == "leaf-entry").BookmarkTargetValidated);
         Assert.True(Assert.Single(records, static record => record.Kind == "index-terminal").BookmarkTargetsValidated);
+    }
+
+    [Fact]
+    public async Task RecoveredCatalogBookmark_DisclosesRecoveryAndWithholdsSameOwnerProof()
+    {
+        var source = new MemoryPages(DatabaseFormat.AceAccdb);
+        source.SetRows(4, (0, new byte[] { 1, 2 }));
+        source.Images[4][4] = 0;
+        var records = new List<CompactIndexRecord>();
+        await ScanAsync(source, records, recoveredCatalogResolver: (page, row, token) =>
+        {
+            token.ThrowIfCancellationRequested();
+            Assert.Equal(4, page);
+            Assert.Equal(0, row);
+            return ValueTask.FromResult<RowLocation?>(new(4, 0, source.PageSize - 2, 2));
+        });
+        CompactIndexRecord entry = Assert.Single(records, static record => record.Kind == "leaf-entry");
+        Assert.True(entry.BookmarkTargetRecovered);
+        Assert.False(entry.BookmarkTargetValidated);
+        CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
+        Assert.True(terminal.BookmarkTargetsRecovered);
+        Assert.False(terminal.BookmarkTargetsValidated);
+        Assert.Contains("same-owner proof is withheld", terminal.Coverage, StringComparison.Ordinal);
+        Assert.All(records, static record => Assert.True(record.IsPinned));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnlistedOrMismatchedRecovery_RefusesWithoutASuccessfulTerminal(bool mismatched)
+    {
+        var source = new MemoryPages(DatabaseFormat.AceAccdb);
+        source.SetRows(4, (0, new byte[] { 1, 2 }));
+        source.Images[4][4] = 0;
+        var records = new List<CompactIndexRecord>();
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(
+            source,
+            records,
+            recoveredCatalogResolver: (_, _, _) => ValueTask.FromResult<RowLocation?>(mismatched ? new(5, 0, source.PageSize - 2, 2) : null)));
+        Assert.DoesNotContain(records, static record => record.Kind == "index-terminal");
+        Assert.DoesNotContain(records, static record => record.BookmarkTargetRecovered);
     }
 
     [Fact]
@@ -243,7 +285,7 @@ public sealed class CompactIndexBookmarkAuditTests
         await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(source, []));
     }
 
-    private static ValueTask ScanAsync(MemoryPages source, List<CompactIndexRecord> records, CompactIndexBookmarkBudget? budget = null, CancellationToken? cancellationToken = null)
+    private static ValueTask ScanAsync(MemoryPages source, List<CompactIndexRecord> records, CompactIndexBookmarkBudget? budget = null, CancellationToken? cancellationToken = null, Func<long, int, CancellationToken, ValueTask<RowLocation?>>? recoveredCatalogResolver = null)
         => CompactIndexBookmarkAudit.ScanAsync(
             source,
             source.Format,
@@ -256,7 +298,8 @@ public sealed class CompactIndexBookmarkAuditTests
                 records.Add(record);
                 return ValueTask.CompletedTask;
             },
-            cancellationToken ?? Ct);
+            cancellationToken ?? Ct,
+            recoveredCatalogResolver);
 
     private sealed class MemoryPages : IPageSource
     {

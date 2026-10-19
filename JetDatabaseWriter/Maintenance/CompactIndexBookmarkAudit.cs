@@ -11,8 +11,10 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>Composes raw index observation with bounded validation of the rows named by stored bookmarks.</summary>
 /// <remarks>
-/// The source must remain immutable. This proves that observed leaf and intermediate bookmarks name live
-/// same-owner headers with readable stored payloads, including deleted moved-row slots. It does not compare
+/// The source must remain immutable. The ordinary path proves that observed leaf and intermediate bookmarks name live
+/// same-owner headers with readable stored payloads, including deleted moved-row slots. An optional trusted resolver
+/// may instead recheck exact accepted catalog recoveries under separate shared session limits; those entries and
+/// terminals disclose recovery and withhold the same-owner proof. This scan does not compare
 /// field values with keys, prove that every row is indexed, or prove ownership of incoming references.
 /// Repeated bookmarks are inspected independently without an unbounded target cache. All storage remains pinned.
 /// </remarks>
@@ -27,7 +29,9 @@ internal static class CompactIndexBookmarkAudit
     /// <param name="bookmarkBudget">The repeated target inspection limits and optional session accounting.</param>
     /// <param name="visitor">Consumes each verified entry and the successful terminal proof.</param>
     /// <param name="cancellationToken">Cancels reads, directory inspection and visitor delivery.</param>
+    /// <param name="recoveredCatalogResolver">Optionally rechecks exact accepted catalog recoveries under independently enforced shared session limits; its work is separate from the ordinary verifier's local read and directory limits. Recovered targets retain ownership ambiguity and withhold the same-owner proof.</param>
     /// <returns>A task completing only after the composed index and bookmark proofs succeed.</returns>
+    /// <exception cref="ArgumentException">Recovered evidence is supplied for a table other than the catalog.</exception>
     /// <exception cref="JetCorruptDataException">An observed bookmark or target directory is malformed or ambiguous.</exception>
     /// <exception cref="JetLimitationException">Target reads, inspected slots, overflow hops or working storage exceed a limit.</exception>
     internal static async ValueTask ScanAsync(
@@ -38,13 +42,19 @@ internal static class CompactIndexBookmarkAudit
         CompactIndexBudget indexBudget,
         CompactIndexBookmarkBudget bookmarkBudget,
         Func<CompactIndexRecord, CancellationToken, ValueTask> visitor,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<long, int, CancellationToken, ValueTask<RowLocation?>>? recoveredCatalogResolver = null)
     {
         Guard.NotNull(pages, nameof(pages));
         Guard.NotNull(format, nameof(format));
         Guard.NotNull(indexBudget, nameof(indexBudget));
         Guard.NotNull(bookmarkBudget, nameof(bookmarkBudget));
         Guard.NotNull(visitor, nameof(visitor));
+        if (recoveredCatalogResolver is not null && ownerTDefPage != 2)
+        {
+            throw new ArgumentException("Recovered bookmark evidence is limited to the catalog.", nameof(recoveredCatalogResolver));
+        }
+
         Guard.InRange(bookmarkBudget.MaxPageReads, 1L, long.MaxValue, nameof(bookmarkBudget));
         Guard.InRange(bookmarkBudget.MaxDirectorySlots, 1L, long.MaxValue, nameof(bookmarkBudget));
         Guard.InRange(bookmarkBudget.MaxWorkingBytes, 1L, long.MaxValue, nameof(bookmarkBudget));
@@ -69,6 +79,7 @@ internal static class CompactIndexBookmarkAudit
         try
         {
             var verifier = new Verifier(pages, format, pageCount, ownerTDefPage, bookmarkBudget, capacity);
+            bool recoveredTargets = false;
             await CompactIndexAudit.ScanAsync(
                 pages,
                 format,
@@ -80,15 +91,34 @@ internal static class CompactIndexBookmarkAudit
                     verifier.CheckSource(record.PageNumber, token);
                     if (record.Kind is "leaf-entry" or "intermediate-entry")
                     {
-                        RowLocation location = await verifier.ValidateAsync(record.TargetPageNumber!.Value, record.TargetRowIndex!.Value, token).ConfigureAwait(false);
-                        record = record with { BookmarkTargetValidated = true, BookmarkDataPageNumber = location.DataPageNumber, BookmarkDataRowIndex = location.DataRowIndex };
+                        long page = record.TargetPageNumber!.Value;
+                        int row = record.TargetRowIndex!.Value;
+                        RowLocation? recovery = recoveredCatalogResolver is null ? null : await recoveredCatalogResolver(page, row, token).ConfigureAwait(false);
+                        if (recovery is { } recovered)
+                        {
+                            if (recovered.PageNumber != page || recovered.RowIndex != row)
+                            {
+                                throw Corrupt(page, "Recovered catalog evidence does not match the index's original bookmark.");
+                            }
+
+                            recoveredTargets = true;
+                            record = record with { BookmarkTargetRecovered = true, BookmarkDataPageNumber = recovered.DataPageNumber, BookmarkDataRowIndex = recovered.DataRowIndex };
+                        }
+                        else
+                        {
+                            RowLocation location = await verifier.ValidateAsync(page, row, token).ConfigureAwait(false);
+                            record = record with { BookmarkTargetValidated = true, BookmarkDataPageNumber = location.DataPageNumber, BookmarkDataRowIndex = location.DataRowIndex };
+                        }
                     }
                     else if (record.Kind == "index-terminal")
                     {
                         record = record with
                         {
-                            BookmarkTargetsValidated = true,
-                            Coverage = record.Coverage + " Observed leaf and intermediate bookmarks identify live same-owner row headers and bounded readable payload chains. Key/value correspondence, missing index entries and incoming row aliases remain unverified.",
+                            BookmarkTargetsValidated = !recoveredTargets,
+                            BookmarkTargetsRecovered = recoveredTargets,
+                            Coverage = record.Coverage + (recoveredTargets
+                                ? " Observed bookmarks include exact independently recovered catalog identities with rechecked stored Ids and readable payloads. Damaged owner headers remain unchanged and same-owner proof is withheld. Key/value correspondence, missing index entries and incoming row aliases remain unverified."
+                                : " Observed leaf and intermediate bookmarks identify live same-owner row headers and bounded readable payload chains. Key/value correspondence, missing index entries and incoming row aliases remain unverified."),
                         };
                     }
 

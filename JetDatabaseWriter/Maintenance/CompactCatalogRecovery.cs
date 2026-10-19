@@ -17,7 +17,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>Recovers independently indexed catalog identities without changing physical ownership.</summary>
 internal static class CompactCatalogRecovery
 {
-    /// <summary>Observes direct live rows named by a catalog Id index when their owner header is damaged.</summary>
+    /// <summary>Observes live catalog bookmarks and independently owned moved payloads when their owner header is damaged.</summary>
     /// <param name="pages">The bounded immutable inventory source.</param>
     /// <param name="format">The verified format.</param>
     /// <param name="catalog">The verified catalog image.</param>
@@ -69,7 +69,7 @@ internal static class CompactCatalogRecovery
             _ = identities.TryAdd(row.Id, (row.PageNumber, row.RowIndex));
         }
 
-        var scanner = new Scanner(pages, format, catalog, decoder, budget, identityIndex, idColumn, result, identities, maxDirectorySlots, budget.MaxObjects - physicalRows.Count);
+        var scanner = new Scanner(pages, format, catalog, decoder, budget, identityIndex, idColumn, result, identities, maxReferences, maxDirectorySlots, budget.MaxObjects - physicalRows.Count);
         try
         {
             await CompactIndexAudit.ScanAsync(
@@ -108,22 +108,29 @@ internal static class CompactCatalogRecovery
 
         internal long DirectorySlots { get; set; }
 
+        internal long OverflowHops { get; set; }
+
         internal List<(long Page, string Reason)> Diagnostics { get; } = [];
     }
 
-    internal sealed record RecoveredRow(CatalogRow Identity, long IndexPage, int LiveRowsOnPage, uint PhysicalOwner);
+    internal sealed record RecoveredRow(CatalogRow Identity, long IndexPage, int LiveRowsOnPage, uint PhysicalOwner)
+    {
+        internal RowLocation Location { get; init; }
+    }
 
-    private sealed class Scanner(IPageSource pages, JetFormat format, TDefImage catalog, CatalogRowReader decoder, CompactTraversalBudget budget, TDefIndexDescriptor index, ColumnInfo idColumn, Result result, Dictionary<long, (long Page, int Row)> identities, long maxDirectorySlots, int maxCandidates)
+    private sealed class Scanner(IPageSource pages, JetFormat format, TDefImage catalog, CatalogRowReader decoder, CompactTraversalBudget budget, TDefIndexDescriptor index, ColumnInfo idColumn, Result result, Dictionary<long, (long Page, int Row)> identities, long maxReferences, long maxDirectorySlots, int maxCandidates)
     {
         private readonly HashSet<(long Page, int Row)> recovered = [];
+        private readonly Dictionary<(long Page, int Start), (long Page, int Row)> payloadHeaders = [];
         private readonly bool[] liveStarts = new bool[format.PageSize];
+        private readonly (long Page, int Row)[] chain = new (long, int)[Constants.DataPage.MaxOverflowHops + 1];
         private int candidates;
 
         internal async ValueTask VisitAsync(CompactIndexRecord record, CancellationToken cancellationToken)
         {
             if (record.Kind is "leaf-entry" or "intermediate-entry" or "index-reference")
             {
-                result.References++;
+                this.Reference(record.PageNumber, overflow: false);
             }
 
             if (record.Kind != "leaf-entry" || record.TargetPageNumber is not { } number || record.TargetRowIndex is not { } target)
@@ -131,51 +138,116 @@ internal static class CompactCatalogRecovery
                 return;
             }
 
-            byte[] page = await pages.ReadPageAsync(number, cancellationToken).ConfigureAwait(false);
             try
             {
-                uint owner = Ru32(page, format.DataPage.TDefOff);
-                if (owner == 2)
+                await this.RecoverAsync(record, number, target, cancellationToken).ConfigureAwait(false);
+            }
+            catch (JetCorruptDataException error) when (error.ErrorCode is JetErrorCode.CorruptCatalog or JetErrorCode.MalformedValue)
+            {
+                this.Diagnose(error.ErrorInfo.PageNumber ?? number, error.ErrorInfo.Reason ?? error.Message);
+            }
+        }
+
+        private async ValueTask RecoverAsync(CompactIndexRecord record, long headerPage, int headerRow, CancellationToken cancellationToken)
+        {
+            long number = headerPage;
+            int target = headerRow;
+            uint headerOwner = 0;
+            int headerLiveRows = 0;
+            for (int hop = 0; ; hop++)
+            {
+                pages.ThrowIfDisposedOrCancelled(cancellationToken);
+                if (number <= 0 || number >= pages.PageCount)
                 {
-                    return;
+                    throw Corrupt(number, "A catalog moved-payload pointer is outside the source page range.");
                 }
 
+                for (int seen = 0; seen < hop; seen++)
+                {
+                    if (this.chain[seen] == (number, target))
+                    {
+                        throw Corrupt(number, "A catalog moved-payload chain closes a row-pointer cycle.");
+                    }
+                }
+
+                this.chain[hop] = (number, target);
+                byte[] page = await pages.ReadPageAsync(number, cancellationToken).ConfigureAwait(false);
                 try
                 {
+                    uint owner = Ru32(page, format.DataPage.TDefOff);
+                    if (hop == 0)
+                    {
+                        if (owner == 2)
+                        {
+                            return;
+                        }
+
+                        headerOwner = owner;
+                        if (this.candidates >= maxCandidates)
+                        {
+                            throw Limit(number, "Catalog recovery candidate decoding exceeds the remaining MaxObjects allowance.");
+                        }
+
+                        budget.Accounting?.Charge(CompactDiscoveryCharge.CatalogObjects, 1, number);
+                        this.candidates++;
+                    }
+                    else if (owner != 2)
+                    {
+                        throw Corrupt(number, "A damaged-owner catalog overflow header requires an independently owned catalog payload; its moved identity is not inferred.");
+                    }
+
                     if (page[0] != Constants.PageTypes.Data)
                     {
-                        throw Corrupt(number, "An Id index bookmark does not name a data page.");
+                        throw Corrupt(number, "An Id index bookmark or moved-payload pointer does not name a data page.");
                     }
 
-                    (RowBound bound, int liveRows) = this.ReadBound(number, page, target, cancellationToken);
+                    (RowBound bound, int liveRows) = this.ReadBound(number, page, target, hop > 0, cancellationToken);
+                    if (hop == 0)
+                    {
+                        headerLiveRows = liveRows;
+                    }
+
                     if (bound.IsOverflowPointer)
                     {
-                        throw Corrupt(number, "A damaged-owner catalog overflow header requires separate payload ownership evidence; its identity is not inferred.");
+                        if (bound.RowSize < Constants.DataPage.OverflowPointerSize)
+                        {
+                            throw Corrupt(number, "A catalog overflow header is shorter than its moved-payload pointer.");
+                        }
+
+                        if (hop >= Constants.DataPage.MaxOverflowHops)
+                        {
+                            throw Limit(number, "Catalog recovery exceeds the bounded MaxOverflowHops allowance.");
+                        }
+
+                        this.Step(number, overflow: true, cancellationToken);
+                        this.Reference(number, overflow: true);
+                        target = page[bound.RowStart];
+                        number = page[bound.RowStart + 1] | (page[bound.RowStart + 2] << 8) | (page[bound.RowStart + 3] << 16);
+                        continue;
                     }
 
-                    if (this.candidates >= maxCandidates)
+                    var location = new RowLocation(headerPage, headerRow, bound.RowStart, bound.RowSize) { DataPageNumber = number, DataRowIndex = target };
+                    if (hop > 0)
                     {
-                        throw Limit(number, "Catalog recovery candidate decoding exceeds the remaining MaxObjects allowance.");
+                        this.ValidatePayloadHeader(location);
                     }
 
-                    budget.Accounting?.Charge(CompactDiscoveryCharge.CatalogObjects, 1, number);
-                    this.candidates++;
-                    CatalogRow identity = decoder.DecodeRow(catalog.Definition, page, new RowLocation(number, target, bound.RowStart, bound.RowSize), 64);
+                    CatalogRow identity = decoder.DecodeRow(catalog.Definition, page, location, 64);
                     byte[] expected = IndexKeyEncoder.EncodeColumnEntry(format, idColumn, checked((int)identity.Id), index.Columns[0].Ascending);
                     if (record.CanonicalKey is null || !expected.AsSpan().SequenceEqual(record.CanonicalKey))
                     {
                         throw Corrupt(number, "The catalog Id index key disagrees with the bookmarked row's stored Id; this does not authorize catalog recovery.");
                     }
 
-                    if (this.recovered.Contains((number, target)))
+                    if (this.recovered.Contains((headerPage, headerRow)))
                     {
                         return;
                     }
 
-                    if (identities.TryGetValue(identity.Id, out (long Page, int Row) previous) && previous != (number, target))
+                    if (identities.TryGetValue(identity.Id, out (long Page, int Row) previous) && previous != (headerPage, headerRow))
                     {
                         _ = result.Rows.RemoveAll(row => row.Identity.Id == identity.Id);
-                        throw Corrupt(number, $"The catalog Id index names live rows {previous.Page}:{previous.Row} and {number}:{target} for stored Id {identity.Id}; neither conflicting recovery is accepted.");
+                        throw Corrupt(number, $"The catalog Id index names live rows {previous.Page}:{previous.Row} and {headerPage}:{headerRow} for stored Id {identity.Id}; neither conflicting recovery is accepted.");
                     }
 
                     if (result.Rows.Count >= budget.MaxObjects)
@@ -183,18 +255,64 @@ internal static class CompactCatalogRecovery
                         throw Limit(number, "Recovered catalog identities exceed MaxObjects.");
                     }
 
-                    _ = identities.TryAdd(identity.Id, (number, target));
-                    _ = this.recovered.Add((number, target));
-                    result.Rows.Add(new(identity, record.PageNumber, liveRows, owner));
+                    _ = identities.TryAdd(identity.Id, (headerPage, headerRow));
+                    _ = this.recovered.Add((headerPage, headerRow));
+                    result.Rows.Add(new(identity, record.PageNumber, headerLiveRows, headerOwner) { Location = location });
+                    return;
                 }
-                catch (JetCorruptDataException error) when (error.ErrorCode is JetErrorCode.CorruptCatalog or JetErrorCode.MalformedValue)
+                finally
                 {
-                    this.Diagnose(number, error.ErrorInfo.Reason ?? error.Message);
+                    PageBuffers.Return(page);
                 }
             }
-            finally
+        }
+
+        private void ValidatePayloadHeader(RowLocation location)
+        {
+            (long Page, int Start) target = (location.DataPageNumber, location.RowStart);
+            (long Page, int Row) header = (location.PageNumber, location.RowIndex);
+            if (this.payloadHeaders.TryGetValue(target, out (long Page, int Row) previous) && previous != header)
             {
-                PageBuffers.Return(page);
+                this.payloadHeaders[target] = default;
+                _ = result.Rows.RemoveAll(row => (row.Location.DataPageNumber, row.Location.RowStart) == target);
+                throw Corrupt(location.DataPageNumber, "Distinct live catalog bookmarks reach the same moved-payload start; neither ambiguous recovery is accepted.");
+            }
+
+            _ = this.payloadHeaders.TryAdd(target, header);
+        }
+
+        private void Reference(long page, bool overflow)
+        {
+            if (result.References >= maxReferences)
+            {
+                throw Limit(page, "Catalog Id index and moved-payload references exceed MaxReferences.");
+            }
+
+            if (overflow)
+            {
+                budget.Accounting?.Charge(CompactDiscoveryCharge.References, 1, page);
+            }
+
+            result.References++;
+        }
+
+        private void Step(long page, bool overflow, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (result.DirectorySlots + result.OverflowHops >= maxDirectorySlots)
+            {
+                throw Limit(page, "Catalog recovery directory inspections and overflow hops exceed MaxMapSteps.");
+            }
+
+            budget.Accounting?.Charge(CompactDiscoveryCharge.MapSteps, 1, page);
+            if (overflow)
+            {
+                budget.Accounting?.Charge(CompactDiscoveryCharge.GraphSteps, 1, page);
+                result.OverflowHops++;
+            }
+            else
+            {
+                result.DirectorySlots++;
             }
         }
 
@@ -208,7 +326,7 @@ internal static class CompactCatalogRecovery
             result.Diagnostics.Add((page, reason));
         }
 
-        private (RowBound Bound, int LiveRows) ReadBound(long number, byte[] page, int target, CancellationToken cancellationToken)
+        private (RowBound Bound, int LiveRows) ReadBound(long number, byte[] page, int target, bool moved, CancellationToken cancellationToken)
         {
             int count = Ru16(page, format.DataPage.NumRows);
             int endDirectory = format.DataPage.RowsStart + (count * 2);
@@ -224,14 +342,7 @@ internal static class CompactCatalogRecovery
             int endTarget = format.PageSize;
             for (int row = 0; row < count; row++)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (result.DirectorySlots >= maxDirectorySlots)
-                {
-                    throw Limit(number, "Catalog recovery directory inspections exceed MaxMapSteps.");
-                }
-
-                budget.Accounting?.Charge(CompactDiscoveryCharge.MapSteps, 1, number);
-                result.DirectorySlots++;
+                this.Step(number, overflow: false, cancellationToken);
                 int raw = Ru16(page, format.DataPage.RowsStart + (row * 2));
                 int start = raw & Constants.DataPage.RowOffsetMask;
                 bool deleted = (raw & Constants.DataPage.DeletedRowFlag) != 0;
@@ -259,9 +370,10 @@ internal static class CompactCatalogRecovery
                 }
             }
 
-            if ((rawTarget & Constants.DataPage.DeletedRowFlag) != 0 || startTarget < endDirectory || startTarget >= format.PageSize)
+            bool targetDeleted = (rawTarget & Constants.DataPage.DeletedRowFlag) != 0;
+            if (targetDeleted != moved || startTarget < endDirectory || startTarget >= format.PageSize || (moved && this.liveStarts[startTarget]))
             {
-                throw Corrupt(number, "An Id index bookmark names a deleted or absent catalog row identity.");
+                throw Corrupt(number, moved ? "A moved catalog payload is absent, aliases a live row or is itself a live identity." : "An Id index bookmark names a deleted or absent catalog row identity.");
             }
 
             return (new(target, startTarget, endTarget - startTarget, (rawTarget & Constants.DataPage.OverflowRowFlag) != 0), live);

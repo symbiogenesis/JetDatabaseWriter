@@ -104,7 +104,9 @@ internal sealed class CompactDiscoverySession
     /// <remarks>
     /// Catalog-only links and opaque objects remain pinned and are never executed. The caller identifies long-value fields in the borrowed rows.
     /// Damaged ownership can hide identities, and the component audits do not prove complete discovery, global index validity or a valid compact result.
-    /// Index bookmarks are verified against live same-owner headers and bounded moved-row chains; stored-key/row correspondence remains unproven.
+    /// Ordinary index bookmarks are verified against live same-owner headers and bounded moved-row chains.
+    /// Exact accepted catalog recoveries are also streamed and can resolve catalog bookmarks after their complete stored Id is rechecked;
+    /// recovered observations disclose damaged ownership and withhold the ordinary same-owner proof. Stored-key/row correspondence remains unproven.
     /// Inventory and definition storage remain admitted throughout all awaited row, index and nested value callbacks.
     /// </remarks>
     internal async ValueTask ScanDatabaseAsync(
@@ -143,7 +145,8 @@ internal sealed class CompactDiscoverySession
     /// <returns>A task completing after the discovered fields, long values and index bookmarks have been audited.</returns>
     /// <remarks>
     /// Stored bytes are never converted or recalculated. Native envelope semantics, hidden catalog identities and incoming ownership remain unproven.
-    /// Calculated ResultType properties are hydrated through bounded raw catalog reads; expressions are never evaluated.
+    /// Calculated ResultType properties are hydrated through bounded intact-owner and independently recovered raw catalog reads; expressions are never evaluated.
+    /// Recovered catalog bookmarks retain their original identities and explicit ownership ambiguity; recovered index observations withhold the same-owner proof.
     /// Assigned calculated storage without a supported persisted result type is retained as a raw observation and then explicitly refused.
     /// Visitors borrow memory only until their awaited call returns. All operations share cumulative work and simultaneous storage limits.
     /// Successful discovery does not authorize relocation, reclamation or publication.
@@ -367,7 +370,7 @@ internal sealed class CompactDiscoverySession
         return default;
     }
 
-    private async ValueTask ScanInventoryCoreAsync(Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor = null)
+    private async ValueTask ScanInventoryCoreAsync(Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor = null, Func<CompactCatalogRecovery.RecoveredRow, CancellationToken, ValueTask>? recoveredCatalogVisitor = null)
     {
         int schemaBytes = checked((int)Math.Min(int.MaxValue, this.budget.MaxSchemaBytes));
         using var definitions = new TableDefReader(this.source, this.SourceFormat, cacheResults: false, this.budget.MaxDefinitionBytes, schemaBytes);
@@ -390,7 +393,8 @@ internal sealed class CompactDiscoverySession
             },
             visitor,
             cancellationToken,
-            definitionVisitor).ConfigureAwait(false);
+            definitionVisitor,
+            recoveredCatalogVisitor).ConfigureAwait(false);
         this.pages.CheckGeometry(0, cancellationToken);
     }
 
@@ -402,7 +406,8 @@ internal sealed class CompactDiscoverySession
         CancellationToken cancellationToken,
         bool hydrateCalculated = false)
     {
-        using CompactCalculatedColumnHydrator? hydrator = hydrateCalculated ? new CompactCalculatedColumnHydrator(this.SourceFormat, this.budget, this.Accounting, this.ScanRowsCoreAsync, this.AuditLongValueAsync) : null;
+        using var recovered = new CompactRecoveredCatalogRows(this.pages, this.SourceFormat, this.budget, this.Accounting);
+        using CompactCalculatedColumnHydrator? hydrator = hydrateCalculated ? new CompactCalculatedColumnHydrator(this.SourceFormat, this.budget, this.Accounting, ScanCatalogRowsAsync, this.AuditLongValueAsync) : null;
         using var ownership = new CompactIndexOwnershipAudit(
             this.pages.PageCount,
             new()
@@ -422,6 +427,7 @@ internal sealed class CompactDiscoverySession
             {
                 if (root == 2)
                 {
+                    recovered.SetCatalog(image);
                     hydrator?.SetCatalog(image);
                 }
 
@@ -450,18 +456,33 @@ internal sealed class CompactDiscoverySession
                                 await indexVisitor(record, indexToken).ConfigureAwait(false);
                                 this.pages.CheckGeometry(record.PageNumber, indexToken);
                             },
-                            token).ConfigureAwait(false);
+                            token,
+                            root == 2 ? recovered.ResolveAsync : null).ConfigureAwait(false);
                     }
                 }
 
                 ValueTask ScanTableRowsAsync(IReadOnlyList<ColumnInfo>? columns, CancellationToken rowToken)
-                    => this.ScanRowsCoreAsync(root, (location, bytes, fieldToken) => rowVisitor(root, image, columns, location, bytes, fieldToken), rowToken);
+                    => ScanCatalogRowsAsync(root, (location, bytes, fieldToken) => rowVisitor(root, image, columns, location, bytes, fieldToken), rowToken);
+            },
+            (evidence, token) =>
+            {
+                recovered.Accept(evidence.Identity.Id, evidence.Location, token);
+                return default;
             }).ConfigureAwait(false);
         await ownership.CompleteAsync(ownershipVisitor, cancellationToken).ConfigureAwait(false);
         this.pages.CheckGeometry(0, cancellationToken);
+
+        async ValueTask ScanCatalogRowsAsync(long owner, Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> visitor, CancellationToken token)
+        {
+            await this.ScanRowsCoreAsync(owner, visitor, token, recovered.Contains).ConfigureAwait(false);
+            if (owner == 2)
+            {
+                await recovered.ScanAsync(visitor, token).ConfigureAwait(false);
+            }
+        }
     }
 
-    private ValueTask ScanRowsCoreAsync(long ownerTDefPage, Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    private ValueTask ScanRowsCoreAsync(long ownerTDefPage, Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken, Func<RowLocation, bool>? excludeRow = null)
     {
         this.Accounting.Charge(CompactDiscoveryCharge.Objects, 1, ownerTDefPage);
         return CompactRawRowReader.ScanAsync(
@@ -479,7 +500,8 @@ internal sealed class CompactDiscoverySession
                 MaxWorkingBytes = this.budget.MaxWorkingBytes,
             },
             visitor,
-            cancellationToken);
+            cancellationToken,
+            excludeRow);
     }
 
     private ValueTask ScanIndexCoreAsync(long ownerTDefPage, long rootPage, Func<CompactIndexRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
@@ -495,7 +517,7 @@ internal sealed class CompactDiscoverySession
             cancellationToken);
     }
 
-    private ValueTask ScanIndexBookmarksCoreAsync(long ownerTDefPage, long rootPage, Func<CompactIndexRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    private ValueTask ScanIndexBookmarksCoreAsync(long ownerTDefPage, long rootPage, Func<CompactIndexRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken, Func<long, int, CancellationToken, ValueTask<RowLocation?>>? recoveredCatalogResolver = null)
     {
         this.Accounting.Charge(CompactDiscoveryCharge.Objects, 1, rootPage);
         return CompactIndexBookmarkAudit.ScanAsync(
@@ -512,7 +534,8 @@ internal sealed class CompactDiscoverySession
                 MaxWorkingBytes = this.budget.MaxWorkingBytes,
             },
             visitor,
-            cancellationToken);
+            cancellationToken,
+            recoveredCatalogResolver);
     }
 
     private CompactIndexBudget CreateIndexBudget()
