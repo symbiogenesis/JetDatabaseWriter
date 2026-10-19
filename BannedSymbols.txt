@@ -11,6 +11,9 @@ M:System.Threading.Tasks.Task.Wait(System.Int32);Await the task or use WaitAsync
 M:System.Threading.Tasks.Task.Wait(System.Int32,System.Threading.CancellationToken);Await the task or use WaitAsync with a timeout/cancellation token.
 M:System.Threading.Tasks.Task.Wait(System.Threading.CancellationToken);Await the task instead of blocking.
 M:System.Threading.Tasks.Task.Wait(System.TimeSpan);Await the task or use WaitAsync with a timeout/cancellation token.
+M:System.Threading.Tasks.Task.Wait(System.TimeSpan,System.Threading.CancellationToken);Await the task or use WaitAsync with a timeout/cancellation token.
+M:System.Threading.Tasks.Task.WaitAll(System.Collections.Generic.IEnumerable{System.Threading.Tasks.Task},System.Threading.CancellationToken);Use await Task.WhenAll(...) and WaitAsync with cancellation instead of blocking.
+M:System.Threading.Tasks.Task.WaitAll(System.ReadOnlySpan{System.Threading.Tasks.Task});Use await Task.WhenAll(...) instead of blocking.
 M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[]);Use await Task.WhenAll(...) instead of blocking.
 M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[],System.Int32);Use await Task.WhenAll(...) or WaitAsync with a timeout/cancellation token.
 M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[],System.Int32,System.Threading.CancellationToken);Use await Task.WhenAll(...) or WaitAsync with a timeout/cancellation token.
@@ -22,6 +25,9 @@ M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[],System.Int32
 M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[],System.Threading.CancellationToken);Use await Task.WhenAny(...) instead of blocking.
 M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[],System.TimeSpan);Use await Task.WhenAny(...) or WaitAsync with a timeout/cancellation token.
 P:System.Threading.Tasks.Task`1.Result;Await the task instead of blocking on Result.
+P:System.Threading.Tasks.ValueTask`1.Result;Await the ValueTask instead of synchronously consuming a potentially incomplete operation.
+M:System.Threading.Tasks.Task.RunSynchronously;Use direct synchronous code or await asynchronous work instead of running a task synchronously.
+M:System.Threading.Tasks.Task.RunSynchronously(System.Threading.Tasks.TaskScheduler);Use direct synchronous code or await asynchronous work instead of running a task synchronously.
 
 // Process termination APIs.
 M:System.Environment.FailFast(System.String);Let top-level exception handling/logging handle fatal failures.
@@ -46,8 +52,27 @@ T:System.Security.Cryptography.RC2;Use AES.
 T:System.Security.Cryptography.Rijndael;Use AES.
 T:System.Security.Cryptography.SHA1;Use SHA-256 or stronger.
 T:System.Security.Cryptography.TripleDES;Use AES.
+T:System.Security.Cryptography.HMACMD5;Use HMAC-SHA256 or stronger unless a legacy compatibility format mandates this algorithm.
+T:System.Security.Cryptography.HMACSHA1;Use HMAC-SHA256 or stronger unless a legacy compatibility format mandates this algorithm.
+P:System.Security.Cryptography.HashAlgorithmName.MD5;Use SHA-256 or stronger unless a legacy compatibility format mandates this algorithm.
+P:System.Security.Cryptography.HashAlgorithmName.SHA1;Use SHA-256 or stronger unless a legacy compatibility format mandates this algorithm.
 F:System.Security.Cryptography.CipherMode.CBC;CBC encryption is unauthenticated. Suppress only for Office/Access compatibility formats that mandate CBC.
 F:System.Security.Cryptography.CipherMode.ECB;ECB encryption reveals block patterns. Suppress only for legacy Access compatibility formats that mandate ECB.
+
+// Crypto factories with implicit defaults or reflection-based algorithm lookup.
+M:System.Security.Cryptography.CryptoConfig.CreateFromName(System.String);Use a typed crypto factory or the validated OfficeCryptoPrimitives algorithm dispatch.
+M:System.Security.Cryptography.CryptoConfig.CreateFromName(System.String,System.Object[]);Use a typed crypto factory or the validated OfficeCryptoPrimitives algorithm dispatch.
+M:System.Security.Cryptography.AsymmetricAlgorithm.Create;Use an explicit typed factory such as RSA.Create().
+M:System.Security.Cryptography.AsymmetricAlgorithm.Create(System.String);Use an explicit typed factory such as RSA.Create().
+M:System.Security.Cryptography.HashAlgorithm.Create;Use an explicit hash algorithm or IncrementalHash with a validated algorithm name.
+M:System.Security.Cryptography.HashAlgorithm.Create(System.String);Use an explicit hash algorithm or IncrementalHash with a validated algorithm name.
+M:System.Security.Cryptography.HMAC.Create;Use an explicit HMAC algorithm or IncrementalHash.CreateHMAC with a validated algorithm name.
+M:System.Security.Cryptography.HMAC.Create(System.String);Use an explicit HMAC algorithm or IncrementalHash.CreateHMAC with a validated algorithm name.
+M:System.Security.Cryptography.KeyedHashAlgorithm.Create;Use an explicit HMAC algorithm or IncrementalHash.CreateHMAC with a validated algorithm name.
+M:System.Security.Cryptography.KeyedHashAlgorithm.Create(System.String);Use an explicit HMAC algorithm or IncrementalHash.CreateHMAC with a validated algorithm name.
+M:System.Security.Cryptography.SymmetricAlgorithm.Create;Use an explicit typed factory such as Aes.Create().
+M:System.Security.Cryptography.SymmetricAlgorithm.Create(System.String);Use an explicit typed factory such as Aes.Create().
+M:System.Security.Cryptography.RandomNumberGenerator.Create(System.String);Use RandomNumberGenerator.Create() for a cryptographically secure platform implementation.
 
 // Legacy HTTP APIs.
 T:System.Net.HttpWebRequest;Use HttpClient.
@@ -89,6 +114,28 @@ P:System.Diagnostics.ProcessStartInfo.Arguments;Use ProcessStartInfo.ArgumentLis
 
 // Reflection activation APIs.
 T:System.Activator;Use dependency injection, typed factories, or explicit constructors instead of reflection activation.
+M:System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(System.Type);Use explicit constructors or typed factories so object invariants are initialized.
+M:System.Runtime.Serialization.FormatterServices.GetUninitializedObject(System.Type);Use explicit constructors or typed factories so object invariants are initialized.
+
+// Text encodings must be explicit and match the database format or declared code page.
+P:System.Text.Encoding.Default;Use an explicit encoding or the database's declared code page instead of the runtime default.
+P:System.Text.Encoding.UTF7;Use UTF-8 or the encoding required by the database format; UTF-7 is unsafe and obsolete.
+T:System.Text.UTF7Encoding;Use UTF-8 or the encoding required by the database format; UTF-7 is unsafe and obsolete.
+
+// Prefer type-safe collections without boxing or runtime casts.
+T:System.Collections.ArrayList;Use List<T>.
+T:System.Collections.Hashtable;Use Dictionary<TKey, TValue>.
+T:System.Collections.Queue;Use Queue<T>.
+T:System.Collections.Stack;Use Stack<T>.
+T:System.Collections.SortedList;Use SortedList<TKey, TValue> or SortedDictionary<TKey, TValue>.
+
+// Host process configuration belongs to the application, not this library.
+M:System.IO.Directory.SetCurrentDirectory(System.String);Use absolute paths or ProcessStartInfo.WorkingDirectory instead of changing the host's working directory.
+M:System.Environment.SetEnvironmentVariable(System.String,System.String);Configure child processes through ProcessStartInfo.Environment instead of mutating the host environment.
+M:System.Environment.SetEnvironmentVariable(System.String,System.String,System.EnvironmentVariableTarget);Configure child processes through ProcessStartInfo.Environment instead of mutating process, user, or machine environments.
+M:System.AppContext.SetSwitch(System.String,System.Boolean);Let the host application choose process-wide runtime switches.
+M:System.Threading.ThreadPool.SetMinThreads(System.Int32,System.Int32);Let the host application configure its shared thread pool.
+M:System.Threading.ThreadPool.SetMaxThreads(System.Int32,System.Int32);Let the host application configure its shared thread pool.
 
 // Ambiguous local clock APIs.
 P:System.DateTime.Now;Prefer TimeProvider, DateTimeOffset.Now/UtcNow, DateTime.UtcNow, or an explicit DateTimeOffset value. Suppress only for external local-clock compatibility.
