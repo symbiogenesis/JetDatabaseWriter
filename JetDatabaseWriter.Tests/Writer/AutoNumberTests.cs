@@ -14,8 +14,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1812 // Test class instantiated by xUnit
-
 /// <summary>
 /// Behavioural coverage for <see cref="ColumnDefinition.IsAutoIncrement"/>
 /// across the integral CLR types Jet supports for autonumber columns

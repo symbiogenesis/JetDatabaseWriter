@@ -645,9 +645,7 @@ internal static class AgileEncryptionFixtureBuilder
     /// Holds all per-fixture random material so the same parameters can be
     /// shared between the fixture builder and the verification self-test.
     /// </summary>
-#pragma warning disable CA1515 // Nested type intentionally exposed via the surrounding internal static helper.
-    public sealed class Parameters
-#pragma warning restore CA1515
+    internal sealed class Parameters
     {
         public byte[] KeyDataSalt { get; init; } = new byte[Constants.AgileEncryption.SaltSize];
 

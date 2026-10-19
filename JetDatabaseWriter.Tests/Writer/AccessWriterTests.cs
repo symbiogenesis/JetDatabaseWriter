@@ -15,7 +15,6 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 #pragma warning disable CA1812 // Test POCOs are instantiated via reflection by RowMapper
-#pragma warning disable SA1201 // Nested test POCOs before test methods is standard xUnit convention
 
 /// <summary>
 /// End-to-end tests for AccessWriter write operations.

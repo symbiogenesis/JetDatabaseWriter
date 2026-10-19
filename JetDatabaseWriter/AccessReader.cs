@@ -148,10 +148,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
         options ??= new AccessReaderOptions();
 
-        // CA2000: OpenAsync(stream, leaveOpen:false) intentionally takes ownership and disposes on all paths.
-#pragma warning disable CA2000
         FileStream fs = CreateStream(path, options);
-#pragma warning restore CA2000
         AccessReader reader = await OpenCoreAsync(fs, options, leaveOpen: false, acquireLease: false, cancellationToken).ConfigureAwait(false);
         if (options.UsesPositionalPageReads(openedFromPath: true))
         {

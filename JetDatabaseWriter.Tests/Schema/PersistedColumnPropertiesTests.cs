@@ -11,8 +11,6 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using Xunit;
 
-#pragma warning disable SA1202 // Tests intentionally interleave public test methods with private fixture helpers.
-
 public sealed class PersistedColumnPropertiesTests
 {
     // ── JetExpressionConverter.ToJetExpression ─────────────────────────

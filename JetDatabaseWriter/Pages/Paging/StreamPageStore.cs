@@ -155,9 +155,7 @@ internal class StreamPageStore : IPageStore
         {
             if (toDisk && this.Stream is FileStream file)
             {
-#pragma warning disable CA1849 // FileStream's durable flush has no asynchronous equivalent.
                 file.Flush(true);
-#pragma warning restore CA1849
             }
             else
             {

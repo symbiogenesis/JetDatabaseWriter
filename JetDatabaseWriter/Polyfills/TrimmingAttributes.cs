@@ -5,9 +5,6 @@ using System;
 
 // Linker annotations are understood by their full names, including on the netstandard asset.
 #pragma warning disable SA1402, SA1649 // Keep framework annotation polyfills together.
-#pragma warning disable SA1600 // Framework annotation polyfills are internal implementation details.
-#pragma warning disable CA1019 // Matches the framework annotation contract.
-#pragma warning disable CA1712 // Matches the framework enum names.
 [Flags]
 internal enum DynamicallyAccessedMemberTypes
 {

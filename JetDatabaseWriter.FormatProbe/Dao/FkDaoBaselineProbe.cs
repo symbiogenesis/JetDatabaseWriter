@@ -12,8 +12,6 @@ using JetDatabaseWriter.FormatProbe;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.TestSupport;
 
-#pragma warning disable CA1303 // Diagnostic console output is not localized.
-
 /// <summary>
 /// DAO-authored relationship output is the diagnostic oracle in this probe.
 /// Writer-created output is only the comparison target; promote root-cause

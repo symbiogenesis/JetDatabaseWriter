@@ -181,10 +181,8 @@ public class TableLookupTests(DatabaseCache db) : IClassFixture<DatabaseCache>
         }
     }
 
-#pragma warning disable CA1812 // Created by the row materializer through its generic constructor contract.
     private sealed class LookupRow
     {
         public int Id { get; set; }
     }
-#pragma warning restore CA1812
 }

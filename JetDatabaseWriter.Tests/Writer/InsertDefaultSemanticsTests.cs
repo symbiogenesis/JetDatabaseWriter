@@ -14,8 +14,6 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA1812 // POCOs are instantiated by the tests and the row mapper.
-
 /// <summary>
 /// How an insert treats a column that has a default, as an Access SQL <c>INSERT</c>
 /// does. A value the insert supplies is stored as given, so <see langword="null"/> and

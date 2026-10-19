@@ -5,8 +5,6 @@ using System.Linq;
 using JetDatabaseWriter.Indexes.Collation;
 using Xunit;
 
-#pragma warning disable CA1707 // underscores in test names
-
 /// <summary>
 /// Unit tests for long keys containing CRLF. The apparent four-byte separator
 /// is the ordinary encoding of CR followed by LF; long legacy keys retain

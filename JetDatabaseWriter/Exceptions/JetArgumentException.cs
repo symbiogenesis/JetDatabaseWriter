@@ -8,7 +8,6 @@ using System;
 /// <param name="paramName">The offending parameter, when applicable.</param>
 /// <param name="errorInfo">The available context.</param>
 /// <param name="innerException">The underlying failure.</param>
-#pragma warning disable RCS1194 // Structured constructors preserve the BCL contract; serialization and unrelated base overloads are not part of the database error API.
 public sealed class JetArgumentException(JetErrorCode errorCode, string message, string? paramName = null, JetErrorInfo? errorInfo = null, Exception? innerException = null)
     : ArgumentException(message, paramName, innerException), IJetException
 {

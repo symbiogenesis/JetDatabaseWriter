@@ -10,8 +10,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Xunit;
 
-#pragma warning disable CA1812 // POCOs are instantiated by the tests and the row mapper.
-
 /// <summary>
 /// How <c>InsertRowAsync&lt;T&gt;</c> and <c>InsertRowsAsync&lt;T&gt;</c> treat a POCO
 /// property mapped to an AutoNumber column. A non-nullable value-type property left at

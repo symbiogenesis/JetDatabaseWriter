@@ -9,8 +9,6 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 using static JetDatabaseWriter.Tests.ComplexColumns.ComplexColumnTestSupport;
 
-#pragma warning disable CA1812 // POCO properties are accessed by the compiled row mapper.
-
 /// <summary>Invalid POCO complex references are refused before any insert is applied.</summary>
 public sealed class ComplexPocoValidationTests
 {

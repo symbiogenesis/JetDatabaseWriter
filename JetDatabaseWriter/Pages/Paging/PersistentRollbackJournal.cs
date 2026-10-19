@@ -9,8 +9,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-#pragma warning disable CA1849 // Journal ordering requires synchronous device flushes before physical database writes.
-
 /// <summary>Persists raw rollback bytes and validated intended writes with bounded working buffers.</summary>
 /// <remarks>The initial snapshot costs one database copy. File flushes do not establish directory-entry power-loss durability.</remarks>
 internal sealed class PersistentRollbackJournal : IDisposable

@@ -14,8 +14,6 @@ using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1812 // RowMapper constructs these POCOs through compiled expressions.
-
 /// <summary>Materializers reuse bounded shape identities across readers and schema edits.</summary>
 public sealed class MaterializerCacheTests
 {

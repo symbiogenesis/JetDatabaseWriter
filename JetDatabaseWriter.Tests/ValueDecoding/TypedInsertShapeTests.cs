@@ -7,8 +7,6 @@ using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
-#pragma warning disable CA1812 // RowMapper constructs this POCO through compiled expressions.
-
 /// <summary>Generated-key flags distinguish typed insert delegates.</summary>
 public sealed class TypedInsertShapeTests
 {
