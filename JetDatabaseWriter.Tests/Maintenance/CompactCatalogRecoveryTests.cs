@@ -80,11 +80,32 @@ public sealed class CompactCatalogRecoveryTests
         Assert.Equal(0, evidence.Location.DataRowIndex);
         Assert.True(evidence.Location.IsOverflow);
         Assert.True(recovered.OverflowHops >= (chained ? 2 : 1));
+        Assert.False(evidence.HasDamagedMovedOwner);
         Assert.Equal(original, bytes);
     }
 
     [Theory]
-    [InlineData("payload-owner")]
+    [InlineData("Jet3Test.mdb", false)]
+    [InlineData("Jet3Test.mdb", true)]
+    [InlineData("Jackcess/adox_jet4.mdb", false)]
+    [InlineData("Jackcess/adox_jet4.mdb", true)]
+    [InlineData("Jackcess/V2007/complexDataTestV2007.accdb", false)]
+    [InlineData("Jackcess/V2007/complexDataTestV2007.accdb", true)]
+    public async Task NativeIdIndexRecoversMovedCatalogIdentityWithDamagedPayloadOwners(string relativePath, bool chained)
+    {
+        (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync(relativePath, chained);
+        DamageMovedOwners(bytes, format, chained ? 2 : 1);
+        byte[] original = bytes.ToArray();
+        CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format);
+        CompactCatalogRecovery.RecoveredRow evidence = Assert.Single(recovered.Rows, row => row.Identity == target);
+        Assert.Equal((bytes.Length / format.PageSize) - 1, evidence.Location.DataPageNumber);
+        Assert.True(evidence.Location.IsOverflow);
+        Assert.True(evidence.HasDamagedMovedOwner);
+        Assert.Empty(recovered.Diagnostics);
+        Assert.Equal(original, bytes);
+    }
+
+    [Theory]
     [InlineData("live-payload")]
     [InlineData("cycle")]
     [InlineData("missing-payload")]
@@ -103,9 +124,6 @@ public sealed class CompactCatalogRecoveryTests
         int payloadStart = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(payload + format.DataPage.RowsStart, 2)) & Constants.DataPage.RowOffsetMask;
         switch (damage)
         {
-            case "payload-owner":
-                BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(payload + format.DataPage.TDefOff, 4), 0);
-                break;
             case "live-payload":
                 BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(payload + format.DataPage.RowsStart, 2), checked((ushort)payloadStart));
                 break;
@@ -142,6 +160,7 @@ public sealed class CompactCatalogRecoveryTests
                 break;
         }
 
+        DamageMovedOwners(bytes, format, damage == "payload-intermediate-alias" ? 2 : 1);
         byte[] original = bytes.ToArray();
         CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format);
         Assert.DoesNotContain(recovered.Rows, row => row.Identity == target);
@@ -149,10 +168,60 @@ public sealed class CompactCatalogRecoveryTests
         Assert.Equal(original, bytes);
     }
 
+    [Theory]
+    [InlineData("owner")]
+    [InlineData("leaf-chain")]
+    [InlineData("incomplete-chain")]
+    [InlineData("late-read")]
+    public async Task DamagedMovedPayloadOwnersRequireCompletelyAuditedIndependentIndexEvidence(string damage)
+    {
+        (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: true);
+        CompactCatalogRecovery.Result intactIndex = await RecoverAsync(bytes, format);
+        long indexPage = Assert.Single(intactIndex.Rows, row => row.Identity == target).IndexPage;
+        DamageMovedOwners(bytes, format, 2);
+        if (damage == "owner")
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(checked((int)indexPage * format.PageSize) + 4, 4), 0);
+        }
+        else if (damage == "leaf-chain")
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(checked((int)indexPage * format.PageSize) + format.IndexPage.NextPageOffset, 4), checked((uint)indexPage));
+        }
+
+        if (damage == "incomplete-chain")
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(checked((int)indexPage * format.PageSize) + format.IndexPage.PrevPageOffset, 4), checked((uint)indexPage));
+        }
+
+        byte[] original = bytes.ToArray();
+        bool reachedPayload = false;
+        CompactCatalogRecovery.Result recovered = await RecoverAsync(
+            bytes,
+            format,
+            decorateRecovery: pages => new ObservedPages(pages, number =>
+            {
+                if (damage == "late-read" && reachedPayload && number != (bytes.Length / format.PageSize) - 1)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The independent index evidence is corrupt after a positive candidate.");
+                }
+
+                reachedPayload |= number == (bytes.Length / format.PageSize) - 1;
+            }));
+        Assert.DoesNotContain(recovered.Rows, row => row.Identity == target);
+        Assert.NotEmpty(recovered.Diagnostics);
+        if (damage == "late-read")
+        {
+            Assert.True(reachedPayload);
+        }
+
+        Assert.Equal(original, bytes);
+    }
+
     [Fact]
     public async Task MovedCatalogRecoveryChargesOverflowReferencesBeforeFollowingThem()
     {
         (byte[] bytes, JetFormat format, _) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: true);
+        DamageMovedOwners(bytes, format, 2);
         await using DatabaseFile damaged = Open(bytes);
         var pages = new CompactInventoryPageSource(damaged.Pages, format, 100_000);
         using var definitions = new TableDefReader(pages, format, cacheResults: false);
@@ -171,6 +240,7 @@ public sealed class CompactCatalogRecoveryTests
     public async Task MovedCatalogRecoveryHonorsFixedOverflowHopBound(int hops)
     {
         (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: false, additionalHops: hops - 1);
+        DamageMovedOwners(bytes, format, hops);
         if (hops == Constants.DataPage.MaxOverflowHops)
         {
             CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format);
@@ -187,6 +257,7 @@ public sealed class CompactCatalogRecoveryTests
     public async Task MovedCatalogRecoveryStopsForCancellationAndPartialHopWorkAllowance()
     {
         (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: true);
+        DamageMovedOwners(bytes, format, 2);
         CompactCatalogRecovery.Result expected = await RecoverAsync(bytes, format);
         CompactCatalogRecovery.RecoveredRow moved = Assert.Single(expected.Rows, row => row.Identity == target);
         long directoryAndHopSteps = expected.DirectorySlots + expected.OverflowHops;
@@ -206,6 +277,31 @@ public sealed class CompactCatalogRecoveryTests
             }),
             recoveryCancellation: cancellation.Token));
         Assert.True(reachedPayload);
+    }
+
+    [Fact]
+    public async Task DamagedMovedOwnerRecoveryRequiresAuditToReturnAfterTerminalObservation()
+    {
+        (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: true);
+        DamageMovedOwners(bytes, format, 2);
+        int checks = 0;
+        CompactCatalogRecovery.Result complete = await RecoverAsync(bytes, format, decorateRecovery: pages => new ObservedPages(pages, static _ => { }, () => checks++));
+        Assert.Contains(complete.Rows, row => row.Identity == target && row.HasDamagedMovedOwner);
+        Assert.True(checks > 0);
+        int repeatedChecks = 0;
+        CompactCatalogRecovery.Result interrupted = await RecoverAsync(bytes, format, decorateRecovery: pages => new ObservedPages(
+            pages,
+            static _ => { },
+            () =>
+            {
+                if (++repeatedChecks == checks)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "Injected corruption at the final post-terminal source guard.");
+                }
+            }));
+        Assert.Equal(checks, repeatedChecks);
+        Assert.DoesNotContain(interrupted.Rows, row => row.Identity == target);
+        Assert.NotEmpty(interrupted.Diagnostics);
     }
 
     private static async Task<(byte[] Bytes, JetFormat Format, CatalogRow Target)> CreateMovedCatalogAsync(string relativePath, bool chained, int additionalHops = 0)
@@ -261,6 +357,14 @@ public sealed class CompactCatalogRecoveryTests
         return (bytes, format, target);
     }
 
+    private static void DamageMovedOwners(byte[] bytes, JetFormat format, int hops)
+    {
+        for (int hop = 1; hop <= hops; hop++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(bytes.Length - (hop * format.PageSize) + format.DataPage.TDefOff, 4), 0);
+        }
+    }
+
     private static void SetPayload(Span<byte> page, JetFormat format, ReadOnlySpan<byte> stored, int flags)
     {
         page[0] = Constants.PageTypes.Data;
@@ -296,7 +400,7 @@ public sealed class CompactCatalogRecoveryTests
     private static DatabaseFile Open(byte[] bytes)
         => DatabaseFile.ForReader(new MemoryStream(bytes, writable: false), bytes.AsSpan(0, Math.Min(4096, bytes.Length)).ToArray(), ReadOnlyMemory<char>.Empty, string.Empty, leaveOpen: false);
 
-    private sealed class ObservedPages(IPageSource inner, Action<long> beforeRead) : IPageSource
+    private sealed class ObservedPages(IPageSource inner, Action<long> beforeRead, Action? onCheck = null) : IPageSource
     {
         public int PageSize => inner.PageSize;
 
@@ -312,6 +416,10 @@ public sealed class CompactCatalogRecoveryTests
 
         public void ThrowIfDisposed() => inner.ThrowIfDisposed();
 
-        public void ThrowIfDisposedOrCancelled(CancellationToken cancellationToken) => inner.ThrowIfDisposedOrCancelled(cancellationToken);
+        public void ThrowIfDisposedOrCancelled(CancellationToken cancellationToken)
+        {
+            inner.ThrowIfDisposedOrCancelled(cancellationToken);
+            onCheck?.Invoke();
+        }
     }
 }

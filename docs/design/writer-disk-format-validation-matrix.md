@@ -247,7 +247,7 @@ Native coverage uses `NativeSchemaDaoTests`, `NativeJet3SchemaRewriteTests`, `Co
 	CompactDatabase automation, transaction tests, emitted-page invariant tests,
 	and cache eviction tests. Future ESE-derived concerns should become matrix
 	rows or feature-specific DAO/regression tests, not a separate backlog.
-- Full Access-style live-page compaction/renumbering stays out of scope unless the project grows an explicit Compact and Repair feature.
+- Managed live-page compaction and repair follow the explicit [implementation plan](compact-and-repair.md); component evidence does not establish acceptance of a complete maintenance API.
 - Byte-for-byte DAO/Access comparisons stay diagnostic unless exact byte parity becomes a release requirement for the specific area.
 - ODBC OpenRecordset remains source- and DSN-dependent; current automated coverage validates metadata generation, cached-schema preservation, and CompactDatabase compatibility.
 - Manual Access UI workflows remain supplemental for cases DAO cannot expose, such as saving an attachment back to disk through the UI.
@@ -273,7 +273,10 @@ bookmarks and exact stored-Id/key matching. Synthetic Jet3/Jet4/ACE direct-row
 owner damage retains recovered pinned identities despite absent or malformed map
 hints and wrong advisory row counts. Stale keys, invalid row directories and
 conflicting identities do not authorize recovery. Missing independent index
-evidence and moved-row ownership remain gaps. `storage-audit` consumes the stream into a bounded partial or completed
+evidence remains a gap. Damaged original and moved-payload owner headers can
+retain identities only with complete independent Id-index ordering/routing
+evidence; late index corruption discards those candidates. Intact original
+headers with damaged moved-payload owners still refuse before recovery. `storage-audit` consumes the stream into a bounded partial or completed
 NDJSON inventory with bounded record serialization. Every region remains pinned;
 neither this phase nor its completion marker proves full row/LVAL/index reachability or permits
 relocation, reclamation, repair or replacement.
@@ -354,8 +357,11 @@ Missing ownership and native compact-result validation remain separate requireme
 bounded persisted ResultType hydration, full signed catalog Id matching,
 cumulative payload/schema limits, unknown result types and property-copy bounds.
 The archived Access calculated fixture now exposes its stored Memo results to
-automatic raw LVAL discovery without expression evaluation. Damaged-owner
-catalog rows are not yet property-hydration inputs.
+automatic raw LVAL discovery without expression evaluation. Accepted recovered
+catalog bookmarks, including damaged original and moved-payload owners backed
+by complete Id-index evidence, also feed property hydration and raw field scans.
+These regressions mutate archived native fixture copies; they preserve source
+hashes and withhold ordinary same-owner bookmark validation.
 
 `CompactRawDataBuilderTests` checks dense private DATA pages, exact opaque and
 moved-row payloads, original-header relocation records, the 255-row output limit,
@@ -365,10 +371,34 @@ bookmarks against packed rows on Jet3/Jet4/ACE layouts.
 `CompactRowRelocationMapTests` checks monotone/unique mappings, binary lookup,
 missing bookmarks, partial reads, cumulative I/O limits, changed lengths and real
 I/O propagation. These are component tests, not native acceptance of a complete
-managed compact result; LVAL/catalog/TDEF/map retargeting remains outstanding.
+managed compact result; complete catalog/TDEF/map assembly remains outstanding.
 
 `LvalRowBoundsDecodePolicyTests` and `CalculatedLongValueDecodePolicyTests` check
 that malformed external directories and assigned calculated payloads produce
 contextual strict corruption, diagnosed lenient missing values and write refusal.
 These synthetic corruption cases do not establish native calculation-error
 semantics or the contents of lost values.
+
+`CompactRawDataLongValueValidatorTests` independently compares reopened packed
+rows and complete staged LVAL rows with source fields and the complete relocation
+ledger. Synthetic tests cover trailing bytes beyond declared payloads, opaque
+unassigned slots, calculated type projections, chains crossing pages, shared or
+uncovered private slots, altered nonpointer bytes, short reads, exhausted budgets,
+I/O errors and cancellation. The proof covers only those supplied private
+allocations, not global incoming ownership or native compact acceptance.
+
+`CompactUsageMapBuilderTests` checks generated INLINE and REFERENCE native map
+membership through the existing reader on Jet3/Jet4/ACE layouts, including
+shifted windows, sparse runs, promotion, malformed membership, native capacity,
+budgets and write/flush failures. `CompactTDefReferencePatcherTests` checks exact
+raw-image preservation outside the complete table/index/LVAL reference words,
+including wide logical definitions, counters and relationship descriptors.
+These synthetic checks establish composable map/reference staging; they do not
+prove global allocation accounting, reclaimability or a complete native result.
+
+
+`CompactStagedTableCompositionTests` combines raw packing, native table maps and
+pinned TDEF patches on writer-created Jet3/Jet4/ACE tables. Reopened ordinary
+reads select only the staged DATA pages and retain every expected row, while
+source bytes and unrelated destination prefix bytes remain exact. Original
+storage remains pinned; this is not a globally reallocated or compacted file.

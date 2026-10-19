@@ -17,7 +17,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>Recovers independently indexed catalog identities without changing physical ownership.</summary>
 internal static class CompactCatalogRecovery
 {
-    /// <summary>Observes live catalog bookmarks and independently owned moved payloads when their owner header is damaged.</summary>
+    /// <summary>Observes indexed catalog identities with matching stored Ids when header and possibly moved-payload ownership is damaged.</summary>
     /// <param name="pages">The bounded immutable inventory source.</param>
     /// <param name="format">The verified format.</param>
     /// <param name="catalog">The verified catalog image.</param>
@@ -70,6 +70,7 @@ internal static class CompactCatalogRecovery
         }
 
         var scanner = new Scanner(pages, format, catalog, decoder, budget, identityIndex, idColumn, result, identities, maxReferences, maxDirectorySlots, budget.MaxObjects - physicalRows.Count);
+        bool indexAuditCompleted = false;
         try
         {
             await CompactIndexAudit.ScanAsync(
@@ -91,12 +92,14 @@ internal static class CompactCatalogRecovery
                 },
                 scanner.VisitAsync,
                 cancellationToken).ConfigureAwait(false);
+            indexAuditCompleted = true;
         }
         catch (JetCorruptDataException error) when (error.ErrorCode == JetErrorCode.CorruptIndex)
         {
             scanner.Diagnose(error.ErrorInfo.PageNumber ?? identityIndex.RootPage, "The catalog Id index cannot be completely audited: " + error.Message + " Positive recovered identities remain observations; coverage and ownership are unproven.");
         }
 
+        scanner.Complete(indexAuditCompleted, cancellationToken);
         return result;
     }
 
@@ -116,6 +119,8 @@ internal static class CompactCatalogRecovery
     internal sealed record RecoveredRow(CatalogRow Identity, long IndexPage, int LiveRowsOnPage, uint PhysicalOwner)
     {
         internal RowLocation Location { get; init; }
+
+        internal bool HasDamagedMovedOwner { get; init; }
     }
 
     private sealed class Scanner(IPageSource pages, JetFormat format, TDefImage catalog, CatalogRowReader decoder, CompactTraversalBudget budget, TDefIndexDescriptor index, ColumnInfo idColumn, Result result, Dictionary<long, (long Page, int Row)> identities, long maxReferences, long maxDirectorySlots, int maxCandidates)
@@ -125,9 +130,16 @@ internal static class CompactCatalogRecovery
         private readonly bool[] liveStarts = new bool[format.PageSize];
         private readonly (long Page, int Row)[] chain = new (long, int)[Constants.DataPage.MaxOverflowHops + 1];
         private int candidates;
+        private bool independentIndexValidated;
 
         internal async ValueTask VisitAsync(CompactIndexRecord record, CancellationToken cancellationToken)
         {
+            if (record.Kind == "index-terminal")
+            {
+                this.independentIndexValidated = record.NavigableGraphAcyclic && record.ObservedLeafChainOrdered
+                    && record.BookmarkInclusiveOrderValidated && record.ObservedKeyRoutingValidated;
+            }
+
             if (record.Kind is "leaf-entry" or "intermediate-entry" or "index-reference")
             {
                 this.Reference(record.PageNumber, overflow: false);
@@ -148,12 +160,39 @@ internal static class CompactCatalogRecovery
             }
         }
 
+        internal void Complete(bool indexAuditCompleted, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (indexAuditCompleted && this.independentIndexValidated)
+            {
+                return;
+            }
+
+            int retained = 0;
+            for (int i = 0; i < result.Rows.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                RecoveredRow row = result.Rows[i];
+                if (!row.HasDamagedMovedOwner)
+                {
+                    result.Rows[retained++] = row;
+                }
+            }
+
+            if (retained < result.Rows.Count)
+            {
+                result.Rows.RemoveRange(retained, result.Rows.Count - retained);
+                this.Diagnose(index.RootPage, "Catalog moved-payload identities with damaged ownership require a completed independent Id-index audit, ordered observed leaf chain and verified key routing; those candidates are withheld.");
+            }
+        }
+
         private async ValueTask RecoverAsync(CompactIndexRecord record, long headerPage, int headerRow, CancellationToken cancellationToken)
         {
             long number = headerPage;
             int target = headerRow;
             uint headerOwner = 0;
             int headerLiveRows = 0;
+            bool damagedMovedOwner = false;
             for (int hop = 0; ; hop++)
             {
                 pages.ThrowIfDisposedOrCancelled(cancellationToken);
@@ -193,7 +232,7 @@ internal static class CompactCatalogRecovery
                     }
                     else if (owner != 2)
                     {
-                        throw Corrupt(number, "A damaged-owner catalog overflow header requires an independently owned catalog payload; its moved identity is not inferred.");
+                        damagedMovedOwner = true;
                     }
 
                     if (page[0] != Constants.PageTypes.Data)
@@ -257,7 +296,7 @@ internal static class CompactCatalogRecovery
 
                     _ = identities.TryAdd(identity.Id, (headerPage, headerRow));
                     _ = this.recovered.Add((headerPage, headerRow));
-                    result.Rows.Add(new(identity, record.PageNumber, headerLiveRows, headerOwner) { Location = location });
+                    result.Rows.Add(new(identity, record.PageNumber, headerLiveRows, headerOwner) { Location = location, HasDamagedMovedOwner = damagedMovedOwner });
                     return;
                 }
                 finally

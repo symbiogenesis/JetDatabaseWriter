@@ -168,7 +168,9 @@ internal static class CompactStorageInventory
                         TargetPageNumber = identity.PageNumber,
                         TargetRowIndex = identity.RowIndex,
                         ObjectId = identity.Id,
-                        Detail = "Reconstructed native Id-index bookmark and matching stored row Id, with verified intact catalog owner headers on moved-payload pages; the compressed bookmark does not have a single physical byte offset. The physical owner header is unchanged and ownership remains ambiguous.",
+                        Detail = evidence.HasDamagedMovedOwner
+                            ? "Reconstructed native Id-index bookmark and matching stored row Id despite damaged moved-payload owners, using complete audited Id-index chain, bookmark ordering and key-routing evidence. The compressed bookmark has no single physical offset; source headers are unchanged and ownership remains ambiguous."
+                            : "Reconstructed native Id-index bookmark and matching stored row Id, with verified intact catalog owner headers on moved-payload pages; the compressed bookmark does not have a single physical byte offset. The physical owner header is unchanged and ownership remains ambiguous.",
                     },
                     cancellationToken).ConfigureAwait(false);
                 if (recoveredCatalogVisitor is not null)

@@ -44,9 +44,10 @@ internal sealed class CompactRecoveredCatalogRows(IPageSource pages, JetFormat f
     /// <param name="id">The independently matched complete signed catalog Id.</param>
     /// <param name="location">The recovery's verified original bookmark and stored-payload coordinates.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="hasDamagedMovedOwner">Whether final accepted complete Id-index evidence also established the moved payload despite a damaged owner header.</param>
     /// <exception cref="JetCorruptDataException">Accepted evidence has invalid or conflicting identities.</exception>
     /// <exception cref="JetLimitationException">The bookmark or storage allowance is exhausted.</exception>
-    internal void Accept(long id, RowLocation location, CancellationToken cancellationToken)
+    internal void Accept(long id, RowLocation location, CancellationToken cancellationToken, bool hasDamagedMovedOwner = false)
     {
         pages.ThrowIfDisposedOrCancelled(cancellationToken);
         accounting.Charge(CompactDiscoveryCharge.GraphSteps, 1, location.PageNumber);
@@ -60,7 +61,7 @@ internal sealed class CompactRecoveredCatalogRows(IPageSource pages, JetFormat f
 
         if (this.bookmarks.TryGetValue((location.PageNumber, location.RowIndex), out Entry previous))
         {
-            if (previous.Id != id || previous.Location != location)
+            if (previous.Id != id || previous.Location != location || previous.HasDamagedMovedOwner != hasDamagedMovedOwner)
             {
                 throw Corrupt(location.PageNumber, "Accepted catalog recoveries disagree about one original bookmark.");
             }
@@ -81,7 +82,7 @@ internal sealed class CompactRecoveredCatalogRows(IPageSource pages, JetFormat f
         // Includes both dictionaries, transient resize arrays, and reservation objects.
         IDisposable storage = accounting.ReserveWorkingBytes(512, location.PageNumber);
         this.reservations.Add(storage);
-        this.bookmarks.Add((location.PageNumber, location.RowIndex), new(id, location));
+        this.bookmarks.Add((location.PageNumber, location.RowIndex), new(id, location, hasDamagedMovedOwner));
         this.identities.Add(id, location);
     }
 
@@ -161,7 +162,7 @@ internal sealed class CompactRecoveredCatalogRows(IPageSource pages, JetFormat f
         byte[] page = await pages.ReadUncachedPageAsync(location.DataPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            this.ValidatePayload(page, location, cancellationToken);
+            this.ValidatePayload(page, location, entry.HasDamagedMovedOwner, cancellationToken);
             ReadOnlyMemory<byte> bytes = page.AsMemory(location.RowStart, location.RowSize);
             CompactRawField id = default;
             await CompactRawFieldReader.ScanAsync(
@@ -197,9 +198,10 @@ internal sealed class CompactRecoveredCatalogRows(IPageSource pages, JetFormat f
         }
     }
 
-    private void ValidatePayload(byte[] page, RowLocation location, CancellationToken cancellationToken)
+    private void ValidatePayload(byte[] page, RowLocation location, bool hasDamagedMovedOwner, CancellationToken cancellationToken)
     {
-        if (page.Length < format.PageSize || page[0] != Constants.PageTypes.Data || (location.IsOverflow && Ru32(page, format.DataPage.TDefOff) != 2))
+        if (page.Length < format.PageSize || page[0] != Constants.PageTypes.Data
+            || (location.IsOverflow && !hasDamagedMovedOwner && Ru32(page, format.DataPage.TDefOff) != 2))
         {
             throw Corrupt(location.DataPageNumber, "The accepted recovered catalog payload is not its verified data page.");
         }
@@ -237,5 +239,5 @@ internal sealed class CompactRecoveredCatalogRows(IPageSource pages, JetFormat f
         }
     }
 
-    private readonly record struct Entry(long Id, RowLocation Location);
+    private readonly record struct Entry(long Id, RowLocation Location, bool HasDamagedMovedOwner);
 }

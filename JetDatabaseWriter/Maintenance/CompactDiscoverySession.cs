@@ -466,7 +466,7 @@ internal sealed class CompactDiscoverySession
             },
             (evidence, token) =>
             {
-                recovered.Accept(evidence.Identity.Id, evidence.Location, token);
+                recovered.Accept(evidence.Identity.Id, evidence.Location, token, evidence.HasDamagedMovedOwner);
                 return default;
             }).ConfigureAwait(false);
         await ownership.CompleteAsync(ownershipVisitor, cancellationToken).ConfigureAwait(false);

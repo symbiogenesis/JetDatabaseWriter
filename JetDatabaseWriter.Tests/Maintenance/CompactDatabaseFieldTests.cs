@@ -244,12 +244,14 @@ public sealed class CompactDatabaseFieldTests
     }
 
     [Theory]
-    [InlineData(false, false, false)]
-    [InlineData(true, false, false)]
-    [InlineData(true, true, false)]
-    [InlineData(true, false, true)]
-    [InlineData(true, true, true)]
-    public async Task DatabaseFields_CalculatedFixtureHydratesResultTypesAndDiscoversMemoStorage(bool recoverCatalog, bool conflictingOwner, bool moved)
+    [InlineData(false, false, false, false)]
+    [InlineData(true, false, false, false)]
+    [InlineData(true, true, false, false)]
+    [InlineData(true, false, true, false)]
+    [InlineData(true, true, true, false)]
+    [InlineData(true, false, true, true)]
+    [InlineData(true, true, true, true)]
+    public async Task DatabaseFields_CalculatedFixtureHydratesResultTypesAndDiscoversMemoStorage(bool recoverCatalog, bool conflictingOwner, bool moved, bool damagedMovedOwner)
     {
         string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "Jackcess", "V2010", "calcFieldTestV2010.accdb");
         byte[] bytes = await File.ReadAllBytesAsync(path, Ct);
@@ -298,7 +300,7 @@ public sealed class CompactDatabaseFieldTests
                             int dataOffset = ((target + 1) * intact.Format.PageSize) - payload.Length;
                             payload.CopyTo(bytes, dataOffset);
                             bytes[target * intact.Format.PageSize] = Constants.PageTypes.Data;
-                            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan((target * intact.Format.PageSize) + intact.Format.DataPage.TDefOff, sizeof(uint)), 2);
+                            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan((target * intact.Format.PageSize) + intact.Format.DataPage.TDefOff, sizeof(uint)), damagedMovedOwner ? owner : 2);
                             BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan((target * intact.Format.PageSize) + intact.Format.DataPage.NumRows, sizeof(ushort)), 1);
                             BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan((target * intact.Format.PageSize) + intact.Format.DataPage.RowsStart, sizeof(ushort)), checked((ushort)((intact.Format.PageSize - payload.Length) | Constants.DataPage.DeletedRowFlag)));
                             int headerOffset = checked(((int)row.PageNumber * intact.Format.PageSize) + location.RowStart);
