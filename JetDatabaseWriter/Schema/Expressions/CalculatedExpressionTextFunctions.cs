@@ -20,8 +20,8 @@ internal static partial class CalculatedExpressionTextFunctions
     private const string WhitespacePattern = "\\s+";
 
 #if NETSTANDARD2_1
-    private static readonly Regex ValNumberPrefixRegexInstance = new(ValNumberPrefixPattern, RegexOptions.CultureInvariant);
-    private static readonly Regex WhitespaceRegexInstance = new(WhitespacePattern);
+    private static readonly Lazy<Regex> ValNumberPrefixRegexInstance = new(static () => new Regex(ValNumberPrefixPattern, RegexOptions.CultureInvariant));
+    private static readonly Lazy<Regex> WhitespaceRegexInstance = new(static () => new Regex(WhitespacePattern));
 #endif
 
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
@@ -251,9 +251,9 @@ internal static partial class CalculatedExpressionTextFunctions
     }
 
 #if NETSTANDARD2_1
-    private static Regex WhitespaceRegex() => WhitespaceRegexInstance;
+    private static Regex WhitespaceRegex() => WhitespaceRegexInstance.Value;
 
-    private static Regex ValNumberPrefixRegex() => ValNumberPrefixRegexInstance;
+    private static Regex ValNumberPrefixRegex() => ValNumberPrefixRegexInstance.Value;
 #else
     [GeneratedRegex(WhitespacePattern)]
     private static partial Regex WhitespaceRegex();
