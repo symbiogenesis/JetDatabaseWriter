@@ -35,9 +35,35 @@ internal static class AccessQueryTranslator
     /// </returns>
     public static (AccessQueryPlan Plan, Expression Boundary) Translate(Expression expression)
     {
-        Expression boundary = FindEngineBoundary(expression);
+        // The stack yields the operators from the source outward without making query
+        // depth depend on the process call stack. Reuse it for the boundary and the plan.
+        var calls = new Stack<MethodCallExpression>();
+        Expression source = expression;
+        while (source is MethodCallExpression { Arguments.Count: > 0 } call)
+        {
+            calls.Push(call);
+            source = call.Arguments[0];
+        }
+
+        if (source is not ConstantExpression)
+        {
+            throw new NotSupportedException($"Unsupported query expression node '{source.NodeType}'.");
+        }
+
+        Expression boundary = FindEngineBoundary(source, calls);
         var plan = new AccessQueryPlan();
-        Visit(boundary, plan);
+        if (!ReferenceEquals(boundary, source))
+        {
+            foreach (MethodCallExpression call in calls)
+            {
+                Apply(call, plan);
+                if (ReferenceEquals(call, boundary))
+                {
+                    break;
+                }
+            }
+        }
+
         return (plan, boundary);
     }
 
@@ -51,31 +77,23 @@ internal static class AccessQueryTranslator
     /// boundary then drops below the <c>OrderBy</c> that starts that ordering and the tail
     /// sorts by every key.
     /// </summary>
-    /// <param name="expression">The sub-expression to examine.</param>
+    /// <param name="source">The innermost query source.</param>
+    /// <param name="calls">The operator chain, enumerated from the source outward.</param>
     /// <returns>The largest engine-evaluable sub-expression.</returns>
-    private static Expression FindEngineBoundary(Expression expression)
+    private static Expression FindEngineBoundary(Expression source, Stack<MethodCallExpression> calls)
     {
-        if (expression is MethodCallExpression call && call.Arguments.Count >= 1)
+        Expression boundary = source;
+        foreach (MethodCallExpression call in calls)
         {
-            Expression innerBoundary = FindEngineBoundary(call.Arguments[0]);
-
-            // Only extend the boundary through this call when nothing below it was cut
-            // (the inner part is fully engine-evaluable) and this operator is supported.
-            if (!ReferenceEquals(innerBoundary, call.Arguments[0]))
+            if (!IsEngineSupported(call))
             {
-                return innerBoundary;
+                return IsThenBy(call) ? OrderingSource(boundary) : boundary;
             }
 
-            if (IsEngineSupported(call))
-            {
-                return call;
-            }
-
-            return IsThenBy(call) ? OrderingSource(call.Arguments[0]) : innerBoundary;
+            boundary = call;
         }
 
-        // The innermost source (a ConstantExpression wrapping the queryable) is the floor.
-        return expression;
+        return boundary;
     }
 
     private static bool IsThenBy(MethodCallExpression call) =>
@@ -136,24 +154,6 @@ internal static class AccessQueryTranslator
     {
         Expression operand = argument is UnaryExpression { NodeType: ExpressionType.Quote } quote ? quote.Operand : argument;
         return operand is LambdaExpression lambda && lambda.Parameters.Count == 1;
-    }
-
-    private static void Visit(Expression expression, AccessQueryPlan plan)
-    {
-        // The root source is a ConstantExpression wrapping the queryable; stop there.
-        if (expression is ConstantExpression)
-        {
-            return;
-        }
-
-        if (expression is MethodCallExpression call && call.Arguments.Count >= 1)
-        {
-            Visit(call.Arguments[0], plan);
-            Apply(call, plan);
-            return;
-        }
-
-        throw new NotSupportedException($"Unsupported query expression node '{expression.NodeType}'.");
     }
 
     private static void Apply(MethodCallExpression call, AccessQueryPlan plan)
