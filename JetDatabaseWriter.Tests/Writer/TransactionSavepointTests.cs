@@ -230,6 +230,46 @@ public sealed class TransactionSavepointTests
         Assert.Equal(2, await reader.GetRealRowCountAsync("Items", TestContext.Current.CancellationToken));
     }
 
+    /// <summary>Overlapping inserts cannot change another statement's current table and insert-page hint.</summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task ConcurrentInserts_IntoDifferentTables_AreSerialized(DatabaseFormat format)
+    {
+        await using var stream = new MemoryStream();
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await writer.CreateTableAsync("First", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
+        await writer.CreateTableAsync("Second", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task first = writer.Services.Transactions.RunAutoCommitAsync(
+            async token =>
+            {
+                await writer.Services.Data.InsertRowAsync("First", [1], token);
+                entered.SetResult();
+                await proceed.Task.WaitAsync(token);
+                await writer.Services.Data.InsertRowAsync("First", [2], token);
+            },
+            TestContext.Current.CancellationToken).AsTask();
+        await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        Task second = writer.InsertRowAsync("Second", [3], TestContext.Current.CancellationToken).AsTask();
+        try
+        {
+            Assert.False(second.IsCompleted);
+        }
+        finally
+        {
+            proceed.SetResult();
+        }
+
+        await Task.WhenAll(first, second);
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(2, await reader.GetRealRowCountAsync("First", TestContext.Current.CancellationToken));
+        Assert.Equal(1, await reader.GetRealRowCountAsync("Second", TestContext.Current.CancellationToken));
+    }
+
     /// <summary>Commit waits for a whole statement, including its suspended callback.</summary>
     [Fact]
     public async Task Commit_WaitsForActiveStatement()

@@ -18,12 +18,6 @@ internal sealed class AsyncReentrantOperationGate(Type ownerType, AttachmentRead
     private const int StateDisposed = 2;
 
     private readonly AsyncLocal<int> operationDepth = new();
-#if NET8_0_OR_GREATER
-    private readonly Lock stateLock = new();
-#else
-    private readonly object stateLock = new();
-#endif
-
     private readonly TaskCompletionSource<object?> disposeCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource<object?>? operationsDrained;
     private int activeOperations;
@@ -57,17 +51,18 @@ internal sealed class AsyncReentrantOperationGate(Type ownerType, AttachmentRead
             return false;
         }
 
-        lock (this.stateLock)
-        {
-            this.operationsDrained = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-            if (Volatile.Read(ref this.activeOperations) == 0)
-            {
-                this.operationsDrained.TrySetResult(null);
-            }
+        var drained = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            waitForOperations = this.operationsDrained.Task;
-            return true;
+        // The full fence pairs publication with the final operation's decrement,
+        // so one of them observes and completes the drain.
+        _ = Interlocked.Exchange(ref this.operationsDrained, drained);
+        if (Volatile.Read(ref this.activeOperations) == 0)
+        {
+            drained.TrySetResult(null);
         }
+
+        waitForOperations = drained.Task;
+        return true;
     }
 
     public void CompleteDispose(Exception? error = null)
@@ -122,13 +117,7 @@ internal sealed class AsyncReentrantOperationGate(Type ownerType, AttachmentRead
             return;
         }
 
-        TaskCompletionSource<object?>? drained;
-        lock (this.stateLock)
-        {
-            drained = this.operationsDrained;
-        }
-
-        drained?.TrySetResult(null);
+        Volatile.Read(ref this.operationsDrained)?.TrySetResult(null);
     }
 
     internal readonly struct Lease(AsyncReentrantOperationGate owner, bool isRoot, int depth, AttachmentReadContext.Lease attachmentRead) : IDisposable

@@ -26,11 +26,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="usageMaps">Edits and promotes table and index usage-map rows.</param>
 internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPages, Pager pager, PageAllocator pageAllocator, IOwnedMapPolicy ownedMaps, UsageMapEditor usageMaps)
 {
-#if NET9_0_OR_GREATER
-    private readonly Lock insertPageHintLock = new();
-#else
-    private readonly object insertPageHintLock = new();
-#endif
+    /// <summary>The hint's table, accessed within TransactionLifecycle's serialized mutations or unpublished initialization.</summary>
     private long cachedInsertTDefPage = -1;
     private long cachedInsertPageNumber = -1;
 
@@ -120,26 +116,20 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
 
     internal bool TryGetCachedInsertPageNumber(long tdefPage, out long pageNumber)
     {
-        lock (this.insertPageHintLock)
+        if (this.cachedInsertTDefPage == tdefPage && this.cachedInsertPageNumber >= 3)
         {
-            if (this.cachedInsertTDefPage == tdefPage && this.cachedInsertPageNumber >= 3)
-            {
-                pageNumber = this.cachedInsertPageNumber;
-                return true;
-            }
-
-            pageNumber = -1;
-            return false;
+            pageNumber = this.cachedInsertPageNumber;
+            return true;
         }
+
+        pageNumber = -1;
+        return false;
     }
 
     internal void SetCachedInsertPageNumber(long tdefPage, long pageNumber)
     {
-        lock (this.insertPageHintLock)
-        {
-            this.cachedInsertTDefPage = tdefPage;
-            this.cachedInsertPageNumber = pageNumber;
-        }
+        this.cachedInsertTDefPage = tdefPage;
+        this.cachedInsertPageNumber = pageNumber;
     }
 
     /// <summary>
@@ -149,22 +139,14 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
     /// </summary>
     /// <returns>The state to pass to <see cref="RestoreState"/>.</returns>
     internal DataPageInserterState CaptureState()
-    {
-        lock (this.insertPageHintLock)
-        {
-            return new DataPageInserterState(this.cachedInsertTDefPage, this.cachedInsertPageNumber);
-        }
-    }
+        => new(this.cachedInsertTDefPage, this.cachedInsertPageNumber);
 
     /// <summary>Puts the insert-page hint back to <paramref name="state"/>.</summary>
     /// <param name="state">A state from <see cref="CaptureState"/>.</param>
     internal void RestoreState(DataPageInserterState state)
     {
-        lock (this.insertPageHintLock)
-        {
-            this.cachedInsertTDefPage = state.HintTDefPage;
-            this.cachedInsertPageNumber = state.HintPageNumber;
-        }
+        this.cachedInsertTDefPage = state.HintTDefPage;
+        this.cachedInsertPageNumber = state.HintPageNumber;
     }
 
     private async ValueTask<PageInsertTarget?> TryFindExistingSystemTablePageAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)
