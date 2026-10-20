@@ -414,7 +414,7 @@ working allowance; source-session admission and ledger read work remain bounded.
 These components return private staging/comparison evidence. The caller still
 must install the patched image on its original pinned TDEF chain, assemble
 catalog/index/global allocation references, prove reclaimability and validate
-the whole destination. Original/global storage remains pinned.
+the whole destination. Original/global storage remains pinned. Controlled native tests compare original, staged and native-compacted Memo/OLE contents on Jet3/Jet4/ACE; native read/compact does not establish mutation with the unchanged global allocation maps. Raw staging copies stored LVAL bytes without applying the ordinary Memo writer's compression or encoding policy.
 
 Individual attachment editing/history (R8), query planning, cache performance,
 benchmarks and the custom-stream recovery contract are not prerequisites for a

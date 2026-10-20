@@ -244,7 +244,7 @@ private static final Set<String> COMPRESSED_FORMATS = new HashSet<>(
                   "xlsx", "xlsb", "pptx"));
 ```
 
-The match is case-insensitive. The fixtures confirm only `.jpg` (raw) and `.txt` (compressed); the rest of the list is Jackcess's observation, not Microsoft documentation. HACKING.md notes "if a memo field is marked for compression, only at value which is at most 1024 characters when uncompressed can be compressed" — that's a memo-compression rule, not an attachment rule, so it does not apply here.
+The match is case-insensitive. The fixtures confirm only `.jpg` (raw) and `.txt` (compressed); the rest of the list is Jackcess's observation, not Microsoft documentation. Memo Unicode compression is a separate storage rule and does not apply to attachment compression. DAO120 controls include compressed single-row Memo values longer than 1024 characters and plain chained values; see [Memo text storage](data-page-row-format-notes.md#memo-text-storage).
 
 ## 4. Reader / writer phases
 
@@ -292,7 +292,7 @@ C7 caveats:
 
 ### 4.4 C8 LVAL chain emission
 
-Phase C8 lifts the inline cap that limited C4 attachment payloads to ~256 bytes. The long-value pass (`LongValueEncoder.PrepareLongValues`, then `WriteLongValuesAsync` once the row is known to fit a page) runs in `InsertRowDataLocAsync` and fires for `Ole` / `Memo` columns whose encoded payload exceeds the in-row inline cap (`Constants.LongValue.MaxInlineOleBytes = 256`, `Constants.LongValue.MaxInlineMemoBytes = 1024`). Smaller values keep the inline path (`WrapInlineLongValue`, bitmask `0x80`) while the row fits a data page; when it does not, the largest of them, the first of equal ones in column order, move to LVAL pages until it does (`TableRowStore.EncodeRow`).
+Phase C8 lifts the inline cap that limited C4 attachment payloads to ~256 bytes. The long-value pass (`LongValueEncoder.PrepareLongValues`, then `WriteLongValuesAsync` once the row is known to fit a page) runs in `InsertRowDataLocAsync` and fires for `Ole` / `Memo` columns whose encoded payload exceeds the in-row inline cap (`Constants.LongValue.MaxInlineBytes = 64`, measured after text encoding and any calculated envelope). Smaller values keep the inline path (`WrapInlineLongValue`, bitmask `0x80`) while the row fits a data page; when it does not, the largest of them, the first of equal ones in column order, move to LVAL pages until it does (`TableRowStore.EncodeRow`).
 
 12-byte LVAL header layout (matches `LongValueDescriptor` and `AccessReader.ReadLongValueAsync`):
 

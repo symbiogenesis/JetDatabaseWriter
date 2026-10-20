@@ -86,6 +86,44 @@ invalid multibyte sequences. Explicit assignments encode normally, even when
 their decoded values equal the originals. Slot bounds and descriptor widths
 remain validated before mutation.
 
+## Variable Text compression
+
+Jet4/ACE marked text starts with `FF FE`. Each single `00` at a character
+boundary switches between one-byte Latin-1 and two-byte UTF-16LE mode.
+The Unicode-mode terminator consumes one byte, including when the next byte is
+nonzero. DAO120-authored `abc中def` stores
+`FF FE 61 62 63 00 2D 4E 00 64 65 66`; treating that terminator as two zeroes
+corrupts the Latin-1 suffix. `NativeCompressedTextDecodeTests` pins native field slices,
+source hashes, offsets and exact native UTF-16 units for Jet4 and ACE.
+A mode-only suffix emits no character. An incomplete final Unicode unit remains
+bounded by the field slice; the reader does not reproduce a native corrupt-slot
+overread into the following field.
+
+## Memo text storage
+
+Ordinary Jet4/ACE Memo decoding also uses its LVAL descriptor's storage mode.
+Inline and single-row payloads may use the marked text grammar; chained payloads
+are plain UTF-16LE, where leading `FF FE` is literal U+FEFF content. Calculated
+Memo text is plain UTF-16LE inside its calculated envelope, in both inline and
+external storage. Preparation, direct encoding, materialized reads and
+write-back snapshots use that distinction.
+
+DAO120 controls accept compressed single-row Latin-1 values through 2048
+characters; larger compressed expansions can read as Null, and compressed bytes
+in chained storage read as plain UTF-16. The writer conservatively compresses
+ordinary Latin-1 Memo only through that verified boundary, then emits plain
+UTF-16. This is a safe writer policy, not a universal statement of native
+allocation choices: independently native-authored controls include compressed
+1025- and 1500-character values and plain chained values below a page's raw
+payload capacity. Native storage context matters more than the marker alone.
+
+Ordinary Memo values of at most 2048 characters beginning with U+FEFF refuse before page
+allocation. Native marker escapes vary with compression/storage context and do
+not yet establish a safe general encoding. Native-authored escaped values remain
+readable, and large plain chained values retain a literal leading U+FEFF.
+The remaining writer coverage is tracked in F8; a safe refusal does not complete
+that compatibility requirement.
+
 ## Long-value integrity
 
 Stored MEMO/OLE payload lengths are exact. Every read path uses all 30 native length bits, including typed inline decoding; the upper two bits select storage mode. The declared length is checked against `MaxLongValueBytes` before copying inline bytes. Resource-limit refusals propagate in strict and lenient modes. An inline payload is bounded by its column slice, not the remaining page; a single-row payload must contain its declared bytes. A chain must supply its declared length without truncation or cycling. Exact reads throw InvalidDataException for malformed payloads and propagate storage I/O failures. They never manufacture placeholder text or substitute an empty payload for unreadable data.

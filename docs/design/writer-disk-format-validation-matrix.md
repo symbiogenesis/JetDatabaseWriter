@@ -167,6 +167,24 @@ an x64 PowerShell host on Windows Arm64. Its SHA-256 is
 (462,848 bytes). It contains eight primitive multi-value kinds, append-only Memo
 history, a late-added Text multi-value column and a deleted highest parent.
 
+`NativeCompressedTextDecodeTests` pins six tiny Text field vectors and their
+hashes. The provenance distinguishes DAO-authored mixed/low-zero text from
+separately specified native-read suffix and malformed-tail controls, with native
+database hashes, field offsets and exact UTF-16 results. The managed decoder
+uses the native single-zero mode transition while retaining field bounds for an
+incomplete final Unicode unit; it does not copy a native corrupt-slot overread.
+
+`NativeMemoCompressionTests` pins Jet4/ACE databases whose row payloads were
+authored and reread ordinally by DAO120 16.0 (ACEDAO 16.0.20430.20182) in
+writer-created empty schemas. Portable tests cover inline/single-row compressed
+values, plain chains, escaped small literal U+FEFF and plain chained U+FEFF
+through typed, string, POCO and DataTable reads. Guarded controls compare writer
+Memo boundaries and large literal U+FEFF before and after native compact.
+Write-back, schema rewrite and calculated-envelope regressions separately check
+plain payload preservation. Small ordinary leading-U+FEFF writes refuse without
+changing bytes; their general native encoding remains open under F8. These
+checks do not establish every native text variant or a complete managed compact.
+
 ## Validation Levels
 
 Use the canonical ladder in [dao-validation-strategy.md](dao-validation-strategy.md). In this matrix, the levels are named as follows:
@@ -435,6 +453,6 @@ Jet3/Jet4/ACE. Reopened raw allocation, independent original-column ledger and
 exact map membership checks precede ordinary map-selected row reads. Altered or
 swapped column records, missing/extra/truncated records and changed ranges refuse
 despite unchanged raw values. Aggregate output/map growth and conservative
-working-storage boundaries are checked separately. These are controlled
+working-storage boundaries are checked separately. Guarded DAO36 Jet3 and DAO120 Jet4/ACE controls compare original, staged and native-compacted mixed Memo/OLE contents using ordinal text and exact binary comparisons. These are controlled
 writer-created tables; original storage remains pinned and no global allocation
 or reclaimability verdict is implied.

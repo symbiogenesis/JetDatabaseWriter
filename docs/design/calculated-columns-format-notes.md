@@ -125,7 +125,7 @@ descriptor type that differs from their result type. In
 `AllNames`' row slots are 12-byte LVAL headers, as for any Memo: three rows
 point at single-page LVAL rows (byte 3 = `0x40`) and the short `John Doe` value
 is inline (`0x80`). The LVAL payload is the 23-byte wrapper around the
-uncompressed UCS-2 text. Jackcess does the same: `ColumnImpl.create` replaces
+uncompressed UCS-2 text. Long-value preparation and direct inline encoding both retain that plain payload; after envelope removal, readers do not reinterpret a literal leading U+FEFF as an ordinary Memo compression marker. Jackcess does the same: `ColumnImpl.create` replaces
 the column type with `ResultType` for calculated columns.
 
 So the reader (`RowDecodePlan`) and the writer (`RowEncoder`,
