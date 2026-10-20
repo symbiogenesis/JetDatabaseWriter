@@ -1,9 +1,6 @@
 name: InferSharp
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -11,7 +8,7 @@ permissions:
 
 concurrency:
   group: infersharp-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 env:
   DOTNET_NOLOGO: true
