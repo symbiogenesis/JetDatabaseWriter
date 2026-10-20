@@ -71,8 +71,8 @@ internal static class CompactCatalogRecovery
 
         if (identityIndex is not null && idColumn is not null)
         {
-            result = await ScanIndexAsync(pages, format, catalog, decoder, budget, physicalRows, identityIndex, [idColumn], maxReferences, maxDirectorySlots, maxWorkingBytes, cancellationToken).ConfigureAwait(false);
-            if (result.IndexValidated)
+            result = await ScanIndexAsync(pages, format, catalog, decoder, budget, physicalRows, identityIndex, [idColumn], maxReferences, maxDirectorySlots, maxWorkingBytes, null, cancellationToken).ConfigureAwait(false);
+            if (result.IndexValidated && !result.HasUnresolvedTargets)
             {
                 return result;
             }
@@ -114,13 +114,15 @@ internal static class CompactCatalogRecovery
                 knownRows.Add(evidence.Identity);
             }
 
-            Result fallback = await ScanIndexAsync(pages, format, catalog, decoder, budget, knownRows, index, [parentColumn, nameColumn], maxReferences - result.References, maxDirectorySlots - result.DirectorySlots - result.OverflowHops, maxWorkingBytes, cancellationToken).ConfigureAwait(false);
+            Result fallback = await ScanIndexAsync(pages, format, catalog, decoder, budget, knownRows, index, [parentColumn, nameColumn], maxReferences - result.References, maxDirectorySlots - result.DirectorySlots - result.OverflowHops, maxWorkingBytes, result, cancellationToken).ConfigureAwait(false);
             if (result.Diagnostics.Count > budget.MaxDiagnostics - fallback.Diagnostics.Count)
             {
                 throw Limit(index.RootPage, "Catalog recovery uncertainty exceeds MaxDiagnostics.");
             }
 
-            _ = result.Rows.RemoveAll(row => fallback.ConflictingIds.Contains(row.Identity.Id));
+            _ = result.Rows.RemoveAll(row => fallback.ConflictingIds.Contains(row.Identity.Id)
+                || fallback.ConflictingBookmarks.Contains((row.Identity.PageNumber, row.Identity.RowIndex))
+                || fallback.ConflictingPayloads.Contains((row.Location.DataPageNumber, row.Location.RowStart)));
             result.Rows.AddRange(fallback.Rows);
             result.Diagnostics.AddRange(fallback.Diagnostics);
             result.References += fallback.References;
@@ -132,9 +134,15 @@ internal static class CompactCatalogRecovery
         return result;
     }
 
-    private static async ValueTask<Result> ScanIndexAsync(IPageSource pages, JetFormat format, TDefImage catalog, CatalogRowReader decoder, CompactTraversalBudget budget, IReadOnlyList<CatalogRow> physicalRows, TDefIndexDescriptor identityIndex, IReadOnlyList<ColumnInfo> keyColumns, long maxReferences, long maxDirectorySlots, long maxWorkingBytes, CancellationToken cancellationToken)
+    private static async ValueTask<Result> ScanIndexAsync(IPageSource pages, JetFormat format, TDefImage catalog, CatalogRowReader decoder, CompactTraversalBudget budget, IReadOnlyList<CatalogRow> physicalRows, TDefIndexDescriptor identityIndex, IReadOnlyList<ColumnInfo> keyColumns, long maxReferences, long maxDirectorySlots, long maxWorkingBytes, Result? previous, CancellationToken cancellationToken)
     {
-        var result = new Result();
+        var result = new Result
+        {
+            ConflictingIds = previous?.ConflictingIds ?? [],
+            ConflictingBookmarks = previous?.ConflictingBookmarks ?? [],
+            ConflictingPayloads = previous?.ConflictingPayloads ?? [],
+            PayloadHeaders = previous?.PayloadHeaders ?? [],
+        };
         string keyName = keyColumns.Count == 1 ? "Id" : "ParentIdName";
         if (maxReferences <= 0)
         {
@@ -190,7 +198,15 @@ internal static class CompactCatalogRecovery
 
     internal sealed class Result
     {
-        internal HashSet<long> ConflictingIds { get; } = [];
+        internal bool HasUnresolvedTargets { get; set; }
+
+        internal HashSet<long> ConflictingIds { get; init; } = [];
+
+        internal HashSet<(long Page, int Row)> ConflictingBookmarks { get; init; } = [];
+
+        internal HashSet<(long Page, int Start)> ConflictingPayloads { get; init; } = [];
+
+        internal Dictionary<(long Page, int Start), (long Page, int Row)> PayloadHeaders { get; init; } = [];
 
         internal bool IndexValidated { get; set; }
 
@@ -217,11 +233,21 @@ internal static class CompactCatalogRecovery
     private sealed class Scanner(IPageSource pages, JetFormat format, TDefImage catalog, CatalogRowReader decoder, CompactTraversalBudget budget, TDefIndexDescriptor? index, IReadOnlyList<ColumnInfo>? keyColumns, Result result, Dictionary<long, (long Page, int Row)> identities, HashSet<(long Page, int Row)> physicalBookmarks, long maxReferences, long maxDirectorySlots, int maxCandidates)
     {
         private readonly HashSet<(long Page, int Row)> recovered = [];
-        private readonly Dictionary<(long Page, int Start), (long Page, int Row)> payloadHeaders = [];
         private readonly bool[] liveStarts = new bool[format.PageSize];
         private readonly (long Page, int Row)[] chain = new (long, int)[Constants.DataPage.MaxOverflowHops + 1];
         private int candidates;
         private bool independentIndexValidated;
+
+        private static void ValidateUnicodeUnit(int unit, ref bool pendingSurrogate, long page)
+        {
+            bool low = unit is >= 0xDC00 and <= 0xDFFF;
+            if (pendingSurrogate != low)
+            {
+                throw Corrupt(page, "The secondary catalog identity Name contains an unpaired Unicode surrogate.");
+            }
+
+            pendingSurrogate = unit is >= 0xD800 and <= 0xDBFF;
+        }
 
         internal async ValueTask ScanPhysicalAsync(CancellationToken cancellationToken)
         {
@@ -293,6 +319,7 @@ internal static class CompactCatalogRecovery
             }
             catch (JetCorruptDataException error) when (error.ErrorCode is JetErrorCode.CorruptCatalog or JetErrorCode.MalformedValue)
             {
+                result.HasUnresolvedTargets = true;
                 this.Diagnose(error.ErrorInfo.PageNumber ?? number, error.ErrorInfo.Reason ?? error.Message);
             }
         }
@@ -329,6 +356,11 @@ internal static class CompactCatalogRecovery
             if (physicalBookmarks.Contains((headerPage, headerRow)))
             {
                 return;
+            }
+
+            if (result.ConflictingBookmarks.Contains((headerPage, headerRow)))
+            {
+                throw Corrupt(headerPage, "A previously conflicting catalog bookmark cannot be accepted through another index.");
             }
 
             long number = headerPage;
@@ -416,6 +448,11 @@ internal static class CompactCatalogRecovery
                     }
 
                     CatalogRow identity = decoder.DecodeRow(catalog.Definition, page, location, 64);
+                    if (result.ConflictingIds.Contains(identity.Id))
+                    {
+                        throw Corrupt(number, "A previously conflicting stored catalog Id cannot be accepted through another index.");
+                    }
+
                     if (record is not null)
                     {
                         byte[] expected = this.EncodeIdentityKey(identity, page, location);
@@ -433,6 +470,8 @@ internal static class CompactCatalogRecovery
                     if (identities.TryGetValue(identity.Id, out (long Page, int Row) previous) && previous != (headerPage, headerRow))
                     {
                         _ = result.ConflictingIds.Add(identity.Id);
+                        _ = result.ConflictingBookmarks.Add(previous);
+                        _ = result.ConflictingBookmarks.Add((headerPage, headerRow));
                         _ = result.Rows.RemoveAll(row => row.Identity.Id == identity.Id);
                         throw Corrupt(number, $"The catalog Id index names live rows {previous.Page}:{previous.Row} and {headerPage}:{headerRow} for stored Id {identity.Id}; neither conflicting recovery is accepted.");
                     }
@@ -510,15 +549,32 @@ internal static class CompactCatalogRecovery
                     throw Corrupt(location.DataPageNumber, "The secondary catalog identity Name contains an incomplete Unicode code unit.");
                 }
 
+                bool pending = false;
+                for (int offset = 0; offset < stored.Length; offset += 2)
+                {
+                    ValidateUnicodeUnit(stored[offset] | (stored[offset + 1] << 8), ref pending, location.DataPageNumber);
+                }
+
+                if (pending)
+                {
+                    throw Corrupt(location.DataPageNumber, "The secondary catalog identity Name contains an unpaired Unicode surrogate.");
+                }
+
                 return;
             }
 
             bool compressed = true;
+            bool pendingSurrogate = false;
             for (int offset = 2; offset < stored.Length;)
             {
                 if (compressed)
                 {
-                    compressed = stored[offset++] != 0;
+                    int unit = stored[offset++];
+                    compressed = unit != 0;
+                    if (compressed)
+                    {
+                        ValidateUnicodeUnit(unit, ref pendingSurrogate, location.DataPageNumber);
+                    }
                 }
                 else
                 {
@@ -528,8 +584,18 @@ internal static class CompactCatalogRecovery
                     }
 
                     compressed = stored[offset] == 0 && stored[offset + 1] == 0;
+                    if (!compressed)
+                    {
+                        ValidateUnicodeUnit(stored[offset] | (stored[offset + 1] << 8), ref pendingSurrogate, location.DataPageNumber);
+                    }
+
                     offset += 2;
                 }
+            }
+
+            if (pendingSurrogate)
+            {
+                throw Corrupt(location.DataPageNumber, "The secondary catalog identity Name contains an unpaired compressed Unicode surrogate.");
             }
         }
 
@@ -537,14 +603,26 @@ internal static class CompactCatalogRecovery
         {
             (long Page, int Start) target = (location.DataPageNumber, location.RowStart);
             (long Page, int Row) header = (location.PageNumber, location.RowIndex);
-            if (this.payloadHeaders.TryGetValue(target, out (long Page, int Row) previous) && previous != header)
+            if (result.ConflictingPayloads.Contains(target))
             {
-                this.payloadHeaders[target] = default;
+                throw Corrupt(location.DataPageNumber, "A previously ambiguous catalog payload cannot be accepted through another index.");
+            }
+
+            if (result.PayloadHeaders.TryGetValue(target, out (long Page, int Row) previous) && previous != header)
+            {
+                _ = result.ConflictingPayloads.Add(target);
+                _ = result.ConflictingBookmarks.Add(previous);
+                _ = result.ConflictingBookmarks.Add(header);
                 _ = result.Rows.RemoveAll(row => (row.Location.DataPageNumber, row.Location.RowStart) == target);
                 throw Corrupt(location.DataPageNumber, "Distinct live catalog bookmarks reach the same moved-payload start; neither ambiguous recovery is accepted.");
             }
 
-            _ = this.payloadHeaders.TryAdd(target, header);
+            if (!result.PayloadHeaders.ContainsKey(target) && result.PayloadHeaders.Count >= budget.MaxObjects)
+            {
+                throw Limit(location.DataPageNumber, "Catalog moved-payload identity tracking exceeds MaxObjects across independent evidence passes.");
+            }
+
+            _ = result.PayloadHeaders.TryAdd(target, header);
         }
 
         private void Reference(long page, bool overflow)

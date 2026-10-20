@@ -775,7 +775,7 @@ public sealed class CompactInventoryTests
     }
 
     [Fact]
-    public async Task Inventory_CatalogRecoveryRefusesMismatchedStoredIdAndRetainsPositiveEvidence()
+    public async Task Inventory_CatalogRecoveryRetainsSecondaryEvidenceButRefusesDamagedDefinitionIdentity()
     {
         byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
         List<CompactStorageRecord> initial = await ScanAsync(bytes);
@@ -809,9 +809,10 @@ public sealed class CompactInventoryTests
                 return ValueTask.CompletedTask;
             },
             Ct));
-        Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
-        Assert.Equal(item.PageNumber, error.ErrorInfo.PageNumber);
-        Assert.DoesNotContain(records, record => record.Kind == "catalog-object" && record.Name == "Items");
+        Assert.Equal(JetErrorCode.CorruptTableDefinition, error.ErrorCode);
+        Assert.Equal(item.ObjectId + 1, error.ErrorInfo.PageNumber);
+        Assert.Contains(records, record => record.Kind == "catalog-object" && record.Name == "Items" && record.ObjectId == item.ObjectId + 1);
+        Assert.Contains(records, record => record.Role == "catalog-recovered-bookmark" && record.Detail!.Contains("ParentIdName", StringComparison.Ordinal));
         Assert.Contains(records, record => record.Kind == "catalog-object" && record.PageNumber == item.PageNumber);
         Assert.Contains(records, record => record.Kind == "diagnostic" && record.Detail!.Contains("key disagrees", StringComparison.Ordinal));
         Assert.Equal(original, bytes);

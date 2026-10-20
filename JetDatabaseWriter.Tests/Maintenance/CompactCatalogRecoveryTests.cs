@@ -10,6 +10,8 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Maintenance;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -251,7 +253,7 @@ public sealed class CompactCatalogRecoveryTests
 
         DamageMovedOwners(bytes, format, damage == "payload-intermediate-alias" ? 2 : 1);
         byte[] original = bytes.ToArray();
-        CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format);
+        CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format, allowSecondaryIndex: secondary);
         Assert.DoesNotContain(recovered.Rows, row => row.Identity.PageNumber == target.PageNumber && row.Identity.RowIndex == target.RowIndex);
         Assert.NotEmpty(recovered.Diagnostics);
         Assert.Equal(original, bytes);
@@ -447,6 +449,106 @@ public sealed class CompactCatalogRecoveryTests
             catalog.LogicalIndexes.ToList()));
         Assert.Empty(recovered.Rows);
         Assert.Contains(recovered.Diagnostics, diagnostic => diagnostic.Reason.Contains("collation is unsupported", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task SecondaryIdentityRecoveryRunsWhenAuditedIdGraphHasAStaleStoredKey()
+    {
+        (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: true);
+        DamageMovedOwners(bytes, format, 2);
+        int payload = bytes.Length - format.PageSize;
+        int start = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(payload + format.DataPage.RowsStart, 2)) & Constants.DataPage.RowOffsetMask;
+        int storedId = checked((int)(target.Id ^ 0x10000));
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(payload + start + format.RowFields.NumCols, 4), storedId);
+        CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format);
+        CompactCatalogRecovery.RecoveredRow evidence = Assert.Single(recovered.Rows, row => row.Identity.PageNumber == target.PageNumber && row.Identity.RowIndex == target.RowIndex);
+        Assert.Equal(storedId, evidence.Identity.Id);
+        Assert.Equal("ParentIdName", evidence.IdentityKey);
+        Assert.Contains(recovered.Diagnostics, diagnostic => diagnostic.Reason.Contains("key disagrees", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(0xD800)]
+    [InlineData(0xDC00)]
+    public async Task SecondaryIdentityRecoveryRefusesLossyFixedNameEvenWhenReplacementKeyMatches(int surrogate)
+    {
+        (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: false);
+        await RemoveIdRootAsync(bytes, format);
+        await using DatabaseFile file = Open(bytes);
+        TDefImage catalog = Assert.IsType<TDefImage>(await file.TableDefs.ReadImageAsync(2, Ct));
+        ColumnInfo originalName = catalog.Definition.FindColumn("Name")!;
+        ColumnInfo parent = catalog.Definition.FindColumn("ParentId")!;
+        int payload = bytes.Length - format.PageSize;
+        int start = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(payload + format.DataPage.RowsStart, 2)) & Constants.DataPage.RowOffsetMask;
+        Assert.True(RowDecodePlan.TryParseRowLayout(format.RowFields, bytes, payload + start, format.PageSize - start, hasVarColumns: true, out RowLayout layout));
+        ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(format.RowFields, bytes, payload + start, format.PageSize - start, layout, originalName);
+        Assert.Equal(0, slice.DataLen & 1);
+        ColumnInfo name = originalName with { Flags = (byte)(originalName.Flags | Constants.ColumnDescriptorFlags.Fixed), FixedOff = slice.DataStart - format.RowFields.NumCols, Size = slice.DataLen };
+        for (int offset = 0; offset < slice.DataLen; offset += 2)
+        {
+            BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(payload + start + slice.DataStart + offset, 2), checked((ushort)(offset == 0 ? surrogate : 'A')));
+        }
+
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(payload + start + layout.VarTableStart + ((layout.VarLen - 1) * 2), 2), checked((ushort)(slice.DataStart + slice.DataLen)));
+        string replacementName = "\uFFFD" + new string('A', (slice.DataLen / 2) - 1);
+        Assert.Equal(replacementName, ScalarColumnReader.DecodeSimpleColumnValue(format, bytes, payload + start, format.PageSize - start, name));
+        TDefIndexDescriptor index = Assert.Single(catalog.RealIndexes, candidate => candidate.Columns.Count == 2 && candidate.Columns[0].ColNum == parent.ColNum && candidate.Columns[1].ColNum == name.ColNum);
+        byte[] key = [.. IndexKeyEncoder.EncodeColumnEntry(format, parent, checked((int)target.ParentId), index.Columns[0].Ascending), .. IndexKeyEncoder.EncodeColumnEntry(format, name, replacementName, index.Columns[1].Ascending)];
+        IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new IndexEntry(key, target.PageNumber, checked((byte)target.RowIndex))], enablePrefixCompression: true).CopyTo(bytes, checked((int)index.RootPage * format.PageSize));
+        DamageMovedOwners(bytes, format, 1);
+        CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format, alterCatalog: image => new(
+            image.CopyBytes(),
+            image.Header,
+            image.Columns.Select(column => column.ColNum == name.ColNum ? name : column).ToList(),
+            image.HasDeletedColumns,
+            image.Issues,
+            image.IndexSection,
+            image.RealIndexes.ToList(),
+            image.LogicalIndexes.ToList()));
+        Assert.DoesNotContain(recovered.Rows, row => row.Identity.PageNumber == target.PageNumber && row.Identity.RowIndex == target.RowIndex);
+        Assert.NotEmpty(recovered.Diagnostics);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SecondaryIdentityRecoveryCannotResurrectPrimaryConflictsOmittedBySecondaryIndex(bool payloadAlias)
+    {
+        (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: false);
+        await using DatabaseFile file = Open(bytes);
+        TDefImage catalog = Assert.IsType<TDefImage>(await file.TableDefs.ReadImageAsync(2, Ct));
+        ColumnInfo id = catalog.Definition.FindColumn("Id")!;
+        ColumnInfo parent = catalog.Definition.FindColumn("ParentId")!;
+        ColumnInfo name = catalog.Definition.FindColumn("Name")!;
+        TDefIndexDescriptor identityIndex = Assert.Single(catalog.RealIndexes, index => index.Columns.Count == 1 && index.Columns[0].ColNum == id.ColNum);
+        TDefIndexDescriptor secondary = Assert.Single(catalog.RealIndexes, index => index.Columns.Count == 2 && index.Columns[0].ColNum == parent.ColNum && index.Columns[1].ColNum == name.ColNum);
+        int header = checked((int)target.PageNumber * format.PageSize);
+        int count = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(header + format.DataPage.NumRows, 2));
+        int other = Enumerable.Range(target.RowIndex + 1, count - target.RowIndex - 1).First(row =>
+            (BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(header + format.DataPage.RowsStart + (row * 2), 2)) & Constants.DataPage.NonLiveRowFlags) == 0);
+        int slot = header + format.DataPage.RowsStart + (other * 2);
+        int start = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(slot, 2)) & Constants.DataPage.RowOffsetMask;
+        int payload = bytes.Length - format.PageSize;
+        int payloadStart = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(payload + format.DataPage.RowsStart, 2)) & Constants.DataPage.RowOffsetMask;
+        byte[] stored = bytes.AsSpan(payload + payloadStart).ToArray();
+        int secondPayloadPage = payload / format.PageSize;
+        if (!payloadAlias)
+        {
+            secondPayloadPage++;
+            Array.Resize(ref bytes, bytes.Length + format.PageSize);
+            SetPayload(bytes.AsSpan(bytes.Length - format.PageSize, format.PageSize), format, stored, Constants.DataPage.DeletedRowFlag);
+            byte[] idKey = IndexKeyEncoder.EncodeColumnEntry(format, id, checked((int)target.Id), identityIndex.Columns[0].Ascending);
+            IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new(idKey, target.PageNumber, checked((byte)target.RowIndex)), new(idKey, target.PageNumber, checked((byte)other))], enablePrefixCompression: true).CopyTo(bytes, checked((int)identityIndex.RootPage * format.PageSize));
+        }
+
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(slot, 2), checked((ushort)(start | Constants.DataPage.OverflowRowFlag)));
+        WritePointer(bytes.AsSpan(header + start, 4), secondPayloadPage, 0);
+        byte[] secondaryKey = [.. IndexKeyEncoder.EncodeColumnEntry(format, parent, checked((int)target.ParentId), secondary.Columns[0].Ascending), .. IndexKeyEncoder.EncodeColumnEntry(format, name, target.Name, secondary.Columns[1].Ascending)];
+        IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new(secondaryKey, target.PageNumber, checked((byte)target.RowIndex))], enablePrefixCompression: true).CopyTo(bytes, checked((int)secondary.RootPage * format.PageSize));
+        DamageMovedOwners(bytes, format, payloadAlias ? 1 : 2);
+        CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format);
+        Assert.DoesNotContain(recovered.Rows, row => row.Identity.PageNumber == target.PageNumber && row.Identity.RowIndex == target.RowIndex);
+        Assert.NotEmpty(recovered.Diagnostics);
     }
 
     [Theory]
