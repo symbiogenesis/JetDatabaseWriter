@@ -153,8 +153,10 @@ unchecked.
 
 A row never spans pages, so it is at most the page size less the data-page
 header and one row-offset slot: 2,036 bytes on Jet3 and 4,080 on Jet4/ACE
-(`DataPageLayout.MaxRowLength`). MEMO values over 1,024 bytes and OLE
-values over 256 bytes go to LVAL pages and take a 12-byte header in the row.
+(`DataPageLayout.MaxRowLength`). MEMO and byte-array OLE payloads over the
+native 64 stored-byte inline limit go to LVAL pages and take a 12-byte
+descriptor in the row. The limit includes a calculated value's envelope;
+ordinary compressed Memo is measured by its encoded bytes.
 `TableRowStore.EncodeRow` serializes the row with a zeroed placeholder for
 each such header, with no I/O. While the row is longer than a page, it
 moves the largest MEMO or byte-array OLE value still inline (the first of

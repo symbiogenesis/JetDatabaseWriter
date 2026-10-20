@@ -73,11 +73,17 @@ be retained only after the complete independent Id-index audit establishes its
 ordered leaf chain, bookmark order and conservative key routing. A late index
 failure discards candidates that relied on damaged moved owners. Deleted-slot
 geometry, complete signed Id matching and cross-bookmark alias checks still
-apply. An intact original owner with damaged moved ownership remains a physical
-catalog traversal refusal before this fallback. Recovery observations and
+apply. An intact original owner with damaged moved ownership now defers that bookmark
+to independent index recovery while retaining other readable physical rows.
+When the Id index cannot supply complete independent evidence, a declared unique
+ParentIdName index can corroborate the full stored ParentId/Name key using its
+supported native collation. That path requires complete graph, leaf-chain,
+bookmark-order and routing audits and lossless complete stored Name text;
+unsupported or damaged text/collation withholds recovery. The signed Id remains
+part of the referenced raw row. Recovery observations and
 diagnostics retain that ambiguity; they do not repair
 page headers or prove exclusive ownership. Positive map conflicts
-without sufficient independent evidence still refuse. Damaged Id indexes,
+without sufficient independent evidence still refuse. Unavailable or damaged independent Id and ParentIdName indexes,
 unproven moved-payload ownership and missing independent references can still hide
 identities. This scan does not prove catalog completeness or authorize
 reclaiming any page.
@@ -99,10 +105,10 @@ in the corresponding TODO item.
 
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
-| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map inspection; independent catalog Id-index identity recovery despite damaged headers and map hints, including bounded moved chains with intact owners or complete independently audited Id-index evidence despite damaged moved-payload owners; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/field/LVAL/index work and simultaneous storage through local-table orchestration | S1: complete remaining public-scan accounting and catalog recovery when independent index evidence or moved-payload ownership is unavailable; qualify runtime/pool and caller-owned memory separately |
-| Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory refusal; bounded raw row and field streaming with retained assignment states; bounded calculated ResultType hydration and complete defined LVAL-chain observations, including trailing storage; private dense raw-row packing with original-header bookmark mappings and independent reopened raw-allocation/ledger comparison; complete raw LVAL staging with retargeted descriptor/chain pointers installed in verified packed rows and per-column allocation observations; independent reopened data/LVAL byte and private allocation coverage validation | S3/F8 and the bounded raw-copy part of I6: interpret native error envelopes independently of Null and damaged values without losing their raw representation; assemble relocated fields and LVAL allocations with catalog/TDEF/maps into a complete compact copy |
+| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map inspection; independent catalog Id and unique ParentIdName key evidence despite damaged headers/map hints, including intact original headers with damaged moved owners and complete independently audited key/chain/routing evidence; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/field/LVAL/index work and simultaneous storage through local-table orchestration | S1: complete remaining public-scan accounting and catalog recovery when physical ownership and both supported independent key paths are unavailable; qualify runtime/pool and caller-owned memory separately |
+| Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory refusal; bounded raw row and field streaming with retained assignment states; bounded calculated ResultType hydration and complete defined LVAL-chain observations, including trailing storage; private dense raw-row packing with original-header bookmark mappings and independent reopened raw-allocation/ledger comparison; complete raw LVAL staging with retargeted descriptor/chain pointers installed in verified packed rows and per-column allocation observations; independent reopened data/LVAL byte and private allocation coverage validation; bounded per-table DATA/LVAL/map assembly with original-column allocation-ledger comparison and a patched pinned definition image | S3/F8 and the bounded raw-copy part of I6: interpret native error envelopes independently of Null and damaged values without losing their raw representation; install staged table images and assemble catalog, index and global allocation references into a complete compact copy |
 | Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; retained continuation headers and original trailing padding during chain writes; complete known table/index/LVAL pointer patching within pinned raw definitions | S7/S9: complete schema-rewrite descriptor/header/trailer preservation and inventory application, security, replication and unknown objects |
-| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key graph, entry-edge fence and observed leaf-chain checks; separate complete observed-edge key-envelope, conservative key-routing and bookmark-inclusive order proofs; bounded same-owner bookmark-target validation; cross-root declared-owner and incoming-reference observations; stored-key staging with disk-backed fences and monotone disk-backed row-bookmark lookup; bounded private native usage-map construction from ordered allocation runs | I2: prove safe sharing and complete incoming-reference ownership beyond known declarations, complete native separator/alias and stored-key/row correspondence validation, and assemble relocated data/index allocations with maps and metadata; F9 only where keys must be regenerated |
+| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key graph, entry-edge fence and observed leaf-chain checks; separate complete observed-edge key-envelope, conservative key-routing and bookmark-inclusive order proofs; bounded same-owner bookmark-target validation; cross-root declared-owner and incoming-reference observations; stored-key staging with disk-backed fences and monotone disk-backed row-bookmark lookup; independent reopened private stored-key/bookmark, child-maximum and allocation coverage validation; bounded private native usage-map construction from ordered allocation runs and independent reopened exact membership/allocation validation | I2: prove safe sharing and complete incoming-reference ownership beyond known declarations, complete native separator/alias and stored-key/row correspondence validation, and assemble relocated data/index allocations with maps and metadata; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
 | Replace the source safely | Private staging, flushed backups and process-interruption tests | E4/F6 and the file-recovery part of I15: coordination, recovery discovery, namespace persistence and actual power-interruption evidence |
 
@@ -270,6 +276,19 @@ staging result. Failure may leave private partial bytes. Whole-database
 relocation records, index/map ownership, native acceptance beyond controlled
 trees and destination validation remain required before publication.
 
+`CompactRawIndexValidator` independently audits a reopened private tree and
+compares every leaf's stored key and relocated bookmark with immutable original
+observations and a separately reopened row ledger. It also compares every
+intermediate entry with its independently read child maximum and requires exact
+contiguous level, sibling, tail, root, owner, height and allocation coverage.
+Original entries must come from completed independent source observations;
+builder output and fence scratch cannot serve as that evidence. Raw graph work,
+canonical comparison bytes, repeated destination reads, levels and simultaneous
+storage are bounded; row-ledger lookup retains its own cumulative read allowance.
+The proof applies to the private builder layout. It preserves supplied keys
+without proving source-entry completeness, their semantic correspondence to
+rows, global ownership or complete database validity.
+
 `CompactRawDataBuilder` streams one table through the discovery session into
 dense direct-row pages appended to a separate private decrypted destination.
 It preserves exact row slices and records original header bookmarks, including
@@ -346,6 +365,17 @@ not included in that map's membership; global allocation assembly must account
 for it separately. Native representability, cancellation and flush failures
 leave private partial bytes and return no completed result.
 
+`CompactUsageMapValidator` independently reads a reopened private map against
+immutable ordered allocation runs. It checks native row geometry, every set bit,
+exact membership and count agreement, and complete sequential private bitmap
+coverage. Missing or extra members, aliased or external bitmap pointers,
+uncovered pages and unnecessary empty reference bitmaps refuse completion.
+Expected runs are supplied independently; deriving them from the map under test
+would not establish the comparison. Fixed page storage, inspected bitmap bytes
+(including zeroes), enumeration and requested read bytes (including partial-read
+retries) have separate admission. This validates the builder's private layout,
+not arbitrary native maps, expected-run ownership or global allocation state.
+
 `CompactTDefReferencePatcher` replaces the table map pair, every physical index
 root/map and every existing known column LVAL map pair in a copied raw logical
 definition. Complete descriptor/trailer boundaries and ordered complete
@@ -360,6 +390,31 @@ required. Focused Jet3/Jet4/ACE composition checks clone a writer-created source
 append packed data/maps, patch a pinned definition, then reopen through ordinary
 map-selected reads. They preserve the original storage and every unrelated prefix
 byte; they do not update global allocation accounting or establish reclamation.
+
+`CompactRawTableBuilder` composes packed DATA rows, the complete row relocation
+ledger, raw LVAL relocation, table maps, existing per-column LVAL maps and a
+pointer-only patched logical TDEF image. A fixed twelve-byte disk-capable ledger
+records each external value's original column and appended page range. Repeated
+per-column scans build ordered maps without retaining a table's allocations in
+memory; free-space maps use the staged pages' actual row capacity. Output pages
+and bytes are admitted across all phases, and private destination/ledger read
+requests share cumulative admission. Parser storage, retained map results and
+image copies have conservative working-storage admission before staging.
+Index replacements remain caller-verified inputs, and an external column without
+an existing verified native map record refuses instead of inventing metadata.
+
+`CompactRawTableAllocationValidator` independently rescans source fields and
+reopened DATA/LVAL rows, compares every per-column ledger record with the
+independently covered destination range, and requires complete ledger coverage.
+Changing or swapping column identities, omitting/adding records or changing page
+ranges refuses even when all raw row and LVAL bytes still compare. The immutable
+validated ledger can then provide expected runs for separate reopened map
+validation. Its fixed ledger buffer and nested raw comparison share the local
+working allowance; source-session admission and ledger read work remain bounded.
+These components return private staging/comparison evidence. The caller still
+must install the patched image on its original pinned TDEF chain, assemble
+catalog/index/global allocation references, prove reclaimability and validate
+the whole destination. Original/global storage remains pinned.
 
 Individual attachment editing/history (R8), query planning, cache performance,
 benchmarks and the custom-stream recovery contract are not prerequisites for a

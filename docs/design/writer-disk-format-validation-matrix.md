@@ -278,7 +278,13 @@ conflicting identities do not authorize recovery. Missing independent index
 evidence remains a gap. Damaged original and moved-payload owner headers can
 retain identities only with complete independent Id-index ordering/routing
 evidence; late index corruption discards those candidates. Intact original
-headers with damaged moved-payload owners still refuse before recovery. `storage-audit` consumes the stream into a bounded partial or completed
+headers with damaged moved-payload owners defer to independent index recovery.
+Damaged copies of the existing native Jet3/Jet4/ACE specimens additionally check
+unique ParentIdName fallback when the Id root is missing or corrupt, with exact
+stored keys under a supported declared collation and a completely audited graph,
+leaf chain, bookmark order and routing. Key mismatches, aliases, incomplete or
+lossy Name text and unsupported collations withhold that recovery. Both key paths
+unavailable still leaves identities unresolved. `storage-audit` consumes the stream into a bounded partial or completed
 NDJSON inventory with bounded record serialization. Every region remains pinned;
 neither this phase nor its completion marker proves full row/LVAL/index reachability or permits
 relocation, reclamation, repair or replacement.
@@ -335,6 +341,16 @@ fixtures. This establishes observed target readability for those files, not
 key/value correspondence, missing-entry detection, global ownership or native
 acceptance of a managed compact copy.
 
+`CompactRawIndexValidatorTests` independently compares reopened private trees
+with original stored keys and relocated bookmarks on Jet3/Jet4/ACE, including
+stored observations from Microsoft-authored catalog fixtures and multilevel
+duplicate opaque keys. Altered keys/bookmarks, child maxima, owner, root, tails,
+height and uncovered pages refuse. Reused source buffers, missing relocations,
+early EOF, partial-read accounting, budgets, changing lengths, cancellation and
+real I/O errors are covered. The result establishes complete private allocation
+coverage and preservation of supplied observations, not source completeness,
+key/value semantics, global ownership or native acceptance of a compact database.
+
 `CompactLongValueAuditTests` checks preservation observations for complete column
 slices, defined external references and complete external rows, including
 zero-length descriptors, trailing bytes and extra chain rows. Synthetic dangling
@@ -361,7 +377,7 @@ cumulative payload/schema limits, unknown result types and property-copy bounds.
 The archived Access calculated fixture now exposes its stored Memo results to
 automatic raw LVAL discovery without expression evaluation. Accepted recovered
 catalog bookmarks, including damaged original and moved-payload owners backed
-by complete Id-index evidence, also feed property hydration and raw field scans.
+by complete independent catalog-key evidence, also feed property hydration and raw field scans.
 These regressions mutate archived native fixture copies; they preserve source
 hashes and withhold ordinary same-owner bookmark validation.
 
@@ -398,9 +414,27 @@ including wide logical definitions, counters and relationship descriptors.
 These synthetic checks establish composable map/reference staging; they do not
 prove global allocation accounting, reclaimability or a complete native result.
 
+`CompactUsageMapValidatorTests` independently compares reopened private INLINE
+and REFERENCE layouts against ordered allocation runs on Jet3/Jet4/ACE. Changed
+members, counts, row ownership/directory geometry, aliased or external bitmap
+pointers, uncovered allocations and extra empty bitmaps refuse. Empty maps,
+partial reads, aggregate work/storage/read limits, cancellation and real I/O
+propagation are covered. This establishes exact supplied map membership and
+private allocation coverage; the expected runs' ownership and whole-database
+allocation accounting remain separate requirements.
 
 `CompactStagedTableCompositionTests` combines raw packing, native table maps and
 pinned TDEF patches on writer-created Jet3/Jet4/ACE tables. Reopened ordinary
 reads select only the staged DATA pages and retain every expected row, while
 source bytes and unrelated destination prefix bytes remain exact. Original
 storage remains pinned; this is not a globally reallocated or compacted file.
+
+`CompactRawTableBuilderTests` additionally composes mixed inline/spilled Memo
+and OLE values with per-column native maps and pinned definition images across
+Jet3/Jet4/ACE. Reopened raw allocation, independent original-column ledger and
+exact map membership checks precede ordinary map-selected row reads. Altered or
+swapped column records, missing/extra/truncated records and changed ranges refuse
+despite unchanged raw values. Aggregate output/map growth and conservative
+working-storage boundaries are checked separately. These are controlled
+writer-created tables; original storage remains pinned and no global allocation
+or reclaimability verdict is implied.
