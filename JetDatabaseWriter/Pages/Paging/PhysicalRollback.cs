@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
 #endif
 
-/// <summary>Owns physical rollback and its raw file snapshot or stream before-images.</summary>
+/// <summary>Owns physical rollback and its selective raw file or stream before-images.</summary>
 internal sealed class PhysicalRollback : IAsyncDisposable
 {
     private readonly IPageStore store;

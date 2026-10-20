@@ -10,8 +10,39 @@ using Xunit;
 /// <summary>Checks durable raw rollback and refusal of conflicting content.</summary>
 public sealed class PersistentRollbackJournalTests
 {
+    /// <summary>Preparation stores one hash per original page and captures raw bytes only for changed pages.</summary>
+    [Fact]
+    public void Create_LargeDatabase_StoresManifestAndSelectiveBeforeImages()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
+        const int pageSize = 2048;
+        const int pageCount = 1024;
+        File.WriteAllBytes(path, new byte[pageSize * pageCount]);
+        try
+        {
+            using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using (var journal = PersistentRollbackJournal.Create(database, pageSize))
+            {
+                long preparedLength = new FileInfo(path + ".jdw-journal").Length;
+                Assert.Equal(128L + (32L * pageCount), preparedLength);
+                journal.RecordBeforeWrite(pageSize, new byte[pageSize]);
+                long changedLength = new FileInfo(path + ".jdw-journal").Length;
+                Assert.Equal(preparedLength + (2L * (pageSize + 40)), changedLength);
+                journal.RecordBeforeWrite(pageSize, new byte[pageSize]);
+                Assert.Equal(changedLength + pageSize + 40, new FileInfo(path + ".jdw-journal").Length);
+            }
+
+            PersistentRollbackJournal.Recover(database);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(path + ".jdw-journal");
+        }
+    }
+
 #pragma warning disable CA1849 // Synchronous device flush and raw reads model interrupted recovery.
-    /// <summary>An authorized removed tail is restored from the raw snapshot.</summary>
+    /// <summary>An authorized removed tail is restored from raw before-images.</summary>
     /// <param name="restart">Whether restoration already started.</param>
     /// <param name="partialRecord">Whether an interrupted append remains.</param>
     [Theory]
@@ -132,7 +163,7 @@ public sealed class PersistentRollbackJournalTests
             using (var interrupted = new ReplayFaultStream(path))
             {
                 Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(interrupted));
-                Assert.Equal(8192, interrupted.Length);
+                Assert.Equal(6144, interrupted.Length);
                 Assert.Equal(1, interrupted.ReplayWrites);
                 Assert.True(File.Exists(path + ".jdw-journal"));
             }
@@ -264,13 +295,13 @@ public sealed class PersistentRollbackJournalTests
         }
     }
 
-    /// <summary>Snapshot, record, identity and hostile size corruption are refused without writes.</summary>
+    /// <summary>Manifest, record, identity and hostile size corruption are refused without writes.</summary>
     /// <param name="location">The journal byte offset to corrupt.</param>
     [Theory]
     [InlineData(8)]
     [InlineData(24)]
     [InlineData(128)]
-    [InlineData(8330)]
+    [InlineData(266)]
     public void Recover_CorruptJournal_RefusesWithoutWrites(int location)
     {
         string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
@@ -703,11 +734,11 @@ public sealed class PersistentRollbackJournalTests
     }
 
     /// <summary>Invalid recovery content preserves evidence and never authorizes coordinated cleanup.</summary>
-    /// <param name="corruptSnapshot">Whether the snapshot is corrupted rather than the database.</param>
+    /// <param name="corruptManifest">Whether the manifest is corrupted rather than the database.</param>
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void Recover_InvalidContent_DoesNotInvokeCleanup(bool corruptSnapshot)
+    public void Recover_InvalidContent_DoesNotInvokeCleanup(bool corruptManifest)
     {
         string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
         string sidecar = path + ".jdw-journal";
@@ -721,7 +752,7 @@ public sealed class PersistentRollbackJournalTests
                 journal.RecordBeforeWrite(0, original.AsSpan(0, 2048));
             }
 
-            if (corruptSnapshot)
+            if (corruptManifest)
             {
                 using var journal = new FileStream(sidecar, FileMode.Open, FileAccess.Write, FileShare.None);
                 journal.Position = 128;

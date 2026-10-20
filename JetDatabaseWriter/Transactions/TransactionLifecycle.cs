@@ -262,7 +262,7 @@ internal sealed class TransactionLifecycle(
     /// journal from the writer and replays each buffered page (in ascending
     /// page-number order) in place through the normal page-write pipeline, so
     /// that per-page encryption and cooperative byte-range locks are honoured,
-    /// then flushes. File-backed replay uses the persistent raw snapshot for
+    /// then flushes. File-backed replay uses selective persistent raw before-images for
     /// live rollback and crash recovery. Other stores retain raw before-images
     /// for in-process rollback after a write or flush failure.
     /// </summary>

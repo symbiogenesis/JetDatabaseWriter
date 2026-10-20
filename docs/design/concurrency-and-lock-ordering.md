@@ -176,10 +176,10 @@ successful recovery, the lifecycle restores the same writer state as a normal
 rollback and marks the transaction rolled back. If recovery also fails, the
 transaction remains neither committed nor rolled back and the writer rejects
 mutations with `WriterFaulted`. Disposal skips pending writes and container
-rewrap. Before-images use bounded memory followed by a DeleteOnClose temporary
-file on file-backed stores with in-place pages; other stores keep them in memory.
+rewrap. Non-file stores retain raw before-images in memory; physical shrinking
+can spill its custom-stream tail undo to a DeleteOnClose temporary file.
 Only raw stored bytes enter the log, so encrypted pages remain encrypted.
-File transactions additionally retain a persistent raw snapshot and flushed write intents in an adjacent `.jdw-journal`. The store records each encoded write before it reaches the database. In-process undo bypasses new intents because original bytes are already represented by the snapshot. Recovery validates all journal and database content before replay; an uncertain commit-decision failure preserves both files and faults the writer. See [transaction crash recovery](transaction-crash-recovery.md). The private temporary undo log alone remains insufficient for custom-stream or power-loss recovery.
+File transactions retain a persistent page-hash manifest, selective original raw page images and flushed write intents in an adjacent `.jdw-journal`. The store records each encoded write before it reaches the database. In-process undo bypasses new intents because original bytes are already captured and bound to the manifest. Recovery validates all journal and database content before replay; an uncertain commit-decision failure preserves both files and faults the writer. See [transaction crash recovery](transaction-crash-recovery.md). The private temporary undo log alone remains insufficient for custom-stream or power-loss recovery.
 
 ### Failed calls inside an explicit transaction
 
@@ -189,7 +189,7 @@ Under `mutationGate`, `RunInSavepointAsync` captures the insert hint, owned-map 
 
 Default row, table-schema, relationship and complex-item calls use the same private journal and commit-lock sequence above. At `max(64, PageCacheSize / 2)` buffered pages, the pager captures each page's first raw before-image and writes the batch, then releases its replay images. Work-phase failures and cancellation restore earlier spills and writer state; replay failures restore the original bytes and length. Each started physical batch and restoration ignores cancellation, while work and preparation between batches remain cancellable. File-backed statements always request a device flush before the journal commit decision. Other stores request it when `UseTransactionalWrites` is true. Private statements are exempt from the explicit transaction page budget; provisional zero reservations keep metadata without allocating page buffers.
 
-Initial database creation and physical tail shrinking use reference-counted write scopes with a separate lifecycle. Path creation publishes only a completely initialized, flushed staging file. File-backed shrinking prepares its own persistent snapshot and truncation intent under the pager frame gate, and records the committed result before cleanup. Encryption replacement also sits outside the statement path and retains an original backup through its replacement boundary.
+Initial database creation and physical tail shrinking use reference-counted write scopes with a separate lifecycle. Path creation publishes only a completely initialized, flushed staging file. File-backed shrinking prepares its own page-hash manifest, saved original tail pages and truncation intent under the pager frame gate, and records the committed result before cleanup. Encryption replacement also sits outside the statement path and retains an original backup through its replacement boundary.
 
 ### Reader operation
 

@@ -10,7 +10,7 @@ using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Pages.Paging;
 using Xunit;
 
-/// <summary>Checks live file rollback against its original raw recovery snapshot.</summary>
+/// <summary>Checks live file rollback against its selective original raw page images.</summary>
 public sealed class FileRollbackTests
 {
     private const int PageSize = 2048;
@@ -64,7 +64,7 @@ public sealed class FileRollbackTests
 
     /// <summary>Repeated encrypted statement spills share the durable original image.</summary>
     [Fact]
-    public async Task StatementSpills_UseRecoverySnapshotAndRestoreFirstRawImage()
+    public async Task StatementSpills_UseSelectiveJournalAndRestoreFirstRawImage()
     {
         string path = Path.Combine(Path.GetTempPath(), "jdw-file-rollback-" + Guid.NewGuid().ToString("N") + ".mdb");
         byte[] original = EncryptedPages(80);

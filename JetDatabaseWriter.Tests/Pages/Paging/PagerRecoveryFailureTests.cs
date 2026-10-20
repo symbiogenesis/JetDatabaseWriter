@@ -86,9 +86,9 @@ public sealed class PagerRecoveryFailureTests
         }
     }
 
-    /// <summary>Cancellation during snapshot preparation still precedes the first physical shrink.</summary>
+    /// <summary>Cancellation during manifest preparation still precedes the first physical shrink.</summary>
     [Fact]
-    public async Task Shrink_CancellationDuringSnapshot_PreservesOriginalImage()
+    public async Task Shrink_CancellationDuringManifest_PreservesOriginalImage()
     {
         string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
         byte[] original = new byte[PageSize * 2];

@@ -16,7 +16,7 @@ using JetDatabaseWriter.Infrastructure;
 /// <remarks>
 /// <para>
 /// Savepoint prior images rewind the in-memory journal. File-backed stores use
-/// one persistent raw snapshot for live rollback and crash recovery, flushed
+/// one persistent manifest and selective raw before-images for live rollback and crash recovery, flushed
 /// before physical writes. Other stores retain raw before-images for in-process
 /// undo. A subsequent writer open restores interrupted file transactions before
 /// parsing the database header.
