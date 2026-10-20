@@ -127,13 +127,20 @@ internal static class CompactStorageInventory
             _ = await this.ValidateDefinitionChainAsync(2, budget.MaxSchemaBytes, cancellationToken).ConfigureAwait(false);
             TDefImage catalog = await tableDefs.ReadImageAsync(2, budget.MaxSchemaBytes, cancellationToken).ConfigureAwait(false)
                 ?? throw Corrupt(2, "The catalog definition cannot be read.");
-            List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(
-                catalog.Definition,
-                cancellationToken,
-                budget.MaxObjects,
-                maxNameLength: 64,
-                scanPhysicalPages: true,
-                admitRow: location => budget.Accounting?.Charge(CompactDiscoveryCharge.CatalogObjects, 1, location.PageNumber)).ConfigureAwait(false);
+            CompactCatalogRecovery.Result physical = await CompactCatalogRecovery.ScanPhysicalAsync(pages, format, catalog, catalogRows, budget, budget.MaxReferences - this.references, budget.MaxMapSteps - this.mapSteps, cancellationToken).ConfigureAwait(false);
+            this.references += physical.References;
+            this.mapSteps += physical.DirectorySlots + physical.OverflowHops;
+            var rows = new List<CatalogRow>(physical.Rows.Count);
+            foreach (CompactCatalogRecovery.RecoveredRow evidence in physical.Rows)
+            {
+                rows.Add(evidence.Identity);
+            }
+
+            foreach ((long page, string reason) in physical.Diagnostics)
+            {
+                await this.DiagnosticAsync(page, reason, cancellationToken).ConfigureAwait(false);
+            }
+
             CompactCatalogRecovery.Result recovered = await CompactCatalogRecovery.ScanAsync(pages, format, catalog, catalogRows, budget, rows, budget.MaxReferences - this.references, budget.MaxMapSteps - this.mapSteps, budget.MaxWorkingBytes - inventoryReservation, cancellationToken).ConfigureAwait(false);
             this.references += recovered.References;
             this.mapSteps += recovered.DirectorySlots + recovered.OverflowHops;
@@ -151,7 +158,7 @@ internal static class CompactStorageInventory
                 recoveredCounts[identity.PageNumber] = count + 1;
                 if (count == 0)
                 {
-                    await this.DiagnosticAsync(identity.PageNumber, "Catalog identities are recovered from an Id index bookmark and matching stored Id despite physical owner " + evidence.PhysicalOwner + "; this proves neither exclusive ownership nor complete catalog coverage. All storage remains pinned.", cancellationToken).ConfigureAwait(false);
+                    await this.DiagnosticAsync(identity.PageNumber, "Catalog identities are recovered from a " + evidence.IdentityKey + " index bookmark and matching stored identity fields despite uncertain header or moved-payload ownership (header owner " + evidence.PhysicalOwner + "); this proves neither exclusive ownership nor complete catalog coverage. All storage remains pinned.", cancellationToken).ConfigureAwait(false);
                 }
 
                 if (count + 1 == evidence.LiveRowsOnPage)
@@ -168,9 +175,12 @@ internal static class CompactStorageInventory
                         TargetPageNumber = identity.PageNumber,
                         TargetRowIndex = identity.RowIndex,
                         ObjectId = identity.Id,
-                        Detail = evidence.HasDamagedMovedOwner
-                            ? "Reconstructed native Id-index bookmark and matching stored row Id despite damaged moved-payload owners, using complete audited Id-index chain, bookmark ordering and key-routing evidence. The compressed bookmark has no single physical offset; source headers are unchanged and ownership remains ambiguous."
-                            : "Reconstructed native Id-index bookmark and matching stored row Id, with verified intact catalog owner headers on moved-payload pages; the compressed bookmark does not have a single physical byte offset. The physical owner header is unchanged and ownership remains ambiguous.",
+                        Detail = evidence switch
+                        {
+                            { IdentityKey: "ParentIdName" } => "Reconstructed native ParentIdName bookmark and matching complete stored ParentId/Name key using the declared supported collation, complete audited index chain, bookmark ordering and key-routing evidence. The full signed Id is retained from that stored row. Source headers are unchanged and ownership remains ambiguous.",
+                            { HasDamagedMovedOwner: true } => "Reconstructed native Id-index bookmark and matching stored row Id despite damaged moved-payload owners, using complete audited Id-index chain, bookmark ordering and key-routing evidence. The compressed bookmark has no single physical offset; source headers are unchanged and ownership remains ambiguous.",
+                            _ => "Reconstructed native Id-index bookmark and matching stored row Id, with verified intact catalog owner headers on moved-payload pages; the compressed bookmark does not have a single physical byte offset. The physical owner header is unchanged and ownership remains ambiguous.",
+                        },
                     },
                     cancellationToken).ConfigureAwait(false);
                 if (recoveredCatalogVisitor is not null)

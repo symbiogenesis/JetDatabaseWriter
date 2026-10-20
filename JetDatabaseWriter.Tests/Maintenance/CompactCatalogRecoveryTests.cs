@@ -12,9 +12,12 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Maintenance;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueDecoding.Models;
 using Xunit;
 
 /// <summary>Native stored Id keys independently identify catalog rows after owner and hint damage.</summary>
@@ -106,17 +109,95 @@ public sealed class CompactCatalogRecoveryTests
     }
 
     [Theory]
-    [InlineData("live-payload")]
-    [InlineData("cycle")]
-    [InlineData("missing-payload")]
-    [InlineData("key-mismatch")]
-    [InlineData("payload-alias")]
-    [InlineData("payload-start-alias")]
-    [InlineData("payload-live-alias")]
-    [InlineData("payload-intermediate-alias")]
-    public async Task MovedCatalogIdentityRefusesUnprovenOrAmbiguousPayload(string damage)
+    [InlineData("Jet3Test.mdb", false)]
+    [InlineData("Jet3Test.mdb", true)]
+    [InlineData("Jackcess/adox_jet4.mdb", false)]
+    [InlineData("Jackcess/adox_jet4.mdb", true)]
+    [InlineData("Jackcess/V2007/complexDataTestV2007.accdb", false)]
+    [InlineData("Jackcess/V2007/complexDataTestV2007.accdb", true)]
+    public async Task InventoryRecoversIntactCatalogHeaderWhoseMovedPayloadOwnersAreDamaged(string relativePath, bool chained)
+    {
+        (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync(relativePath, chained);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(checked((int)target.PageNumber * format.PageSize) + format.DataPage.TDefOff, 4), 2);
+        DamageMovedOwners(bytes, format, chained ? 2 : 1);
+        byte[] original = bytes.ToArray();
+        await using DatabaseFile damaged = Open(bytes);
+        var records = new List<CompactStorageRecord>();
+        await CompactStorageInventory.ScanAsync(
+            damaged.Pages,
+            format,
+            damaged.TableDefs,
+            new(),
+            (record, _) =>
+            {
+                records.Add(record);
+                return ValueTask.CompletedTask;
+            },
+            Ct);
+        Assert.Contains(records, record => record.Kind == "catalog-object" && record.ObjectId == target.Id
+            && record.PageNumber == target.PageNumber && record.TargetRowIndex == target.RowIndex);
+        Assert.Contains(records, record => record.Role == "catalog-recovered-bookmark" && record.ObjectId == target.Id);
+        Assert.All(records, record => Assert.True(record.IsPinned));
+        Assert.Equal(original, bytes);
+    }
+
+    [Theory]
+    [InlineData("Jet3Test.mdb", false)]
+    [InlineData("Jet3Test.mdb", true)]
+    [InlineData("Jackcess/adox_jet4.mdb", false)]
+    [InlineData("Jackcess/adox_jet4.mdb", true)]
+    [InlineData("Jackcess/V2007/complexDataTestV2007.accdb", false)]
+    [InlineData("Jackcess/V2007/complexDataTestV2007.accdb", true)]
+    public async Task ParentIdNameIndexRecoversCatalogIdentityWhenIdEvidenceIsUnavailable(string relativePath, bool missingIdRoot)
+    {
+        (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync(relativePath, chained: true);
+        DamageMovedOwners(bytes, format, 2);
+        await using (DatabaseFile file = Open(bytes))
+        {
+            TDefImage catalog = Assert.IsType<TDefImage>(await file.TableDefs.ReadImageAsync(2, Ct));
+            int idColumn = catalog.Definition.FindColumn("Id")!.ColNum;
+            TDefIndexDescriptor id = Assert.Single(catalog.RealIndexes, index => index.Columns.Count == 1 && index.Columns[0].ColNum == idColumn);
+            Assert.InRange(id.Slot.FirstDpOffset, 0, format.PageSize - 4);
+            int damageOffset = missingIdRoot
+                ? (2 * format.PageSize) + id.Slot.FirstDpOffset
+                : checked((int)id.RootPage * format.PageSize) + 4;
+            bytes.AsSpan(damageOffset, 4).Clear();
+        }
+
+        byte[] original = bytes.ToArray();
+        CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format);
+        CompactCatalogRecovery.RecoveredRow evidence = Assert.Single(recovered.Rows, row => row.Identity == target);
+        Assert.True(evidence.HasDamagedMovedOwner);
+        Assert.Equal("ParentIdName", evidence.IdentityKey);
+        Assert.NotEmpty(recovered.Diagnostics);
+        Assert.Equal(original, bytes);
+    }
+
+    [Theory]
+    [InlineData("live-payload", false)]
+    [InlineData("cycle", false)]
+    [InlineData("missing-payload", false)]
+    [InlineData("key-mismatch", false)]
+    [InlineData("payload-alias", false)]
+    [InlineData("payload-start-alias", false)]
+    [InlineData("payload-live-alias", false)]
+    [InlineData("payload-intermediate-alias", false)]
+    [InlineData("live-payload", true)]
+    [InlineData("cycle", true)]
+    [InlineData("missing-payload", true)]
+    [InlineData("key-mismatch", true)]
+    [InlineData("payload-alias", true)]
+    [InlineData("payload-start-alias", true)]
+    [InlineData("payload-live-alias", true)]
+    [InlineData("payload-intermediate-alias", true)]
+    public async Task MovedCatalogIdentityRefusesUnprovenOrAmbiguousPayload(string damage, bool secondary)
     {
         (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: damage == "payload-intermediate-alias");
+        if (secondary)
+        {
+            await RemoveIdRootAsync(bytes, format);
+        }
+
         int header = checked((int)target.PageNumber * format.PageSize);
         int payload = bytes.Length - format.PageSize;
         int targetSlot = header + format.DataPage.RowsStart + (target.RowIndex * 2);
@@ -135,7 +216,15 @@ public sealed class CompactCatalogRecoveryTests
                 WritePointer(bytes.AsSpan(header + headerStart, 4), bytes.Length / format.PageSize, 0);
                 break;
             case "key-mismatch":
-                bytes[payload + payloadStart + format.RowFields.NumCols] ^= 1;
+                int field = format.RowFields.NumCols;
+                if (secondary)
+                {
+                    await using DatabaseFile file = Open(bytes);
+                    TDefImage catalog = Assert.IsType<TDefImage>(await file.TableDefs.ReadImageAsync(2, Ct));
+                    field += catalog.Definition.FindColumn("ParentId")!.FixedOff;
+                }
+
+                bytes[payload + payloadStart + field] ^= 1;
                 break;
             default:
                 int count = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(header + format.DataPage.NumRows, 2));
@@ -143,7 +232,7 @@ public sealed class CompactCatalogRecoveryTests
                     && (BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(header + format.DataPage.RowsStart + (row * 2), 2)) & Constants.DataPage.NonLiveRowFlags) == 0);
                 CompactCatalogRecovery.Result beforeAlias = await RecoverAsync(bytes, format);
                 CompactCatalogRecovery.RecoveredRow later = Assert.Single(beforeAlias.Rows, row => row.Identity.PageNumber == target.PageNumber && row.Identity.RowIndex == other);
-                Assert.True(target.Id < later.Identity.Id);
+                Assert.True(secondary || target.Id < later.Identity.Id);
                 int slot = header + format.DataPage.RowsStart + (other * 2);
                 int start = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(slot, 2)) & Constants.DataPage.RowOffsetMask;
                 BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(slot, 2), checked((ushort)(start | Constants.DataPage.OverflowRowFlag)));
@@ -163,7 +252,7 @@ public sealed class CompactCatalogRecoveryTests
         DamageMovedOwners(bytes, format, damage == "payload-intermediate-alias" ? 2 : 1);
         byte[] original = bytes.ToArray();
         CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format);
-        Assert.DoesNotContain(recovered.Rows, row => row.Identity == target);
+        Assert.DoesNotContain(recovered.Rows, row => row.Identity.PageNumber == target.PageNumber && row.Identity.RowIndex == target.RowIndex);
         Assert.NotEmpty(recovered.Diagnostics);
         Assert.Equal(original, bytes);
     }
@@ -198,6 +287,7 @@ public sealed class CompactCatalogRecoveryTests
         CompactCatalogRecovery.Result recovered = await RecoverAsync(
             bytes,
             format,
+            allowSecondaryIndex: false,
             decorateRecovery: pages => new ObservedPages(pages, number =>
             {
                 if (damage == "late-read" && reachedPayload && number != (bytes.Length / format.PageSize) - 1)
@@ -232,6 +322,131 @@ public sealed class CompactCatalogRecoveryTests
         CompactCatalogRecovery.Result expected = await CompactCatalogRecovery.ScanAsync(pages, format, catalog, rows, new(), physical, 100_000, 100_000, 512L * 1024 * 1024, Ct);
         Assert.Equal(2, expected.OverflowHops);
         await Assert.ThrowsAsync<JetLimitationException>(async () => await CompactCatalogRecovery.ScanAsync(pages, format, catalog, rows, new(), physical, expected.References - 1, 100_000, 512L * 1024 * 1024, Ct));
+    }
+
+    [Theory]
+    [InlineData("late-read")]
+    [InlineData("references")]
+    [InlineData("directory")]
+    [InlineData("cancel")]
+    [InlineData("io")]
+    public async Task SecondaryIdentityRecoveryRequiresCompleteAuditAndAggregateWork(string failure)
+    {
+        (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: true);
+        DamageMovedOwners(bytes, format, 2);
+        await RemoveIdRootAsync(bytes, format);
+        CompactCatalogRecovery.Result expected = await RecoverAsync(bytes, format);
+        Assert.Contains(expected.Rows, row => row.Identity == target && row.IdentityKey == "ParentIdName");
+        if (failure == "directory")
+        {
+            await Assert.ThrowsAsync<JetLimitationException>(async () => await RecoverAsync(bytes, format, maxDirectorySlots: expected.DirectorySlots + expected.OverflowHops - 1));
+            return;
+        }
+
+        if (failure == "references")
+        {
+            await Assert.ThrowsAsync<JetLimitationException>(async () => await RecoverAsync(bytes, format, maxReferences: expected.References - 1));
+            return;
+        }
+
+        bool reachedPayload = false;
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var io = new IOException("Secondary identity evidence read failed.");
+        IPageSource Observe(IPageSource pages) => new ObservedPages(pages, number =>
+        {
+            if (reachedPayload && number != (bytes.Length / format.PageSize) - 1)
+            {
+                if (failure == "io")
+                {
+                    throw io;
+                }
+
+                if (failure == "cancel")
+                {
+                    cancellation.Cancel();
+                }
+                else
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "Secondary identity evidence is corrupt after its positive candidate.");
+                }
+            }
+
+            reachedPayload |= number == (bytes.Length / format.PageSize) - 1;
+        });
+        Task<CompactCatalogRecovery.Result> RunAsync() => RecoverAsync(bytes, format, decorateRecovery: Observe, recoveryCancellation: cancellation.Token);
+        if (failure == "io")
+        {
+            Assert.Same(io, await Assert.ThrowsAsync<IOException>(RunAsync));
+        }
+        else if (failure == "cancel")
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(RunAsync);
+        }
+        else
+        {
+            CompactCatalogRecovery.Result recovered = await RunAsync();
+            Assert.DoesNotContain(recovered.Rows, row => row.Identity == target);
+            Assert.NotEmpty(recovered.Diagnostics);
+        }
+
+        Assert.True(reachedPayload);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SecondaryIdentityRecoveryRefusesUnicodeBytesIgnoredByOrdinaryTextDecoding(bool compressed)
+    {
+        (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: false);
+        await RemoveIdRootAsync(bytes, format);
+        await using DatabaseFile file = Open(bytes);
+        TDefImage catalog = Assert.IsType<TDefImage>(await file.TableDefs.ReadImageAsync(2, Ct));
+        ColumnInfo name = catalog.Definition.FindColumn("Name")!;
+        int payload = bytes.Length - format.PageSize;
+        int start = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(payload + format.DataPage.RowsStart, 2)) & Constants.DataPage.RowOffsetMask;
+        byte[] originalRow = bytes.AsSpan(payload + start).ToArray();
+        Assert.True(RowDecodePlan.TryParseRowLayout(format.RowFields, originalRow, 0, originalRow.Length, hasVarColumns: true, out RowLayout layout));
+        ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(format.RowFields, originalRow, 0, originalRow.Length, layout, name);
+        byte[] encodedName = format.EncodeText(target.Name, compress: compressed);
+        byte[] incompleteName = compressed ? [.. encodedName, 0, 0x41] : [.. encodedName, 0x41];
+        int delta = incompleteName.Length - slice.DataLen;
+        byte[] changed = new byte[originalRow.Length + delta];
+        originalRow.AsSpan(0, slice.DataStart).CopyTo(changed);
+        incompleteName.CopyTo(changed, slice.DataStart);
+        originalRow.AsSpan(slice.DataStart + slice.DataLen).CopyTo(changed.AsSpan(slice.DataStart + incompleteName.Length));
+        BinaryPrimitives.WriteUInt16LittleEndian(changed.AsSpan(layout.VarTableStart - 2 + delta, 2), checked((ushort)(layout.Eod + delta)));
+        for (int variable = 0; variable < layout.VarLen; variable++)
+        {
+            int oldOffset = layout.VarTableStart + ((layout.VarLen - 1 - variable) * 2);
+            int value = BinaryPrimitives.ReadUInt16LittleEndian(originalRow.AsSpan(oldOffset, 2));
+            BinaryPrimitives.WriteUInt16LittleEndian(changed.AsSpan(oldOffset + delta, 2), checked((ushort)(value + (variable > name.VarIdx ? delta : 0))));
+        }
+
+        Assert.Equal(target.Name, ScalarColumnReader.DecodeSimpleColumnValue(format, changed, 0, changed.Length, name));
+        SetPayload(bytes.AsSpan(payload, format.PageSize), format, changed, Constants.DataPage.DeletedRowFlag);
+        DamageMovedOwners(bytes, format, 1);
+        CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format);
+        Assert.DoesNotContain(recovered.Rows, row => row.Identity.PageNumber == target.PageNumber && row.Identity.RowIndex == target.RowIndex);
+        Assert.Contains(recovered.Diagnostics, diagnostic => diagnostic.Reason.Contains("incomplete", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task SecondaryIdentityRecoveryRefusesUnsupportedNameCollation()
+    {
+        (byte[] bytes, JetFormat format, _) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: true);
+        DamageMovedOwners(bytes, format, 2);
+        await RemoveIdRootAsync(bytes, format);
+        CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format, alterCatalog: catalog => new(
+            catalog.CopyBytes(),
+            catalog.Header,
+            catalog.Columns.Select(column => column.Name == "Name" ? column with { TextSortOrder = new(0x0411, 0, true) } : column).ToList(),
+            catalog.HasDeletedColumns,
+            catalog.Issues,
+            catalog.IndexSection,
+            catalog.RealIndexes.ToList(),
+            catalog.LogicalIndexes.ToList()));
+        Assert.Empty(recovered.Rows);
+        Assert.Contains(recovered.Diagnostics, diagnostic => diagnostic.Reason.Contains("collation is unsupported", StringComparison.Ordinal));
     }
 
     [Theory]
@@ -285,11 +500,11 @@ public sealed class CompactCatalogRecoveryTests
         (byte[] bytes, JetFormat format, CatalogRow target) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: true);
         DamageMovedOwners(bytes, format, 2);
         int checks = 0;
-        CompactCatalogRecovery.Result complete = await RecoverAsync(bytes, format, decorateRecovery: pages => new ObservedPages(pages, static _ => { }, () => checks++));
+        CompactCatalogRecovery.Result complete = await RecoverAsync(bytes, format, allowSecondaryIndex: false, decorateRecovery: pages => new ObservedPages(pages, static _ => { }, () => checks++));
         Assert.Contains(complete.Rows, row => row.Identity == target && row.HasDamagedMovedOwner);
         Assert.True(checks > 0);
         int repeatedChecks = 0;
-        CompactCatalogRecovery.Result interrupted = await RecoverAsync(bytes, format, decorateRecovery: pages => new ObservedPages(
+        CompactCatalogRecovery.Result interrupted = await RecoverAsync(bytes, format, allowSecondaryIndex: false, decorateRecovery: pages => new ObservedPages(
             pages,
             static _ => { },
             () =>
@@ -383,7 +598,17 @@ public sealed class CompactCatalogRecoveryTests
         pointer[3] = checked((byte)((page >> 16) & 0xFF));
     }
 
-    private static async Task<CompactCatalogRecovery.Result> RecoverAsync(byte[] bytes, JetFormat format, long maxDirectorySlots = 100_000, Func<IPageSource, IPageSource>? decorateRecovery = null, CancellationToken? recoveryCancellation = null)
+    private static async Task RemoveIdRootAsync(byte[] bytes, JetFormat format)
+    {
+        await using DatabaseFile file = Open(bytes);
+        TDefImage catalog = Assert.IsType<TDefImage>(await file.TableDefs.ReadImageAsync(2, Ct));
+        int idColumn = catalog.Definition.FindColumn("Id")!.ColNum;
+        TDefIndexDescriptor id = Assert.Single(catalog.RealIndexes, index => index.Columns.Count == 1 && index.Columns[0].ColNum == idColumn);
+        Assert.InRange(id.Slot.FirstDpOffset, 0, format.PageSize - 4);
+        bytes.AsSpan((2 * format.PageSize) + id.Slot.FirstDpOffset, 4).Clear();
+    }
+
+    private static async Task<CompactCatalogRecovery.Result> RecoverAsync(byte[] bytes, JetFormat format, long maxDirectorySlots = 100_000, bool allowSecondaryIndex = true, long maxReferences = 100_000, Func<IPageSource, IPageSource>? decorateRecovery = null, CancellationToken? recoveryCancellation = null, Func<TDefImage, TDefImage>? alterCatalog = null)
     {
         await using DatabaseFile damaged = Open(bytes);
         var pages = new CompactInventoryPageSource(damaged.Pages, format, 100_000);
@@ -391,8 +616,14 @@ public sealed class CompactCatalogRecoveryTests
         using var owned = new OwnedDataPages(pages, format, cacheResults: false);
         var rows = new CatalogRowReader(format, definitions, owned);
         TDefImage catalog = Assert.IsType<TDefImage>(await definitions.ReadImageAsync(2, Ct));
+        if (!allowSecondaryIndex)
+        {
+            catalog = new(catalog.CopyBytes(), catalog.Header, catalog.Columns.ToList(), catalog.HasDeletedColumns, catalog.Issues, catalog.IndexSection, catalog.RealIndexes.Where(index => index.Columns.Count == 1).ToList(), catalog.LogicalIndexes.ToList());
+        }
+
+        catalog = alterCatalog?.Invoke(catalog) ?? catalog;
         List<CatalogRow> physical = await rows.GetCatalogRowsAsync(catalog.Definition, Ct, scanPhysicalPages: true);
-        return await CompactCatalogRecovery.ScanAsync(decorateRecovery?.Invoke(pages) ?? pages, format, catalog, rows, new(), physical, 100_000, maxDirectorySlots, 512L * 1024 * 1024, recoveryCancellation ?? Ct);
+        return await CompactCatalogRecovery.ScanAsync(decorateRecovery?.Invoke(pages) ?? pages, format, catalog, rows, new(), physical, maxReferences, maxDirectorySlots, 512L * 1024 * 1024, recoveryCancellation ?? Ct);
     }
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
