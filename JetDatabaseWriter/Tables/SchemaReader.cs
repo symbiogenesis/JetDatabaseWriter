@@ -47,6 +47,9 @@ internal sealed class SchemaReader(
     TableReader tables,
     AsyncReentrantOperationGate operations)
 {
+    private const int RelationshipCacheCapacity = 4096;
+    private volatile RelationshipSnapshot? relationships;
+
     /// <summary>Reads the empty-name table validation property target.</summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -250,6 +253,13 @@ internal sealed class SchemaReader(
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         cancellationToken.ThrowIfCancellationRequested();
 
+        int generation = catalog.Generation;
+        RelationshipSnapshot? cached = this.relationships;
+        if (!tableDefs.VerifyOnHit && cached?.Generation == generation)
+        {
+            return cached.Relationships;
+        }
+
         // MSysRelationships is a system table; ReadTableAsync resolves it through
         // the catalog fallback; absence means there are no stored relationships.
         // The gate is reentrant, so the nested
@@ -262,7 +272,35 @@ internal sealed class SchemaReader(
         DataTable table = await tables.ReadTableAsync(Constants.SystemTableNames.Relationships, maxRows: null, progress: null, cancellationToken).ConfigureAwait(false);
         try
         {
-            return RelationshipMetadataAggregator.Aggregate(table);
+            List<RelationshipMetadata> result = RelationshipMetadataAggregator.Aggregate(table);
+            long retainedColumns = 0;
+            foreach (RelationshipMetadata relationship in result)
+            {
+                retainedColumns = checked(retainedColumns + relationship.PrimaryColumns.Count + relationship.ForeignColumns.Count);
+            }
+
+            if (result.Count <= RelationshipCacheCapacity && retainedColumns <= RelationshipCacheCapacity)
+            {
+                for (int index = 0; index < result.Count; index++)
+                {
+                    result[index] = result[index] with
+                    {
+                        PrimaryColumns = System.Array.AsReadOnly(result[index].PrimaryColumns.ToArray()),
+                        ForeignColumns = System.Array.AsReadOnly(result[index].ForeignColumns.ToArray()),
+                    };
+                }
+
+                IReadOnlyList<RelationshipMetadata> snapshot = result.AsReadOnly();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (generation == catalog.Generation)
+                {
+                    this.relationships = new RelationshipSnapshot(generation, snapshot);
+                }
+
+                return snapshot;
+            }
+
+            return result;
         }
         finally
         {
@@ -281,7 +319,13 @@ internal sealed class SchemaReader(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
         await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        return await complexColumns.GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (await linked.GetTableKindAsync(tableName, cancellationToken).ConfigureAwait(false) == LinkedTableKind.Text)
+        {
+            return [];
+        }
+
+        return await linked.TryReadAccessAsync(tableName, (source, name) => source.GetComplexColumnsAsync(name, cancellationToken), cancellationToken).ConfigureAwait(false)
+            ?? await complexColumns.GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -345,4 +389,6 @@ internal sealed class SchemaReader(
 
     private static string ResolveTypeName(ColumnInfo col) =>
         IsHyperlinkColumn(col) ? "Hyperlink" : GetTypeDisplayName(ResolveValueType(col));
+
+    private sealed record RelationshipSnapshot(int Generation, IReadOnlyList<RelationshipMetadata> Relationships);
 }

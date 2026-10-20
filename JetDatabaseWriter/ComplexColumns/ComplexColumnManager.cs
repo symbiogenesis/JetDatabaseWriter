@@ -730,6 +730,7 @@ internal sealed class ComplexColumnManager(
         // ID handed out, as Access does, so neither this library nor Access
         // reuses it after the column is dropped.
         await autoNumbers.RaiseHighWaterAsync(pg, complexId, cancellationToken).ConfigureAwait(false);
+        this.catalog.Invalidate();
     }
 
     // ── Row-level APIs for complex (Attachment / MultiValue) columns ──
@@ -1327,6 +1328,7 @@ internal sealed class ComplexColumnManager(
         if (matched.Count > 0)
         {
             await indexes.MaintainIndexesAsync(msysCxPg, msysCxDef, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+            this.catalog.Invalidate();
         }
     }
 
@@ -1388,6 +1390,7 @@ internal sealed class ComplexColumnManager(
         if (matched.Count > 0)
         {
             await indexes.MaintainIndexesAsync(msysCxPg, msysCxDef, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+            this.catalog.Invalidate();
         }
     }
 

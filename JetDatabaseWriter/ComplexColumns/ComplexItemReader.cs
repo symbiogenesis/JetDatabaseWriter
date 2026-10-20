@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Tables;
 
 /// <summary>
@@ -17,8 +18,9 @@ using JetDatabaseWriter.Tables;
 /// </summary>
 /// <param name="complexColumns">Finds and decodes the column's flat child table.</param>
 /// <param name="tables">Validates parent table names.</param>
+/// <param name="linked">Reads complex items from approved Access sources.</param>
 /// <param name="operations">The reader's operation gate.</param>
-internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, TableReader tables, AsyncReentrantOperationGate operations)
+internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, TableReader tables, LinkedTableReader linked, AsyncReentrantOperationGate operations)
 {
     /// <summary>
     /// Returns every attachment row stored in the hidden flat child table backing
@@ -33,6 +35,12 @@ internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, Tabl
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         cancellationToken.ThrowIfCancellationRequested();
+
+        IReadOnlyList<AttachmentRecord>? linkedItems = await linked.TryReadAccessAsync(tableName, (source, name) => source.GetAttachmentsAsync(name, columnName, cancellationToken), cancellationToken).ConfigureAwait(false);
+        if (linkedItems is not null)
+        {
+            return linkedItems;
+        }
 
         await tables.ThrowIfLinkedLocalReadAsync(tableName, cancellationToken).ConfigureAwait(false);
         await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -56,6 +64,12 @@ internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, Tabl
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         cancellationToken.ThrowIfCancellationRequested();
+
+        IReadOnlyList<MultiValueItem>? linkedItems = await linked.TryReadAccessAsync(tableName, (source, name) => source.GetMultiValueItemsAsync(name, columnName, cancellationToken), cancellationToken).ConfigureAwait(false);
+        if (linkedItems is not null)
+        {
+            return linkedItems;
+        }
 
         await tables.ThrowIfLinkedLocalReadAsync(tableName, cancellationToken).ConfigureAwait(false);
         await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);

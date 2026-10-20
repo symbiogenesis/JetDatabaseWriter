@@ -61,6 +61,13 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
     internal async ValueTask<bool> IsLinkedTableAsync(string tableName, CancellationToken cancellationToken)
         => await this.FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false) is not null;
 
+    /// <summary>Returns the kind of a linked table without opening its source.</summary>
+    /// <param name="tableName">The requested table.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The link kind, or null for a local or absent table.</returns>
+    internal async ValueTask<LinkedTableKind?> GetTableKindAsync(string tableName, CancellationToken cancellationToken)
+        => (await this.FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false))?.Kind;
+
     /// <summary>Counts the rows of a linked table, or returns <see langword="null"/> when <paramref name="tableName"/> is not a link.</summary>
     /// <param name="tableName">The linked table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -192,6 +199,54 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
             link => LinkedTableManager.GetLinkedTextColumnMetadataAsync(policy, link, cancellationToken),
             (source, link) => source.GetColumnMetadataAsync(link.SourceObjectName, cancellationToken),
             cancellationToken);
+
+    /// <summary>Runs a metadata or complex-item read against an approved Access source.</summary>
+    /// <typeparam name="TResult">The detached read result.</typeparam>
+    /// <param name="tableName">The host table name.</param>
+    /// <param name="read">The source operation.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The source result, or null when this is not an Access link.</returns>
+    internal async ValueTask<TResult?> TryReadAccessAsync<TResult>(string tableName, Func<AccessReader, string, ValueTask<TResult>> read, CancellationToken cancellationToken)
+        where TResult : class
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        LinkedTableInfo? link = await this.FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (link?.Kind != LinkedTableKind.Access)
+        {
+            return null;
+        }
+
+        await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(policy, link, cancellationToken).ConfigureAwait(false);
+        return await read(source, link.SourceObjectName).ConfigureAwait(false);
+    }
+
+    /// <summary>Streams index results from the approved Access source, keeping it open through enumeration.</summary>
+    /// <typeparam name="TRow">The projected row type.</typeparam>
+    /// <param name="tableName">The host table name.</param>
+    /// <param name="read">The source operation.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="JetNotSupportedException">Text links have no index storage.</exception>
+    internal async IAsyncEnumerable<TRow> ReadAccessIndexAsync<TRow>(string tableName, Func<AccessReader, string, IAsyncEnumerable<TRow>> read, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        LinkedTableInfo? link = await this.FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (link is null)
+        {
+            yield break;
+        }
+
+        await this.ThrowIfExecutionUnavailableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (link.Kind == LinkedTableKind.Text)
+        {
+            throw new JetNotSupportedException(JetErrorCode.LinkedTableHasNoIndexes, $"Linked text table '{tableName}' has no indexes.", new JetErrorInfo { TableName = tableName });
+        }
+
+        await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(policy, link, cancellationToken).ConfigureAwait(false);
+        await foreach (TRow row in read(source, link.SourceObjectName).WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            yield return row;
+        }
+    }
 
     private async ValueTask<LinkedTableManager.LinkedCatalog> GetLinkedCatalogAsync(CancellationToken cancellationToken)
     {

@@ -11,12 +11,14 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
@@ -37,6 +39,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="catalog">Resolves tables by name.</param>
 /// <param name="complexColumns">Builds the complex-column cells (every attachment or multi-value item of a row) that replace each row's complex reference.</param>
 /// <param name="tables">Scans the table when no index covers a predicate.</param>
+/// <param name="linked">Delegates index reads to approved Access sources.</param>
 /// <param name="operations">The reader's operation gate.</param>
 internal sealed class IndexRowReader(
     JetFormat format,
@@ -46,6 +49,7 @@ internal sealed class IndexRowReader(
     CatalogReader catalog,
     ComplexColumnReader complexColumns,
     TableReader tables,
+    LinkedTableReader linked,
     AsyncReentrantOperationGate operations)
 {
     private const int IndexCacheCapacity = 256;
@@ -83,6 +87,17 @@ internal sealed class IndexRowReader(
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
+
+        LinkedTableKind? linkKind = await linked.GetTableKindAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (linkKind == LinkedTableKind.Text)
+        {
+            return [];
+        }
+
+        if (linkKind == LinkedTableKind.Access)
+        {
+            return await linked.TryReadAccessAsync(tableName, (source, name) => source.ListIndexesAsync(name, cancellationToken), cancellationToken).ConfigureAwait(false) ?? [];
+        }
 
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved is null)
@@ -350,7 +365,7 @@ internal sealed class IndexRowReader(
 
         lock (this.indexMetadata)
         {
-            if (this.indexMetadata.TryGetValue(resolved.Entry.TDefPage, out var cached) && ReferenceEquals(cached.Image, image))
+            if (this.indexMetadata.TryGetValue(resolved.Entry.TDefPage, out (TDefImage Image, IReadOnlyList<IndexMetadata> Indexes) cached) && ReferenceEquals(cached.Image, image))
             {
                 return cached.Indexes;
             }
@@ -390,7 +405,16 @@ internal sealed class IndexRowReader(
         Guard.NotNull(createProjection, nameof(createProjection));
         cancellationToken.ThrowIfCancellationRequested();
 
-        await tables.ThrowIfLinkedLocalReadAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (await linked.IsLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false))
+        {
+            await foreach (TRow row in linked.ReadAccessIndexAsync(tableName, (source, name) => source.Services.Indexes.EnumerateIndexRowsAsync(name, indexName, criteria, createProjection, cancellationToken), cancellationToken).ConfigureAwait(false))
+            {
+                yield return row;
+                operation.Resume();
+            }
+
+            yield break;
+        }
 
         ResolvedTable? resolved = await tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)

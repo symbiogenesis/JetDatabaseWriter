@@ -60,6 +60,9 @@ internal sealed class TableReader(
     AccessReaderOptions options)
 {
     private const int MinimumAutoTableScanReadAheadPages = 3;
+    private const int ResultCacheCapacity = 256;
+    private readonly Dictionary<string, (int Generation, bool Exists)> tableLookups = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<long, (int Generation, long Count)> rowCounts = [];
 
     /// <summary>
     /// Returns <see langword="true"/> when any column flagged in
@@ -133,6 +136,35 @@ internal sealed class TableReader(
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
+        int generation = catalog.Generation;
+        lock (this.tableLookups)
+        {
+            if (!tableDefs.VerifyOnHit && this.tableLookups.TryGetValue(tableName, out (int Generation, bool Exists) cached) && cached.Generation == generation)
+            {
+                return cached.Exists;
+            }
+        }
+
+        bool exists = await this.LookupTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (this.tableLookups)
+        {
+            if (catalog.Generation == generation && tableName.Length <= AccessObjectName.MaxLength)
+            {
+                if (this.tableLookups.Count >= ResultCacheCapacity)
+                {
+                    this.tableLookups.Clear();
+                }
+
+                this.tableLookups[tableName] = (generation, exists);
+            }
+        }
+
+        return exists;
+    }
+
+    private async ValueTask<bool> LookupTableAsync(string tableName, CancellationToken cancellationToken)
+    {
         if (await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false) is not null)
         {
             return true;
@@ -246,6 +278,15 @@ internal sealed class TableReader(
         }
 
         long count = 0;
+        int generation = catalog.Generation;
+        lock (this.rowCounts)
+        {
+            if (pageSource is not Pager && this.rowCounts.TryGetValue(resolved.Entry.TDefPage, out (int Generation, long Count) cached) && cached.Generation == generation)
+            {
+                return cached.Count;
+            }
+        }
+
         TableDef td = resolved.Definition;
         IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, rows.StrictParsing);
@@ -273,6 +314,20 @@ internal sealed class TableReader(
                 {
                     count++;
                 }
+            }
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (this.rowCounts)
+        {
+            if (pageSource is not Pager && catalog.Generation == generation)
+            {
+                if (this.rowCounts.Count >= ResultCacheCapacity)
+                {
+                    this.rowCounts.Clear();
+                }
+
+                this.rowCounts[resolved.Entry.TDefPage] = (generation, count);
             }
         }
 

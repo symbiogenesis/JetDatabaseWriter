@@ -56,8 +56,17 @@ public sealed class LinkedSourceCapabilityTests
         await using AccessReader reader = await AccessReader.OpenAsync(host, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
         string tableName = Assert.Single(await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken)).Name;
         Assert.True(await reader.TryLookupTableAsync(tableName, TestContext.Current.CancellationToken));
-        _ = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
-        _ = await reader.GetComplexColumnsAsync(tableName, TestContext.Current.CancellationToken);
+        if (kind == LinkedTableKind.Access)
+        {
+            await Assert.ThrowsAsync<JetAccessDeniedException>(async () => await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<JetAccessDeniedException>(async () => await reader.GetComplexColumnsAsync(tableName, TestContext.Current.CancellationToken));
+        }
+        else
+        {
+            _ = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
+            _ = await reader.GetComplexColumnsAsync(tableName, TestContext.Current.CancellationToken);
+        }
+
         Type failure = kind == LinkedTableKind.Odbc ? typeof(JetNotSupportedException) : typeof(JetAccessDeniedException);
         Func<Task>[] operations =
         [

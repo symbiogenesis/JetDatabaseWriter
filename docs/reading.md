@@ -116,6 +116,11 @@ await writer.CreateTableAsync("Events",
 
 `ListIndexesAsync` returns the logical indexes declared on a table — primary keys, foreign-key indexes, and ordinary user indexes — parsed directly from the TDEF page chain.
 
+For an Access link, index metadata and explicit index reads resolve the source table
+through `LinkedSourceResolver`, as do complex-column metadata and item reads. Text
+links return no index or complex-column metadata. ODBC links expose cached local
+metadata and refuse index or complex-item execution.
+
 ```csharp
 IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Companies", cancellationToken);
 foreach (IndexMetadata idx in indexes)

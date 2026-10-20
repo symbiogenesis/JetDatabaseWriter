@@ -116,6 +116,28 @@ release-quality benchmark results justify reopening a specific area.
   at a time, letting `Take` and abandoned seeks stop further leaf reads. The
   cursor detects repeated leaf pages and bounds its hops; writer maintenance
   retains the collecting APIs.
+- Catalog resolutions and system-name lookups retain up to 256 entries each,
+  including verified misses. Index metadata retains up to 256 root images with
+  read-only key lists. Complex discovery retains up to 64 table descriptor lists
+  and a validated object-name map only when it contains at most 4,096 entries.
+  Catalog generations and write-observed structural images invalidate derived
+  metadata; writer counters always read the current root page. Properties load
+  lazily, matching the complete catalog Id before decoding the selected LvProp,
+  without following unrelated property chains.
+- Read-only real-row counts and table-existence results each retain at most 256
+  entries. Counts publish only after a complete successful scan and cancellation
+  check. Read-only statistics reuse cached TDEF counters. Relationship snapshots
+  retain at most 4,096 relationships and 4,096 total key-column references in
+  read-only collections. Cache hits still check cancellation; structural cache
+  verification deliberately rereads definitions instead of measuring warm I/O.
+  These limits cover the added caches, not all reader memory or schema storage.
+- Count, string, object-array, mapped and direct-row scans share
+  `TableReader.EnumerateTableScanPagesAsync`, including its read-ahead cancellation
+  and abandoned-read cleanup. Warm descriptor/count/miss reads need no page reads
+  while their entries remain cached; warm seeks also depend on their index/data
+  pages remaining in the configured page cache. Linked Access operations open a
+  fresh approved source for each request, so resolver authorization and source
+  lifetime remain explicit rather than being hidden by a host-side data cache.
 - `DirectRowDecoderBuilder.TryBuild<T>` can emit a direct page-to-POCO delegate
   for primitive projections. The compiled delegate still asks `RowDecodePlan`
   to parse row layout and resolve column slices, so direct and fallback decode

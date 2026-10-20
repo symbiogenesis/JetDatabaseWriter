@@ -158,8 +158,9 @@ increase them for trusted large schemas. A schema traversal limit reports
 corruption or impose a process-wide memory ceiling: parsed objects, cache
 lifetime and collection overhead have separate costs.
 
-Linked Access/text data reads require `LinkedSourceResolver`; listing link definitions and
-cached ODBC columns does not. Register trusted, committed snapshot bytes independently
+Linked Access/text data reads require `LinkedSourceResolver`; Access-source index and
+complex-column metadata reads require it too. Listing link definitions, empty text-link
+index/complex metadata and cached ODBC metadata does not. Register trusted, committed snapshot bytes independently
 of the host database, then select them in the resolver. For example, after the application
 has obtained `approvedBackendSnapshot` from its trusted source:
 
@@ -189,6 +190,12 @@ recovery before registration. The reader owns each returned stream, including ca
 and parse failures, so return a fresh stream per request. The same resolver applies to nested
 links, and the depth limit still bounds recursion through physical aliases. Source passwords
 come only from `LinkedSourcePasswordResolver`, after stream authorization.
+
+Access-linked index seeks, typed `FromIndex` reads, attachments and multi-value items
+delegate to the approved source table, including transitive links. The source reader
+and its authorized stream close when the operation or enumeration ends, including
+early disposal and failures. Text links expose no indexes or complex columns; ODBC
+links retain cached metadata and refuse data execution.
 
 `MaxAttachmentContentBytesPerOperation` includes extension headers and is shared across attachment columns during one table scan. Each table in a multi-table read starts a fresh budget. Set a positive larger limit for trusted reads that exceed the 256 MiB default; `ValueTooLarge` refusals propagate in strict and lenient modes. Inflation checks cancellation between output chunks and before its final excess-byte check. A single decompressor read, checksum or copy remains a synchronous interval.
 

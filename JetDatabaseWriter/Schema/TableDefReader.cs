@@ -58,12 +58,18 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
     /// <inheritdoc/>
     public void OnInvalidateAll() => this.images.OnInvalidateAll();
 
-    /// <summary>Reads current counters from the root page alone, never from the structural cache.</summary>
+    /// <summary>Reads live writer counters from the root page, reusing immutable reader images when available.</summary>
     /// <param name="tdefPage">The root page.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The current counters, or null when the root is not a TDEF.</returns>
     internal async ValueTask<TableCounters?> ReadTableCountersAsync(long tdefPage, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (this.pages is not Pager && this.images.TryGet(tdefPage, out _))
+        {
+            return (await this.ReadImageAsync(tdefPage, cancellationToken).ConfigureAwait(false))?.Header.Counters;
+        }
+
         byte[] page = await this.pages.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
