@@ -84,7 +84,8 @@ internal static class CompactCatalogRecovery
 
         ColumnInfo? parentColumn = catalog.Definition.FindColumn("ParentId");
         ColumnInfo? nameColumn = catalog.Definition.FindColumn("Name");
-        if (parentColumn?.Type != ColumnType.LongIntegerType || nameColumn?.Type != ColumnType.TextType)
+        if (idColumn?.Type != ColumnType.LongIntegerType
+            || parentColumn?.Type != ColumnType.LongIntegerType || nameColumn?.Type != ColumnType.TextType)
         {
             return result;
         }

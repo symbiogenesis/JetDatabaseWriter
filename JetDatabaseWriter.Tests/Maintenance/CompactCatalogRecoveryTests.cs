@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
@@ -449,6 +450,25 @@ public sealed class CompactCatalogRecoveryTests
             catalog.LogicalIndexes.ToList()));
         Assert.Empty(recovered.Rows);
         Assert.Contains(recovered.Diagnostics, diagnostic => diagnostic.Reason.Contains("collation is unsupported", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task SecondaryIdentityRecoveryRequiresNativeSignedInt32IdStorage()
+    {
+        (byte[] bytes, JetFormat format, _) = await CreateMovedCatalogAsync("Jackcess/adox_jet4.mdb", chained: false);
+        await RemoveIdRootAsync(bytes, format);
+        DamageMovedOwners(bytes, format, 1);
+        CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format, alterCatalog: image => new(
+            image.CopyBytes(),
+            image.Header,
+            image.Columns.Select(column => column.Name == "Id" ? column with { Type = ColumnType.BigIntType, Size = 8 } : column).ToList(),
+            image.HasDeletedColumns,
+            image.Issues,
+            image.IndexSection,
+            image.RealIndexes.ToList(),
+            image.LogicalIndexes.ToList()));
+        Assert.Empty(recovered.Rows);
+        Assert.NotEmpty(recovered.Diagnostics);
     }
 
     [Fact]
