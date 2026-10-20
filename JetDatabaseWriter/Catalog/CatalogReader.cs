@@ -26,6 +26,14 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="rows">Decodes <c>MSysObjects</c> rows as strings.</param>
 internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, TableCatalog tables, CatalogRowReader catalogRows, RowDecoder rows)
 {
+    private const int NameCacheCapacity = 256;
+    private readonly Dictionary<string, ResolvedTable?> resolvedNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, long> systemNames = new(StringComparer.OrdinalIgnoreCase);
+    private int cachedGeneration = -1;
+
+    /// <summary>Gets the catalog generation used by dependent metadata caches.</summary>
+    internal int Generation => tables.Generation;
+
     /// <summary>
     /// Returns the <c>ResultType</c> a calculated column's persisted properties
     /// declare, or <see langword="default"/> when none is recorded.
@@ -52,6 +60,29 @@ internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, 
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<ResolvedTable?> ResolveTableAsync(string tableName, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        int generation = this.Generation;
+        ResolvedTable? resolved;
+        lock (this.resolvedNames)
+        {
+            this.RefreshNameCaches(generation);
+            if (this.resolvedNames.TryGetValue(tableName, out resolved) && resolved is null)
+            {
+                return null;
+            }
+        }
+
+        if (resolved is not null)
+        {
+            // Resolve the current write-observed image even on a name hit. A TDEF
+            // write can change structure without changing the catalog identity.
+            TableSchema? current = await tables.GetSchemaAsync(resolved.Entry.TDefPage, loadProperties: false, cancellationToken).ConfigureAwait(false);
+            if (current is { Image.Columns.Count: > 0 })
+            {
+                return this.CacheResolution(tableName, ReferenceEquals(current, resolved.Schema) ? resolved : new ResolvedTable(resolved.Entry, current), generation);
+            }
+        }
+
         List<CatalogEntry> userTables = await tables.GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
 
         CatalogEntry? entry = userTables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
@@ -60,7 +91,7 @@ internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, 
             TableSchema? schema = await tables.GetSchemaAsync(entry.TDefPage, loadProperties: false, cancellationToken).ConfigureAwait(false);
             if (schema is { Image.Columns.Count: > 0 })
             {
-                return new ResolvedTable(entry, schema);
+                return this.CacheResolution(tableName, new ResolvedTable(entry, schema), generation);
             }
         }
 
@@ -73,11 +104,11 @@ internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, 
             TableSchema? systemSchema = await tables.GetSchemaAsync(sysPage, loadProperties: false, cancellationToken).ConfigureAwait(false);
             if (systemSchema is { Image.Columns.Count: > 0 })
             {
-                return new ResolvedTable(new CatalogEntry(tableName, sysPage), systemSchema);
+                return this.CacheResolution(tableName, new ResolvedTable(new CatalogEntry(tableName, sysPage), systemSchema), generation);
             }
         }
 
-        return null;
+        return this.CacheResolution(tableName, null, generation);
     }
 
     /// <summary>
@@ -154,8 +185,36 @@ internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, 
     /// </summary>
     /// <param name="name">The name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal ValueTask<long> FindSystemTablePageAsync(string name, CancellationToken cancellationToken) =>
-        catalogRows.FindSystemTableTdefPageAsync(name, includeLinkedOdbc: true, cancellationToken);
+    internal async ValueTask<long> FindSystemTablePageAsync(string name, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        int generation = this.Generation;
+        lock (this.resolvedNames)
+        {
+            this.RefreshNameCaches(generation);
+            if (this.systemNames.TryGetValue(name, out long cached))
+            {
+                return cached;
+            }
+        }
+
+        long page = await catalogRows.FindSystemTableTdefPageAsync(name, includeLinkedOdbc: true, cancellationToken).ConfigureAwait(false);
+        lock (this.resolvedNames)
+        {
+            if (generation == this.Generation && name.Length <= AccessObjectName.MaxLength)
+            {
+                this.RefreshNameCaches(generation);
+                if (this.systemNames.Count == NameCacheCapacity)
+                {
+                    this.systemNames.Clear();
+                }
+
+                this.systemNames[name] = page;
+            }
+        }
+
+        return page;
+    }
 
     /// <summary>
     /// Finds the TDEF page for the unique table whose name satisfies <paramref name="nameMatches"/>,
@@ -165,6 +224,35 @@ internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, 
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask<long> FindSystemTablePageAsync(Predicate<string> nameMatches, CancellationToken cancellationToken) =>
         catalogRows.FindTableTdefPageAsync(nameMatches, includeLinkedOdbc: true, cancellationToken);
+
+    private ResolvedTable? CacheResolution(string name, ResolvedTable? resolved, int generation)
+    {
+        lock (this.resolvedNames)
+        {
+            if (generation == this.Generation && name.Length <= AccessObjectName.MaxLength)
+            {
+                this.RefreshNameCaches(generation);
+                if (this.resolvedNames.Count == NameCacheCapacity && !this.resolvedNames.ContainsKey(name))
+                {
+                    this.resolvedNames.Clear();
+                }
+
+                this.resolvedNames[name] = resolved;
+            }
+        }
+
+        return resolved;
+    }
+
+    private void RefreshNameCaches(int generation)
+    {
+        if (this.cachedGeneration != generation)
+        {
+            this.resolvedNames.Clear();
+            this.systemNames.Clear();
+            this.cachedGeneration = generation;
+        }
+    }
 
     /// <summary>
     /// Renders the most recent user-table scan. Scan failures are always

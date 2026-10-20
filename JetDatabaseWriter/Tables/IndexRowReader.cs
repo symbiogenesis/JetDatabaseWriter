@@ -48,6 +48,9 @@ internal sealed class IndexRowReader(
     TableReader tables,
     AsyncReentrantOperationGate operations)
 {
+    private const int IndexCacheCapacity = 256;
+    private readonly Dictionary<long, (TDefImage Image, IReadOnlyList<IndexMetadata> Indexes)> indexMetadata = [];
+
     private static bool CanEncodePlan(JetFormat format, TableDef definition, string tableName, IndexPlan plan)
         => (plan.Criteria.Values is null || IndexKeyEncoder.CanEncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Values))
             && (plan.Criteria.Lower is null || IndexKeyEncoder.CanEncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Lower.Values))
@@ -339,13 +342,38 @@ internal sealed class IndexRowReader(
 
     private async ValueTask<IReadOnlyList<IndexMetadata>> ReadIndexesAsync(ResolvedTable resolved, CancellationToken cancellationToken)
     {
-        byte[]? td = await tableDefs.ReadTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        if (td == null || td.Length < format.TDef.BlockEnd)
+        TDefImage? image = await tableDefs.ReadImageAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        if (image is null)
         {
             return [];
         }
 
-        return IndexCatalogReader.ReadMetadata(format, td, resolved.Definition.Columns);
+        lock (this.indexMetadata)
+        {
+            if (this.indexMetadata.TryGetValue(resolved.Entry.TDefPage, out var cached) && ReferenceEquals(cached.Image, image))
+            {
+                return cached.Indexes;
+            }
+        }
+
+        List<IndexMetadata> parsed = IndexCatalogReader.ReadMetadata(format, image.CopyBytes(), image.Columns);
+        for (int i = 0; i < parsed.Count; i++)
+        {
+            parsed[i] = parsed[i] with { Columns = Array.AsReadOnly(parsed[i].Columns.ToArray()) };
+        }
+
+        IReadOnlyList<IndexMetadata> indexes = Array.AsReadOnly(parsed.ToArray());
+        lock (this.indexMetadata)
+        {
+            if (this.indexMetadata.Count == IndexCacheCapacity && !this.indexMetadata.ContainsKey(resolved.Entry.TDefPage))
+            {
+                this.indexMetadata.Clear();
+            }
+
+            this.indexMetadata[resolved.Entry.TDefPage] = (image, indexes);
+        }
+
+        return indexes;
     }
 
     private async IAsyncEnumerable<TRow> EnumerateIndexRowsAsync<TRow>(
@@ -378,15 +406,9 @@ internal sealed class IndexRowReader(
 
         CatalogEntry entry = resolved.Entry;
         TableDef td = resolved.Definition;
-        byte[]? tdefBytes = await tableDefs.ReadTDefBytesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        if (tdefBytes == null || tdefBytes.Length < format.TDef.BlockEnd)
-        {
-            yield break;
-        }
+        IReadOnlyList<IndexMetadata> indexes = await this.ReadIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
 
-        List<IndexMetadata> indexes = IndexCatalogReader.ReadMetadata(format, tdefBytes, td.Columns);
-
-        IndexMetadata? index = indexes.Find(i => string.Equals(i.Name, indexName, StringComparison.OrdinalIgnoreCase))
+        IndexMetadata? index = indexes.FirstOrDefault(i => string.Equals(i.Name, indexName, StringComparison.OrdinalIgnoreCase))
             ?? throw new JetObjectNotFoundException(JetErrorCode.IndexNotFound, $"Index '{indexName}' was not found on table '{tableName}'.", nameof(indexName), errorInfo: new JetErrorInfo { TableName = tableName, IndexName = indexName });
 
         if (index.FirstDp <= 0 || index.Columns.Count == 0)
