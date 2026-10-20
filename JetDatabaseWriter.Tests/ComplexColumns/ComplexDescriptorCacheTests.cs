@@ -1,15 +1,19 @@
 namespace JetDatabaseWriter.Tests.ComplexColumns;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
@@ -79,6 +83,87 @@ public sealed class ComplexDescriptorCacheTests
         Assert.DoesNotContain(restored, column => column.ColumnName == "Attachments");
     }
 
+    [Theory]
+    [InlineData("parent-type")]
+    [InlineData("parent-misc")]
+    [InlineData("flat-type")]
+    [InlineData("flat-flags")]
+    public async Task SameGenerationDescriptorWrites_DoNotReturnStaleComplexMetadata(string mutation)
+    {
+        await using MemoryStream database = await CreateDatabaseAsync();
+        await using AccessWriter writer = await AccessWriter.OpenAsync(database, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct);
+        writer.Database.TableDefs.VerifyOnHit = false;
+        using var pages = new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity: 0);
+        var rows = new RowDecoder(writer.Database.Format, writer.Database.OwnedPages, pages, new LongValueDecoder(writer.Database.Format, pages), strictParsing: true);
+        var catalog = new CatalogReader(writer.Database.Format, writer.Database.TableDefs, writer.Services.Catalog, writer.Services.CatalogRows, rows);
+        var complex = new ComplexColumnReader(writer.Database.Format, writer.Database.TableDefs, catalog, rows, diagnosticsEnabled: false);
+        IReadOnlyList<ComplexColumnInfo> original = await complex.GetComplexColumnsAsync("Docs", Ct);
+        int generation = writer.Services.Catalog.Generation;
+        if (mutation == "flat-flags")
+        {
+            int flatId = Assert.Single(original, column => column.ColumnName == "Tags").FlatTableId;
+            TableDef objects = Assert.IsType<TableDef>(await writer.Database.TableDefs.ReadTableDefAsync(2, Ct));
+            CatalogRow entry = Assert.Single(await writer.Services.CatalogRows.GetCatalogRowsAsync(objects, Ct), entry => entry.Id == flatId);
+            JetDatabaseWriter.Pages.Models.RowLocation location = Assert.Single(await writer.Database.GetLiveRowLocationsAsync(2, Ct), location => location.PageNumber == entry.PageNumber && location.RowIndex == entry.RowIndex);
+            byte[] page = await writer.Database.Pages.ReadPageCopyAsync(location.DataPageNumber, Ct);
+            int offset = location.RowStart + writer.Database.Format.RowFields.NumCols + Assert.IsType<JetDatabaseWriter.Schema.Models.ColumnInfo>(objects.FindColumn("Flags")).FixedOff;
+            BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(offset, sizeof(int)), 0);
+            await writer.Pager.WritePageAsync(location.DataPageNumber, page, Ct);
+        }
+        else
+        {
+            long root = mutation == "flat-type"
+                ? Assert.Single(original, column => column.ColumnName == "Tags").FlatTableId
+                : (await writer.Services.Catalog.ResolveRequiredTableAsync("Docs", Ct)).Entry.TDefPage;
+            byte[] page = await writer.Database.Pages.ReadPageCopyAsync(root, Ct);
+            int descriptor = await FindColumnDescriptorAsync(writer, root, mutation == "flat-type" ? "Value" : "Files", page);
+            if (mutation == "parent-misc")
+            {
+                BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(descriptor + writer.Database.Format.ColumnDescriptor.MiscOff, sizeof(int)), 0);
+            }
+            else
+            {
+                page[descriptor + writer.Database.Format.ColumnDescriptor.TypeOff] = (byte)ColumnType.LongIntegerType;
+            }
+
+            await writer.Pager.WritePageAsync(root, page, Ct);
+        }
+
+        Assert.Equal(generation, writer.Services.Catalog.Generation);
+        if (mutation == "parent-type")
+        {
+            Assert.Equal("Tags", Assert.Single(await complex.GetComplexColumnsAsync("Docs", Ct)).ColumnName);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<JetCorruptDataException>(async () => await complex.GetComplexColumnsAsync("Docs", Ct));
+        }
+    }
+
+    [Fact]
+    public async Task DescriptorCache_WithVerificationEnabled_AuditsTheCurrentFlatSchema()
+    {
+        await using MemoryStream database = await CreateDatabaseAsync();
+        long root;
+        int typeOffset;
+        await using (AccessWriter inspection = await AccessWriter.OpenAsync(database, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))
+        {
+            root = await inspection.Services.CatalogRows.FindTableTdefPageAsync(name => name.EndsWith("_Tags", StringComparison.Ordinal), includeLinkedOdbc: false, Ct);
+            byte[] flat = await inspection.Database.Pages.ReadPageCopyAsync(root, Ct);
+            typeOffset = await FindColumnDescriptorAsync(inspection, root, "Value", flat) + inspection.Database.Format.ColumnDescriptor.TypeOff;
+        }
+
+        database.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(database, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct);
+        reader.Database.TableDefs.VerifyOnHit = false;
+        Assert.Equal(2, (await reader.GetComplexColumnsAsync("Docs", Ct)).Count);
+        reader.Database.TableDefs.VerifyOnHit = true;
+        database.Position = (root * reader.PageSize) + typeOffset;
+        database.WriteByte((byte)ColumnType.LongIntegerType);
+
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.GetComplexColumnsAsync("Docs", Ct));
+    }
+
     [Fact]
     public async Task WarmDescriptors_ConcurrentReadsCannotMutateTheSharedResult()
     {
@@ -137,5 +222,12 @@ public sealed class ComplexDescriptorCacheTests
             await database.DisposeAsync();
             throw;
         }
+    }
+
+    private static async Task<int> FindColumnDescriptorAsync(AccessWriter writer, long root, string columnName, byte[] page)
+    {
+        TableDef definition = Assert.IsType<TableDef>(await writer.Database.TableDefs.ReadTableDefAsync(root, Ct));
+        int realIndexes = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(writer.Database.Format.TDef.NumRealIdx, sizeof(int)));
+        return writer.Database.Format.TDef.BlockEnd + (realIndexes * writer.Database.Format.TDef.RealIdxEntrySz) + (definition.FindColumnIndex(columnName) * writer.Database.Format.ColumnDescriptor.Size);
     }
 }

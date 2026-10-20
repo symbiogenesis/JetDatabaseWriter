@@ -51,9 +51,10 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 #else
     private readonly object metadataGate = new();
 #endif
-    private readonly Dictionary<string, IReadOnlyList<ComplexColumnInfo>> descriptors = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DescriptorSnapshot> descriptors = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<long, CatalogRow>? objectNames;
     private int metadataGeneration = -1;
+    private long metadataWriteEpoch = -1;
 
     /// <summary>
     /// Replaces each complex column's <see cref="ComplexIdRef"/> in a typed row
@@ -118,19 +119,23 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             return [];
         }
 
-        int generation = this.ReadMetadataGeneration();
-        lock (this.metadataGate)
-        {
-            if (catalog.Generation == generation && this.metadataGeneration == generation && this.descriptors.TryGetValue(tableName, out IReadOnlyList<ComplexColumnInfo>? cached))
-            {
-                return cached;
-            }
-        }
-
+        (int Generation, long WriteEpoch) revision = this.ReadMetadataRevision();
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             return [];
+        }
+
+        lock (this.metadataGate)
+        {
+            // Auditing must also revisit the catalog, flat and template images.
+            if (!tableDefs.VerifyOnHit && this.MatchesMetadataRevision(revision)
+                && this.descriptors.TryGetValue(tableName, out DescriptorSnapshot? cached)
+                && cached.ParentRoot == resolved.Entry.TDefPage
+                && ReferenceEquals(cached.ParentImage, resolved.Schema.Image))
+            {
+                return cached.Columns;
+            }
         }
 
         var byComplexId = new Dictionary<int, (string Name, ColumnType Type)>();
@@ -159,14 +164,14 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             result = Array.AsReadOnly(retained);
             lock (this.metadataGate)
             {
-                if (catalog.Generation == generation && this.metadataGeneration == generation)
+                if (this.MatchesMetadataRevision(revision))
                 {
                     if (this.descriptors.Count >= DescriptorCacheCapacity)
                     {
                         this.descriptors.Clear();
                     }
 
-                    this.descriptors[tableName] = result;
+                    this.descriptors[tableName] = new DescriptorSnapshot(resolved.Entry.TDefPage, resolved.Schema.Image, result);
                 }
             }
         }
@@ -726,30 +731,36 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         return elementType is ColumnType type ? "Multi-value " + GetTypeDisplayName(type) : null;
     }
 
-    private int ReadMetadataGeneration()
+    private (int Generation, long WriteEpoch) ReadMetadataRevision()
     {
         lock (this.metadataGate)
         {
             int generation = catalog.Generation;
-            if (this.metadataGeneration != generation)
+            long writeEpoch = tableDefs.WriteEpoch;
+            if (this.metadataGeneration != generation || this.metadataWriteEpoch != writeEpoch)
             {
                 this.descriptors.Clear();
                 this.objectNames = null;
                 this.metadataGeneration = generation;
+                this.metadataWriteEpoch = writeEpoch;
             }
 
-            return generation;
+            return (generation, writeEpoch);
         }
     }
+
+    private bool MatchesMetadataRevision((int Generation, long WriteEpoch) revision)
+        => catalog.Generation == revision.Generation && tableDefs.WriteEpoch == revision.WriteEpoch
+            && this.metadataGeneration == revision.Generation && this.metadataWriteEpoch == revision.WriteEpoch;
 
     private async ValueTask<Dictionary<long, CatalogRow>> BuildObjectNameLookupAsync(CancellationToken cancellationToken, int? maxEntries = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        int generation = this.ReadMetadataGeneration();
+        (int Generation, long WriteEpoch) revision = this.ReadMetadataRevision();
         int limit = maxEntries ?? maxComplexDiscoveryEntries;
         lock (this.metadataGate)
         {
-            if (catalog.Generation == generation && this.metadataGeneration == generation && this.objectNames is { } cached)
+            if (!tableDefs.VerifyOnHit && this.MatchesMetadataRevision(revision) && this.objectNames is { } cached)
             {
                 if (cached.Count > limit)
                 {
@@ -771,7 +782,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
         lock (this.metadataGate)
         {
-            if (map.Count <= ObjectNameCacheCapacity && catalog.Generation == generation && this.metadataGeneration == generation)
+            if (map.Count <= ObjectNameCacheCapacity && this.MatchesMetadataRevision(revision))
             {
                 this.objectNames = map;
             }
@@ -1216,6 +1227,12 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             }
         }
     }
+
+    /// <summary>Verified descriptors tied to their current parent image and identity.</summary>
+    /// <param name="ParentRoot">The parent table's root page.</param>
+    /// <param name="ParentImage">The immutable parent layout.</param>
+    /// <param name="Columns">The verified complex descriptors.</param>
+    private sealed record DescriptorSnapshot(long ParentRoot, TDefImage ParentImage, IReadOnlyList<ComplexColumnInfo> Columns);
 
     /// <summary>A complex column's hidden flat child table.</summary>
     /// <param name="TDefPage">The flat table's TDEF page.</param>

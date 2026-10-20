@@ -39,6 +39,9 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
     /// <summary>Gets the current file geometry for catalog reference validation.</summary>
     internal long PageCount => this.pages.PageCount;
 
+    /// <summary>Gets the epoch advanced by observed writes and global invalidation.</summary>
+    internal long WriteEpoch => this.images.Epoch;
+
     /// <summary>Gets the per-table logical byte budget for direct chain readers.</summary>
     internal int MaxLogicalBytes { get; }
 
