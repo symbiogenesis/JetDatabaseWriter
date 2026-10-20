@@ -169,7 +169,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
             return false;
         }
 
-        data = format.EncodeText(text, col.IsCompressedUnicode);
+        data = col.IsCalculated ? format.EncodeText(text, compress: false) : format.EncodeMemoText(text, col.IsCompressedUnicode);
         if (col.IsCalculated)
         {
             data = CalculatedColumnUtil.Wrap(data);
@@ -217,7 +217,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
             return null;
         }
 
-        byte[] data = format.EncodeText(text, compress);
+        byte[] data = format.EncodeMemoText(text, compress);
         (UsageMapPointer Owned, UsageMapPointer Free)? maps = usageMaps is not null
             ? await usageMaps.PrepareColumnAsync(tableTdefPage, columnNumber, cancellationToken).ConfigureAwait(false)
             : null;

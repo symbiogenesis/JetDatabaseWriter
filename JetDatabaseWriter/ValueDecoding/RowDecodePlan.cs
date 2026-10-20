@@ -864,7 +864,7 @@ internal sealed class RowDecodePlan
             {
                 byte[] raw = await longValueDecoder.ReadLongValueRawBytesAsync(page, start, length, cancellationToken).ConfigureAwait(false);
                 byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(raw);
-                return longValueDecoder.DecodeLongValue(payload, 0, payload.Length, valueType == OleType);
+                return longValueDecoder.DecodeLongValue(payload, 0, payload.Length, valueType == OleType, compressedStorage: false);
             }
 
             if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))

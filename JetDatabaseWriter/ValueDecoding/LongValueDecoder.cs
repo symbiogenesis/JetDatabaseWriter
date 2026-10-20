@@ -90,7 +90,8 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
     internal async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
     {
         byte[] bytes = await this.ReadLongValueBytesExactAsync(row, start, len, cancellationToken).ConfigureAwait(false);
-        return this.DecodeLongValue(bytes, 0, bytes.Length, isOle);
+        LongValueDescriptor.TryRead(row.AsSpan(start, len), out LongValueDescriptor descriptor);
+        return this.DecodeLongValue(bytes, 0, bytes.Length, isOle, compressedStorage: descriptor.IsInline || descriptor.IsSinglePage);
     }
 
     internal ValueTask<byte[]> ReadLongValueRawBytesAsync(byte[] row, int start, int len, CancellationToken cancellationToken)
@@ -194,8 +195,9 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
     /// <param name="offset">The value's offset.</param>
     /// <param name="length">The value's length.</param>
     /// <param name="isOle">Whether the value is an OLE value.</param>
-    internal string DecodeLongValue(byte[] buffer, int offset, int length, bool isOle)
+    /// <param name="compressedStorage">Whether an ordinary inline or single-row Memo may contain the compressed marker.</param>
+    internal string DecodeLongValue(byte[] buffer, int offset, int length, bool isOle, bool compressedStorage = true)
         => isOle
             ? OleObjectDecoder.ToDataUri(buffer, offset, length)
-            : format.DecodeText(buffer, offset, length);
+            : format.DecodeMemoText(buffer, offset, length, compressedStorage);
 }

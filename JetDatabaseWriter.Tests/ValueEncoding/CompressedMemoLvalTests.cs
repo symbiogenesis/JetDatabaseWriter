@@ -58,13 +58,12 @@ public sealed class CompressedMemoLvalTests
 
     /// <summary>
     /// A very large Latin-1 Memo forces the chained LVAL path (bitmask 0x00)
-    /// and round-trips correctly. This is the specific gap case: compressed
-    /// Memo prefixes longer than 1 inline page.
+    /// and round-trips correctly with plain UTF-16 chained storage.
     /// </summary>
     [Fact]
     public async Task Memo_VeryLargeLatin1_ChainedLvalRoundTrips()
     {
-        // 5000 Latin-1 chars → 5000 compressed bytes > single LVAL page cap
+        // 5000 Latin-1 chars → 10000 plain UTF-16 bytes > single LVAL page cap
         // → chained LVAL pages.
         string memoValue = new('Q', 5000);
         await AssertMemoRoundTripAsync(memoValue, Constants.LongValue.ChainedStorageMode);

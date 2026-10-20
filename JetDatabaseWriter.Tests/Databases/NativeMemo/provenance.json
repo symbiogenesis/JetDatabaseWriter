@@ -1,0 +1,534 @@
+[
+  {
+    "Format": "Jet4Mdb",
+    "NativeInfo": "ENGINE=16.0\r\nDAO_DLL=C:\\Program Files\\Microsoft Office\\root\\VFS\\ProgramFilesCommonX64\\Microsoft Shared\\Office16\\ACEDAO.DLL VERSION=16.0.20430.20182\r\n",
+    "Sha256": "F1D9A911859401DB5CAD80D40F637CE0819DA273318F37A388890FD16A8A4FC2",
+    "Values": [
+      {
+        "Id": 0,
+        "Characters": 10,
+        "HasLiteralFeff": false,
+        "StoredBytes": 12,
+        "Descriptor": "0C0000800000000000000000",
+        "Prefix": "FFFE62626262626262626262"
+      },
+      {
+        "Id": 1,
+        "Characters": 1023,
+        "HasLiteralFeff": false,
+        "StoredBytes": 1025,
+        "Descriptor": "010400400000020000000000",
+        "Prefix": "FFFE626262626262626262626262626262626262"
+      },
+      {
+        "Id": 2,
+        "Characters": 1024,
+        "HasLiteralFeff": false,
+        "StoredBytes": 1026,
+        "Descriptor": "020400400100020000000000",
+        "Prefix": "FFFE626262626262626262626262626262626262"
+      },
+      {
+        "Id": 3,
+        "Characters": 1025,
+        "HasLiteralFeff": false,
+        "StoredBytes": 1027,
+        "Descriptor": "030400400001020000000000",
+        "Prefix": "FFFE626262626262626262626262626262626262"
+      },
+      {
+        "Id": 4,
+        "Characters": 1494,
+        "HasLiteralFeff": false,
+        "StoredBytes": 1496,
+        "Descriptor": "D80500400101020000000000",
+        "Prefix": "FFFE626262626262626262626262626262626262"
+      },
+      {
+        "Id": 5,
+        "Characters": 1500,
+        "HasLiteralFeff": false,
+        "StoredBytes": 1502,
+        "Descriptor": "DE0500400002020000000000",
+        "Prefix": "FFFE626262626262626262626262626262626262"
+      },
+      {
+        "Id": 6,
+        "Characters": 2000,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4000,
+        "Descriptor": "A00F0000000302001195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 7,
+        "Characters": 2023,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4046,
+        "Descriptor": "CE0F0000000402001195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 8,
+        "Characters": 2024,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4048,
+        "Descriptor": "D00F0000000502001195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 9,
+        "Characters": 2025,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4050,
+        "Descriptor": "D20F0000000602001195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 10,
+        "Characters": 2030,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4060,
+        "Descriptor": "DC0F0000000702001195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 11,
+        "Characters": 2031,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4062,
+        "Descriptor": "DE0F0000000802001195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 12,
+        "Characters": 2032,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4064,
+        "Descriptor": "E00F0000000902001195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 13,
+        "Characters": 2033,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4066,
+        "Descriptor": "E20F0000000A02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 14,
+        "Characters": 2034,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4068,
+        "Descriptor": "E40F0000000B02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 15,
+        "Characters": 2035,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4070,
+        "Descriptor": "E60F0000000C02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 16,
+        "Characters": 2036,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4072,
+        "Descriptor": "E80F0000000D02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 17,
+        "Characters": 2037,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4074,
+        "Descriptor": "EA0F0000000E02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 18,
+        "Characters": 2038,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4076,
+        "Descriptor": "EC0F0000001002002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 19,
+        "Characters": 2039,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4078,
+        "Descriptor": "EE0F0000001202002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 20,
+        "Characters": 2040,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4080,
+        "Descriptor": "F00F0000001402002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 21,
+        "Characters": 2041,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4082,
+        "Descriptor": "F20F0000001602002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 22,
+        "Characters": 2047,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4094,
+        "Descriptor": "FE0F0000001802002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 23,
+        "Characters": 2048,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4096,
+        "Descriptor": "00100000001A02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 24,
+        "Characters": 2049,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4098,
+        "Descriptor": "02100000001C02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 25,
+        "Characters": 4094,
+        "HasLiteralFeff": false,
+        "StoredBytes": 8188,
+        "Descriptor": "FC1F0000001E02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 26,
+        "Characters": 4095,
+        "HasLiteralFeff": false,
+        "StoredBytes": 8190,
+        "Descriptor": "FE1F0000002102002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 27,
+        "Characters": 10001,
+        "HasLiteralFeff": false,
+        "StoredBytes": 20002,
+        "Descriptor": "224E0000002402002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 28,
+        "Characters": 11,
+        "HasLiteralFeff": true,
+        "StoredBytes": 16,
+        "Descriptor": "100000800000000000000000",
+        "Prefix": "FFFE00FFFE0062626262626262626262"
+      },
+      {
+        "Id": 29,
+        "Characters": 1025,
+        "HasLiteralFeff": true,
+        "StoredBytes": 1030,
+        "Descriptor": "060400400102020000000000",
+        "Prefix": "FFFE00FFFE006262626262626262626262626262"
+      },
+      {
+        "Id": 30,
+        "Characters": 2049,
+        "HasLiteralFeff": true,
+        "StoredBytes": 4098,
+        "Descriptor": "02100000002902002195B417",
+        "Prefix": "FFFE620062006200620062006200620062006200"
+      },
+      {
+        "Id": 31,
+        "Characters": 4097,
+        "HasLiteralFeff": true,
+        "StoredBytes": 8194,
+        "Descriptor": "02200000002B02002195B417",
+        "Prefix": "FFFE620062006200620062006200620062006200"
+      }
+    ],
+    "SchemaOrigin": "Library-created empty Items table; all retained rows and payloads inserted by DAO SQL",
+    "NativeVerification": "DAO.DBEngine.120 reread all 32 rows with StringComparison.Ordinal before retaining bytes",
+    "ExpectedUtf16": "Ids0..27:0062 repeated Characters times; Ids28..31:FEFF followed by0062 repeated (Characters-1) times"
+  },
+  {
+    "Format": "AceAccdb",
+    "NativeInfo": "ENGINE=16.0\r\nDAO_DLL=C:\\Program Files\\Microsoft Office\\root\\VFS\\ProgramFilesCommonX64\\Microsoft Shared\\Office16\\ACEDAO.DLL VERSION=16.0.20430.20182\r\n",
+    "Sha256": "6CAC20346F956E10297D0D0EA994DA84BB28B4BDBAC2FC206689EBF4B6446C95",
+    "Values": [
+      {
+        "Id": 0,
+        "Characters": 10,
+        "HasLiteralFeff": false,
+        "StoredBytes": 12,
+        "Descriptor": "0C0000800000000000000000",
+        "Prefix": "FFFE62626262626262626262"
+      },
+      {
+        "Id": 1,
+        "Characters": 1023,
+        "HasLiteralFeff": false,
+        "StoredBytes": 1025,
+        "Descriptor": "010400400000020000000000",
+        "Prefix": "FFFE626262626262626262626262626262626262"
+      },
+      {
+        "Id": 2,
+        "Characters": 1024,
+        "HasLiteralFeff": false,
+        "StoredBytes": 1026,
+        "Descriptor": "020400400100020000000000",
+        "Prefix": "FFFE626262626262626262626262626262626262"
+      },
+      {
+        "Id": 3,
+        "Characters": 1025,
+        "HasLiteralFeff": false,
+        "StoredBytes": 1027,
+        "Descriptor": "030400400001020000000000",
+        "Prefix": "FFFE626262626262626262626262626262626262"
+      },
+      {
+        "Id": 4,
+        "Characters": 1494,
+        "HasLiteralFeff": false,
+        "StoredBytes": 1496,
+        "Descriptor": "D80500400101020000000000",
+        "Prefix": "FFFE626262626262626262626262626262626262"
+      },
+      {
+        "Id": 5,
+        "Characters": 1500,
+        "HasLiteralFeff": false,
+        "StoredBytes": 1502,
+        "Descriptor": "DE0500400002020000000000",
+        "Prefix": "FFFE626262626262626262626262626262626262"
+      },
+      {
+        "Id": 6,
+        "Characters": 2000,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4000,
+        "Descriptor": "A00F0000000302002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 7,
+        "Characters": 2023,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4046,
+        "Descriptor": "CE0F0000000402002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 8,
+        "Characters": 2024,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4048,
+        "Descriptor": "D00F0000000502002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 9,
+        "Characters": 2025,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4050,
+        "Descriptor": "D20F0000000602002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 10,
+        "Characters": 2030,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4060,
+        "Descriptor": "DC0F0000000702002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 11,
+        "Characters": 2031,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4062,
+        "Descriptor": "DE0F0000000802002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 12,
+        "Characters": 2032,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4064,
+        "Descriptor": "E00F0000000902002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 13,
+        "Characters": 2033,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4066,
+        "Descriptor": "E20F0000000A02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 14,
+        "Characters": 2034,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4068,
+        "Descriptor": "E40F0000000B02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 15,
+        "Characters": 2035,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4070,
+        "Descriptor": "E60F0000000C02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 16,
+        "Characters": 2036,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4072,
+        "Descriptor": "E80F0000000D02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 17,
+        "Characters": 2037,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4074,
+        "Descriptor": "EA0F0000000E02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 18,
+        "Characters": 2038,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4076,
+        "Descriptor": "EC0F0000001002002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 19,
+        "Characters": 2039,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4078,
+        "Descriptor": "EE0F0000001202002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 20,
+        "Characters": 2040,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4080,
+        "Descriptor": "F00F0000001402002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 21,
+        "Characters": 2041,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4082,
+        "Descriptor": "F20F0000001602002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 22,
+        "Characters": 2047,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4094,
+        "Descriptor": "FE0F0000001802002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 23,
+        "Characters": 2048,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4096,
+        "Descriptor": "00100000001A02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 24,
+        "Characters": 2049,
+        "HasLiteralFeff": false,
+        "StoredBytes": 4098,
+        "Descriptor": "02100000001C02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 25,
+        "Characters": 4094,
+        "HasLiteralFeff": false,
+        "StoredBytes": 8188,
+        "Descriptor": "FC1F0000001E02002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 26,
+        "Characters": 4095,
+        "HasLiteralFeff": false,
+        "StoredBytes": 8190,
+        "Descriptor": "FE1F0000002102002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 27,
+        "Characters": 10001,
+        "HasLiteralFeff": false,
+        "StoredBytes": 20002,
+        "Descriptor": "224E0000002402002195B417",
+        "Prefix": "6200620062006200620062006200620062006200"
+      },
+      {
+        "Id": 28,
+        "Characters": 11,
+        "HasLiteralFeff": true,
+        "StoredBytes": 16,
+        "Descriptor": "100000800000000000000000",
+        "Prefix": "FFFE00FFFE0062626262626262626262"
+      },
+      {
+        "Id": 29,
+        "Characters": 1025,
+        "HasLiteralFeff": true,
+        "StoredBytes": 1030,
+        "Descriptor": "060400400102020000000000",
+        "Prefix": "FFFE00FFFE006262626262626262626262626262"
+      },
+      {
+        "Id": 30,
+        "Characters": 2049,
+        "HasLiteralFeff": true,
+        "StoredBytes": 4098,
+        "Descriptor": "02100000002902003095B417",
+        "Prefix": "FFFE620062006200620062006200620062006200"
+      },
+      {
+        "Id": 31,
+        "Characters": 4097,
+        "HasLiteralFeff": true,
+        "StoredBytes": 8194,
+        "Descriptor": "02200000002B02004095B417",
+        "Prefix": "FFFE620062006200620062006200620062006200"
+      }
+    ],
+    "SchemaOrigin": "Library-created empty Items table; all retained rows and payloads inserted by DAO SQL",
+    "NativeVerification": "DAO.DBEngine.120 reread all 32 rows with StringComparison.Ordinal before retaining bytes",
+    "ExpectedUtf16": "Ids0..27:0062 repeated Characters times; Ids28..31:FEFF followed by0062 repeated (Characters-1) times"
+  }
+]

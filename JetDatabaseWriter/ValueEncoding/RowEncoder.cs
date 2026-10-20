@@ -765,7 +765,7 @@ internal sealed class RowEncoder(JetFormat format)
             return null;
         }
 
-        byte[] data = format.EncodeText(value, compress);
+        byte[] data = format.EncodeMemoText(value, compress);
         if (data.Length > Constants.LongValue.MaxInlineBytes)
         {
             throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineBytes} bytes.");

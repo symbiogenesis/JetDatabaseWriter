@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.ValueDecoding.Models;
@@ -468,7 +469,8 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
             return new UnreadableLongValue(columnName, ex.Message);
         }
 
-        return isOle ? bytes : format.DecodeText(bytes, 0, bytes.Length);
+        LongValueDescriptor.TryRead(page.AsSpan(start, length), out LongValueDescriptor descriptor);
+        return isOle ? bytes : format.DecodeMemoText(bytes, 0, bytes.Length, descriptor.IsInline || descriptor.IsSinglePage);
     }
 
     /// <summary>
@@ -519,7 +521,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
             byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(raw);
             return reference.IsOle
                 ? payload
-                : longValues.DecodeLongValue(payload, 0, payload.Length, isOle: false);
+                : longValues.DecodeLongValue(payload, 0, payload.Length, isOle: false, compressedStorage: false);
         }
         catch (Exception exception) when (RowValueDecodePolicy.IsMalformedValueException(exception))
         {
