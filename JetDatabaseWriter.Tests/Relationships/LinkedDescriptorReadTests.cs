@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -60,6 +61,35 @@ public sealed class LinkedDescriptorReadTests
         await using AccessReader reader = await AccessReader.OpenAsync(host, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<JetAccessDeniedException>(async () => await reader.ListIndexesAsync("Alias", TestContext.Current.CancellationToken));
         await Assert.ThrowsAsync<JetAccessDeniedException>(async () => await reader.GetComplexColumnsAsync("Alias", TestContext.Current.CancellationToken));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task AccessLink_QueryOrdering_OpensOneSourceWithItsOwnCapabilities(DatabaseFormat format)
+    {
+        await using var source = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(source, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("Data", [new("Id", typeof(int))], [new("PK", "Id") { IsPrimaryKey = true }], TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync("Data", [[2], [1]], TestContext.Current.CancellationToken);
+        }
+
+        await using MemoryStream host = await CreateHostAsync(text: false);
+        int opens = 0;
+        var options = new AccessReaderOptions
+        {
+            UseLockFile = false,
+            LinkedSourceResolver = (_, _, _) =>
+            {
+                opens++;
+                return new ValueTask<Stream>(new MemoryStream(source.ToArray(), writable: false));
+            },
+        };
+        await using AccessReader reader = await AccessReader.OpenAsync(host, options, leaveOpen: true, TestContext.Current.CancellationToken);
+        List<LinkedRow> ordered = await reader.Query<LinkedRow>("Alias").OrderBy(row => row.Id).ToListAsync(TestContext.Current.CancellationToken);
+        Assert.Equal([1, 2], ordered.Select(row => row.Id));
+        Assert.Equal(1, opens);
     }
 
     [Fact]
