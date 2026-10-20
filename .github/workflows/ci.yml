@@ -25,7 +25,7 @@ env:
 
 # The full suite runs on Windows: it uses Windows paths and byte-range locks, and the
 # DAO round-trip tests skip themselves when Access is not installed. The jobs run in
-# parallel. The analyzers take most of a Release build, so four jobs share them, and the
+# parallel. The analyzers take most of a Release build, so five jobs share them, and the
 # test legs execute their own analyzed Release binaries immediately in the same job.
 jobs:
   analyze:
@@ -52,10 +52,16 @@ jobs:
             options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
             tf: net10.0
             runner: true
-          - name: tests net8.0
+          - name: tests net10.0 netstandard
             project: JetDatabaseWriter.Tests
-            options: -f net8.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
-            tf: net8.0
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true
+            restore-options: -p:TestNetStandard=true
+            tf: net10.0-netstandard
+            runner: true
+          - name: tests net11.0
+            project: JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
+            tf: net11.0
             runner: true
 
     steps:
@@ -76,17 +82,21 @@ jobs:
         shell: pwsh
         run: ./scripts/check-security-traceability.ps1
 
-      # global.json pins the .NET 10 SDK that builds everything.
+      # global.json pins the .NET 10 SDK; .NET 11 is installed only to run compatibility tests.
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
-          dotnet-version: ${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}
           cache: true
           cache-dependency-path: '*/packages.lock.json'
 
+      - name: Setup .NET 11 runtime
+        if: matrix.tf == 'net11.0'
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: .github/dotnet11/global.json
       - name: Restore
-        run: dotnet restore ${{ matrix.project }} --locked-mode
+        run: dotnet restore ${{ matrix.project }} --locked-mode ${{ matrix.restore-options }}
 
       # Release turns on every analyzer, code-style rule and XML-doc check as an error,
       # including in the test project.
@@ -99,7 +109,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dao-test-runner-${{ matrix.tf }}
-          path: JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}/
+          path: JetDatabaseWriter.Tests/bin/Release/net10.0/
           if-no-files-found: error
           retention-days: 3
 
@@ -108,10 +118,13 @@ jobs:
       - name: Test
         if: matrix.runner
         env:
+          JDW_EXPECTED_RUNTIME_MAJOR: ${{ matrix.tf == 'net11.0' && '11' || '10' }}
+          DOTNET_ROLL_FORWARD: ${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}
+          DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
           JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}
         run: >-
           dotnet test --test-modules JetDatabaseWriter.Tests.dll
-          --root-directory JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}
+          --root-directory JetDatabaseWriter.Tests/bin/Release/net10.0
           --minimum-expected-tests 1
           --long-running 60 --xunit-diagnostics on --no-ansi --output Detailed --timeout 80m
           --report-xunit-xml --report-xunit-xml-filename tests.xml
@@ -178,7 +191,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        tf: [net10.0, net8.0]
+        tf: [net10.0, net11.0]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -188,17 +201,26 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
-          dotnet-version: ${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}
           cache: true
           cache-dependency-path: '*/packages.lock.json'
+      - name: Setup .NET 11 runtime
+        if: matrix.tf == 'net11.0'
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: .github/dotnet11/global.json
       - name: Restore
         run: dotnet restore JetDatabaseWriter.Tests --locked-mode
       - name: Build
-        run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f ${{ matrix.tf }} -p:RunAnalyzers=false
+        run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f net10.0 -p:RunAnalyzers=false
       - name: Test managed recovery, encryption replacement and linked-source boundaries
+        env:
+          JDW_EXPECTED_RUNTIME_MAJOR: ${{ matrix.tf == 'net11.0' && '11' || '10' }}
+          DOTNET_ROLL_FORWARD: ${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}
+          DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
         run: >-
-          dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f ${{ matrix.tf }}
-          --filter-class JetDatabaseWriter.Tests.Encryption.AtomicReplacementTests
+          dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f net10.0
+          --filter-class JetDatabaseWriter.Tests.Infrastructure.LibraryTargetTests
+          JetDatabaseWriter.Tests.Encryption.AtomicReplacementTests
           JetDatabaseWriter.Tests.Encryption.ReplacementCancellationTests
           JetDatabaseWriter.Tests.Encryption.ReplacementDurabilityTests
           JetDatabaseWriter.Tests.Encryption.ReplacementCrashRecoveryTests

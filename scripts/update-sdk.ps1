@@ -29,6 +29,9 @@ foreach ($project in $solution.SelectNodes('//Project[@Path]')) {
         throw "Solution project must stay inside the repository: $($project.Path)"
     }
     $files.Add((Join-Path (Split-Path -Parent $projectPath) 'packages.lock.json'))
+    foreach ($lock in Get-ChildItem -LiteralPath (Split-Path -Parent $projectPath) -Filter 'packages.netstandard.lock.json' -File) {
+        $files.Add($lock.FullName)
+    }
 }
 foreach ($mode in 'seed', 'trimmed', 'native') {
     $files.Add((Join-Path $PSScriptRoot "AotSmoke/packages.$mode.lock.json"))

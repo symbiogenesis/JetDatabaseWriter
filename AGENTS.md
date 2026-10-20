@@ -16,8 +16,8 @@ JetDatabaseWriter reads and writes Microsoft Access databases in pure .NET: Jet3
 | Project | Targets | Role |
 |---|---|---|
 | `JetDatabaseWriter` | netstandard2.1, net10.0 | The library and NuGet package |
-| `JetDatabaseWriter.Tests` | net10.0, net8.0 | xUnit v3 on Microsoft Testing Platform. The net8.0 leg loads the library's netstandard2.1 build |
-| `JetDatabaseWriter.TestSupport` | net10.0, net8.0 | Non-packable helpers that the tests and FormatProbe share |
+| `JetDatabaseWriter.Tests` | net10.0 | xUnit v3 on Microsoft Testing Platform. CI runs on .NET 10 and .NET 11; a separate .NET 10 lane loads the netstandard2.1 library |
+| `JetDatabaseWriter.TestSupport` | net10.0 | Non-packable helpers that the tests and FormatProbe share |
 | `JetDatabaseWriter.Benchmarks` | net10.0 | BenchmarkDotNet |
 | `JetDatabaseWriter.FormatProbe` | net10.0 | Diagnostics against real Access files |
 | `JetDatabaseWriter.Scaffold` | net10.0 | Entity scaffolding tool |
@@ -34,7 +34,7 @@ When a design decision is left to you, choose what Microsoft Access does, then t
 - All benchmarks run only on CI, including a single benchmark, short/medium/dry jobs, smoke checks, and debugging runs. Building the benchmark project locally is allowed; executing benchmarks is not.
 - Local builds and targeted tests provide development feedback. Required acceptance gates still run on CI against the settled `main` revision.
 - For compiler and analyzer feedback without a local build, stage new files and run `pwsh -NoProfile -File scripts/submit-candidate.ps1 -Base origin/main`. The main-only candidate workflow applies the unpublished patch, installs its SDK, compiles all solution targets, formats changed source and retains a reviewable patch plus strict build diagnostics. Review and apply formatter fixes before integrating; candidate success does not replace the ordinary main CI gate. Oversized workflow inputs are refused before dispatch.
-- Windows test analyzer lanes execute their exact Release binaries with `dotnet test --test-modules` immediately after their own build, without restoring or building again. Both framework legs and every analyzer gate remain required. The lanes upload the analyzed runner for focused DAO checks and xUnit results with individual test durations.
+- Windows test analyzer lanes execute their exact Release binaries with `dotnet test --test-modules` immediately after their own build, without restoring or building again. All three runtime/library lanes and every analyzer gate remain required. The lanes upload the analyzed runner for focused DAO checks and xUnit results with individual test durations.
 - Specialized benchmark, fuzz and portability workflows require a completed, successful `ci.yml` run for the exact main revision before their build jobs start. Finish that gate before dispatching them; no additional local build is required.
 
 ## Build
@@ -57,9 +57,9 @@ git -c push.followTags=false push origin main:main
 gh run list --workflow ci.yml --branch main --commit <commit>
 ```
 
-Record the run URL, exact tested SHA and verdict. Inspect all nine jobs: four Windows Release analyzer/package jobs (the two test analyzer lanes also execute their full ordinary suites), the Windows generated trimmed/NativeAOT consumer job, and focused encryption replacement tests on Linux and macOS for both target frameworks. Do not treat a queued or running workflow as passed. A timing-sensitive failure may be retried once with `gh run rerun <id> --failed` before diagnosing it as reproducible.
+Record the run URL, exact tested SHA and verdict. Inspect all ten jobs: five Windows Release analyzer/package jobs (the three test analyzer lanes also execute their full ordinary suites), the Windows generated trimmed/NativeAOT consumer job, and focused encryption replacement tests on Linux and macOS on .NET 10 and .NET 11. Do not treat a queued or running workflow as passed. A timing-sensitive failure may be retried once with `gh run rerun <id> --failed` before diagnosing it as reproducible.
 
-For a completed run, the reporting mode of the existing helper prints every step result, build summaries, both test summaries and failing-test messages without pushing or dispatching:
+For a completed run, the reporting mode of the existing helper prints every step result, build summaries, all three test summaries and failing-test messages without pushing or dispatching:
 
 ```
 pwsh -NoProfile -File scripts/ci-gate.ps1 -RunId <id>
@@ -69,7 +69,7 @@ The helper never publishes or deletes Git refs. After publishing `main`, `-Sha <
 
 ## Tests
 
-Expected results on both legs:
+Expected results in all three ordinary test lanes:
 
 - Nothing fails.
 - Every skipped test is a skip-guarded DAO test ("Requires Microsoft Access (DAO.DBEngine.120)"). Microsoft Access is absent on hosted CI, so those cases skip there. Selected DAO tests can run locally on an Access-equipped host using locally built binaries or CI-built binaries from the matching revision; engine-specific skips remain evidence gaps.
@@ -93,7 +93,7 @@ xUnit v3 on Microsoft Testing Platform:
   - Several values go after one switch, separated by spaces (`--filter-class Foo Bar`).
   - Other switches: `--list-tests`, `--stop-on-fail on`, and `-?`.
 - Fuzz harnesses are `[Fact(Explicit = true)]` with `[Trait("Category", "Fuzz")]`. Run them only on purpose: `dotnet test --project JetDatabaseWriter.Tests --filter-trait Category=Fuzz --explicit only`.
-- Test code must compile on both legs. Polyfills for newer BCL types go in `JetDatabaseWriter.Tests/Polyfills`, and `LibraryTarget.IsNetStandard` tells a test which library build it loaded. The scaffolding tests build for net10.0 only.
+- Test code compiles for net10.0. CI runs the native library on .NET 10 and .NET 11, and the netstandard2.1 library on .NET 10 using `-p:TestNetStandard=true`. `LibraryTarget.IsNetStandard` reports the loaded asset. The standard lane excludes scaffolding tests. The root SDK pin stays on .NET 10; `.github/dotnet11/global.json` pins the CI-only runtime installation.
 - Helpers that the tests and FormatProbe share go in `JetDatabaseWriter.TestSupport`, never in the library. Run child processes through `PowerShellProcessRunner`, not by reading a redirected stream to its end before `WaitForExit`, which ignores the timeout.
 - Writing tests:
   - Prefer primary constructors for fixtures and output, for example `public class MyTests(DatabaseCache db, ITestOutputHelper output) : IClassFixture<DatabaseCache>`.

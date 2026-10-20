@@ -21,8 +21,7 @@ using Xunit;
 /// DAO probe and the DAO round-trip scripts use. A hung host must be killed with every process it
 /// started once the timeout passes, a process in that tree that cannot be killed must not turn
 /// the timeout into an exception, and a child process that keeps the output pipes open after the
-/// host exits must not block the caller. Both legs run these, so the runner is checked on net8.0
-/// as well as net10.0.
+/// host exits must not block the caller. All runtime and library-asset lanes run these.
 /// </summary>
 public sealed partial class PowerShellProcessRunnerTests
 {

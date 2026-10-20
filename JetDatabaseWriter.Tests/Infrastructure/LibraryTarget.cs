@@ -5,9 +5,8 @@ using System.Reflection;
 using System.Runtime.Versioning;
 
 /// <summary>
-/// Reports which build of the library the running tests loaded. The net10.0 test leg
-/// loads the library's net10.0 asset and the net8.0 leg loads its netstandard2.1 asset,
-/// the one .NET 8 and 9 consumers get.
+/// Reports which build of the library the running tests loaded. The ordinary runtime
+/// lanes load the net10.0 asset; TestNetStandard selects the netstandard2.1 asset.
 /// </summary>
 internal static class LibraryTarget
 {

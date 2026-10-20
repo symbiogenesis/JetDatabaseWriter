@@ -31,6 +31,7 @@ function New-Fixture {
     [IO.File]::WriteAllText((Join-Path $fixture 'global.json'), "{`r`n  `"sdk`": { `"version`": `"10.0.401`", `"rollForward`": `"disable`" }`r`n}`r`n")
     [IO.File]::WriteAllText((Join-Path $fixture 'JetDatabaseWriter.slnx'), '<Solution><Project Path="Library/Library.csproj" /></Solution>')
     [IO.File]::WriteAllText((Join-Path $fixture 'Library/packages.lock.json'), "original library`r`n")
+    [IO.File]::WriteAllText((Join-Path $fixture 'Library/packages.netstandard.lock.json'), "original standard`r`n")
     [IO.File]::WriteAllText((Join-Path $scripts 'AotSmoke/AotSmoke.csproj'), '<Project />')
     foreach ($mode in 'seed', 'trimmed', 'native') {
         [IO.File]::WriteAllText((Join-Path $scripts ("AotSmoke/packages.$mode.lock.json")), "original $mode`r`n")
@@ -48,6 +49,8 @@ function dotnet {
         $mode = @($arguments | Where-Object { $_ -like '-p:SmokeMode=*' })
         $lock = if ($mode.Count) {
             Join-Path $scripts ('AotSmoke/packages.' + $mode[0].Split('=')[1] + '.lock.json')
+        } elseif ($arguments -contains '-p:TestNetStandard=true') {
+            Join-Path $fixture 'Library/packages.netstandard.lock.json'
         } else { Join-Path $fixture 'Library/packages.lock.json' }
         [IO.File]::WriteAllText($lock, "updated $($context.Version)`n")
     }
@@ -66,6 +69,7 @@ function Invoke-Scenario([string] $Name, [string] $ExpectedError = '') {
         Assert-Check ([IO.File]::Exists($libraryLock)) "$Name deleted an existing library lock."
         $expectedLibrary = if ($context.EmptyLibrary) { '' } else { "original library`r`n" }
         Assert-Check ([IO.File]::ReadAllText($libraryLock) -eq $expectedLibrary) "$Name did not restore the original library lock bytes."
+        Assert-Check ([IO.File]::ReadAllText((Join-Path $fixture 'Library/packages.netstandard.lock.json')) -eq "original standard`r`n") "$Name did not restore the standard-asset lock bytes."
         foreach ($mode in 'seed', 'trimmed', 'native') {
             $path = Join-Path $scripts ("AotSmoke/packages.$mode.lock.json")
             if ($mode -eq 'native' -and $context.MissingNative) {
@@ -80,7 +84,7 @@ function Invoke-Scenario([string] $Name, [string] $ExpectedError = '') {
 
 New-Fixture
 & (Join-Path $scripts 'restore-dependencies.ps1')
-Assert-Check ($context.Calls.Count -eq 4) 'Locked restoration must cover the solution and all three smoke modes.'
+Assert-Check ($context.Calls.Count -eq 5) 'Locked restoration must cover the solution and all three smoke modes.'
 Assert-Check (($context.Calls | ForEach-Object { $_ -join ' ' })[0] -like '*JetDatabaseWriter.slnx*') 'The solution restore is missing.'
 foreach ($call in $context.Calls) {
     Assert-Check ($call -contains '--locked-mode' -and $call -notcontains '--force-evaluate') 'Ordinary restoration must remain locked.'
@@ -88,7 +92,8 @@ foreach ($call in $context.Calls) {
 foreach ($mode in 'seed', 'trimmed', 'native') {
     Assert-Check (@($context.Calls | Where-Object { $_ -contains "-p:SmokeMode=$mode" }).Count -eq 1) "The $mode lock was not restored exactly once."
 }
-'PASS: locked mode covers solution and every smoke configuration'
+Assert-Check (@($context.Calls | Where-Object { $_ -contains '-p:TestNetStandard=true' }).Count -eq 1) 'The standard-asset lock must be restored exactly once.'
+'PASS: locked mode covers solution, standard asset and every smoke configuration'
 
 New-Fixture
 & (Join-Path $scripts 'restore-dependencies.ps1') -AotOnly
@@ -105,15 +110,17 @@ Assert-Check (($actualModes -join ',') -eq ($lockModes -join ',')) 'Every smoke 
 
 New-Fixture
 Invoke-Scenario 'complete atomic SDK update'
-Assert-Check ($context.Calls.Count -eq 8) 'SDK updates must refresh and then verify all four restore targets.'
-for ($i = 0; $i -lt 4; $i++) {
+Assert-Check ($context.Calls.Count -eq 10) 'SDK updates must refresh and then verify all five restore targets.'
+for ($i = 0; $i -lt 5; $i++) {
     Assert-Check ($context.Calls[$i] -contains '--force-evaluate' -and $context.Calls[$i] -contains '-p:RestoreLockedMode=false') 'Refresh did not explicitly unlock restoration.'
-    Assert-Check ($context.Calls[$i + 4] -contains '--locked-mode') 'Fresh locks were not verified in locked mode.'
+    Assert-Check ($context.Calls[$i + 5] -contains '--locked-mode') 'Fresh locks were not verified in locked mode.'
 }
 Assert-Check (([IO.File]::ReadAllText((Join-Path $fixture 'global.json')) | ConvertFrom-Json).sdk.version -eq '10.0.402') 'The SDK pin was not updated.'
 Assert-Check ([IO.File]::ReadAllText((Join-Path $scripts 'AotSmoke/packages.native.lock.json')) -eq "updated 10.0.402`r`n") 'Generated locks were not normalized to CRLF.'
 
-foreach ($stage in 1, 2, 3, 4, 5, 8) {
+Assert-Check ([IO.File]::ReadAllText((Join-Path $fixture 'Library/packages.netstandard.lock.json')) -eq "updated 10.0.402`r`n") 'The standard-asset lock was not refreshed and normalized.'
+
+foreach ($stage in 1, 2, 3, 4, 5, 6, 10) {
     New-Fixture
     $context.FailAt = $stage
     Invoke-Scenario "restore failure $stage rolls back" 'failed with exit code 7'

@@ -25,7 +25,10 @@ function Invoke-Restore([string[]] $Arguments) {
 
 Push-Location $repository
 try {
-    if (-not $AotOnly) { Invoke-Restore @('JetDatabaseWriter.slnx') }
+    if (-not $AotOnly) {
+        Invoke-Restore @('JetDatabaseWriter.slnx')
+        Invoke-Restore @('JetDatabaseWriter.Tests', '-p:TestNetStandard=true')
+    }
     foreach ($mode in 'seed', 'trimmed', 'native') {
         Invoke-Restore @('scripts/AotSmoke/AotSmoke.csproj', "-p:SmokeMode=$mode")
     }

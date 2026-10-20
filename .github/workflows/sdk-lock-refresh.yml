@@ -64,6 +64,9 @@ jobs:
             }
             $lock = Join-Path (Split-Path -Parent $projectPath) 'packages.lock.json'
             $files.Add([IO.Path]::GetRelativePath($repository, $lock).Replace('\', '/'))
+            foreach ($alternate in Get-ChildItem -LiteralPath (Split-Path -Parent $projectPath) -Filter 'packages.netstandard.lock.json' -File) {
+              $files.Add([IO.Path]::GetRelativePath($repository, $alternate.FullName).Replace('\', '/'))
+            }
           }
           foreach ($mode in 'seed', 'trimmed', 'native') {
             $files.Add("scripts/AotSmoke/packages.$mode.lock.json")

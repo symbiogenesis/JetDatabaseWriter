@@ -38,7 +38,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
-        tf: [net10.0, net8.0]
+        tf: [net10.0, net11.0]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,12 +48,20 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
-          dotnet-version: ${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}
           cache: true
           cache-dependency-path: '*/packages.lock.json'
+      - name: Setup .NET 11 runtime
+        if: matrix.tf == 'net11.0'
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: .github/dotnet11/global.json
       - name: Restore
         run: dotnet restore JetDatabaseWriter.Tests --locked-mode
       - name: Build
-        run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f ${{ matrix.tf }}
+        run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f net10.0
       - name: Test
-        run: dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f ${{ matrix.tf }}
+        env:
+          JDW_EXPECTED_RUNTIME_MAJOR: ${{ matrix.tf == 'net11.0' && '11' || '10' }}
+          DOTNET_ROLL_FORWARD: ${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}
+          DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
+        run: dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f net10.0

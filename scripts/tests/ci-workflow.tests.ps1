@@ -52,14 +52,18 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     $frameworks = @($TestProject.SelectNodes('/Project/PropertyGroup/TargetFrameworks') | ForEach-Object { $_.InnerText.Split(';', [StringSplitOptions]::RemoveEmptyEntries) } | Sort-Object -Unique)
     Assert-Contract ($frameworks.Count -gt 0) 'The test project framework declaration is missing.'
     $testLanes = @($lanes | Where-Object project -eq 'JetDatabaseWriter.Tests')
-    Assert-Contract ($testLanes.Count -eq $frameworks.Count) 'Every test framework must have exactly one analyzer lane.'
-    foreach ($framework in $frameworks) {
-        $expectedOptions = '-f ' + $framework + ' -p:AnalyzeOnly=JetDatabaseWriter.Tests'
-        $lane = @($testLanes | Where-Object options -eq $expectedOptions)
-        Assert-Contract ($lane.Count -eq 1) "The '$framework' test framework must have an analyzer lane."
-        Assert-Contract ($lane[0].tf -eq $framework -and $lane[0].runner -eq 'true') "The '$framework' analyzer lane must publish its matching test runner."
+    Assert-Contract (($frameworks -join ';') -eq 'net10.0') 'Tests must build locally with the pinned .NET 10 SDK.'
+    Assert-Contract ($testLanes.Count -eq 3) 'Native .NET 10, netstandard and .NET 11 must have analyzer lanes.'
+    foreach ($framework in 'net10.0', 'net10.0-netstandard', 'net11.0') {
+        $expectedOptions = '-f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests'
+        if ($framework -eq 'net10.0-netstandard') { $expectedOptions += ' -p:TestNetStandard=true' }
+        $lane = @($testLanes | Where-Object tf -eq $framework)
+        Assert-Contract ($lane.Count -eq 1 -and $lane[0].options -eq $expectedOptions -and $lane[0].runner -eq 'true') "The '$framework' test lane must analyze and publish its matching runner."
+        if ($framework -eq 'net10.0-netstandard') {
+            Assert-Contract ($lane[0]['restore-options'] -eq '-p:TestNetStandard=true') 'The netstandard lane must restore its matching dependency graph.'
+        }
     }
-    Assert-Contract ($lanes.Count -eq (2 + $frameworks.Count)) 'Unexpected analyzer lanes require a coverage review.'
+    Assert-Contract ($lanes.Count -eq 5) 'Unexpected analyzer lanes require a coverage review.'
 
     $build = [regex]::Match($analyze, '(?m)^        run: (?<command>dotnet build [^\n]+)$').Groups['command'].Value
     Assert-Contract ($build -match '(?:^| )-c Release(?: |$)' -and $build.Contains('${{ matrix.project }}') -and $build.Contains('${{ matrix.options }}')) 'The analyzer build must use Release and every matrix lane option.'
@@ -77,7 +81,7 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     # Each runtime leg executes its own Release analyzer output in the same job.
     # The artifact remains available for focused DAO checks on Access hosts.
     $runnerName = 'name: dao-test-runner-${{ matrix.tf }}'
-    $runnerPath = 'path: JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}/'
+    $runnerPath = 'path: JetDatabaseWriter.Tests/bin/Release/net10.0/'
     $upload = [regex]::Match($analyze, '(?ms)^      - name: Upload DAO test runner\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($upload -match '(?m)^        if: matrix.runner$' -and $upload.Contains($runnerName) -and $upload.Contains($runnerPath) -and $upload -match 'uses: actions/upload-artifact@[0-9a-f]{40}(?:\s|$)' -and $upload.Contains('if-no-files-found: error')) 'Analyzer jobs must publish the complete matching test runner with a pinned action.'
     Assert-Contract ($analyze -notmatch '(?m)^    needs:') 'Test analyzer lanes must start independently of other analyzer lanes.'
@@ -90,12 +94,13 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract ($buildPosition -ge 0 -and $buildPosition -lt $testPosition) 'Ordinary tests must follow their successful Release analyzer build.'
     $afterBuild = $test.Substring($buildPosition + '      - name: Build'.Length)
     Assert-Contract ([regex]::Matches($afterBuild, '(?m)^[ \t]+(?:run:.*\b)?dotnet[ \t]+(?:build|restore|publish)\b').Count -eq 1) 'Ordinary tests must execute the validated binaries without rebuilding.'
-    Assert-Contract ($test.Contains("dotnet-version: `${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}")) 'The net8.0 analyzer lane must install its test runtime.'
+    Assert-Contract ($test.Contains('global-json-file: .github/dotnet11/global.json') -and $test.Contains("if: matrix.tf == 'net11.0'")) 'The .NET 11 lane must install the pinned prerelease runtime.'
+    Assert-Contract ($testStep.Contains("DOTNET_ROLL_FORWARD: `${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}") -and $testStep.Contains("DOTNET_ROLL_FORWARD_TO_PRERELEASE: `${{ matrix.tf == 'net11.0' && '1' || '0' }}") -and $testStep.Contains("JDW_EXPECTED_RUNTIME_MAJOR: `${{ matrix.tf == 'net11.0' && '11' || '10' }}")) 'Test lanes must select and verify their intended runtime, including prereleases.'
     $testCommand = [regex]::Match($testStep, '(?m)^        run: (?<command>[^\n]+)$').Groups['command'].Value
     if ($testCommand -eq '>-') {
         $testCommand = ([regex]::Matches($testStep, '(?m)^          (?<line>[^\n]+)$') | ForEach-Object { $_.Groups['line'].Value.Trim() }) -join ' '
     }
-    Assert-Contract ($testCommand.Contains('--test-modules JetDatabaseWriter.Tests.dll') -and $testCommand.Contains('--root-directory JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}') -and $testCommand -match '(?:^| )--minimum-expected-tests 1(?: |$)') 'Ordinary tests must launch the validated module and reject empty discovery.'
+    Assert-Contract ($testCommand.Contains('--test-modules JetDatabaseWriter.Tests.dll') -and $testCommand.Contains('--root-directory JetDatabaseWriter.Tests/bin/Release/net10.0') -and $testCommand -match '(?:^| )--minimum-expected-tests 1(?: |$)') 'Ordinary tests must launch the validated module and reject empty discovery.'
     Assert-Contract ($testCommand -notmatch '(?:^| )--(?:filter|list-tests|explicit|project|solution)\b') 'Ordinary test jobs must run the full ordinary suite from the downloaded module.'
     Assert-Contract ($testStep.Contains('JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}')) 'Ordinary tests must retain normalized golden specimens in their framework lane.'
     $golden = [regex]::Match($analyze, '(?ms)^      - name: Upload golden diagnostics\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
@@ -114,16 +119,11 @@ function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedE
 }
 
 Assert-Scenario 'hosted coverage and immediate validated binary execution' $workflow
-$net8Lane = '(?ms)^          - name: tests net8\.0\n.*?(?=^          - name:|^    steps:|\z)'
-Assert-Scenario 'missing net8 analyzer lane' ([regex]::Replace($workflow, $net8Lane, '')) 'Every test framework must have exactly one analyzer lane'
-Assert-Scenario 'wrong analyzer project selection' ($workflow.Replace('-f net8.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests', '-f net8.0 -p:AnalyzeOnly=JetDatabaseWriter.Test')) "The 'net8.0' test framework must have an analyzer lane"
 Assert-Scenario 'incomplete solution analysis' ($workflow.Replace('project: JetDatabaseWriter.slnx', 'project: JetDatabaseWriter.TestSupport')) 'The tools lane must analyze the complete solution'
 Assert-Scenario 'Debug analyzer build' ($workflow.Replace('dotnet build ${{ matrix.project }} -c Release', 'dotnet build ${{ matrix.project }} -c Debug')) 'The analyzer build must use Release'
 Assert-Scenario 'disabled analyzers' ($workflow.Replace('dotnet build ${{ matrix.project }}', 'dotnet build -p:RunAnalyzers=false ${{ matrix.project }}')) 'Analyzer jobs must retain all strict build guarantees'
-Assert-Scenario 'mismatched analyzer runner framework' ($workflow.Replace("tf: net8.0`n", "tf: net10.0`n")) "The 'net8.0' analyzer lane must publish its matching test runner"
 Assert-Scenario 'ordinary suite disabled' ($workflow.Replace("      - name: Test`n        if: matrix.runner", "      - name: Test`n        if: false")) 'Every test analyzer lane must run its full ordinary suite'
 Assert-Scenario 'unrelated analyzer barrier' ($workflow.Replace("    name: Analyze", "    needs: another-analyzer`n    name: Analyze")) 'Test analyzer lanes must start independently'
-Assert-Scenario 'missing net8 runtime' ($workflow.Replace("          dotnet-version: `${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}`n", '')) 'The net8.0 analyzer lane must install its test runtime'
 
 $analyzeJob = Get-CiJob $workflow 'analyze'
 $testStep = [regex]::Match($analyzeJob, '(?ms)^      - name: Test\n.*?(?=^      - |\z)').Value
@@ -142,7 +142,17 @@ $weakenedProps.SelectSingleNode('/Project/PropertyGroup/TreatWarningsAsErrors').
 Assert-Scenario 'warnings cease to be errors' $workflow "The 'TreatWarningsAsErrors' build guarantee must remain enabled" $weakenedProps
 $additionalFramework = [xml]$testProject.OuterXml
 $additionalFramework.SelectSingleNode('/Project/PropertyGroup/TargetFrameworks').InnerText += ';net9.0'
-Assert-Scenario 'new test framework lacks hosted coverage' $workflow 'Every test framework must have exactly one analyzer lane' -Tests $additionalFramework
+Assert-Scenario 'new test framework lacks hosted coverage' $workflow 'Tests must build locally with the pinned .NET 10 SDK' -Tests $additionalFramework
 $suppressedWarning = [xml]$testProject.OuterXml
 $suppressedWarning.SelectSingleNode('/Project/PropertyGroup/NoWarn').InnerText += ';CA2000'
 Assert-Scenario 'blanket suppression hides disposal analysis' $workflow 'The test project must not add blanket warning suppressions' -Tests $suppressedWarning
+
+$standardLane = '(?ms)^          - name: tests net10\.0 netstandard\n.*?(?=^          - name:|^    steps:|\z)'
+Assert-Scenario 'missing standard asset lane' ([regex]::Replace($workflow, $standardLane, '')) 'Native .NET 10, netstandard and .NET 11 must have analyzer lanes'
+Assert-Scenario 'wrong standard analyzer project' ($workflow.Replace('-p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true', '-p:AnalyzeOnly=JetDatabaseWriter.Test -p:TestNetStandard=true')) "The 'net10.0-netstandard' test lane must analyze"
+Assert-Scenario 'mismatched runtime runner' ($workflow.Replace("tf: net11.0`n", "tf: net10.0`n")) "The 'net10.0' test lane must analyze"
+Assert-Scenario 'standard graph not restored' ($workflow.Replace('restore-options: -p:TestNetStandard=true', 'restore-options: removed')) 'The netstandard lane must restore its matching dependency graph'
+Assert-Scenario 'missing prerelease installation' ($workflow.Replace('global-json-file: .github/dotnet11/global.json', 'global-json-file: global.json')) 'The .NET 11 lane must install'
+Assert-Scenario 'runtime stays on installed 10' ($workflow.Replace("'LatestMajor'", "'Major'")) 'Test lanes must select and verify their intended runtime'
+Assert-Scenario 'prerelease runtime excluded' ($workflow.Replace("DOTNET_ROLL_FORWARD_TO_PRERELEASE:", 'REMOVED_PRERELEASE:')) 'Test lanes must select and verify their intended runtime'
+Assert-Scenario 'runtime assertion disabled' ($workflow.Replace('JDW_EXPECTED_RUNTIME_MAJOR:', 'REMOVED_RUNTIME_ASSERTION:')) 'Test lanes must select and verify their intended runtime'

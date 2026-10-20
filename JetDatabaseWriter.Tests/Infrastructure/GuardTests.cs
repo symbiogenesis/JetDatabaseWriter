@@ -8,8 +8,8 @@ using Xunit;
 
 /// <summary>
 /// Pins the exception contract of <see cref="Guard"/>. The library forks Guard on
-/// <c>NETSTANDARD2_1</c>; the net8.0 test leg runs these against that branch and the
-/// net10.0 leg against the BCL throw helpers, so both assets must throw the same types.
+/// <c>NETSTANDARD2_1</c>; the standard-asset lane runs these against that branch and
+/// the native-asset lanes against the BCL throw helpers, with the same exception types.
 /// </summary>
 public sealed class GuardTests
 {

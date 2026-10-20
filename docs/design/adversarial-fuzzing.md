@@ -74,7 +74,7 @@ gh workflow run fuzz.yml --ref main -f cases=64 -f seed=20261015
 ```
 
 Verify the run's head SHA and completed verdict on both framework legs. The
-`fuzz-net10.0` and `fuzz-net8.0` artifacts contain the per-case manifests, coverage
+`fuzz-net10.0` and `fuzz-net11.0` artifacts contain the per-case manifests, coverage
 signals, logs and any retained failure inputs. Download useful evidence before
 artifact retention expires. A successful campaign establishes its listed cases
 under its budgets; it does not establish native interoperability or complete

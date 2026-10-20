@@ -34,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tf: [net10.0, net8.0]
+        tf: [net10.0, net11.0]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,17 +42,24 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
-          dotnet-version: ${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}
+      - name: Setup .NET 11 runtime
+        if: matrix.tf == 'net11.0'
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: .github/dotnet11/global.json
       - name: Restore
         run: dotnet restore JetDatabaseWriter.Tests --locked-mode
       - name: Build
-        run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f ${{ matrix.tf }} -p:RunAnalyzers=false
+        run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f net10.0 -p:RunAnalyzers=false
       - name: Bounded process fuzz cases
         shell: pwsh
         env:
+          JDW_EXPECTED_RUNTIME_MAJOR: ${{ matrix.tf == 'net11.0' && '11' || '10' }}
+          DOTNET_ROLL_FORWARD: ${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}
+          DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
           FUZZ_CASES: ${{ inputs.cases }}
           FUZZ_SEED: ${{ inputs.seed }}
-        run: ./scripts/run-hosted-fuzz.ps1 -Runner JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}/JetDatabaseWriter.Tests.exe -Cases ([int]$env:FUZZ_CASES) -Seed ([int]$env:FUZZ_SEED)
+        run: ./scripts/run-hosted-fuzz.ps1 -Runner JetDatabaseWriter.Tests/bin/Release/net10.0/JetDatabaseWriter.Tests.exe -Cases ([int]$env:FUZZ_CASES) -Seed ([int]$env:FUZZ_SEED)
       - name: Summarize mutation and operation coverage
         if: always()
         shell: pwsh
