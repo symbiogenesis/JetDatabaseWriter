@@ -80,6 +80,7 @@ public sealed class Jet3CompressedIndexFixtureTests
         Assert.Equal(258, entries[0].ChildPage);
         Assert.Equal(259, entries[1].ChildPage);
         Assert.Equal(258, IndexPageCodec.SelectChildPage(layout, page, format.PageSize, key));
+        Assert.Null(IndexPageCodec.SelectChildPage(layout, page, format.PageSize, [.. key, 0]));
         Assert.Equal(258, IndexPageCodec.ReadFirstChildPointer(layout, page, format.PageSize));
         Assert.Equal(259, IndexPageCodec.ReadLastChildPointer(layout, page, format.PageSize));
     }

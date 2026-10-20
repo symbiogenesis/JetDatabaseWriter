@@ -1382,19 +1382,21 @@ internal static class IndexPageCodec
         int prefixLength,
         bool isFirstEntry)
     {
-        int canonicalLength = isFirstEntry || prefixLength == 0 ? suffixLength : prefixLength + suffixLength;
-        int length = Math.Min(searchKey.Length, canonicalLength);
-        for (int offset = 0; offset < length; offset++)
+        int searchLength = searchKey.Length;
+        if (isFirstEntry || prefixLength == 0)
         {
-            byte entryByte = ReadCanonicalKeyByte(page, prefixStart, entryStart, prefixLength, isFirstEntry, offset);
-            int difference = searchKey[offset] - entryByte;
-            if (difference != 0)
-            {
-                return difference;
-            }
+            return searchKey.AsSpan().SequenceCompareTo(page.AsSpan(entryStart, suffixLength));
         }
 
-        return searchKey.Length - canonicalLength;
+        // Native compression can include bookmark bytes, so only the key's part
+        // of the shared prefix participates in comparison.
+        int canonicalLength = prefixLength + suffixLength;
+        int keyPrefixLength = Math.Min(prefixLength, canonicalLength);
+        int comparison = searchKey.AsSpan(0, Math.Min(searchLength, keyPrefixLength))
+            .SequenceCompareTo(page.AsSpan(prefixStart, keyPrefixLength));
+        return comparison != 0
+            ? comparison
+            : searchKey.AsSpan(keyPrefixLength).SequenceCompareTo(page.AsSpan(entryStart, canonicalLength - keyPrefixLength));
     }
 
     private static bool EntryStartsWithKey(
@@ -1412,16 +1414,14 @@ internal static class IndexPageCodec
             return false;
         }
 
-        for (int offset = 0; offset < requiredPrefix.Length; offset++)
+        if (isFirstEntry || prefixLength == 0)
         {
-            byte entryByte = ReadCanonicalKeyByte(page, prefixStart, entryStart, prefixLength, isFirstEntry, offset);
-            if (entryByte != requiredPrefix[offset])
-            {
-                return false;
-            }
+            return requiredPrefix.AsSpan().SequenceEqual(page.AsSpan(entryStart, requiredPrefix.Length));
         }
 
-        return true;
+        int comparedPrefixLength = Math.Min(prefixLength, requiredPrefix.Length);
+        return requiredPrefix.AsSpan(0, comparedPrefixLength).SequenceEqual(page.AsSpan(prefixStart, comparedPrefixLength))
+            && requiredPrefix.AsSpan(comparedPrefixLength).SequenceEqual(page.AsSpan(entryStart, requiredPrefix.Length - comparedPrefixLength));
     }
 
     private static byte ReadCanonicalKeyByte(
