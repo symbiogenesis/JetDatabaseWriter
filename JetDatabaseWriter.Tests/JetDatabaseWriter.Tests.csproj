@@ -52,6 +52,7 @@
   <ItemGroup>
     <None Include="Databases\**\*.mdw;Databases\**\*.mdb;Databases\**\*.accdb;Databases\**\*.docx" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Databases\Golden\*.bin" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Databases\NativeText\*.bin" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Cfb\**\*.cfs;Cfb\**\*.doc;Cfb\**\*.xls;Cfb\**\*.ppt;Cfb\**\*.suo" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
