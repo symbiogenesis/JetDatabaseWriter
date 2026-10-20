@@ -107,7 +107,7 @@ public sealed class AccessReaderOptions : AccessOptions
     /// <see cref="Exceptions.JetErrorCode.MalformedValue"/> in strict mode. Lenient scalar
     /// reads emit a trace warning and return <see cref="DBNull.Value"/> in typed rows,
     /// empty text in string rows, or an unassigned/default POCO property.
-    /// Unreadable MEMO/OLE descriptors or chains throw <see cref="InvalidDataException"/>
+    /// Unreadable MEMO/OLE descriptors or chains throw <see cref="Exceptions.JetCorruptDataException"/>
     /// in strict mode; malformed calculated MEMO/OLE envelopes throw
     /// <see cref="Exceptions.JetCorruptDataException"/> with
     /// <see cref="Exceptions.JetErrorCode.MalformedValue"/>. Lenient MEMO/OLE faults

@@ -107,7 +107,8 @@ internal sealed class ConstraintRegistry(
                 // ("Large Number") autonumber columns require schema bits the writer does not
                 // emit yet. Reject up-front so callers get a typed signal instead of a corrupt
                 // schema on first insert.
-                throw new NotSupportedException(
+                throw new JetNotSupportedException(
+                    JetErrorCode.FeatureNotSupported,
                     $"Column '{c.Name}': IsAutoIncrement is only supported for Int16, Int32 and Guid; '{c.ClrType}' is not supported.");
             }
 
@@ -291,7 +292,7 @@ internal sealed class ConstraintRegistry(
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values, in table-column order. Every <see cref="DbDefault"/> is replaced, so it never reaches the row encoder.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">A NOT NULL column is null after defaults and AutoNumber values are applied.</exception>
+    /// <exception cref="JetOperationException">A NOT NULL column is null after defaults and AutoNumber values are applied.</exception>
     /// <exception cref="ArgumentException">A validation rule rejects a value, or the row's complex columns are given different references or one outside 1 to <see cref="int.MaxValue"/>.</exception>
     /// <exception cref="JetValidationRuleException">The operation is refused with a structured <see cref="JetValidationRuleException"/>.</exception>
     /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
@@ -428,7 +429,7 @@ internal sealed class ConstraintRegistry(
     /// <param name="values">The post-update row, in table-column order.</param>
     /// <param name="assignedColumns">The indexes of the columns the update assigns.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">An assigned NOT NULL or integer AutoNumber column is set to null.</exception>
+    /// <exception cref="JetOperationException">An assigned NOT NULL or integer AutoNumber column is set to null.</exception>
     /// <exception cref="ArgumentException">A validation rule rejects an assigned value.</exception>
     /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
     /// <exception cref="JetValidationRuleException">The operation is refused with a structured <see cref="JetValidationRuleException"/>.</exception>
@@ -491,7 +492,7 @@ internal sealed class ConstraintRegistry(
     /// <param name="tableDef">The table's current definition.</param>
     /// <param name="count">How many references to allocate.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">The table would use a reference above <see cref="int.MaxValue"/>.</exception>
+    /// <exception cref="JetOperationException">The table would use a reference above <see cref="int.MaxValue"/>.</exception>
     internal async ValueTask<int> AllocateComplexReferencesAsync(string tableName, TableDef tableDef, int count, CancellationToken cancellationToken)
     {
         List<ColumnConstraint> list = await this.GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
@@ -1064,7 +1065,7 @@ internal sealed class ConstraintRegistry(
     /// <param name="count">How many references to hand out.</param>
     /// <param name="checkpoints">Receives the counter's previous value, so a rejected insert can rewind it; <see langword="null"/> when the caller does not rewind.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">The table would use a reference above <see cref="int.MaxValue"/>.</exception>
+    /// <exception cref="JetOperationException">The table would use a reference above <see cref="int.MaxValue"/>.</exception>
     private async ValueTask<int> NextComplexReferenceAsync(
         string tableName,
         TableDef tableDef,
@@ -1077,7 +1078,7 @@ internal sealed class ConstraintRegistry(
         long first = holder?.NextAutoValue ?? (await this.ReadComplexSeedAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false) + 1);
         if (first + count - 1 > int.MaxValue)
         {
-            throw new InvalidOperationException($"Table '{tableName}' has used every complex column reference up to {int.MaxValue}.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Table '{tableName}' has used every complex column reference up to {int.MaxValue}.");
         }
 
         if (holder is not null)

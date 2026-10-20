@@ -11,6 +11,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Mapping;
@@ -510,7 +511,7 @@ internal static class IncludeLoader
 
             indices[i] = found >= 0
                 ? found
-                : throw new InvalidOperationException($"Relationship key column '{keyColumns[i]}' was not found in the related table.");
+                : throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Relationship key column '{keyColumns[i]}' was not found in the related table.");
         }
 
         return indices;
@@ -754,15 +755,14 @@ internal static class IncludeLoader
     {
         if (type.IsAbstract || type.IsInterface || type.GetConstructor(Type.EmptyTypes) is null)
         {
-            throw new InvalidOperationException(
+            throw new JetOperationException(
+                JetErrorCode.InvalidOperationState,
                 $"Include navigation '{navigation.Name}' targets type '{type}', which must be a concrete class with a parameterless constructor.");
         }
     }
 
-    private static InvalidOperationException NoRelationship(PropertyInfo navigation, string table, Type relatedType) =>
-        new($"Could not infer a relationship for navigation '{navigation.Name}' between table '{table}' and type '{relatedType.Name}'. "
-            + "Ensure a foreign key linking the two tables exists in MSysRelationships, and that the related type name matches its "
-            + "table name (ignoring case and non-alphanumeric separators) or carries a [Table(\"...\")] attribute naming the table.");
+    private static JetOperationException NoRelationship(PropertyInfo navigation, string table, Type relatedType) =>
+        new(JetErrorCode.RelationshipNotFound, $"Could not infer a relationship for navigation '{navigation.Name}' between table '{table}' and type '{relatedType.Name}'. Ensure a foreign key linking the two tables exists in MSysRelationships, and that the related type name matches its table name (ignoring case and non-alphanumeric separators) or carries a [Table(\"...\")] attribute naming the table.");
 
     private readonly record struct SeekPlan(string IndexName, int IndexColumnCount, string[] Headers);
 

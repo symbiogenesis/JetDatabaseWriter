@@ -163,8 +163,8 @@ public sealed class MixedOleTypedScanTests
         await using var stream = new MemoryStream(bytes, writable: false);
         await using (AccessReader strict = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0 }, leaveOpen: true, cancellationToken: Ct))
         {
-            InvalidDataException fallback = await Assert.ThrowsAsync<InvalidDataException>(async () => await strict.Services.Tables.RowsWithDecoder<PlaylistRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct).ToListAsync(Ct));
-            InvalidDataException hybrid = await Assert.ThrowsAsync<InvalidDataException>(async () => await strict.Rows<PlaylistRow>("Playlists", cancellationToken: Ct).ToListAsync(Ct));
+            JetCorruptDataException fallback = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await strict.Services.Tables.RowsWithDecoder<PlaylistRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct).ToListAsync(Ct));
+            JetCorruptDataException hybrid = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await strict.Rows<PlaylistRow>("Playlists", cancellationToken: Ct).ToListAsync(Ct));
             Assert.Equal(fallback.Message, hybrid.Message);
             Assert.Contains("Filter", hybrid.Message, StringComparison.Ordinal);
             Assert.NotNull(hybrid.InnerException);

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema.Models;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
@@ -59,7 +60,7 @@ internal sealed class CalculatedExpressionEvaluationContext
 
         if (this.evaluating[index])
         {
-            throw new InvalidOperationException($"Calculated column '{constraint.Name}' participates in a circular expression dependency.");
+            throw new JetOperationException(JetErrorCode.InvalidExpression, $"Calculated column '{constraint.Name}' participates in a circular expression dependency.");
         }
 
         if (string.IsNullOrWhiteSpace(constraint.CalculationExpression))
@@ -79,11 +80,6 @@ internal sealed class CalculatedExpressionEvaluationContext
             this.values[index] = coerced;
             this.evaluated[index] = true;
             return coerced;
-        }
-        catch (NotSupportedException) when (!this.force && !IsNull(current))
-        {
-            this.evaluated[index] = true;
-            return current;
         }
         catch (Exception ex) when (CalculatedExpressionErrors.IsWrappable(ex) && !CalculatedExpressionErrors.NamesColumn(ex))
         {
@@ -105,12 +101,12 @@ internal sealed class CalculatedExpressionEvaluationContext
             && (this.tableName is null
                 || (!rowLocalQualifier && !string.Equals(qualifier, this.tableName, StringComparison.OrdinalIgnoreCase))))
         {
-            throw new NotSupportedException($"Expression reference to table '{qualifier}' cannot be evaluated in the current row context.");
+            throw new JetNotSupportedException(JetErrorCode.UnsupportedExpression, $"Expression reference to table '{qualifier}' cannot be evaluated in the current row context.");
         }
 
         if (!this.columnIndexes.TryGetValue(name, out int index))
         {
-            throw new InvalidOperationException($"Calculated-column expression references unknown name '{name}'.");
+            throw new JetOperationException(JetErrorCode.InvalidExpression, $"Calculated-column expression references unknown name '{name}'.");
         }
 
         // Callers may pass "10" for an Integer field or 10 for a Text field;

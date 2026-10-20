@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Collections.Generic;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 
@@ -66,8 +67,24 @@ internal static class IndexBTreeBuilder
     /// <param name="entries">The entries.</param>
     /// <param name="firstPageNumber">The first page number.</param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry size, or allocated page range cannot fit the B-tree format.</exception>
-    /// <exception cref="IndexCapacityException">Valid entries exceed the available index page capacity.</exception>
+    /// <exception cref="JetLimitationException">Valid entries exceed the available index page capacity.</exception>
     public static IndexBTreeBuildResult Build(
+        IndexPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<IndexEntry> entries,
+        long firstPageNumber)
+        => TryBuild(layout, pageSize, parentTdefPage, entries, firstPageNumber)
+            ?? throw new JetLimitationException(JetErrorCode.IndexEntryTooLarge, "Index entries or allocated page numbers exceed the available format capacity.", new JetErrorInfo { PageNumber = parentTdefPage });
+
+    /// <summary>Builds a tree, or returns null when entries or page numbers exceed format capacity.</summary>
+    /// <param name="layout">The layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The owning TDEF page.</param>
+    /// <param name="entries">Sorted entries.</param>
+    /// <param name="firstPageNumber">The first allocated page.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The caller supplies invalid page metadata.</exception>
+    public static IndexBTreeBuildResult? TryBuild(
         IndexPageLayout layout,
         int pageSize,
         long parentTdefPage,
@@ -81,7 +98,11 @@ internal static class IndexBTreeBuilder
 
         IndexPageCodec.ValidateLeafMetadata(layout, pageSize, parentTdefPage, entries);
         Guard.NotNull(entries, nameof(entries));
-        Guard.InRange(firstPageNumber, 0, 0xFFFFFF, nameof(firstPageNumber));
+        Guard.InRange(firstPageNumber, 0, long.MaxValue, nameof(firstPageNumber));
+        if (firstPageNumber > 0xFFFFFF)
+        {
+            return null;
+        }
 
         int entryAreaSize = pageSize - layout.FirstEntryOffset;
 
@@ -123,7 +144,7 @@ internal static class IndexBTreeBuilder
                 int entryLen = e.Key.Length + 4;
                 if (entryLen > entryAreaSize)
                 {
-                    throw new IndexCapacityException(nameof(entries), $"Single index entry of {entryLen} bytes exceeds the {entryAreaSize}-byte payload area; one entry must fit on one page.");
+                    return null;
                 }
 
                 if (currentSize + entryLen > entryAreaSize)
@@ -147,7 +168,7 @@ internal static class IndexBTreeBuilder
         int splitPageCount = splitPages.Count;
         if (firstPageNumber + splitPageCount - 1 > 0xFFFFFF)
         {
-            throw new IndexCapacityException(nameof(firstPageNumber), "Allocated page numbers exceed the 24-bit child-pointer range.");
+            return null;
         }
 
         // Step 3: Render split pages (leaves) with prev/next sibling chain.
@@ -182,7 +203,7 @@ internal static class IndexBTreeBuilder
         // as (base page, count) instead of a per-page array.
         long childPageBase = firstPageNumber;
         int childPageCount = splitPageCount;
-        IReadOnlyList<IndexEntry> childLastEntries = splitPageLastEntries;
+        List<IndexEntry> childLastEntries = splitPageLastEntries;
         long nextFreePage = firstPageNumber + splitPageCount;
 
         // tail-leaf is the rightmost split page the builder just emitted
@@ -194,13 +215,21 @@ internal static class IndexBTreeBuilder
 
         while (childPageCount > 1)
         {
+            for (int i = 0; i < childPageCount; i++)
+            {
+                if (childLastEntries[i].Key.Length > entryAreaSize - 8)
+                {
+                    return null;
+                }
+            }
+
             (List<List<DecodedIntermediateEntry>>? groups, List<IndexEntry>? nextLevelLast) =
                 PackIntermediate(childPageBase, childPageCount, childLastEntries, entryAreaSize);
 
             int levelCount = groups.Count;
-            if (nextFreePage + levelCount - 1 > 0xFFFFFF)
+            if (levelCount >= childPageCount || nextFreePage + levelCount - 1 > 0xFFFFFF)
             {
-                throw new IndexCapacityException(nameof(firstPageNumber), "Allocated page numbers exceed the 24-bit child-pointer range.");
+                return null;
             }
 
             for (int i = 0; i < levelCount; i++)
@@ -303,7 +332,7 @@ internal static class IndexBTreeBuilder
     private static (List<List<DecodedIntermediateEntry>> Groups, List<IndexEntry> LastPerGroup) PackIntermediate(
         long childPageBase,
         int childPageCount,
-        IReadOnlyList<IndexEntry> childLastEntries,
+        List<IndexEntry> childLastEntries,
         int entryAreaSize)
     {
         // Rough capacity hint: assume ~64-byte average summary key ⇒ each
@@ -318,11 +347,6 @@ internal static class IndexBTreeBuilder
         {
             var entry = new DecodedIntermediateEntry(childLastEntries[i], childPageBase + i);
             int len = entry.Entry.Key.Length + 4 + 4;
-            if (len > entryAreaSize)
-            {
-                throw new IndexCapacityException(nameof(childLastEntries), "Intermediate entry exceeds page payload area.");
-            }
-
             if (currentSize + len > entryAreaSize)
             {
                 groups.Add(current);

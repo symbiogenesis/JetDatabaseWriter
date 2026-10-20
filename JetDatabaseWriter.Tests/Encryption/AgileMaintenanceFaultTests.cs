@@ -95,7 +95,7 @@ public sealed class AgileMaintenanceFaultTests
             await FreePageTailFixture.AddFreeTailAsync(writer);
             stream.FailWritesFrom(2);
             await Assert.ThrowsAsync<AggregateException>(async () => await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken));
-            JetOperationException failure = await Assert.ThrowsAsync<JetOperationException>(async () => await writer.InsertRowAsync("T", [9, "Refused after failed undo"], TestContext.Current.CancellationToken));
+            JetOperationException failure = await StructuredFormatAssert.ThrowsAsync<JetOperationException>(JetErrorCode.WriterFaulted, async () => await writer.InsertRowAsync("T", [9, "Refused after failed undo"], TestContext.Current.CancellationToken));
             Assert.Equal(JetErrorCode.WriterFaulted, failure.ErrorCode);
             int writes = stream.WriteCount;
             await writer.DisposeAsync();

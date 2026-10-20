@@ -152,7 +152,7 @@ public sealed class ComplexColumnsRowApiTests
         ];
 
         byte[] rawBody = wrapped.AsSpan(8, BinaryPrimitives.ReadInt32LittleEndian(wrapped.AsSpan(4, 4))).ToArray();
-        Assert.Throws<InvalidDataException>(() => InflateZlib(rawBody));
+        Assert.Throws<JetCorruptDataException>(() => InflateZlib(rawBody));
 
         bool ok = AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded, cancellationToken: TestContext.Current.CancellationToken);
 
@@ -362,7 +362,7 @@ public sealed class ComplexColumnsRowApiTests
 
         await writer.InsertRowAsync("Tags", [1, DBNull.Value], TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
             await writer.AddAttachmentAsync(
                 "Tags",
                 "Labels",
@@ -434,7 +434,7 @@ public sealed class ComplexColumnsRowApiTests
 
         await writer.InsertRowAsync("Documents", [1, DBNull.Value], TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
             await writer.AddMultiValueItemAsync(
                 "Documents",
                 "Files",

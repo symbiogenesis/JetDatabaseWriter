@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
@@ -76,11 +77,11 @@ public sealed class LvalRowBoundsDecodePolicyTests
             await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: ct);
             if (strict)
             {
-                InvalidDataException typed = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct));
-                InvalidDataException strings = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct));
-                InvalidDataException poco = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
-                InvalidDataException natural = await Assert.ThrowsAsync<InvalidDataException>(async () => await ReadNaturalProjectionAsync(reader, ole, ct));
-                InvalidDataException table = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
+                JetCorruptDataException typed = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct));
+                JetCorruptDataException strings = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct));
+                JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
+                JetCorruptDataException natural = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ReadNaturalProjectionAsync(reader, ole, ct));
+                JetCorruptDataException table = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
                 Assert.Contains("Value", typed.Message, StringComparison.Ordinal);
                 Assert.Equal(typed.Message, strings.Message);
                 Assert.Equal(typed.Message, poco.Message);
@@ -107,16 +108,20 @@ public sealed class LvalRowBoundsDecodePolicyTests
         await mutationStream.WriteAsync(bytes, ct);
         mutationStream.Position = 0;
         await using AccessWriter mutation = await AccessWriter.OpenAsync(mutationStream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct);
-        await Assert.ThrowsAsync<InvalidDataException>(async () => await mutation.UpdateRowsAsync("Values", RowCriteria.All(), new RowValues { ["Id"] = 2 }, ct));
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await mutation.UpdateRowsAsync("Values", RowCriteria.All(), new RowValues { ["Id"] = 2 }, ct));
         Assert.Equal(bytes, mutationStream.ToArray());
     }
 
     [Theory]
-    [InlineData(false, true)]
-    [InlineData(false, false)]
-    [InlineData(true, true)]
-    [InlineData(true, false)]
-    public async Task PayloadIoFailure_PublicReadsPropagateOriginalException(bool ole, bool strict)
+    [InlineData(false, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, true)]
+    [InlineData(false, false, true)]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, true)]
+    public async Task PayloadIoFailure_PublicReadsPropagateOriginalException(bool ole, bool strict, bool invalidData)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using var original = new MemoryStream();
@@ -127,18 +132,18 @@ public sealed class LvalRowBoundsDecodePolicyTests
         }
 
         (JetFormat profile, LongValueDescriptor descriptor) = await FindLvalAsync(original, ct);
-        await using var stream = new FaultingMemoryStream(original.ToArray());
+        await using var stream = new FaultingMemoryStream(original.ToArray(), invalidData ? new InvalidDataException("payload page I/O failure") : new IOException("payload page I/O failure"));
         await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
             new AccessReaderOptions { UseLockFile = false, StrictParsing = strict, PageCacheSize = 0, PageReadOptimizationMode = PageReadOptimizationMode.Disabled },
             leaveOpen: true,
             cancellationToken: ct);
         stream.FailureOffset = LongValueStore.PageNumber(descriptor.FirstDp) * profile.PageSize;
-        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct)));
-        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct)));
-        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)));
-        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await ReadNaturalProjectionAsync(reader, ole, ct)));
-        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct)));
+        Assert.Same(stream.Failure, await Assert.ThrowsAsync(stream.Failure.GetType(), async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct)));
+        Assert.Same(stream.Failure, await Assert.ThrowsAsync(stream.Failure.GetType(), async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct)));
+        Assert.Same(stream.Failure, await Assert.ThrowsAsync(stream.Failure.GetType(), async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)));
+        Assert.Same(stream.Failure, await Assert.ThrowsAsync(stream.Failure.GetType(), async () => await ReadNaturalProjectionAsync(reader, ole, ct)));
+        Assert.Same(stream.Failure, await Assert.ThrowsAsync(stream.Failure.GetType(), async () => await reader.ReadTableAsync("Values", cancellationToken: ct)));
     }
 
     private static async Task<(JetFormat Format, LongValueDescriptor Descriptor)> FindLvalAsync(MemoryStream original, CancellationToken ct)
@@ -188,11 +193,11 @@ public sealed class LvalRowBoundsDecodePolicyTests
         public string? Value { get; set; }
     }
 
-    private sealed class FaultingMemoryStream(byte[] bytes) : MemoryStream(bytes, writable: false)
+    private sealed class FaultingMemoryStream(byte[] bytes, Exception failure) : MemoryStream(bytes, writable: false)
     {
         internal long FailureOffset { get; set; } = -1;
 
-        internal IOException Failure { get; } = new("payload page I/O failure");
+        internal Exception Failure { get; } = failure;
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
             => this.Position == this.FailureOffset ? ValueTask.FromException<int>(this.Failure) : base.ReadAsync(buffer, cancellationToken);

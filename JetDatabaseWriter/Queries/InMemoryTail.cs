@@ -11,6 +11,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Linq;
 
@@ -79,7 +80,7 @@ internal static class InMemoryTail
     /// <param name="boundary">The engine boundary inside <paramref name="expression"/>.</param>
     /// <param name="cancellationToken">A token used to cancel the enumeration.</param>
     /// <returns>The tail's output, boxed.</returns>
-    /// <exception cref="NotSupportedException">Thrown when the tail holds an operator this class does not run.</exception>
+    /// <exception cref="JetNotSupportedException">Thrown when the tail holds an operator this class does not run.</exception>
     public static IAsyncEnumerable<object?> Apply(IAsyncEnumerable<object?> rows, Expression expression, Expression boundary, CancellationToken cancellationToken)
     {
         var calls = new List<MethodCallExpression>();
@@ -117,17 +118,16 @@ internal static class InMemoryTail
     /// <param name="operatorName">The operator's name.</param>
     /// <param name="overload">Describes the unsupported overload, or <see langword="null"/> when the operator is not supported at all.</param>
     /// <returns>The exception to throw.</returns>
-    internal static NotSupportedException UnsupportedOperator(string operatorName, string? overload = null)
+    internal static JetNotSupportedException UnsupportedOperator(string operatorName, string? overload = null)
     {
         string form = overload is null ? $"'{operatorName}'" : $"'{operatorName}' {overload}";
-        return new NotSupportedException(
-            $"The query operator {form} is not supported on Query<T> results. Use AsAsyncEnumerable() and apply '{operatorName}' "
-            + "with the async LINQ operators, or materialize the rows with ToListAsync and apply it with LINQ to Objects.");
+        return new JetNotSupportedException(
+            JetErrorCode.FeatureNotSupported,
+            $"The query operator {form} is not supported on Query<T> results. Use AsAsyncEnumerable() and apply '{operatorName}' with the async LINQ operators, or materialize the rows with ToListAsync and apply it with LINQ to Objects.");
     }
 
-    private static NotSupportedException IncludeAboveBoundary(string operatorName) =>
-        new($"'{operatorName}' loads navigations onto the entities the table read returns, so it must come before Select "
-            + $"and the other operators that run after the read. Move '{operatorName}' ahead of them.");
+    private static JetNotSupportedException IncludeAboveBoundary(string operatorName) =>
+        new(JetErrorCode.FeatureNotSupported, $"'{operatorName}' loads navigations onto the entities the table read returns, so it must come before Select and the other operators that run after the read. Move '{operatorName}' ahead of them.");
 
     private static IAsyncEnumerable<object?> CreateStep(MethodCallExpression call, IAsyncEnumerable<object?> source, CancellationToken cancellationToken)
     {
@@ -171,7 +171,7 @@ internal static class InMemoryTail
     /// <typeparam name="TResult">The delegate's result: <see cref="bool"/> for a predicate, <see cref="object"/> for a selector.</typeparam>
     /// <param name="call">The operator call whose second argument is the lambda.</param>
     /// <returns>The compiled delegate.</returns>
-    /// <exception cref="NotSupportedException">Thrown for an overload whose lambda also takes the element's index.</exception>
+    /// <exception cref="JetNotSupportedException">Thrown for an overload whose lambda also takes the element's index.</exception>
     private static Func<object?, TResult> CompileElementLambda<TResult>(MethodCallExpression call)
     {
         var lambda = (LambdaExpression)StripQuote(call.Arguments[1]);
@@ -294,11 +294,11 @@ internal static class InMemoryTail
 
     private static object DefaultInstance(Type comparerDefinition, Type type) =>
         comparerDefinition.MakeGenericType(type).GetProperty("Default")?.GetValue(obj: null)
-            ?? throw new InvalidOperationException($"{comparerDefinition.Name} has no default instance for {type}.");
+            ?? throw new JetOperationException(JetErrorCode.InvalidOperationState, $"{comparerDefinition.Name} has no default instance for {type}.");
 
     private static MethodInfo RequireMethod(Type type, string name, params Type[] parameterTypes) =>
         type.GetMethod(name, parameterTypes)
-            ?? throw new InvalidOperationException($"{type} has no method {name} with {parameterTypes.Length} parameters.");
+            ?? throw new JetOperationException(JetErrorCode.InvalidOperationState, $"{type} has no method {name} with {parameterTypes.Length} parameters.");
 
     private static async IAsyncEnumerable<object?> SortAsync(
         IAsyncEnumerable<object?> source,

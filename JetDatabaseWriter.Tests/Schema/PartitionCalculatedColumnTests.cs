@@ -6,6 +6,7 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -23,7 +24,7 @@ public sealed class PartitionCalculatedColumnTests
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
         byte[] beforeCreate = stream.ToArray();
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.CreateTableAsync(
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.CreateTableAsync(
             "Rejected",
             [new ColumnDefinition("Id", typeof(int)), CalculatedColumn(expression)],
             TestContext.Current.CancellationToken));
@@ -31,7 +32,7 @@ public sealed class PartitionCalculatedColumnTests
 
         await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
         byte[] beforeAdd = stream.ToArray();
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.AddColumnAsync(
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.AddColumnAsync(
             "T", CalculatedColumn(expression), TestContext.Current.CancellationToken));
         Assert.Equal(beforeAdd, stream.ToArray());
         await writer.InsertRowAsync("T", [1], TestContext.Current.CancellationToken);
@@ -59,10 +60,10 @@ public sealed class PartitionCalculatedColumnTests
         stream.Position = 0;
         await using AccessWriter reopened = await AccessWriter.OpenAsync(
             stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await reopened.InsertRowAsync(
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await reopened.InsertRowAsync(
             "T", [2, DBNull.Value], TestContext.Current.CancellationToken));
         Assert.Equal(image, stream.ToArray());
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await reopened.UpdateRowsAsync(
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await reopened.UpdateRowsAsync(
             "T", "Id", 1, new Dictionary<string, object?> { ["Id"] = 2 }, TestContext.Current.CancellationToken));
         Assert.Equal(image, stream.ToArray());
     }

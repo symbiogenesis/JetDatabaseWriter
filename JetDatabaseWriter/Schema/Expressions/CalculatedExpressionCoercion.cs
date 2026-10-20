@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
 using System.Globalization;
+using JetDatabaseWriter.Infrastructure;
 
 internal static class CalculatedExpressionCoercion
 {
@@ -10,6 +11,12 @@ internal static class CalculatedExpressionCoercion
 
     /// <summary>The OLE Automation serial of 10000-01-01, one day past the latest Access date.</summary>
     private const double MaxOleDateExclusive = 2958466d;
+
+    private const long MillisecondsPerDay = TimeSpan.TicksPerDay / TimeSpan.TicksPerMillisecond;
+
+    private const long MinOleDateMilliseconds = (long)MinOleDate * MillisecondsPerDay;
+
+    private const long MaxOleDateMillisecondsExclusive = (long)MaxOleDateExclusive * MillisecondsPerDay;
 
     /// <summary>OLE Automation day 0, 1899-12-30, whose date part General Date text leaves out.</summary>
     private static readonly DateTime OleDateZero = new(1899, 12, 30);
@@ -139,28 +146,10 @@ internal static class CalculatedExpressionCoercion
             return value!;
         }
 
-        try
-        {
-            if (declaredType == typeof(Guid))
-            {
-                return value is string guidText ? Guid.Parse(guidText) : value;
-            }
-
-            return IsStoredScalarType(declaredType)
-                ? Convert.ChangeType(value, declaredType, CultureInfo.InvariantCulture) ?? value
-                : value;
-        }
-        catch (FormatException)
-        {
-        }
-        catch (InvalidCastException)
-        {
-        }
-        catch (OverflowException)
-        {
-        }
-
-        return value;
+        return (IsStoredScalarType(declaredType) || declaredType == typeof(Guid))
+            && ScalarConversion.TryConvert(value, declaredType, out object? converted)
+                ? converted!
+                : value!;
     }
 
     internal static object CompareValues(object left, object right, Func<int, bool> predicate, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
@@ -483,12 +472,30 @@ internal static class CalculatedExpressionCoercion
     /// <exception cref="OverflowException">The serial is outside the supported range.</exception>
     internal static DateTime FromOleDate(double serial)
     {
-        if (double.IsNaN(serial) || serial < MinOleDate || serial >= MaxOleDateExclusive)
+        if (!IsOleDateInRange(serial))
         {
             throw new OverflowException($"Date serial {serial.ToString("R", CultureInfo.InvariantCulture)} is outside the range of an Access date.");
         }
 
         return DateTime.FromOADate(serial);
+    }
+
+    private static bool IsOleDateInRange(double serial)
+    {
+        if (double.IsNaN(serial) || serial < MinOleDate || serial >= MaxOleDateExclusive)
+        {
+            return false;
+        }
+
+        // OLE Automation rounds to whole milliseconds. Negative fractions
+        // describe a positive time of day on the serial's negative date.
+        long milliseconds = (long)((serial * MillisecondsPerDay) + (serial >= 0d ? 0.5d : -0.5d));
+        if (milliseconds < 0)
+        {
+            milliseconds -= 2 * (milliseconds % MillisecondsPerDay);
+        }
+
+        return milliseconds is >= MinOleDateMilliseconds and < MaxOleDateMillisecondsExclusive;
     }
 
     /// <summary>
@@ -524,25 +531,16 @@ internal static class CalculatedExpressionCoercion
 
     internal static bool TryConvertDecimal(object? value, out decimal result)
     {
-        if (IsNull(value))
+        if (value is bool boolean)
         {
-            result = 0;
-            return false;
-        }
-
-        try
-        {
-            result = ToDecimal(value);
+            result = boolean ? -1m : 0m;
             return true;
         }
-        catch (FormatException)
+
+        if (ScalarConversion.TryConvert(value, typeof(decimal), out object? converted))
         {
-        }
-        catch (InvalidCastException)
-        {
-        }
-        catch (OverflowException)
-        {
+            result = (decimal)converted!;
+            return true;
         }
 
         result = 0;
@@ -551,25 +549,34 @@ internal static class CalculatedExpressionCoercion
 
     internal static bool TryConvertDateTime(object? value, out DateTime result)
     {
-        if (IsNull(value))
+        if (value is DateTime dateTime)
         {
-            result = default;
-            return false;
-        }
-
-        try
-        {
-            result = ToDateTime(value);
+            result = dateTime;
             return true;
         }
-        catch (FormatException)
+
+        if (value is bool or byte or short or int or long or float or double or decimal)
         {
+            double serial = ToDouble(value);
+            if (IsOleDateInRange(serial))
+            {
+                result = FromOleDate(serial);
+                return true;
+            }
         }
-        catch (InvalidCastException)
+        else if (!IsNull(value))
         {
-        }
-        catch (OverflowException)
-        {
+            string text = ToText(value);
+            if (DateTime.TryParseExact(text, DateParseFormats, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out result))
+            {
+                return true;
+            }
+
+            if (DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault, out DateTime parsed))
+            {
+                result = parsed.Date == DateTime.MinValue ? TimeOnDayZero(parsed) : parsed;
+                return true;
+            }
         }
 
         result = default;

@@ -680,7 +680,7 @@ public sealed class LvPropReadTests
         {
             stored = await row.ReadLvPropAsync(db);
         }
-        catch (InvalidDataException)
+        catch (Exception exception) when (exception is InvalidDataException or JetCorruptDataException)
         {
             return null;
         }

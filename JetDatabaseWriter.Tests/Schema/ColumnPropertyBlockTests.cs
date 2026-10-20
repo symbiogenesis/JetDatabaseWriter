@@ -365,7 +365,8 @@ public class ColumnPropertyBlockTests
             Value = [1],
             Padding = new byte[ushort.MaxValue - 8],
         });
-        Assert.Throws<InvalidOperationException>(() => builder.ToBytes(JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+        JetLimitationException failure = Assert.Throws<JetLimitationException>(() => builder.ToBytes(JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+        Assert.Equal(JetErrorCode.ValueTooLarge, failure.ErrorCode);
     }
 
     [Fact]

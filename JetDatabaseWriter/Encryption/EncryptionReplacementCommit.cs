@@ -35,27 +35,18 @@ internal static class EncryptionReplacementCommit
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
-            var failure = new IOException(
-                renamed
-                    ? $"Replacement of '{path}' was renamed, but its durability commit failed. The original is retained in '{original}'."
-                    : $"Could not commit replacement of '{path}'. Retained copies are named in the exception data; check the destination before retrying.",
-                error);
             if (!renamed && File.Exists(temporary))
             {
-                failure.Data[EncryptionManager.ReplacementFileDataKey] = temporary;
+                error.Data[EncryptionManager.ReplacementFileDataKey] = temporary;
             }
 
             if (originalReady && File.Exists(original))
             {
-                failure.Data[OriginalFileDataKey] = original;
+                error.Data[OriginalFileDataKey] = original;
             }
 
-            if (error.Data[IncompleteOriginalFileDataKey] is string incomplete)
-            {
-                failure.Data[IncompleteOriginalFileDataKey] = incomplete;
-            }
-
-            throw failure;
+            // Keep genuine filesystem exceptions and their stack traces intact.
+            throw;
         }
 
         // Cleanup is after the commit decision. A cleanup failure cannot undo it.

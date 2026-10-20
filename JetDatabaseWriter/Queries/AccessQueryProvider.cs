@@ -8,6 +8,7 @@ using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
@@ -38,7 +39,7 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
     where T : class, new()
 {
     public IQueryable CreateQuery(Expression expression) =>
-        throw new NotSupportedException("Untyped CreateQuery is not supported; use the generic LINQ query operators.");
+        throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Untyped CreateQuery is not supported; use the generic LINQ query operators.");
 
     public IQueryable<TElement> CreateQuery<TElement>(Expression expression) =>
         IsOrderingOperator(expression)

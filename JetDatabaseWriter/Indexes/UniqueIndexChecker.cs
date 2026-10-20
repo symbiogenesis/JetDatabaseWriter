@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -39,7 +38,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
     /// <param name="tableDef">The table def.</param>
     /// <param name="tableName">The table name, for error messages.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidDataException">The page at <paramref name="tdefPage"/> is not a table definition.</exception>
+    /// <exception cref="JetCorruptDataException">The page at <paramref name="tdefPage"/> is not a table definition.</exception>
     /// <exception cref="JetLimitationException">The index section cannot be parsed, or a unique index names a column the table does not have.</exception>
     internal async ValueTask<List<UniqueIndexDescriptor>> LoadUniqueIndexDescriptorsAsync(
         long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
@@ -47,7 +46,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         var result = new List<UniqueIndexDescriptor>();
 
         byte[] tdefBuffer = await tableDefs.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidDataException($"The table definition of '{tableName}' at page {tdefPage} could not be read.");
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"The table definition of '{tableName}' at page {tdefPage} could not be read.", new JetErrorInfo { TableName = tableName, PageNumber = tdefPage });
 
         TDefCounts header = TDefCodec.ReadCounts(format, tdefBuffer);
         int numCols = header.ColumnCount;
@@ -196,7 +195,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
     /// <param name="descriptors">The descriptors.</param>
     /// <param name="pendingRows">The pending rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">Thrown when a pending insert would duplicate a unique key.</exception>
+    /// <exception cref="JetOperationException">Thrown when a pending insert would duplicate a unique key.</exception>
     /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
     private async ValueTask CheckUniqueIndexesFastPathAsync(
         string tableName,
@@ -325,7 +324,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
 
     /// <summary>
     /// Core: builds the post-mutation effective row set and detects any
-    /// unique-key collision. Throws <see cref="InvalidOperationException"/>
+    /// unique-key collision. Throws <see cref="JetOperationException"/>
     /// on first violation.
     /// </summary>
     /// <param name="tableName">The table name.</param>
@@ -333,7 +332,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
     /// <param name="existingRows">The table's live rows.</param>
     /// <param name="pendingInsertRows">The pending insert rows.</param>
     /// <param name="replaceAtRowIndex">Post-update rows keyed by their position in <paramref name="existingRows"/>.</param>
-    /// <exception cref="InvalidOperationException">Thrown when the effective post-mutation row set contains a duplicate unique key.</exception>
+    /// <exception cref="JetOperationException">Thrown when the effective post-mutation row set contains a duplicate unique key.</exception>
     /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
     private void CheckUniqueIndexesCore(
         string tableName,

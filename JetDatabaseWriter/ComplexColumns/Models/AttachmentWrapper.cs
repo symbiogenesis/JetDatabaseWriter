@@ -262,7 +262,7 @@ internal static class AttachmentWrapper
             content = RawInflate(data, offset, length, expectedLength, cancellationToken);
             return true;
         }
-        catch (InvalidDataException)
+        catch (Exception exception) when (exception is InvalidDataException or JetCorruptDataException)
         {
             content = [];
             return false;
@@ -280,7 +280,7 @@ internal static class AttachmentWrapper
     /// <param name="expectedLength">The declared uncompressed content length.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The uncompressed content.</returns>
-    /// <exception cref="InvalidDataException">The content length differs from its declaration.</exception>
+    /// <exception cref="JetCorruptDataException">The content length differs from its declaration.</exception>
     internal static byte[] Inflate(Stream input, int expectedLength, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -296,7 +296,7 @@ internal static class AttachmentWrapper
             cancellationToken.ThrowIfCancellationRequested();
             if (read == 0)
             {
-                throw new InvalidDataException("The attachment content is shorter than its declared length.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The attachment content is shorter than its declared length.");
             }
 
             position += read;
@@ -307,7 +307,7 @@ internal static class AttachmentWrapper
         cancellationToken.ThrowIfCancellationRequested();
         if (extraByte != -1)
         {
-            throw new InvalidDataException("The attachment content exceeds its declared length.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The attachment content exceeds its declared length.");
         }
 
         return output;

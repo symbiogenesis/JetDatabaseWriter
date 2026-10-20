@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
 using System.Collections.Generic;
+using JetDatabaseWriter.Exceptions;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionFunctionRegistry;
@@ -20,7 +21,8 @@ internal static class CalculatedExpressionMetadataFunctions
     }
 
     private static object EvaluateDomainAggregate(CalculatedFunctionInvocation function)
-        => throw new NotSupportedException(
+        => throw new JetNotSupportedException(
+            JetErrorCode.UnsupportedExpression,
             $"Access table calculated columns reject domain aggregate function '{function.Name}' because it requires domain/query evaluation.");
 
     private static int VarType(object? value)

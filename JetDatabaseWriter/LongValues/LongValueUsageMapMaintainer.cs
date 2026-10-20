@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.LongValues;
 
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -36,13 +35,13 @@ internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager,
     /// <param name="definition">The column layout, including persisted calculated result types.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task completed when the trailer and new map rows are linked.</returns>
-    /// <exception cref="InvalidDataException">The native trailer or column layout cannot be read completely.</exception>
+    /// <exception cref="JetCorruptDataException">The native trailer or column layout cannot be read completely.</exception>
     internal static async ValueTask InitializeAsync(JetFormat format, Pager pager, PageAllocator allocator, long tdefPage, TableDef definition, CancellationToken cancellationToken)
     {
         LogicalTDefChain chain = await LogicalTDefChain.ReadRequiredAsync(tdefPage, format.PageSize, pager.ReadPageAsync, PageBuffers.Return, true, cancellationToken).ConfigureAwait(false);
         if (!LongValueUsageMaps.TryRead(format, chain.Bytes, out List<LongValueUsageMap> maps, out int sentinel))
         {
-            throw new InvalidDataException("The long-value usage-map trailer is malformed.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The long-value usage-map trailer is malformed.");
         }
 
         var missing = definition.Columns.Where(column => (ResolveValueType(column) is MemoType or OleType) && !maps.Any(map => map.ColumnNumber == column.ColNum)).ToList();
@@ -80,7 +79,7 @@ internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager,
     /// <param name="columnNumber">The row-layout column number.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The owned and free row pointers.</returns>
-    /// <exception cref="InvalidDataException">The table or selected column does not declare readable long-value storage.</exception>
+    /// <exception cref="JetCorruptDataException">The table or selected column does not declare readable long-value storage.</exception>
     internal async ValueTask<(UsageMapPointer Owned, UsageMapPointer Free)> PrepareColumnAsync(long tdefPage, int columnNumber, CancellationToken cancellationToken)
     {
         List<LongValueUsageMap> maps = await this.ReadMapsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
@@ -90,10 +89,10 @@ internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager,
             // persisted ResultType establishes long storage after the catalog
             // entry exists, including a schema rewrite's private replacement.
             TableDef definition = await catalog.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
-                ?? throw new InvalidDataException("The long-value column definitions are malformed.");
+                ?? throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The long-value column definitions are malformed.");
             if (!definition.Columns.Any(column => column.ColNum == columnNumber && !column.IsFixed && ResolveValueType(column) is MemoType or OleType))
             {
-                throw new InvalidDataException("The selected column does not declare long-value storage.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The selected column does not declare long-value storage.");
             }
 
             await InitializeAsync(format, pager, allocator, tdefPage, definition, cancellationToken).ConfigureAwait(false);
@@ -361,7 +360,7 @@ internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager,
             if (!UsageMap.TryGetRowBound(map, format.DataPage, format.PageSize, pointer.RowIndex, out RowBound row)
                 || !await UsageMap.TryEnumeratePagesAsync(map, row, format.PageSize, pager.PageCount, 1, true, pager.ReadPageAsync, PageBuffers.Return, members, cancellationToken).ConfigureAwait(false))
             {
-                throw new InvalidDataException("The column's LVAL usage-map members are malformed.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The column's LVAL usage-map members are malformed.");
             }
 
             return members;
@@ -375,10 +374,10 @@ internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager,
     private async ValueTask<List<LongValueUsageMap>> ReadMapsAsync(long tdefPage, CancellationToken cancellationToken)
     {
         byte[] tdef = await tableDefs.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidDataException("The long-value table definition is unreadable.");
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The long-value table definition is unreadable.");
         if (!LongValueUsageMaps.TryRead(format, tdef, out List<LongValueUsageMap> maps, out _))
         {
-            throw new InvalidDataException("The long-value usage-map trailer is malformed.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The long-value usage-map trailer is malformed.");
         }
 
         return maps;

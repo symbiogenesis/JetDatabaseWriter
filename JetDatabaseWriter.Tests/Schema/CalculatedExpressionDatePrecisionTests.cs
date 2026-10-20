@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Schema;
 using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
 using Xunit;
@@ -35,7 +36,7 @@ public sealed class CalculatedExpressionDatePrecisionTests
     [InlineData("DateSerial(2020, 32768, 1)")]
     [InlineData("DateSerial(2020, 1, -32769)")]
     public void DateSerial_ArgumentsOutsideIntegerRangeOverflow(string expression)
-        => Assert.Throws<OverflowException>(() => Evaluate<DateTime>(expression));
+        => Assert.Throws<JetLimitationException>(() => Evaluate<DateTime>(expression));
 
     [Theory]
     [InlineData("Now()")]
@@ -51,6 +52,49 @@ public sealed class CalculatedExpressionDatePrecisionTests
         Assert.Equal(new DateTime(2020, 1, 31, 6, 0, 1, DateTimeKind.Local), CalculatedExpressionDateTimeFunctions.TruncateToWholeSeconds(clock));
         Assert.Equal(clock.TimeOfDay.TotalSeconds, CalculatedExpressionDateTimeFunctions.TimerSeconds(clock));
         Assert.True(CalculatedExpressionDateTimeFunctions.TimerSeconds(clock) > 21601d);
+    }
+
+    [Fact]
+    public void ClosestUpperDateSerial_RefusesBeforeRoundedMillisecondsOverflow()
+    {
+        double serial = Math.BitDecrement(2958466d);
+        Assert.False(CalculatedExpressionCoercion.TryConvertDateTime(serial, out _));
+        Assert.Throws<OverflowException>(() => CalculatedExpressionCoercion.FromOleDate(serial));
+    }
+
+    [Fact]
+    public void DateSerialRounding_PreservesLastMillisecondAndRefusesMidnightOverflow()
+    {
+        DateTime last = new(9999, 12, 31, 23, 59, 59, 999);
+        double serial = last.ToOADate();
+        Assert.Equal(last, CalculatedExpressionCoercion.FromOleDate(serial));
+        Assert.True(CalculatedExpressionCoercion.TryConvertDateTime(serial, out DateTime converted));
+        Assert.Equal(last, converted);
+
+        const double roundedPastEnd = 2958466d - (0.25d / (TimeSpan.TicksPerDay / TimeSpan.TicksPerMillisecond));
+        Assert.False(CalculatedExpressionCoercion.TryConvertDateTime(roundedPastEnd, out _));
+        Assert.Throws<OverflowException>(() => CalculatedExpressionCoercion.FromOleDate(roundedPastEnd));
+    }
+
+    [Fact]
+    public void RoundedDateSerialOverflow_ReportsStructuredNumericFailure()
+    {
+        JetLimitationException failure = Assert.Throws<JetLimitationException>(() => Evaluate<DateTime>("CDate(2958465.9999999995)"));
+        Assert.Equal(JetErrorCode.NumericOverflow, failure.ErrorCode);
+        Assert.Equal("Calc", failure.ErrorInfo.ColumnName);
+    }
+
+    [Theory]
+    [InlineData(-1.25d)]
+    [InlineData(-1.75d)]
+    [InlineData(-0.25d)]
+    [InlineData(-0.75d)]
+    public void NegativeDateSerialFractions_KeepOleAutomationTimeOfDay(double serial)
+    {
+        var expected = DateTime.FromOADate(serial);
+        Assert.Equal(expected, CalculatedExpressionCoercion.FromOleDate(serial));
+        Assert.True(CalculatedExpressionCoercion.TryConvertDateTime(serial, out DateTime converted));
+        Assert.Equal(expected, converted);
     }
 
     private static T Evaluate<T>(string expression)

@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Linq;
 
@@ -33,7 +34,7 @@ internal static class AccessQueryTranslator
     /// boundary is reference-equal to <paramref name="expression"/> the whole query runs in
     /// the engine and there is no tail.
     /// </returns>
-    /// <exception cref="NotSupportedException">The query source is not a constant expression.</exception>
+    /// <exception cref="JetNotSupportedException">The query source is not a constant expression.</exception>
     public static (AccessQueryPlan Plan, Expression Boundary) Translate(Expression expression)
     {
         // The stack yields the operators from the source outward without making query
@@ -48,7 +49,7 @@ internal static class AccessQueryTranslator
 
         if (source is not ConstantExpression)
         {
-            throw new NotSupportedException($"Unsupported query expression node '{source.NodeType}'.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Unsupported query expression node '{source.NodeType}'.");
         }
 
         Expression boundary = FindEngineBoundary(source, calls);
@@ -234,7 +235,7 @@ internal static class AccessQueryTranslator
     {
         UnaryExpression { NodeType: ExpressionType.Quote } quote => (LambdaExpression)quote.Operand,
         LambdaExpression lambda => lambda,
-        _ => throw new NotSupportedException("Expected a lambda argument in the query expression."),
+        _ => throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Expected a lambda argument in the query expression."),
     };
 
     /// <summary>
@@ -380,9 +381,8 @@ internal static class AccessQueryTranslator
             return property;
         }
 
-        throw new NotSupportedException(
-            "An Include navigation must be a property access, optionally followed by Where / OrderBy / "
-            + "OrderByDescending / ThenBy / ThenByDescending / Skip / Take on a collection navigation, "
-            + "for example o => o.Customer, c => c.Orders, or c => c.Orders.Where(o => o.Open).Take(5).");
+        throw new JetNotSupportedException(
+            JetErrorCode.FeatureNotSupported,
+            "An Include navigation must be a property access, optionally followed by Where / OrderBy / OrderByDescending / ThenBy / ThenByDescending / Skip / Take on a collection navigation, for example o => o.Customer, c => c.Orders, or c => c.Orders.Where(o => o.Open).Take(5).");
     }
 }

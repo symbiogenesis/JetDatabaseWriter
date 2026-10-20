@@ -71,10 +71,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// be opened for writing (read-only, or locked by another process) reports
     /// that error before any encryption or password error.
     /// </remarks>
-    /// <exception cref="UnauthorizedAccessException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong, or when the file cannot be opened for writing. A pending transaction journal is recovered before password validation.</exception>
+    /// <exception cref="JetAccessDeniedException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong, or when the file cannot be opened for writing. A pending transaction journal is recovered before password validation.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. The file is not opened.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(string path, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
+        DiagnosticTrace.ThrowIfReentrant();
         cancellationToken.ThrowIfCancellationRequested();
         Guard.RequireExistingDatabaseFile(path, nameof(path));
 
@@ -98,11 +99,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the writer is disposed. Default is <c>false</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the open operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the database.</returns>
-    /// <exception cref="UnauthorizedAccessException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong. A pending file-backed transaction journal is recovered before password validation.</exception>
+    /// <exception cref="JetAccessDeniedException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong. A pending file-backed transaction journal is recovered before password validation.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. The stream is not read, written or disposed.</exception>
-    /// <exception cref="NotSupportedException">Office compound packages are not native Microsoft Access database inputs.</exception>
+    /// <exception cref="JetNotSupportedException">Office compound packages are not native Microsoft Access database inputs.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(Stream stream, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
+        DiagnosticTrace.ThrowIfReentrant();
         Guard.RequireReadWriteSeekableStream(stream, nameof(stream));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -126,7 +128,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
             if (EncryptionManager.IsCompoundFileEncrypted(header))
             {
-                throw new NotSupportedException("Office compound packages are not native Microsoft Access databases.");
+                throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Office compound packages are not native Microsoft Access databases.");
             }
 
             return new AccessWriter(
@@ -167,6 +169,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <exception cref="JetIOException">The destination database file already exists.</exception>
     public static async ValueTask<AccessWriter> CreateDatabaseAsync(string path, DatabaseFormat format, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
+        DiagnosticTrace.ThrowIfReentrant();
         Guard.NotNullOrEmpty(path, nameof(path));
         cancellationToken.ThrowIfCancellationRequested();
         options ??= new AccessWriterOptions();
@@ -205,6 +208,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. Nothing is written to the stream.</exception>
     public static async ValueTask<AccessWriter> CreateDatabaseAsync(Stream stream, DatabaseFormat format, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
+        DiagnosticTrace.ThrowIfReentrant();
         Guard.RequireReadWriteSeekableStream(stream, nameof(stream));
         cancellationToken.ThrowIfCancellationRequested();
         options ??= new AccessWriterOptions();

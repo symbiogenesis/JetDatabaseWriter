@@ -27,7 +27,7 @@ internal static class Jet4SecuritySid
     {
         if (rawHeader.Length < 0x92)
         {
-            throw new JetCorruptDataException("The database header is too short to derive its security identity key.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The database header is too short to derive its security identity key.");
         }
 
         byte[] header = (byte[])rawHeader.Clone();
@@ -39,7 +39,7 @@ internal static class Jet4SecuritySid
             double creationDate = BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64LittleEndian(header.AsSpan(0x72, 8)));
             if (double.IsNaN(creationDate) || double.IsInfinity(creationDate) || creationDate < int.MinValue || creationDate > int.MaxValue)
             {
-                throw new JetCorruptDataException("The database creation date cannot derive its security identity key.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The database creation date cannot derive its security identity key.");
             }
 
             BinaryPrimitives.WriteInt32LittleEndian(dateMask, (int)creationDate);

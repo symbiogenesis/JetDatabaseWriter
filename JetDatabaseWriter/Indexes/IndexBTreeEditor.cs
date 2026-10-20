@@ -79,7 +79,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
 
     /// <summary>
     /// Builds a B-tree over <paramref name="entries"/>, reserves its pages,
-    /// and writes them. See <see cref="TryPlaceTreeAsync(Func{long, IndexBTreeBuildResult}, ReservedPageRuns, CancellationToken)"/>.
+    /// and writes them. See <see cref="TryPlaceTreeAsync(Func{long, IndexBTreeBuildResult?}, ReservedPageRuns, CancellationToken)"/>.
     /// </summary>
     /// <param name="layout">The index page layout.</param>
     /// <param name="tdefPage">The owning table's TDEF page, stamped on every index page.</param>
@@ -94,7 +94,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         ReservedPageRuns runs,
         CancellationToken cancellationToken)
         => this.TryPlaceTreeAsync(
-            firstPage => IndexBTreeBuilder.Build(layout, format.PageSize, tdefPage, entries, firstPage),
+            firstPage => IndexBTreeBuilder.TryBuild(layout, format.PageSize, tdefPage, entries, firstPage),
             runs,
             cancellationToken);
 
@@ -102,24 +102,19 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// Builds a tree with <paramref name="buildAt"/> at the provisional end of
     /// file, then places it with <see cref="PlaceBuiltTreeAsync"/>. Returns
     /// <see langword="null"/>, with nothing reserved, when the tree cannot be
-    /// built (<see cref="IndexCapacityException"/>: an entry larger than a
-    /// page, or page numbers past the 24-bit limit).
+    /// built because an entry is larger than a
+    /// page, or page numbers exceed the 24-bit limit.
     /// </summary>
-    /// <param name="buildAt">Builds the tree with its first page at the given page number; production passes <see cref="IndexBTreeBuilder.Build(IndexPageLayout, int, long, IReadOnlyList{IndexEntry}, long)"/>.</param>
+    /// <param name="buildAt">Builds the tree with its first page at the given page number; returning null on capacity refusal.</param>
     /// <param name="runs">Records the written run until the caller links it.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The placed tree, or <see langword="null"/> when it cannot be built.</returns>
     internal async ValueTask<IndexBTreeBuildResult?> TryPlaceTreeAsync(
-        Func<long, IndexBTreeBuildResult> buildAt,
+        Func<long, IndexBTreeBuildResult?> buildAt,
         ReservedPageRuns runs,
         CancellationToken cancellationToken)
     {
-        IndexBTreeBuildResult provisional;
-        try
-        {
-            provisional = buildAt(pager.PageCount);
-        }
-        catch (IndexCapacityException)
+        if (buildAt(pager.PageCount) is not { } provisional)
         {
             return null;
         }
@@ -148,7 +143,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// <returns>The tree as written, or <see langword="null"/> when it could not be placed.</returns>
     internal async ValueTask<IndexBTreeBuildResult?> PlaceBuiltTreeAsync(
         IndexBTreeBuildResult provisional,
-        Func<long, IndexBTreeBuildResult> buildAt,
+        Func<long, IndexBTreeBuildResult?> buildAt,
         ReservedPageRuns runs,
         CancellationToken cancellationToken)
     {
@@ -160,15 +155,12 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             IndexBTreeBuildResult build = provisional;
             if (firstPage != provisional.FirstPageNumber)
             {
-                try
-                {
-                    build = buildAt(firstPage);
-                }
-                catch (IndexCapacityException)
+                if (buildAt(firstPage) is not { } relocated)
                 {
                     return null;
                 }
 
+                build = relocated;
                 if (build.Pages.Count != pageCount)
                 {
                     return null;
@@ -265,7 +257,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// <paramref name="leafNext"/>; interior pages point at their
     /// neighbours via <paramref name="pageNumbers"/>). Returns
     /// <see langword="null"/> on any single-entry overflow
-    /// (<see cref="IndexCapacityException"/> from the page builder).
+    /// as reported by the page builder.
     /// </summary>
     /// <param name="layout">The layout.</param>
     /// <param name="tdefPage">The TDEF page.</param>
@@ -285,27 +277,26 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     {
         int splitCount = splitPages.Count;
         byte[][] pageBytesAll = new byte[splitCount][];
-        try
+        for (int p = 0; p < splitCount; p++)
         {
-            for (int p = 0; p < splitCount; p++)
+            long thisPrev = p == 0 ? leafPrev : pageNumbers[p - 1];
+            long thisNext = p == splitCount - 1 ? leafNext : pageNumbers[p + 1];
+            byte[]? built = IndexPageCodec.TryBuildLeafPage(
+                layout,
+                format.PageSize,
+                tdefPage,
+                splitPages[p],
+                prevPage: thisPrev,
+                nextPage: thisNext,
+                tailPage: 0,
+                enablePrefixCompression: true,
+                maxPrefixLength: maxPrefixLength);
+            if (built is null)
             {
-                long thisPrev = p == 0 ? leafPrev : pageNumbers[p - 1];
-                long thisNext = p == splitCount - 1 ? leafNext : pageNumbers[p + 1];
-                pageBytesAll[p] = IndexPageCodec.BuildLeafPage(
-                    layout,
-                    format.PageSize,
-                    tdefPage,
-                    splitPages[p],
-                    prevPage: thisPrev,
-                    nextPage: thisNext,
-                    tailPage: 0,
-                    enablePrefixCompression: true,
-                    maxPrefixLength: maxPrefixLength);
+                return null;
             }
-        }
-        catch (IndexCapacityException)
-        {
-            return null;
+
+            pageBytesAll[p] = built;
         }
 
         return pageBytesAll;
@@ -337,25 +328,18 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     {
         int n = splitInts.Count;
         byte[][] pages = new byte[n][];
-        try
+        for (int p = 0; p < n; p++)
         {
-            for (int p = 0; p < n; p++)
+            long prev = p == 0 ? firstPrev : pageNumbers[p - 1];
+            long next = p == n - 1 ? lastNext : pageNumbers[p + 1];
+            byte[]? built = IndexBTreeBuilder.TryBuildIntermediatePage(
+                layout, format.PageSize, tdefPage, splitInts[p], prev, next, tails[p]);
+            if (built is null)
             {
-                long prev = p == 0 ? firstPrev : pageNumbers[p - 1];
-                long next = p == n - 1 ? lastNext : pageNumbers[p + 1];
-                byte[]? built = IndexBTreeBuilder.TryBuildIntermediatePage(
-                    layout, format.PageSize, tdefPage, splitInts[p], prev, next, tails[p]);
-                if (built is null)
-                {
-                    return null;
-                }
-
-                pages[p] = built;
+                return null;
             }
-        }
-        catch (IndexCapacityException)
-        {
-            return null;
+
+            pages[p] = built;
         }
 
         return pages;
@@ -422,23 +406,18 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         int maxPrefixLength,
         out int freeSpace)
     {
-        freeSpace = 0;
-        try
-        {
-            byte[] page = IndexPageCodec.BuildLeafPage(
+        byte[]? page = IndexPageCodec.TryBuildLeafPage(
                 layout,
                 format.PageSize,
                 parentTdefPage: 0,
                 entries,
+                prevPage: 0,
+                nextPage: 0,
+                tailPage: 0,
                 enablePrefixCompression: true,
                 maxPrefixLength: maxPrefixLength);
-            freeSpace = Ru16(page, 2);
-            return true;
-        }
-        catch (IndexCapacityException)
-        {
-            return false;
-        }
+        freeSpace = page is null ? 0 : Ru16(page, 2);
+        return page is not null;
     }
 
     /// <summary>
@@ -602,10 +581,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             return false;
         }
 
-        byte[] rewritten;
-        try
-        {
-            rewritten = IndexPageCodec.BuildLeafPage(
+        byte[]? rewritten = IndexPageCodec.TryBuildLeafPage(
                 layout,
                 format.PageSize,
                 tdefPage,
@@ -615,8 +591,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 tailPage: 0,
                 enablePrefixCompression: true,
                 maxPrefixLength: originalTailPrefLen);
-        }
-        catch (IndexCapacityException)
+        if (rewritten is null)
         {
             // Tail leaf would overflow a single page. Fall through to the
             // bulk path, which will resnap the tree (and emit a fresh tail leaf).
@@ -1800,16 +1775,8 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             [.. splitInts.ConvertAll(s => s.ConvertAll(si => si.Entry))],
             intPageNumbers);
 
-        byte[]? newRootBytes;
-        try
-        {
-            newRootBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
+        byte[]? newRootBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
                 layout, format.PageSize, tdefPage, rootEntries, prevPage: 0, nextPage: 0, tailPage: intTails[^1]);
-        }
-        catch (IndexCapacityException)
-        {
-            return false;
-        }
 
         if (newRootBytes is null)
         {

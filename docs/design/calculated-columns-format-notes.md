@@ -436,8 +436,11 @@ Delivered:
   logical; this follows OLE Automation, measured on Windows, and Access itself
   was not checked. `ValidationRule` terms are still joined by the rule's own
   `And`/`Or` logic, which only combines Boolean terms.
-- An evaluation failure keeps its exception type (`OverflowException`,
-  `InvalidCastException`, `DivideByZeroException` and so on) but its message
+- An evaluation failure carries a structured code: result overflow uses
+  `JetLimitationException` with `NumericOverflow`, unsupported evaluation uses
+  `JetNotSupportedException` with `UnsupportedExpression`, and other evaluation
+  failures use `JetOperationException` with `InvalidExpression`. Its context
+  names the table and calculated column, and its message
   names the table, the calculated column and its expression, plus the value
   and result type when the result could not be stored (`[A] * 100` in a Byte
   column with `A = 5` "evaluated to 500, which a Byte result cannot hold").

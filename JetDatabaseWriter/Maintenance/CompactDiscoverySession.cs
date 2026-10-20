@@ -305,7 +305,7 @@ internal sealed class CompactDiscoverySession
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task completing after the declared payload is written.</returns>
     /// <remarks>Payload bytes are charged before copying, including bytes of an interrupted copy. Complete row bytes, trailing content and reference ownership require auditing separately.</remarks>
-    /// <exception cref="InvalidDataException">The original column has a truncated descriptor or unreadable payload.</exception>
+    /// <exception cref="JetCorruptDataException">The original column has a truncated descriptor or unreadable payload.</exception>
     /// <exception cref="ArgumentException">The destination is not writable.</exception>
     internal async ValueTask CopyLongValueAsync(ReadOnlyMemory<byte> column, Stream destination, CancellationToken cancellationToken)
     {
@@ -315,7 +315,7 @@ internal sealed class CompactDiscoverySession
         {
             if (!LongValueDescriptor.TryRead(column.Span, out LongValueDescriptor descriptor))
             {
-                throw new InvalidDataException("The raw long-value column is shorter than its descriptor.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The raw long-value column is shorter than its descriptor.");
             }
 
             ReadOnlyMemory<byte> inline = column[Constants.LongValue.HeaderSize..];
@@ -556,7 +556,7 @@ internal sealed class CompactDiscoverySession
         this.pages.CheckGeometry(0, cancellationToken);
         if (Interlocked.CompareExchange(ref this.activeScan, 1, 0) != 0)
         {
-            throw new InvalidOperationException("A compact discovery root scan is already active.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "A compact discovery root scan is already active.");
         }
     }
 
@@ -565,7 +565,7 @@ internal sealed class CompactDiscoverySession
         this.pages.CheckGeometry(0, cancellationToken);
         if (Interlocked.CompareExchange(ref this.activeValue, 1, 0) != 0)
         {
-            throw new InvalidOperationException("A compact discovery long-value operation is already active.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "A compact discovery long-value operation is already active.");
         }
     }
 

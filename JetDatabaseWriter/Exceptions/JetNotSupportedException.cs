@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Exceptions;
 
 using System;
 
-/// <summary>A structured database failure compatible with <see cref="NotSupportedException"/>.</summary>
+/// <summary>A structured database failure with a stable code and available context.</summary>
 /// <param name="errorCode">The stable failure code.</param>
 /// <param name="message">The failure message.</param>
 /// <param name="errorInfo">The available context.</param>
@@ -35,5 +35,5 @@ public sealed class JetNotSupportedException(JetErrorCode errorCode, string mess
     public JetErrorCode ErrorCode { get; } = errorCode;
 
     /// <inheritdoc/>
-    public JetErrorInfo ErrorInfo { get; } = errorInfo ?? new JetErrorInfo();
+    public JetErrorInfo ErrorInfo { get; } = JetDatabaseWriter.Infrastructure.JetFailureMetrics.Context(errorCode, errorInfo);
 }

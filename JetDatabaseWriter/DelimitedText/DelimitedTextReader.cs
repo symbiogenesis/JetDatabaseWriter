@@ -7,6 +7,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 
 internal sealed class DelimitedTextReader : IDisposable
@@ -38,7 +39,7 @@ internal sealed class DelimitedTextReader : IDisposable
     {
         if (currentLength > maxLength - increment)
         {
-            throw new InvalidDataException($"Delimited text source exceeds {optionName} ({maxLength}).");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Delimited text source exceeds {optionName} ({maxLength}).", new JetErrorInfo { ObjectName = optionName });
         }
 
         return currentLength + increment;
@@ -116,7 +117,7 @@ internal sealed class DelimitedTextReader : IDisposable
 
                 if (inQuotes)
                 {
-                    throw new InvalidDataException("Delimited text source contains a quoted field without a closing quote.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptDelimitedText, "Delimited text source contains a quoted field without a closing quote.", new JetErrorInfo { ObjectName = "DelimitedText", Reason = $"Unterminated quoted field at line {this.lineNumber}." });
                 }
 
                 this.AddField(fields, field, bufferedFieldStart, bufferedFieldLength);
@@ -253,7 +254,7 @@ internal sealed class DelimitedTextReader : IDisposable
 
                 if (inQuotes)
                 {
-                    throw new InvalidDataException("Delimited text source contains a quoted field without a closing quote.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptDelimitedText, "Delimited text source contains a quoted field without a closing quote.", new JetErrorInfo { ObjectName = "DelimitedText", Reason = $"Unterminated quoted field at line {this.lineNumber}." });
                 }
 
                 this.AddCountedField(ref fieldCount);
@@ -381,7 +382,7 @@ internal sealed class DelimitedTextReader : IDisposable
     {
         if (version != this.recordVersion)
         {
-            throw new InvalidOperationException("Delimited text records must be materialized before reading the next record.");
+            throw new JetOperationException(JetErrorCode.ReadProtocolViolation, "Delimited text records must be materialized before reading the next record.", new JetErrorInfo { ObjectName = "DelimitedTextRecord" });
         }
 
         string[] result = new string[fieldCount];
@@ -519,7 +520,7 @@ internal sealed class DelimitedTextReader : IDisposable
     {
         if (fields.Count >= this.limits.MaxColumnCount)
         {
-            throw new InvalidDataException($"Delimited text source exceeds {this.limits.MaxColumnCountOptionName} ({this.limits.MaxColumnCount}).");
+            throw new JetLimitationException(JetErrorCode.ColumnCountLimit, $"Delimited text source exceeds {this.limits.MaxColumnCountOptionName} ({this.limits.MaxColumnCount}).", new JetErrorInfo { ObjectName = this.limits.MaxColumnCountOptionName });
         }
 
         if (field.Length == 0 && bufferedFieldStart >= 0)
@@ -640,7 +641,7 @@ internal sealed class DelimitedTextReader : IDisposable
     {
         if (fieldCount >= this.limits.MaxColumnCount)
         {
-            throw new InvalidDataException($"Delimited text source exceeds {this.limits.MaxColumnCountOptionName} ({this.limits.MaxColumnCount}).");
+            throw new JetLimitationException(JetErrorCode.ColumnCountLimit, $"Delimited text source exceeds {this.limits.MaxColumnCountOptionName} ({this.limits.MaxColumnCount}).", new JetErrorInfo { ObjectName = this.limits.MaxColumnCountOptionName });
         }
 
         fieldCount++;

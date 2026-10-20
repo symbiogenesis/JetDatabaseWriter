@@ -230,7 +230,7 @@ public sealed class Jet3CodePageTextTests
         ms.Position = 0x18;
         ms.Write(new byte[0x96 - 0x18]);
         byte[] before = ms.ToArray();
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await OpenWriterAsync(ms));
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await OpenWriterAsync(ms));
         Assert.Equal(before, ms.ToArray());
     }
 

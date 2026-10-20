@@ -4,10 +4,10 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
 using System.Linq;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
@@ -57,12 +57,137 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// </summary>
 internal static class IndexKeyEncoder
 {
+    /// <summary>Encodes a candidate key without exceptions for unsupported values or format limits.</summary>
+    /// <param name="columnType">The key type.</param>
+    /// <param name="value">The candidate value.</param>
+    /// <param name="ascending">The direction.</param>
+    /// <param name="numericScale">The declared numeric scale.</param>
+    /// <param name="legacyNumeric">Whether to use legacy numeric keys.</param>
+    /// <param name="sortOrder">The text sort order.</param>
+    /// <param name="fixedBinaryLength">The fixed binary width, or zero.</param>
+    internal static byte[]? TryEncodeColumnEntry(ColumnType columnType, object? value, bool ascending, byte numericScale, bool legacyNumeric, TextSortOrder sortOrder, int fixedBinaryLength = 0)
+    {
+        if (columnType == NumericType && numericScale > 28)
+        {
+            return null;
+        }
+
+        if (value is null or DBNull)
+        {
+            return [ascending ? AscendingNull : DescendingNull];
+        }
+
+        if (columnType is TextType or MemoType)
+        {
+            if (!sortOrder.IsSupported || value is not (string or char or bool or byte or sbyte or short or ushort or int or uint or long or ulong or decimal or float or double or DateTime or DateTimeOffset or Guid))
+            {
+                return null;
+            }
+
+            string text = ToText(value);
+            return sortOrder.HasVersion && sortOrder.Version != 0 && sortOrder.Value != 0
+                ? GeneralTextIndexEncoder.TryEncode(text, ascending)
+                : EncodeTextEntry(sortOrder, text, ascending);
+        }
+
+        if (columnType == GuidType)
+        {
+            object? guidValue = value switch
+            {
+                Guid guid => guid,
+                byte[] bytes when bytes.Length == 16 => new Guid(bytes),
+                string text when Guid.TryParse(text, out Guid guid) => guid,
+                _ => null,
+            };
+            return guidValue is null ? null : EncodeEntry(columnType, guidValue, ascending);
+        }
+
+        if (columnType == BinaryType)
+        {
+            int length = value switch
+            {
+                byte[] bytes => bytes.Length,
+                ArraySegment<byte> segment => segment.Count,
+                ReadOnlyMemory<byte> memory => memory.Length,
+                Memory<byte> memory => memory.Length,
+                _ => -1,
+            };
+            return length < 0 || (fixedBinaryLength > 0 && length > fixedBinaryLength)
+                ? null
+                : EncodeEntry(columnType, NormalizeFixedBinaryValue(value, fixedBinaryLength), ascending);
+        }
+
+        if (columnType is DateTimeType or DateTimeExtendedType)
+        {
+            if (columnType == DateTimeExtendedType && value is byte[] bytes)
+            {
+                return bytes.Length == 42 ? EncodeEntry(columnType, value, ascending) : null;
+            }
+
+            DateTime date;
+            if (value is DateTime dateTime)
+            {
+                date = dateTime;
+            }
+            else if (value is DateTimeOffset offset)
+            {
+                date = offset.UtcDateTime;
+            }
+            else if (value is not string text || !DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out date))
+            {
+                return null;
+            }
+
+            return columnType == DateTimeType && date.Ticks >= TimeSpan.TicksPerDay && date.Year < 100
+                ? null
+                : EncodeEntry(columnType, date, ascending);
+        }
+
+        if (columnType is LongIntegerType or ComplexType && value is ComplexIdRef reference)
+        {
+            value = reference.Id;
+        }
+
+        Type? target = columnType switch
+        {
+            ByteType => typeof(byte),
+            IntegerType => typeof(short),
+            LongIntegerType or ComplexType => typeof(int),
+            BigIntType => typeof(long),
+            FloatType => typeof(float),
+            DoubleType => typeof(double),
+            MoneyType or NumericType => typeof(decimal),
+            BooleanType or DateTimeType or BinaryType or TextType or OleType or MemoType or GuidType or BigBinaryType or DateTimeExtendedType => null,
+            _ => null,
+        };
+        if (target is null || !ScalarConversion.TryConvert(value, target, out object? normalized))
+        {
+            return null;
+        }
+
+        if (columnType == MoneyType && decimal.Round((decimal)normalized!, 4, MidpointRounding.ToEven) is < -922337203685477.5808m or > 922337203685477.5807m)
+        {
+            return null;
+        }
+
+        if (columnType == NumericType)
+        {
+            decimal scaled = decimal.Round((decimal)normalized!, numericScale, MidpointRounding.ToEven);
+            Span<byte> magnitude = stackalloc byte[16];
+            return NumericEncoder.TryEncodeFixedPointPayload(scaled, numericScale, magnitude, out _)
+                ? EncodeNumericEntry(scaled, ascending, numericScale, legacyNumeric)
+                : null;
+        }
+
+        return EncodeEntry(columnType, normalized, ascending);
+    }
+
     /// <summary>Encodes text using the descriptor's Access sort order.</summary>
     /// <param name="sortOrder">The declared sort order.</param>
     /// <param name="value">The value.</param>
     /// <param name="ascending">The direction.</param>
     /// <returns>The encoded entry.</returns>
-    /// <exception cref="NotSupportedException">The text sort order is unsupported.</exception>
+    /// <exception cref="JetNotSupportedException">The text sort order is unsupported.</exception>
     internal static byte[] EncodeTextEntry(TextSortOrder sortOrder, object? value, bool ascending = true)
     {
         if (value is null or DBNull)
@@ -72,7 +197,7 @@ internal static class IndexKeyEncoder
 
         if (!sortOrder.IsSupported)
         {
-            throw new NotSupportedException($"Text sort order 0x{sortOrder.Value:X4}, version {sortOrder.Version}, is not supported.");
+            throw new JetNotSupportedException(JetErrorCode.UnsupportedTextCollation, $"Text sort order 0x{sortOrder.Value:X4}, version {sortOrder.Version}, is not supported.", new JetErrorInfo { Reason = "Unsupported text sort order" });
         }
 
         string text = ToText(value);
@@ -125,7 +250,7 @@ internal static class IndexKeyEncoder
     /// <param name="ascending">Sort direction. <see langword="true"/> yields
     /// the ascending encoding; <see langword="false"/> ones-complements every
     /// byte of the ascending form.</param>
-    /// <exception cref="NotSupportedException">The column type is outside the
+    /// <exception cref="JetNotSupportedException">The column type is outside the
     /// supported set.</exception>
     /// <exception cref="ArgumentException">The value cannot be coerced to the
     /// .NET representation expected by <paramref name="columnType"/>.</exception>
@@ -323,7 +448,7 @@ internal static class IndexKeyEncoder
             }
 
             case BooleanType:
-                throw new NotSupportedException("BOOL columns are stored in the row null mask, not in index key bytes.");
+                throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "BOOL columns are stored in the row null mask, not in index key bytes.", new JetErrorInfo { Reason = "Boolean index key encoding is unsupported" });
             case BinaryType:
             case TextType:
             case OleType:
@@ -332,11 +457,12 @@ internal static class IndexKeyEncoder
             case NumericType:
             case BigBinaryType:
             case DateTimeExtendedType:
-                throw new NotSupportedException(
-                    $"Index key encoding for column type {JetTypeInfo.GetTypeDisplayName(columnType)} is not supported. " +
-                    "Supported types: BYTE, INT, LONG, BIGINT, MONEY, FLOAT, DOUBLE, DATETIME, DATETIMEEXT, GUID, BINARY, TEXT, MEMO.");
+                throw new JetNotSupportedException(
+                    JetErrorCode.FeatureNotSupported,
+                    $"Index key encoding for column type {JetTypeInfo.GetTypeDisplayName(columnType)} is not supported.",
+                    new JetErrorInfo { Reason = "Unsupported index key column type" });
             default:
-                throw new InvalidOperationException($"Index key encoding for column type {JetTypeInfo.GetTypeDisplayName(columnType)} is unknown.");
+                throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Index key encoding for column type {JetTypeInfo.GetTypeDisplayName(columnType)} is unknown.", new JetErrorInfo { Reason = "Unknown index key column type" });
         }
     }
 
@@ -565,8 +691,7 @@ internal static class IndexKeyEncoder
     /// Values whose natural scale is less than <paramref name="targetScale"/>
     /// are multiplied by <c>10^(targetScale - naturalScale)</c>; values whose mantissa exceeds the
     /// 16-byte (128-bit unsigned) field after scaling throw
-    /// <see cref="NotSupportedException"/>, which lets index maintenance use
-    /// the conservative rebuild or snapshot fallback path.
+    /// <see cref="JetLimitationException"/>. Candidate paths probe capacity before encoding.
     /// </para>
     /// <para>
     /// Twiddling rules (per Jackcess <c>handleNegationAndOrder</c>) — the
@@ -594,7 +719,7 @@ internal static class IndexKeyEncoder
     /// <param name="targetScale">The target scale.</param>
     /// <param name="legacy">The legacy.</param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="targetScale"/> is below the value's natural scale.</exception>
-    /// <exception cref="NotSupportedException">Thrown when the rescaled mantissa exceeds the 16-byte NUMERIC field.</exception>
+    /// <exception cref="JetLimitationException">Thrown when the rescaled mantissa exceeds the 16-byte NUMERIC field.</exception>
     public static byte[] EncodeNumericEntry(object? value, bool ascending, int targetScale, bool legacy)
     {
         bool isNull = value is null or DBNull;
@@ -610,9 +735,10 @@ internal static class IndexKeyEncoder
         Span<byte> magnitudeBe = stackalloc byte[16];
         if (!NumericEncoder.TryEncodeFixedPointPayload(d, targetScale, magnitudeBe, out FixedPointPayload payload))
         {
-            throw new NotSupportedException(
-                $"Numeric index key mantissa requires {payload.MagnitudeByteCount} bytes after rescale to {targetScale} digits, " +
-                "which exceeds the 16-byte (128-bit) NUMERIC field. Use a smaller target scale or a smaller value.");
+            throw new JetLimitationException(
+                JetErrorCode.NumericOverflow,
+                $"Numeric index key mantissa requires {payload.MagnitudeByteCount} bytes after rescale to {targetScale} digits, which exceeds the 16-byte NUMERIC field.",
+                new JetErrorInfo { Reason = "Numeric index mantissa exceeds format capacity" });
         }
 
         byte[] valueBytes = new byte[17];
@@ -706,6 +832,34 @@ internal static class IndexKeyEncoder
     public static byte[] EncodeIndexKeyPrefix(JetFormat format, string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues, string paramName) =>
         EncodeIndexKey(format, tableName, index, tableDef, keyValues, requireFullKey: false, paramName);
 
+    /// <summary>Checks whether a candidate prefix can be encoded without using exceptions for plan selection.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="index">The index.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="keyValues">The candidate prefix values.</param>
+    /// <exception cref="JetCorruptDataException">The index references a missing column.</exception>
+    internal static bool CanEncodeIndexKeyPrefix(JetFormat format, string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues)
+    {
+        if (keyValues.Count == 0 || keyValues.Count > index.Columns.Count)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < keyValues.Count; i++)
+        {
+            IndexColumnReference key = index.Columns[i];
+            ColumnInfo column = tableDef.Columns.FirstOrDefault(column => column.ColNum == key.ColumnNumber)
+                ?? throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"Index '{index.Name}' on table '{tableName}' references missing column number {key.ColumnNumber}.", new JetErrorInfo { TableName = tableName, IndexName = index.Name });
+            if (TryEncodeColumnEntry(column.Type, keyValues[i], key.IsAscending, column.NumericScale, format.LegacyNumericIndexKeys, column.TextSortOrder, column.IsFixed && !column.IsCalculated ? column.Size : 0) is null)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static byte[] EncodeIndexKey(
         JetFormat format,
         string tableName,
@@ -740,7 +894,7 @@ internal static class IndexKeyEncoder
             IndexColumnReference keyColumn = index.Columns[i];
 
             ColumnInfo? column = tableDef.Columns.FirstOrDefault(c => c.ColNum == keyColumn.ColumnNumber)
-                ?? throw new InvalidDataException($"Index '{index.Name}' on table '{tableName}' references missing column number {keyColumn.ColumnNumber}.");
+                ?? throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"Index '{index.Name}' on table '{tableName}' references missing column number {keyColumn.ColumnNumber}.", new JetErrorInfo { TableName = tableName, IndexName = index.Name });
 
             object? value = keyValues[i];
             perColumn[i] = column.Type == NumericType

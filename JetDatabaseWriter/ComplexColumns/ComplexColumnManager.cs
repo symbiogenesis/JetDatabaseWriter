@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.ComplexColumns;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -215,12 +214,12 @@ internal sealed class ComplexColumnManager(
     /// <param name="column">The complex column being declared.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The validated template's TDEF page.</returns>
-    /// <exception cref="NotSupportedException">The declared complex type has no native template.</exception>
+    /// <exception cref="JetNotSupportedException">The declared complex type has no native template.</exception>
     /// <exception cref="JetCorruptDataException">The required template is missing, unreadable, outside the file, or has an invalid column schema.</exception>
     private async ValueTask<long> ReadRequiredComplexTypeTemplateAsync(ColumnDefinition column, CancellationToken cancellationToken)
     {
         string templateName = ResolveComplexTypeTemplateName(column)
-            ?? throw new NotSupportedException($"Column '{column.Name}' has no supported native complex type template.");
+            ?? throw new JetNotSupportedException(JetErrorCode.ComplexColumnsNotSupported, $"Column '{column.Name}' has no supported native complex type template.", new JetErrorInfo { ColumnName = column.Name });
         long templatePage = await catalogRows.FindSystemTableTdefPageAsync(templateName, cancellationToken).ConfigureAwait(false);
         if (templatePage <= 0 || templatePage >= this.pager.PageCount)
         {
@@ -232,7 +231,7 @@ internal sealed class ComplexColumnManager(
         {
             template = await this.tableDefs.ReadTableDefAsync(templatePage, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception error) when (error is InvalidDataException or EndOfStreamException or JetCorruptDataException or ArgumentException or OverflowException)
+        catch (Exception error) when (error is JetCorruptDataException or ArgumentException or OverflowException)
         {
             throw InvalidComplexTypeTemplate(column.Name, templateName, templatePage, error);
         }
@@ -350,10 +349,10 @@ internal sealed class ComplexColumnManager(
     /// <param name="columns">The columns.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="ArgumentException">Thrown when a multi-value column does not declare its element type or declares a Text length outside 0..255.</exception>
-    /// <exception cref="NotSupportedException">Thrown when complex columns are declared for a non-ACE database or a catalog missing <c>MSysComplexColumns</c>.</exception>
+    /// <exception cref="JetNotSupportedException">Thrown when complex columns are declared for a non-ACE database or a catalog missing <c>MSysComplexColumns</c>.</exception>
     /// <exception cref="JetNotSupportedException">The complex-column system table is missing.</exception>
-    /// <exception cref="InvalidOperationException">The requested columns exceed the remaining ComplexID capacity.</exception>
     /// <exception cref="JetCorruptDataException">A required native template or persisted complex counter is malformed.</exception>
+    /// <exception cref="JetLimitationException">The operation exceeds a format or configured bound.</exception>
     public async ValueTask<IReadOnlyList<ComplexColumnAllocation>?> PrepareComplexColumnAllocationsAsync(
         IReadOnlyList<ColumnDefinition> columns,
         CancellationToken cancellationToken)
@@ -390,8 +389,7 @@ internal sealed class ComplexColumnManager(
 
         if (!this.format.SupportsComplexColumns)
         {
-            throw new NotSupportedException(
-                "Attachment and MultiValue columns are an Access 2007+ ACE feature; declare them only on .accdb databases.");
+            throw new JetNotSupportedException(JetErrorCode.ComplexColumnsNotSupported, "Attachment and MultiValue columns are an Access 2007+ ACE feature; declare them only on .accdb databases.");
         }
 
         long msysComplexPg = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
@@ -408,7 +406,7 @@ internal sealed class ComplexColumnManager(
         int nextId = await this.GetNextComplexIdAsync(msysComplexPg, cancellationToken).ConfigureAwait(false);
         if ((long)nextId + indices.Count - 1 > int.MaxValue)
         {
-            throw new InvalidOperationException($"'{Constants.SystemTableNames.ComplexColumns}' does not have enough ComplexID values remaining up to {int.MaxValue} for {indices.Count} columns.");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"'{Constants.SystemTableNames.ComplexColumns}' does not have enough ComplexID values remaining up to {int.MaxValue} for {indices.Count} columns.");
         }
 
         var allocations = new ComplexColumnAllocation[indices.Count];
@@ -430,8 +428,9 @@ internal sealed class ComplexColumnManager(
     /// </summary>
     /// <param name="msysComplexPg">The MSysComplexColumns page number.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">Every <c>ComplexID</c> up to <see cref="int.MaxValue"/> has been used.</exception>
+    /// <exception cref="JetOperationException">Every <c>ComplexID</c> up to <see cref="int.MaxValue"/> has been used.</exception>
     /// <exception cref="JetCorruptDataException">The ComplexID metadata is invalid or an existing ID exceeds the persisted counter.</exception>
+    /// <exception cref="JetLimitationException">The operation exceeds a format or configured bound.</exception>
     private async ValueTask<int> GetNextComplexIdAsync(long msysComplexPg, CancellationToken cancellationToken)
     {
         TableDef msysComplex = await this.tableDefs.ReadRequiredTableDefAsync(msysComplexPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
@@ -472,7 +471,7 @@ internal sealed class ComplexColumnManager(
 
         return counter < int.MaxValue
             ? (int)(counter + 1)
-            : throw new InvalidOperationException($"'{Constants.SystemTableNames.ComplexColumns}' has used every ComplexID up to {int.MaxValue}.");
+            : throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"'{Constants.SystemTableNames.ComplexColumns}' has used every ComplexID up to {int.MaxValue}.");
     }
 
     /// <summary>
@@ -590,7 +589,7 @@ internal sealed class ComplexColumnManager(
     /// <c>IdxFKPrimaryScalar</c> attachment index.
     /// </para>
     /// </remarks>
-    /// <exception cref="InvalidOperationException">Thrown when a multi-value flat-table schema is requested without an element type.</exception>
+    /// <exception cref="JetOperationException">Thrown when a multi-value flat-table schema is requested without an element type.</exception>
     private static (ColumnDefinition[] Columns, IndexDefinition[] Indexes) BuildFlatTableSchema(
         string parentTableName,
         ColumnDefinition parentColumn)
@@ -669,7 +668,7 @@ internal sealed class ComplexColumnManager(
         // stores them on this column (Access's Decimal(18,0) when none is declared);
         // other element types ignore them.
         Type elementType = parentColumn.MultiValueElementType
-            ?? throw new InvalidOperationException("MultiValueElementType must be set on a multi-value column.");
+            ?? throw new JetOperationException(JetErrorCode.InvalidOperationState, "MultiValueElementType must be set on a multi-value column.");
         var valueCol = new ColumnDefinition("Value", elementType, maxLength: elementType == typeof(string) && parentColumn.MaxLength == 0 ? ComplexTypeTemplateTextLength : parentColumn.MaxLength)
         {
             ForceVariableLengthStorage = elementType == typeof(decimal),
@@ -700,7 +699,7 @@ internal sealed class ComplexColumnManager(
     /// <param name="flatTableId">The flat table id.</param>
     /// <param name="complexTypeObjectId">The complex type object id.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">Thrown when the <c>MSysComplexColumns</c> table is missing.</exception>
+    /// <exception cref="JetOperationException">Thrown when the <c>MSysComplexColumns</c> table is missing.</exception>
     /// <exception cref="JetOperationException">The operation is refused with a structured <see cref="JetOperationException"/>.</exception>
     private async ValueTask InsertMSysComplexColumnsRowAsync(
         string parentColumnName,
@@ -757,8 +756,7 @@ internal sealed class ComplexColumnManager(
 
         if (!this.format.SupportsComplexColumns)
         {
-            throw new NotSupportedException(
-                "Complex (Attachment / MultiValue) columns are an Access 2007+ ACE feature; only .accdb databases are supported.");
+            throw new JetNotSupportedException(JetErrorCode.ComplexColumnsNotSupported, "Complex (Attachment / MultiValue) columns are an Access 2007+ ACE feature; only .accdb databases are supported.");
         }
 
         // Resolve parent table + complex column.
@@ -772,8 +770,7 @@ internal sealed class ComplexColumnManager(
         bool isComplexCol = complexCol.Type is ComplexType;
         if (!isComplexCol)
         {
-            throw new NotSupportedException(
-                $"Column '{tableName}.{columnName}' is not a complex (Attachment / MultiValue) column (type={GetTypeDisplayName(complexCol.Type)}).");
+            throw new JetNotSupportedException(JetErrorCode.ComplexColumnsNotSupported, $"Column '{tableName}.{columnName}' is not a complex (Attachment / MultiValue) column (type={GetTypeDisplayName(complexCol.Type)}).", new JetErrorInfo { TableName = tableName });
         }
 
         // Resolve the hidden flat child table via MSysComplexColumns.
@@ -787,20 +784,17 @@ internal sealed class ComplexColumnManager(
         ComplexColumnKind kind = ClassifyComplexColumnKind(flatDef);
         if (kind == ComplexColumnKind.Unknown)
         {
-            throw new NotSupportedException(
-                $"Column '{tableName}.{columnName}' is a complex column, but its subtype could not be determined from the flat child table.");
+            throw new JetNotSupportedException(JetErrorCode.ComplexColumnsNotSupported, $"Column '{tableName}.{columnName}' is a complex column, but its subtype could not be determined from the flat child table.", new JetErrorInfo { TableName = tableName });
         }
 
         if (expectAttachment && kind != ComplexColumnKind.Attachment)
         {
-            throw new NotSupportedException(
-                $"Column '{tableName}.{columnName}' is a MultiValue column; call AddMultiValueItemAsync instead.");
+            throw new JetNotSupportedException(JetErrorCode.ComplexColumnsNotSupported, $"Column '{tableName}.{columnName}' is a MultiValue column; call AddMultiValueItemAsync instead.", new JetErrorInfo { TableName = tableName });
         }
 
         if (!expectAttachment && kind != ComplexColumnKind.MultiValue)
         {
-            throw new NotSupportedException(
-                $"Column '{tableName}.{columnName}' is an Attachment column; call AddAttachmentAsync instead.");
+            throw new JetNotSupportedException(JetErrorCode.ComplexColumnsNotSupported, $"Column '{tableName}.{columnName}' is an Attachment column; call AddAttachmentAsync instead.", new JetErrorInfo { TableName = tableName });
         }
 
         if (!expectAttachment && flatDef.FindColumn("Value") is { Type: TextType } valueColumn
@@ -898,7 +892,7 @@ internal sealed class ComplexColumnManager(
     /// </summary>
     /// <param name="flatTdefPage">The flat TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or has no row for <paramref name="flatTdefPage"/>.</exception>
+    /// <exception cref="JetOperationException">Thrown when <c>MSysObjects</c> is missing or has no row for <paramref name="flatTdefPage"/>.</exception>
     /// <exception cref="JetOperationException">The operation is refused with a structured <see cref="JetOperationException"/>.</exception>
     private async ValueTask<string> ResolveFlatTableNameAsync(long flatTdefPage, CancellationToken cancellationToken)
     {

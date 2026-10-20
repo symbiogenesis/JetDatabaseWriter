@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
 using Xunit;
@@ -257,7 +258,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [Fact]
     public void ByteResult_FromTrue_RefusesOverflow()
     {
-        OverflowException exception = Assert.Throws<OverflowException>(() => Evaluate("[A] > 1", typeof(byte), ("A", 3)));
+        JetLimitationException exception = Assert.Throws<JetLimitationException>(() => Evaluate("[A] > 1", typeof(byte), ("A", 3)));
         Assert.Contains("'Calc'", exception.Message, StringComparison.Ordinal);
         Assert.Contains("[A] > 1", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Byte", exception.Message, StringComparison.Ordinal);
@@ -282,7 +283,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("CByte(256)")]
     public void CByte_OutOfRange_ThrowsOverflowNamingColumnAndExpression(string expression)
     {
-        OverflowException exception = Assert.Throws<OverflowException>(() => Evaluate(expression, typeof(int)));
+        JetLimitationException exception = Assert.Throws<JetLimitationException>(() => Evaluate(expression, typeof(int)));
 
         Assert.Contains("'Calc'", exception.Message, StringComparison.Ordinal);
         Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
@@ -292,7 +293,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [Fact]
     public void ResultOutOfRange_ThrowsOverflowNamingValueAndResultType()
     {
-        OverflowException exception = Assert.Throws<OverflowException>(() => Evaluate("[A] * 100", typeof(byte), ("A", 5)));
+        JetLimitationException exception = Assert.Throws<JetLimitationException>(() => Evaluate("[A] * 100", typeof(byte), ("A", 5)));
 
         Assert.Contains("'Calc'", exception.Message, StringComparison.Ordinal);
         Assert.Contains("[A] * 100", exception.Message, StringComparison.Ordinal);
@@ -359,7 +360,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
         ];
         object[] values = [DBNull.Value, DBNull.Value];
 
-        OverflowException exception = Assert.Throws<OverflowException>(() => CalculatedExpressionEvaluator.Apply(tableDef, constraints, values, force: false, "T"));
+        JetLimitationException exception = Assert.Throws<JetLimitationException>(() => CalculatedExpressionEvaluator.Apply(tableDef, constraints, values, force: false, "T"));
 
         Assert.Contains("'Inner'", exception.Message, StringComparison.Ordinal);
         Assert.Contains("'T'", exception.Message, StringComparison.Ordinal);
@@ -415,11 +416,11 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [Fact]
     public void DateArithmetic_InvalidOperand_ThrowsNamingColumn()
     {
-        InvalidCastException mismatch = Assert.Throws<InvalidCastException>(() => EvaluateDates("[D] + \"abc\"", typeof(DateTime)));
+        JetOperationException mismatch = Assert.Throws<JetOperationException>(() => EvaluateDates("[D] + \"abc\"", typeof(DateTime)));
         Assert.Contains("'Calc'", mismatch.Message, StringComparison.Ordinal);
         Assert.Contains("[D] + \"abc\"", mismatch.Message, StringComparison.Ordinal);
 
-        OverflowException overflow = Assert.Throws<OverflowException>(() => EvaluateDates("[D] + 3000000", typeof(DateTime)));
+        JetLimitationException overflow = Assert.Throws<JetLimitationException>(() => EvaluateDates("[D] + 3000000", typeof(DateTime)));
         Assert.Contains("'Calc'", overflow.Message, StringComparison.Ordinal);
     }
 
@@ -453,14 +454,14 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("5 Mod 0.4")]
     public void IntegerDivisionOrModByZero_ThrowsDivideByZero(string expression)
     {
-        DivideByZeroException exception = Assert.Throws<DivideByZeroException>(() => Evaluate(expression, typeof(int)));
+        JetOperationException exception = Assert.Throws<JetOperationException>(() => Evaluate(expression, typeof(int)));
 
         Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void IntegerDivision_OperandBeyondLong_ThrowsOverflow()
-        => Assert.Throws<OverflowException>(() => Evaluate("10000000000 \\ 1", typeof(int)));
+        => Assert.Throws<JetLimitationException>(() => Evaluate("10000000000 \\ 1", typeof(int)));
 
     /// <summary>
     /// <c>And</c>, <c>Or</c>, <c>Xor</c>, <c>Eqv</c>, <c>Imp</c> and <c>Not</c> are bitwise
@@ -567,8 +568,8 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [Fact]
     public void BitwiseOperand_OutOfRange_Throws()
     {
-        Assert.Throws<OverflowException>(() => Evaluate("1E10 And 1", typeof(int)));
-        Assert.Throws<InvalidCastException>(() => Evaluate("\"abc\" And 1", typeof(int)));
+        Assert.Throws<JetLimitationException>(() => Evaluate("1E10 And 1", typeof(int)));
+        Assert.Throws<JetOperationException>(() => Evaluate("\"abc\" And 1", typeof(int)));
     }
 
     [Theory]
@@ -845,7 +846,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("TimeSerial(40000, 0, 0)")]
     [InlineData("TimeSerial(0, -32769, 0)")]
     public void TimeSerial_ArgumentOutsideInteger_Overflows(string expression)
-        => Assert.Throws<OverflowException>(() => EvaluateDates(expression, typeof(DateTime)));
+        => Assert.Throws<JetLimitationException>(() => EvaluateDates(expression, typeof(DateTime)));
 
     /// <summary>
     /// Time() is the current time on day 0, as VBA's Time is, so it has no date part as

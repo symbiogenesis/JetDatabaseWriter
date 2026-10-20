@@ -299,13 +299,14 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         Assert.Equal(1, await reader.GetRealRowCountAsync("MemoTarget", ct));
         counting.Reset();
 
-        InvalidDataException failure = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
         {
             await foreach (object[] _ in reader.Rows("MemoTarget", cancellationToken: ct))
             {
                 Assert.Fail("The malformed MEMO must not yield a row.");
             }
         });
+        Assert.Equal(JetErrorCode.UnreadableLongValue, failure.ErrorCode);
         Assert.Contains("Body", failure.Message, StringComparison.Ordinal);
         Assert.InRange(counting.BytesRead, 0, bytes.LongLength);
         Assert.Equal(expected, backing.ToArray());
@@ -528,7 +529,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         BinaryPrimitives.WriteUInt32LittleEndian(page.AsSpan(0, 4), rowPointer);
         int reads = 0;
         await using var output = new MemoryStream();
-        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await LongValueStore.CopyPayloadAsync(
                 LongValueDescriptor.Chained(32, rowPointer, 0),
                 ReadOnlyMemory<byte>.Empty,
@@ -538,6 +539,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
                 32,
                 LocateAsync,
                 TestContext.Current.CancellationToken));
+        Assert.Equal(JetErrorCode.UnreadableLongValue, failure.ErrorCode);
         Assert.Equal(1, reads);
 
         ValueTask<LvalRowLocation> LocateAsync(uint pointer, CancellationToken token)

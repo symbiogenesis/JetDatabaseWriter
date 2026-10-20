@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Tests.ValueDecoding;
 
 using System;
-using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
@@ -51,7 +50,7 @@ public sealed class LongValueCorruptionTests
         descriptor[3] = Constants.LongValue.StorageModeMask;
         var decoder = new LongValueDecoder(JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb), null!);
 
-        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await decoder.ReadLongValueBytesExactAsync(descriptor, 0, descriptor.Length, TestContext.Current.CancellationToken));
     }
 
@@ -77,7 +76,7 @@ public sealed class LongValueCorruptionTests
         LongValueDescriptor.Inline(8).WriteTo(row);
         var decoder = new LongValueDecoder(JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb), null!);
 
-        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
         {
             if (raw)
             {

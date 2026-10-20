@@ -1,10 +1,10 @@
 namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
-using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
@@ -31,22 +31,13 @@ internal static class RowValueDecodePolicy
                 exception);
         }
 
-        try
-        {
-            Trace.TraceWarning("The {0} {1} value for column '{2}' is unreadable and was returned as a missing value.", storage, valueType, column.Name);
-        }
-#pragma warning disable CA1031 // A diagnostic listener must not turn an explicitly lenient read into a failure.
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            return DBNull.Value;
-        }
+        DiagnosticTrace.Warning($"The {storage} {valueType} value for column '{column.Name}' is unreadable and was returned as a missing value.");
 
         return DBNull.Value;
     }
 
     internal static bool IsMalformedValueException(Exception exception)
-        => exception is ArgumentException or IndexOutOfRangeException or OverflowException;
+        => exception is ArgumentException or IndexOutOfRangeException or OverflowException or JetCorruptDataException { ErrorCode: JetErrorCode.MalformedValue };
 
     internal static bool HasFixedPayload(ColumnInfo column, int length, bool strictParsing)
     {
@@ -63,13 +54,13 @@ internal static class RowValueDecodePolicy
     {
         if (data.Length < Constants.CalculatedColumn.DataOffset)
         {
-            throw new ArgumentException("Calculated value envelope is truncated.", nameof(data));
+            throw new JetCorruptDataException(JetErrorCode.MalformedValue, "Calculated value envelope is truncated.");
         }
 
         int length = JetTypeInfo.Ri32(data, Constants.CalculatedColumn.DataLenOffset);
         if (length < 0 || length > data.Length - Constants.CalculatedColumn.DataOffset)
         {
-            throw new ArgumentException("Calculated value envelope declares an invalid payload length.", nameof(data));
+            throw new JetCorruptDataException(JetErrorCode.MalformedValue, "Calculated value envelope declares an invalid payload length.");
         }
 
         return CalculatedColumnUtil.Unwrap(data);
@@ -100,7 +91,7 @@ internal static class RowValueDecodePolicy
 
         if (payload.Length < required)
         {
-            throw new ArgumentException($"Calculated payload needs {required} byte(s), found {payload.Length}.", nameof(payload));
+            throw new JetCorruptDataException(JetErrorCode.MalformedValue, $"Calculated payload needs {required} byte(s), found {payload.Length}.");
         }
 
         return true;

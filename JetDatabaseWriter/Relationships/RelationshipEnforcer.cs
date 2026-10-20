@@ -423,7 +423,7 @@ internal sealed class RelationshipEnforcer(
     /// updates, or a relationship whose key changes names a foreign table or
     /// column that cannot be found.
     /// </exception>
-    /// <exception cref="System.IO.InvalidDataException">
+    /// <exception cref="JetDatabaseWriter.Exceptions.JetCorruptDataException">
     /// A dependent row holds a MEMO or OLE value whose stored data cannot be
     /// read, which rewriting the row would lose.
     /// </exception>

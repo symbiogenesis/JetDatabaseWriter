@@ -153,7 +153,7 @@ internal static class LongValueStore
     /// <param name="releasePage">Releases each located buffer after its awaited write, including failed locations. If locating throws, the locator retains ownership.</param>
     /// <returns>A task completed after copying the declared payload.</returns>
     /// <exception cref="ArgumentException">The destination is not writable.</exception>
-    /// <exception cref="InvalidDataException">The descriptor or reachable row content is malformed or incomplete.</exception>
+    /// <exception cref="JetCorruptDataException">The descriptor or reachable row content is malformed or incomplete.</exception>
     /// <exception cref="JetLimitationException">The payload or external-row budget is exceeded.</exception>
     internal static async ValueTask CopyPayloadAsync(
         LongValueDescriptor descriptor,
@@ -197,7 +197,7 @@ internal static class LongValueStore
             cancellationToken.ThrowIfCancellationRequested();
             if (currentDp == 0)
             {
-                throw new InvalidDataException($"the chain ended after {copied} of {descriptor.Length} byte(s)");
+                throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, $"the chain ended after {copied} of {descriptor.Length} byte(s)");
             }
 
             if (rows >= maxChainRows)
@@ -207,7 +207,7 @@ internal static class LongValueStore
 
             if (!seen.Add(currentDp))
             {
-                throw new InvalidDataException("the chain contains a cycle");
+                throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "the chain contains a cycle");
             }
 
             rows++;
@@ -216,20 +216,20 @@ internal static class LongValueStore
             {
                 if (location.Failed)
                 {
-                    throw new InvalidDataException($"the LVAL row could not be located: {location.Error}");
+                    throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, $"the LVAL row could not be located: {location.Error}");
                 }
 
                 int prefixLength = descriptor.IsSinglePage ? 0 : 4;
                 int validPageLength = Math.Min(pageSize, location.Page.Length);
                 if (location.Start < 0 || location.Size <= prefixLength || location.Size > validPageLength || location.Start > validPageLength - location.Size)
                 {
-                    throw new InvalidDataException($"invalid LVAL row bounds: start {location.Start}, size {location.Size}");
+                    throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, $"invalid LVAL row bounds: start {location.Start}, size {location.Size}");
                 }
 
                 int available = location.Size - prefixLength;
                 if (descriptor.IsSinglePage && available < descriptor.Length)
                 {
-                    throw new InvalidDataException($"the LVAL row is truncated but the descriptor claims {descriptor.Length} byte(s)");
+                    throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, $"the LVAL row is truncated but the descriptor claims {descriptor.Length} byte(s)");
                 }
 
                 currentDp = descriptor.IsSinglePage ? 0 : Ru32(location.Page, location.Start);
@@ -258,7 +258,7 @@ internal static class LongValueStore
                 and not Constants.LongValue.SinglePageStorageMode
                 and not Constants.LongValue.ChainedStorageMode)
         {
-            throw new InvalidDataException("the long-value descriptor has an invalid length or reserved storage mode");
+            throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "the long-value descriptor has an invalid length or reserved storage mode");
         }
 
         if (descriptor.Length > maxValueBytes)
@@ -268,7 +268,7 @@ internal static class LongValueStore
 
         if (descriptor.IsInline && descriptor.Length > inlineLength)
         {
-            throw new InvalidDataException($"the inline value claims {descriptor.Length} byte(s) but the column slice contains fewer bytes");
+            throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, $"the inline value claims {descriptor.Length} byte(s) but the column slice contains fewer bytes");
         }
 
         if (!descriptor.IsInline && descriptor.Length > 0 && maxChainRows == 0)

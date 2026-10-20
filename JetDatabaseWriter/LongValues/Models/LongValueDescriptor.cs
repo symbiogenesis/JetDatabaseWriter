@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.LongValues.Models;
 
 using System;
 using System.Buffers.Binary;
+using JetDatabaseWriter.Exceptions;
 
 /// <summary>
 /// Parsed 12-byte JET long-value descriptor stored in MEMO/OLE row bodies.
@@ -63,7 +64,7 @@ internal readonly record struct LongValueDescriptor(int Length, byte StorageMode
 
         if (this.Length is < 0 or > MaxLength)
         {
-            throw new InvalidOperationException("The native long-value length must fit its 30-bit field.");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The native long-value length must fit its 30-bit field.");
         }
 
         uint lengthWithFlags = checked((uint)this.Length) | ((uint)this.StorageMode << 24);

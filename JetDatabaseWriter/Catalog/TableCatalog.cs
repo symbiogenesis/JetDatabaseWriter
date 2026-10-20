@@ -89,7 +89,7 @@ internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, 
     /// <summary>Finds a user table's catalog entry by name, or throws when it does not exist.</summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">Thrown when no user table is named <paramref name="tableName"/>.</exception>
+    /// <exception cref="JetOperationException">Thrown when no user table is named <paramref name="tableName"/>.</exception>
     /// <exception cref="JetOperationException">The operation is refused with a structured <see cref="JetOperationException"/>.</exception>
     internal async ValueTask<CatalogEntry> GetRequiredCatalogEntryAsync(string tableName, CancellationToken cancellationToken = default)
         => await this.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false)
@@ -102,12 +102,12 @@ internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, 
     /// </summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="System.IO.InvalidDataException">The table definition cannot be read.</exception>
+    /// <exception cref="JetCorruptDataException">The table definition cannot be read.</exception>
     internal async ValueTask<ResolvedTable> ResolveRequiredTableAsync(string tableName, CancellationToken cancellationToken = default)
     {
         CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableSchema schema = await this.GetSchemaAsync(entry.TDefPage, loadProperties: false, cancellationToken).ConfigureAwait(false)
-            ?? throw new System.IO.InvalidDataException($"Table definition for '{tableName}' could not be read.");
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"Table definition for '{tableName}' could not be read.", new JetErrorInfo { TableName = tableName, PageNumber = entry.TDefPage });
         return new ResolvedTable(entry, schema);
     }
 

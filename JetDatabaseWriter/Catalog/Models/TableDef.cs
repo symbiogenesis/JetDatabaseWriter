@@ -2,8 +2,8 @@ namespace JetDatabaseWriter.Catalog.Models;
 
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -172,10 +172,10 @@ internal sealed class TableDef
     /// falling back to the first <c>LongInteger</c> column when no underscore-prefixed
     /// candidate exists. Throws when no <c>LongInteger</c> column is present.
     /// </summary>
-    /// <exception cref="InvalidDataException">Thrown when the flat child table has no Long FK back-reference column.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown when the flat child table has no Long FK back-reference column.</exception>
     public ColumnInfo FindFlatTableForeignKeyColumn() => this.Columns.FirstOrDefault(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
             ?? this.Columns.FirstOrDefault(c => c.Type == LongIntegerType)
-            ?? throw new InvalidDataException("Flat child table is missing a Long FK back-reference column.");
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "Flat child table is missing a Long FK back-reference column.");
 
     /// <summary>
     /// Populates the per-table metadata caches (<see cref="ClrTypes"/>,

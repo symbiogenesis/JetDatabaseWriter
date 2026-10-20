@@ -1,28 +1,25 @@
 namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
-using System.Diagnostics;
-using System.IO;
+using System.Runtime.ExceptionServices;
+using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Infrastructure;
 
 internal static class LongValueReadPolicy
 {
-    internal static object MissingValue(string columnName, InvalidDataException failure, bool strictParsing)
+    internal static object MissingValue(string columnName, Exception failure, bool strictParsing)
     {
-        if (strictParsing)
+        if (failure is not JetCorruptDataException)
         {
-            throw new InvalidDataException($"The stored long value for column '{columnName}' is unreadable.", failure);
+            ExceptionDispatchInfo.Capture(failure).Throw();
         }
 
-        try
+        if (strictParsing)
         {
-            Trace.TraceWarning("The stored long value for column '{0}' is unreadable and was returned as a missing value.", columnName);
+            throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, $"The stored long value for column '{columnName}' is unreadable.", new JetErrorInfo { ColumnName = columnName }, failure);
         }
-#pragma warning disable CA1031 // A diagnostic listener must not turn an explicitly lenient read into a failure.
-        catch (Exception)
-#pragma warning restore CA1031 // A diagnostic listener must not turn an explicitly lenient read into a failure.
-        {
-            return DBNull.Value;
-        }
+
+        DiagnosticTrace.Warning($"The stored long value for column '{columnName}' is unreadable and was returned as a missing value.");
 
         return DBNull.Value;
     }

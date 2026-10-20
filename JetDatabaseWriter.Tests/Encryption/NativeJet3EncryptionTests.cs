@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -63,7 +64,7 @@ public sealed class NativeJet3EncryptionTests
         foreach (string? supplied in new string?[] { null, "wrong", password + "x", password + "\0" })
         {
             await using var refused = new MemoryStream(fixture, writable: false);
-            await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+            await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(supplied is null ? JetErrorCode.PasswordRequired : JetErrorCode.PasswordIncorrect, async () =>
             {
                 await using AccessReader reader = await AccessReader.OpenAsync(refused, new AccessReaderOptions(supplied) { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
             });

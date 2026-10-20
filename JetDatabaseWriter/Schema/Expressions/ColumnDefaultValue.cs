@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
 using System.Globalization;
+using JetDatabaseWriter.Exceptions;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
@@ -102,7 +103,7 @@ internal sealed class ColumnDefaultValue
         if (NumericLiteral.TryParse(JetExpressionConverter.ToJetExpression(value)!, out NumericLiteral number)
             && new ColumnDefaultValue(null, number, null).TryEvaluate(
                 clrType,
-                static () => throw new InvalidOperationException("A numeric literal needs no evaluation context."),
+                static () => throw new JetOperationException(JetErrorCode.InvalidExpression, "A numeric literal needs no evaluation context."),
                 out object evaluated))
         {
             stored = evaluated;

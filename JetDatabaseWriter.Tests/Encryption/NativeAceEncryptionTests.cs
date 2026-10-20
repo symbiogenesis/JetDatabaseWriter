@@ -46,7 +46,7 @@ public sealed class NativeAceEncryptionTests
     public async Task NativeAgile_WrongPasswordIsRefused()
     {
         string path = Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb");
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, async () =>
         {
             await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions("wrong") { UseLockFile = false }, TestContext.Current.CancellationToken);
         });
@@ -186,15 +186,15 @@ public sealed class NativeAceEncryptionTests
             await File.WriteAllBytesAsync(path, fixture, TestContext.Current.CancellationToken);
             if (operation == "encrypt")
             {
-                await Assert.ThrowsAsync<InvalidOperationException>(async () => await AccessDatabaseEncryption.EncryptAsync(path, "Changed123".AsMemory(), AccessEncryptionFormat.AccdbAgile, cancellationToken: TestContext.Current.CancellationToken));
+                await StructuredFormatAssert.ThrowsAsync<JetOperationException>(JetErrorCode.AlreadyEncrypted, async () => await AccessDatabaseEncryption.EncryptAsync(path, "Changed123".AsMemory(), AccessEncryptionFormat.AccdbAgile, cancellationToken: TestContext.Current.CancellationToken));
             }
             else if (operation == "decrypt")
             {
-                await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessDatabaseEncryption.DecryptAsync(path, "wrong".AsMemory(), cancellationToken: TestContext.Current.CancellationToken));
+                await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, async () => await AccessDatabaseEncryption.DecryptAsync(path, "wrong".AsMemory(), cancellationToken: TestContext.Current.CancellationToken));
             }
             else
             {
-                await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessDatabaseEncryption.ChangePasswordAsync(path, "wrong".AsMemory(), "Changed123".AsMemory(), cancellationToken: TestContext.Current.CancellationToken));
+                await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, async () => await AccessDatabaseEncryption.ChangePasswordAsync(path, "wrong".AsMemory(), "Changed123".AsMemory(), cancellationToken: TestContext.Current.CancellationToken));
             }
 
             Assert.Equal(fixture, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));

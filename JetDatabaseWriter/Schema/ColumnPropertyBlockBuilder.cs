@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Schema;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -201,7 +202,8 @@ internal sealed class ColumnPropertyBlockBuilder
     /// (no targets or unknown chunks). Parsed source signatures and name pools remain present.
     /// </summary>
     /// <param name="format">Database format. Selects Jet3 codepage vs Jet4 UTF-16LE string encoding.</param>
-    /// <exception cref="InvalidOperationException">If a chunk would exceed the on-disk uint16 / uint32 length limits.</exception>
+    /// <exception cref="JetOperationException">If a chunk would exceed the on-disk uint16 / uint32 length limits.</exception>
+    /// <exception cref="JetLimitationException">The serialized property exceeds an on-disk size limit.</exception>
     public byte[]? ToBytes(JetFormat format)
     {
         if (this.IsEmpty)
@@ -274,7 +276,7 @@ internal sealed class ColumnPropertyBlockBuilder
                 {
                     if (names.Count > ushort.MaxValue)
                     {
-                        throw new InvalidOperationException("Property name pool exceeds the uint16 index limit.");
+                        throw new JetLimitationException(JetErrorCode.ValueTooLarge, "Property name pool exceeds the uint16 index limit.");
                     }
 
                     indices.Add(entry.Name, names.Count);
@@ -418,7 +420,7 @@ internal sealed class ColumnPropertyBlockBuilder
             long entryLength = PropertyEntryHeaderLength + (long)valueLength + entry.Padding.Length;
             if (entryLength > ushort.MaxValue)
             {
-                throw new InvalidOperationException($"Property entry '{entry.Name}' value is {valueLength} bytes; max supported is {ushort.MaxValue - PropertyEntryHeaderLength}.");
+                throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Property entry '{entry.Name}' value is {valueLength} bytes; max supported is {ushort.MaxValue - PropertyEntryHeaderLength}.");
             }
 
             entryLengths[entryIndex] = (int)entryLength;
@@ -443,7 +445,7 @@ internal sealed class ColumnPropertyBlockBuilder
                 : nameIndices.GetValueOrDefault(entry.Name, -1);
             if (index is < 0 or > ushort.MaxValue)
             {
-                throw new InvalidOperationException($"Entry name '{entry.Name}' was not registered in the name pool.");
+                throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Entry name '{entry.Name}' was not registered in the name pool.");
             }
 
             int entryLength = entryLengths[entryIndex];
@@ -470,7 +472,7 @@ internal sealed class ColumnPropertyBlockBuilder
         if (newLength > int.MaxValue)
         {
             string description = detail is null ? valueDescription : $"{valueDescription} {detail}";
-            throw new InvalidOperationException($"{description} would be {newLength} bytes, exceeding the supported array length.");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"{description} would be {newLength} bytes, exceeding the supported array length.");
         }
 
         return (int)newLength;
@@ -481,7 +483,7 @@ internal sealed class ColumnPropertyBlockBuilder
         int byteCount = encoding.GetByteCount(value);
         if (byteCount > ushort.MaxValue)
         {
-            throw new InvalidOperationException($"{valueDescription} '{value}' encodes to {byteCount} bytes, exceeding the uint16 length limit.");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"{valueDescription} '{value}' encodes to {byteCount} bytes, exceeding the uint16 length limit.");
         }
 
         return byteCount;
@@ -500,7 +502,7 @@ internal sealed class ColumnPropertyBlockBuilder
         long chunkLength = ChunkHeaderLength + (long)payloadLength;
         if (chunkLength > uint.MaxValue)
         {
-            throw new InvalidOperationException($"Property chunk would be {chunkLength} bytes, exceeding the uint32 length limit.");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Property chunk would be {chunkLength} bytes, exceeding the uint32 length limit.");
         }
 
         return chunkLength;

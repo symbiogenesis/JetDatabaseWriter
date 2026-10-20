@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -74,7 +75,7 @@ public sealed class EntityQueryTableAttributeTests(DatabaseCache db) : IClassFix
         await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(
             async () => await reader.Query<UnmappedParent>("JdwAttrParent")
                 .Include(p => p.Children)
                 .ToListAsync(ct));

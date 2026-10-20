@@ -703,7 +703,7 @@ internal sealed class TableDataWriter(
             if (Convert.ToString(row[i], CultureInfo.InvariantCulture) is { } text
                 && format.DescribeUnstorableCharacter(text) is { } character)
             {
-                throw new JetLimitationException(format.UnstorableTextMessage($"The value for column '{column.Name}' of table '{tableName}'", character));
+                throw new JetLimitationException(JetErrorCode.FeatureNotSupported, format.UnstorableTextMessage($"The value for column '{column.Name}' of table '{tableName}'", character), new JetErrorInfo { TableName = tableName, ColumnName = column.Name, Reason = "Unrepresentable character in database code page" });
             }
         }
     }

@@ -1,8 +1,8 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
-using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -81,9 +81,9 @@ public sealed class TDefCodecMalformedInputTests
         copy[format.TDef.BlockEnd] = 255;
         Assert.Equal(original, image.CopyBytes());
         Assert.Equal(type, column.RawDescriptor[format.ColumnDescriptor.TypeOff]);
-        Assert.Throws<NotSupportedException>(() => ((IList<byte>)column.RawDescriptor)[0] = 255);
+        Assert.Throws<JetNotSupportedException>(() => ((IList<byte>)column.RawDescriptor)[0] = 255);
         Assert.Same(column.RawDescriptor, column.WithCalculatedResultType(ColumnType.LongIntegerType).RawDescriptor);
-        Assert.Throws<NotSupportedException>(() => ((IList<ColumnInfo>)image.Columns).Clear());
+        Assert.Throws<JetNotSupportedException>(() => ((IList<ColumnInfo>)image.Columns).Clear());
     }
 
     [Theory]

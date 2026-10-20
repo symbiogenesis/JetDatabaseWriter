@@ -558,14 +558,14 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
-                _ = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+                _ = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
                     await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 3 }, Ct)));
         }
 
         Assert.Equal(["1|one"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
         Assert.Equal(["1|1|a"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
         Assert.Equal(before, ms.ToArray());
-        _ = await Assert.ThrowsAsync<InvalidDataException>(async () => await ForeignKeyTestDatabase.ReadRowsAsync(ms, "M"));
+        _ = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ForeignKeyTestDatabase.ReadRowsAsync(ms, "M"));
         long[] rowCounts = await ReadRowCountsAsync(ms, "P", "C", "M");
         Assert.Equal([1L, 1L, 1L], rowCounts);
     }

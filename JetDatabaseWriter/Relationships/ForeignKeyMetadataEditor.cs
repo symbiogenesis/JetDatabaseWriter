@@ -230,7 +230,7 @@ internal sealed class ForeignKeyMetadataEditor(
     /// <param name="columnNumbers">The column numbers.</param>
     /// <param name="preferUnique">Whether to share a unique covering real index in preference to the first one (see <see cref="FindCoveringRealIdx"/>).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="NotSupportedException">Thrown when the TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown when the TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
     private async ValueTask<(FkSidePlan Plan, List<string> ExistingNames)> PrepareFkSideAsync(
         long tdefPage,
         int[] columnNumbers,
@@ -241,8 +241,7 @@ internal sealed class ForeignKeyMetadataEditor(
         byte[] page = chain.Bytes;
         if (!this.TryParseFkTDefLayout(page, out FkTDefLayout layout))
         {
-            throw new NotSupportedException(
-                $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
+            throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).", new JetErrorInfo { PageNumber = tdefPage });
         }
 
         int sharedSlot = FindCoveringRealIdx(this.format.Index, page, columnNumbers, in layout, preferUnique);
@@ -266,7 +265,7 @@ internal sealed class ForeignKeyMetadataEditor(
     /// <param name="pkColumnNumbers">The primary key column numbers.</param>
     /// <param name="fkColumnNumbers">The foreign key column numbers.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="NotSupportedException">Thrown when the TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown when the TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
     private async ValueTask<(FkSidePlan PkPlan, FkSidePlan FkPlan, List<string> ExistingNames)> PrepareSelfReferentialFkSidesAsync(
         long tdefPage,
         int[] pkColumnNumbers,
@@ -277,8 +276,7 @@ internal sealed class ForeignKeyMetadataEditor(
         byte[] page = chain.Bytes;
         if (!this.TryParseFkTDefLayout(page, out FkTDefLayout layout))
         {
-            throw new NotSupportedException(
-                $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
+            throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).", new JetErrorInfo { PageNumber = tdefPage });
         }
 
         int pkSharedSlot = FindCoveringRealIdx(this.format.Index, page, pkColumnNumbers, in layout, preferUnique: true);
@@ -334,7 +332,7 @@ internal sealed class ForeignKeyMetadataEditor(
     /// <param name="cascadeDels">The cascade dels.</param>
     /// <param name="newLeafRuns">Holds the new real index's empty leaf until the TDEF write links it.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="NotSupportedException">Thrown when the target TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown when the target TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="indexName"/> is too long for a TDEF name record (more than 255 ANSI bytes on Jet3).</exception>
     private async ValueTask EmitFkLogicalIdxAsync(
         long tdefPage,
@@ -354,8 +352,7 @@ internal sealed class ForeignKeyMetadataEditor(
 
         if (!this.TryParseFkTDefLayout(td, out FkTDefLayout layout))
         {
-            throw new NotSupportedException(
-                $"cannot mutate the TDEF at page {tdefPage} (malformed counts or not a TDEF).");
+            throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"cannot mutate the TDEF at page {tdefPage} (malformed counts or not a TDEF).", new JetErrorInfo { PageNumber = tdefPage });
         }
 
         IndexLayout lay = this.format.Index;
@@ -380,8 +377,7 @@ internal sealed class ForeignKeyMetadataEditor(
         {
             if (!this.TryGetLogicalIdxNameRange(td, in layout, insertAt - 1, out int lastNameStart, out int lastNameLen))
             {
-                throw new NotSupportedException(
-                    $"cannot mutate the TDEF at page {tdefPage} (its index names cannot be walked).");
+                throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"cannot mutate the TDEF at page {tdefPage} (its index names cannot be walked).", new JetErrorInfo { PageNumber = tdefPage });
             }
 
             namesBeforeLen = lastNameStart + lastNameLen - logIdxNamesStart;
@@ -668,8 +664,8 @@ internal sealed class ForeignKeyMetadataEditor(
     /// <param name="mapColumnName">Maps each captured column name to its name in the copy.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The map from each entry's old <c>index_num</c> to its new one.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when a key column is missing from the copy.</exception>
-    /// <exception cref="NotSupportedException">Thrown when the copy's TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
+    /// <exception cref="JetOperationException">Thrown when a key column is missing from the copy.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown when the copy's TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
     internal async ValueTask<IReadOnlyDictionary<int, int>> EmitFkEntriesForRewriteAsync(
         RelationshipRewriteState state,
         long targetTdefPage,
@@ -694,8 +690,7 @@ internal sealed class ForeignKeyMetadataEditor(
                 int columnIndex = mapped is null ? -1 : targetDef.FindColumnIndex(mapped);
                 if (columnIndex < 0)
                 {
-                    throw new InvalidOperationException(
-                        $"Column '{entry.ColumnNames[k]}' of foreign-key index '{entry.Name}' is missing from the rebuilt table '{state.TableName}'.");
+                    throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Column '{entry.ColumnNames[k]}' of foreign-key index '{entry.Name}' is missing from the rebuilt table '{state.TableName}'.");
                 }
 
                 columnNumbers[i][k] = targetDef.Columns[columnIndex].ColNum;
@@ -708,8 +703,7 @@ internal sealed class ForeignKeyMetadataEditor(
         LogicalTDefChain chain = await this.ReadRequiredLogicalTDefChainAsync(targetTdefPage, cancellationToken).ConfigureAwait(false);
         if (!this.TryParseFkTDefLayout(chain.Bytes, out FkTDefLayout layout))
         {
-            throw new NotSupportedException(
-                $"TDEF at page {targetTdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
+            throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"TDEF at page {targetTdefPage} cannot be mutated in place (malformed counts or not a TDEF).", new JetErrorInfo { PageNumber = targetTdefPage });
         }
 
         int nextIndexNumber = NextLogicalIdxNumber(this.format.Index, chain.Bytes, in layout);

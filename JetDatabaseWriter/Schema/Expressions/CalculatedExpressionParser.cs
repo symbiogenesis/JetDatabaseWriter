@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Schema.Expressions;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using JetDatabaseWriter.Exceptions;
 
 using static JetDatabaseWriter.Schema.Expressions.AccessExpressionText;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionLimits;
@@ -190,7 +191,7 @@ internal sealed class CalculatedExpressionParser
             case TokenKind.Comma:
                 throw this.SyntaxError(token.Kind == TokenKind.End ? "the expression ends where an operand is expected" : $"unexpected '{token.Text}' where an operand is expected");
             default:
-                throw new InvalidOperationException($"Unexpected calculated-column token kind '{token.Kind}'.");
+                throw new JetOperationException(JetErrorCode.InvalidExpression, $"Unexpected calculated-column token kind '{token.Kind}'.");
         }
     }
 
@@ -203,7 +204,7 @@ internal sealed class CalculatedExpressionParser
 
         if (this.isCalculatedColumn && name.ToUpperInvariant() is "PARTITION" or "CBOOL" or "CBYTE" or "CINT" or "CLNG" or "CSNG" or "CCUR" or "CDEC" or "CSTR" or "CDATE" or "TIMEVALUE" or "DATEVALUE")
         {
-            throw new NotSupportedException($"Access table calculated columns do not accept the {name} function.");
+            throw new JetNotSupportedException(JetErrorCode.UnsupportedExpression, $"Access table calculated columns do not accept the {name} function.");
         }
 
         this.Expect(TokenKind.OpenParen, "(");
@@ -419,7 +420,7 @@ internal sealed class CalculatedExpressionParser
 
                 if (!isCalculatedColumn)
                 {
-                    throw new NotSupportedException("Access table and field rules and defaults do not accept table-qualified field references.");
+                    throw new JetNotSupportedException(JetErrorCode.UnsupportedExpression, "Access table and field rules and defaults do not accept table-qualified field references.");
                 }
 
                 return new Token(TokenKind.Value, expression[start..index], new CalculatedExpressionFieldNode(column, first, rowLocalQualifier: !bracketed));

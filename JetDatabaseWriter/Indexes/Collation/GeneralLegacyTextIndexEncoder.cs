@@ -10,6 +10,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
+using JetDatabaseWriter.Exceptions;
 using static JetDatabaseWriter.Constants.IndexEntryFlags;
 
 /// <summary>
@@ -225,9 +226,32 @@ internal static class GeneralLegacyTextIndexEncoder
         var state = new ChunkEmitState(chars.Length, comparison);
         EmitChunkInline(chars, codes, extCodes, bout, state);
         FinishEntry(bout, payloadStart, state, ascending);
-        ApplyMaxEntryLength(bout, text, ascending, maxEntryLength, longRowSuffixProvider);
+        if (!TryApplyMaxEntryLength(bout, text, ascending, maxEntryLength, longRowSuffixProvider))
+        {
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "The General text index key requires a long-row suffix that is not supported.", new JetErrorInfo { Reason = "Unsupported long-row text index suffix" });
+        }
 
         return [.. bout];
+    }
+
+    /// <summary>Encodes a capped General entry, returning null when its suffix is unsupported.</summary>
+    /// <param name="text">The source text.</param>
+    /// <param name="ascending">The direction.</param>
+    /// <param name="codes">The base code table.</param>
+    /// <param name="extCodes">The extended code table.</param>
+    /// <param name="longRowSuffixProvider">The native suffix provider.</param>
+    internal static byte[]? TryEncodeGeneralEntry(string text, bool ascending, CharHandler[] codes, CharHandler[] extCodes, LongRowSuffixProvider longRowSuffixProvider)
+    {
+        ReadOnlySpan<char> chars = text.AsSpan().TrimEnd(' ');
+        chars = chars[..Math.Min(chars.Length, Constants.IndexTextEncoding.MaxTextIndexByteLength)];
+        List<byte> buffer = CreateEntryBuffer(chars.Length, ascending);
+        int payloadStart = buffer.Count;
+        var state = new ChunkEmitState(chars.Length);
+        EmitChunkInline(chars, codes, extCodes, buffer, state);
+        FinishEntry(buffer, payloadStart, state, ascending);
+        return TryApplyMaxEntryLength(buffer, text, ascending, MaxEntryLengthGeneralV2010, longRowSuffixProvider)
+            ? [.. buffer]
+            : null;
     }
 
     private static List<byte> CreateEntryBuffer(int payloadCapacity, bool ascending)
@@ -374,7 +398,7 @@ internal static class GeneralLegacyTextIndexEncoder
         bout.Add(EndExtraText);
     }
 
-    private static void ApplyMaxEntryLength(
+    private static bool TryApplyMaxEntryLength(
         List<byte> bout,
         string text,
         bool ascending,
@@ -383,7 +407,7 @@ internal static class GeneralLegacyTextIndexEncoder
     {
         if (maxEntryLength <= 0 || bout.Count <= maxEntryLength)
         {
-            return;
+            return true;
         }
 
         if (longRowSuffixProvider is not null
@@ -396,10 +420,11 @@ internal static class GeneralLegacyTextIndexEncoder
         }
         else
         {
-            throw new NotSupportedException("The General text index key requires a long-row suffix that is not supported.");
+            return false;
         }
 
         bout.RemoveRange(maxEntryLength, bout.Count - maxEntryLength);
+        return true;
     }
 
     private sealed class ChunkEmitState(int initialCapacity, bool comparison = false)
@@ -558,7 +583,7 @@ internal static class GeneralLegacyTextIndexEncoder
 
         Assembly asm = typeof(GeneralLegacyTextIndexEncoder).Assembly;
         using Stream raw = asm.GetManifestResourceStream(resourceName)
-            ?? throw new InvalidOperationException($"Embedded resource '{resourceName}' not found.");
+            ?? throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Embedded resource '{resourceName}' not found.", new JetErrorInfo { ObjectName = resourceName });
         using var gz = new GZipStream(raw, CompressionMode.Decompress);
         using var reader = new StreamReader(gz, Encoding.ASCII);
 
@@ -576,7 +601,7 @@ internal static class GeneralLegacyTextIndexEncoder
             else
             {
                 values[i] = ParseCodes(reader.ReadLine()
-                    ?? throw new InvalidDataException($"Premature end of resource '{resourceName}' at index {i}."));
+                    ?? throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"Premature end of resource '{resourceName}' at index {i}.", new JetErrorInfo { ObjectName = resourceName }));
             }
         }
 
@@ -602,7 +627,7 @@ internal static class GeneralLegacyTextIndexEncoder
                 CodesToBytes(parts[1], required: false),
                 parts[2] == "1" ? CrazyCode1 : CrazyCode2),
             'G' => new SignificantCharHandler(CodesToBytes(parts[0], required: true)!),
-            _ => throw new InvalidDataException($"Unknown code prefix '{prefix}' in '{codeLine}'."),
+            _ => throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"Unknown code prefix '{prefix}' in '{codeLine}'.", new JetErrorInfo { Reason = "Unknown index collation code prefix" }),
         };
     }
 
@@ -612,7 +637,7 @@ internal static class GeneralLegacyTextIndexEncoder
         {
             if (required)
             {
-                throw new InvalidDataException("Empty code bytes.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "Empty code bytes.", new JetErrorInfo { Reason = "Empty index collation code" });
             }
 
             return null;

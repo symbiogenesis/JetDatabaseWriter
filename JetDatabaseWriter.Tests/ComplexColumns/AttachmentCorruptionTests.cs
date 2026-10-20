@@ -42,7 +42,7 @@ public sealed class AttachmentCorruptionTests
         await using AccessReader reader = await AccessReader.OpenAsync(
             corrupted, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct);
 
-        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await reader.GetAttachmentsAsync("Docs", "Files", Ct));
     }
 
@@ -66,7 +66,7 @@ public sealed class AttachmentCorruptionTests
 
         if (strict)
         {
-            await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
                 await reader.ReadTableAsync("Docs", cancellationToken: Ct));
         }
         else

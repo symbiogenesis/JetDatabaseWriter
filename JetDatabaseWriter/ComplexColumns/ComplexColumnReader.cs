@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.ComplexColumns;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
@@ -655,7 +654,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             FlatTable? flat = await this.ResolveFlatTableAsync(column, cancellationToken).ConfigureAwait(false);
             return flat == null ? ComplexColumnKind.Unknown : ClassifyFlatTable(flat.Definition, column.ColumnName);
         }
-        catch (InvalidDataException ex) when (!rows.StrictParsing)
+        catch (JetCorruptDataException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(ClassifyFromFlatTableAsync), ex);
             return ComplexColumnKind.Unknown;
@@ -681,7 +680,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                 elementType = valueIndex >= 0 ? flat.Definition.Columns[valueIndex].Type : null;
             }
         }
-        catch (InvalidDataException ex) when (!rows.StrictParsing)
+        catch (JetCorruptDataException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(DescribeMultiValueTypeAsync), ex);
         }
@@ -891,7 +890,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
             return matchedPage;
         }
-        catch (InvalidDataException ex) when (!rows.StrictParsing)
+        catch (JetCorruptDataException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(GetComplexFlatTablePageAsync), ex);
         }
@@ -913,7 +912,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         {
             return await this.GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
         }
-        catch (InvalidDataException ex) when (!rows.StrictParsing)
+        catch (JetCorruptDataException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(TryGetComplexColumnsAsync), ex);
         }
@@ -973,7 +972,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
             return cells.Count > 0 ? cells : null;
         }
-        catch (InvalidDataException ex) when (!rows.StrictParsing)
+        catch (JetCorruptDataException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(LoadColumnCellsAsync), ex);
             return null;
@@ -1034,7 +1033,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             {
                 if (!AttachmentWrapper.TryDecode(fileData, out string wrappedType, out byte[] payload, maxAttachmentContentBytes, attachmentContent, cancellationToken))
                 {
-                    throw new InvalidDataException($"The attachment wrapper for complex column '{columnName}' is malformed.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, $"The attachment wrapper for complex column '{columnName}' is malformed.");
                 }
 
                 fileData = payload;

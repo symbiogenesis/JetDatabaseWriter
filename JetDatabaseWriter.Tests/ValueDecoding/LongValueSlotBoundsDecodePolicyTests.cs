@@ -78,18 +78,18 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
             await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: ct);
             if (strict)
             {
-                InvalidDataException strings = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct));
-                InvalidDataException typed = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct));
-                InvalidDataException poco = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
-                InvalidDataException table = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
+                JetCorruptDataException strings = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct));
+                JetCorruptDataException typed = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct));
+                JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
+                JetCorruptDataException table = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
                 Assert.Contains("Value", strings.Message, StringComparison.Ordinal);
-                Assert.IsType<InvalidDataException>(strings.InnerException);
+                Assert.IsType<JetCorruptDataException>(strings.InnerException);
                 Assert.Equal(strings.Message, typed.Message);
                 Assert.Equal(typed.Message, poco.Message);
                 Assert.Equal(poco.Message, table.Message);
                 if (ole)
                 {
-                    InvalidDataException hybrid = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.Rows<OleRow>("Values", cancellationToken: ct).ToListAsync(ct));
+                    JetCorruptDataException hybrid = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<OleRow>("Values", cancellationToken: ct).ToListAsync(ct));
                     Assert.Equal(typed.Message, hybrid.Message);
                 }
             }
@@ -118,7 +118,7 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
         await mutationStream.WriteAsync(bytes, ct);
         mutationStream.Position = 0;
         await using AccessWriter mutation = await AccessWriter.OpenAsync(mutationStream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct);
-        await Assert.ThrowsAsync<InvalidDataException>(async () => await mutation.UpdateRowsAsync("Values", RowCriteria.All(), new RowValues { ["Id"] = 2 }, ct));
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await mutation.UpdateRowsAsync("Values", RowCriteria.All(), new RowValues { ["Id"] = 2 }, ct));
         Assert.Equal(bytes, mutationStream.ToArray());
     }
 

@@ -280,14 +280,14 @@ internal sealed class TableRowStore(
         {
             if (!DataPageRows.TryGetSlotBound(format, page, rowIndex, out RowBound header))
             {
-                throw new JetCorruptDataException("The overflow header has invalid row bounds.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The overflow header has invalid row bounds.");
             }
 
             var intermediateSlots = new List<(long PageNumber, RowBound Bound)>();
             OverflowRowTarget? resolvedTarget = await ownedPages.TryResolveOverflowRowAsync(page, header, pager.ReadPageAsync, PageBuffers.Return, cancellationToken, intermediateSlots).ConfigureAwait(false);
             if (resolvedTarget is null && dataMode != DeletedRowDataMode.Clear)
             {
-                throw new JetCorruptDataException("The overflow row cannot be resolved before deleting its storage.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The overflow row cannot be resolved before deleting its storage.");
             }
 
             var slots = new Dictionary<long, HashSet<int>>();
@@ -323,7 +323,7 @@ internal sealed class TableRowStore(
                             {
                                 if (!DataPageRows.TryGetSlotBound(format, otherHeader, row.Location.RowIndex, out RowBound bound))
                                 {
-                                    throw new JetCorruptDataException("Another overflow header has invalid row bounds.");
+                                    throw new JetCorruptDataException(JetErrorCode.CorruptPage, "Another overflow header has invalid row bounds.");
                                 }
 
                                 CheckSpan(row.Location.PageNumber, bound.RowStart, bound.RowSize);
@@ -370,7 +370,7 @@ internal sealed class TableRowStore(
                     {
                         if (!DataPageRows.TryGetSlotBound(format, current, index, out RowBound bound))
                         {
-                            throw new JetCorruptDataException("The overflow row slot has invalid bounds before reclamation.");
+                            throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The overflow row slot has invalid bounds before reclamation.");
                         }
 
                         if (clear)
@@ -430,7 +430,7 @@ internal sealed class TableRowStore(
                     {
                         if (start < bound.RowStart + bound.RowSize && bound.RowStart < start + length)
                         {
-                            throw new JetCorruptDataException("The overflow payload overlaps storage referenced by another live row.");
+                            throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The overflow payload overlaps storage referenced by another live row.");
                         }
                     }
                 }

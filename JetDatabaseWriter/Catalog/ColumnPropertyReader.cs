@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Catalog;
 
 using System;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -97,7 +96,7 @@ internal sealed class ColumnPropertyReader(JetFormat format, TableDefReader tabl
                 }
             }
         }
-        catch (InvalidDataException exception)
+        catch (JetCorruptDataException exception)
         {
             throw new JetCorruptDataException(
                 JetErrorCode.CorruptCatalog,

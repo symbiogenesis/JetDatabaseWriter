@@ -260,7 +260,7 @@ public sealed class LinkedTableTests : IDisposable
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
 
-        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        JetNotSupportedException exception = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
             await reader.ReadTableAsync("LinkedSales", cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("ODBC", exception.Message, StringComparison.Ordinal);
     }
@@ -462,7 +462,7 @@ public sealed class LinkedTableTests : IDisposable
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.ReadTableAsync("LinkedTraversal", cancellationToken: TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<JetAccessDeniedException>(async () => await reader.ReadTableAsync("LinkedTraversal", cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -485,7 +485,7 @@ public sealed class LinkedTableTests : IDisposable
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        await Assert.ThrowsAsync<JetAccessDeniedException>(async () =>
             await reader.ReadTableAsync("LinkedAbsolute", cancellationToken: ct));
     }
 
@@ -527,7 +527,7 @@ public sealed class LinkedTableTests : IDisposable
             leaveOpen: true,
             ct);
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        await Assert.ThrowsAsync<JetAccessDeniedException>(async () =>
             await reader.ReadTableAsync("LinkedStreamData", cancellationToken: ct));
     }
 
@@ -604,7 +604,7 @@ public sealed class LinkedTableTests : IDisposable
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.ReadTableAsync("LinkedBlocked", cancellationToken: TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<JetAccessDeniedException>(async () => await reader.ReadTableAsync("LinkedBlocked", cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -637,7 +637,7 @@ public sealed class LinkedTableTests : IDisposable
         };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        await Assert.ThrowsAsync<JetAccessDeniedException>(async () =>
             await reader.ReadTableAsync("LinkedSibling", cancellationToken: ct));
     }
 
@@ -719,7 +719,7 @@ public sealed class LinkedTableTests : IDisposable
             },
         };
         await using AccessReader reader = await AccessReader.OpenAsync(first, options, ct);
-        InvalidDataException failure = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.GetRealRowCountAsync("ToB", ct));
+        JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.GetRealRowCountAsync("ToB", ct));
         Assert.Contains("cycle", failure.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, authorizations);
     }
@@ -734,7 +734,7 @@ public sealed class LinkedTableTests : IDisposable
         await InjectLinkedTableEntryAsync(first, "ToB", second, "ToMissing", ct);
         await InjectLinkedTableEntryAsync(second, "ToMissing", missing, "Data", ct);
         await using AccessReader reader = await AccessReader.OpenAsync(first, new AccessReaderOptions { UseLockFile = false, LinkedSourceMaxDepth = 1, LinkedSourceResolver = LinkedTestPaths.ResolverFor(second) }, ct);
-        InvalidDataException failure = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.GetRealRowCountAsync("ToB", ct));
+        JetLimitationException failure = await Assert.ThrowsAsync<JetLimitationException>(async () => await reader.GetRealRowCountAsync("ToB", ct));
         Assert.Contains("depth", failure.Message, StringComparison.OrdinalIgnoreCase);
     }
 

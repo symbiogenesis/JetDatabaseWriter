@@ -31,12 +31,12 @@ internal static class NativeJetSecurity
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="bootstrap">Whether this is an unpublished empty template whose ACE table will be initialized after remasking.</param>
     /// <exception cref="JetCorruptDataException">A required security field or row is malformed.</exception>
-    /// <exception cref="NotSupportedException">The database does not use native Jet4 masked security identities.</exception>
+    /// <exception cref="JetNotSupportedException">The database does not use native Jet4 masked security identities.</exception>
     internal static async ValueTask RewriteAsync(JetFormat format, TableDefReader tableDefs, OwnedDataPages ownedPages, Pager pager, IndexMaintainer indexes, byte[] oldHeader, byte[] newHeader, CancellationToken cancellationToken, bool bootstrap = false)
     {
         if (!format.UsesHeaderMaskedSecuritySids)
         {
-            throw new NotSupportedException("Security identity remasking applies only to native Jet4 databases.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Security identity remasking applies only to native Jet4 databases.");
         }
 
         var rows = new CatalogRowReader(format, tableDefs, ownedPages);
@@ -56,15 +56,15 @@ internal static class NativeJetSecurity
         async ValueTask RewriteColumnAsync(long page, string table, string columnName, bool preflightOnly)
         {
             TableDef definition = await tableDefs.ReadRequiredTableDefAsync(page, table, cancellationToken).ConfigureAwait(false);
-            ColumnInfo column = definition.FindColumn(columnName) ?? throw new JetCorruptDataException($"{table} is missing its security {columnName} field.");
+            ColumnInfo column = definition.FindColumn(columnName) ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"{table} is missing its security {columnName} field.", new JetErrorInfo { TableName = table, ColumnName = columnName });
             byte[] tdef = await tableDefs.ReadTDefBytesAsync(page, cancellationToken).ConfigureAwait(false)
-                ?? throw new JetCorruptDataException($"{table} has no security table definition.");
+                ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"{table} has no security table definition.", new JetErrorInfo { TableName = table, ColumnName = columnName });
             TDefCounts counts = TDefCodec.ReadCounts(format, tdef);
             bool indexedIdentity = false;
             if (counts.RealIndexCount is < 0 or > Constants.TableDefinition.MaxIndexes
                 || counts.LogicalIndexCount is < 0 or > Constants.TableDefinition.MaxIndexes)
             {
-                throw new JetCorruptDataException($"{table} has invalid security index counts.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"{table} has invalid security index counts.", new JetErrorInfo { TableName = table, ColumnName = columnName });
             }
 
             if (counts.RealIndexCount != 0 || counts.LogicalIndexCount != 0)
@@ -72,7 +72,7 @@ internal static class NativeJetSecurity
                 int descriptorStart = IndexCatalogReader.LocateRealIdxDescStart(format, tdef, counts.ColumnCount, counts.RealIndexCount);
                 if (descriptorStart < 0)
                 {
-                    throw new JetCorruptDataException($"{table} has a malformed security index catalog.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"{table} has a malformed security index catalog.", new JetErrorInfo { TableName = table, ColumnName = columnName });
                 }
 
                 IndexSectionAnchors anchors = format.Index.GetIndexSection(descriptorStart, counts.RealIndexCount, counts.LogicalIndexCount);
@@ -80,7 +80,7 @@ internal static class NativeJetSecurity
                 {
                     if (!format.Index.TryReadRealIdxSlotWithKeyColumns(tdef, descriptorStart, index, out _, out System.Collections.Generic.List<KeyColumn>? keys))
                     {
-                        throw new JetCorruptDataException($"{table} has a malformed security index descriptor.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"{table} has a malformed security index descriptor.", new JetErrorInfo { TableName = table, ColumnName = columnName });
                     }
 
                     foreach (KeyColumn key in keys)
@@ -92,7 +92,7 @@ internal static class NativeJetSecurity
 
                         if (definition.FindColumnIndex(candidate => candidate.ColNum == key.ColNum) < 0)
                         {
-                            throw new JetCorruptDataException($"{table} has an unresolved security index column.");
+                            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"{table} has an unresolved security index column.", new JetErrorInfo { TableName = table, ColumnName = columnName });
                         }
                     }
                 }
@@ -102,7 +102,7 @@ internal static class NativeJetSecurity
                     if (!format.Index.TryReadLogicalEntry(tdef, anchors.LogIdxStart, index, out LogicalIdxEntry entry)
                         || entry.IndexNum2 < 0 || entry.IndexNum2 >= counts.RealIndexCount)
                     {
-                        throw new JetCorruptDataException($"{table} has a malformed logical security index.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"{table} has a malformed logical security index.", new JetErrorInfo { TableName = table, ColumnName = columnName });
                     }
                 }
             }
@@ -123,7 +123,7 @@ internal static class NativeJetSecurity
                 {
                     if (!RowDecodePlan.TryParseRowLayout(format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, definition.HasVarColumns, out RowLayout layout))
                     {
-                        throw new JetCorruptDataException($"{table} has a malformed security row.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"{table} has a malformed security row.", new JetErrorInfo { TableName = table, ColumnName = columnName });
                     }
 
                     ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, layout, column);
@@ -134,7 +134,7 @@ internal static class NativeJetSecurity
 
                     if (slice.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var))
                     {
-                        throw new JetCorruptDataException($"{table} has a malformed security identity.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"{table} has a malformed security identity.", new JetErrorInfo { TableName = table, ColumnName = columnName });
                     }
 
                     int offset = row.Location.RowStart + slice.DataStart;

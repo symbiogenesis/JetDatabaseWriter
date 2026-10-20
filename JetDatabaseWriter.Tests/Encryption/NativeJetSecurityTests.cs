@@ -80,7 +80,7 @@ public sealed class NativeJetSecurityTests
         }
         else
         {
-            await Assert.ThrowsAsync<JetCorruptDataException>(() => NativeJetSecurity.RewriteAsync(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Pager, harness.Services.Indexes, oldHeader, newHeader, TestContext.Current.CancellationToken).AsTask());
+            await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCatalog, () => NativeJetSecurity.RewriteAsync(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Pager, harness.Services.Indexes, oldHeader, newHeader, TestContext.Current.CancellationToken).AsTask());
         }
 
         if (!indexedOwner)

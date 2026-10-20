@@ -1,6 +1,6 @@
 namespace JetDatabaseWriter.Schema.Expressions;
 
-using System;
+using JetDatabaseWriter.Exceptions;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
@@ -27,7 +27,7 @@ internal sealed class CalculatedExpressionBinaryNode(string operation, Calculate
             ">=" => CompareValues(leftValue, rightValue, static c => c >= 0, context.TextCollation),
             "<" => CompareValues(leftValue, rightValue, static c => c < 0, context.TextCollation),
             "<=" => CompareValues(leftValue, rightValue, static c => c <= 0, context.TextCollation),
-            _ => throw new InvalidOperationException($"Unexpected calculated-column binary operation '{operation}'."),
+            _ => throw new JetOperationException(JetErrorCode.InvalidExpression, $"Unexpected calculated-column binary operation '{operation}'."),
         };
     }
 }

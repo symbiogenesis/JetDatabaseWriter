@@ -83,7 +83,7 @@ public sealed class UnknownColumnTypeTests
             {
                 foreach (object value in new object[] { DBNull.Value, 17 })
                 {
-                    NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+                    JetNotSupportedException error = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
                         await writer.InsertRowAsync("Samples", [value, 8], ct));
                     Assert.Contains("0x48", error.Message, StringComparison.Ordinal);
                     Assert.Contains("Opaque", error.Message, StringComparison.Ordinal);
@@ -99,7 +99,7 @@ public sealed class UnknownColumnTypeTests
             mode,
             async () =>
             {
-                await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.InsertRowAsync("Samples", [DBNull.Value, 8], ct));
+                await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.InsertRowAsync("Samples", [DBNull.Value, 8], ct));
                 Assert.Equal(original, stream.ToArray());
                 await writer.InsertRowAsync("Control", [8], ct);
             },
@@ -220,7 +220,7 @@ public sealed class UnknownColumnTypeTests
                 Size = sizeof(int),
             };
             var definition = new TableDef { Columns = [column] };
-            NotSupportedException error = Assert.Throws<NotSupportedException>(() => encoder.SerializeRow(definition, [DBNull.Value]));
+            JetNotSupportedException error = Assert.Throws<JetNotSupportedException>(() => encoder.SerializeRow(definition, [DBNull.Value]));
             Assert.Contains($"0x{code:X2}", error.Message, StringComparison.Ordinal);
             Assert.Contains("Opaque", error.Message, StringComparison.Ordinal);
         }

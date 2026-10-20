@@ -1,9 +1,9 @@
 namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.ValueDecoding.Models;
 
 /// <summary>
@@ -55,7 +55,7 @@ internal sealed class HybridRowDecodePlan<T>(
                     ? []
                     : await longValues.ReadLongValueRawBytesAsync(page, rowStart + slice.DataStart, slice.DataLen, cancellationToken).ConfigureAwait(false);
             }
-            catch (InvalidDataException exception)
+            catch (JetCorruptDataException exception)
             {
                 _ = LongValueReadPolicy.MissingValue(oleColumns[i].Name, exception, strictParsing);
                 continue;

@@ -50,7 +50,7 @@ public sealed class TransactionSavepointTests
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         await writer.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<InvalidDataException>(() => writer.InsertRowsAsync("Items", FailingRows(), TestContext.Current.CancellationToken).AsTask());
+        await Assert.ThrowsAsync<JetCorruptDataException>(() => writer.InsertRowsAsync("Items", FailingRows(), TestContext.Current.CancellationToken).AsTask());
         await writer.InsertRowAsync("Items", [2], TestContext.Current.CancellationToken);
         await transaction.CommitAsync(TestContext.Current.CancellationToken);
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
@@ -123,7 +123,7 @@ public sealed class TransactionSavepointTests
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await harness.BeginTransactionAsync(TestContext.Current.CancellationToken);
         SortedSet<long> before = await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<InvalidDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
+        await Assert.ThrowsAsync<JetCorruptDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
             async token =>
             {
                 await harness.Services.Schema.DropTableAsync("Items", token);
@@ -153,7 +153,7 @@ public sealed class TransactionSavepointTests
 
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await harness.BeginTransactionAsync(TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<InvalidDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
+        await Assert.ThrowsAsync<JetCorruptDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
             async token =>
             {
                 await harness.Services.Schema.CreateDeclaredTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], [], token);
@@ -183,7 +183,7 @@ public sealed class TransactionSavepointTests
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await harness.BeginTransactionAsync(TestContext.Current.CancellationToken);
         SortedSet<long> before = await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<InvalidDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
+        await Assert.ThrowsAsync<JetCorruptDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
             async token =>
             {
                 _ = await harness.Services.Data.DeleteRowsAsync("Parent", RowCriteria.All(), token);

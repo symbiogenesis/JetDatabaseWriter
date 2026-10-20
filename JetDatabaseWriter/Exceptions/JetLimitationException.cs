@@ -16,7 +16,7 @@ public sealed class JetLimitationException : Exception, IJetException
         : base(message, innerException)
     {
         this.ErrorCode = errorCode;
-        this.ErrorInfo = errorInfo ?? new JetErrorInfo();
+        this.ErrorInfo = JetDatabaseWriter.Infrastructure.JetFailureMetrics.Context(errorCode, errorInfo);
     }
 
     /// <inheritdoc/>

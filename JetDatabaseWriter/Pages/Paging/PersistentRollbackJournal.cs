@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 
 /// <summary>Persists raw rollback bytes and validated intended writes with bounded working buffers.</summary>
 /// <remarks>Preparation hashes every original page; raw before-images are retained only for overwritten or removed pages. File flushes do not establish directory-entry power-loss durability.</remarks>
@@ -43,6 +44,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
     /// <param name="pageSize">The raw page size.</param>
     /// <returns>The live journal.</returns>
     /// <exception cref="IOException">An existing recovery journal prevents preparation.</exception>
+    /// <exception cref="JetOperationException">A recovery journal already exists.</exception>
     internal static PersistentRollbackJournal Create(FileStream database, int pageSize)
     {
         ValidatePageSize(pageSize);
@@ -52,7 +54,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         string stagingPath = finalPath + ".preparing";
         if (File.Exists(finalPath))
         {
-            throw new IOException("An existing recovery journal must be recovered before starting another transaction.");
+            throw new JetOperationException(JetErrorCode.HotJournalConflict, "An existing recovery journal must be recovered before starting another transaction.");
         }
 
         // The caller holds exclusive database ownership. Staging bytes never authorize database writes.
@@ -121,12 +123,12 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
     /// <summary>Refuses independent readers while a sidecar exists.</summary>
     /// <param name="database">The opened database.</param>
-    /// <exception cref="IOException">A recovery journal exists.</exception>
+    /// <exception cref="JetOperationException">A recovery journal exists.</exception>
     internal static void RejectHotJournal(FileStream database)
     {
         if (File.Exists(JournalPath(database.Name)))
         {
-            throw new IOException("The database has a transaction recovery journal; open it with AccessWriter to recover first.");
+            throw new JetOperationException(JetErrorCode.HotJournalConflict, "The database has a transaction recovery journal; open it with AccessWriter to recover first.");
         }
     }
 
@@ -176,7 +178,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
     {
         if (journal.Length is < HeaderLength or > MaximumJournalLength)
         {
-            throw new IOException("The recovery journal length is invalid.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery journal length is invalid.");
         }
 
         byte[] header = new byte[HeaderLength];
@@ -188,7 +190,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         long manifestLength = RecordStart(pageSize, originalLength) - HeaderLength;
         if (!header.AsSpan(0, 8).SequenceEqual(Magic) || !header.AsSpan(96, 32).SequenceEqual(Hash(header, 96)) || !header.AsSpan(24, 32).SequenceEqual(Identity(databasePath)) || journal.Length < HeaderLength + manifestLength)
         {
-            throw new IOException("The recovery journal identity or header is invalid.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery journal identity or header is invalid.");
         }
 
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -203,7 +205,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
         if (!header.AsSpan(56, 32).SequenceEqual(hash.GetHashAndReset()))
         {
-            throw new IOException("The recovery page-hash manifest checksum is invalid.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery page-hash manifest checksum is invalid.");
         }
 
         return (pageSize, originalLength);
@@ -230,7 +232,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             {
                 if (position + recordSize != journal.Length || !record.AsSpan(8, 32).SequenceEqual(DatabaseHash(database)))
                 {
-                    throw new IOException("The recovery commit decision conflicts with database content.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery commit decision conflicts with database content.");
                 }
 
                 committed = true;
@@ -241,7 +243,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             {
                 if (minimumLength == originalLength)
                 {
-                    throw new IOException("The recovery replay marker has no removed original tail.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery replay marker has no removed original tail.");
                 }
 
                 recovering = true;
@@ -250,7 +252,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
             if (recovering)
             {
-                throw new IOException("A recovering journal cannot authorize further database mutations.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "A recovering journal cannot authorize further database mutations.");
             }
 
             if (offset == -2)
@@ -258,14 +260,14 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 long length = BinaryPrimitives.ReadInt64LittleEndian(record.AsSpan(8));
                 if (length < 0 || length % pageSize != 0 || length > maximumLength)
                 {
-                    throw new IOException("The recovery truncate intent is invalid.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery truncate intent is invalid.");
                 }
 
                 for (long removed = length; removed < originalLength; removed += pageSize)
                 {
                     if (!beforeImages.ContainsKey(removed))
                     {
-                        throw new IOException("A recovery truncation is missing an original before-image.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "A recovery truncation is missing an original before-image.");
                     }
                 }
 
@@ -279,7 +281,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 long originalOffset = offset - long.MinValue;
                 if (originalOffset >= originalLength || originalOffset % pageSize != 0 || !beforeImages.TryAdd(originalOffset, position))
                 {
-                    throw new IOException("The recovery before-image offset is invalid or repeated.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery before-image offset is invalid or repeated.");
                 }
 
                 VerifyOriginalPage(journal, pageSize, originalLength, originalOffset, record.AsSpan(8, pageSize));
@@ -289,7 +291,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             if (offset < 0 || offset % pageSize != 0 || offset > MaximumDatabaseLength - pageSize
                 || (offset < originalLength && !beforeImages.ContainsKey(offset)))
             {
-                throw new IOException("The recovery page offset is invalid or has no original before-image.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery page offset is invalid or has no original before-image.");
             }
 
             maximumLength = Math.Max(maximumLength, offset + pageSize);
@@ -297,7 +299,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
         if (!committed && (database.Length < minimumLength || database.Length > maximumLength || (!authorizedLength && !recovering)))
         {
-            throw new IOException("The database length conflicts with its recovery journal.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The database length conflicts with its recovery journal.");
         }
 
         return new JournalState(pageSize, originalLength, start, completeEnd, minimumLength, recovering, committed, beforeImages);
@@ -318,7 +320,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 int oldCount = OriginalPageLength(state.PageSize, state.OriginalLength, offset);
                 if (count < oldCount)
                 {
-                    throw new IOException("An untouched original page has been truncated.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "An untouched original page has been truncated.");
                 }
 
                 VerifyOriginalPage(journal, state.PageSize, state.OriginalLength, offset, current);
@@ -326,7 +328,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 {
                     if (current[index] != 0)
                     {
-                        throw new IOException("An unassigned extension of an original page is not zero-filled.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "An unassigned extension of an original page is not zero-filled.");
                     }
                 }
 
@@ -367,7 +369,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             {
                 if (!valid[index])
                 {
-                    throw new IOException("Database content conflicts with the recovery journal; no recovery bytes were written.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "Database content conflicts with the recovery journal; no recovery bytes were written.");
                 }
             }
         }
@@ -385,7 +387,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         Read(journal, HeaderLength + (offset / pageSize * 32), expected, expected.Length);
         if (!expected.AsSpan().SequenceEqual(Hash(page[..OriginalPageLength(pageSize, originalLength, offset)])))
         {
-            throw new IOException("An original page does not match its prepared recovery manifest.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "An original page does not match its prepared recovery manifest.");
         }
     }
 
@@ -395,7 +397,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         byte[] record = new byte[checked(8 + payloadLength + 32)];
         if (journal.Length > MaximumJournalLength - record.Length)
         {
-            throw new IOException("The bounded recovery journal size limit has been reached.");
+            throw new JetLimitationException(JetErrorCode.JournalBudgetExceeded, "The bounded recovery journal size limit has been reached.");
         }
 
         byte[] lengthBytes = new byte[8];
@@ -423,7 +425,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         Read(journal, position, record, record.Length);
         if (!record.AsSpan(record.Length - 32).SequenceEqual(Hash(record, record.Length - 32)))
         {
-            throw new IOException("The recovery page record checksum is invalid.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery page record checksum is invalid.");
         }
 
         return BinaryPrimitives.ReadInt64LittleEndian(record);
@@ -487,7 +489,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             int next = stream.Read(bytes, read, count - read);
             if (next == 0)
             {
-                throw new IOException("Unexpected end of recovery data.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "Unexpected end of recovery data.");
             }
 
             read += next;
@@ -498,7 +500,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
     {
         if (pageSize is not (2048 or 4096))
         {
-            throw new IOException("The recovery page size is invalid.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery page size is invalid.");
         }
     }
 
@@ -506,19 +508,19 @@ internal sealed class PersistentRollbackJournal : IDisposable
     {
         if (length is < 0 or > MaximumDatabaseLength)
         {
-            throw new IOException("The recovery database length exceeds the Access size bound.");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The recovery database length exceeds the Access size bound.");
         }
     }
 
     /// <summary>Durably records a possible raw page image before its database write.</summary>
     /// <param name="offset">The page-aligned physical offset.</param>
     /// <param name="after">The encoded raw bytes, including ciphertext when encrypted.</param>
-    /// <exception cref="IOException">The physical write is outside the supported bounds.</exception>
+    /// <exception cref="JetOperationException">The physical write is outside the supported bounds.</exception>
     internal void RecordBeforeWrite(long offset, ReadOnlySpan<byte> after)
     {
         if (this.completed || offset < 0 || offset % this.pageSize != 0 || offset > MaximumDatabaseLength - this.pageSize || after.Length != this.pageSize)
         {
-            throw new IOException("The rollback journal cannot record this physical page write.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "The rollback journal cannot record this physical page write.");
         }
 
         this.RequireRecordCapacity(offset < this.originalLength && !this.beforeImages.ContainsKey(offset) ? 2 : 1);
@@ -527,12 +529,12 @@ internal sealed class PersistentRollbackJournal : IDisposable
     }
 
     /// <summary>Records that restoration may re-extend an authorized truncated tail.</summary>
-    /// <exception cref="IOException">The journal is already completed.</exception>
+    /// <exception cref="JetOperationException">The journal is already completed.</exception>
     internal void RecordRecoveryStart()
     {
         if (this.completed)
         {
-            throw new IOException("A completed rollback journal cannot begin recovery.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "A completed rollback journal cannot begin recovery.");
         }
 
         _ = this.AppendRecord(-3, []);
@@ -540,12 +542,12 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
     /// <summary>Durably authorizes removal of a raw tail before changing file length.</summary>
     /// <param name="length">The retained page-aligned length.</param>
-    /// <exception cref="IOException">The intent is outside the supported bounds.</exception>
+    /// <exception cref="JetOperationException">The intent is outside the supported bounds.</exception>
     internal void RecordBeforeTruncate(long length)
     {
         if (this.completed || length < 0 || length % this.pageSize != 0 || length > this.database.Length)
         {
-            throw new IOException("The rollback journal cannot record this truncation.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "The rollback journal cannot record this truncation.");
         }
 
         int missing = 0;
@@ -571,18 +573,19 @@ internal sealed class PersistentRollbackJournal : IDisposable
     /// <summary>Restores overwritten pages and removed tail bytes from verified raw before-images.</summary>
     /// <param name="store">The physical store with intent recording detached.</param>
     /// <returns>The restoration and durable cleanup completion.</returns>
-    /// <exception cref="IOException">The original manifest or before-images are invalid, or the journal is completed.</exception>
+    /// <exception cref="JetCorruptDataException">The original manifest or before-images are invalid.</exception>
+    /// <exception cref="JetOperationException">The journal is completed.</exception>
     internal async ValueTask RestoreAsync(IPageStore store)
     {
         if (this.completed)
         {
-            throw new IOException("A completed rollback journal cannot restore database bytes.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "A completed rollback journal cannot restore database bytes.");
         }
 
         JournalState state = ValidateJournal(this.database, this.journal);
         if (state.PageSize != this.pageSize || state.OriginalLength != this.originalLength || state.Committed)
         {
-            throw new IOException("The recovery manifest differs from the prepared database image.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery manifest differs from the prepared database image.");
         }
 
         if (state.MinimumLength < state.OriginalLength && !state.Recovering)
@@ -666,7 +669,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
     {
         if (this.journal.Length > MaximumJournalLength - ((records + 2L) * (this.pageSize + 40)))
         {
-            throw new IOException("The bounded recovery journal must retain decision record capacity.");
+            throw new JetLimitationException(JetErrorCode.JournalBudgetExceeded, "The bounded recovery journal must retain decision record capacity.");
         }
     }
 

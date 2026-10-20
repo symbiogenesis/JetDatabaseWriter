@@ -45,7 +45,7 @@ internal sealed class RowEncoder(JetFormat format)
 
         if (data.Length > Constants.LongValue.MaxInlineBytes)
         {
-            throw new JetLimitationException($"OLE value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineBytes} bytes.");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"OLE value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineBytes} bytes.");
         }
 
         return LongValueStore.WrapInlineLongValue(data);
@@ -62,7 +62,7 @@ internal sealed class RowEncoder(JetFormat format)
     /// <param name="dest">The destination buffer.</param>
     /// <returns>The number of bytes written, or 0 when the type has no fixed payload.</returns>
     /// <exception cref="FormatException">A GUID column value is not a GUID.</exception>
-    /// <exception cref="InvalidOperationException"><paramref name="type"/> is not a known column type.</exception>
+    /// <exception cref="JetNotSupportedException"><paramref name="type"/> is not a known column type.</exception>
     private static int TryEncodeFixedValue(ColumnType type, ColumnInfo column, object value, Span<byte> dest)
     {
         switch (type)
@@ -140,7 +140,7 @@ internal sealed class RowEncoder(JetFormat format)
             case MemoType:
                 return 0;
             default:
-                throw new InvalidOperationException($"Unknown column type: {JetTypeInfo.GetTypeDisplayName(type)}");
+                throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Unknown column type: {JetTypeInfo.GetTypeDisplayName(type)}");
         }
     }
 
@@ -174,14 +174,12 @@ internal sealed class RowEncoder(JetFormat format)
         bool fits = NumericEncoder.TryEncodeFixedPointPayload(rounded, declaredScale, magnitudeBe, out FixedPointPayload payload);
         if (payload.DigitCount > precision)
         {
-            throw new JetLimitationException(
-                $"Numeric value '{value}' exceeds NUMERIC({precision},{declaredScale}) precision after rounding.");
+            throw new JetLimitationException(JetErrorCode.NumericOverflow, $"Numeric value '{value}' exceeds NUMERIC({precision},{declaredScale}) precision after rounding.");
         }
 
         if (!fits)
         {
-            throw new JetLimitationException(
-                $"Numeric value '{value}' requires {payload.MagnitudeByteCount} bytes, exceeding the 16-byte NUMERIC mantissa.");
+            throw new JetLimitationException(JetErrorCode.NumericOverflow, $"Numeric value '{value}' requires {payload.MagnitudeByteCount} bytes, exceeding the 16-byte NUMERIC mantissa.");
         }
 
         dest[0] = payload.Negative ? (byte)0x80 : (byte)0x00;
@@ -243,7 +241,7 @@ internal sealed class RowEncoder(JetFormat format)
         byte[] wrapped = CalculatedColumnUtil.Wrap(data);
         if (wrapped.Length > Constants.LongValue.MaxInlineBytes)
         {
-            throw new JetLimitationException($"Calculated OLE value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {Constants.LongValue.MaxInlineBytes} bytes.");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Calculated OLE value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {Constants.LongValue.MaxInlineBytes} bytes.");
         }
 
         return LongValueStore.WrapInlineLongValue(wrapped);
@@ -293,6 +291,7 @@ internal sealed class RowEncoder(JetFormat format)
     /// <param name="rowLength">The row's length in bytes.</param>
     /// <returns>The exception.</returns>
     internal JetLimitationException CreateRowTooLongException(int rowLength) => new(
+        JetErrorCode.RowTooLarge,
         $"The row is {rowLength} bytes, which exceeds the {this.MaxRowLength}-byte maximum of one data page. MEMO values and byte-array OLE values move to long-value pages first; store fewer or shorter values in the row's other columns, or give its OLE values as byte arrays.");
 
     /// <summary>
@@ -332,8 +331,9 @@ internal sealed class RowEncoder(JetFormat format)
     /// variable columns with an EOD the jump table cannot encode, or a fixed Text value
     /// exceeds its descriptor's encoded width, or a fixed Binary value exceeds its declared width.
     /// </exception>
-    /// <exception cref="InvalidOperationException">A preserved fixed Text slot does not match its descriptor width.</exception>
-    /// <exception cref="NotSupportedException">A column has an unknown descriptor or calculated result type, or a fixed Text descriptor cannot hold whole encoded padding spaces.</exception>
+    /// <exception cref="JetOperationException">A preserved fixed Text slot does not match its descriptor width.</exception>
+    /// <exception cref="JetNotSupportedException">A column has an unknown descriptor or calculated result type, or a fixed Text descriptor cannot hold whole encoded padding spaces.</exception>
+    /// <exception cref="JetCorruptDataException">A stored fixed-column descriptor is malformed.</exception>
     internal byte[]? TrySerializeRow(TableDef tableDef, object[] values, out int rowLength, IReadOnlyDictionary<int, byte[]>? fixedTextBytes = null)
     {
         int numCols = 0;
@@ -344,13 +344,13 @@ internal sealed class RowEncoder(JetFormat format)
             ColumnInfo col = tableDef.Columns[i];
             if (JetTypeInfo.GetClrType(col.Type) is null)
             {
-                throw new NotSupportedException($"Column '{col.Name}': unknown JET column type {JetTypeInfo.GetTypeDisplayName(col.Type)} cannot be written.");
+                throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Column '{col.Name}': unknown JET column type {JetTypeInfo.GetTypeDisplayName(col.Type)} cannot be written.", new JetErrorInfo { ColumnName = col.Name });
             }
 
             ColumnType valueType = JetTypeInfo.ResolveValueType(col);
             if (JetTypeInfo.GetClrType(valueType) is null)
             {
-                throw new NotSupportedException($"Column '{col.Name}': unknown calculated result type {JetTypeInfo.GetTypeDisplayName(valueType)} cannot be written.");
+                throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Column '{col.Name}': unknown calculated result type {JetTypeInfo.GetTypeDisplayName(valueType)} cannot be written.", new JetErrorInfo { ColumnName = col.Name });
             }
 
             numCols = Math.Max(numCols, col.ColNum + 1);
@@ -369,8 +369,7 @@ internal sealed class RowEncoder(JetFormat format)
         bool jet3 = format.RowFields.HasJumpTable;
         if (jet3 && (numCols > Constants.TableDefinition.MaxJet3Columns || varLen > Constants.TableDefinition.MaxJet3Columns))
         {
-            throw new JetLimitationException(
-                $"The row has {numCols} columns, {varLen} of them variable-length; a Jet3 (Access 97) row holds at most {Constants.TableDefinition.MaxJet3Columns}.");
+            throw new JetLimitationException(JetErrorCode.ColumnCountLimit, $"The row has {numCols} columns, {varLen} of them variable-length; a Jet3 (Access 97) row holds at most {Constants.TableDefinition.MaxJet3Columns}.");
         }
 
         for (int i = 0; i < tableDef.Columns.Count; i++)
@@ -378,13 +377,13 @@ internal sealed class RowEncoder(JetFormat format)
             ColumnInfo column = tableDef.Columns[i];
             if (column.Type == BigBinaryType && (!format.SupportsBigBinary || !column.IsFixed || column.Size != JetTypeInfo.GetFixedSize(BigBinaryType)))
             {
-                throw new JetLimitationException($"Column '{column.Name}' has a malformed BIGBINARY descriptor; native Jet4 storage requires 3992 fixed bytes.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"Column '{column.Name}' has a malformed BIGBINARY descriptor; native Jet4 storage requires 3992 fixed bytes.", new JetErrorInfo { ColumnName = column.Name });
             }
 
             if (column.IsFixed && column.Type is BinaryType or BigBinaryType && values[i] is { } binary && binary is not DBNull
                 && this.EncodeBinaryValue(binary, maxSize: 0) is { } bytes && bytes.Length > column.Size)
             {
-                throw new JetLimitationException($"Fixed Binary column '{column.Name}' holds at most {column.Size} bytes; the value occupies {bytes.Length}.");
+                throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Fixed Binary column '{column.Name}' holds at most {column.Size} bytes; the value occupies {bytes.Length}.", new JetErrorInfo { ColumnName = column.Name });
             }
 
             if (column.IsFixed && column.Type == TextType && fixedTextBytes?.ContainsKey(i) != true && values[i] is { } value && value is not DBNull)
@@ -393,12 +392,12 @@ internal sealed class RowEncoder(JetFormat format)
                 int byteCount = format.PropertyTextEncoding.GetByteCount(text);
                 if (byteCount > column.Size)
                 {
-                    throw new JetLimitationException($"Fixed Text column '{column.Name}' holds at most {column.Size} encoded bytes; the value occupies {byteCount}.");
+                    throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Fixed Text column '{column.Name}' holds at most {column.Size} encoded bytes; the value occupies {byteCount}.", new JetErrorInfo { ColumnName = column.Name });
                 }
 
                 if ((column.Size - byteCount) % format.PropertyTextEncoding.GetByteCount(" ") != 0)
                 {
-                    throw new NotSupportedException($"Fixed Text column '{column.Name}' cannot hold whole encoded padding spaces within its {column.Size}-byte descriptor.");
+                    throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Fixed Text column '{column.Name}' cannot hold whole encoded padding spaces within its {column.Size}-byte descriptor.", new JetErrorInfo { ColumnName = column.Name });
                 }
             }
         }
@@ -452,7 +451,7 @@ internal sealed class RowEncoder(JetFormat format)
                 {
                     if (stored.Length != column.Size)
                     {
-                        throw new InvalidOperationException($"Preserved fixed Text slot '{column.Name}' does not match its descriptor width.");
+                        throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Preserved fixed Text slot '{column.Name}' does not match its descriptor width.", new JetErrorInfo { ColumnName = column.Name });
                     }
 
                     stored.AsSpan().CopyTo(fixedArea.AsSpan(column.FixedOff, column.Size));
@@ -656,7 +655,7 @@ internal sealed class RowEncoder(JetFormat format)
             return null;
         }
 
-        throw new InvalidOperationException($"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
+        throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
     }
 
     private byte[]? EncodeCalculatedValue(ColumnInfo column, object value)
@@ -693,7 +692,7 @@ internal sealed class RowEncoder(JetFormat format)
             return payload is null ? null : CalculatedColumnUtil.Wrap(payload);
         }
 
-        throw new InvalidOperationException($"Unsupported column type: {JetTypeInfo.GetTypeDisplayName(valueType)}");
+        throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Unsupported column type: {JetTypeInfo.GetTypeDisplayName(valueType)}");
     }
 
     private byte[]? EncodeCalculatedMemoValue(object value)
@@ -713,7 +712,7 @@ internal sealed class RowEncoder(JetFormat format)
         byte[] wrapped = CalculatedColumnUtil.Wrap(data);
         if (wrapped.Length > Constants.LongValue.MaxInlineBytes)
         {
-            throw new JetLimitationException($"Calculated MEMO value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {Constants.LongValue.MaxInlineBytes} bytes.");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Calculated MEMO value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {Constants.LongValue.MaxInlineBytes} bytes.");
         }
 
         return LongValueStore.WrapInlineLongValue(wrapped);
@@ -768,7 +767,7 @@ internal sealed class RowEncoder(JetFormat format)
         byte[] data = format.EncodeMemoText(value, compress);
         if (data.Length > Constants.LongValue.MaxInlineBytes)
         {
-            throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineBytes} bytes.");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"MEMO value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineBytes} bytes.");
         }
 
         return LongValueStore.WrapInlineLongValue(data);

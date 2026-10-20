@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Schema;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -102,11 +103,11 @@ public sealed class CalculatedConversionDaoTests
         byte[] before = await System.IO.File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken);
         await using (AccessWriter writer = await AccessWriter.OpenAsync(session.SourcePath, new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken))
         {
-            await Assert.ThrowsAsync<OverflowException>(async () => await writer.UpdateRowsAsync(
+            await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync(
                 "T", "Id", 1, new Dictionary<string, object?> { ["Id"] = 3 }, TestContext.Current.CancellationToken));
-            await Assert.ThrowsAsync<OverflowException>(async () => await writer.UpdateRowsAsync(
+            await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync(
                 "T", "Id", 2, new Dictionary<string, object?> { ["Flag"] = true }, TestContext.Current.CancellationToken));
-            await Assert.ThrowsAsync<OverflowException>(async () => await writer.InsertRowAsync(
+            await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.InsertRowAsync(
                 "T", [3, true, DBNull.Value, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken));
         }
 

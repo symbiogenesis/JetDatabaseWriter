@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Transactions;
@@ -50,6 +51,7 @@ public static class AccessDatabaseEncryption
     /// <exception cref="ArgumentException">The requested target is unencrypted.</exception>
     public static ValueTask EncryptAsync(string path, ReadOnlyMemory<char> newPassword, AccessEncryptionFormat? targetFormat = null, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
+        DiagnosticTrace.ThrowIfReentrant();
         Guard.NotEmpty(newPassword, nameof(newPassword));
         if (targetFormat == AccessEncryptionFormat.None)
         {
@@ -77,6 +79,7 @@ public static class AccessDatabaseEncryption
     /// <returns>The asynchronous maintenance operation.</returns>
     public static ValueTask ChangePasswordAsync(string path, ReadOnlyMemory<char> oldPassword, ReadOnlyMemory<char> newPassword, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
+        DiagnosticTrace.ThrowIfReentrant();
         Guard.NotEmpty(newPassword, nameof(newPassword));
         return ConvertFileAsync(path, oldPassword, newPassword, null, encryptedSource: true, options, cancellationToken);
     }
@@ -132,6 +135,7 @@ public static class AccessDatabaseEncryption
 
     private static async ValueTask ConvertFileAsync(string path, ReadOnlyMemory<char> oldPassword, ReadOnlyMemory<char> newPassword, AccessEncryptionFormat? targetFormat, bool encryptedSource, AccessWriterOptions? options, CancellationToken cancellationToken)
     {
+        DiagnosticTrace.ThrowIfReentrant();
         Guard.NotNullOrEmpty(path, nameof(path));
         cancellationToken.ThrowIfCancellationRequested();
         path = Path.GetFullPath(path);
@@ -156,7 +160,7 @@ public static class AccessDatabaseEncryption
                     bool protectedSource = detected != AccessEncryptionFormat.None || EncryptionManager.HasHeaderPassword(sourceHeader, format);
                     if (protectedSource != encryptedSource)
                     {
-                        throw new InvalidOperationException(encryptedSource ? "The source database has no encryption or password protection." : "The source database is already encrypted or password protected.");
+                        throw new JetOperationException(encryptedSource ? JetErrorCode.NotEncrypted : JetErrorCode.AlreadyEncrypted, encryptedSource ? "The source database has no encryption or password protection." : "The source database is already encrypted or password protected.");
                     }
 
                     AccessEncryptionFormat target = targetFormat ?? EncryptionConverter.ResolveBestTargetFormat(sourceHeader);
@@ -214,7 +218,7 @@ public static class AccessDatabaseEncryption
 
         if (format != DatabaseFormat.Jet4Mdb)
         {
-            throw new NotSupportedException("Password-only maintenance requires a native Jet database password field.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Password-only maintenance requires a native Jet database password field.");
         }
 
         EncryptionManager.WriteNativeJet4EncryptionHeader(header, 0, password.Span);
@@ -230,7 +234,7 @@ public static class AccessDatabaseEncryption
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The owned output codec.</returns>
     /// <exception cref="ArgumentException">An encrypted target has no password.</exception>
-    /// <exception cref="NotSupportedException">The native provider cannot be created for this database format.</exception>
+    /// <exception cref="JetNotSupportedException">The native provider cannot be created for this database format.</exception>
     internal static IPageCodec PrepareHeader(byte[] header, DatabaseFormat format, AccessEncryptionFormat target, ReadOnlyMemory<char> password, AccessWriterOptions options, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -290,18 +294,28 @@ public static class AccessDatabaseEncryption
             }
         }
 
-        throw new NotSupportedException($"The native provider {target} is not supported for {format} encryption maintenance.");
+        throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"The native provider {target} is not supported for {format} encryption maintenance.");
     }
 
     private static async ValueTask<byte[]> ReadHeaderAsync(Stream source, CancellationToken cancellationToken)
     {
         byte[] prefix = new byte[0x100];
-        await source.ReadExactlyAsync(prefix.AsMemory(), cancellationToken).ConfigureAwait(false);
+        await ReadHeaderBytesAsync(source, prefix, cancellationToken).ConfigureAwait(false);
+        JetFormat.ValidateNativeSignature(prefix);
         DatabaseFormat format = JetFormat.DetectFormat(prefix);
         int pageSize = JetFormat.PageSizeOf(format);
         byte[] header = new byte[pageSize];
         source.Position = 0;
-        await source.ReadExactlyAsync(header.AsMemory(), cancellationToken).ConfigureAwait(false);
+        await ReadHeaderBytesAsync(source, header, cancellationToken).ConfigureAwait(false);
         return header;
+    }
+
+    private static async ValueTask ReadHeaderBytesAsync(Stream source, Memory<byte> bytes, CancellationToken cancellationToken)
+    {
+        int read = await source.ReadAtLeastAsync(bytes, bytes.Length, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
+        if (read != bytes.Length)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptDatabaseHeader, "The source database header is truncated.", new JetErrorInfo { PageNumber = 0 });
+        }
     }
 }

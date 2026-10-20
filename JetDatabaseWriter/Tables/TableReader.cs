@@ -192,13 +192,13 @@ internal sealed class TableReader(
     /// <summary>Refuses linked sources for APIs that require local index or flat-table storage.</summary>
     /// <param name="tableName">The requested table.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <exception cref="NotSupportedException">The requested API cannot execute a linked source.</exception>
+    /// <exception cref="JetNotSupportedException">The requested API cannot execute a linked source.</exception>
     internal async ValueTask ThrowIfLinkedLocalReadAsync(string tableName, CancellationToken cancellationToken)
     {
         await linked.ThrowIfExecutionUnavailableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (await linked.IsLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false))
         {
-            throw new NotSupportedException($"This operation requires local index or complex-item storage; linked table '{tableName}' cannot be read through this API.");
+            throw new JetNotSupportedException(JetErrorCode.LinkedTableHasNoIndexes, $"This operation requires local index or complex-item storage; linked table '{tableName}' cannot be read through this API.", new JetErrorInfo { TableName = tableName });
         }
     }
 

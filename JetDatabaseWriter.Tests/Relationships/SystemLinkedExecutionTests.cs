@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
@@ -72,7 +73,7 @@ public sealed class SystemLinkedExecutionTests
         ];
         foreach (Func<Task> operation in operations)
         {
-            _ = await Assert.ThrowsAsync<NotSupportedException>(operation);
+            _ = await Assert.ThrowsAsync<JetNotSupportedException>(operation);
         }
     }
 
@@ -103,7 +104,7 @@ public sealed class SystemLinkedExecutionTests
         {
             Assert.Empty(await refused.ListLinkedTablesAsync(TestContext.Current.CancellationToken));
             Assert.True(await refused.TryLookupTableAsync("Victim", TestContext.Current.CancellationToken));
-            _ = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await refused.GetRealRowCountAsync("Victim", TestContext.Current.CancellationToken));
+            _ = await Assert.ThrowsAsync<JetAccessDeniedException>(async () => await refused.GetRealRowCountAsync("Victim", TestContext.Current.CancellationToken));
         }
 
         byte[] approved = "Id\r\n7\r\n"u8.ToArray();

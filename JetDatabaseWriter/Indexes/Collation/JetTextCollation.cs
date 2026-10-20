@@ -1,6 +1,6 @@
 namespace JetDatabaseWriter.Indexes.Collation;
 
-using System;
+using JetDatabaseWriter.Exceptions;
 
 /// <summary>Compares expression text with the database's Access sort order.</summary>
 /// <param name="sortOrder">The database sort order.</param>
@@ -19,12 +19,12 @@ internal sealed class JetTextCollation(TextSortOrder sortOrder)
     /// <summary>Encodes a complete comparison key without stored-index limits.</summary>
     /// <param name="text">The text.</param>
     /// <param name="trimTrailingSpaces">Whether to omit trailing spaces from the comparison key.</param>
-    /// <exception cref="NotSupportedException">The database sort order is unsupported.</exception>
+    /// <exception cref="JetNotSupportedException">The database sort order is unsupported.</exception>
     internal byte[] EncodeComparisonKey(string text, bool trimTrailingSpaces = false)
     {
         if (!sortOrder.IsSupported)
         {
-            throw new NotSupportedException($"Text sort order 0x{sortOrder.Value:X4}, version {sortOrder.Version}, is not supported.");
+            throw new JetNotSupportedException(JetErrorCode.UnsupportedTextCollation, $"Text sort order 0x{sortOrder.Value:X4}, version {sortOrder.Version}, is not supported.", new JetErrorInfo { Reason = "Unsupported text sort order" });
         }
 
         if (sortOrder.Value == 0 || (sortOrder.HasVersion && sortOrder.Version == 0))

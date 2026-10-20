@@ -99,8 +99,9 @@ internal static class LinkedTableManager
     /// </summary>
     /// <param name="catalog">Reads the <c>MSysObjects</c> rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidDataException">Thrown when linked-table metadata exceeds the per-reader row limit.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown when linked-table metadata exceeds the per-reader row limit.</exception>
     /// <exception cref="JetCorruptDataException">Required linked catalog structure is missing or invalid.</exception>
+    /// <exception cref="JetLimitationException">Linked-table metadata exceeds its entry limit.</exception>
     internal static async ValueTask<LinkedCatalog> GetLinkedTablesAsync(CatalogReader catalog, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -153,7 +154,7 @@ internal static class LinkedTableManager
                 Constants.SystemObjects.LinkedOdbcType => LinkedTableKind.Odbc,
                 Constants.SystemObjects.LinkedTableType when !string.IsNullOrEmpty(connectStr) => LinkedTableKind.Text,
                 Constants.SystemObjects.LinkedTableType => LinkedTableKind.Access,
-                _ => throw new InvalidDataException($"Unsupported linked-table object type: {objType}."),
+                _ => throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"Unsupported linked-table object type: {objType}."),
             };
 
             // Native ODBC links may expose only cached LvProp schema, with no source connection metadata.
@@ -171,8 +172,7 @@ internal static class LinkedTableManager
 
             if (result.Count >= MaxLinkedTableMetadataRows)
             {
-                throw new InvalidDataException(
-                    $"Linked-table metadata exceeds the per-reader limit of {MaxLinkedTableMetadataRows} entries.");
+                throw new JetLimitationException(JetErrorCode.LinkedSourceBudgetExceeded, $"Linked-table metadata exceeds the per-reader limit of {MaxLinkedTableMetadataRows} entries.");
             }
 
             var linkedTable = new LinkedTableInfo
@@ -352,8 +352,7 @@ internal static class LinkedTableManager
     {
         if (maxMaterializedRows.HasValue && rowCount >= maxMaterializedRows.Value)
         {
-            throw new InvalidDataException(
-                $"Linked text table '{tableName}' exceeds AccessReaderOptions.{nameof(AccessReaderOptions.LinkedTextMaxMaterializedRows)} ({maxMaterializedRows.Value}).");
+            throw new JetLimitationException(JetErrorCode.LinkedSourceBudgetExceeded, $"Linked text table '{tableName}' exceeds AccessReaderOptions.{nameof(AccessReaderOptions.LinkedTextMaxMaterializedRows)} ({maxMaterializedRows.Value}).", new JetErrorInfo { TableName = tableName });
         }
     }
 
@@ -546,14 +545,15 @@ internal static class LinkedTableManager
     /// <param name="link">The next linked table.</param>
     /// <param name="resolvedPath">The untrusted logical source path hint.</param>
     /// <returns>The new immutable ancestry.</returns>
-    /// <exception cref="InvalidDataException">The read contains a cycle or exceeds its depth limit.</exception>
+    /// <exception cref="JetCorruptDataException">The read contains a cycle.</exception>
+    /// <exception cref="JetLimitationException">The read exceeds its depth limit.</exception>
     private static LinkedSourceTraversal ExtendLinkedTraversal(LinkedSourcePolicy policy, LinkedTableInfo link, string resolvedPath)
     {
         LinkedSourceTraversal? previous = policy.OpenOptions.LinkedSourceTraversal;
         int depth = previous?.Depth ?? 0;
         if (depth >= policy.OpenOptions.LinkedSourceMaxDepth)
         {
-            throw new InvalidDataException($"Linked table '{link.Name}' exceeds the linked-source depth limit ({policy.OpenOptions.LinkedSourceMaxDepth}).");
+            throw new JetLimitationException(JetErrorCode.LinkedSourceBudgetExceeded, $"Linked table '{link.Name}' exceeds the linked-source depth limit ({policy.OpenOptions.LinkedSourceMaxDepth}).", new JetErrorInfo { TableName = link.Name });
         }
 
         List<KeyValuePair<string, string>> ancestors = previous is null ? [] : [.. previous.Ancestors];
@@ -568,7 +568,7 @@ internal static class LinkedTableManager
             if (string.Equals(ancestor.Key, resolvedPath, pathComparison)
                 && string.Equals(ancestor.Value, link.SourceObjectName, StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidDataException($"Linked table '{link.Name}' contains a linked-source cycle at '{resolvedPath}' table '{link.SourceObjectName}'.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"Linked table '{link.Name}' contains a linked-source cycle at '{resolvedPath}' table '{link.SourceObjectName}'.", new JetErrorInfo { TableName = link.Name, ObjectName = link.SourceObjectName });
             }
         }
 
@@ -660,8 +660,7 @@ internal static class LinkedTableManager
         long length = source.Length;
         if (length > limits.MaxSourceFileBytes.Value)
         {
-            throw new InvalidDataException(
-                $"Linked text table '{tableName}' source file exceeds AccessReaderOptions.{nameof(AccessReaderOptions.LinkedTextMaxSourceFileBytes)} ({limits.MaxSourceFileBytes.Value}).");
+            throw new JetLimitationException(JetErrorCode.LinkedSourceBudgetExceeded, $"Linked text table '{tableName}' source file exceeds AccessReaderOptions.{nameof(AccessReaderOptions.LinkedTextMaxSourceFileBytes)} ({limits.MaxSourceFileBytes.Value}).", new JetErrorInfo { TableName = tableName });
         }
     }
 
@@ -669,9 +668,7 @@ internal static class LinkedTableManager
     {
         if (string.IsNullOrWhiteSpace(link.SourcePath))
         {
-            throw new FileNotFoundException(
-                $"Source path for linked table '{link.Name}' not found: {link.SourcePath}",
-                link.SourcePath);
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"Source path for linked table '{link.Name}' not found: {link.SourcePath}", new JetErrorInfo { TableName = link.Name });
         }
 
         string rawPath = link.SourcePath.Trim();
@@ -693,9 +690,7 @@ internal static class LinkedTableManager
         string resolvedDirectory = ResolveLinkedSourcePath(policy, link);
         if (string.IsNullOrWhiteSpace(link.SourceObjectName))
         {
-            throw new FileNotFoundException(
-                $"Text source for linked table '{link.Name}' not found: {link.SourceObjectName}",
-                link.SourceObjectName);
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"Text source for linked table '{link.Name}' not found: {link.SourceObjectName}", new JetErrorInfo { TableName = link.Name });
         }
 
         string rawFilePath = link.SourceObjectName.Trim();
@@ -704,8 +699,7 @@ internal static class LinkedTableManager
         string resolvedFilePath = ResolvePath(rawFilePath, resolvedDirectory, $"linked text table '{link.Name}'");
         if (!IsPathWithinDirectory(resolvedFilePath, resolvedDirectory))
         {
-            throw new UnauthorizedAccessException(
-                $"Linked text table '{link.Name}' source file '{link.SourceObjectName}' is outside its source directory.");
+            throw new JetAccessDeniedException(JetErrorCode.LinkedSourceNotPermitted, $"Linked text table '{link.Name}' source file '{link.SourceObjectName}' is outside its source directory.", new JetErrorInfo { TableName = link.Name });
         }
 
         return resolvedFilePath;
@@ -719,10 +713,9 @@ internal static class LinkedTableManager
     {
         cancellationToken.ThrowIfCancellationRequested();
         Func<LinkedTableInfo, string, CancellationToken, ValueTask<Stream>> resolver = policy.OpenOptions.LinkedSourceResolver
-            ?? throw new UnauthorizedAccessException(
-                $"Linked table '{link.Name}' requires AccessReaderOptions.LinkedSourceResolver to provide an authorized source stream.");
+            ?? throw new JetAccessDeniedException(JetErrorCode.LinkedSourceNotPermitted, $"Linked table '{link.Name}' requires AccessReaderOptions.LinkedSourceResolver to provide an authorized source stream.", new JetErrorInfo { TableName = link.Name });
         Stream source = await resolver(link with { }, resolvedPath, cancellationToken).ConfigureAwait(false)
-            ?? throw new UnauthorizedAccessException($"Linked table '{link.Name}' source was not authorized by AccessReaderOptions.LinkedSourceResolver.");
+            ?? throw new JetAccessDeniedException(JetErrorCode.LinkedSourceNotPermitted, $"Linked table '{link.Name}' source was not authorized by AccessReaderOptions.LinkedSourceResolver.", new JetErrorInfo { TableName = link.Name });
 
         try
         {
@@ -798,8 +791,7 @@ internal static class LinkedTableManager
             _ => "non-Access",
         };
 
-        throw new NotSupportedException(
-            $"Linked {kindDescription} table '{link.Name}' is metadata-only; JetDatabaseWriter opens Access-file linked tables and reads delimited text links.");
+        throw new JetNotSupportedException(JetErrorCode.OdbcRowsNotAvailable, $"Linked {kindDescription} table '{link.Name}' is metadata-only; JetDatabaseWriter opens Access-file linked tables and reads delimited text links.", new JetErrorInfo { TableName = link.Name });
     }
 
     private static DelimitedTextFormat ParseTextLinkFormat(string? connectString)
@@ -838,7 +830,7 @@ internal static class LinkedTableManager
         {
             if (format.Equals("FixedLength", StringComparison.OrdinalIgnoreCase))
             {
-                throw new NotSupportedException("Linked text tables with FMT=FixedLength are not supported by the managed CSV reader.");
+                throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Linked text tables with FMT=FixedLength are not supported by the managed CSV reader.");
             }
 
             if (format.Equals("TabDelimited", StringComparison.OrdinalIgnoreCase))
@@ -857,7 +849,7 @@ internal static class LinkedTableManager
             else if (!format.Equals("Delimited", StringComparison.OrdinalIgnoreCase)
                 && !format.Equals("CSVDelimited", StringComparison.OrdinalIgnoreCase))
             {
-                throw new NotSupportedException($"Linked text tables with FMT={format} are not supported by the managed CSV reader.");
+                throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Linked text tables with FMT={format} are not supported by the managed CSV reader.");
             }
         }
 
@@ -926,8 +918,10 @@ internal static class LinkedTableManager
             NotSupportedException or
             PathTooLongException)
         {
-            throw new UnauthorizedAccessException(
+            throw new JetAccessDeniedException(
+                JetErrorCode.LinkedSourceNotPermitted,
                 $"Invalid path in {context}: '{path}'.",
+                new JetErrorInfo { Reason = context },
                 ex);
         }
     }
@@ -935,7 +929,7 @@ internal static class LinkedTableManager
     /// <summary>Rejects Windows device namespaces and ambiguous drive-relative sources.</summary>
     /// <param name="path">The path supplied by database metadata or caller policy.</param>
     /// <param name="context">The failure context.</param>
-    /// <exception cref="UnauthorizedAccessException">The path can address a device or has ambiguous Windows semantics.</exception>
+    /// <exception cref="JetAccessDeniedException">The path can address a device or has ambiguous Windows semantics.</exception>
     private static void ThrowIfUnsafeWindowsPath(string path, string context)
     {
         string devicePath = path.Replace('/', '\\');
@@ -944,7 +938,7 @@ internal static class LinkedTableManager
             || devicePath.StartsWith("\\??\\", StringComparison.Ordinal)
             || (path.Length >= 2 && path[1] == ':' && (path.Length == 2 || (path[2] != '\\' && path[2] != '/'))))
         {
-            throw new UnauthorizedAccessException($"Invalid device or drive-relative path in {context}: '{path}'.");
+            throw new JetAccessDeniedException(JetErrorCode.LinkedSourceNotPermitted, $"Invalid device or drive-relative path in {context}: '{path}'.");
         }
 
         if (Path.DirectorySeparatorChar != '\\')
@@ -971,7 +965,7 @@ internal static class LinkedTableManager
                     && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)));
             if (reserved || segment.Contains(':', StringComparison.Ordinal) || segment.EndsWith('.') || segment.EndsWith(' '))
             {
-                throw new UnauthorizedAccessException($"Invalid device, alternate stream or aliased path in {context}: '{path}'.");
+                throw new JetAccessDeniedException(JetErrorCode.LinkedSourceNotPermitted, $"Invalid device, alternate stream or aliased path in {context}: '{path}'.");
             }
         }
     }

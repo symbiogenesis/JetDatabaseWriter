@@ -6,6 +6,7 @@ using System.Text;
 using System.Xml;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Encryption.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -64,7 +65,7 @@ public sealed class AgileEncryptionTests
         Assert.Contains($"keyBits=\"{keyBits}\"", descriptor, StringComparison.Ordinal);
 
         Assert.Equal(inner, OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, TestDatabases.AesEncryptedPassword));
-        Assert.Throws<UnauthorizedAccessException>(() => OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, "not_the_password"));
+        StructuredFormatAssert.Throws<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, () => OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, "not_the_password"));
     }
 
     /// <summary>Package encryption preserves zero padding and segment boundaries.</summary>
@@ -117,8 +118,7 @@ public sealed class AgileEncryptionTests
     {
         OfficeEncryptedPackage package = OfficeCryptoAgile.Encrypt(new byte[256], "primitive password");
         package.EncryptedPackage[24] ^= 0xFF;
-        InvalidDataException error = Assert.Throws<InvalidDataException>(() => OfficeCryptoAgile.Decrypt(package.EncryptionInfo, package.EncryptedPackage, "primitive password"));
-        Assert.Contains("integrity", error.Message, StringComparison.OrdinalIgnoreCase);
+        _ = StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptedPackage, () => OfficeCryptoAgile.Decrypt(package.EncryptionInfo, package.EncryptedPackage, "primitive password"));
     }
 
     /// <summary>Password verification remains effective when the descriptor omits optional package integrity fields.</summary>
@@ -136,7 +136,7 @@ public sealed class AgileEncryptionTests
         xmlBytes.CopyTo(withoutIntegrity.AsSpan(8));
 
         Assert.Equal(new byte[256], OfficeCryptoAgile.Decrypt(withoutIntegrity, package, "primitive password"));
-        Assert.Throws<UnauthorizedAccessException>(() => OfficeCryptoAgile.Decrypt(withoutIntegrity, package, "wrong"));
+        StructuredFormatAssert.Throws<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, () => OfficeCryptoAgile.Decrypt(withoutIntegrity, package, "wrong"));
     }
 
     [Fact]

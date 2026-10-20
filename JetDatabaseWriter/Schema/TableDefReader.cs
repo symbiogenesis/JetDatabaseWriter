@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Schema;
 
 using System;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -120,10 +119,10 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
     /// <param name="startPage">The root page.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The chain.</returns>
-    /// <exception cref="InvalidDataException">The root is not a table definition.</exception>
+    /// <exception cref="JetCorruptDataException">The root is not a table definition.</exception>
     internal async ValueTask<LogicalTDefChain> ReadTDefChainAsync(long startPage, CancellationToken cancellationToken = default)
         => await this.ReadChainAsync(startPage, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidDataException($"The table definition at page {startPage} could not be read.");
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"The table definition at page {startPage} could not be read.");
 
     /// <summary>Reads an immutable parsed structural image, with guarded cache publication.</summary>
     /// <param name="tdefPage">The root page.</param>
@@ -137,7 +136,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
     /// <param name="remainingSchemaBytes">The remaining logical-byte allowance of the current catalog traversal.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The image, or null when the root is not a table definition.</returns>
-    /// <exception cref="InvalidDataException">Verification detects stale cached structure.</exception>
+    /// <exception cref="JetCorruptDataException">Verification detects stale cached structure.</exception>
     /// <exception cref="JetCorruptDataException">A table definition has an invalid column layout.</exception>
     /// <exception cref="JetLimitationException">The image exceeds the remaining schema traversal budget.</exception>
     internal async ValueTask<TDefImage?> ReadImageAsync(long tdefPage, int remainingSchemaBytes, CancellationToken cancellationToken)
@@ -155,7 +154,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
                 LogicalTDefChain? current = await this.ReadChainAsync(tdefPage, remainingSchemaBytes, cancellationToken, retainPageNumbers: false).ConfigureAwait(false);
                 if (current is null || !this.images.StructuralBytesEqual(cached.Bytes, current.Bytes))
                 {
-                    throw new InvalidDataException($"The cached table definition at page {tdefPage} is stale.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"The cached table definition at page {tdefPage} is stale.");
                 }
             }
 
@@ -204,10 +203,10 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
     /// <param name="tableName">The name for error reporting.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The layout.</returns>
-    /// <exception cref="InvalidDataException">The definition cannot be read.</exception>
+    /// <exception cref="JetCorruptDataException">The definition cannot be read.</exception>
     internal async ValueTask<TableDef> ReadRequiredTableDefAsync(long tdefPage, string tableName, CancellationToken cancellationToken = default)
         => await this.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"Table definition for '{tableName}' could not be read.");
 
     /// <summary>Validates freshly read bytes, reusing a parse only for an exactly identical immutable image.</summary>
     /// <param name="tdefPage">The root page.</param>

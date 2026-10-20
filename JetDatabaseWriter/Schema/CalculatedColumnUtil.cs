@@ -107,7 +107,7 @@ internal static class CalculatedColumnUtil
             return string.Empty;
         }
 
-        throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(type)}");
+        throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Unknown column type: {GetTypeDisplayName(type)}");
     }
 
     internal static object ReadPayloadTyped(ReadOnlySpan<byte> payload, ColumnType type, bool strictNumeric)
@@ -134,7 +134,7 @@ internal static class CalculatedColumnUtil
             return DBNull.Value;
         }
 
-        throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(type)}");
+        throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Unknown column type: {GetTypeDisplayName(type)}");
     }
 
     private static bool ReadBooleanPayload(ReadOnlySpan<byte> payload)
@@ -146,7 +146,7 @@ internal static class CalculatedColumnUtil
         {
             if (strict)
             {
-                throw new JetLimitationException($"Calculated Numeric payload is too short (need at least 4 bytes, have {payload.Length}).");
+                throw new JetCorruptDataException(JetErrorCode.MalformedValue, $"Calculated Numeric payload is too short (need at least 4 bytes, have {payload.Length}).");
             }
 
             return DBNull.Value;
@@ -171,6 +171,7 @@ internal static class CalculatedColumnUtil
             if (strict)
             {
                 throw new JetLimitationException(
+                    JetErrorCode.NumericOverflow,
                     $"Calculated Numeric mantissa is {mantissaLen} bytes, which exceeds the .NET decimal limit of 12 bytes.");
             }
 
@@ -183,6 +184,7 @@ internal static class CalculatedColumnUtil
             if (strict)
             {
                 throw new JetLimitationException(
+                    JetErrorCode.NumericOverflow,
                     $"Calculated Numeric scale {scale} exceeds the .NET decimal maximum of 28.");
             }
 
@@ -209,8 +211,9 @@ internal static class CalculatedColumnUtil
             if (strict)
             {
                 throw new JetLimitationException(
+                    JetErrorCode.NumericOverflow,
                     $"Calculated Numeric value overflow (hi=0x{hi:X8}, mid=0x{mid:X8}, lo=0x{lo:X8}, scale={scale})",
-                    ex);
+                    innerException: ex);
             }
 
             return DBNull.Value;

@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
@@ -58,7 +59,8 @@ public sealed class IndexLayoutWriterTests(DatabaseCache cache) : IClassFixture<
         IndexLayout layout = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb).Index;
         byte[] td = new byte[layout.RealIdxPhysSize];
 
-        Assert.Throws<ArgumentException>(() => layout.WriteRealIdxDescriptor(td, 0, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0, 1));
+        JetLimitationException failure = Assert.Throws<JetLimitationException>(() => layout.WriteRealIdxDescriptor(td, 0, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0, 1));
+        Assert.Equal(JetErrorCode.ColumnCountLimit, failure.ErrorCode);
     }
 
     [Theory]

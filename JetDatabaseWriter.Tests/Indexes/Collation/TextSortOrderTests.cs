@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Indexes.Collation;
 using System;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
 using Xunit;
@@ -147,11 +148,11 @@ public sealed class TextSortOrderTests
 
     [Fact]
     public void GeneralLongKeyWithoutSuffixTable_RefusesEncoding()
-        => Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeTextEntry(new TextSortOrder(0x0409, 1, true), new string('é', 255)));
+        => Assert.Throws<JetNotSupportedException>(() => IndexKeyEncoder.EncodeTextEntry(new TextSortOrder(0x0409, 1, true), new string('é', 255)));
 
     [Fact]
     public void UnsupportedSortOrder_RefusesNonNullText()
-        => Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeTextEntry(new TextSortOrder(0x041D, 0, true), "a", true));
+        => Assert.Throws<JetNotSupportedException>(() => IndexKeyEncoder.EncodeTextEntry(new TextSortOrder(0x041D, 0, true), "a", true));
 
     private static byte[] EncodeIndexComparison(TextSortOrder order, string text, bool trimTrailingSpaces = true)
     {

@@ -666,7 +666,7 @@ public sealed class CalculatedColumnWriteTests
             ],
             TestContext.Current.CancellationToken);
 
-        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        JetNotSupportedException exception = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
             await writer.InsertRowAsync(
                 "CalcDomain",
                 [DBNull.Value],
@@ -693,7 +693,7 @@ public sealed class CalculatedColumnWriteTests
             ],
             TestContext.Current.CancellationToken);
 
-        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        JetNotSupportedException exception = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
             await writer.InsertRowAsync(
                 "CalcSpreadsheetOnly",
                 [DBNull.Value],
@@ -848,7 +848,7 @@ public sealed class CalculatedColumnWriteTests
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            JetNotSupportedException exception = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
                 await writer.CreateTableAsync(
                     "CalcMdb",
                     [
@@ -881,7 +881,7 @@ public sealed class CalculatedColumnWriteTests
             await writer.CreateTableAsync("CalcAddMdb", [new("A", typeof(int))], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("CalcAddMdb", [5], TestContext.Current.CancellationToken);
 
-            NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            JetNotSupportedException exception = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
                 await writer.AddColumnAsync(
                     "CalcAddMdb",
                     new("Calc", typeof(int)) { IsCalculated = true, CalculationExpression = expression },
@@ -929,7 +929,7 @@ public sealed class CalculatedColumnWriteTests
         }
         else
         {
-            exception = await Assert.ThrowsAsync<NotSupportedException>(AddColumnAsync);
+            exception = await Assert.ThrowsAsync<JetNotSupportedException>(AddColumnAsync);
         }
 
         Assert.Contains("only supported in ACCDB", exception.Message, StringComparison.Ordinal);
@@ -964,7 +964,7 @@ public sealed class CalculatedColumnWriteTests
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            JetNotSupportedException exception = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
                 await writer.CreateTableAsync(
                     "CalcAuto",
                     [
@@ -1192,7 +1192,7 @@ public sealed class CalculatedColumnWriteTests
             ],
             TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
             await writer.InsertRowAsync(
                 "CalcCycle",
                 [DBNull.Value, DBNull.Value],
@@ -1519,12 +1519,12 @@ public sealed class CalculatedColumnWriteTests
         {
             await writer.InsertRowAsync("CalcByteFlag", [1, 0, DBNull.Value], TestContext.Current.CancellationToken);
             byte[] before = stream.ToArray();
-            OverflowException insert = await Assert.ThrowsAsync<OverflowException>(async () =>
+            JetLimitationException insert = await Assert.ThrowsAsync<JetLimitationException>(async () =>
                 await writer.InsertRowAsync("CalcByteFlag", [2, 3, DBNull.Value], TestContext.Current.CancellationToken));
             Assert.Contains("'Flag'", insert.Message, StringComparison.Ordinal);
             Assert.Contains("'CalcByteFlag'", insert.Message, StringComparison.Ordinal);
             Assert.Equal(before, stream.ToArray());
-            await Assert.ThrowsAsync<OverflowException>(async () => await writer.UpdateRowsAsync(
+            await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync(
                 "CalcByteFlag", "Id", 1, new Dictionary<string, object?> { ["Score"] = 9 }, TestContext.Current.CancellationToken));
             Assert.Equal(before, stream.ToArray());
             await writer.InsertRowAsync("CalcByteFlag", [2, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken);
@@ -1566,7 +1566,7 @@ public sealed class CalculatedColumnWriteTests
 
         await WriteInModeAsync(stream, explicitTransaction ? WriteMode.ExplicitCommit : WriteMode.Direct, async writer =>
         {
-            OverflowException exception = await Assert.ThrowsAsync<OverflowException>(async () =>
+            JetLimitationException exception = await Assert.ThrowsAsync<JetLimitationException>(async () =>
                 await writer.InsertRowAsync("CalcOverflow", [2, 5, DBNull.Value], TestContext.Current.CancellationToken));
             Assert.Contains("'Hundreds'", exception.Message, StringComparison.Ordinal);
             Assert.Contains("'CalcOverflow'", exception.Message, StringComparison.Ordinal);

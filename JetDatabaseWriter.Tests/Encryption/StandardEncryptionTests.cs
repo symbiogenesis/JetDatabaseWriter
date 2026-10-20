@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Encryption.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -19,7 +20,7 @@ public sealed class StandardEncryptionTests
     private const string WrongPassword = "wrong_password_123";
 
     [Fact]
-    public void Standard_Decrypt_TruncatedEncryptionInfo_ThrowsInvalidDataException()
+    public void Standard_Decrypt_TruncatedEncryptionInfo_ThrowsJetCorruptDataException()
     {
         // EncryptionInfo too short for a header size field.
         byte[] truncatedInfo = new byte[10];
@@ -28,12 +29,11 @@ public sealed class StandardEncryptionTests
 
         byte[] pkg = new byte[64];
 
-        Assert.Throws<InvalidDataException>(
-            () => OfficeCryptoStandard.Decrypt(truncatedInfo, pkg, TestPassword));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptionDescriptor, () => OfficeCryptoStandard.Decrypt(truncatedInfo, pkg, TestPassword));
     }
 
     [Fact]
-    public void Standard_Decrypt_InvalidHeaderSize_ThrowsInvalidDataException()
+    public void Standard_Decrypt_InvalidHeaderSize_ThrowsJetCorruptDataException()
     {
         // HeaderSize exceeds the stream length.
         byte[] info = new byte[32];
@@ -44,8 +44,7 @@ public sealed class StandardEncryptionTests
 
         byte[] pkg = new byte[64];
 
-        Assert.Throws<InvalidDataException>(
-            () => OfficeCryptoStandard.Decrypt(info, pkg, TestPassword));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptionDescriptor, () => OfficeCryptoStandard.Decrypt(info, pkg, TestPassword));
     }
 
     [Fact]
@@ -55,8 +54,7 @@ public sealed class StandardEncryptionTests
         byte[] info = BuildFakeStandardEncryptionInfo(algId: 0x6801);
         byte[] pkg = new byte[64];
 
-        Assert.Throws<NotSupportedException>(
-            () => OfficeCryptoStandard.Decrypt(info, pkg, TestPassword));
+        StructuredFormatAssert.Throws<JetNotSupportedException>(JetErrorCode.FeatureNotSupported, () => OfficeCryptoStandard.Decrypt(info, pkg, TestPassword));
     }
 
     [Fact]
@@ -66,45 +64,41 @@ public sealed class StandardEncryptionTests
         byte[] info = BuildFakeStandardEncryptionInfo(algIdHash: 0x0000);
         byte[] pkg = new byte[64];
 
-        Assert.Throws<NotSupportedException>(
-            () => OfficeCryptoStandard.Decrypt(info, pkg, TestPassword));
+        StructuredFormatAssert.Throws<JetNotSupportedException>(JetErrorCode.FeatureNotSupported, () => OfficeCryptoStandard.Decrypt(info, pkg, TestPassword));
     }
 
     [Fact]
-    public void Standard_Decrypt_TruncatedVerifier_ThrowsInvalidDataException()
+    public void Standard_Decrypt_TruncatedVerifier_ThrowsJetCorruptDataException()
     {
         // Build an EncryptionInfo where the verifier section is truncated.
         byte[] info = BuildFakeStandardEncryptionInfo(truncateVerifier: true);
         byte[] pkg = new byte[64];
 
-        Assert.Throws<InvalidDataException>(
-            () => OfficeCryptoStandard.Decrypt(info, pkg, TestPassword));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptionDescriptor, () => OfficeCryptoStandard.Decrypt(info, pkg, TestPassword));
     }
 
     [Fact]
-    public void Standard_Decrypt_InvalidSaltSize_ThrowsInvalidDataException()
+    public void Standard_Decrypt_InvalidSaltSize_ThrowsJetCorruptDataException()
     {
         // Standard encryption requires salt size = 16.
         byte[] info = BuildFakeStandardEncryptionInfo(saltSize: 32);
         byte[] pkg = new byte[64];
 
-        Assert.Throws<InvalidDataException>(
-            () => OfficeCryptoStandard.Decrypt(info, pkg, TestPassword));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptionDescriptor, () => OfficeCryptoStandard.Decrypt(info, pkg, TestPassword));
     }
 
     [Fact]
-    public void Standard_Decrypt_TruncatedEncryptedPackage_ThrowsInvalidDataException()
+    public void Standard_Decrypt_TruncatedEncryptedPackage_ThrowsJetCorruptDataException()
     {
         // EncryptedPackage shorter than the 8-byte size prefix.
         byte[] info = BuildValidStandardEncryptionInfo();
         byte[] pkg = new byte[4]; // Too short.
 
-        Assert.Throws<InvalidDataException>(
-            () => OfficeCryptoStandard.Decrypt(info, pkg, TestPassword));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptedPackage, () => OfficeCryptoStandard.Decrypt(info, pkg, TestPassword));
     }
 
     [Fact]
-    public void Standard_Decrypt_NonStandardVersionHeader_ThrowsInvalidDataException()
+    public void Standard_Decrypt_NonStandardVersionHeader_ThrowsJetCorruptDataException()
     {
         // Pass an Agile version header (4,4) — should be rejected.
         byte[] agileInfo = new byte[16];
@@ -114,8 +108,7 @@ public sealed class StandardEncryptionTests
 
         byte[] pkg = new byte[64];
 
-        Assert.Throws<InvalidDataException>(
-            () => OfficeCryptoStandard.Decrypt(agileInfo, pkg, TestPassword));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptionDescriptor, () => OfficeCryptoStandard.Decrypt(agileInfo, pkg, TestPassword));
     }
 
     [Fact]
@@ -161,7 +154,7 @@ public sealed class StandardEncryptionTests
         OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(new byte[16], TestPassword);
         int headerBytes = BinaryPrimitives.ReadInt32LittleEndian(package.EncryptionInfo.AsSpan(8));
         BinaryPrimitives.WriteInt32LittleEndian(package.EncryptionInfo.AsSpan(12 + headerBytes + 36), hashBytes);
-        Assert.Throws<InvalidDataException>(() => OfficeCryptoStandard.Decrypt(package.EncryptionInfo, package.EncryptedPackage, TestPassword));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptionDescriptor, () => OfficeCryptoStandard.Decrypt(package.EncryptionInfo, package.EncryptedPackage, TestPassword));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -250,8 +243,7 @@ public sealed class StandardEncryptionTests
 
         OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
 
-        Assert.Throws<UnauthorizedAccessException>(
-            () => OfficeCryptoStandard.Decrypt(package.EncryptionInfo, package.EncryptedPackage, WrongPassword));
+        StructuredFormatAssert.Throws<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, () => OfficeCryptoStandard.Decrypt(package.EncryptionInfo, package.EncryptedPackage, WrongPassword));
     }
 
     [Fact]

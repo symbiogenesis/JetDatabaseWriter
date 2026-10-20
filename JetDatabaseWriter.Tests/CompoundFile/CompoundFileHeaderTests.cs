@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
+using JetDatabaseWriter.Exceptions;
 using Xunit;
 
 public sealed class CompoundFileHeaderTests
@@ -20,7 +21,7 @@ public sealed class CompoundFileHeaderTests
         BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(0x1C), checked((ushort)byteOrder));
         await using var stream = new MemoryStream(bytes);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () =>
             CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
         Assert.Equal(512, stream.Position);
     }
@@ -36,7 +37,7 @@ public sealed class CompoundFileHeaderTests
             bytes[index] = 1;
             await using var stream = new MemoryStream(bytes);
 
-            await Assert.ThrowsAsync<InvalidDataException>(() =>
+            await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () =>
                 CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
             Assert.Equal(512, stream.Position);
         }
@@ -51,7 +52,7 @@ public sealed class CompoundFileHeaderTests
         bytes[offset] = 1;
         await using var stream = new MemoryStream(bytes);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () =>
             CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
         Assert.Equal(4096, stream.Position);
     }
@@ -65,7 +66,7 @@ public sealed class CompoundFileHeaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0x28), count);
         await using var stream = new MemoryStream(bytes);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () =>
             CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
         Assert.Equal(512, stream.Position);
     }
@@ -80,7 +81,7 @@ public sealed class CompoundFileHeaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0x28), count);
         await using var stream = new MemoryStream(bytes);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () =>
             CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
     }
 
@@ -117,7 +118,7 @@ public sealed class CompoundFileHeaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0x38), cutoff);
         await using var stream = new MemoryStream(bytes);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () =>
             CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
         Assert.Equal(512, stream.Position);
     }

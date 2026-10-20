@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
@@ -195,33 +194,20 @@ internal sealed class RowCriteriaEvaluator
             return true;
         }
 
-        // Coerce the operand to the cell value's runtime type and compare.
-        try
+        // Probe built-in conversions before comparing; unsupported or out-of-range
+        // operands are ordinary candidate misses, not exception signals.
+        if (left is IComparable comparable
+            && ScalarConversion.TryConvert(right, left.GetType(), out object? coercedRight))
         {
-            if (left is IComparable comparable)
-            {
-                object coercedRight = Convert.ChangeType(right, left.GetType(), CultureInfo.InvariantCulture);
-                order = comparable.CompareTo(coercedRight);
-                return true;
-            }
-        }
-        catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException)
-        {
-            // Fall through to the operand-typed attempt below.
+            order = comparable.CompareTo(coercedRight);
+            return true;
         }
 
-        try
+        if (right is IComparable comparableRight
+            && ScalarConversion.TryConvert(left, right.GetType(), out object? coercedLeft))
         {
-            if (right is IComparable comparableRight)
-            {
-                object coercedLeft = Convert.ChangeType(left, right.GetType(), CultureInfo.InvariantCulture);
-                order = -comparableRight.CompareTo(coercedLeft);
-                return true;
-            }
-        }
-        catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException)
-        {
-            return false;
+            order = -comparableRight.CompareTo(coercedLeft);
+            return true;
         }
 
         return false;

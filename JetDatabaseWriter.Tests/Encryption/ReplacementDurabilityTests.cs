@@ -112,7 +112,9 @@ public sealed class ReplacementDurabilityTests
                 await File.WriteAllBytesAsync(backup, unrelated, TestContext.Current.CancellationToken);
             }
 
-            IOException error = Assert.Throws<IOException>(() => EncryptionReplacementCommit.Commit(temporary, path));
+            IOException error = existingBackup
+                ? Assert.Throws<IOException>(() => EncryptionReplacementCommit.Commit(temporary, path))
+                : Assert.Throws<FileNotFoundException>(() => EncryptionReplacementCommit.Commit(temporary, path));
             Assert.Equal(temporary, error.Data[EncryptionManager.ReplacementFileDataKey]);
             Assert.Null(error.Data[EncryptionReplacementCommit.OriginalFileDataKey]);
             Assert.Equal(replacement, await File.ReadAllBytesAsync(temporary, TestContext.Current.CancellationToken));

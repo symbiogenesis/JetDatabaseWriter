@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.ComplexColumns;
 
 using System;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Schema.Models;
@@ -15,12 +16,12 @@ internal static class ComplexParentKeyComparer
     /// <param name="value">The predicate or decoded value.</param>
     /// <returns>The complete comparison bytes.</returns>
     /// <exception cref="ArgumentException">The value is incompatible with the column.</exception>
-    /// <exception cref="NotSupportedException">The column or text collation is unsupported.</exception>
+    /// <exception cref="JetNotSupportedException">The column or text collation is unsupported.</exception>
     internal static byte[] Encode(JetFormat format, ColumnInfo column, object? value)
     {
         if (column.Type is ColumnType.ComplexType)
         {
-            throw new NotSupportedException($"Complex column '{column.Name}' cannot identify a parent row.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Complex column '{column.Name}' cannot identify a parent row.", new JetErrorInfo { ColumnName = column.Name });
         }
 
         if (value is null or DBNull)

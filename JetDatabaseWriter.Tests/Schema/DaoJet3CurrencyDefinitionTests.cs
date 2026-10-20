@@ -136,8 +136,8 @@ public sealed class DaoJet3CurrencyDefinitionTests
             foreach ((byte refusedPrecision, byte refusedScale) in new (byte, byte)[] { (18, 0), (15, 0), (19, 4), (10, 5) })
             {
                 var refused = new ColumnDefinition("Refused", typeof(decimal)) { NumericPrecision = refusedPrecision, NumericScale = refusedScale };
-                await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.CreateTableAsync("Refused", [refused], Ct));
-                await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.AddColumnAsync("Ledger", refused, Ct));
+                await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.CreateTableAsync("Refused", [refused], Ct));
+                await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.AddColumnAsync("Ledger", refused, Ct));
             }
         }
 

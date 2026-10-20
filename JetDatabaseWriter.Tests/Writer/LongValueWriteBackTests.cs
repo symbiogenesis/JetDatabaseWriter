@@ -9,6 +9,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -348,7 +349,7 @@ public sealed class LongValueWriteBackTests
 
         await using (AccessWriter writer = await OpenWriterAsync(ms))
         {
-            InvalidDataException ex = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            JetCorruptDataException ex = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
                 await writer.UpdateRowsAsync(TableName, "Id", 1, new Dictionary<string, object?> { ["Note"] = "changed" }, TestContext.Current.CancellationToken));
             Assert.Contains("Body", ex.Message, StringComparison.Ordinal);
 
@@ -390,7 +391,7 @@ public sealed class LongValueWriteBackTests
 
         await using (AccessWriter writer = await OpenWriterAsync(ms))
         {
-            _ = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            _ = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
                 await writer.AddColumnAsync(TableName, new ColumnDefinition("Extra", typeof(int)), TestContext.Current.CancellationToken));
 
             // Dropping the unreadable column itself loses nothing else and is allowed.
@@ -534,7 +535,7 @@ public sealed class LongValueWriteBackTests
         ms.Position = 0;
         await using (AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
-            await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
                 await reader.ReadTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken));
         }
 

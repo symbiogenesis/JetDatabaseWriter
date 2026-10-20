@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.IO;
 using System.Security.Cryptography;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Paging;
 using Xunit;
 
@@ -27,7 +28,7 @@ public sealed class SelectiveRollbackJournalTests
         fixture.Database.Flush(flushToDisk: true);
         byte[] current = ReadDatabase(fixture.Database);
 
-        Assert.Throws<IOException>(() => journal.RecordBeforeWrite(pageSize, new byte[pageSize]));
+        Assert.Throws<JetCorruptDataException>(() => journal.RecordBeforeWrite(pageSize, new byte[pageSize]));
         Assert.Equal(current, ReadDatabase(fixture.Database));
         Assert.Equal(HeaderLength + (3L * HashLength), new FileInfo(fixture.JournalPath).Length);
     }
@@ -225,7 +226,7 @@ public sealed class SelectiveRollbackJournalTests
     private static void AssertRefused(JournalFixture fixture, byte[] evidence)
     {
         byte[] current = ReadDatabase(fixture.Database);
-        Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(fixture.Database));
+        Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(fixture.Database));
         Assert.Equal(current, ReadDatabase(fixture.Database));
         Assert.Equal(evidence, File.ReadAllBytes(fixture.JournalPath));
     }

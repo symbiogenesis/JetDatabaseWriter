@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -173,7 +174,7 @@ public sealed class SystemTableIndexMaintenanceTests
         tableDef.SetValueByName(row, "ACM", Constants.Aces.DefaultAcm);
         tableDef.SetValueByName(row, "FInheritable", false);
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(() =>
             writer.Services.Indexes.InsertSystemRowAndMaintainAsync(
                 tdefPage,
                 tableDef,
@@ -181,6 +182,7 @@ public sealed class SystemTableIndexMaintenanceTests
                 row,
                 cancellationToken: ct).AsTask());
 
+        Assert.Equal(JetErrorCode.SystemIndexMaintenanceFailed, ex.ErrorCode);
         Assert.Contains("Could not maintain MSysACEs system-table indexes incrementally", ex.Message, StringComparison.Ordinal);
         Assert.Contains("full rebuild fallback is disabled", ex.Message, StringComparison.Ordinal);
     }
@@ -206,9 +208,10 @@ public sealed class SystemTableIndexMaintenanceTests
         }
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(stream, leaveOpen: true, cancellationToken: ct);
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(() =>
             writer.DropTableAsync("Victim", ct).AsTask());
 
+        Assert.Equal(JetErrorCode.SystemIndexMaintenanceFailed, ex.ErrorCode);
         Assert.Contains("Could not maintain MSysACEs system-table indexes incrementally", ex.Message, StringComparison.Ordinal);
         Assert.Contains("full rebuild fallback is disabled", ex.Message, StringComparison.Ordinal);
     }

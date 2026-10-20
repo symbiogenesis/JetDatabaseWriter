@@ -2,9 +2,7 @@ namespace JetDatabaseWriter.Tests.Encryption;
 
 using System;
 using System.Buffers.Binary;
-using System.IO;
 using System.Text;
-using System.Xml;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Exceptions;
 using Xunit;
@@ -17,7 +15,7 @@ public sealed class AgileDescriptorCorruptionTests
         byte[] info = Info(DescriptorXml());
         info[4] = 0x41;
 
-        Assert.Throws<InvalidDataException>(() => OfficeCryptoAgile.Decrypt(info, new byte[8], "password"));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptionDescriptor, () => OfficeCryptoAgile.Decrypt(info, new byte[8], "password"));
     }
 
     [Theory]
@@ -44,7 +42,7 @@ public sealed class AgileDescriptorCorruptionTests
         };
 
         byte[] info = Info(xml.Replace(original, replacement, StringComparison.Ordinal));
-        Assert.Throws<InvalidDataException>(() => OfficeCryptoAgile.Decrypt(info, [], "password"));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptionDescriptor, () => OfficeCryptoAgile.Decrypt(info, [], "password"));
     }
 
     [Fact]
@@ -64,7 +62,7 @@ public sealed class AgileDescriptorCorruptionTests
         byte[] package = new byte[8];
         BinaryPrimitives.WriteInt64LittleEndian(package, int.MaxValue);
 
-        Assert.Throws<InvalidDataException>(() => OfficeCryptoAgile.Decrypt(Info(DescriptorXml()), package, "password"));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptedPackage, () => OfficeCryptoAgile.Decrypt(Info(DescriptorXml()), package, "password"));
     }
 
     [Fact]
@@ -72,7 +70,7 @@ public sealed class AgileDescriptorCorruptionTests
     {
         byte[] info = Info("<!DOCTYPE encryption [<!ENTITY external SYSTEM 'file:///untrusted-secret'>]><encryption>&external;</encryption>");
 
-        Assert.Throws<XmlException>(() => OfficeCryptoAgile.Decrypt(info, [], "password"));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptionDescriptor, () => OfficeCryptoAgile.Decrypt(info, [], "password"));
     }
 
     [Fact]
@@ -92,10 +90,8 @@ public sealed class AgileDescriptorCorruptionTests
     {
         string xml = DescriptorXml().Replace("<keyEncryptors>", integrity + "<keyEncryptors>", StringComparison.Ordinal);
 
-        InvalidDataException failure = Assert.Throws<InvalidDataException>(() =>
+        _ = StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptionDescriptor, () =>
             OfficeCryptoAgile.Decrypt(Info(xml), new byte[8], "password"));
-
-        Assert.Contains("integrity", failure.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
@@ -109,7 +105,7 @@ public sealed class AgileDescriptorCorruptionTests
         int end = xml.IndexOf("/>", start, StringComparison.Ordinal) + 2;
         string duplicate = xml[start..end];
         xml = xml.Insert(end, duplicate);
-        Assert.Throws<InvalidDataException>(() => OfficeCryptoAgile.Decrypt(Info(xml), new byte[8], "password"));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptionDescriptor, () => OfficeCryptoAgile.Decrypt(Info(xml), new byte[8], "password"));
     }
 
     [Theory]
@@ -118,7 +114,7 @@ public sealed class AgileDescriptorCorruptionTests
     public void Decrypt_RejectsWrongCryptographicNamespaces(string original)
     {
         string xml = DescriptorXml().Replace(original, "urn:wrong", StringComparison.Ordinal);
-        Assert.Throws<InvalidDataException>(() => OfficeCryptoAgile.Decrypt(Info(xml), new byte[8], "password"));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptionDescriptor, () => OfficeCryptoAgile.Decrypt(Info(xml), new byte[8], "password"));
     }
 
     private static byte[] Info(string xml)

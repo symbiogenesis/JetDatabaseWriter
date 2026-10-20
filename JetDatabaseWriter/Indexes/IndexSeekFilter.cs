@@ -191,15 +191,12 @@ internal static class IndexSeekFilter
     /// <returns><see langword="true"/> when a seek for the key misses no matching row.</returns>
     private static bool IsDateKeyBound(DateTime value, ColumnPredicateOperator @operator)
     {
-        long keyTicks;
-        try
-        {
-            keyTicks = DateTime.FromOADate(value.ToOADate()).Ticks;
-        }
-        catch (OverflowException)
+        if (value.Ticks >= TimeSpan.TicksPerDay && value.Year < 100)
         {
             return false;
         }
+
+        long keyTicks = DateTime.FromOADate(value.ToOADate()).Ticks;
 
         if (keyTicks == value.Ticks || @operator == ColumnPredicateOperator.Equal)
         {

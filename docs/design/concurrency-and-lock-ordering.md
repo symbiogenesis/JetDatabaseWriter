@@ -104,6 +104,15 @@ lock, then takes the store's `ioGate` for seek/write. The page lock is
 released after the store gate. AES transforms never run under the store gate.
 A physical read releases the store gate before decoding.
 
+Diagnostic trace delivery occurs after page acquisition releases its gates and
+outside ownership/cache publication locks. `DiagnosticTrace` suppresses recursive
+delivery and listener failures. Reader entry/disposal and writer mutation/disposal
+check its async-flow marker before acquiring their gates, refusing callback
+reentry with `ReentrantDiagnosticCall`; a listener cannot wait on disposal of the
+operation that is delivering it. Optional EventSource counters use atomic totals;
+recording a failure never initializes an EventSource or invokes its listeners.
+Provider registration is an explicit caller action before database operations.
+
 `frameSync` and the other memory locks are leaves: no awaits or store
 calls while holding them. Invalidation takes only `frameSync`, increments a
 generation and drops every frame. A load that began under an older generation

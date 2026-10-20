@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
@@ -63,9 +64,9 @@ internal sealed class EntityMap
             {
                 if (isExplicit)
                 {
-                    throw new InvalidOperationException(
-                        $"Properties '{existing.Property.Name}' and '{property.Name}' on type '{type}' both map to column '{columnName}'. "
-                        + "Give each property a distinct [Column(\"...\")] name or mark one [NotMapped].");
+                    throw new JetOperationException(
+                        JetErrorCode.InvalidOperationState,
+                        $"Properties '{existing.Property.Name}' and '{property.Name}' on type '{type}' both map to column '{columnName}'. Give each property a distinct [Column(\"...\")] name or mark one [NotMapped].");
                 }
 
                 // An explicit [Column] claim beats a property that only matches by name.
@@ -95,7 +96,7 @@ internal sealed class EntityMap
     /// <summary>Returns the cached mapping model for <paramref name="type"/>.</summary>
     /// <param name="type">The POCO type.</param>
     /// <returns>The mapping model.</returns>
-    /// <exception cref="InvalidOperationException">Two properties of <paramref name="type"/> name the same column through <c>[Column]</c>.</exception>
+    /// <exception cref="JetOperationException">Two properties of <paramref name="type"/> name the same column through <c>[Column]</c>.</exception>
     public static EntityMap For([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type type)
     {
         Guard.NotNull(type, nameof(type));

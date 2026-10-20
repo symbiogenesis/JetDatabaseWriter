@@ -203,9 +203,9 @@ public sealed class CreateDatabaseTests
         ms.Write(new byte[0x96 - 0x18]);
         byte[] before = ms.ToArray();
         ms.Position = 0;
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await AccessWriter.OpenAsync(ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct));
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await AccessWriter.OpenAsync(ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct));
         ms.Position = 0;
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct));
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct));
         Assert.Equal(before, ms.ToArray());
     }
 

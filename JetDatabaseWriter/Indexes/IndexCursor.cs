@@ -129,7 +129,7 @@ internal sealed class IndexCursor
     /// <param name="tableDef">The table definition.</param>
     /// <param name="criteria">The seek criteria.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <exception cref="NotSupportedException">The criteria kind is unsupported.</exception>
+    /// <exception cref="JetNotSupportedException">The criteria kind is unsupported.</exception>
     public async IAsyncEnumerable<(long DataPage, int RowIndex)> EnumerateRowLocationsForCriteriaAsync(
         JetFormat format,
         string tableName,
@@ -158,7 +158,7 @@ internal sealed class IndexCursor
                 range = new EncodedIndexRange(lower, upper);
                 break;
             default:
-                throw new NotSupportedException($"Index query kind '{criteria.Kind}' is not supported.");
+                throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Index query kind '{criteria.Kind}' is not supported.", new JetErrorInfo { TableName = tableName, IndexName = index.Name, PageNumber = index.FirstDp });
         }
 
         await foreach ((long DataPage, int RowIndex) location in this.EnumerateRowLocationsInRangeAsync(index.FirstDp, range, cancellationToken).ConfigureAwait(false))

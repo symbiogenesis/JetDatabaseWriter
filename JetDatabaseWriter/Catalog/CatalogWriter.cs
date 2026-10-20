@@ -6,7 +6,6 @@ using System.Collections.Generic;
 #if !NET5_0_OR_GREATER
 using System.Globalization;
 #endif
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -503,11 +502,11 @@ internal sealed class CatalogWriter(
         ColumnInfo? ownerColumn = objects.FindColumn("Owner");
         if (nameColumn is null || ownerColumn is null)
         {
-            throw new JetCorruptDataException("MSysObjects has no database security owner columns.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects has no database security owner columns.");
         }
 
-        ColumnInfo idColumn = objects.FindColumn("Id") ?? throw new JetCorruptDataException("MSysObjects has no security object identifier column.");
-        ColumnInfo typeColumn = objects.FindColumn("Type") ?? throw new JetCorruptDataException("MSysObjects has no security object type column.");
+        ColumnInfo idColumn = objects.FindColumn("Id") ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects has no security object identifier column.");
+        ColumnInfo typeColumn = objects.FindColumn("Type") ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects has no security object type column.");
         byte[]? owner = null;
         int matches = 0;
         await ownedPages.ForEachLiveTableRowAsync(
@@ -521,7 +520,7 @@ internal sealed class CatalogWriter(
                 {
                     if (validId && id == objectId)
                     {
-                        throw new JetCorruptDataException($"MSysObjects contains another object sharing the {objectName} security identifier.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"MSysObjects contains another object sharing the {objectName} security identifier.", new JetErrorInfo { ObjectName = objectName });
                     }
 
                     return new ValueTask<bool>(true);
@@ -529,13 +528,13 @@ internal sealed class CatalogWriter(
 
                 if (++matches != 1)
                 {
-                    throw new JetCorruptDataException($"MSysObjects contains duplicate {objectName} security objects.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"MSysObjects contains duplicate {objectName} security objects.", new JetErrorInfo { ObjectName = objectName });
                 }
 
                 if (!validId || id != objectId
                     || !CatalogValueReader.TryParseInt32(ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, typeColumn), out int type) || type != objectType)
                 {
-                    throw new JetCorruptDataException($"{objectName} has an invalid security object identity.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"{objectName} has an invalid security object identity.", new JetErrorInfo { ObjectName = objectName });
                 }
 
                 string value = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, ownerColumn);
@@ -545,7 +544,7 @@ internal sealed class CatalogWriter(
             cancellationToken).ConfigureAwait(false);
         return owner is { Length: > 0 }
             ? owner
-            : throw new JetCorruptDataException($"MSysObjects has no valid {objectName} security owner.");
+            : throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"MSysObjects has no valid {objectName} security owner.", new JetErrorInfo { ObjectName = objectName });
     }
 
     /// <summary>Inherits native container permissions and resolves the format-specific owner placeholder.</summary>
@@ -555,7 +554,7 @@ internal sealed class CatalogWriter(
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The validated and remapped native permissions.</returns>
     /// <exception cref="JetCorruptDataException">Required security metadata is malformed.</exception>
-    /// <exception cref="NotSupportedException">The container has no inheritable permissions.</exception>
+    /// <exception cref="JetNotSupportedException">The container has no inheritable permissions.</exception>
     private async ValueTask<(byte[] Sid, int Acm)[]> ReadInheritedPermissionsAsync(
         bool relationships,
         long acesTdefPage,
@@ -564,10 +563,10 @@ internal sealed class CatalogWriter(
     {
         byte[] owner = await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false);
 
-        ColumnInfo objectColumn = acesDef.FindColumn("ObjectId") ?? throw new JetCorruptDataException("MSysACEs has no ObjectId column.");
-        ColumnInfo sidColumn = acesDef.FindColumn("SID") ?? throw new JetCorruptDataException("MSysACEs has no SID column.");
-        ColumnInfo acmColumn = acesDef.FindColumn("ACM") ?? throw new JetCorruptDataException("MSysACEs has no ACM column.");
-        ColumnInfo inheritColumn = acesDef.FindColumn("FInheritable") ?? throw new JetCorruptDataException("MSysACEs has no FInheritable column.");
+        ColumnInfo objectColumn = acesDef.FindColumn("ObjectId") ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysACEs has no ObjectId column.");
+        ColumnInfo sidColumn = acesDef.FindColumn("SID") ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysACEs has no SID column.");
+        ColumnInfo acmColumn = acesDef.FindColumn("ACM") ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysACEs has no ACM column.");
+        ColumnInfo inheritColumn = acesDef.FindColumn("FInheritable") ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysACEs has no FInheritable column.");
         int parentId = relationships ? Constants.SystemObjects.RelationshipsParentId : Constants.SystemObjects.TablesParentId;
         _ = await this.ReadCatalogSecurityObjectAsync(relationships ? "Relationships" : "Tables", parentId, 3, cancellationToken).ConfigureAwait(false);
         var inherited = new List<(byte[] Sid, int Acm)>();
@@ -581,7 +580,7 @@ internal sealed class CatalogWriter(
 
                 if (!CatalogValueReader.TryParseInt32(Decode(objectColumn), out int id))
                 {
-                    throw new JetCorruptDataException("MSysACEs contains an invalid object identifier.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysACEs contains an invalid object identifier.");
                 }
 
                 if (id == parentId)
@@ -589,25 +588,25 @@ internal sealed class CatalogWriter(
                     string inherit = Decode(inheritColumn);
                     if (inherit is not ("True" or "False"))
                     {
-                        throw new JetCorruptDataException("A container MSysACEs entry has an invalid inheritance flag.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "A container MSysACEs entry has an invalid inheritance flag.");
                     }
 
                     if (!CatalogValueReader.TryParseInt32(Decode(acmColumn), out int acm))
                     {
-                        throw new JetCorruptDataException("A container MSysACEs entry has an invalid permission mask.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "A container MSysACEs entry has an invalid permission mask.");
                     }
 
                     byte[] sid = ParseHexBytes(Decode(sidColumn));
                     if (sid.Length == 0)
                     {
-                        throw new JetCorruptDataException("A container MSysACEs entry has no security identity.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "A container MSysACEs entry has no security identity.");
                     }
 
                     if (inherit == "True")
                     {
                         if (!storedIdentities.Add(BitConverter.ToString(sid)))
                         {
-                            throw new JetCorruptDataException("Native inherited container permissions contain duplicate stored security identities.");
+                            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "Native inherited container permissions contain duplicate stored security identities.");
                         }
 
                         inherited.Add((sid, acm));
@@ -619,7 +618,7 @@ internal sealed class CatalogWriter(
             cancellationToken).ConfigureAwait(false);
         if (inherited.Count == 0)
         {
-            throw new NotSupportedException("The database has no inheritable catalog permissions for the new object.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "The database has no inheritable catalog permissions for the new object.");
         }
 
         byte[] placeholder;
@@ -671,7 +670,7 @@ internal sealed class CatalogWriter(
         long page = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         if (page <= 0)
         {
-            throw new JetCorruptDataException("The native permissions table is absent.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The native permissions table is absent.");
         }
 
         _ = await this.ReadCatalogSecurityObjectAsync(Constants.SystemTableNames.Aces, checked((int)page), 1, cancellationToken).ConfigureAwait(false);
@@ -692,7 +691,7 @@ internal sealed class CatalogWriter(
         long acesTdefPage = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         if (acesTdefPage <= 0)
         {
-            throw new JetCorruptDataException("The native permissions table is absent.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The native permissions table is absent.");
         }
 
         TableDef acesDef = await tableDefs.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
@@ -718,7 +717,7 @@ internal sealed class CatalogWriter(
         bool spliced = await indexes.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
         if (!spliced)
         {
-            throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes for '{objectName}'.");
+            throw new JetOperationException(JetErrorCode.CatalogIndexMaintenanceFailed, $"Could not maintain MSysObjects catalog indexes for '{objectName}'.");
         }
     }
 
@@ -739,7 +738,7 @@ internal sealed class CatalogWriter(
         int propertyIndex = objects.FindColumnIndex("LvProp");
         if (nameIndex < 0 || idIndex < 0 || typeIndex < 0 || flagsIndex < 0 || propertyIndex < 0)
         {
-            throw new JetCorruptDataException("MSysObjects lacks required table identity or property columns.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects lacks required table identity or property columns.");
         }
 
         List<LocatedRow> matches = (await snapshots.ReadRowsAsync(2, cancellationToken).ConfigureAwait(false)).FindAll(row =>
@@ -769,7 +768,7 @@ internal sealed class CatalogWriter(
         bool maintained = await indexes.TryRelocateCatalogRowAsync(objects, original, new LocatedRow(inserted, replacement), cancellationToken).ConfigureAwait(false);
         if (!maintained)
         {
-            throw new JetCorruptDataException($"The native catalog indexes for '{tableName}' could not retain their stored keys.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"The native catalog indexes for '{tableName}' could not retain their stored keys.", new JetErrorInfo { TableName = tableName });
         }
 
         catalog.Invalidate();
@@ -891,7 +890,7 @@ internal sealed class CatalogWriter(
 
         if (!format.IsJet3)
         {
-            throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes while {operation}.");
+            throw new JetOperationException(JetErrorCode.CatalogIndexMaintenanceFailed, $"Could not maintain MSysObjects catalog indexes while {operation}.");
         }
 
         await indexes.MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
@@ -914,7 +913,7 @@ internal sealed class CatalogWriter(
     private async ValueTask<int> AllocateNonTableObjectIdAsync(TableDef msys, CancellationToken cancellationToken)
     {
         ColumnInfo? idColumn = msys.FindColumn("Id")
-            ?? throw new InvalidDataException("MSysObjects does not expose an 'Id' column.");
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects does not expose an 'Id' column.");
 
         var usedIds = new HashSet<int>();
         int maxLow24 = 0;
@@ -951,6 +950,6 @@ internal sealed class CatalogWriter(
             low24++;
         }
 
-        throw new InvalidOperationException("No free negative MSysObjects catalog object id is available.");
+        throw new JetLimitationException(JetErrorCode.ValueTooLarge, "No free negative MSysObjects catalog object id is available.");
     }
 }

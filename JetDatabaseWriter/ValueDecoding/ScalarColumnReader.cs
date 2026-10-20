@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding.Models;
@@ -26,7 +27,7 @@ internal static class ScalarColumnReader
     /// <param name="rowSize">The row size.</param>
     /// <param name="column">The column.</param>
     /// <returns>The value as a string, or <see cref="string.Empty"/>.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the column type is unknown.</exception>
+    /// <exception cref="JetNotSupportedException">Thrown when the column type is unknown.</exception>
     internal static string DecodeSimpleColumnValue(JetFormat format, byte[] page, int rowStart, int rowSize, ColumnInfo column)
     {
         if (column == null || rowSize < format.RowFields.NumCols)
@@ -82,7 +83,7 @@ internal static class ScalarColumnReader
                     return string.Empty;
                 }
 
-                throw new InvalidOperationException($"Unknown column type: {GetTypeDisplayName(column.Type)}");
+                throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Unknown column type: {GetTypeDisplayName(column.Type)}");
 
             default:
                 return string.Empty;

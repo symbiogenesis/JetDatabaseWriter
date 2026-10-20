@@ -63,7 +63,7 @@ internal static class CompoundFileReader
             if (hdr.SectorSize > header.Length)
             {
                 int paddingSize = hdr.SectorSize - header.Length;
-                await stream.ReadExactlyAsync(scratch.AsMemory(0, paddingSize), cancellationToken).ConfigureAwait(false);
+                await ReadExactlyAsync(stream, scratch.AsMemory(0, paddingSize), cancellationToken).ConfigureAwait(false);
                 ValidateZeroHeaderBytes(scratch.AsSpan(0, paddingSize));
             }
 
@@ -85,11 +85,11 @@ internal static class CompoundFileReader
     {
         byte[] header = new byte[512];
         _ = stream.Seek(0, SeekOrigin.Begin);
-        await stream.ReadExactlyAsync(header.AsMemory(), cancellationToken).ConfigureAwait(false);
+        await ReadExactlyAsync(stream, header.AsMemory(), cancellationToken).ConfigureAwait(false);
 
         if (!HasCompoundFileMagic(header))
         {
-            throw new InvalidDataException("Stream is not a valid OLE compound file (signature mismatch).");
+            throw Corrupt("Stream is not a valid OLE compound file (signature mismatch).");
         }
 
         return header;
@@ -101,7 +101,7 @@ internal static class CompoundFileReader
         ValidateZeroHeaderBytes(header.AsSpan(0x22, 6));
         if (BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.ByteOrder, 2)) != 0xFFFE)
         {
-            throw new InvalidDataException("Unsupported CFB byte order.");
+            throw Corrupt("Unsupported CFB byte order.");
         }
 
         ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.MajorVersion, 2));
@@ -110,29 +110,29 @@ internal static class CompoundFileReader
 
         if (sectorShift is not 9 and not 12)
         {
-            throw new InvalidDataException($"Unsupported CFB sector shift: {sectorShift}.");
+            throw Corrupt($"Unsupported CFB sector shift: {sectorShift}.");
         }
 
         if (majorVersion is not 3 and not 4)
         {
-            throw new InvalidDataException($"Unsupported CFB major version: {majorVersion}.");
+            throw Corrupt($"Unsupported CFB major version: {majorVersion}.");
         }
 
         if ((majorVersion == 3 && sectorShift != 9) || (majorVersion == 4 && sectorShift != 12))
         {
-            throw new InvalidDataException(
+            throw Corrupt(
                 $"CFB major version {majorVersion} does not match sector shift {sectorShift}.");
         }
 
         if (miniSectorShift != 6)
         {
-            throw new InvalidDataException($"Unsupported CFB mini-sector shift: {miniSectorShift}.");
+            throw Corrupt($"Unsupported CFB mini-sector shift: {miniSectorShift}.");
         }
 
         uint numDirSectors = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.NumDirSectors, 4));
         if (majorVersion == 3 && numDirSectors != 0)
         {
-            throw new InvalidDataException("CFB version 3 must not declare a directory sector count.");
+            throw Corrupt("CFB version 3 must not declare a directory sector count.");
         }
 
         uint miniStreamCutoff = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.MiniStreamCutoff, 4));
@@ -142,7 +142,7 @@ internal static class CompoundFileReader
         if (miniStreamCutoff != Constants.CompoundFile.StandardMiniStreamCutoff
             && (majorVersion != 3 || miniStreamCutoff != 0))
         {
-            throw new InvalidDataException($"Unsupported CFB mini-stream cutoff: {miniStreamCutoff}.");
+            throw Corrupt($"Unsupported CFB mini-stream cutoff: {miniStreamCutoff}.");
         }
 
         return new CfbHeader(
@@ -164,7 +164,7 @@ internal static class CompoundFileReader
         {
             if (value != 0)
             {
-                throw new InvalidDataException("CFB reserved header bytes must be zero.");
+                throw Corrupt("CFB reserved header bytes must be zero.");
             }
         }
     }
@@ -207,7 +207,7 @@ internal static class CompoundFileReader
         {
             if (!visitedDifat.Add(difatSector))
             {
-                throw new InvalidDataException($"CFB DIFAT chain contains a cycle at sector {difatSector}.");
+                throw Corrupt($"CFB DIFAT chain contains a cycle at sector {difatSector}.");
             }
 
             ClaimSector(difatSector, ownedSectors, "DIFAT");
@@ -229,7 +229,7 @@ internal static class CompoundFileReader
             || difatSector is not Constants.CompoundFile.EndOfChain and not Constants.CompoundFile.FreeSect
             || fatSectorIds.Count != hdr.NumFatSectors)
         {
-            throw new InvalidDataException("CFB FAT or DIFAT sector count contradicts its chain.");
+            throw Corrupt("CFB FAT or DIFAT sector count contradicts its chain.");
         }
 
         // ── Materialise the FAT itself by reading each FAT sector. ──
@@ -288,7 +288,7 @@ internal static class CompoundFileReader
     {
         if (directory.Length < Constants.CompoundFile.DirEntrySize)
         {
-            throw new InvalidDataException("CFB directory has no complete root entry.");
+            throw Corrupt("CFB directory has no complete root entry.");
         }
 
         // Root entry holds the start sector + size of the mini stream.
@@ -344,12 +344,12 @@ internal static class CompoundFileReader
             ushort nameLen = BinaryPrimitives.ReadUInt16LittleEndian(entry.Slice(0x40, 2));
             if (nameLen is < 2 or > 64 || (nameLen & 1) != 0)
             {
-                throw new InvalidDataException("CFB stream name has an invalid UTF-16 byte length.");
+                throw Corrupt("CFB stream name has an invalid UTF-16 byte length.");
             }
 
             if (entry[nameLen - 2] != 0 || entry[nameLen - 1] != 0)
             {
-                throw new InvalidDataException("CFB stream name is not NUL-terminated.");
+                throw Corrupt("CFB stream name is not NUL-terminated.");
             }
 
             // nameLen includes the trailing UTF-16 NUL.
@@ -388,11 +388,11 @@ internal static class CompoundFileReader
         long offset = ((long)sectorIndex + 1) * sectorSize;
         if (offset > stream.Length - sectorSize)
         {
-            throw new InvalidDataException("CFB sector points beyond the physical file.");
+            throw Corrupt("CFB sector points beyond the physical file.");
         }
 
         _ = stream.Seek(offset, SeekOrigin.Begin);
-        await stream.ReadExactlyAsync(buffer.AsMemory(0, sectorSize), cancellationToken).ConfigureAwait(false);
+        await ReadExactlyAsync(stream, buffer.AsMemory(0, sectorSize), cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<byte[]> ReadChainAsync(
@@ -413,7 +413,7 @@ internal static class CompoundFileReader
         int chainLength = WalkChainLength(startSector, fat, "FAT", (stream.Length / sectorSize) - 1, ownedSectors, cancellationToken);
         if (expectedSectors >= 0 && chainLength != expectedSectors)
         {
-            throw new InvalidDataException("CFB metadata sector count contradicts its chain.");
+            throw Corrupt("CFB metadata sector count contradicts its chain.");
         }
 
         byte[] result = AllocateChainBuffer(chainLength, sectorSize, exactSize, budget);
@@ -438,7 +438,7 @@ internal static class CompoundFileReader
             // we actually need — the disk sector's trailing padding is
             // simply left unread, so no scratch/pool buffer is required.
             int toRead = Math.Min(runSectors * sectorSize, remaining);
-            await stream.ReadExactlyAsync(result.AsMemory(dstOffset, toRead), cancellationToken).ConfigureAwait(false);
+            await ReadExactlyAsync(stream, result.AsMemory(dstOffset, toRead), cancellationToken).ConfigureAwait(false);
             dstOffset += toRead;
             sector = next;
         }
@@ -467,7 +467,7 @@ internal static class CompoundFileReader
             long runBytes = (long)runSectors * miniSectorSize;
             if (offset + runBytes > miniStream.Length)
             {
-                throw new InvalidDataException("CFB mini-sector offset exceeds mini-stream size.");
+                throw Corrupt("CFB mini-sector offset exceeds mini-stream size.");
             }
 
             // Trailing partial mini-sector copies only the logical bytes
@@ -521,7 +521,7 @@ internal static class CompoundFileReader
     /// <param name="physicalSectorCount">The number of sectors physically present.</param>
     /// <param name="ownedSectors">Sectors already claimed by metadata or another chain in this address space.</param>
     /// <param name="cancellationToken">A token used to cancel traversal.</param>
-    /// <exception cref="InvalidDataException">The sector chain is out of range, cyclic, or shares sectors with another chain.</exception>
+    /// <exception cref="JetCorruptDataException">The sector chain is out of range, cyclic, or shares sectors with another chain.</exception>
     private static int WalkChainLength(uint startSector, uint[] fat, string fatKind, long physicalSectorCount, HashSet<uint> ownedSectors, CancellationToken cancellationToken)
     {
         int count = 0;
@@ -532,12 +532,12 @@ internal static class CompoundFileReader
             cancellationToken.ThrowIfCancellationRequested();
             if (cur >= fat.Length || cur >= physicalSectorCount)
             {
-                throw new InvalidDataException($"CFB {fatKind} sector index {cur} exceeds {fatKind} length {fat.Length}.");
+                throw Corrupt($"CFB {fatKind} sector index {cur} exceeds {fatKind} length {fat.Length}.");
             }
 
             if (!ownedSectors.Add(cur))
             {
-                throw new InvalidDataException($"CFB {fatKind} sector {cur} forms a cycle or overlaps another chain.");
+                throw Corrupt($"CFB {fatKind} sector {cur} forms a cycle or overlaps another chain.");
             }
 
             count++;
@@ -557,14 +557,14 @@ internal static class CompoundFileReader
     /// <param name="sectorSize">The sector size.</param>
     /// <param name="exactSize">The exact size.</param>
     /// <param name="budget">The live buffer byte budget.</param>
-    /// <exception cref="InvalidDataException">The logical size exceeds the chain capacity or buffer limit.</exception>
+    /// <exception cref="JetCorruptDataException">The logical size exceeds the chain capacity or buffer limit.</exception>
     private static byte[] AllocateChainBuffer(int chainLength, int sectorSize, long exactSize, BufferBudget budget)
     {
         long capacity = (long)chainLength * sectorSize;
         long logicalLength = exactSize >= 0 ? exactSize : capacity;
         if (logicalLength > capacity || logicalLength > int.MaxValue)
         {
-            throw new InvalidDataException("CFB stream length exceeds its chain capacity or supported buffer size.");
+            throw Corrupt("CFB stream length exceeds its chain capacity or supported buffer size.");
         }
 
         budget.Reserve(logicalLength);
@@ -576,7 +576,7 @@ internal static class CompoundFileReader
     {
         if (!ownedSectors.Add(sector))
         {
-            throw new InvalidDataException($"CFB {sectorKind} sector {sector} overlaps another metadata sector.");
+            throw Corrupt($"CFB {sectorKind} sector {sector} overlaps another metadata sector.");
         }
     }
 
@@ -588,7 +588,7 @@ internal static class CompoundFileReader
             || hdr.NumMiniFatSectors > physicalSectors
             || (long)hdr.NumDirSectors + hdr.NumFatSectors + hdr.NumDifatSectors + hdr.NumMiniFatSectors > physicalSectors)
         {
-            throw new InvalidDataException("CFB metadata sector counts exceed the physical file.");
+            throw Corrupt("CFB metadata sector counts exceed the physical file.");
         }
 
         if (hdr.SectorSize == 4096)
@@ -606,7 +606,7 @@ internal static class CompoundFileReader
         bool hasSectors = count != 0;
         if (hasSectors == absent || (!absent && start >= physicalSectors))
         {
-            throw new InvalidDataException("CFB metadata chain start contradicts its sector count or physical file.");
+            throw Corrupt("CFB metadata chain start contradicts its sector count or physical file.");
         }
     }
 
@@ -614,11 +614,25 @@ internal static class CompoundFileReader
     {
         if (fatSectorIds.Count >= hdr.NumFatSectors)
         {
-            throw new InvalidDataException("CFB DIFAT contains more FAT sectors than the header declares.");
+            throw Corrupt("CFB DIFAT contains more FAT sectors than the header declares.");
         }
 
         ClaimSector(sector, ownedSectors, "FAT");
         fatSectorIds.Add(sector);
+    }
+
+    private static JetCorruptDataException Corrupt(string message) => new(
+        JetErrorCode.CorruptCompoundFile,
+        message,
+        new JetErrorInfo { ObjectName = "CompoundFile", Reason = message });
+
+    private static async ValueTask ReadExactlyAsync(Stream stream, Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        int read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
+        if (read != buffer.Length)
+        {
+            throw Corrupt("The compound file is truncated.");
+        }
     }
 
     private sealed class BufferBudget(int maxBytes)

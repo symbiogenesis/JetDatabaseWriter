@@ -173,8 +173,8 @@ internal static class JetTypeInfo
     /// <param name="paramName">The public parameter that carries <paramref name="column"/>, for <see cref="ArgumentException.ParamName"/>.</param>
     /// <returns>The declared column type.</returns>
     /// <exception cref="ArgumentException">The definition's flags conflict: both Attachment and multi-value, Currency on a complex or non-decimal column, or Date/Time Extended on a non-<see cref="DateTime"/> column.</exception>
-    /// <exception cref="NotSupportedException">The CLR type has no Access column type or a descriptor/result override uses an unknown type code.</exception>
-    /// <exception cref="InvalidOperationException">The CLR type is unknown.</exception>
+    /// <exception cref="JetNotSupportedException">The CLR type has no Access column type or a descriptor/result override uses an unknown type code.</exception>
+    /// <exception cref="JetOperationException">The CLR type is unknown.</exception>
     internal static ColumnType TypeCodeFromDefinition(ColumnDefinition column, string paramName)
     {
         if (column.IsCalculated && column.CalculatedResultType != 0)
@@ -280,7 +280,7 @@ internal static class JetTypeInfo
                     return column.MaxLength is > 0 and <= 255 ? BinaryType : OleType;
                 }
 
-                throw new NotSupportedException($"CLR type '{clrType}' is not supported for table creation.");
+                throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"CLR type '{clrType}' is not supported for table creation.");
             case TypeCode.Char:
             case TypeCode.DBNull:
             case TypeCode.Empty:
@@ -288,9 +288,9 @@ internal static class JetTypeInfo
             case TypeCode.UInt16:
             case TypeCode.UInt32:
             case TypeCode.UInt64:
-                throw new NotSupportedException($"CLR type '{clrType}' is not supported for table creation.");
+                throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"CLR type '{clrType}' is not supported for table creation.");
             default:
-                throw new InvalidOperationException($"CLR type '{clrType}' is unknown.");
+                throw new JetOperationException(JetErrorCode.InvalidOperationState, $"CLR type '{clrType}' is unknown.");
         }
     }
 
@@ -298,11 +298,11 @@ internal static class JetTypeInfo
     /// <param name="type">The declared type code.</param>
     /// <param name="column">The column definition.</param>
     /// <returns>The known type code.</returns>
-    /// <exception cref="NotSupportedException">The type has no known Access codec.</exception>
+    /// <exception cref="JetNotSupportedException">The type has no known Access codec.</exception>
     private static ColumnType RequireKnownType(ColumnType type, ColumnDefinition column)
         => GetClrType(type) is not null
             ? type
-            : throw new NotSupportedException($"Column '{column.Name}': unknown JET column type {GetTypeDisplayName(type)} cannot be written.");
+            : throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Column '{column.Name}': unknown JET column type {GetTypeDisplayName(type)} cannot be written.");
 
     /// <summary>
     /// Checks a calculated column: the format has calculated columns
@@ -314,9 +314,9 @@ internal static class JetTypeInfo
     /// <param name="column">The column definition; a column that is not calculated passes.</param>
     /// <param name="format">The database's format profile.</param>
     /// <param name="paramName">The public parameter that carries <paramref name="column"/>, for <see cref="ArgumentException.ParamName"/>.</param>
-    /// <exception cref="NotSupportedException">The format or the column's kind cannot be calculated, or the result type is not supported.</exception>
+    /// <exception cref="JetNotSupportedException">The format or the column's kind cannot be calculated, or the result type is not supported.</exception>
     /// <exception cref="ArgumentException">The column has no expression, or its flags conflict.</exception>
-    /// <exception cref="InvalidOperationException">The result type is unknown.</exception>
+    /// <exception cref="JetOperationException">The result type is unknown.</exception>
     internal static void ValidateCalculatedColumn(ColumnDefinition column, JetFormat format, string paramName)
     {
         if (!column.IsCalculated)
@@ -326,7 +326,8 @@ internal static class JetTypeInfo
 
         if (!format.SupportsCalculatedColumns)
         {
-            throw new NotSupportedException(
+            throw new JetNotSupportedException(
+                JetErrorCode.FeatureNotSupported,
                 $"Column '{column.Name}': calculated columns are only supported in ACCDB databases.");
         }
 
@@ -339,13 +340,15 @@ internal static class JetTypeInfo
 
         if (column.IsAttachment || column.IsMultiValue || column.IsHyperlink || column.ClrType == typeof(Hyperlink))
         {
-            throw new NotSupportedException(
+            throw new JetNotSupportedException(
+                JetErrorCode.FeatureNotSupported,
                 $"Column '{column.Name}': calculated Attachment, MultiValue, and Hyperlink columns are not supported.");
         }
 
         if (column.IsAutoIncrement)
         {
-            throw new NotSupportedException(
+            throw new JetNotSupportedException(
+                JetErrorCode.FeatureNotSupported,
                 $"Column '{column.Name}': calculated columns cannot be AutoNumber columns.");
         }
 
@@ -371,10 +374,12 @@ internal static class JetTypeInfo
             case BigBinaryType:
             case ComplexType:
             case DateTimeExtendedType:
-                throw new NotSupportedException(
+                throw new JetNotSupportedException(
+                    JetErrorCode.FeatureNotSupported,
                     $"Column '{column.Name}': calculated result type {GetTypeDisplayName(type)} is not supported.");
             default:
-                throw new InvalidOperationException(
+                throw new JetOperationException(
+                    JetErrorCode.InvalidOperationState,
                     $"Column '{column.Name}': calculated result type {GetTypeDisplayName(type)} is unknown.");
         }
     }
@@ -410,7 +415,7 @@ internal static class JetTypeInfo
     /// <param name="paramName">The public parameter that carries <paramref name="definition"/>, for <see cref="ArgumentException.ParamName"/>.</param>
     /// <returns>The column type to write into the descriptor.</returns>
     /// <exception cref="ArgumentOutOfRangeException">A <c>Numeric</c> column's precision is not 1..28 or its scale is above its precision.</exception>
-    /// <exception cref="NotSupportedException">The type code is unknown or a Jet3 decimal column declares a precision or scale Currency cannot hold.</exception>
+    /// <exception cref="JetNotSupportedException">The type code is unknown or a Jet3 decimal column declares a precision or scale Currency cannot hold.</exception>
     internal static ColumnType ResolveStorageType(ColumnDefinition definition, ColumnType declaredType, JetFormat format, string paramName)
     {
         _ = RequireKnownType(declaredType, definition);
@@ -429,19 +434,15 @@ internal static class JetTypeInfo
 
         if (definition.ColumnTypeOverride is not null)
         {
-            throw new NotSupportedException($"Column '{definition.Name}': Jet3 (Access 97) does not support Numeric descriptors.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Column '{definition.Name}': Jet3 (Access 97) does not support Numeric descriptors.");
         }
 
         int integerDigits = precision - scale;
         if (scale > CurrencyScale || integerDigits > CurrencyIntegerDigits)
         {
-            throw new NotSupportedException(
-                $"Column '{definition.Name}': Jet3 (Access 97) databases have no Decimal type, so a decimal column is stored as Currency, "
-                + $"which keeps {CurrencyScale} decimal places and reaches 922,337,203,685,477.5807, "
-                + $"so it holds every value with up to {CurrencyIntegerDigits} digits before the decimal point. "
-                + $"Decimal({precision},{scale}) allows {integerDigits} digits before it and {scale} after it. "
-                + $"Declare a NumericScale of at most {CurrencyScale} and a NumericPrecision of at most NumericScale + {CurrencyIntegerDigits}, "
-                + "set IsCurrency for Currency's full range, or use a double column.");
+            throw new JetNotSupportedException(
+                JetErrorCode.FeatureNotSupported,
+                $"Column '{definition.Name}': Jet3 (Access 97) databases have no Decimal type, so a decimal column is stored as Currency, which keeps {CurrencyScale} decimal places and reaches 922,337,203,685,477.5807, so it holds every value with up to {CurrencyIntegerDigits} digits before the decimal point. Decimal({precision},{scale}) allows {integerDigits} digits before it and {scale} after it. Declare a NumericScale of at most {CurrencyScale} and a NumericPrecision of at most NumericScale + {CurrencyIntegerDigits}, set IsCurrency for Currency's full range, or use a double column.");
         }
 
         return MoneyType;
@@ -705,9 +706,9 @@ internal static class JetTypeInfo
 
     /// <summary>
     /// Typed counterpart to <see cref="ReadNumericString"/>: returns the boxed
-    /// <see cref="decimal"/> directly. Strict-mode failure modes (insufficient
-    /// bytes, scale > 28, decimal overflow) throw <see cref="JetLimitationException"/>
-    /// to match the contract the typed reader path relies on; non-strict failures
+    /// <see cref="decimal"/> directly. Invalid slot bounds throw <see cref="JetCorruptDataException"/>;
+    /// unsupported decimal scales or magnitudes throw <see cref="JetLimitationException"/>.
+    /// Non-strict failures
     /// collapse to <see cref="DBNull.Value"/> (the typed analogue of
     /// <see cref="ReadNumericString"/>'s empty-string return).
     /// </summary>
@@ -727,7 +728,8 @@ internal static class JetTypeInfo
         {
             if (strict)
             {
-                throw new JetLimitationException(
+                throw new JetCorruptDataException(
+                    JetErrorCode.MalformedValue,
                     $"Numeric slot at offset {start} extends past the row buffer (need 17 bytes, have {Math.Max(0, b.Length - start)}).");
             }
 
@@ -739,6 +741,7 @@ internal static class JetTypeInfo
             if (strict)
             {
                 throw new JetLimitationException(
+                    JetErrorCode.NumericOverflow,
                     $"Numeric scale {scale} exceeds the .NET decimal maximum of 28.");
             }
 
@@ -760,7 +763,7 @@ internal static class JetTypeInfo
         {
             if (strict)
             {
-                throw new JetLimitationException("Numeric value exceeds the .NET decimal 96-bit mantissa range.");
+                throw new JetLimitationException(JetErrorCode.NumericOverflow, "Numeric value exceeds the .NET decimal 96-bit mantissa range.");
             }
 
             return false;
@@ -779,7 +782,9 @@ internal static class JetTypeInfo
             if (strict)
             {
                 throw new JetLimitationException(
-                    $"Numeric value overflow (scale={scale})", ex);
+                    JetErrorCode.NumericOverflow,
+                    $"Numeric value overflow (scale={scale})",
+                    innerException: ex);
             }
 
             return false;

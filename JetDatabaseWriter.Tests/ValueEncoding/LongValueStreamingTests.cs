@@ -76,7 +76,7 @@ public sealed class LongValueStreamingTests
     public async Task CopyPayloadAsync_RejectsReservedModeBeforeReadingOrWriting(int length)
     {
         await using var output = new MemoryStream();
-        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await LongValueStore.CopyPayloadAsync(
                 new LongValueDescriptor(length, Constants.LongValue.StorageModeMask, 256, 0),
                 ReadOnlyMemory<byte>.Empty,
@@ -113,7 +113,7 @@ public sealed class LongValueStreamingTests
     public async Task CopyPayloadAsync_RejectsInlineTruncationBeforeWriting()
     {
         await using var output = new MemoryStream();
-        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await LongValueStore.CopyPayloadAsync(
                 LongValueDescriptor.Inline(3),
                 new byte[] { 1, 2 },
@@ -157,7 +157,7 @@ public sealed class LongValueStreamingTests
     {
         await using var output = new MemoryStream();
         int located = 0;
-        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await LongValueStore.CopyPayloadAsync(
                 LongValueDescriptor.Chained(10, 256, 0),
                 ReadOnlyMemory<byte>.Empty,
@@ -350,7 +350,7 @@ public sealed class LongValueStreamingTests
 
         if (failureMode is 1 or 2)
         {
-            await Assert.ThrowsAsync<InvalidDataException>(CopyAsync);
+            await Assert.ThrowsAsync<JetCorruptDataException>(CopyAsync);
         }
         else if (failureMode == 3)
         {

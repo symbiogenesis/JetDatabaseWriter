@@ -70,7 +70,7 @@ public sealed class RelationshipNativeSecurityTests
                 };
                 if (corruption == "inheritance")
                 {
-                    await Assert.ThrowsAsync<NotSupportedException>(mutation);
+                    await Assert.ThrowsAsync<JetNotSupportedException>(mutation);
                 }
                 else
                 {

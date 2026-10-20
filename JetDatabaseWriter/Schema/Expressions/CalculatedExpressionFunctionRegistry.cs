@@ -1,10 +1,11 @@
 namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
+using System.Collections.Generic;
 #if NET8_0_OR_GREATER
 using System.Collections.Frozen;
 #endif
-using System.Collections.Generic;
+using JetDatabaseWriter.Exceptions;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionLimits;
@@ -26,7 +27,7 @@ internal static class CalculatedExpressionFunctionRegistry
         ValidateFunctionArgumentCount(normalizedName, args.Count);
         if (!FunctionDescriptors.TryGetValue(normalizedName, out CalculatedFunctionDescriptor? descriptor))
         {
-            throw new NotSupportedException($"Calculated-column function '{name}' is not supported.");
+            throw new JetNotSupportedException(JetErrorCode.UnsupportedExpression, $"Calculated-column function '{name}' is not supported.");
         }
 
         descriptor.ValidateArgumentCount(normalizedName, args.Count);
@@ -53,7 +54,7 @@ internal static class CalculatedExpressionFunctionRegistry
             string normalizedName = NormalizeFunctionName(registeredName);
             if (!descriptors.TryAdd(normalizedName, descriptor))
             {
-                throw new InvalidOperationException($"Calculated-column function '{normalizedName}' is registered more than once.");
+                throw new JetOperationException(JetErrorCode.InvalidExpression, $"Calculated-column function '{normalizedName}' is registered more than once.");
             }
         }
     }

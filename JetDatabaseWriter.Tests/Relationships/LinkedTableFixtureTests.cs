@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -39,25 +40,25 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
         AccessReader reader = await db.GetReaderAsync(TestDatabases.OdbcLinkerTestV2007, TestContext.Current.CancellationToken);
         LinkedTableInfo link = Assert.Single(await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken), table => table.Kind == LinkedTableKind.Odbc);
         Assert.NotEmpty(await reader.GetColumnMetadataAsync(link.Name, TestContext.Current.CancellationToken));
-        _ = await Assert.ThrowsAsync<NotSupportedException>(async () => await reader.GetRealRowCountAsync(link.Name, TestContext.Current.CancellationToken));
-        _ = await Assert.ThrowsAsync<NotSupportedException>(async () => await reader.ReadTableAsync(link.Name, cancellationToken: TestContext.Current.CancellationToken));
-        _ = await Assert.ThrowsAsync<NotSupportedException>(async () => await reader.ReadTableAsStringsAsync(link.Name, cancellationToken: TestContext.Current.CancellationToken));
-        _ = await Assert.ThrowsAsync<NotSupportedException>(async () => await reader.ReadTableAsync<object>(link.Name, cancellationToken: TestContext.Current.CancellationToken));
-        _ = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        _ = await Assert.ThrowsAsync<JetNotSupportedException>(async () => await reader.GetRealRowCountAsync(link.Name, TestContext.Current.CancellationToken));
+        _ = await Assert.ThrowsAsync<JetNotSupportedException>(async () => await reader.ReadTableAsync(link.Name, cancellationToken: TestContext.Current.CancellationToken));
+        _ = await Assert.ThrowsAsync<JetNotSupportedException>(async () => await reader.ReadTableAsStringsAsync(link.Name, cancellationToken: TestContext.Current.CancellationToken));
+        _ = await Assert.ThrowsAsync<JetNotSupportedException>(async () => await reader.ReadTableAsync<object>(link.Name, cancellationToken: TestContext.Current.CancellationToken));
+        _ = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
         {
             await foreach (object[] row in reader.Rows(link.Name, cancellationToken: TestContext.Current.CancellationToken))
             {
                 Assert.NotNull(row);
             }
         });
-        _ = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        _ = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
         {
             await foreach (object[] row in reader.SeekRowsAsync(link.Name, "unavailable-index", [1], TestContext.Current.CancellationToken))
             {
                 Assert.NotNull(row);
             }
         });
-        _ = await Assert.ThrowsAsync<NotSupportedException>(async () => await reader.Query<object>(link.Name).CountAsync(TestContext.Current.CancellationToken));
+        _ = await Assert.ThrowsAsync<JetNotSupportedException>(async () => await reader.Query<object>(link.Name).CountAsync(TestContext.Current.CancellationToken));
     }
 
     /// <summary>

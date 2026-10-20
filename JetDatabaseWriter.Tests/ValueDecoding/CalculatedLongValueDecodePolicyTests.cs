@@ -101,7 +101,7 @@ public sealed class CalculatedLongValueDecodePolicyTests
         await using MemoryStream stream = await CreateDamagedDatabaseAsync(fault, external, ct);
         byte[] before = stream.ToArray();
         await using AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct);
-        InvalidDataException failure = await Assert.ThrowsAsync<InvalidDataException>(async () => await writer.UpdateRowsAsync("Values", RowCriteria.All(), new RowValues { ["Id"] = 2 }, ct));
+        JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await writer.UpdateRowsAsync("Values", RowCriteria.All(), new RowValues { ["Id"] = 2 }, ct));
         Assert.Contains("Value", failure.Message, StringComparison.Ordinal);
         Assert.Equal(before, stream.ToArray());
     }

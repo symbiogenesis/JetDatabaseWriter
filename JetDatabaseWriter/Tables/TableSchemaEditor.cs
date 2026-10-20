@@ -188,7 +188,7 @@ internal sealed class TableSchemaEditor(
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A task that completes when the table is in the catalog.</returns>
     /// <exception cref="ArgumentException">Thrown when <paramref name="columns"/> is empty.</exception>
-    /// <exception cref="InvalidOperationException">Thrown when a table named <paramref name="tableName"/> already exists.</exception>
+    /// <exception cref="JetOperationException">Thrown when a table named <paramref name="tableName"/> already exists.</exception>
     /// <exception cref="JetObjectExistsException">The operation is refused with a structured <see cref="JetObjectExistsException"/>.</exception>
     internal async ValueTask CreateTableAsync(
         string tableName,
@@ -294,7 +294,7 @@ internal sealed class TableSchemaEditor(
     /// <param name="tableName">The table to drop.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that completes when the table is gone.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the table does not exist or takes part in a relationship.</exception>
+    /// <exception cref="JetOperationException">Thrown when the table does not exist or takes part in a relationship.</exception>
     internal async ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
@@ -579,7 +579,7 @@ internal sealed class TableSchemaEditor(
     /// <summary>Checks declared AutoNumber types before catalog I/O.</summary>
     /// <param name="column">The column being declared.</param>
     /// <param name="paramName">The public parameter name.</param>
-    /// <exception cref="NotSupportedException">The column requests AutoNumber on a byte or long type.</exception>
+    /// <exception cref="JetNotSupportedException">The column requests AutoNumber on a byte or long type.</exception>
     /// <exception cref="ArgumentException">The column requests AutoNumber on a non-integer type.</exception>
     private static void ValidateDeclaredAutoIncrement(ColumnDefinition? column, string paramName)
     {
@@ -590,8 +590,7 @@ internal sealed class TableSchemaEditor(
 
         if (column.ClrType == typeof(byte) || column.ClrType == typeof(long))
         {
-            throw new NotSupportedException(
-                $"Column '{column.Name}': IsAutoIncrement is only supported for Int16, Int32 and Guid; '{column.ClrType}' is not supported.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Column '{column.Name}': IsAutoIncrement is only supported for Int16, Int32 and Guid; '{column.ClrType}' is not supported.", new JetErrorInfo { ColumnName = column.Name });
         }
 
         if (column.ClrType != typeof(short) && column.ClrType != typeof(int) && column.ClrType != typeof(Guid))
@@ -679,8 +678,7 @@ internal sealed class TableSchemaEditor(
     {
         if (columnCount > Constants.TableDefinition.MaxTableColumns)
         {
-            throw new JetLimitationException(
-                $"Table '{tableName}' would have {columnCount} columns; a Microsoft Access table holds at most {Constants.TableDefinition.MaxTableColumns}.");
+            throw new JetLimitationException(JetErrorCode.ColumnCountLimit, $"Table '{tableName}' would have {columnCount} columns; a Microsoft Access table holds at most {Constants.TableDefinition.MaxTableColumns}.", new JetErrorInfo { TableName = tableName });
         }
     }
 
@@ -700,9 +698,9 @@ internal sealed class TableSchemaEditor(
     /// the column references in the table's expressions.
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">Thrown when the projection leaves no columns, or drops a relationship key column or a column another column's expression names.</exception>
+    /// <exception cref="JetOperationException">Thrown when the projection leaves no columns, or drops a relationship key column or a column another column's expression names.</exception>
     /// <exception cref="ArgumentException">Thrown, before anything is written, when a renamed column's new name would push an expression that names it past the expression limits.</exception>
-    /// <exception cref="System.IO.InvalidDataException">Thrown, before anything is written, when a row holds a MEMO or OLE value in a kept column whose stored data cannot be read.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown, before anything is written, when a row holds a MEMO or OLE value in a kept column whose stored data cannot be read.</exception>
     /// <exception cref="JetLimitationException">Thrown, before anything is written, when an index of the table names a column the table does not have, or the index section of its table definition cannot be parsed or runs past the end of it (<see cref="IndexMaintainer.ThrowIfIndexesUnmaintainableAsync"/>).</exception>
     /// <exception cref="JetOperationException">The operation is refused with a structured <see cref="JetOperationException"/>.</exception>
     private async ValueTask RewriteTableAsync(

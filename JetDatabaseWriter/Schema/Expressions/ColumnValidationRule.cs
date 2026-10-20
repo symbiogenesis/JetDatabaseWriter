@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
 using System.Collections.Generic;
+using JetDatabaseWriter.Exceptions;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionParser;
@@ -96,10 +97,10 @@ internal sealed class ColumnValidationRule
     /// </summary>
     /// <param name="context">The evaluation context over the candidate row.</param>
     /// <returns>Whether the value is accepted.</returns>
-    /// <exception cref="NotSupportedException">The rule cannot be evaluated.</exception>
+    /// <exception cref="JetNotSupportedException">The rule cannot be evaluated.</exception>
     public bool Accepts(CalculatedExpressionEvaluationContext context)
         => this.root is null
-            ? throw new NotSupportedException("The validation rule cannot be evaluated.")
+            ? throw new JetNotSupportedException(JetErrorCode.UnsupportedExpression, "The validation rule cannot be evaluated.")
             : this.root.Evaluate(context) != false;
 
     private static bool? ToTriState(object value)
@@ -116,7 +117,7 @@ internal sealed class ColumnValidationRule
 
         return TryConvertDecimal(value, out decimal numeric)
             ? numeric != 0m
-            : throw new NotSupportedException("Validation rule term did not evaluate to a Boolean.");
+            : throw new JetNotSupportedException(JetErrorCode.UnsupportedExpression, "Validation rule term did not evaluate to a Boolean.");
     }
 
     private sealed class Parser(string source, List<Token> tokens, CalculatedExpressionNode operand)
@@ -371,7 +372,7 @@ internal sealed class ColumnValidationRule
                 LogicalOperator.Xor => l != r,
                 LogicalOperator.Eqv => l == r,
                 LogicalOperator.Imp => false,
-                _ => throw new InvalidOperationException($"Unexpected validation-rule operator '{op}'."),
+                _ => throw new JetOperationException(JetErrorCode.InvalidExpression, $"Unexpected validation-rule operator '{op}'."),
             };
         }
     }

@@ -100,7 +100,7 @@ public sealed class NativeJet4CatalogSecurityTests
 
     [Fact]
     public void ShortHeader_RefusesSidDerivation()
-        => Assert.Throws<JetCorruptDataException>(() => Jet4SecuritySid.GetOwnerPlaceholder(
+        => StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptCatalog, () => Jet4SecuritySid.GetOwnerPlaceholder(
             JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb), new byte[0x91]));
 
     [Theory]
@@ -167,12 +167,12 @@ public sealed class NativeJet4CatalogSecurityTests
         {
             if (duplicateIdentity)
             {
-                await Assert.ThrowsAsync<JetCorruptDataException>(async () => await writer.CreateTableAsync(
+                await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCatalog, async () => await writer.CreateTableAsync(
                     "Rejected", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken));
             }
             else
             {
-                await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.CreateTableAsync(
+                await StructuredFormatAssert.ThrowsAsync<JetNotSupportedException>(JetErrorCode.FeatureNotSupported, async () => await writer.CreateTableAsync(
                     "Rejected", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken));
             }
         }
@@ -229,12 +229,12 @@ public sealed class NativeJet4CatalogSecurityTests
         {
             if (relationship)
             {
-                await Assert.ThrowsAsync<JetCorruptDataException>(async () => await writer.CreateRelationshipAsync(
+                await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCatalog, async () => await writer.CreateRelationshipAsync(
                     new RelationshipDefinition("Rejected", "T", "Id", "Added", "Id"), TestContext.Current.CancellationToken));
             }
             else
             {
-                await Assert.ThrowsAsync<JetCorruptDataException>(async () => await writer.CreateTableAsync(
+                await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCatalog, async () => await writer.CreateTableAsync(
                     "Rejected", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken));
             }
         }

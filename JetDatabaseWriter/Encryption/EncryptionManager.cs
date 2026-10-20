@@ -52,7 +52,7 @@ internal static class EncryptionManager
     /// <param name="format">The format.</param>
     /// <param name="password">The password.</param>
     /// <param name="passwordOptionName">Where the caller supplies the password, named by a missing-password message (<see cref="ReaderPasswordOption"/>, <see cref="WriterPasswordOption"/>).</param>
-    /// <exception cref="UnauthorizedAccessException">Thrown when the database requires a password and the supplied password is missing or incorrect.</exception>
+    /// <exception cref="JetAccessDeniedException">Thrown when the database requires a password and the supplied password is missing or incorrect.</exception>
     internal static IPageCodec OpenPageCodec(
         byte[] header,
         DatabaseFormat format,
@@ -67,8 +67,7 @@ internal static class EncryptionManager
             {
                 if (password.IsEmpty || !(format == DatabaseFormat.Jet3Mdb ? NativeJet3PasswordMatches(header, password.Span) : NativeJet4PasswordMatches(header, password.Span)))
                 {
-                    throw new UnauthorizedAccessException(
-                        $"This database requires its password via {passwordOptionName}; the supplied password is missing or incorrect.");
+                    throw new JetAccessDeniedException(password.IsEmpty ? JetErrorCode.PasswordRequired : JetErrorCode.PasswordIncorrect, $"This database requires its password via {passwordOptionName}; the supplied password is missing or incorrect.", new JetErrorInfo { ObjectName = passwordOptionName, PageNumber = 0 });
                 }
             }
 
@@ -289,6 +288,7 @@ internal static class EncryptionManager
         string path,
         CancellationToken cancellationToken = default)
     {
+        DiagnosticTrace.ThrowIfReentrant();
         cancellationToken.ThrowIfCancellationRequested();
         Guard.RequireExistingDatabaseFile(path, nameof(path));
 
@@ -312,6 +312,7 @@ internal static class EncryptionManager
         Stream stream,
         CancellationToken cancellationToken = default)
     {
+        DiagnosticTrace.ThrowIfReentrant();
         Guard.RequireReadableSeekableStream(stream, nameof(stream));
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -337,7 +338,8 @@ internal static class EncryptionManager
     /// <param name="stream">A readable, seekable stream containing the database bytes.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> yielding the header page.</returns>
-    /// <exception cref="EndOfStreamException">Thrown when the stream holds fewer than <see cref="Constants.DatabaseHeader.Length"/> bytes.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown when the stream holds fewer than <see cref="Constants.DatabaseHeader.Length"/> bytes.</exception>
+    /// <exception cref="JetNotSupportedException">The source is an Office compound package.</exception>
     internal static async ValueTask<byte[]> ReadOpenHeaderPageAsync(Stream stream, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -350,10 +352,15 @@ internal static class EncryptionManager
             cancellationToken: cancellationToken).ConfigureAwait(false);
         if (read < Constants.DatabaseHeader.Length)
         {
-            throw new EndOfStreamException(
-                $"The database is {read} bytes long, shorter than the {Constants.DatabaseHeader.Length}-byte JET header.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptDatabaseHeader, $"The database is {read} bytes long, shorter than the {Constants.DatabaseHeader.Length}-byte JET header.", new JetErrorInfo { PageNumber = 0 });
         }
 
+        if (IsCompoundFileEncrypted(headerPage))
+        {
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Office compound packages are not native Microsoft Access databases.");
+        }
+
+        JetFormat.ValidateNativeSignature(headerPage);
         return headerPage;
     }
 
@@ -452,7 +459,7 @@ internal static class EncryptionManager
     {
         if (password.Length > HeaderPasswordLength / sizeof(char))
         {
-            throw new JetLimitationException("Jet4 passwords cannot exceed twenty UTF-16 characters.");
+            throw new JetLimitationException(JetErrorCode.PasswordTooLong, "Jet4 passwords cannot exceed twenty UTF-16 characters.");
         }
 
         if (password.IndexOf('\0') >= 0)
@@ -496,7 +503,7 @@ internal static class EncryptionManager
 
         if (password.Length > Constants.DatabaseHeader.Jet3PasswordLength)
         {
-            throw new JetLimitationException("Jet3 passwords cannot exceed twenty bytes in the database code page.");
+            throw new JetLimitationException(JetErrorCode.PasswordTooLong, "Jet3 passwords cannot exceed twenty bytes in the database code page.");
         }
 
         var encoding = (Encoding)JetFormat.FromHeader(header).AnsiEncoding.Clone();
@@ -507,7 +514,7 @@ internal static class EncryptionManager
         {
             if (bytes.Length > Constants.DatabaseHeader.Jet3PasswordLength)
             {
-                throw new JetLimitationException("Jet3 passwords cannot exceed twenty bytes in the database code page.");
+                throw new JetLimitationException(JetErrorCode.PasswordTooLong, "Jet3 passwords cannot exceed twenty bytes in the database code page.");
             }
 
             TransformHeaderMask(header, DatabaseFormat.Jet3Mdb);
@@ -544,9 +551,12 @@ internal static class EncryptionManager
         try
         {
             TransformHeaderMask(unmasked, DatabaseFormat.Jet3Mdb);
-            var encoding = (Encoding)JetFormat.FromHeader(header).AnsiEncoding.Clone();
-            encoding.EncoderFallback = EncoderFallback.ExceptionFallback;
-            supplied = encoding.GetBytes(passwordCharacters);
+            var format = JetFormat.FromHeader(header);
+            if (!format.TryEncodeAnsiText(passwordCharacters, out supplied))
+            {
+                return false;
+            }
+
             if (supplied.Length > Constants.DatabaseHeader.Jet3PasswordLength)
             {
                 return false;
@@ -558,10 +568,6 @@ internal static class EncryptionManager
             bool matches = CryptographicOperations.FixedTimeEquals(unmasked.AsSpan(Constants.DatabaseHeader.Password, padded.Length), padded);
             CryptographicOperations.ZeroMemory(padded);
             return matches;
-        }
-        catch (EncoderFallbackException)
-        {
-            return false;
         }
         finally
         {

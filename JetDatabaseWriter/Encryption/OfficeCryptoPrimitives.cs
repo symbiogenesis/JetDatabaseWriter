@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Encryption;
 
 using System;
 using System.Security.Cryptography;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 
 internal static class OfficeCryptoPrimitives
@@ -12,14 +13,14 @@ internal static class OfficeCryptoPrimitives
 
     /// <summary>Returns the digest size of a supported Office provider hash.</summary>
     /// <param name="algorithm">The declared digest.</param>
-    /// <exception cref="NotSupportedException">The digest is unsupported.</exception>
+    /// <exception cref="JetNotSupportedException">The digest is unsupported.</exception>
     public static int HashSize(string algorithm) => algorithm.ToUpperInvariant() switch
     {
         "SHA1" => 20,
         "SHA256" => 32,
         "SHA384" => 48,
         "SHA512" => 64,
-        _ => throw new NotSupportedException($"Office encryption hash '{algorithm}' is unsupported."),
+        _ => throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Office encryption hash '{algorithm}' is unsupported."),
     };
 
     /// <summary>Hashes provider data with its declared digest.</summary>

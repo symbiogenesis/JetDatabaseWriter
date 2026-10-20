@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Indexes;
 using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
@@ -173,8 +174,9 @@ public sealed class IndexPageCodecLeafPageTests
             entries[i] = entry;
         }
 
-        Assert.ThrowsAny<ArgumentOutOfRangeException>(() =>
+        JetLimitationException failure = Assert.Throws<JetLimitationException>(() =>
             IndexPageCodec.BuildLeafPage(layout, pageSize, 100, entries, 0, 0, 0, enablePrefixCompression: false));
+        Assert.Equal(JetErrorCode.IndexEntryTooLarge, failure.ErrorCode);
     }
 
     [Theory]

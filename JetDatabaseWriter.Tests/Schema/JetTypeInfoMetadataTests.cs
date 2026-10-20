@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
@@ -135,7 +136,7 @@ public sealed class JetTypeInfoMetadataTests
             ColumnDefinition definition = calculated
                 ? new("Unknown", typeof(string)) { IsCalculated = true, CalculatedResultType = (byte)type, CalculationExpression = "\"value\"" }
                 : new("Unknown", typeof(string)) { ColumnTypeOverride = type };
-            NotSupportedException error = Assert.Throws<NotSupportedException>(() => JetTypeInfo.TypeCodeFromDefinition(definition));
+            JetNotSupportedException error = Assert.Throws<JetNotSupportedException>(() => JetTypeInfo.TypeCodeFromDefinition(definition));
             Assert.Contains(JetTypeInfo.GetTypeDisplayName(type), error.Message, StringComparison.Ordinal);
         }
     }
@@ -150,7 +151,7 @@ public sealed class JetTypeInfoMetadataTests
         var definition = new ColumnDefinition("Unknown", typeof(string));
         foreach (ColumnType type in UnknownCodes())
         {
-            Assert.Throws<NotSupportedException>(() => JetTypeInfo.ResolveStorageType(definition, type, format, nameof(definition)));
+            Assert.Throws<JetNotSupportedException>(() => JetTypeInfo.ResolveStorageType(definition, type, format, nameof(definition)));
         }
     }
 
@@ -168,7 +169,7 @@ public sealed class JetTypeInfoMetadataTests
         foreach (ColumnType type in UnknownCodes())
         {
             var definition = new ColumnDefinition("Unknown", typeof(string)) { ColumnTypeOverride = type };
-            await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.CreateTableAsync("Samples", [definition], ct));
+            await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.CreateTableAsync("Samples", [definition], ct));
             Assert.Equal(original, stream.ToArray());
         }
     }
@@ -201,7 +202,8 @@ public sealed class JetTypeInfoMetadataTests
         byte[] original = stream.ToArray();
         stream.Position = 0;
         await using AccessWriter reopened = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
-        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(async () => await reopened.RenameColumnAsync("Samples", "Known", "Renamed", ct));
+        JetNotSupportedException error = await Assert.ThrowsAsync<JetNotSupportedException>(async () => await reopened.RenameColumnAsync("Samples", "Known", "Renamed", ct));
+        Assert.Equal(JetErrorCode.UnknownColumnType, error.ErrorCode);
         Assert.Contains($"0x{code:X2}", error.Message, StringComparison.Ordinal);
         Assert.Equal(original, stream.ToArray());
     }

@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Queries;
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
+using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
 /// Orders query keys produced by compiled key selectors. Database nulls sort first;
@@ -30,16 +30,9 @@ internal sealed class QueryKeyComparer : IComparer<object?>
             return sameTyped.CompareTo(y);
         }
 
-        if (x is IComparable comparable)
+        if (x is IComparable comparable && ScalarConversion.TryConvert(y, x.GetType(), out object? converted))
         {
-            try
-            {
-                return comparable.CompareTo(Convert.ChangeType(y, x.GetType(), CultureInfo.InvariantCulture));
-            }
-            catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException or ArgumentException)
-            {
-                // Fall through to the string comparison.
-            }
+            return comparable.CompareTo(converted);
         }
 
         return string.CompareOrdinal(x.ToString(), y.ToString());

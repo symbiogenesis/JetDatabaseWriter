@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Text;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
@@ -166,8 +167,7 @@ internal static class CompoundFileWriter
         long fileSize = sectorSize + ((long)totalSectors * sectorSize);
         if (fileSize > int.MaxValue)
         {
-            throw new NotSupportedException(
-                $"Compound file output would exceed 2 GiB ({fileSize:N0} bytes); not supported.");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Compound file output would exceed 2 GiB ({fileSize:N0} bytes); not supported.");
         }
 
         byte[] file = new byte[fileSize];

@@ -27,6 +27,7 @@ internal sealed class AsyncReentrantOperationGate(Type ownerType, AttachmentRead
 
     public Lease Enter()
     {
+        DiagnosticTrace.ThrowIfReentrant();
         int depth = this.operationDepth.Value;
         if (depth > 0)
         {
@@ -45,6 +46,7 @@ internal sealed class AsyncReentrantOperationGate(Type ownerType, AttachmentRead
 
     public bool TryBeginDispose(out Task waitForOperations)
     {
+        DiagnosticTrace.ThrowIfReentrant();
         if (Interlocked.CompareExchange(ref this.state, StateDisposing, StateOpen) != StateOpen)
         {
             waitForOperations = this.disposeCompleted.Task;

@@ -6,6 +6,7 @@ using System.Data;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -67,7 +68,7 @@ public sealed class LvalLengthMismatchTests
         const int corruptedLen = 8000;
         WriteLvalLength(dbBytes, headerOffset, corruptedLen);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() => ReadOleBlobAsync(dbBytes));
+        await Assert.ThrowsAsync<JetCorruptDataException>(() => ReadOleBlobAsync(dbBytes));
     }
 
     /// <summary>

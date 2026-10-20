@@ -1,8 +1,8 @@
 namespace JetDatabaseWriter.Indexes;
 
-using System;
 using System.Collections.Generic;
 using System.Threading;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
@@ -61,7 +61,7 @@ internal abstract class AccessIndexQueryBase<TRow> : IAccessIndexQuery<TRow>
     {
         if (this.Criteria.IsFiltered)
         {
-            throw new InvalidOperationException("An index query can contain only one index-key predicate.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "An index query can contain only one index-key predicate.", new JetErrorInfo { TableName = this.TableName, IndexName = this.IndexName });
         }
 
         return this.WithCriteria(nextCriteria);

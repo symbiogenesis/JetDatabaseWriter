@@ -300,10 +300,10 @@ public sealed class TableRenamedQualifiedExpressionTests
         stream.Position = 0;
         await using AccessWriter writer = await AccessWriter.OpenAsync(
             stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.InsertRowAsync(
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.InsertRowAsync(
             "Renamed T", [2, DBNull.Value], TestContext.Current.CancellationToken));
         Assert.Equal(image, stream.ToArray());
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.UpdateRowsAsync(
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.UpdateRowsAsync(
             "Renamed T", "Price", 4, new Dictionary<string, object?> { ["Price"] = 5 }, TestContext.Current.CancellationToken));
         Assert.Equal(image, stream.ToArray());
     }

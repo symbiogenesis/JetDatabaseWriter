@@ -100,7 +100,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
                 else if (appendedPage != firstAppendedPage + offset)
                 {
                     await this.ReleaseReservedPagesAsync(appendedPage, 1).ConfigureAwait(false);
-                    throw new IOException("Contiguous append reservation was interrupted by a non-contiguous page assignment.");
+                    throw new JetOperationException(JetErrorCode.InvalidOperationState, "Contiguous append reservation was interrupted by a non-contiguous page assignment.");
                 }
 
                 appended++;
@@ -208,7 +208,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
         await this.PreflightGlobalMapAsync(cancellationToken).ConfigureAwait(false);
         if (pager.IsJournalActive)
         {
-            throw new InvalidOperationException("ShrinkDatabaseAsync cannot run inside an active transaction.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "ShrinkDatabaseAsync cannot run inside an active transaction.");
         }
 
         bool secure = options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages;
@@ -437,7 +437,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
         {
             if (!UsageMap.TryGetFirstRowBound(globalPage, format.DataPage, format.PageSize, out RowBound rowBound))
             {
-                throw new InvalidDataException("The global usage map has invalid row bounds.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The global usage map has invalid row bounds.");
             }
 
             byte mapType = globalPage[rowBound.RowStart];
@@ -469,7 +469,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
     {
         if (Ri32(globalPage, rowBound.RowStart + Constants.UsageMap.ReferenceMapPointerOffset) != 0)
         {
-            throw new InvalidDataException("The global inline usage map must be anchored at page zero.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The global inline usage map must be anchored at page zero.");
         }
 
         // Native global maps consider uncovered pages free. Copy every existing bit,
@@ -527,14 +527,14 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
         int pointerCount = (rowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
         if (pointerIndex < 0 || pointerIndex >= pointerCount)
         {
-            throw new InvalidDataException("The global usage map cannot represent the requested page.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The global usage map cannot represent the requested page.");
         }
 
         int pointerOffset = rowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4);
         int mapPageNumber = Ri32(globalPage, pointerOffset);
         if (mapPageNumber < 0 || mapPageNumber >= pager.PageCount)
         {
-            throw new InvalidDataException("The global usage-map bitmap pointer is outside the database.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The global usage-map bitmap pointer is outside the database.");
         }
 
         byte[] mapPage;
@@ -555,7 +555,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
             if (mapPage[0] != Constants.PageTypes.UsageMap)
             {
                 PageBuffers.Return(mapPage);
-                throw new InvalidDataException("The global usage-map reference does not point to a usage-map bitmap.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The global usage-map reference does not point to a usage-map bitmap.");
             }
         }
 
@@ -595,7 +595,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
         if (!this.IsGlobalUsageMapPage(page))
         {
             PageBuffers.Return(page);
-            throw new InvalidDataException("The database global usage map is malformed.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The database global usage map is malformed.");
         }
 
         return page;
@@ -624,14 +624,14 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
         {
             if (!UsageMap.TryGetFirstRowBound(page, format.DataPage, format.PageSize, out RowBound row))
             {
-                throw new InvalidDataException("The global usage map has invalid row bounds.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The global usage map has invalid row bounds.");
             }
 
             if (page[row.RowStart] == Constants.UsageMap.InlineMapType)
             {
                 if (Ri32(page, row.RowStart + Constants.UsageMap.ReferenceMapPointerOffset) != 0)
                 {
-                    throw new InvalidDataException("The global inline usage map must be anchored at page zero.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The global inline usage map must be anchored at page zero.");
                 }
 
                 return;
@@ -650,7 +650,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
 
                 if (pointer <= GlobalUsageMapPageNumber || pointer >= pager.PageCount || !pointers.Add(pointer) || pointer == pageToFree)
                 {
-                    throw new InvalidDataException("The global usage map has an invalid, repeated or self-referencing bitmap pointer.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The global usage map has an invalid, repeated or self-referencing bitmap pointer.");
                 }
 
                 byte[] bitmap = await pager.ReadPageAsync(pointer, cancellationToken).ConfigureAwait(false);
@@ -658,7 +658,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
                 {
                     if (bitmap[0] != Constants.PageTypes.UsageMap || bitmap[1] != 1)
                     {
-                        throw new InvalidDataException("The global usage-map reference does not point to a usage-map bitmap.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The global usage-map reference does not point to a usage-map bitmap.");
                     }
                 }
                 finally
@@ -674,7 +674,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
                 if (ownerWindow >= count || Ri32(page, row.RowStart + Constants.UsageMap.ReferenceMapPointerOffset + (ownerWindow * 4)) == 0
                     || await this.TryGetReferenceFreeStateAsync(page, row.RowStart, row.RowSize, pointer, cancellationToken).ConfigureAwait(false))
                 {
-                    throw new InvalidDataException("A global usage-map bitmap is itself marked free or is outside allocation coverage.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "A global usage-map bitmap is itself marked free or is outside allocation coverage.");
                 }
             }
         }
@@ -691,7 +691,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
         {
             if (!UsageMap.TryGetFirstRowBound(page, format.DataPage, format.PageSize, out RowBound row))
             {
-                throw new InvalidDataException("The global usage map has invalid row bounds.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The global usage map has invalid row bounds.");
             }
 
             long lastPage = checked(firstPage + pageCount - 1);
@@ -706,7 +706,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
             long capacity = (long)count * UsageMap.PagesPerReferenceMapPage(format.PageSize);
             if (firstPage < 0 || lastPage >= capacity)
             {
-                throw new InvalidDataException("The global usage map cannot represent the requested allocation range.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The global usage map cannot represent the requested allocation range.");
             }
 
             var missingWindows = new HashSet<int>();
@@ -730,7 +730,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
                 long lastBitmapPage = checked(firstBitmapPage + previousCount - 1);
                 if (lastBitmapPage >= capacity)
                 {
-                    throw new InvalidDataException("The global usage map cannot represent its additional bitmap pages.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The global usage map cannot represent its additional bitmap pages.");
                 }
 
                 int firstBitmapWindow = UsageMap.ReferencePointerIndex(format.PageSize, firstBitmapPage);

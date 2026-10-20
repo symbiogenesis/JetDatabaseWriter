@@ -5,6 +5,7 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -34,7 +35,7 @@ public sealed class NativeJetEncryptionTests
     public async Task NativeJet4_WrongPasswordIsRefused(string fixture)
     {
         string path = Path.Combine(TestDatabases.EncryptedRoot, fixture);
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, async () =>
         {
             await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions("wrong") { UseLockFile = false }, TestContext.Current.CancellationToken);
         });
@@ -73,7 +74,7 @@ public sealed class NativeJetEncryptionTests
         try
         {
             await File.WriteAllBytesAsync(path, original, TestContext.Current.CancellationToken);
-            await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+            await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, async () =>
             {
                 if (operation == "Decrypt")
                 {

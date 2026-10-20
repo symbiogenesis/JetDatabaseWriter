@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.DelimitedText;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -178,9 +179,9 @@ public sealed class DelimitedTextReaderTests
         using DelimitedTextReader reader = CreateReader(stringReader);
         _ = await reader.ReadRecordAsync(TestContext.Current.CancellationToken);
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetCorruptDataException exception = await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptDelimitedText, async () =>
             await reader.ReadRecordAsync(TestContext.Current.CancellationToken));
-        Assert.Contains("closing quote", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(JetErrorCode.CorruptDelimitedText, exception.ErrorCode);
     }
 
     [Theory]
@@ -190,9 +191,9 @@ public sealed class DelimitedTextReaderTests
         using var stringReader = new StringReader(source);
         using DelimitedTextReader reader = CreateReader(stringReader);
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetCorruptDataException exception = await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptDelimitedText, async () =>
             await reader.ReadRecordAsync(TestContext.Current.CancellationToken));
-        Assert.Contains("closing quote", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(JetErrorCode.CorruptDelimitedText, exception.ErrorCode);
     }
 
     [Fact]
@@ -202,9 +203,9 @@ public sealed class DelimitedTextReaderTests
         using var stringReader = new StringReader("abcd\n");
         using DelimitedTextReader reader = CreateReader(stringReader, limits: limits);
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException exception = await StructuredFormatAssert.ThrowsAsync<JetLimitationException>(JetErrorCode.ValueTooLarge, async () =>
             await reader.ReadRecordAsync(TestContext.Current.CancellationToken));
-        Assert.Contains("MaxFieldLength", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("MaxFieldLength", exception.ErrorInfo.ObjectName);
     }
 
     [Fact]
@@ -214,9 +215,9 @@ public sealed class DelimitedTextReaderTests
         using var stringReader = new StringReader("ab,cd\n");
         using DelimitedTextReader reader = CreateReader(stringReader, limits: limits);
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException exception = await StructuredFormatAssert.ThrowsAsync<JetLimitationException>(JetErrorCode.ValueTooLarge, async () =>
             await reader.ReadRecordAsync(TestContext.Current.CancellationToken));
-        Assert.Contains("MaxRecordLength", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("MaxRecordLength", exception.ErrorInfo.ObjectName);
     }
 
     [Fact]
@@ -226,9 +227,9 @@ public sealed class DelimitedTextReaderTests
         using var stringReader = new StringReader("a,b,c\n");
         using DelimitedTextReader reader = CreateReader(stringReader, limits: limits);
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException exception = await StructuredFormatAssert.ThrowsAsync<JetLimitationException>(JetErrorCode.ColumnCountLimit, async () =>
             await reader.ReadRecordAsync(TestContext.Current.CancellationToken));
-        Assert.Contains("MaxColumnCount", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("MaxColumnCount", exception.ErrorInfo.ObjectName);
     }
 
     [Fact]
@@ -259,9 +260,9 @@ public sealed class DelimitedTextReaderTests
         using var stringReader = new StringReader("A,B\n1,\"unterminated\n");
         using DelimitedTextReader reader = CreateReader(stringReader);
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetCorruptDataException exception = await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptDelimitedText, async () =>
             await reader.CountRecordsAsync(skipFirstRecord: true, TestContext.Current.CancellationToken));
-        Assert.Contains("closing quote", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(JetErrorCode.CorruptDelimitedText, exception.ErrorCode);
     }
 
     [Fact]
@@ -271,9 +272,9 @@ public sealed class DelimitedTextReaderTests
         using var stringReader = new StringReader("ab,cd\n");
         using DelimitedTextReader reader = CreateReader(stringReader, limits: limits);
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException exception = await StructuredFormatAssert.ThrowsAsync<JetLimitationException>(JetErrorCode.ValueTooLarge, async () =>
             await reader.CountRecordsAsync(skipFirstRecord: false, TestContext.Current.CancellationToken));
-        Assert.Contains("MaxRecordLength", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("MaxRecordLength", exception.ErrorInfo.ObjectName);
     }
 
     [Fact]
@@ -283,9 +284,9 @@ public sealed class DelimitedTextReaderTests
         using var stringReader = new StringReader("abcd\n");
         using DelimitedTextReader reader = CreateReader(stringReader, limits: limits);
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException exception = await StructuredFormatAssert.ThrowsAsync<JetLimitationException>(JetErrorCode.ValueTooLarge, async () =>
             await reader.CountRecordsAsync(skipFirstRecord: false, TestContext.Current.CancellationToken));
-        Assert.Contains("MaxFieldLength", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("MaxFieldLength", exception.ErrorInfo.ObjectName);
     }
 
     [Fact]
@@ -295,9 +296,9 @@ public sealed class DelimitedTextReaderTests
         using var stringReader = new StringReader("a,b,c\n");
         using DelimitedTextReader reader = CreateReader(stringReader, limits: limits);
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException exception = await StructuredFormatAssert.ThrowsAsync<JetLimitationException>(JetErrorCode.ColumnCountLimit, async () =>
             await reader.CountRecordsAsync(skipFirstRecord: false, TestContext.Current.CancellationToken));
-        Assert.Contains("MaxColumnCount", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("MaxColumnCount", exception.ErrorInfo.ObjectName);
     }
 
     [Theory]

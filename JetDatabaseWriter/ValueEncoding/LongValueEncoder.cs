@@ -53,8 +53,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
     {
         if (data.Length > Constants.LongValue.MaxPayloadBytes)
         {
-            throw new JetLimitationException(
-                $"Long value is {data.Length} bytes, which exceeds the supported writer LVAL payload limit of {Constants.LongValue.MaxPayloadBytes} bytes.");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Long value is {data.Length} bytes, which exceeds the supported writer LVAL payload limit of {Constants.LongValue.MaxPayloadBytes} bytes.");
         }
     }
 

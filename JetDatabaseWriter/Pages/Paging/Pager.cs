@@ -974,18 +974,18 @@ internal sealed class Pager : PageFile
         /// <summary>Attaches <paramref name="journal"/>, so later writes and appends are buffered in it.</summary>
         /// <param name="journal">The new transaction's journal.</param>
         /// <param name="preserveFrames">Whether unchanged physical frames may be retained for a statement.</param>
-        /// <exception cref="InvalidOperationException">A journal is already attached.</exception>
+        /// <exception cref="JetOperationException">A journal is already attached.</exception>
         internal void Attach(PagerTransaction journal, bool preserveFrames = false)
         {
             Pager pager = this.Owner;
             if (pager.journal is not null)
             {
-                throw new InvalidOperationException("A transaction journal is already attached to this file.");
+                throw new JetOperationException(JetErrorCode.InvalidOperationState, "A transaction journal is already attached to this file.");
             }
 
             if (pager.zeroReservations.Count != 0)
             {
-                throw new InvalidOperationException("Initialize or release reserved pages before starting a transaction.");
+                throw new JetOperationException(JetErrorCode.InvalidOperationState, "Initialize or release reserved pages before starting a transaction.");
             }
 
             if (!preserveFrames)

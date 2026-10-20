@@ -393,7 +393,7 @@ public sealed class CompactRawRowReaderTests
         source = Overflow(DatabaseFormat.Jet4Mdb, 0);
         source.Failure = failure;
         source.FailureOnRead = 2;
-        InvalidDataException actual = await Assert.ThrowsAsync<InvalidDataException>(async () => await ScanAsync(source));
+        JetCorruptDataException actual = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(source));
         Assert.Same(failure, actual);
     }
 

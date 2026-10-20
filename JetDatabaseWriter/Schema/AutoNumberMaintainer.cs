@@ -3,11 +3,11 @@ namespace JetDatabaseWriter.Schema;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
@@ -359,7 +359,7 @@ internal sealed class AutoNumberMaintainer(JetFormat format, TableDefReader tabl
         {
             indexes = IndexCatalogReader.ReadMetadata(format, tdefBytes, tableDef.Columns);
         }
-        catch (Exception ex) when (ex is InvalidDataException or ArgumentException)
+        catch (Exception ex) when (ex is JetCorruptDataException or ArgumentException)
         {
             return null;
         }

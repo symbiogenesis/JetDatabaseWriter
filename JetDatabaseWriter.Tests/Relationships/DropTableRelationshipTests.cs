@@ -290,7 +290,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
         byte[] before = stream.ToArray();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            InvalidOperationException ex = await AssertDropRefusedAsync(writer, table, names[0]);
+            JetOperationException ex = await AssertDropRefusedAsync(writer, table, names[0]);
             Assert.All(names, name => Assert.Contains($"'{name}'", ex.Message, StringComparison.Ordinal));
         }
 
@@ -438,7 +438,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
         Assert.Equal(ParentIds, await ReadIdsAsync(stream, Parent));
     }
 
-    private static async ValueTask<InvalidOperationException> AssertDropRefusedAsync(AccessWriter writer, string table, string relationship)
+    private static async ValueTask<JetOperationException> AssertDropRefusedAsync(AccessWriter writer, string table, string relationship)
     {
         JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(async () => await writer.DropTableAsync(table, Ct));
         Assert.Contains("participates in", ex.Message, StringComparison.Ordinal);

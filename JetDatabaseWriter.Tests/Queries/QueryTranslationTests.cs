@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Queries;
 using System;
 using System.Linq;
 using System.Linq.Expressions;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Queries;
 using Xunit;
 
@@ -81,7 +82,7 @@ public sealed class QueryTranslationTests
             expression = Expression.Call(typeof(Queryable), nameof(Queryable.Skip), [typeof(int)], expression, Expression.Constant(1));
         }
 
-        NotSupportedException error = Assert.Throws<NotSupportedException>(() => AccessQueryTranslator.Translate(expression));
+        JetNotSupportedException error = Assert.Throws<JetNotSupportedException>(() => AccessQueryTranslator.Translate(expression));
 
         Assert.Equal("Unsupported query expression node 'Parameter'.", error.Message);
     }

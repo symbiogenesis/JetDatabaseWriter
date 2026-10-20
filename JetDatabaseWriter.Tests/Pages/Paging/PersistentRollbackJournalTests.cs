@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.IO;
 using System.Security.Cryptography;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Paging;
 using Xunit;
 
@@ -131,7 +132,7 @@ public sealed class PersistentRollbackJournalTests
             }
 
             database.Flush(true);
-            Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database));
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database));
             Assert.Equal(length, database.Length);
             Assert.True(File.Exists(path + ".jdw-journal"));
         }
@@ -235,7 +236,7 @@ public sealed class PersistentRollbackJournalTests
 
             database.Position = 40;
             database.WriteByte(99);
-            Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database));
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database));
             database.Position = 40;
             Assert.Equal(99, database.ReadByte());
             Assert.True(File.Exists(path + ".jdw-journal"));
@@ -281,7 +282,7 @@ public sealed class PersistentRollbackJournalTests
                 journal.Flush(true);
             }
 
-            Assert.Throws<IOException>(() => PersistentRollbackJournal.RejectHotJournal(database));
+            Assert.Throws<JetOperationException>(() => PersistentRollbackJournal.RejectHotJournal(database));
             PersistentRollbackJournal.Recover(database);
             database.Position = 0;
             byte[] restored = new byte[8192];
@@ -326,7 +327,7 @@ public sealed class PersistentRollbackJournalTests
                 journal.Flush(true);
             }
 
-            Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database));
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database));
             database.Position = 0;
             byte[] current = new byte[8192];
             Assert.Equal(current.Length, database.Read(current));
@@ -381,7 +382,7 @@ public sealed class PersistentRollbackJournalTests
 
             if (corrupt)
             {
-                Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database));
+                Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database));
                 Assert.True(File.Exists(path + ".jdw-journal"));
             }
             else
@@ -420,7 +421,7 @@ public sealed class PersistentRollbackJournalTests
 
             File.Copy(path + ".jdw-journal", other + ".jdw-journal");
             using var copiedDatabase = new FileStream(other, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(copiedDatabase));
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(copiedDatabase));
             Assert.True(File.Exists(other + ".jdw-journal"));
         }
         finally
@@ -446,7 +447,7 @@ public sealed class PersistentRollbackJournalTests
         try
         {
             using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database));
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database));
             byte[] current = new byte[8192];
             database.Position = 0;
             Assert.Equal(current.Length, database.Read(current));
@@ -493,7 +494,7 @@ public sealed class PersistentRollbackJournalTests
             }
 
             long length = database.Length;
-            Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database));
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database));
             Assert.Equal(length, database.Length);
             Assert.True(File.Exists(path + ".jdw-journal"));
         }
@@ -593,7 +594,7 @@ public sealed class PersistentRollbackJournalTests
         try
         {
             using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            Assert.Throws<IOException>(() => PersistentRollbackJournal.Create(database, 2048));
+            Assert.Throws<JetOperationException>(() => PersistentRollbackJournal.Create(database, 2048));
             Assert.Equal(evidence, File.ReadAllBytes(path + ".jdw-journal"));
             Assert.False(File.Exists(path + ".jdw-journal.preparing"));
         }
@@ -769,7 +770,7 @@ public sealed class PersistentRollbackJournalTests
 
             byte[] evidence = File.ReadAllBytes(sidecar);
             int callbacks = 0;
-            Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database, () => callbacks++));
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database, () => callbacks++));
             Assert.Equal(0, callbacks);
             Assert.Equal(evidence, File.ReadAllBytes(sidecar));
             byte[] current = new byte[original.Length];

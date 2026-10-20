@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -54,8 +55,8 @@ public sealed class ColumnDeclarationSafetyTests
             }
             else
             {
-                await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.CreateTableAsync("Refused", [column], ct));
-                await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.AddColumnAsync("Existing", column, ct));
+                await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.CreateTableAsync("Refused", [column], ct));
+                await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.AddColumnAsync("Existing", column, ct));
             }
 
             Assert.Equal(before, stream.ToArray());

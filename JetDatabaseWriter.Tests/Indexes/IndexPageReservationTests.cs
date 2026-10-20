@@ -39,7 +39,7 @@ public sealed class IndexPageReservationTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task TryPlaceTree_RelocatedBuildThrows_ReleasesRunAndReturnsNull(DatabaseFormat format)
+    public async Task TryPlaceTree_RelocatedBuildRefuses_ReleasesRunAndReturnsNull(DatabaseFormat format)
     {
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
@@ -60,7 +60,7 @@ public sealed class IndexPageReservationTests
         var runs = new ReservedPageRuns(allocator);
         IndexBTreeBuildResult? placed = await new IndexBTreeEditor(db.Format, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
             firstPage => ++calls == 2
-                ? throw new IndexCapacityException(nameof(firstPage), "Injected capacity refusal.")
+                ? null
                 : IndexBTreeBuilder.Build(layout, db.Format.PageSize, 2, entries, firstPage),
             runs,
             this.ct);

@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -128,7 +127,7 @@ internal sealed class IndexMaintainer(
     /// <param name="tableName">The table name.</param>
     /// <param name="rows">The row collection.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidDataException">Thrown when the system table has rows to rewrite but no data pages are present.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown when the system table has rows to rewrite but no data pages are present.</exception>
     internal async ValueTask RewriteSystemTableRowsAsync(
         long tdefPage,
         TableDef tableDef,
@@ -153,7 +152,7 @@ internal sealed class IndexMaintainer(
 
         if (dataPageNumbers.Count == 0 && rows.Count > 0)
         {
-            throw new InvalidDataException($"System table '{tableName}' has no data pages to rewrite.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"System table '{tableName}' has no data pages to rewrite.", new JetErrorInfo { TableName = tableName, PageNumber = tdefPage });
         }
 
         foreach (long pageNumber in dataPageNumbers)
@@ -245,7 +244,7 @@ internal sealed class IndexMaintainer(
     private int ReadTableUsageMapPage(byte[] tdefBuffer)
         => UsageMap.ReadUInt24(tdefBuffer, format.TDef.UsedPagesPage);
 
-    private InvalidOperationException CreateSystemTableIndexMaintenanceException(string tableName, Exception? inner = null)
+    private JetOperationException CreateSystemTableIndexMaintenanceException(string tableName, Exception? inner = null)
     {
         string message = $"Could not maintain {tableName} system-table indexes incrementally; full rebuild fallback is disabled.";
         if (!string.IsNullOrWhiteSpace(this.LastIncrementalBail))
@@ -253,7 +252,7 @@ internal sealed class IndexMaintainer(
             message += $" Bail: {this.LastIncrementalBail}.";
         }
 
-        return inner is null ? new InvalidOperationException(message) : new InvalidOperationException(message, inner);
+        return new JetOperationException(JetErrorCode.SystemIndexMaintenanceFailed, message, new JetErrorInfo { TableName = tableName, Reason = this.LastIncrementalBail }, inner);
     }
 
     /// <summary>
@@ -554,7 +553,7 @@ internal sealed class IndexMaintainer(
     /// <param name="tableDef">The table def.</param>
     /// <param name="tableName">The table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">Thrown when a unique index violation is detected after a row mutation.</exception>
+    /// <exception cref="JetOperationException">Thrown when a unique index violation is detected after a row mutation.</exception>
     /// <exception cref="JetLimitationException">Thrown when the TDEF's index section cannot be parsed or an index names a column the table does not have, so the indexes cannot be rebuilt.</exception>
     public ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
         => this.RebuildIndexesAsync(tdefPage, tableDef, tableName, writtenRows: null, cancellationToken);
@@ -571,7 +570,7 @@ internal sealed class IndexMaintainer(
     /// <param name="tableName">The table name.</param>
     /// <param name="writtenRows">Every live row of the table, in <paramref name="tableDef"/> column order, with its location; or <see langword="null"/> to decode every live row of the table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">Thrown when a unique index violation is detected after a row mutation.</exception>
+    /// <exception cref="JetOperationException">Thrown when a unique index violation is detected after a row mutation.</exception>
     /// <exception cref="JetLimitationException">Thrown when the TDEF's index section cannot be parsed or an index names a column the table does not have, so the indexes cannot be rebuilt.</exception>
     /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
     internal async ValueTask RebuildIndexesAsync(
@@ -719,12 +718,13 @@ internal sealed class IndexMaintainer(
                 {
                     IndexBTreeBuildResult? placed = await this.btreeEditor.PlaceBuiltTreeAsync(
                         build,
-                        firstPage => IndexBTreeBuilder.Build(leafLayout, format.PageSize, tdefPage, entries, firstPage),
+                        firstPage => IndexBTreeBuilder.TryBuild(leafLayout, format.PageSize, tdefPage, entries, firstPage),
                         runs,
                         cancellationToken).ConfigureAwait(false);
-                    build = placed ?? throw new ArgumentOutOfRangeException(
-                        nameof(tdefPage),
-                        $"The rebuilt B-tree of real index {rieKey} on table '{tableName}' no longer fits at the pages the allocator reserved for it.");
+                    build = placed ?? throw new JetLimitationException(
+                        JetErrorCode.IndexEntryTooLarge,
+                        $"The rebuilt B-tree of real index {rieKey} on table '{tableName}' no longer fits at the pages the allocator reserved for it.",
+                        new JetErrorInfo { TableName = tableName, PageNumber = tdefPage });
 
                     rootPageNumber = build.RootPageNumber;
                     pageNumbers = new long[build.Pages.Count];
@@ -2276,13 +2276,13 @@ internal sealed class IndexMaintainer(
             cancellationToken.ThrowIfCancellationRequested();
             if (pageNumber >= pager.PageCount || !seen.Add(pageNumber))
             {
-                throw new JetCorruptDataException("The preserved catalog index contains an invalid leaf chain.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The preserved catalog index contains an invalid leaf chain.", new JetErrorInfo { PageNumber = pageNumber });
             }
 
             byte[] leaf = await pager.ReadPageCopyAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
-                throw new JetCorruptDataException("The preserved catalog index chain contains a non-leaf page.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The preserved catalog index chain contains a non-leaf page.", new JetErrorInfo { PageNumber = pageNumber });
             }
 
             entries.AddRange(DecodeRequiredCatalogLeaf(pageNumber, leaf, format));
@@ -2297,7 +2297,7 @@ internal sealed class IndexMaintainer(
     /// concatenating. Honours Jet4's legacy fixed-point byte-twiddling for
     /// <c>Numeric</c> columns (<see cref="JetFormat.LegacyNumericIndexKeys"/>). Throws
     /// whatever <see cref="IndexKeyEncoder"/> throws on encoder rejection
-    /// (<see cref="NotSupportedException"/> / <see cref="ArgumentException"/>
+    /// (<see cref="JetNotSupportedException"/> / <see cref="ArgumentException"/>
     /// / <see cref="OverflowException"/>); callers that want soft-fail
     /// behaviour should use <see cref="TryEncodeCompositeKey"/>.
     /// </summary>
@@ -2331,12 +2331,11 @@ internal sealed class IndexMaintainer(
     }
 
     /// <summary>
-    /// Soft-fail wrapper over <see cref="EncodeCompositeKey"/>: gathers the
+    /// Candidate encoder for the composite key: gathers the
     /// per-column cells for <paramref name="row"/> against
     /// <paramref name="keyColInfos"/>'s snapshot indices and returns
-    /// <see langword="null"/> when the row is too short or any encoder
-    /// rejects (<see cref="NotSupportedException"/>,
-    /// <see cref="ArgumentException"/>, or <see cref="OverflowException"/>).
+    /// <see langword="null"/> when the row is too short or a value exceeds
+    /// the declared key type or capacity.
     /// Used by the incremental + catalog-splice paths to bail to bulk on any
     /// encoder rejection.
     /// </summary>
@@ -2344,27 +2343,37 @@ internal sealed class IndexMaintainer(
     /// <param name="row">The row values or row bytes.</param>
     private byte[]? TryEncodeCompositeKey(List<KeyColumnInfo> keyColInfos, object[] row)
     {
-        object?[] cells = new object?[keyColInfos.Count];
+        byte[][] pieces = new byte[keyColInfos.Count][];
+        int totalLength = 0;
         for (int k = 0; k < keyColInfos.Count; k++)
         {
             int snapIdx = keyColInfos[k].SnapIdx;
-            if (snapIdx >= row.Length)
+            if (snapIdx < 0 || snapIdx >= row.Length)
             {
                 return null;
             }
 
-            object cell = row[snapIdx];
-            cells[k] = cell is DBNull ? null : cell;
+            KeyColumnInfo key = keyColInfos[k];
+            ColumnInfo column = key.Col;
+            byte[]? encoded = IndexKeyEncoder.TryEncodeColumnEntry(column.Type, row[snapIdx], key.Ascending, column.NumericScale, format.LegacyNumericIndexKeys, column.TextSortOrder, column.IsFixed && !column.IsCalculated ? column.Size : 0);
+            if (encoded is null)
+            {
+                return null;
+            }
+
+            pieces[k] = encoded;
+            totalLength += encoded.Length;
         }
 
-        try
+        byte[] composite = new byte[totalLength];
+        int offset = 0;
+        foreach (byte[] piece in pieces)
         {
-            return this.EncodeCompositeKey(keyColInfos, cells);
+            piece.AsSpan().CopyTo(composite.AsSpan(offset));
+            offset += piece.Length;
         }
-        catch (Exception ex) when (ex is NotSupportedException or ArgumentException or OverflowException)
-        {
-            return null;
-        }
+
+        return composite;
     }
 
     /// <summary>
@@ -2451,7 +2460,7 @@ internal sealed class IndexMaintainer(
     /// report as JET <c>-1601</c>.
     /// </para>
     /// </remarks>
-    /// <exception cref="InvalidOperationException">Thrown when an unexpected TdefPreambleStatus is encountered.</exception>
+    /// <exception cref="JetOperationException">Thrown when an unexpected TdefPreambleStatus is encountered.</exception>
     public async ValueTask<bool> TrySpliceCatalogIndexEntryAsync(
         long tdefPage,
         TableDef tableDef,
@@ -2477,7 +2486,7 @@ internal sealed class IndexMaintainer(
             case TdefPreambleStatus.ColumnNameWalkFailed:
                 return false;
             default:
-                throw new InvalidOperationException($"Unexpected TdefPreambleStatus {preStatus}");
+                throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Unexpected TdefPreambleStatus {preStatus}", new JetErrorInfo { PageNumber = tdefPage, Reason = "Unknown index preamble status" });
         }
 
         byte[] tdefBuf = preamble.Buffer;

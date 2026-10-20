@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Encryption;
 
 using System;
 using System.Buffers.Binary;
-using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -26,9 +25,9 @@ internal sealed class NativeStandardPageCodec(byte[] passwordHash, byte[] encodi
     /// <param name="workBudget">The aggregate password hashing budget.</param>
     /// <param name="cancellationToken">Cancellation for password hashing.</param>
     /// <returns>The unlocked original provider.</returns>
-    /// <exception cref="InvalidDataException">The descriptor is malformed.</exception>
-    /// <exception cref="NotSupportedException">The provider algorithm is unsupported.</exception>
-    /// <exception cref="UnauthorizedAccessException">The password is incorrect.</exception>
+    /// <exception cref="JetCorruptDataException">The descriptor is malformed.</exception>
+    /// <exception cref="JetNotSupportedException">The provider algorithm is unsupported.</exception>
+    /// <exception cref="JetAccessDeniedException">The password is incorrect.</exception>
     /// <exception cref="JetLimitationException">The configured cryptographic budget is exceeded.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A configured budget is invalid.</exception>
     internal static NativeStandardPageCodec Open(byte[] header, ReadOnlySpan<char> password, int maxSpinCount, int maxDescriptorBytes, EncryptionWorkBudget? workBudget = null, CancellationToken cancellationToken = default)
@@ -46,13 +45,13 @@ internal sealed class NativeStandardPageCodec(byte[] passwordHash, byte[] encodi
         const int infoOffset = 0x29B;
         if (unmasked.Length < infoOffset + 12)
         {
-            throw new InvalidDataException("The native ACE encryption descriptor is truncated.");
+            throw Corrupt("The native ACE encryption descriptor is truncated.");
         }
 
         int length = BinaryPrimitives.ReadUInt16LittleEndian(unmasked.AsSpan(0x299));
         if (length < 12 || length > Math.Min(unmasked.Length, 4096) - infoOffset)
         {
-            throw new InvalidDataException("The native ACE encryption descriptor length is invalid.");
+            throw Corrupt("The native ACE encryption descriptor length is invalid.");
         }
 
         if (length > maxDescriptorBytes)
@@ -66,13 +65,13 @@ internal sealed class NativeStandardPageCodec(byte[] passwordHash, byte[] encodi
         uint flags = BinaryPrimitives.ReadUInt32LittleEndian(info[4..]);
         if (major is not 2 and not 3 and not 4 || minor != 2 || (flags & 0x14) != 4)
         {
-            throw new NotSupportedException("The native ACE binary encryption provider is unsupported.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "The native ACE binary encryption provider is unsupported.");
         }
 
         int headerSize = BinaryPrimitives.ReadInt32LittleEndian(info[8..]);
         if (headerSize < 32 || headerSize > info.Length - 12 || (headerSize & 1) != 0)
         {
-            throw new InvalidDataException("The native ACE EncryptionHeader size is invalid.");
+            throw Corrupt("The native ACE EncryptionHeader size is invalid.");
         }
 
         ReadOnlySpan<byte> provider = info.Slice(12, headerSize);
@@ -82,7 +81,7 @@ internal sealed class NativeStandardPageCodec(byte[] passwordHash, byte[] encodi
         int bits = BinaryPrimitives.ReadInt32LittleEndian(provider[16..]);
         if (providerFlags != flags || BinaryPrimitives.ReadUInt32LittleEndian(provider[4..]) != 0 || hashAlgorithm is not 0 and not 0x8004)
         {
-            throw new InvalidDataException("The native ACE provider flags, extra size or hash algorithm are invalid.");
+            throw Corrupt("The native ACE provider flags, extra size or hash algorithm are invalid.");
         }
 
         if (algorithm == 0)
@@ -94,12 +93,12 @@ internal sealed class NativeStandardPageCodec(byte[] passwordHash, byte[] encodi
         int aesBits = algorithm switch { 0x660E => 128, 0x660F => 192, 0x6610 => 256, _ => 0 };
         if (!isRc4 && aesBits == 0)
         {
-            throw new NotSupportedException($"Native ACE encryption algorithm 0x{algorithm:X} is unsupported.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Native ACE encryption algorithm 0x{algorithm:X} is unsupported.");
         }
 
         if ((isRc4 && (flags & 0x20) != 0) || (!isRc4 && major == 2))
         {
-            throw new InvalidDataException("The native ACE provider algorithm contradicts its version or AES flag.");
+            throw Corrupt("The native ACE provider algorithm contradicts its version or AES flag.");
         }
 
         if (bits == 0)
@@ -111,7 +110,7 @@ internal sealed class NativeStandardPageCodec(byte[] passwordHash, byte[] encodi
 
         if (isRc4 ? bits is < 40 or > 128 || bits % 8 != 0 : bits != aesBits)
         {
-            throw new InvalidDataException("The native ACE provider key length is invalid.");
+            throw Corrupt("The native ACE provider key length is invalid.");
         }
 
         // Compatibility-mode AES descriptors omit fAES and use no iterations.
@@ -125,7 +124,7 @@ internal sealed class NativeStandardPageCodec(byte[] passwordHash, byte[] encodi
         int hashLength = isRc4 ? 20 : 32;
         if (verifier.Length != 40 + hashLength || BinaryPrimitives.ReadInt32LittleEndian(verifier) != 16 || BinaryPrimitives.ReadInt32LittleEndian(verifier[36..]) != 20)
         {
-            throw new InvalidDataException("The native ACE password verifier sizes are invalid.");
+            throw Corrupt("The native ACE password verifier sizes are invalid.");
         }
 
         workBudget?.Charge(iterations);
@@ -169,7 +168,7 @@ internal sealed class NativeStandardPageCodec(byte[] passwordHash, byte[] encodi
                 if (!OfficeCryptoPrimitives.FixedTimeEquals(expected, plain.AsSpan(16), 20))
                 {
                     codec.Dispose();
-                    throw new UnauthorizedAccessException("The provided password is incorrect for this database.");
+                    throw new JetAccessDeniedException(JetErrorCode.PasswordIncorrect, "The provided password is incorrect for this database.");
                 }
 
                 return codec;
@@ -205,6 +204,11 @@ internal sealed class NativeStandardPageCodec(byte[] passwordHash, byte[] encodi
         CryptographicOperations.ZeroMemory(passwordHash);
         CryptographicOperations.ZeroMemory(encodingKey);
     }
+
+    private static JetCorruptDataException Corrupt(string message) => new(
+        JetErrorCode.CorruptEncryptionDescriptor,
+        message,
+        new JetErrorInfo { ObjectName = "EncryptionInfo", PageNumber = 0, Reason = message });
 
     private byte[] DeriveKey(uint block)
     {
@@ -263,7 +267,7 @@ internal sealed class NativeStandardPageCodec(byte[] passwordHash, byte[] encodi
 
         if (pageSize != 4096)
         {
-            throw new InvalidDataException("Native ACE encryption requires a complete 4096-byte page.");
+            throw Corrupt("Native ACE encryption requires a complete 4096-byte page.");
         }
 
         byte[] key = this.DeriveKey(checked((uint)pageNumber) ^ BinaryPrimitives.ReadUInt32LittleEndian(encodingKey));

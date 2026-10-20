@@ -126,6 +126,15 @@ public enum JetErrorCode
     /// <summary>Identifies TransactionNestingLimit.</summary>
     TransactionNestingLimit = 511,
 
+    /// <summary>The operation cannot run in its current state.</summary>
+    InvalidOperationState = 512,
+
+    /// <summary>The text reader protocol was violated.</summary>
+    ReadProtocolViolation = 513,
+
+    /// <summary>A diagnostic callback attempted to enter database operations or disposal.</summary>
+    ReentrantDiagnosticCall = 514,
+
     /// <summary>Identifies PasswordRequired.</summary>
     PasswordRequired = 601,
 
@@ -165,6 +174,27 @@ public enum JetErrorCode
     /// <summary>Identifies UnknownColumnType.</summary>
     UnknownColumnType = 708,
 
+    /// <summary>The physical page layout is corrupt.</summary>
+    CorruptPage = 709,
+
+    /// <summary>The page allocation map is corrupt.</summary>
+    CorruptUsageMap = 710,
+
+    /// <summary>The recovery journal is corrupt.</summary>
+    CorruptRecoveryJournal = 711,
+
+    /// <summary>The database header is corrupt.</summary>
+    CorruptDatabaseHeader = 712,
+
+    /// <summary>The compound file structure is corrupt.</summary>
+    CorruptCompoundFile = 713,
+
+    /// <summary>The native encryption descriptor is corrupt.</summary>
+    CorruptEncryptionDescriptor = 714,
+
+    /// <summary>The linked delimited text is malformed.</summary>
+    CorruptDelimitedText = 715,
+
     /// <summary>Identifies ValueTooLarge.</summary>
     ValueTooLarge = 801,
 
@@ -197,6 +227,9 @@ public enum JetErrorCode
 
     /// <summary>Identifies SchemaTraversalBudgetExceeded.</summary>
     SchemaTraversalBudgetExceeded = 811,
+
+    /// <summary>The linked source exceeds the configured read budget.</summary>
+    LinkedSourceBudgetExceeded = 812,
 
     /// <summary>Identifies FeatureNotSupported.</summary>
     FeatureNotSupported = 901,

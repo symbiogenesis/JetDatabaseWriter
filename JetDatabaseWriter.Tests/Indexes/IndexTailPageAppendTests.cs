@@ -6,6 +6,7 @@ using System.Data;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
@@ -56,7 +57,7 @@ public sealed class IndexTailPageAppendTests
         await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
         await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken);
 
-        NotSupportedException ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        JetNotSupportedException ex = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
             await writer.CreateTableAsync(
                 "OleIdxRejected",
                 [
@@ -80,7 +81,7 @@ public sealed class IndexTailPageAppendTests
         await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
         await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
             await writer.CreateTableAsync(
                 "MixedOleIdxRejected",
                 [

@@ -39,7 +39,7 @@ public sealed class QualifiedExpressionReferenceTests
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(reference + " * 2");
         Assert.Equal(8m, Assert.IsType<decimal>(plan.Evaluate(Context("Renamed T"))));
         Assert.False(ColumnDefaultValue.Compile(reference).TryEvaluate(typeof(int), () => Context("Renamed T"), out _));
-        Assert.Throws<NotSupportedException>(() => CalculatedExpressionParser.Parse(reference, isCalculatedColumn: false));
+        Assert.Throws<JetNotSupportedException>(() => CalculatedExpressionParser.Parse(reference, isCalculatedColumn: false));
     }
 
     [Theory]
@@ -123,7 +123,7 @@ public sealed class QualifiedExpressionReferenceTests
     {
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(expression);
         CalculatedExpressionEvaluationContext context = Context(tableName);
-        Assert.Throws<NotSupportedException>(() => plan.Evaluate(context));
+        Assert.Throws<JetNotSupportedException>(() => plan.Evaluate(context));
         Assert.False(ColumnDefaultValue.Compile(expression).TryEvaluate(typeof(double), () => context, out _));
         Assert.False(ColumnValidationRule.Compile(expression + " > 0", "Price").IsSupported);
     }
@@ -163,7 +163,8 @@ public sealed class QualifiedExpressionReferenceTests
     public void GeneratedPlaceholder_CannotAliasBareField()
     {
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse("[Price] + __JdwCalcCol0");
-        Assert.Throws<InvalidOperationException>(() => plan.Evaluate(Context("T")));
+        JetOperationException failure = Assert.Throws<JetOperationException>(() => plan.Evaluate(Context("T")));
+        Assert.Equal(JetErrorCode.InvalidExpression, failure.ErrorCode);
     }
 
     [Theory]
@@ -182,7 +183,7 @@ public sealed class QualifiedExpressionReferenceTests
     {
         Assert.False(ColumnDefaultValue.Compile(reference + " * 3").TryEvaluate(typeof(int), () => Context("T"), out _));
         Assert.False(ColumnValidationRule.Compile(reference + " > 0", "Price").IsSupported);
-        Assert.Throws<NotSupportedException>(() => CalculatedExpressionParser.Parse(reference + " > 0", isCalculatedColumn: false));
+        Assert.Throws<JetNotSupportedException>(() => CalculatedExpressionParser.Parse(reference + " > 0", isCalculatedColumn: false));
     }
 
     [Theory]
@@ -246,7 +247,7 @@ public sealed class QualifiedExpressionReferenceTests
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
         {
-            await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.SetTableValidationRuleAsync(
+            await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.SetTableValidationRuleAsync(
                 "T", new TableValidationRule(reference + " > 0"), TestContext.Current.CancellationToken));
             Assert.Equal(before, stream.ToArray());
         }

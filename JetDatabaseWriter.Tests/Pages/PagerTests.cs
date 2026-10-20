@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Paging;
@@ -226,7 +227,7 @@ public sealed class PagerTests
             var journal = new PagerTransaction(gate.PhysicalLengthBytes, pager.PageSize, maxPages: 4);
             gate.Attach(journal);
             Assert.Same(journal, gate.Current);
-            _ = Assert.Throws<InvalidOperationException>(() => gate.Attach(new PagerTransaction(gate.PhysicalLengthBytes, pager.PageSize, maxPages: 4)));
+            _ = Assert.Throws<JetOperationException>(() => gate.Attach(new PagerTransaction(gate.PhysicalLengthBytes, pager.PageSize, maxPages: 4)));
             gate.Detach();
             Assert.Null(gate.Current);
         }

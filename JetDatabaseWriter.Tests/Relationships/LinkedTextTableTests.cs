@@ -597,7 +597,7 @@ public sealed class LinkedTextTableTests : IDisposable
         var options = new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()), LinkedTextMaxFieldLength = 4 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException exception = await Assert.ThrowsAsync<JetLimitationException>(async () =>
             await reader.ReadTableAsync("LinkedFieldBudgetCsv", cancellationToken: ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxFieldLength), exception.Message, StringComparison.Ordinal);
     }
@@ -626,11 +626,11 @@ public sealed class LinkedTextTableTests : IDisposable
         var options = new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()), LinkedTextMaxRecordLength = 10 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
-        InvalidDataException countException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException countException = await Assert.ThrowsAsync<JetLimitationException>(async () =>
             await reader.GetRealRowCountAsync("LinkedRecordBudgetCsv", ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxRecordLength), countException.Message, StringComparison.Ordinal);
 
-        InvalidDataException tableException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException tableException = await Assert.ThrowsAsync<JetLimitationException>(async () =>
             await reader.ReadTableAsync("LinkedRecordBudgetCsv", cancellationToken: ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxRecordLength), tableException.Message, StringComparison.Ordinal);
     }
@@ -658,11 +658,11 @@ public sealed class LinkedTextTableTests : IDisposable
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()) }, cancellationToken: ct);
 
-        InvalidDataException countException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetCorruptDataException countException = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await reader.GetRealRowCountAsync("LinkedMissingQuoteCsv", ct));
         Assert.Contains("closing quote", countException.Message, StringComparison.OrdinalIgnoreCase);
 
-        InvalidDataException tableException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetCorruptDataException tableException = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await reader.ReadTableAsync("LinkedMissingQuoteCsv", cancellationToken: ct));
         Assert.Contains("closing quote", tableException.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -691,11 +691,11 @@ public sealed class LinkedTextTableTests : IDisposable
         var options = new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()), LinkedTextMaxColumnCount = 3 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
-        InvalidDataException countException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException countException = await Assert.ThrowsAsync<JetLimitationException>(async () =>
             await reader.GetRealRowCountAsync("LinkedColumnBudgetCsv", ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxColumnCount), countException.Message, StringComparison.Ordinal);
 
-        InvalidDataException tableException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException tableException = await Assert.ThrowsAsync<JetLimitationException>(async () =>
             await reader.ReadTableAsync("LinkedColumnBudgetCsv", cancellationToken: ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxColumnCount), tableException.Message, StringComparison.Ordinal);
     }
@@ -762,7 +762,7 @@ public sealed class LinkedTextTableTests : IDisposable
         DataRow row = Assert.Single(preview.Rows.Cast<DataRow>());
         Assert.Equal("ok", row["Note"]);
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException exception = await Assert.ThrowsAsync<JetLimitationException>(async () =>
             await reader.ReadTableAsync("LinkedPreviewBudgetCsv", cancellationToken: ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxFieldLength), exception.Message, StringComparison.Ordinal);
     }
@@ -816,11 +816,11 @@ public sealed class LinkedTextTableTests : IDisposable
         var options = new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()), LinkedTextMaxSourceFileBytes = 8 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
-        InvalidDataException countException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException countException = await Assert.ThrowsAsync<JetLimitationException>(async () =>
             await reader.GetRealRowCountAsync("LinkedSourceSizeCsv", ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxSourceFileBytes), countException.Message, StringComparison.Ordinal);
 
-        InvalidDataException tableException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException tableException = await Assert.ThrowsAsync<JetLimitationException>(async () =>
             await reader.ReadTableAsync("LinkedSourceSizeCsv", cancellationToken: ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxSourceFileBytes), tableException.Message, StringComparison.Ordinal);
     }
@@ -852,7 +852,7 @@ public sealed class LinkedTextTableTests : IDisposable
         DataTable preview = await reader.ReadTableAsync("LinkedMaterializedRowsCsv", maxRows: 1, cancellationToken: ct);
         Assert.Single(preview.Rows);
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException exception = await Assert.ThrowsAsync<JetLimitationException>(async () =>
             await reader.ReadTableAsync("LinkedMaterializedRowsCsv", cancellationToken: ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxMaterializedRows), exception.Message, StringComparison.Ordinal);
     }
@@ -886,7 +886,7 @@ public sealed class LinkedTextTableTests : IDisposable
         Assert.Equal("Ada", row.Name);
         Assert.Empty(await reader.ReadTableAsync<LinkedTextRow>("LinkedTypedRowsCsv", maxRows: 0, ct));
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException exception = await Assert.ThrowsAsync<JetLimitationException>(async () =>
             await reader.ReadTableAsync<LinkedTextRow>("LinkedTypedRowsCsv", cancellationToken: ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxMaterializedRows), exception.Message, StringComparison.Ordinal);
     }
@@ -921,7 +921,7 @@ public sealed class LinkedTextTableTests : IDisposable
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
 
-        UnauthorizedAccessException exception = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        JetAccessDeniedException exception = await Assert.ThrowsAsync<JetAccessDeniedException>(async () =>
             await reader.ReadTableAsync("LinkedReparseCsv", cancellationToken: ct));
         Assert.Contains("resolver", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -1022,7 +1022,7 @@ public sealed class LinkedTextTableTests : IDisposable
         var options = new AccessReaderOptions { LinkedSourceResolver = static (_, _, _) => throw new InvalidOperationException("Unsafe text hints must be refused before resolution.") };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        await Assert.ThrowsAsync<JetAccessDeniedException>(async () =>
             await reader.ReadTableAsync("LinkedEscapedCsv", cancellationToken: ct));
     }
 
@@ -1068,7 +1068,7 @@ public sealed class LinkedTextTableTests : IDisposable
             leaveOpen: true,
             ct);
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        await Assert.ThrowsAsync<JetAccessDeniedException>(async () =>
             await reader.ReadTableAsync("LinkedStreamCsv", cancellationToken: ct));
     }
 
@@ -1145,7 +1145,7 @@ public sealed class LinkedTextTableTests : IDisposable
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()) }, cancellationToken: ct);
 
-        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        JetNotSupportedException exception = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
             await reader.ReadTableAsync("LinkedUnsupportedFormatText", cancellationToken: ct));
         Assert.Contains(expectedFormat, exception.Message, StringComparison.Ordinal);
     }

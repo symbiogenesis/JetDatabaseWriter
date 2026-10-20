@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -366,7 +367,7 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
     private static async Task AssertRefusedAsync(string path, string? password)
     {
         var options = new AccessReaderOptions { UseLockFile = false, Password = password.AsMemory() };
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(string.IsNullOrEmpty(password) ? JetErrorCode.PasswordRequired : JetErrorCode.PasswordIncorrect, async () =>
         {
             await using AccessReader reader = await AccessReader.OpenAsync(path, options, Ct);
         });

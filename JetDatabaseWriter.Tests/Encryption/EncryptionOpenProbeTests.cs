@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -194,10 +195,9 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         string lockPath = LockFileSlotWriter.GetLockFilePath(path);
 
         var options = new AccessWriterOptions { Password = password.AsMemory() };
-        UnauthorizedAccessException ex;
         using (FileStreamFactory.OpenTracker opens = FileStreamFactory.TrackOpens())
         {
-            ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+            await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(password is null ? JetErrorCode.PasswordRequired : JetErrorCode.PasswordIncorrect, async () =>
             {
                 await using AccessWriter writer = await AccessWriter.OpenAsync(path, options, ct);
             });
@@ -205,7 +205,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
             Assert.Equal(1, CountOpens(opens, path));
         }
 
-        Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(before, await File.ReadAllBytesAsync(path, ct));
         Assert.False(File.Exists(lockPath), "The refused open left a lock file behind.");
 
@@ -252,7 +251,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         byte[] before = backing.ToArray();
 
         var options = new AccessWriterOptions { UseLockFile = false, Password = "wrong-password".AsMemory() };
-        _ = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        _ = await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, async () =>
         {
             await using AccessWriter writer = await AccessWriter.OpenAsync(backing, options, leaveOpen: true, ct);
         });
@@ -294,12 +293,11 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         byte[] before = await File.ReadAllBytesAsync(path, ct);
 
         var options = new AccessWriterOptions { Password = "wrong-password".AsMemory() };
-        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        _ = await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, async () =>
         {
             await using AccessWriter writer = await AccessWriter.OpenAsync(path, options, ct);
         });
 
-        Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(before, await File.ReadAllBytesAsync(path, ct));
         Assert.False(File.Exists(LockFileSlotWriter.GetLockFilePath(path)), "The refused open left a lock file behind.");
     }
@@ -313,7 +311,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         CancellationToken ct = TestContext.Current.CancellationToken;
         string path = await this.WriteTempDatabaseAsync(encryption == AccessEncryptionFormat.Jet4Rc4 ? Jet4 : Ace, encryption, ct);
 
-        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        JetAccessDeniedException ex = await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordRequired, async () =>
         {
             if (byPath)
             {
@@ -328,8 +326,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
             }
         });
 
-        Assert.Contains("AccessWriterOptions.Password", ex.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("AccessReaderOptions", ex.Message, StringComparison.Ordinal);
+        Assert.Equal("AccessWriterOptions.Password", ex.ErrorInfo.ObjectName);
     }
 
     [Theory]
@@ -340,7 +337,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         string path = await this.WriteTempDatabaseAsync(encryption == AccessEncryptionFormat.Jet4Rc4 ? Jet4 : Ace, encryption, ct);
         var options = new AccessReaderOptions { UseLockFile = false };
 
-        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        JetAccessDeniedException ex = await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordRequired, async () =>
         {
             if (byPath)
             {
@@ -353,8 +350,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
             }
         });
 
-        Assert.Contains("AccessReaderOptions.Password", ex.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("AccessWriterOptions", ex.Message, StringComparison.Ordinal);
+        Assert.Equal("AccessReaderOptions.Password", ex.ErrorInfo.ObjectName);
     }
 
     // ───── Helpers ───────────────────────────────────────────────────

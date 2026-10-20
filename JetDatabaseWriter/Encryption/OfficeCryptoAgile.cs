@@ -86,7 +86,7 @@ internal static class OfficeCryptoAgile
 
     /// <summary>
     /// Decrypts an Agile-encrypted Office package. Throws
-    /// <see cref="UnauthorizedAccessException"/> when the password fails
+    /// <see cref="JetAccessDeniedException"/> when the password fails
     /// verification.
     /// </summary>
     /// <param name="encryptionInfo">The encryption info.</param>
@@ -94,7 +94,7 @@ internal static class OfficeCryptoAgile
     /// <param name="password">The password.</param>
     /// <param name="maxSpinCount">The password hashing budget.</param>
     /// <param name="maxDescriptorBytes">The XML descriptor byte budget.</param>
-    /// <exception cref="InvalidDataException">Thrown when <paramref name="encryptionInfo"/> is not an Agile 4.4 descriptor.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown when <paramref name="encryptionInfo"/> is not an Agile 4.4 descriptor.</exception>
     public static byte[] Decrypt(byte[] encryptionInfo, byte[] encryptedPackage, ReadOnlySpan<char> password, int maxSpinCount = 1_000_000, int maxDescriptorBytes = 1024 * 1024)
     {
         Guard.NotNull(encryptionInfo, nameof(encryptionInfo));
@@ -102,7 +102,7 @@ internal static class OfficeCryptoAgile
 
         if (!IsAgileEncryptionInfo(encryptionInfo))
         {
-            throw new InvalidDataException(
+            throw Corrupt(
                 "EncryptionInfo header is not in Agile (version 4.4) format.");
         }
 
@@ -263,14 +263,14 @@ internal static class OfficeCryptoAgile
     /// <param name="maxDescriptorBytes">The descriptor byte budget.</param>
     /// <returns>The codec that owns the new provider key.</returns>
     /// <param name="cancellationToken">Cancellation for provider creation.</param>
-    /// <exception cref="InvalidDataException">The supplied header is incomplete.</exception>
+    /// <exception cref="JetCorruptDataException">The supplied header is incomplete.</exception>
     /// <exception cref="JetLimitationException">The configured cryptographic budget is exceeded.</exception>
     internal static NativeAgilePageCodec CreateFlatEncryptionHeader(byte[] headerPage, ReadOnlySpan<char> password, int maxSpinCount = 1_000_000, int maxDescriptorBytes = 1024 * 1024, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (headerPage.Length != Constants.PageSizes.Jet4)
         {
-            throw new InvalidDataException("Native ACE encryption requires a complete page zero.");
+            throw Corrupt("Native ACE encryption requires a complete page zero.");
         }
 
         if (maxSpinCount < Constants.AgileEncryption.SpinCount)
@@ -294,7 +294,7 @@ internal static class OfficeCryptoAgile
                 : Ru16(target, Constants.AgileEncryption.FlatEncryptionInfoLengthOffset);
             if (Constants.AgileEncryption.FlatEncryptionInfoOffset + previousLength > target.Length)
             {
-                throw new InvalidDataException("The previous native ACE encryption descriptor exceeds page zero.");
+                throw Corrupt("The previous native ACE encryption descriptor exceeds page zero.");
             }
 
             // Native user-lock metadata follows the descriptor and must survive replacement.
@@ -337,24 +337,24 @@ internal static class OfficeCryptoAgile
     /// <param name="maxDescriptorBytes">The descriptor byte budget.</param>
     /// <param name="workBudget">The aggregate password hashing budget.</param>
     /// <param name="cancellationToken">Cancellation for password hashing.</param>
-    /// <exception cref="InvalidDataException">The native Agile descriptor is absent or malformed.</exception>
-    /// <exception cref="NotSupportedException">The native ACE provider is not Agile.</exception>
+    /// <exception cref="JetCorruptDataException">The native Agile descriptor is absent or malformed.</exception>
+    /// <exception cref="JetNotSupportedException">The native ACE provider is not Agile.</exception>
     internal static NativeAgilePageCodec CreateFlatPageCodec(byte[] headerPage, ReadOnlySpan<char> password, int maxSpinCount, int maxDescriptorBytes, EncryptionWorkBudget? workBudget = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!TryGetFlatEncryptionInfo(headerPage, out byte[] encryptionInfo))
         {
-            throw new InvalidDataException("Native ACE encryption requires a complete page-zero descriptor.");
+            throw Corrupt("Native ACE encryption requires a complete page-zero descriptor.");
         }
 
         if (Ru16(encryptionInfo, 0) != 4 || Ru16(encryptionInfo, 2) != 4)
         {
-            throw new NotSupportedException("The native ACE encryption provider is not supported.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "The native ACE encryption provider is not supported.");
         }
 
         if (!IsAgileEncryptionInfo(encryptionInfo))
         {
-            throw new InvalidDataException("The native Agile descriptor reserved flags are invalid.");
+            throw Corrupt("The native Agile descriptor reserved flags are invalid.");
         }
 
         AgileDescriptor descriptor = ParseDescriptor(encryptionInfo, maxSpinCount, maxDescriptorBytes);
@@ -388,12 +388,12 @@ internal static class OfficeCryptoAgile
     /// <param name="encrypt">Whether to encrypt.</param>
     /// <param name="hashAlgorithm">The declared digest.</param>
     /// <param name="cipherChaining">The declared cipher chaining mode.</param>
-    /// <exception cref="InvalidDataException">The page size is not the native ACE size.</exception>
+    /// <exception cref="JetCorruptDataException">The page size is not the native ACE size.</exception>
     internal static void TransformFlatPage(byte[] data, int offset, int pageNumber, int pageSize, byte[] dataKey, byte[] keyDataSalt, byte[] encodingKey, bool encrypt, string hashAlgorithm = "SHA512", string cipherChaining = "ChainingModeCBC")
     {
         if (pageSize != Constants.PageSizes.Jet4)
         {
-            throw new InvalidDataException("Native ACE encryption requires a complete 4096-byte page.");
+            throw Corrupt("Native ACE encryption requires a complete 4096-byte page.");
         }
 
         byte[] input = data.AsSpan(offset, pageSize).ToArray();
@@ -416,6 +416,22 @@ internal static class OfficeCryptoAgile
 
     private static AgileDescriptor ParseDescriptor(byte[] encryptionInfo, int maxSpinCount, int maxDescriptorBytes)
     {
+        try
+        {
+            return ParseDescriptorCore(encryptionInfo, maxSpinCount, maxDescriptorBytes);
+        }
+        catch (Exception error) when (error is XmlException or FormatException)
+        {
+            throw new JetCorruptDataException(
+                JetErrorCode.CorruptEncryptionDescriptor,
+                "Agile EncryptionInfo contains malformed XML or encoded data.",
+                new JetErrorInfo { ObjectName = "EncryptionInfo", PageNumber = 0, Reason = "Invalid XML or Base64" },
+                error);
+        }
+    }
+
+    private static AgileDescriptor ParseDescriptorCore(byte[] encryptionInfo, int maxSpinCount, int maxDescriptorBytes)
+    {
         if (maxSpinCount is < 0 or > 10_000_000)
         {
             throw new ArgumentOutOfRangeException(nameof(maxSpinCount), "The spin budget must be between zero and 10,000,000.");
@@ -428,7 +444,7 @@ internal static class OfficeCryptoAgile
 
         if (encryptionInfo.Length < 8)
         {
-            throw new InvalidDataException("Agile EncryptionInfo is missing its version header.");
+            throw Corrupt("Agile EncryptionInfo is missing its version header.");
         }
 
         if (encryptionInfo.Length - 8 > maxDescriptorBytes)
@@ -473,14 +489,14 @@ internal static class OfficeCryptoAgile
 
             if (reader.Depth > 16)
             {
-                throw new InvalidDataException("Agile EncryptionInfo XML exceeds the supported nesting depth.");
+                throw Corrupt("Agile EncryptionInfo XML exceeds the supported nesting depth.");
             }
 
             if (reader.Depth == 0)
             {
                 if (hasRoot || reader.LocalName != "encryption" || reader.NamespaceURI != encryptionNamespace)
                 {
-                    throw new InvalidDataException("Agile EncryptionInfo must have one encryption root in the Office encryption namespace.");
+                    throw Corrupt("Agile EncryptionInfo must have one encryption root in the Office encryption namespace.");
                 }
 
                 hasRoot = true;
@@ -498,14 +514,14 @@ internal static class OfficeCryptoAgile
                     continue;
                 }
 
-                throw new InvalidDataException("Agile EncryptionInfo contains a cryptographic field in the wrong namespace.");
+                throw Corrupt("Agile EncryptionInfo contains a cryptographic field in the wrong namespace.");
             }
 
             if (local == "keyData")
             {
                 if (hasKeyData || reader.Depth != 1)
                 {
-                    throw new InvalidDataException("Agile EncryptionInfo contains duplicate or misplaced keyData.");
+                    throw Corrupt("Agile EncryptionInfo contains duplicate or misplaced keyData.");
                 }
 
                 hasKeyData = true;
@@ -522,7 +538,7 @@ internal static class OfficeCryptoAgile
             {
                 if (hasDataIntegrity || reader.Depth != 1)
                 {
-                    throw new InvalidDataException("Agile EncryptionInfo contains duplicate or misplaced dataIntegrity.");
+                    throw Corrupt("Agile EncryptionInfo contains duplicate or misplaced dataIntegrity.");
                 }
 
                 hasDataIntegrity = true;
@@ -533,7 +549,7 @@ internal static class OfficeCryptoAgile
             {
                 if (reader.Depth != 2)
                 {
-                    throw new InvalidDataException("Agile EncryptionInfo contains a misplaced keyEncryptor.");
+                    throw Corrupt("Agile EncryptionInfo contains a misplaced keyEncryptor.");
                 }
 
                 string? uri = reader.GetAttribute("uri");
@@ -543,7 +559,7 @@ internal static class OfficeCryptoAgile
             {
                 if (hasPasswordKey || reader.Depth != 3)
                 {
-                    throw new InvalidDataException("Agile EncryptionInfo contains duplicate or misplaced password encryptedKey.");
+                    throw Corrupt("Agile EncryptionInfo contains duplicate or misplaced password encryptedKey.");
                 }
 
                 hasPasswordKey = true;
@@ -566,7 +582,7 @@ internal static class OfficeCryptoAgile
             d.EncryptedKeyValue.Length == 0 || d.EncryptedVerifierHashInput.Length == 0 ||
             d.EncryptedVerifierHashValue.Length == 0)
         {
-            throw new InvalidDataException("Agile EncryptionInfo XML is missing required fields.");
+            throw Corrupt("Agile EncryptionInfo XML is missing required fields.");
         }
 
         int passwordHashSize = OfficeCryptoPrimitives.HashSize(d.PasswordHashAlgorithm);
@@ -575,8 +591,7 @@ internal static class OfficeCryptoAgile
         if (!string.Equals(d.PasswordCipherAlgorithm, "AES", StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(d.KeyDataCipherAlgorithm, "AES", StringComparison.OrdinalIgnoreCase))
         {
-            throw new NotSupportedException(
-                $"Agile encryption cipher '{d.PasswordCipherAlgorithm}' / '{d.KeyDataCipherAlgorithm}' is not supported (only AES).");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Agile encryption cipher '{d.PasswordCipherAlgorithm}' / '{d.KeyDataCipherAlgorithm}' is not supported (only AES).");
         }
 
         // MS-OFFCRYPTO 2.3.4.10 bounds spinCount to 10,000,000.
@@ -591,14 +606,14 @@ internal static class OfficeCryptoAgile
             || d.EncryptedVerifierHashValue.Length != (passwordHashSize + 15) / 16 * 16
             || d.EncryptedKeyValue.Length != ((d.KeyDataKeyBits / 8) + 15) / 16 * 16)
         {
-            throw new InvalidDataException("Agile EncryptionInfo contains inconsistent or unsupported cryptographic parameter sizes.");
+            throw Corrupt("Agile EncryptionInfo contains inconsistent or unsupported cryptographic parameter sizes.");
         }
 
         if (hasDataIntegrity
             && (d.EncryptedHmacKey.Length != (d.KeyDataSaltSize + 15) / 16 * 16
                 || d.EncryptedHmacValue.Length != (d.KeyDataHashSize + 15) / 16 * 16))
         {
-            throw new InvalidDataException("Agile EncryptionInfo contains incomplete or inconsistent data integrity fields.");
+            throw Corrupt("Agile EncryptionInfo contains incomplete or inconsistent data integrity fields.");
         }
 
         if (d.SpinCount > maxSpinCount)
@@ -609,7 +624,7 @@ internal static class OfficeCryptoAgile
         if (d.KeyDataCipherChaining is not "ChainingModeCBC" and not "ChainingModeCFB"
             || d.PasswordCipherChaining is not "ChainingModeCBC" and not "ChainingModeCFB")
         {
-            throw new NotSupportedException("Only Agile AES CBC and byte-feedback CFB chaining are supported.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Only Agile AES CBC and byte-feedback CFB chaining are supported.");
         }
 
         return d;
@@ -620,7 +635,7 @@ internal static class OfficeCryptoAgile
         string? raw = reader.GetAttribute(name);
         if (!int.TryParse(raw, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int value))
         {
-            throw new InvalidDataException($"Agile EncryptionInfo attribute '{name}' is missing or not a supported unsigned integer.");
+            throw Corrupt($"Agile EncryptionInfo attribute '{name}' is missing or not a supported unsigned integer.");
         }
 
         return value;
@@ -661,8 +676,7 @@ internal static class OfficeCryptoAgile
 
             if (!OfficeCryptoPrimitives.FixedTimeEquals(expectedHash, storedHash, expectedHash.Length))
             {
-                throw new UnauthorizedAccessException(
-                    "The provided password is incorrect for this database.");
+                throw new JetAccessDeniedException(JetErrorCode.PasswordIncorrect, "The provided password is incorrect for this database.");
             }
 
             // 2. Recover the intermediate key.
@@ -688,14 +702,14 @@ internal static class OfficeCryptoAgile
 
     /// <summary>
     /// MS-OFFCRYPTO §2.3.4.14 — verifies the <c>dataIntegrity</c> HMAC over
-    /// the EncryptedPackage. Throws <see cref="InvalidDataException"/> on
+    /// the EncryptedPackage. Throws <see cref="JetCorruptDataException"/> on
     /// mismatch. Skips verification only when the descriptor omits the
     /// optional dataIntegrity element. Present integrity fields are validated during parsing.
     /// </summary>
     /// <param name="d">The Agile encryption descriptor.</param>
     /// <param name="intermediateKey">The intermediate key.</param>
     /// <param name="encryptedPackage">The encrypted package.</param>
-    /// <exception cref="InvalidDataException">Thrown when the computed package HMAC does not match the stored integrity data.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown when the computed package HMAC does not match the stored integrity data.</exception>
     private static void VerifyDataIntegrity(AgileDescriptor d, byte[] intermediateKey, byte[] encryptedPackage)
     {
         if (d.EncryptedHmacKey.Length == 0 || d.EncryptedHmacValue.Length == 0)
@@ -725,7 +739,7 @@ internal static class OfficeCryptoAgile
 
             if (!OfficeCryptoPrimitives.FixedTimeEquals(computedHmac, storedHmac, d.KeyDataHashSize))
             {
-                throw new InvalidDataException(
+                throw CorruptPackage(
                     "Package integrity check failed: the EncryptedPackage HMAC does not match the stored dataIntegrity value.");
             }
         }
@@ -749,14 +763,14 @@ internal static class OfficeCryptoAgile
     {
         if (encryptedPackage.Length < 8)
         {
-            throw new InvalidDataException("EncryptedPackage stream is missing its size prefix.");
+            throw CorruptPackage("EncryptedPackage stream is missing its size prefix.");
         }
 
         long size = Ri64(encryptedPackage, 0);
         if (size is < 0 or > int.MaxValue
             || (size + descriptor.KeyDataBlockSize - 1) / descriptor.KeyDataBlockSize * descriptor.KeyDataBlockSize > encryptedPackage.Length - 8L)
         {
-            throw new InvalidDataException("EncryptedPackage length cannot contain its declared plaintext size.");
+            throw CorruptPackage("EncryptedPackage length cannot contain its declared plaintext size.");
         }
     }
 
@@ -764,14 +778,14 @@ internal static class OfficeCryptoAgile
     {
         if (encryptedPackage.Length < 8)
         {
-            throw new InvalidDataException("EncryptedPackage stream is too small (missing size prefix).");
+            throw CorruptPackage("EncryptedPackage stream is too small (missing size prefix).");
         }
 
         long decryptedSize = Ri64(encryptedPackage, 0);
 
         if (decryptedSize is < 0 or > int.MaxValue)
         {
-            throw new InvalidDataException($"EncryptedPackage decrypted size out of range: {decryptedSize}.");
+            throw CorruptPackage($"EncryptedPackage decrypted size out of range: {decryptedSize}.");
         }
 
         int blockSize = d.KeyDataBlockSize;
@@ -779,7 +793,7 @@ internal static class OfficeCryptoAgile
         long requiredCipherBytes = (decryptedSize + blockSize - 1) / blockSize * blockSize;
         if (requiredCipherBytes > encryptedPackage.Length - 8L)
         {
-            throw new InvalidDataException("EncryptedPackage length cannot contain its declared plaintext size.");
+            throw CorruptPackage("EncryptedPackage length cannot contain its declared plaintext size.");
         }
 
         byte[] result = new byte[decryptedSize];
@@ -794,7 +808,7 @@ internal static class OfficeCryptoAgile
 
             if (readOffset + paddedLen > encryptedPackage.Length)
             {
-                throw new InvalidDataException(
+                throw CorruptPackage(
                     $"EncryptedPackage stream truncated at segment {segmentIndex}.");
             }
 
@@ -1392,4 +1406,14 @@ internal static class OfficeCryptoAgile
 
         public byte[] EncryptedHmacValue { get; set; } = [];
     }
+
+    private static JetCorruptDataException Corrupt(string message) => new(
+        JetErrorCode.CorruptEncryptionDescriptor,
+        message,
+        new JetErrorInfo { ObjectName = "EncryptionInfo", PageNumber = 0, Reason = message });
+
+    private static JetCorruptDataException CorruptPackage(string message) => new(
+        JetErrorCode.CorruptEncryptedPackage,
+        message,
+        new JetErrorInfo { ObjectName = "EncryptedPackage", Reason = message });
 }

@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.ValueDecoding.Models;
 
 using System.Collections.Generic;
-using System.IO;
+using JetDatabaseWriter.Exceptions;
 
 /// <summary>
 /// Cell value that the writer's row snapshots hold for a MEMO / OLE value whose
@@ -20,7 +20,7 @@ internal sealed class UnreadableLongValue(string columnName, string reason)
     /// </summary>
     /// <param name="values">The row values about to be written.</param>
     /// <param name="tableName">The table being written, for the message.</param>
-    /// <exception cref="InvalidDataException">A value cannot be read.</exception>
+    /// <exception cref="JetCorruptDataException">A value cannot be read.</exception>
     internal static void ThrowIfAny(IReadOnlyList<object?> values, string? tableName)
     {
         for (int i = 0; i < values.Count; i++)
@@ -35,10 +35,9 @@ internal sealed class UnreadableLongValue(string columnName, string reason)
     /// <inheritdoc/>
     public override string ToString() => $"(unreadable long value in column '{columnName}': {reason})";
 
-    private InvalidDataException CreateException(string? tableName)
+    private JetCorruptDataException CreateException(string? tableName)
     {
         string where = string.IsNullOrEmpty(tableName) ? $"column '{columnName}'" : $"column '{columnName}' of table '{tableName}'";
-        return new InvalidDataException(
-            $"The MEMO / OLE value in {where} cannot be read ({reason}), so the row cannot be rewritten without losing that value.");
+        return new JetCorruptDataException(JetErrorCode.UnreadableLongValue, $"The MEMO / OLE value in {where} cannot be read ({reason}), so the row cannot be rewritten without losing that value.", new JetErrorInfo { TableName = tableName, ColumnName = columnName, Reason = reason });
     }
 }

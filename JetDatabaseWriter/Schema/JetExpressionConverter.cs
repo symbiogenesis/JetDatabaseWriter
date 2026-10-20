@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Schema;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
@@ -20,7 +21,7 @@ internal static class JetExpressionConverter
     /// or returns <see langword="null"/> when the value is null / <see cref="DBNull"/>.
     /// </summary>
     /// <param name="value">The value.</param>
-    /// <exception cref="NotSupportedException">If the value's type cannot be expressed as a Jet literal (e.g. <c>byte[]</c>).</exception>
+    /// <exception cref="JetNotSupportedException">If the value's type cannot be expressed as a Jet literal (e.g. <c>byte[]</c>).</exception>
     public static string? ToJetExpression(object? value)
     {
         if (value is null or DBNull)
@@ -45,8 +46,8 @@ internal static class JetExpressionConverter
             decimal m => m.ToString(CultureInfo.InvariantCulture),
             DateTime dt => "#" + dt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + "#",
             Guid g => "{guid " + g.ToString("D", CultureInfo.InvariantCulture) + "}",
-            byte[] => throw new NotSupportedException("byte[] is not a supported DefaultValue type for Jet expression conversion."),
-            _ => throw new NotSupportedException($"DefaultValue type '{value.GetType()}' cannot be converted to a Jet expression."),
+            byte[] => throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "byte[] is not a supported DefaultValue type for Jet expression conversion."),
+            _ => throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"DefaultValue type '{value.GetType()}' cannot be converted to a Jet expression."),
         };
     }
 

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Linq;
 
 /// <summary>
@@ -23,9 +24,8 @@ internal static class AsyncOnlyQuery
 
     /// <summary>Returns the exception that enumerating a query synchronously throws.</summary>
     /// <returns>The exception to throw.</returns>
-    public static NotSupportedException EnumerationNotSupported() =>
-        new("Query<T> results are async-only and cannot be enumerated synchronously. "
-            + "Use ToListAsync, another async terminal in JetDatabaseWriter.Linq, or await foreach over AsAsyncEnumerable().");
+    public static JetNotSupportedException EnumerationNotSupported() =>
+        new(JetErrorCode.FeatureNotSupported, "Query<T> results are async-only and cannot be enumerated synchronously. Use ToListAsync, another async terminal in JetDatabaseWriter.Linq, or await foreach over AsAsyncEnumerable().");
 
     /// <summary>
     /// Returns the exception that executing <paramref name="expression"/> synchronously throws:
@@ -34,7 +34,7 @@ internal static class AsyncOnlyQuery
     /// </summary>
     /// <param name="expression">The expression handed to <c>IQueryProvider.Execute</c>.</param>
     /// <returns>The exception to throw.</returns>
-    public static NotSupportedException ExecutionNotSupported(Expression expression)
+    public static JetNotSupportedException ExecutionNotSupported(Expression expression)
     {
         if (expression is not MethodCallExpression call || typeof(IQueryable).IsAssignableFrom(expression.Type))
         {
@@ -46,6 +46,6 @@ internal static class AsyncOnlyQuery
         string remedy = AsyncTerminalNames.Contains(asyncName)
             ? $"Use {asyncName}, or materialize the rows with ToListAsync and apply '{name}' with LINQ to Objects."
             : $"Materialize the rows with ToListAsync and apply '{name}' with LINQ to Objects.";
-        return new NotSupportedException($"Query<T> results are async-only, so the synchronous operator '{name}' cannot run. {remedy}");
+        return new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Query<T> results are async-only, so the synchronous operator '{name}' cannot run. {remedy}");
     }
 }

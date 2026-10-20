@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.ValueDecoding;
 
@@ -37,19 +38,19 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
     /// <summary>Refuses unavailable linked execution even when a local cached TDEF exists.</summary>
     /// <param name="tableName">The requested table.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <exception cref="NotSupportedException">ODBC execution is unavailable.</exception>
-    /// <exception cref="UnauthorizedAccessException">No authorized source resolver was supplied.</exception>
+    /// <exception cref="JetNotSupportedException">ODBC execution is unavailable.</exception>
+    /// <exception cref="JetAccessDeniedException">No authorized source resolver was supplied.</exception>
     internal async ValueTask ThrowIfExecutionUnavailableAsync(string tableName, CancellationToken cancellationToken)
     {
         LinkedTableInfo? link = await this.FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (link?.Kind == LinkedTableKind.Odbc)
         {
-            throw new NotSupportedException($"Linked ODBC table '{tableName}' exposes cached schema only; ODBC execution is unavailable.");
+            throw new JetNotSupportedException(JetErrorCode.OdbcRowsNotAvailable, $"Linked ODBC table '{tableName}' exposes cached schema only; ODBC execution is unavailable.", new JetErrorInfo { TableName = tableName });
         }
 
         if (link is not null && policy.OpenOptions.LinkedSourceResolver is null)
         {
-            throw new UnauthorizedAccessException($"Linked table '{tableName}' requires AccessReaderOptions.LinkedSourceResolver to supply an authorized source stream.");
+            throw new JetAccessDeniedException(JetErrorCode.LinkedSourceNotPermitted, $"Linked table '{tableName}' requires AccessReaderOptions.LinkedSourceResolver to supply an authorized source stream.", new JetErrorInfo { TableName = tableName });
         }
     }
 

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
 using System.Globalization;
+using JetDatabaseWriter.Exceptions;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
@@ -381,7 +382,7 @@ internal static class AccessVariantOperators
             OperandKind.Int16 => unchecked((short)result),
             OperandKind.Int64 => result,
             OperandKind.Int32 or OperandKind.Other => unchecked((int)result),
-            _ => throw new InvalidOperationException($"Unexpected bitwise result kind '{kind}'."),
+            _ => throw new JetOperationException(JetErrorCode.InvalidExpression, $"Unexpected bitwise result kind '{kind}'."),
         };
     }
 

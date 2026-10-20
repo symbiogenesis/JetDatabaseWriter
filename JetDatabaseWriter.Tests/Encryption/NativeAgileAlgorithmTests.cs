@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -47,7 +48,7 @@ public sealed class NativeAgileAlgorithmTests
         Assert.Equal(expected, transformed);
         codec.Decode(transformed, 0, 17, 4096);
         Assert.Equal(page, transformed);
-        Assert.Throws<UnauthorizedAccessException>(() => OfficeCryptoAgile.CreateFlatPageCodec(header, "wrong", 7, 4096, cancellationToken: TestContext.Current.CancellationToken));
+        StructuredFormatAssert.Throws<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, () => OfficeCryptoAgile.CreateFlatPageCodec(header, "wrong", 7, 4096, cancellationToken: TestContext.Current.CancellationToken));
     }
 
     /// <summary>Immutable Microsoft compact outputs retain the declared alternative Agile algorithms.</summary>

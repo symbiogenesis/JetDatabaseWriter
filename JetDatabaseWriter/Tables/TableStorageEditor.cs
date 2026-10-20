@@ -402,7 +402,7 @@ internal sealed class TableStorageEditor(
         if (page[0] is not (Constants.PageTypes.Data or Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf)
             || Ri32(page, ownerOffset) != tempTdefPage)
         {
-            throw new JetCorruptDataException($"Replacement storage page {pageNumber} does not belong to temporary table {tempTdefPage}.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"Replacement storage page {pageNumber} does not belong to temporary table {tempTdefPage}.", new JetErrorInfo { PageNumber = pageNumber });
         }
 
         return ownerOffset;
@@ -567,9 +567,9 @@ internal sealed class TableStorageEditor(
     private async ValueTask CollectUnreferencedMapStorageAsync(long tdefPage, SortedSet<long> pagesToFree, CancellationToken cancellationToken)
     {
         byte[] definition = await tableDefs.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false)
-            ?? throw new JetCorruptDataException("The removed table definition is unreadable.");
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, "The removed table definition is unreadable.");
         TDefImage image = TDefCodec.Parse(format, definition)
-            ?? throw new JetCorruptDataException("The removed table definition is malformed.");
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, "The removed table definition is malformed.");
         var pointers = new HashSet<UsageMapPointer>();
         _ = UsageMap.TryReadPointer(definition, format.TDef.UsedPages, out UsageMapPointer owned);
         _ = UsageMap.TryReadPointer(definition, format.TDef.FreePages, out UsageMapPointer free);

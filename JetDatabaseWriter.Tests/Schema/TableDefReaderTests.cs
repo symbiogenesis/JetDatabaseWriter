@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
@@ -174,9 +175,9 @@ public sealed class TableDefReaderTests
         counting.Reset();
         Assert.Null(await tableDefs.ReadTDefBytesAsync(1, Ct));
         Assert.Equal(1L, Assert.Single(counting.PagesRead(pageSize)));
-        InvalidDataException ex = await Assert.ThrowsAsync<InvalidDataException>(async () => await tableDefs.ReadRequiredTableDefAsync(1, "Missing", Ct));
+        JetCorruptDataException ex = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await tableDefs.ReadRequiredTableDefAsync(1, "Missing", Ct));
         Assert.Contains("'Missing'", ex.Message, StringComparison.Ordinal);
-        _ = await Assert.ThrowsAsync<InvalidDataException>(async () => await tableDefs.ReadTDefChainAsync(1, Ct));
+        _ = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await tableDefs.ReadTDefChainAsync(1, Ct));
     }
 
     /// <summary>

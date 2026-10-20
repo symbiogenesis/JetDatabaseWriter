@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -58,7 +59,7 @@ public sealed class PersistedColumnPropertiesTests
     }
 
     [Fact]
-    public void ToJetExpression_ByteArray_Throws() => Assert.Throws<NotSupportedException>(() => JetExpressionConverter.ToJetExpression(new byte[] { 1, 2, 3 }));
+    public void ToJetExpression_ByteArray_Throws() => Assert.Throws<JetNotSupportedException>(() => JetExpressionConverter.ToJetExpression(new byte[] { 1, 2, 3 }));
 
     // ── ColumnPropertyBlockBuilder round-trip via parser ──────────────
 

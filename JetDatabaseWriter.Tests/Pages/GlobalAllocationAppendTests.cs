@@ -6,6 +6,7 @@ using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Paging;
 using Xunit;
@@ -135,12 +136,12 @@ public sealed class GlobalAllocationAppendTests
         var allocator = new PageAllocator(format, pager, new AccessWriterOptions());
         if (freeing)
         {
-            _ = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            _ = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
                 await allocator.DeallocatePageAsync(2, TestContext.Current.CancellationToken));
         }
         else
         {
-            _ = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            _ = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
                 await allocator.ReserveContiguousPagesAsync(1, TestContext.Current.CancellationToken));
         }
 
@@ -177,7 +178,7 @@ public sealed class GlobalAllocationAppendTests
         await using var pager = new Pager(stream, format.PageSize, new NoPageCodec(), true, typeof(AccessWriter), 0);
 #pragma warning restore CA2000
         var allocator = new PageAllocator(format, pager, new AccessWriterOptions());
-        _ = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        _ = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await allocator.ReserveContiguousPagesAsync(1, TestContext.Current.CancellationToken));
         Assert.Equal(baseline, stream.ToArray());
     }

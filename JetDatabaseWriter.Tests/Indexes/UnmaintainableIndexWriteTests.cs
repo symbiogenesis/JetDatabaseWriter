@@ -307,7 +307,7 @@ public sealed class UnmaintainableIndexWriteTests
         const DamagedTable layout = DamagedTable.ChainHeaderHit101;
         await using MemoryStream stream = await CreateDamagedTableAsync(format, layout);
         byte[] before = stream.ToArray();
-        await Assert.ThrowsAsync<InvalidDataException>(() => CountIndexesAsync(stream));
+        await Assert.ThrowsAsync<JetCorruptDataException>(() => CountIndexesAsync(stream));
         string lastColumn = ColumnName(ColumnCountOf(layout) - 1);
 
         _ = await WriteExpectingRefusalAsync<InvalidDataException>(
@@ -341,7 +341,7 @@ public sealed class UnmaintainableIndexWriteTests
             });
 
         Assert.Equal(before, stream.ToArray());
-        await Assert.ThrowsAsync<InvalidDataException>(() => CountIndexesAsync(stream));
+        await Assert.ThrowsAsync<JetCorruptDataException>(() => CountIndexesAsync(stream));
     }
 
     /// <summary>
@@ -549,7 +549,7 @@ public sealed class UnmaintainableIndexWriteTests
                     // page's type, so the entire chain must be refused.
                     byte[] continuation = await harness.Database.Pages.ReadPageCopyAsync(intact.PageNumbers[1], Ct);
                     Assert.Equal((byte)0x04, continuation[0]);
-                    await Assert.ThrowsAsync<InvalidDataException>(async () =>
+                    await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
                         await harness.Database.TableDefs.ReadTDefChainAsync(table.Entry.TDefPage, Ct));
                 }
             }

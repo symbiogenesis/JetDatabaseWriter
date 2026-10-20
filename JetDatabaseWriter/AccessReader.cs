@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
@@ -143,6 +144,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessReader"/> for the specified database.</returns>
     public static async ValueTask<AccessReader> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
     {
+        DiagnosticTrace.ThrowIfReentrant();
         cancellationToken.ThrowIfCancellationRequested();
         Guard.RequireExistingDatabaseFile(path, nameof(path));
 
@@ -179,7 +181,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// completion port even when the page is already in the OS cache. The path
     /// overload opens its file that way.
     /// </remarks>
-    /// <exception cref="NotSupportedException">Office compound packages are not native Microsoft Access database inputs.</exception>
+    /// <exception cref="JetNotSupportedException">Office compound packages are not native Microsoft Access database inputs.</exception>
     public static ValueTask<AccessReader> OpenAsync(Stream stream, AccessReaderOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
         => OpenCoreAsync(stream, options, leaveOpen, acquireLease: true, cancellationToken);
 
@@ -194,6 +196,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private static async ValueTask<AccessReader> OpenCoreAsync(Stream stream, AccessReaderOptions? options, bool leaveOpen, bool acquireLease, CancellationToken cancellationToken, string? linkedSourceHint = null)
     {
+        DiagnosticTrace.ThrowIfReentrant();
         Guard.NotNull(stream, nameof(stream));
 
         FileStream? snapshotLease = null;
@@ -469,17 +472,28 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Stream stream = this.Database.Pages.Stream;
         if (stream.Length < 128)
         {
-            throw new InvalidDataException("File too small to be a valid JET database");
+            throw new JetCorruptDataException(JetErrorCode.CorruptDatabaseHeader, "File too small to be a valid JET database", new JetErrorInfo { PageNumber = 0 });
         }
 
         // Verify the JET magic signature at offset 0: 00 01 00 00
         _ = stream.Seek(0, SeekOrigin.Begin);
         byte[] magic = new byte[4];
-        int read = stream.Read(magic, 0, 4);
+        int read = 0;
+        while (read < magic.Length)
+        {
+            int count = stream.Read(magic, read, magic.Length - read);
+            if (count == 0)
+            {
+                break;
+            }
+
+            read += count;
+        }
+
         if (read < 4 || magic[0] != 0x00 || magic[1] != 0x01 || magic[2] != 0x00 || magic[3] != 0x00)
         {
             string msg = $"File does not have a valid JET magic signature (expected 00 01 00 00, got {magic[0]:X2} {magic[1]:X2} {magic[2]:X2} {magic[3]:X2}).";
-            throw new InvalidDataException(msg);
+            throw new JetCorruptDataException(JetErrorCode.CorruptDatabaseHeader, msg, new JetErrorInfo { PageNumber = 0 });
         }
     }
 }

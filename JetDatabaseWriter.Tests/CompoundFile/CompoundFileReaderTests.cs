@@ -6,6 +6,7 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
+using JetDatabaseWriter.Exceptions;
 using Xunit;
 
 /// <summary>
@@ -120,16 +121,14 @@ public sealed class CompoundFileReaderTests
         }
 
         await using var stream = new MemoryStream(file, writable: false);
-        await Assert.ThrowsAsync<InvalidDataException>(
-            () => CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () => CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
     }
 
     [Fact]
     public async Task ReadStreams_FatChainLoop_ThrowsInvalidData()
     {
         await using FileStream fs = File.OpenRead(FixturePath("FatChainLoop_v3.cfs"));
-        await Assert.ThrowsAsync<InvalidDataException>(
-            () => CompoundFileReader.ReadStreamsAsync(fs, TestContext.Current.CancellationToken).AsTask());
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () => CompoundFileReader.ReadStreamsAsync(fs, TestContext.Current.CancellationToken).AsTask());
     }
 
     [Theory]
@@ -194,8 +193,7 @@ public sealed class CompoundFileReaderTests
         data[offset] = value;
 
         await using var ms = new MemoryStream(data);
-        _ = await Assert.ThrowsAsync<InvalidDataException>(
-            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
+        _ = await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
 
     /// <summary>
@@ -265,7 +263,7 @@ public sealed class CompoundFileReaderTests
     /// Same synthetic layout as <see cref="ReadStreams_SyntheticDifatExtension_RecoversStream"/>
     /// but with the DIFAT extension sector's chain-link patched to loop back
     /// to itself. The reader's DIFAT cycle-detection visited-set
-    /// catches the duplicate immediately and throws <see cref="InvalidDataException"/>.
+    /// catches the duplicate immediately and throws <see cref="JetCorruptDataException"/>.
     /// </summary>
     [Fact]
     public async Task ReadStreams_SyntheticDifatLoop_DoesNotHang()
@@ -282,11 +280,9 @@ public sealed class CompoundFileReaderTests
 
         await using var ms = new MemoryStream(file);
 
-        // Cycle detection throws InvalidDataException immediately on
+        // Cycle detection throws JetCorruptDataException immediately on
         // the second visit to sector 3.
-        InvalidDataException ex = await Assert.ThrowsAsync<InvalidDataException>(
-            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
-        Assert.Contains("cycle", ex.Message, StringComparison.OrdinalIgnoreCase);
+        _ = await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
 
     // Hostile FAT/DIFAT counts are rejected before allocation or traversal.
@@ -298,8 +294,7 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(0x2C), 0x7FFFFFFFu);
         await using var ms = new MemoryStream(file);
 
-        await Assert.ThrowsAsync<InvalidDataException>(
-            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
 
     [Fact]
@@ -311,8 +306,7 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difatOff + 508), 3);
         await using var ms = new MemoryStream(file);
 
-        await Assert.ThrowsAsync<InvalidDataException>(
-            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
 
     [Fact]
@@ -322,8 +316,7 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(0x48), 1000);
         await using var ms = new MemoryStream(file);
 
-        await Assert.ThrowsAsync<InvalidDataException>(
-            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
 
     [Theory]
@@ -335,8 +328,7 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(0x48), checked((uint)declaredCount));
         await using var ms = new MemoryStream(file);
 
-        await Assert.ThrowsAsync<InvalidDataException>(
-            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
 
     [Fact]
@@ -347,8 +339,7 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difatOffset + 508), 3);
         await using var ms = new MemoryStream(file);
 
-        await Assert.ThrowsAsync<InvalidDataException>(
-            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
 
     /// <summary>

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 
@@ -74,7 +75,7 @@ public static class ComplexCellValue
     /// <param name="cell">The <c>byte[]</c> value read from an Attachment column.</param>
     /// <returns>The parent row's attachments, with decoded file data.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="cell"/> is <see langword="null"/>.</exception>
-    /// <exception cref="FormatException"><paramref name="cell"/> is not an Attachment column cell.</exception>
+    /// <exception cref="JetCorruptDataException"><paramref name="cell"/> is not an Attachment column cell.</exception>
     public static IReadOnlyList<AttachmentRecord> ReadAttachments(byte[] cell)
     {
         using BinaryReader reader = OpenCell(cell, AttachmentKind, AttachmentKind, out _, out int conceptualTableId, out int count);
@@ -101,9 +102,9 @@ public static class ComplexCellValue
 
             return result;
         }
-        catch (EndOfStreamException ex)
+        catch (Exception ex) when (ex is EndOfStreamException or FormatException or ArgumentException)
         {
-            throw new FormatException("The complex column cell is truncated.", ex);
+            throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The complex column cell is malformed or truncated.", innerException: ex);
         }
     }
 
@@ -115,7 +116,7 @@ public static class ComplexCellValue
     /// <param name="cell">The <c>byte[]</c> value read from a Multi-value or Version-history column.</param>
     /// <returns>The parent row's values.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="cell"/> is <see langword="null"/>.</exception>
-    /// <exception cref="FormatException"><paramref name="cell"/> is not a Multi-value or Version-history column cell.</exception>
+    /// <exception cref="JetCorruptDataException"><paramref name="cell"/> is not a Multi-value or Version-history column cell.</exception>
     public static IReadOnlyList<MultiValueItem> ReadMultiValueItems(byte[] cell)
     {
         using BinaryReader reader = OpenCell(cell, MultiValueKind, VersionHistoryKind, out byte kind, out int conceptualTableId, out int count);
@@ -135,9 +136,9 @@ public static class ComplexCellValue
 
             return result;
         }
-        catch (EndOfStreamException ex)
+        catch (Exception ex) when (ex is EndOfStreamException or FormatException or ArgumentException)
         {
-            throw new FormatException("The complex column cell is truncated.", ex);
+            throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The complex column cell is malformed or truncated.", innerException: ex);
         }
     }
 
@@ -236,7 +237,7 @@ public static class ComplexCellValue
     /// <param name="kind">Receives the cell's kind byte.</param>
     /// <param name="conceptualTableId">Receives the per-row complex reference.</param>
     /// <param name="count">Receives the item count.</param>
-    /// <exception cref="FormatException"><paramref name="cell"/> is not a cell of either kind, or its item count is negative.</exception>
+    /// <exception cref="JetCorruptDataException"><paramref name="cell"/> is not a cell of either kind, or its item count is negative.</exception>
     private static BinaryReader OpenCell(byte[] cell, byte expectedKind, byte otherExpectedKind, out byte kind, out int conceptualTableId, out int count)
     {
         Guard.NotNull(cell, nameof(cell));
@@ -248,23 +249,23 @@ public static class ComplexCellValue
             || cell[1] != Magic[1]
             || cell[2] != Magic[2])
         {
-            throw new FormatException("The value is not a complex column cell.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The value is not a complex column cell.");
         }
 
         kind = cell[3];
         if (kind != expectedKind && kind != otherExpectedKind)
         {
             string expected = expectedKind == AttachmentKind ? "an Attachment" : "a Multi-value or Version-history";
-            throw new FormatException($"The complex column cell is not {expected} column cell.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, $"The complex column cell is not {expected} column cell.");
         }
 
         var reader = new BinaryReader(new MemoryStream(cell, signatureSize, cell.Length - signatureSize, writable: false), Encoding.UTF8);
         conceptualTableId = reader.ReadInt32();
         count = reader.ReadInt32();
-        if (count < 0)
+        if (count < 0 || count > cell.Length - headerSize)
         {
             reader.Dispose();
-            throw new FormatException("The complex column cell has a negative item count.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The complex column cell item count exceeds the available data.");
         }
 
         return reader;
@@ -273,9 +274,9 @@ public static class ComplexCellValue
     private static byte[] ReadByteArray(BinaryReader reader)
     {
         int length = reader.ReadInt32();
-        if (length < 0)
+        if (length < 0 || length > reader.BaseStream.Length - reader.BaseStream.Position)
         {
-            throw new FormatException("The complex column cell has a negative byte length.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The complex column cell byte length exceeds the available data.");
         }
 
         byte[] bytes = reader.ReadBytes(length);
@@ -363,7 +364,7 @@ public static class ComplexCellValue
             DateTimeTag => DateTime.FromBinary(reader.ReadInt64()),
             StringTag => reader.ReadString(),
             BytesTag => ReadByteArray(reader),
-            _ => throw new FormatException($"The complex column cell has an unknown value tag {tag.ToString(CultureInfo.InvariantCulture)}."),
+            _ => throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, $"The complex column cell has an unknown value tag {tag.ToString(CultureInfo.InvariantCulture)}."),
         };
     }
 

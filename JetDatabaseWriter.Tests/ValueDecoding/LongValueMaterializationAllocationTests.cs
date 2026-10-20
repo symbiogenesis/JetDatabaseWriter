@@ -2,10 +2,10 @@ namespace JetDatabaseWriter.Tests.ValueDecoding;
 
 using System;
 using System.Buffers;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
@@ -56,7 +56,7 @@ public sealed class LongValueMaterializationAllocationTests
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 
         Assert.True(read.IsCompleted);
-        await Assert.ThrowsAsync<InvalidDataException>(async () => await read);
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await read);
         Assert.Equal(damage is 0 or 1 ? 0 : 1, source.ReadCount);
         Assert.InRange(allocated, 0, 1024 * 1024);
     }

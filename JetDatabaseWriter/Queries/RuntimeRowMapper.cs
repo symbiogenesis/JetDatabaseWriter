@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Mapping;
 
 /// <summary>
@@ -68,7 +69,7 @@ internal static class RuntimeRowMapper
             // compiled new T() expression factory (as the generic row mapper does).
             if (t.IsAbstract || t.IsInterface || t.GetConstructor(Type.EmptyTypes) is null)
             {
-                throw new InvalidOperationException($"Type '{t}' must be a concrete class with a parameterless constructor.");
+                throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Type '{t}' must be a concrete class with a parameterless constructor.");
             }
 
             return Expression.Lambda<Func<object>>(Expression.Convert(Expression.New(t), typeof(object))).Compile();

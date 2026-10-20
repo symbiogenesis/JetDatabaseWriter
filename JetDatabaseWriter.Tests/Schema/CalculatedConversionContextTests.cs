@@ -6,6 +6,7 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Expressions;
 using Xunit;
@@ -29,7 +30,7 @@ public sealed class CalculatedConversionContextTests
     [InlineData("cstr$ ([Amount])")]
     public void Conversion_RefusedOnlyInCalculatedField(string expression)
     {
-        NotSupportedException exception = Assert.Throws<NotSupportedException>(() => CalculatedExpressionParser.Parse(expression));
+        JetNotSupportedException exception = Assert.Throws<JetNotSupportedException>(() => CalculatedExpressionParser.Parse(expression));
         Assert.Contains("calculated columns", exception.Message, StringComparison.Ordinal);
         Assert.NotNull(CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false));
     }
@@ -56,14 +57,14 @@ public sealed class CalculatedConversionContextTests
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
         byte[] before = stream.ToArray();
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.CreateTableAsync(
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.CreateTableAsync(
             "Rejected",
             [new ColumnDefinition("Flag", typeof(bool)), new ColumnDefinition("Amount", typeof(double)), CalculatedColumn(expression)],
             TestContext.Current.CancellationToken));
         Assert.Equal(before, stream.ToArray());
         await writer.CreateTableAsync("T", [new ColumnDefinition("Flag", typeof(bool)), new ColumnDefinition("Amount", typeof(double))], TestContext.Current.CancellationToken);
         before = stream.ToArray();
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.AddColumnAsync("T", CalculatedColumn(expression), TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.AddColumnAsync("T", CalculatedColumn(expression), TestContext.Current.CancellationToken));
         Assert.Equal(before, stream.ToArray());
         await writer.InsertRowAsync("T", [false, 1d], TestContext.Current.CancellationToken);
     }
@@ -104,9 +105,9 @@ public sealed class CalculatedConversionContextTests
         stream.Position = 0;
         await using AccessWriter reopened = await AccessWriter.OpenAsync(
             stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await reopened.InsertRowAsync("T", [2, DBNull.Value], TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await reopened.InsertRowAsync("T", [2, DBNull.Value], TestContext.Current.CancellationToken));
         Assert.Equal(image, stream.ToArray());
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await reopened.UpdateRowsAsync(
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await reopened.UpdateRowsAsync(
             "T", "Id", 1, new Dictionary<string, object?> { ["Id"] = 2 }, TestContext.Current.CancellationToken));
         Assert.Equal(image, stream.ToArray());
     }

@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -347,7 +348,7 @@ public sealed class QueryAggregateTests
 
         await Assert.ThrowsAsync<ArgumentNullException>("source", () => nullSource);
         await Assert.ThrowsAsync<ArgumentNullException>("selector", () => nullSelector);
-        await Assert.ThrowsAsync<NotSupportedException>(() => unsupportedSource);
+        await Assert.ThrowsAsync<JetNotSupportedException>(() => unsupportedSource);
         await Assert.ThrowsAsync<InvalidOperationException>(() => invalidSelector);
         InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(() => selectorFault);
         Assert.StartsWith(SelectorFault, error.Message, StringComparison.Ordinal);

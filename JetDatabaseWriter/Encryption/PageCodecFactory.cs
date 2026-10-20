@@ -4,6 +4,7 @@ using System;
 using System.Buffers.Binary;
 using System.Threading;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 
 /// <summary>Selects the page codec after validating the header and password.</summary>
 internal static class PageCodecFactory
@@ -17,9 +18,9 @@ internal static class PageCodecFactory
     /// <param name="maxEncryptionInfoBytes">The descriptor byte budget.</param>
     /// <param name="workBudget">The aggregate password hashing budget.</param>
     /// <param name="cancellationToken">Cancellation for password hashing.</param>
-    /// <exception cref="UnauthorizedAccessException">The native encrypted database requires a password.</exception>
-    /// <exception cref="System.IO.InvalidDataException">The native descriptor is missing or malformed.</exception>
-    /// <exception cref="NotSupportedException">The native provider is unsupported.</exception>
+    /// <exception cref="JetAccessDeniedException">The native encrypted database requires a password.</exception>
+    /// <exception cref="JetCorruptDataException">The native descriptor is missing or malformed.</exception>
+    /// <exception cref="JetNotSupportedException">The native provider is unsupported.</exception>
     /// <returns>The owned codec.</returns>
     internal static IPageCodec Open(byte[] header, DatabaseFormat format, ReadOnlyMemory<char> password, string passwordOptionName, int maxEncryptionSpinCount = 1_000_000, int maxEncryptionInfoBytes = 1024 * 1024, EncryptionWorkBudget? workBudget = null, CancellationToken cancellationToken = default)
     {
@@ -33,7 +34,7 @@ internal static class PageCodecFactory
         {
             if (password.IsEmpty)
             {
-                throw new UnauthorizedAccessException($"The native encrypted database requires a password via {passwordOptionName}.");
+                throw new JetAccessDeniedException(JetErrorCode.PasswordRequired, $"The native encrypted database requires a password via {passwordOptionName}.", new JetErrorInfo { ObjectName = passwordOptionName, PageNumber = 0 });
             }
 
             return OfficeCryptoAgile.IsFlatAgileEncrypted(header)

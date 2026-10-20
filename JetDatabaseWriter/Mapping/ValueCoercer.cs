@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Mapping;
 using System;
 using System.Globalization;
 using System.Reflection;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 
 /// <summary>
@@ -35,7 +36,7 @@ internal static class ValueCoercer
     /// </summary>
     internal static MethodInfo CoerceMethod { get; } =
         typeof(ValueCoercer).GetMethod(nameof(Coerce), BindingFlags.Public | BindingFlags.Static)
-            ?? throw new InvalidOperationException("Failed to get method info for ValueCoercer.Coerce.");
+            ?? throw new JetOperationException(JetErrorCode.InvalidOperationState, "Failed to get method info for ValueCoercer.Coerce.");
 
     /// <summary>
     /// Converts <paramref name="value"/>, read from <paramref name="columnName"/>, to

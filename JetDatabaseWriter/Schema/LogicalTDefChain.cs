@@ -69,7 +69,7 @@ internal sealed class LogicalTDefChain
                 cancellationToken.ThrowIfCancellationRequested();
                 if (seen?.Add(pageNumber) == false)
                 {
-                    throw new InvalidDataException($"TDEF chain contains a cycle at page {pageNumber}.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"TDEF chain contains a cycle at page {pageNumber}.");
                 }
 
                 int bytesToCopy = pageIndex == 0 ? pageSizeBytes : pageSizeBytes - 8;
@@ -84,7 +84,7 @@ internal sealed class LogicalTDefChain
                 {
                     if (page.Length < pageSizeBytes)
                     {
-                        throw new InvalidDataException($"TDEF page {pageNumber} is truncated.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"TDEF page {pageNumber} is truncated.");
                     }
 
                     if (page[0] != Constants.PageTypes.TableDefinition)
@@ -94,7 +94,7 @@ internal sealed class LogicalTDefChain
                             return null;
                         }
 
-                        throw new InvalidDataException($"TDEF continuation page {pageNumber} has an invalid page type.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"TDEF continuation page {pageNumber} has an invalid page type.");
                     }
 
                     long nextPage = Ru32(page, 4);
@@ -170,7 +170,7 @@ internal sealed class LogicalTDefChain
             retainPageNumbers,
             cancellationToken,
             maxLogicalBytes).ConfigureAwait(false)
-            ?? throw new NotSupportedException($"TDEF at page {startPage} could not be read.");
+            ?? throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"TDEF at page {startPage} could not be read.");
 
     internal static int GetLogicalPageCount(int pageSizeBytes, int usedLength)
     {
@@ -274,7 +274,7 @@ internal sealed class LogicalTDefChain
     /// <c>VC</c> signature there.
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">Thrown when the chain retains no physical page.</exception>
+    /// <exception cref="JetOperationException">Thrown when the chain retains no physical page.</exception>
     /// <exception cref="JetCorruptDataException">The original declared length does not identify the final retained page.</exception>
     internal async ValueTask WriteAsync(
         byte[] logicalBytes,
@@ -287,7 +287,7 @@ internal sealed class LogicalTDefChain
     {
         if (this.pageNumbers.Count == 0)
         {
-            throw new InvalidOperationException("A logical TDEF chain must retain at least one physical page before it can be written.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "A logical TDEF chain must retain at least one physical page before it can be written.");
         }
 
         if (this.preservedPadding is null)
@@ -378,7 +378,7 @@ internal sealed class LogicalTDefChain
     /// <param name="returnPage">Returns a buffer obtained from <paramref name="readPageAsync"/>.</param>
     /// <param name="writePageAsync">Writes one physical page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">The chain was read without retaining its page numbers.</exception>
+    /// <exception cref="JetOperationException">The chain was read without retaining its page numbers.</exception>
     internal async ValueTask WriteInPlaceAsync(
         Func<long, CancellationToken, ValueTask<byte[]>> readPageAsync,
         Action<byte[]> returnPage,
@@ -387,7 +387,7 @@ internal sealed class LogicalTDefChain
     {
         if (this.pageNumbers.Count == 0)
         {
-            throw new InvalidOperationException("A logical TDEF chain must retain its physical pages before it can be written in place.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "A logical TDEF chain must retain its physical pages before it can be written in place.");
         }
 
         int bodyPerContinuation = this.pageSizeBytes - 8;

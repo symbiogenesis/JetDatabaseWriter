@@ -7,6 +7,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Queries;
 
@@ -25,7 +26,7 @@ public static class AccessQueryExtensions
 {
     private static readonly MethodInfo IncludeMethodDefinition =
         typeof(AccessQueryExtensions).GetMethod(nameof(Include))
-            ?? throw new InvalidOperationException("The Include method could not be reflected.");
+            ?? throw new JetOperationException(JetErrorCode.InvalidOperationState, "The Include method could not be reflected.");
 
     private static readonly MethodInfo ThenIncludeAfterReferenceMethod = ResolveThenInclude(afterCollection: false);
 
@@ -163,7 +164,7 @@ public static class AccessQueryExtensions
     /// <param name="source">The query to read.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The first entity.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    /// <exception cref="JetOperationException">Thrown when the query produces no rows.</exception>
     public static ValueTask<T> FirstAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
         => AsAsyncEnumerable(source).FirstAsync(cancellationToken);
 
@@ -173,7 +174,7 @@ public static class AccessQueryExtensions
     /// <param name="predicate">The row predicate; pushed through the query so an index can be inferred.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The first matching entity.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when no row matches.</exception>
+    /// <exception cref="JetOperationException">Thrown when no row matches.</exception>
     public static ValueTask<T> FirstAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
     {
         Guard.NotNull(source, nameof(source));
@@ -199,7 +200,7 @@ public static class AccessQueryExtensions
     /// <param name="source">The query to read.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The single entity.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows or more than one row.</exception>
+    /// <exception cref="JetOperationException">Thrown when the query produces no rows or more than one row.</exception>
     public static ValueTask<T> SingleAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
         => AsAsyncEnumerable(source).SingleAsync(cancellationToken);
 
@@ -209,7 +210,7 @@ public static class AccessQueryExtensions
     /// <param name="predicate">The row predicate; pushed through the query so an index can be inferred.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The single matching entity.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when no row matches or more than one row matches.</exception>
+    /// <exception cref="JetOperationException">Thrown when no row matches or more than one row matches.</exception>
     public static ValueTask<T> SingleAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
     {
         Guard.NotNull(source, nameof(source));
@@ -296,7 +297,7 @@ public static class AccessQueryExtensions
     /// <param name="source">The query to read.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The last entity.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    /// <exception cref="JetOperationException">Thrown when the query produces no rows.</exception>
     public static ValueTask<T> LastAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
         => AsAsyncEnumerable(source).LastAsync(cancellationToken);
 
@@ -306,7 +307,7 @@ public static class AccessQueryExtensions
     /// <param name="predicate">The row predicate; pushed through the query so an index can be inferred.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The last matching entity.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when no row matches.</exception>
+    /// <exception cref="JetOperationException">Thrown when no row matches.</exception>
     public static ValueTask<T> LastAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
     {
         Guard.NotNull(source, nameof(source));
@@ -454,7 +455,7 @@ public static class AccessQueryExtensions
     /// <param name="selector">Projects each entity to the value being compared.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The smallest value, or <see langword="null"/> when there is none and <typeparamref name="TResult"/> is a reference or nullable type.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows and <typeparamref name="TResult"/> is a non-nullable value type.</exception>
+    /// <exception cref="JetOperationException">Thrown when the query produces no rows and <typeparamref name="TResult"/> is a non-nullable value type.</exception>
     public static ValueTask<TResult?> MinAsync<T, TResult>(this IQueryable<T> source, Expression<Func<T, TResult>> selector, CancellationToken cancellationToken = default)
         => ExtremeAsync(source, selector, keepGreater: false, cancellationToken);
 
@@ -469,7 +470,7 @@ public static class AccessQueryExtensions
     /// <param name="selector">Projects each entity to the value being compared.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The largest value, or <see langword="null"/> when there is none and <typeparamref name="TResult"/> is a reference or nullable type.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows and <typeparamref name="TResult"/> is a non-nullable value type.</exception>
+    /// <exception cref="JetOperationException">Thrown when the query produces no rows and <typeparamref name="TResult"/> is a non-nullable value type.</exception>
     public static ValueTask<TResult?> MaxAsync<T, TResult>(this IQueryable<T> source, Expression<Func<T, TResult>> selector, CancellationToken cancellationToken = default)
         => ExtremeAsync(source, selector, keepGreater: true, cancellationToken);
 
@@ -575,7 +576,7 @@ public static class AccessQueryExtensions
     /// <param name="selector">Projects each entity to the value being averaged.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The mean of the projected values.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    /// <exception cref="JetOperationException">Thrown when the query produces no rows.</exception>
     public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, int>> selector, CancellationToken cancellationToken = default)
         => await Project(source, selector).AverageAsync(cancellationToken).ConfigureAwait(false);
 
@@ -594,7 +595,7 @@ public static class AccessQueryExtensions
     /// <param name="selector">Projects each entity to the value being averaged.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The mean of the projected values.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    /// <exception cref="JetOperationException">Thrown when the query produces no rows.</exception>
     /// <exception cref="OverflowException">Thrown when the sum of the values is outside the range of <see cref="long"/>.</exception>
     public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, long>> selector, CancellationToken cancellationToken = default)
         => await Project(source, selector).AverageAsync(cancellationToken).ConfigureAwait(false);
@@ -615,7 +616,7 @@ public static class AccessQueryExtensions
     /// <param name="selector">Projects each entity to the value being averaged.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The mean of the projected values.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    /// <exception cref="JetOperationException">Thrown when the query produces no rows.</exception>
     public static async ValueTask<float> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, float>> selector, CancellationToken cancellationToken = default)
     {
         // Async LINQ seeds the sum with +0; preserve the sign when every present value is -0.
@@ -654,7 +655,7 @@ public static class AccessQueryExtensions
     /// <param name="selector">Projects each entity to the value being averaged.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The mean of the projected values.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    /// <exception cref="JetOperationException">Thrown when the query produces no rows.</exception>
     public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, double>> selector, CancellationToken cancellationToken = default)
     {
         // Async LINQ seeds the sum with +0; preserve the sign when every present value is -0.
@@ -693,7 +694,7 @@ public static class AccessQueryExtensions
     /// <param name="selector">Projects each entity to the value being averaged.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The mean of the projected values.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    /// <exception cref="JetOperationException">Thrown when the query produces no rows.</exception>
     /// <exception cref="OverflowException">Thrown when the sum of the values is outside the range of <see cref="decimal"/>.</exception>
     public static async ValueTask<decimal> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, decimal>> selector, CancellationToken cancellationToken = default)
         => await Project(source, selector).AverageAsync(cancellationToken).ConfigureAwait(false);
@@ -742,7 +743,7 @@ public static class AccessQueryExtensions
             }
         }
 
-        throw new InvalidOperationException("A ThenInclude method could not be reflected.");
+        throw new JetOperationException(JetErrorCode.InvalidOperationState, "A ThenInclude method could not be reflected.");
     }
 
     /// <summary>
@@ -752,18 +753,18 @@ public static class AccessQueryExtensions
     /// <typeparam name="T">The query element type.</typeparam>
     /// <param name="source">The query to enumerate.</param>
     /// <returns>The query as an async sequence.</returns>
-    /// <exception cref="NotSupportedException">Thrown when <paramref name="source"/> was not created by <c>AccessReader.Query&lt;T&gt;(...)</c>.</exception>
+    /// <exception cref="JetNotSupportedException">Thrown when <paramref name="source"/> was not created by <c>AccessReader.Query&lt;T&gt;(...)</c>.</exception>
     public static IAsyncEnumerable<T> AsAsyncEnumerable<T>(this IQueryable<T> source)
     {
         Guard.NotNull(source, nameof(source));
         return source as IAsyncEnumerable<T>
-            ?? throw new NotSupportedException("This async operator requires a query created by AccessReader.Query<T>(...).");
+            ?? throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "This async operator requires a query created by AccessReader.Query<T>(...).");
     }
 
     private static async ValueTask<int> ToInt32CountAsync(ValueTask<long> count) =>
         checked((int)await count.ConfigureAwait(false));
 
-    private static InvalidOperationException NoElements() => new("The sequence contains no elements.");
+    private static JetOperationException NoElements() => new(JetErrorCode.InvalidOperationState, "The sequence contains no elements.");
 
     /// <summary>
     /// Streams <paramref name="selector"/>'s value for each row the query produces. The selector
@@ -794,7 +795,7 @@ public static class AccessQueryExtensions
     /// <param name="keepGreater"><see langword="true"/> for the largest value, <see langword="false"/> for the smallest.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The smallest or largest value, or <see langword="null"/> when there is none and the result type admits it.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when there is no value and <typeparamref name="TResult"/> is a non-nullable value type.</exception>
+    /// <exception cref="JetOperationException">Thrown when there is no value and <typeparamref name="TResult"/> is a non-nullable value type.</exception>
     private static async ValueTask<TResult?> ExtremeAsync<T, TResult>(
         IQueryable<T> source,
         Expression<Func<T, TResult>> selector,

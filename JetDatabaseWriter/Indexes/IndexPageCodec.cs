@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Indexes;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -54,7 +55,7 @@ internal static class IndexPageCodec
     /// <param name="enablePrefixCompression">Whether prefix compression is enabled.</param>
     /// <param name="maxPrefixLength">The maximum prefix length.</param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry payload, or page-number fields exceed format limits.</exception>
-    /// <exception cref="IndexCapacityException">Valid entries exceed the available index page capacity.</exception>
+    /// <exception cref="JetLimitationException">Valid entries exceed the available index page capacity.</exception>
     public static byte[] BuildLeafPage(
         IndexPageLayout layout,
         int pageSize,
@@ -68,7 +69,7 @@ internal static class IndexPageCodec
     {
         if (!CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength, out int prefLen))
         {
-            throw new IndexCapacityException(nameof(entries), "Leaf page capacity exceeded.");
+            throw new JetLimitationException(JetErrorCode.IndexEntryTooLarge, "Leaf page capacity exceeded.", new JetErrorInfo { PageNumber = parentTdefPage });
         }
 
         if (pageSize <= layout.FirstEntryOffset)
@@ -111,7 +112,7 @@ internal static class IndexPageCodec
             if (entryStart + entryLen > payloadLimit)
             {
                 string message = $"Index entries do not fit on a single leaf page (need {entryStart + entryLen} bytes, have {payloadLimit}). B-tree splitting is required for tables this large.";
-                throw new IndexCapacityException(nameof(entries), message);
+                throw new JetLimitationException(JetErrorCode.IndexEntryTooLarge, message, new JetErrorInfo { PageNumber = parentTdefPage });
             }
 
             Buffer.BlockCopy(entry.Key, keyOffset, page, entryStart, keyLen);
@@ -246,7 +247,7 @@ internal static class IndexPageCodec
     /// <param name="tailPage">The tail page.</param>
     /// <param name="maxPrefixLength">The maximum prefix length.</param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry payload, or page-number fields exceed format limits.</exception>
-    /// <exception cref="IndexCapacityException">Valid entries exceed the available index page capacity.</exception>
+    /// <exception cref="JetLimitationException">Valid entries exceed the available index page capacity.</exception>
     public static byte[] BuildIntermediatePage(
         IndexPageLayout layout,
         int pageSize,
@@ -259,7 +260,7 @@ internal static class IndexPageCodec
     {
         if (!CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry.Entry, static entry => entry.ChildPage, prevPage, nextPage, tailPage, true, maxPrefixLength, out int prefLen))
         {
-            throw new IndexCapacityException(nameof(entries), "Intermediate page capacity exceeded.");
+            throw new JetLimitationException(JetErrorCode.IndexEntryTooLarge, "Intermediate page capacity exceeded.", new JetErrorInfo { PageNumber = parentTdefPage });
         }
 
         if (pageSize <= layout.FirstEntryOffset)
@@ -307,7 +308,7 @@ internal static class IndexPageCodec
 
             if (entryStart + entryLen > payloadLimit)
             {
-                throw new IndexCapacityException(nameof(entries), "Intermediate page overflow (internal error).");
+                throw new JetLimitationException(JetErrorCode.IndexEntryTooLarge, "Intermediate page overflow.", new JetErrorInfo { PageNumber = parentTdefPage });
             }
 
             Buffer.BlockCopy(key, keyOffset, page, entryStart, keyLen);
@@ -1170,7 +1171,7 @@ internal static class IndexPageCodec
         int byteOffset = layout.BitmaskOffset + (bitIndex / 8);
         if (byteOffset >= layout.FirstEntryOffset)
         {
-            throw new IndexCapacityException(parameterName, overflowMessage);
+            throw new JetLimitationException(JetErrorCode.IndexEntryTooLarge, overflowMessage, new JetErrorInfo { Reason = parameterName });
         }
 
         page[byteOffset] |= (byte)(1 << (bitIndex % 8));

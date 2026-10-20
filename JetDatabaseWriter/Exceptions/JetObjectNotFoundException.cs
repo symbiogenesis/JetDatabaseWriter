@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Exceptions;
 
 using System;
 
-/// <summary>A structured database failure compatible with <see cref="ArgumentException"/>.</summary>
+/// <summary>A structured database failure with a stable code and available context.</summary>
 /// <param name="errorCode">The stable failure code.</param>
 /// <param name="message">The failure message.</param>
 /// <param name="paramName">The offending parameter, when applicable.</param>
@@ -36,5 +36,5 @@ public sealed class JetObjectNotFoundException(JetErrorCode errorCode, string me
     public JetErrorCode ErrorCode { get; } = errorCode;
 
     /// <inheritdoc/>
-    public JetErrorInfo ErrorInfo { get; } = errorInfo ?? new JetErrorInfo();
+    public JetErrorInfo ErrorInfo { get; } = JetDatabaseWriter.Infrastructure.JetFailureMetrics.Context(errorCode, errorInfo);
 }

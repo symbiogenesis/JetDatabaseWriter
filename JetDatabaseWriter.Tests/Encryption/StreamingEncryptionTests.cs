@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Exceptions;
 using Xunit;
 
 /// <summary>Exercises bounded page conversion independently of native header preparation.</summary>
@@ -44,7 +45,9 @@ public sealed class StreamingEncryptionTests
         await using var target = new MemoryStream();
         using var codec = new XorCodec(0);
 
-        await Assert.ThrowsAsync<InvalidDataException>(async () => await EncryptionConverter.TransformPagesAsync(source, target, new byte[2048], codec, codec, TestContext.Current.CancellationToken));
+        JetCorruptDataException error = await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptPage, async () => await EncryptionConverter.TransformPagesAsync(source, target, new byte[2048], codec, codec, TestContext.Current.CancellationToken));
+        Assert.Equal(1, error.ErrorInfo.PageNumber);
+        Assert.Null(error.ErrorInfo.ObjectName);
         Assert.Equal(0, target.Length);
     }
 

@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.ValueDecoding;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -342,12 +341,12 @@ internal sealed class RowDecodePlan
     {
         if (length != JetTypeInfo.GetFixedSize(ComplexType))
         {
-            throw new ArgumentException("A Complex reference slot must contain exactly four bytes.", nameof(length));
+            throw new JetCorruptDataException(JetErrorCode.MalformedValue, "A Complex reference slot must contain exactly four bytes.");
         }
 
         if (JetTypeInfo.Ri32(page, start) <= 0)
         {
-            throw new ArgumentException("An assigned Complex reference must be positive.", nameof(page));
+            throw new JetCorruptDataException(JetErrorCode.MalformedValue, "An assigned Complex reference must be positive.");
         }
     }
 
@@ -427,7 +426,7 @@ internal sealed class RowDecodePlan
         {
             _ = LongValueReadPolicy.MissingValue(
                 column.Name,
-                new InvalidDataException("The assigned long-value slot has missing or invalid row offsets."),
+                new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "The assigned long-value slot has missing or invalid row offsets."),
                 this.strictParsing || this.PreservesLongValueBytes);
             return;
         }
@@ -530,7 +529,7 @@ internal sealed class RowDecodePlan
                 return false;
             }
 
-            throw new InvalidOperationException($"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
+            throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
         }
         catch (Exception ex) when (ex is JetLimitationException or ArgumentException or OverflowException)
         {
@@ -623,7 +622,7 @@ internal sealed class RowDecodePlan
     {
         if (this.columnOrdinals == null || result.Length < this.columnOrdinals.Length)
         {
-            throw new InvalidOperationException("Partial row decoding requires a partial-column plan and a result buffer large enough for every ordinal.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "Partial row decoding requires a partial-column plan and a result buffer large enough for every ordinal.");
         }
 
         if (!this.TryParseLayout(source, page, rowStart, rowSize, out RowLayout layout))
@@ -816,13 +815,13 @@ internal sealed class RowDecodePlan
                 return string.Empty;
             }
 
-            throw new InvalidOperationException($"Column '{column.Name}' has unknown type {JetTypeInfo.GetTypeDisplayName(column.Type)}.");
+            throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Column '{column.Name}' has unknown type {JetTypeInfo.GetTypeDisplayName(column.Type)}.", new JetErrorInfo { ColumnName = column.Name });
         }
         catch (JetLimitationException)
         {
             throw;
         }
-        catch (InvalidDataException exception) when (JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
+        catch (JetCorruptDataException exception) when (JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
         {
             _ = LongValueReadPolicy.MissingValue(column.Name, exception, this.strictParsing);
             return null!;
@@ -886,13 +885,13 @@ internal sealed class RowDecodePlan
                     this.strictParsing || this.PreservesLongValueBytes);
             }
 
-            throw new InvalidOperationException($"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");
+            throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");
         }
         catch (JetLimitationException)
         {
             throw;
         }
-        catch (InvalidDataException exception) when (JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
+        catch (JetCorruptDataException exception) when (JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
         {
             _ = LongValueReadPolicy.MissingValue(column.Name, exception, this.strictParsing);
             return null!;
@@ -990,7 +989,7 @@ internal sealed class RowDecodePlan
                 return DBNull.Value;
             }
 
-            throw new InvalidOperationException($"Column '{column.Name}' has unknown type {JetTypeInfo.GetTypeDisplayName(column.Type)}.");
+            throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Column '{column.Name}' has unknown type {JetTypeInfo.GetTypeDisplayName(column.Type)}.", new JetErrorInfo { ColumnName = column.Name });
         }
         catch (JetLimitationException)
         {
@@ -1074,7 +1073,7 @@ internal sealed class RowDecodePlan
                     this.strictParsing || this.PreservesLongValueBytes);
             }
 
-            throw new InvalidOperationException($"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");
+            throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");
         }
         catch (JetLimitationException)
         {

@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.TestSupport;
@@ -37,7 +38,7 @@ public sealed class LinkedSourceCapabilityTests
             }
 
             await using AccessReader reader = await AccessReader.OpenAsync(host, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
-            await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.GetRealRowCountAsync("Linked", TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<JetAccessDeniedException>(async () => await reader.GetRealRowCountAsync("Linked", TestContext.Current.CancellationToken));
         }
         finally
         {
@@ -57,7 +58,7 @@ public sealed class LinkedSourceCapabilityTests
         Assert.True(await reader.TryLookupTableAsync(tableName, TestContext.Current.CancellationToken));
         _ = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
         _ = await reader.GetComplexColumnsAsync(tableName, TestContext.Current.CancellationToken);
-        Type failure = kind == LinkedTableKind.Odbc ? typeof(NotSupportedException) : typeof(UnauthorizedAccessException);
+        Type failure = kind == LinkedTableKind.Odbc ? typeof(JetNotSupportedException) : typeof(JetAccessDeniedException);
         Func<Task>[] operations =
         [
             async () => _ = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken),
@@ -90,7 +91,7 @@ public sealed class LinkedSourceCapabilityTests
         }
         else
         {
-            _ = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken));
+            _ = await Assert.ThrowsAsync<JetAccessDeniedException>(async () => await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken));
         }
     }
 
@@ -306,7 +307,7 @@ public sealed class LinkedSourceCapabilityTests
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(host, options, leaveOpen: true, TestContext.Current.CancellationToken);
-        InvalidDataException failure = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.GetRealRowCountAsync("Linked", TestContext.Current.CancellationToken));
+        JetLimitationException failure = await Assert.ThrowsAsync<JetLimitationException>(async () => await reader.GetRealRowCountAsync("Linked", TestContext.Current.CancellationToken));
         Assert.Contains("depth", failure.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(2, resolutions);
         Assert.All(returned, source => Assert.True(source.Disposed));
@@ -319,7 +320,7 @@ public sealed class LinkedSourceCapabilityTests
         await using MemoryStream host = await CreateHostAsync(LinkedTableKind.Access);
         var options = new AccessReaderOptions { LinkedSourceResolver = (_, _, _) => new ValueTask<Stream>(source) };
         await using AccessReader reader = await AccessReader.OpenAsync(host, options, leaveOpen: true, TestContext.Current.CancellationToken);
-        _ = await Assert.ThrowsAsync<EndOfStreamException>(async () => await reader.GetRealRowCountAsync("Linked", TestContext.Current.CancellationToken));
+        _ = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.GetRealRowCountAsync("Linked", TestContext.Current.CancellationToken));
         Assert.True(source.Disposed);
     }
 

@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
@@ -349,7 +348,7 @@ public sealed class LogicalTDefChainTests
     public async Task ReadAsync_Cycle_RefusesInsteadOfReturningPartialSchema()
     {
         var pages = new Dictionary<long, byte[]> { [10] = CreatePage(20), [20] = CreatePage(10) };
-        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await LogicalTDefChain.ReadAsync(
                 10,
                 PageSize,
@@ -373,7 +372,7 @@ public sealed class LogicalTDefChainTests
         }
 
         var pages = new Dictionary<long, byte[]> { [10] = CreatePage(20), [20] = continuation };
-        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await LogicalTDefChain.ReadAsync(
                 10,
                 PageSize,

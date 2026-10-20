@@ -3,7 +3,7 @@ namespace JetDatabaseWriter.Pages;
 using System;
 using System.Buffers;
 using System.Collections.Generic;
-using System.IO;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -21,7 +21,7 @@ internal static class DataPageRows
     /// <param name="page">The data page, whose deleted slot still bounds the removed payload.</param>
     /// <param name="rowIndex">The newly deleted slot; existing deleted overflow targets are retained.</param>
     /// <param name="clearFreedSpace">Whether the secure-erase policy also clears the newly unused gap.</param>
-    /// <exception cref="InvalidDataException">The row directory or deleted slot has invalid bounds.</exception>
+    /// <exception cref="JetCorruptDataException">The row directory or deleted slot has invalid bounds.</exception>
     internal static void ReclaimDeletedRowSpace(JetFormat format, byte[] page, int rowIndex, bool clearFreedSpace)
     {
         int rows = Ru16(page, format.DataPage.NumRows);
@@ -29,7 +29,7 @@ internal static class DataPageRows
         if (rows > Constants.DataPage.MaxRowsPerPage || directoryEnd > format.PageSize
             || !DataPageRows.TryGetSlotBound(format, page, rowIndex, out RowBound removed))
         {
-            throw new InvalidDataException("The deleted row has invalid page bounds.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The deleted row has invalid page bounds.");
         }
 
         int first = format.PageSize;
@@ -44,7 +44,7 @@ internal static class DataPageRows
 
         if (first < directoryEnd)
         {
-            throw new InvalidDataException("The data page row directory overlaps its payload.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The data page row directory overlaps its payload.");
         }
 
         int end = removed.RowStart + removed.RowSize;

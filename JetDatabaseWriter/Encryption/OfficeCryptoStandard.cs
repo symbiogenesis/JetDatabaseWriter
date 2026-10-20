@@ -2,10 +2,10 @@ namespace JetDatabaseWriter.Encryption;
 
 using System;
 using System.Buffers;
-using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using JetDatabaseWriter.Encryption.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -30,13 +30,13 @@ internal static class OfficeCryptoStandard
 
     /// <summary>
     /// Decrypts a Standard-encrypted Office package. Throws
-    /// <see cref="UnauthorizedAccessException"/> when the password fails
+    /// <see cref="JetAccessDeniedException"/> when the password fails
     /// verification.
     /// </summary>
     /// <param name="encryptionInfo">The encryption info.</param>
     /// <param name="encryptedPackage">The encrypted package.</param>
     /// <param name="password">The password.</param>
-    /// <exception cref="InvalidDataException">Thrown when <paramref name="encryptionInfo"/> is not a Standard 3.2 or 4.2 descriptor.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown when <paramref name="encryptionInfo"/> is not a Standard 3.2 or 4.2 descriptor.</exception>
     public static byte[] Decrypt(byte[] encryptionInfo, byte[] encryptedPackage, ReadOnlySpan<char> password)
     {
         Guard.NotNull(encryptionInfo, nameof(encryptionInfo));
@@ -44,7 +44,7 @@ internal static class OfficeCryptoStandard
 
         if (!OfficeCryptoAgile.IsStandardEncryptionInfo(encryptionInfo))
         {
-            throw new InvalidDataException(
+            throw Corrupt(
                 "EncryptionInfo header is not in Standard (version 3.2 or 4.2) format.");
         }
 
@@ -129,7 +129,7 @@ internal static class OfficeCryptoStandard
         //   [12+HeaderSize..] EncryptionVerifier
         if (encryptionInfo.Length < 12)
         {
-            throw new InvalidDataException("EncryptionInfo is too short to contain a header size.");
+            throw Corrupt("EncryptionInfo is too short to contain a header size.");
         }
 
         int headerSize = Ri32(encryptionInfo, 8);
@@ -138,7 +138,7 @@ internal static class OfficeCryptoStandard
 
         if (headerEnd < 0)
         {
-            throw new InvalidDataException(
+            throw Corrupt(
                 $"EncryptionHeader size ({headerSize}) is invalid or exceeds stream length.");
         }
 
@@ -153,34 +153,32 @@ internal static class OfficeCryptoStandard
 
         if (algId is not AlgIdAes128 and not AlgIdAes192 and not AlgIdAes256)
         {
-            throw new NotSupportedException(
-                $"Standard encryption AlgID 0x{algId:X4} is not supported (only AES-128/192/256).");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Standard encryption AlgID 0x{algId:X4} is not supported (only AES-128/192/256).");
         }
 
         if (algIdHash != AlgIdHashSha1)
         {
-            throw new NotSupportedException(
-                $"Standard encryption AlgIDHash 0x{algIdHash:X4} is not supported (only SHA-1 0x8004).");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Standard encryption AlgIDHash 0x{algIdHash:X4} is not supported (only SHA-1 0x8004).");
         }
 
         int requiredKeyBits = algId switch { AlgIdAes128 => 128, AlgIdAes192 => 192, _ => 256 };
         if (keyBits != requiredKeyBits)
         {
-            throw new InvalidDataException("Standard encryption algorithm and key size disagree.");
+            throw Corrupt("Standard encryption algorithm and key size disagree.");
         }
 
         // Parse EncryptionVerifier (immediately after EncryptionHeader).
         int verifierStart = headerEnd;
         if (encryptionInfo.Length < verifierStart + 52)
         {
-            throw new InvalidDataException("EncryptionInfo is too short to contain EncryptionVerifier.");
+            throw Corrupt("EncryptionInfo is too short to contain EncryptionVerifier.");
         }
 
         ReadOnlySpan<byte> ver = encryptionInfo.AsSpan(verifierStart);
         int saltSize = Ri32(ver, 0);
         if (saltSize != 16)
         {
-            throw new InvalidDataException($"Standard encryption salt size must be 16, got {saltSize}.");
+            throw Corrupt($"Standard encryption salt size must be 16, got {saltSize}.");
         }
 
         byte[] salt = ver.Slice(4, 16).ToArray();
@@ -188,7 +186,7 @@ internal static class OfficeCryptoStandard
         int verifierHashSize = Ri32(ver, 36);
         if (verifierHashSize != OfficeCryptoPrimitives.Sha1HashBytes)
         {
-            throw new InvalidDataException("Standard encryption password verifier must declare a 20-byte SHA-1 hash.");
+            throw Corrupt("Standard encryption password verifier must declare a 20-byte SHA-1 hash.");
         }
 
         // EncryptedVerifierHash is keyBits/8 bytes for the key length,
@@ -201,7 +199,7 @@ internal static class OfficeCryptoStandard
 
         if (encryptionInfo.Length < verifierStart + 40 + encryptedVerifierHashLen)
         {
-            throw new InvalidDataException("EncryptionInfo is too short to contain EncryptedVerifierHash.");
+            throw Corrupt("EncryptionInfo is too short to contain EncryptedVerifierHash.");
         }
 
         byte[] encryptedVerifierHash = ver.Slice(40, encryptedVerifierHashLen).ToArray();
@@ -355,8 +353,7 @@ internal static class OfficeCryptoStandard
             int compareLen = Math.Min(d.VerifierHashSize, expectedHash.Length);
             if (!OfficeCryptoPrimitives.FixedTimeEquals(expectedHash, verifierHash, compareLen))
             {
-                throw new UnauthorizedAccessException(
-                    "The provided password is incorrect for this database.");
+                throw new JetAccessDeniedException(JetErrorCode.PasswordIncorrect, "The provided password is incorrect for this database.");
             }
         }
         finally
@@ -375,13 +372,13 @@ internal static class OfficeCryptoStandard
     {
         if (encryptedPackage.Length < 8)
         {
-            throw new InvalidDataException("EncryptedPackage stream is too small (missing size prefix).");
+            throw CorruptPackage("EncryptedPackage stream is too small (missing size prefix).");
         }
 
         long decryptedSize = Ri64(encryptedPackage, 0);
         if (decryptedSize is < 0 or > int.MaxValue)
         {
-            throw new InvalidDataException($"EncryptedPackage decrypted size out of range: {decryptedSize}.");
+            throw CorruptPackage($"EncryptedPackage decrypted size out of range: {decryptedSize}.");
         }
 
         int cipherLen = encryptedPackage.Length - 8;
@@ -528,4 +525,14 @@ internal static class OfficeCryptoStandard
 
         public byte[] EncryptedVerifierHash { get; set; } = [];
     }
+
+    private static JetCorruptDataException Corrupt(string message) => new(
+        JetErrorCode.CorruptEncryptionDescriptor,
+        message,
+        new JetErrorInfo { ObjectName = "EncryptionInfo", PageNumber = 0, Reason = message });
+
+    private static JetCorruptDataException CorruptPackage(string message) => new(
+        JetErrorCode.CorruptEncryptedPackage,
+        message,
+        new JetErrorInfo { ObjectName = "EncryptedPackage", Reason = message });
 }

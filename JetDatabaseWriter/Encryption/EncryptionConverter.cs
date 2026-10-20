@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -22,7 +23,7 @@ internal static class EncryptionConverter
     /// <param name="targetCodec">The target page codec, retained by the caller.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The asynchronous copy operation.</returns>
-    /// <exception cref="InvalidDataException">The source does not contain whole native pages.</exception>
+    /// <exception cref="JetCorruptDataException">The source does not contain whole native pages.</exception>
     internal static async ValueTask TransformPagesAsync(
         Stream source,
         Stream destination,
@@ -34,10 +35,14 @@ internal static class EncryptionConverter
         cancellationToken.ThrowIfCancellationRequested();
         int pageSize = targetHeader.Length;
         long length = source.Length;
-        if (pageSize is not (Constants.PageSizes.Jet3 or Constants.PageSizes.Jet4)
-            || length < pageSize || length % pageSize != 0)
+        if (pageSize is not (Constants.PageSizes.Jet3 or Constants.PageSizes.Jet4) || length < pageSize)
         {
-            throw new InvalidDataException("The source database must contain complete native database pages.");
+            throw CorruptHeader("The source database must contain a complete native header page.");
+        }
+
+        if (length % pageSize != 0)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The source database contains a partial native page.", new JetErrorInfo { PageNumber = length / pageSize });
         }
 
         _ = source.Seek(pageSize, SeekOrigin.Begin);
@@ -48,7 +53,12 @@ internal static class EncryptionConverter
             for (long page = 1; page < length / pageSize; page++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                await source.ReadExactlyAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
+                int read = await source.ReadAtLeastAsync(buffer.AsMemory(), pageSize, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
+                if (read != pageSize)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The source database page is truncated.", new JetErrorInfo { PageNumber = page });
+                }
+
                 sourceCodec.Decode(buffer, 0, page, pageSize);
                 targetCodec.Encode(buffer, 0, page, pageSize);
                 await destination.WriteAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
@@ -66,14 +76,14 @@ internal static class EncryptionConverter
     /// </summary>
     /// <param name="plaintext">The plaintext database bytes.</param>
     /// <returns>The default target encryption format.</returns>
-    /// <exception cref="InvalidDataException">Thrown when <paramref name="plaintext"/> is shorter than a JET header.</exception>
-    /// <exception cref="NotSupportedException">Thrown when the database format has no password encryption target.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown when <paramref name="plaintext"/> is shorter than a JET header.</exception>
+    /// <exception cref="JetNotSupportedException">Thrown when the database format has no password encryption target.</exception>
     public static AccessEncryptionFormat ResolveBestTargetFormat(byte[] plaintext)
     {
         Guard.NotNull(plaintext, nameof(plaintext));
         if (plaintext.Length < HeaderLength)
         {
-            throw new InvalidDataException("Plaintext database is shorter than the JET header.");
+            throw CorruptHeader("Plaintext database is shorter than the JET header.");
         }
 
         return JetFormat.DetectFormat(plaintext) switch
@@ -81,13 +91,13 @@ internal static class EncryptionConverter
             DatabaseFormat.Jet4Mdb => AccessEncryptionFormat.Jet4Rc4,
             DatabaseFormat.AceAccdb => AccessEncryptionFormat.AccdbAgile,
             DatabaseFormat.Jet3Mdb => AccessEncryptionFormat.Jet3Rc4,
-            _ => throw new InvalidDataException("The database format is unknown."),
+            _ => throw CorruptHeader("The database format is unknown."),
         };
     }
 
     /// <summary>Detects the on-disk encryption format of <paramref name="rawFile"/> without modifying it.</summary>
     /// <param name="rawFile">The raw file.</param>
-    /// <exception cref="NotSupportedException">Office compound packages are not native database inputs.</exception>
+    /// <exception cref="JetNotSupportedException">Office compound packages are not native database inputs.</exception>
     public static AccessEncryptionFormat Detect(byte[] rawFile)
     {
         if (rawFile == null || rawFile.Length < HeaderLength)
@@ -97,7 +107,7 @@ internal static class EncryptionConverter
 
         if (EncryptionManager.IsCompoundFileEncrypted(rawFile))
         {
-            throw new NotSupportedException("Office compound packages are not native Microsoft Access databases.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Office compound packages are not native Microsoft Access databases.");
         }
 
         DatabaseFormat fmt = JetFormat.DetectFormat(rawFile);
@@ -126,7 +136,7 @@ internal static class EncryptionConverter
                 const int algorithmOffset = infoOffset + 20;
                 if (header.Length < algorithmOffset + sizeof(uint))
                 {
-                    throw new InvalidDataException("The native ACE encryption descriptor is truncated.");
+                    throw Corrupt("The native ACE encryption descriptor is truncated.");
                 }
 
                 uint algorithm = Ru32(header, algorithmOffset);
@@ -140,7 +150,7 @@ internal static class EncryptionConverter
                 {
                     0x6801 => AccessEncryptionFormat.AccdbRc4CryptoApi,
                     0x660E or 0x660F or 0x6610 => AccessEncryptionFormat.AccdbStandard,
-                    _ => throw new NotSupportedException($"The native ACE encryption algorithm 0x{algorithm:X} is unsupported."),
+                    _ => throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"The native ACE encryption algorithm 0x{algorithm:X} is unsupported."),
                 };
             }
             finally
@@ -170,4 +180,14 @@ internal static class EncryptionConverter
 
         return AccessEncryptionFormat.None;
     }
+
+    private static JetCorruptDataException Corrupt(string message) => new(
+        JetErrorCode.CorruptEncryptionDescriptor,
+        message,
+        new JetErrorInfo { ObjectName = "EncryptionInfo", PageNumber = 0, Reason = message });
+
+    private static JetCorruptDataException CorruptHeader(string message) => new(
+        JetErrorCode.CorruptDatabaseHeader,
+        message,
+        new JetErrorInfo { PageNumber = 0, Reason = message });
 }

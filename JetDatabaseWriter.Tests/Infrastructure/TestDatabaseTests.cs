@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Transactions;
 using Xunit;
 
@@ -71,7 +72,7 @@ public sealed class TestDatabaseTests
     {
         await using var stream = new MemoryStream();
 
-        await Assert.ThrowsAsync<EndOfStreamException>(async () =>
+        JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
         {
             await using AccessReader reader = await TestDatabase.OpenReaderAsync(
                 stream,
@@ -79,6 +80,7 @@ public sealed class TestDatabaseTests
                 cancellationToken: TestContext.Current.CancellationToken);
         });
 
+        Assert.Equal(JetErrorCode.CorruptDatabaseHeader, failure.ErrorCode);
         Assert.Equal(leaveOpen, stream.CanRead);
     }
 
@@ -91,7 +93,7 @@ public sealed class TestDatabaseTests
     {
         await using var stream = new MemoryStream();
 
-        await Assert.ThrowsAsync<EndOfStreamException>(async () =>
+        JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
         {
             await using AccessWriter writer = await TestDatabase.OpenWriterAsync(
                 stream,
@@ -99,6 +101,7 @@ public sealed class TestDatabaseTests
                 cancellationToken: TestContext.Current.CancellationToken);
         });
 
+        Assert.Equal(JetErrorCode.CorruptDatabaseHeader, failure.ErrorCode);
         Assert.Equal(leaveOpen, stream.CanRead);
     }
 

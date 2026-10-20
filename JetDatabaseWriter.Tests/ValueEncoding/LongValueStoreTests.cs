@@ -7,6 +7,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
@@ -178,7 +179,7 @@ public sealed class LongValueStoreTests
         };
 
         await using var output = new MemoryStream();
-        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await LongValueStore.CopyPayloadAsync(
                 LongValueDescriptor.Chained(10, firstDp, 0),
                 ReadOnlyMemory<byte>.Empty,
@@ -195,7 +196,7 @@ public sealed class LongValueStoreTests
     public async Task CopyPayloadAsync_RejectsTruncatedChain()
     {
         await using var output = new MemoryStream();
-        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await LongValueStore.CopyPayloadAsync(
                 LongValueDescriptor.Chained(10, 256, 0),
                 ReadOnlyMemory<byte>.Empty,

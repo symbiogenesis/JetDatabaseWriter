@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Queries;
 
-using System;
 using System.Collections.Generic;
+using JetDatabaseWriter.Exceptions;
 
 /// <summary>
 /// The translated form of a query expression tree: the operators the provider knows
@@ -23,7 +23,7 @@ internal sealed class AccessQueryPlan
     {
         if (this.IncludePaths.Count == 0)
         {
-            throw new NotSupportedException("ThenInclude must follow an Include in the query.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "ThenInclude must follow an Include in the query.");
         }
 
         this.IncludePaths[^1].Add(step);

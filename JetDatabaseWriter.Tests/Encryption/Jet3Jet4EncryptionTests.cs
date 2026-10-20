@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -58,9 +59,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         SetJet4PasswordFlag(data);
 
         await using MemoryStream ms = ToStream(data);
-        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken));
-
-        Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
+        _ = await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordRequired, async () => await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -92,10 +91,8 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         SetJet4PasswordFlag(data);
         string temp = this.WriteTempBytes(data, ".mdb");
 
-        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        _ = await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordRequired, async () =>
             await AccessWriter.OpenAsync(temp, new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken));
-
-        Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -111,8 +108,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
             Password = "wrong_password".AsMemory(),
         };
 
-        UnauthorizedAccessException ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken));
-        Assert.Contains("incorrect", ex.Message, StringComparison.OrdinalIgnoreCase);
+        _ = await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, async () => await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken));
     }
 
     [Fact]

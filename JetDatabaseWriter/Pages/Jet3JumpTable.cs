@@ -144,8 +144,7 @@ internal static class Jet3JumpTable
 
         if (varLen == DummyEntry && dummies > 1)
         {
-            throw new JetLimitationException(
-                $"A Jet3 row with 255 variable columns cannot end its variable data at offset {eod}: its jump table would need {dummies} unused entries, which Jet cannot tell from the EOD's index.");
+            throw new JetLimitationException(JetErrorCode.RowTooLarge, $"A Jet3 row with 255 variable columns cannot end its variable data at offset {eod}: its jump table would need {dummies} unused entries, which Jet cannot tell from the EOD's index.");
         }
     }
 }

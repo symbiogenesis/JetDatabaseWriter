@@ -89,7 +89,7 @@ public sealed class NativeJet3CatalogSecurityTests
             async Task CreateAsync() => await writer.CreateTableAsync("Rejected", [new ColumnDefinition("Id", typeof(int))], Ct);
             if (corruption == "no-inheritance")
             {
-                await Assert.ThrowsAsync<NotSupportedException>(CreateAsync);
+                await Assert.ThrowsAsync<JetNotSupportedException>(CreateAsync);
             }
             else
             {

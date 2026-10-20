@@ -107,7 +107,7 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
     /// <param name="start">The offset of the 12-byte long-value descriptor.</param>
     /// <param name="len">The length of the column slice.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidDataException">The descriptor is truncated or its LVAL data cannot be read.</exception>
+    /// <exception cref="JetCorruptDataException">The descriptor is truncated or its LVAL data cannot be read.</exception>
     internal async ValueTask<byte[]> ReadLongValueBytesExactAsync(byte[] row, int start, int len, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -173,12 +173,12 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
     {
         if (start < 0 || len < 0 || start > row.Length - len)
         {
-            throw new InvalidDataException("the long-value column slice is outside the row buffer");
+            throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "the long-value column slice is outside the row buffer");
         }
 
         if (!LongValueDescriptor.TryRead(row.AsSpan(start, len), out LongValueDescriptor descriptor))
         {
-            throw new InvalidDataException($"the long-value descriptor is {len} byte(s), shorter than the {Constants.LongValue.HeaderSize}-byte header");
+            throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, $"the long-value descriptor is {len} byte(s), shorter than the {Constants.LongValue.HeaderSize}-byte header");
         }
 
         LongValueStore.ValidatePayload(descriptor, len - Constants.LongValue.HeaderSize, format.PageSize, maxValueBytes, maxChainRows);

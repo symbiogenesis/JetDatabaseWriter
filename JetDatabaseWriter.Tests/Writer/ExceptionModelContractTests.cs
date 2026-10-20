@@ -46,7 +46,7 @@ public sealed class ExceptionModelContractTests
     }
 
     [Fact]
-    public void ConstraintFailure_PreservesTheGoldenMessage()
+    public void ConstraintFailure_ReportsCascadeDepthCode()
     {
         const string message = "Foreign-key cascade depth exceeded 64. Possible cyclic relationship.";
         var error = new JetConstraintException(JetErrorCode.CascadeDepthExceeded, message);
@@ -55,7 +55,7 @@ public sealed class ExceptionModelContractTests
     }
 
     [Fact]
-    public void LimitationFailure_PreservesTheGoldenMessageAndReason()
+    public void LimitationFailure_ReportsIndexMaintenanceReason()
     {
         const string message = "The indexes of table 'T' cannot be maintained: the index descriptor is damaged.";
         var info = new JetErrorInfo { TableName = "T", Reason = "the index descriptor is damaged" };

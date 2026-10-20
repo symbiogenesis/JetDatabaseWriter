@@ -22,7 +22,7 @@ public sealed class CompoundFileMetadataTests
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(countOffset), uint.MaxValue);
         await using var stream = new MemoryStream(bytes);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () =>
             CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
     }
 
@@ -33,7 +33,7 @@ public sealed class CompoundFileMetadataTests
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0x2C), 2);
         await using var stream = new MemoryStream(bytes);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () =>
             CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
     }
 
@@ -46,7 +46,7 @@ public sealed class CompoundFileMetadataTests
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(countOffset), 1);
         await using var stream = new MemoryStream(bytes);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () =>
             CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
     }
 
@@ -60,7 +60,7 @@ public sealed class CompoundFileMetadataTests
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0x40), checked((uint)declaredCount));
         await using var stream = new MemoryStream(bytes);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () =>
             CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
     }
 
@@ -90,7 +90,7 @@ public sealed class CompoundFileMetadataTests
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0x50), spareSector);
         await using var stream = new MemoryStream(bytes);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () =>
             CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
     }
 

@@ -248,7 +248,7 @@ public sealed class NativeBigBinaryTests
     {
         var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
         var column = new ColumnInfo { Type = NativeType, Size = width, Flags = Constants.ColumnDescriptorFlags.Fixed, ColNum = 0 };
-        Assert.Throws<NotSupportedException>(() => TDefPageBuilder.BuildTableDefinition([new ColumnDefinition("Data", typeof(byte[]), width) { ColumnTypeOverride = NativeType }], format));
+        Assert.Throws<JetNotSupportedException>(() => TDefPageBuilder.BuildTableDefinition([new ColumnDefinition("Data", typeof(byte[]), width) { ColumnTypeOverride = NativeType }], format));
         Assert.Equal(DBNull.Value, JetTypeInfo.ReadFixedTyped(new byte[NativeWidth], start: 0, column, width));
     }
 
@@ -258,7 +258,7 @@ public sealed class NativeBigBinaryTests
     public void BigBinaryDescriptor_UnsupportedFormatIsRefused(DatabaseFormat databaseFormat)
     {
         var format = JetFormat.ForNewDatabase(databaseFormat);
-        Assert.Throws<NotSupportedException>(() => TDefPageBuilder.BuildTableDefinition([new ColumnDefinition("Data", typeof(byte[]), NativeWidth) { ColumnTypeOverride = NativeType }], format));
+        Assert.Throws<JetNotSupportedException>(() => TDefPageBuilder.BuildTableDefinition([new ColumnDefinition("Data", typeof(byte[]), NativeWidth) { ColumnTypeOverride = NativeType }], format));
     }
 
     [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Rows<T> instantiates this POCO through its materializer.")]

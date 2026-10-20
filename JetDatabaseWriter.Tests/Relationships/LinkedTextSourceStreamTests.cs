@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Relationships;
 using Xunit;
 
@@ -21,7 +22,7 @@ public sealed class LinkedTextSourceStreamTests
         Assert.Equal(2, await bounded.ReadAsync(bytes.AsMemory(), TestContext.Current.CancellationToken));
         source.WriteByte(3);
         source.Position = 2;
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+        JetLimitationException exception = await Assert.ThrowsAsync<JetLimitationException>(async () =>
             _ = await bounded.ReadAsync(bytes.AsMemory(), TestContext.Current.CancellationToken));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxSourceFileBytes), exception.Message, StringComparison.Ordinal);
     }
@@ -46,8 +47,8 @@ public sealed class LinkedTextSourceStreamTests
         using var source = new MemoryStream([1, 2]);
         using var bounded = new LinkedTextSourceStream(source, 1, "Exceeded");
         byte[] bytes = new byte[2];
-        _ = Assert.Throws<InvalidDataException>(() => bounded.Read(bytes, 0, bytes.Length));
-        _ = Assert.Throws<InvalidDataException>(() => bounded.Read(bytes, 0, bytes.Length));
+        _ = Assert.Throws<JetLimitationException>(() => bounded.Read(bytes, 0, bytes.Length));
+        _ = Assert.Throws<JetLimitationException>(() => bounded.Read(bytes, 0, bytes.Length));
     }
 
     [Fact]

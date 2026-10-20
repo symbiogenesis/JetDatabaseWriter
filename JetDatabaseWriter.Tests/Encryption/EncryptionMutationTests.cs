@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -57,7 +58,7 @@ public sealed class EncryptionMutationTests
                 await AssertNativeRowAsync(reader);
             }
 
-            await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+            await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, async () =>
             {
                 await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions(oldPassword), TestContext.Current.CancellationToken);
             });
@@ -91,7 +92,7 @@ public sealed class EncryptionMutationTests
         try
         {
             await File.WriteAllBytesAsync(path, original, TestContext.Current.CancellationToken);
-            await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessDatabaseEncryption.ChangePasswordAsync(path, "Wrong123".AsMemory(), "Changed123".AsMemory(), new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken));
+            await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, async () => await AccessDatabaseEncryption.ChangePasswordAsync(path, "Wrong123".AsMemory(), "Changed123".AsMemory(), new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken));
             Assert.Equal(original, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
             Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + ".reenc-*.tmp"));
         }
@@ -163,7 +164,7 @@ public sealed class EncryptionMutationTests
                 await AssertNativeRowAsync(reader);
             }
 
-            await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+            await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, async () =>
             {
                 await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions("Native123"), TestContext.Current.CancellationToken);
             });

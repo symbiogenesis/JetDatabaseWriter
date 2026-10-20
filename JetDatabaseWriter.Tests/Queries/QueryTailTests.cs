@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -148,7 +149,7 @@ public sealed class QueryTailTests(DatabaseCache db) : IClassFixture<DatabaseCac
         IQueryable<object?> query = ComposeUnsupported(reader.Query<TailItem>(Table), reader.Query<TailItem>(Table), shape);
         counting.Reset();
 
-        NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(async () => await query.ToListAsync(ct));
+        JetNotSupportedException error = await Assert.ThrowsAsync<JetNotSupportedException>(async () => await query.ToListAsync(ct));
 
         Assert.Contains($"'{operatorName}'", error.Message, StringComparison.Ordinal);
         Assert.Contains("AsAsyncEnumerable()", error.Message, StringComparison.Ordinal);
@@ -182,7 +183,7 @@ public sealed class QueryTailTests(DatabaseCache db) : IClassFixture<DatabaseCac
         };
         counting.Reset();
 
-        NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(
+        JetNotSupportedException error = await Assert.ThrowsAsync<JetNotSupportedException>(
             async () => await (takeFirst ? query.Take(1) : query).ToListAsync(ct));
 
         Assert.Contains("'Where'", error.Message, StringComparison.Ordinal);
@@ -232,7 +233,7 @@ public sealed class QueryTailTests(DatabaseCache db) : IClassFixture<DatabaseCac
         IQueryable<TailItem> query = CapturedConcat(source, source.Where((_, index) => index > 0));
         counting.Reset();
 
-        NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(async () => await query.Take(1).ToListAsync(ct));
+        JetNotSupportedException error = await Assert.ThrowsAsync<JetNotSupportedException>(async () => await query.Take(1).ToListAsync(ct));
 
         Assert.Contains("'Where'", error.Message, StringComparison.Ordinal);
         Assert.Contains("AsAsyncEnumerable()", error.Message, StringComparison.Ordinal);
@@ -334,7 +335,7 @@ public sealed class QueryTailTests(DatabaseCache db) : IClassFixture<DatabaseCac
         counting.Reset();
 
         // Distinct runs after the read, so the include would have no entities of its own to load onto.
-        NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(async () => await query.ToListAsync(ct));
+        JetNotSupportedException error = await Assert.ThrowsAsync<JetNotSupportedException>(async () => await query.ToListAsync(ct));
 
         Assert.Contains("'Include'", error.Message, StringComparison.Ordinal);
         Assert.Equal(0L, counting.BytesRead);

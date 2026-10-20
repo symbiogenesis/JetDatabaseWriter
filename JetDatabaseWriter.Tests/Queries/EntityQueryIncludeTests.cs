@@ -1,12 +1,12 @@
 namespace JetDatabaseWriter.Tests.Queries;
 
-using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -103,7 +103,7 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
         await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
             await reader.Query<JdwChild>("JdwChild").Include(c => c.Stray).ToListAsync(ct));
     }
 

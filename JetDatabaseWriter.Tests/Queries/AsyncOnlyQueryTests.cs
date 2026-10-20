@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -40,9 +41,9 @@ public sealed class AsyncOnlyQueryTests(DatabaseCache db) : IClassFixture<Databa
         await using AccessReader reader = await OpenReaderAsync(counting, ct);
         counting.Reset();
 
-        NotSupportedException viaForeach = Assert.Throws<NotSupportedException>(() => Enumerate(Compose(reader, shape)));
-        NotSupportedException viaToList = Assert.Throws<NotSupportedException>(() => Compose(reader, shape).ToList());
-        NotSupportedException viaToArray = Assert.Throws<NotSupportedException>(() => Compose(reader, shape).ToArray());
+        JetNotSupportedException viaForeach = Assert.Throws<JetNotSupportedException>(() => Enumerate(Compose(reader, shape)));
+        JetNotSupportedException viaToList = Assert.Throws<JetNotSupportedException>(() => Compose(reader, shape).ToList());
+        JetNotSupportedException viaToArray = Assert.Throws<JetNotSupportedException>(() => Compose(reader, shape).ToArray());
 
         Assert.Contains("ToListAsync", viaForeach.Message, StringComparison.Ordinal);
         Assert.Contains("ToListAsync", viaToList.Message, StringComparison.Ordinal);
@@ -80,7 +81,7 @@ public sealed class AsyncOnlyQueryTests(DatabaseCache db) : IClassFixture<Databa
         IQueryable<AoItem> query = reader.Query<AoItem>(ItemTable).Where(i => i.Score >= 10);
         counting.Reset();
 
-        NotSupportedException error = Assert.Throws<NotSupportedException>(() => RunSyncTerminal(query, terminal));
+        JetNotSupportedException error = Assert.Throws<JetNotSupportedException>(() => RunSyncTerminal(query, terminal));
 
         Assert.Contains($"'{terminal}'", error.Message, StringComparison.Ordinal);
         Assert.Contains("ToListAsync", error.Message, StringComparison.Ordinal);
@@ -101,9 +102,9 @@ public sealed class AsyncOnlyQueryTests(DatabaseCache db) : IClassFixture<Databa
 
         // A projection used to replay a sync terminal in memory over the read rows, and an
         // include to load its navigation first; both are refused like any other query.
-        NotSupportedException projected = Assert.Throws<NotSupportedException>(
+        JetNotSupportedException projected = Assert.Throws<JetNotSupportedException>(
             () => reader.Query<AoItem>(ItemTable).Select(i => i.Name).Count());
-        NotSupportedException included = Assert.Throws<NotSupportedException>(
+        JetNotSupportedException included = Assert.Throws<JetNotSupportedException>(
             () => reader.Query<AoItem>(ItemTable).Include(i => i.Tags).First());
 
         Assert.Contains("CountAsync", projected.Message, StringComparison.Ordinal);
@@ -121,8 +122,8 @@ public sealed class AsyncOnlyQueryTests(DatabaseCache db) : IClassFixture<Databa
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
         IQueryable<AoItem> query = reader.Query<AoItem>(ItemTable).OrderBy(i => i.Id);
 
-        NotSupportedException untyped = Assert.Throws<NotSupportedException>(() => query.Provider.Execute(query.Expression));
-        NotSupportedException typed = Assert.Throws<NotSupportedException>(() => query.Provider.Execute<IEnumerable<AoItem>>(query.Expression));
+        JetNotSupportedException untyped = Assert.Throws<JetNotSupportedException>(() => query.Provider.Execute(query.Expression));
+        JetNotSupportedException typed = Assert.Throws<JetNotSupportedException>(() => query.Provider.Execute<IEnumerable<AoItem>>(query.Expression));
 
         Assert.Contains("ToListAsync", untyped.Message, StringComparison.Ordinal);
         Assert.Contains("ToListAsync", typed.Message, StringComparison.Ordinal);

@@ -7,6 +7,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
+using JetDatabaseWriter.Exceptions;
 using static JetDatabaseWriter.Constants.IndexEntryFlags;
 
 /// <summary>
@@ -244,7 +245,7 @@ internal static class General97TextIndexEncoder
 
         Assembly asm = typeof(General97TextIndexEncoder).Assembly;
         using Stream raw = asm.GetManifestResourceStream(resourceName)
-            ?? throw new InvalidOperationException($"Embedded resource '{resourceName}' not found.");
+            ?? throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Embedded resource '{resourceName}' not found.", new JetErrorInfo { ObjectName = resourceName });
         using var gz = new GZipStream(raw, CompressionMode.Decompress);
         using var reader = new StreamReader(gz, Encoding.ASCII);
 

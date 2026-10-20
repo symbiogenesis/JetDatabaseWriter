@@ -230,7 +230,8 @@ internal static class IndexHelpers
     /// <param name="indexes">The indexes.</param>
     /// <param name="tableDef">The table def.</param>
     /// <exception cref="ArgumentException">Thrown when an index definition is malformed or references an unknown column.</exception>
-    /// <exception cref="NotSupportedException">Thrown when an index has too many columns or targets a column type Microsoft Access does not support for indexes.</exception>
+    /// <exception cref="JetNotSupportedException">The index targets a column type Microsoft Access does not support for indexes.</exception>
+    /// <exception cref="JetLimitationException">The index exceeds the format's key-column capacity.</exception>
     public static List<ResolvedIndex> ResolveIndexes(IReadOnlyList<IndexDefinition> indexes, TableDef tableDef)
     {
         if (indexes.Count == 0)
@@ -262,7 +263,7 @@ internal static class IndexHelpers
             // The JET col_map carries up to 10 columns per index (§3.1).
             if (def.Columns.Count > 10)
             {
-                throw new NotSupportedException($"IndexDefinition '{def.Name}' has {def.Columns.Count} columns; the JET col_map supports at most 10.");
+                throw new JetLimitationException(JetErrorCode.ColumnCountLimit, $"IndexDefinition '{def.Name}' has {def.Columns.Count} columns; the JET col_map supports at most 10.", new JetErrorInfo { IndexName = def.Name });
             }
 
             // Multi-column non-PK indexes are accepted; the maintenance loop
@@ -292,7 +293,7 @@ internal static class IndexHelpers
 
                 if (column.Type == BigBinaryType)
                 {
-                    throw new NotSupportedException($"IndexDefinition '{def.Name}' references column '{columnName}'; native BIGBINARY index encoding is unsupported.");
+                    throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"IndexDefinition '{def.Name}' references column '{columnName}'; native BIGBINARY index encoding is unsupported.", new JetErrorInfo { IndexName = def.Name, ColumnName = columnName });
                 }
 
                 // Public declarations cannot index OLE or complex values. Access's
@@ -302,9 +303,10 @@ internal static class IndexHelpers
                     && column.Type is ComplexType;
                 if (column.Type == OleType || (column.Type is ComplexType && !complexReference))
                 {
-                    throw new NotSupportedException(
-                        $"IndexDefinition '{def.Name}' references column '{columnName}' whose type is {GetTypeDisplayName(column.Type)}; "
-                        + "Microsoft Access does not permit indexes on this column type.");
+                    throw new JetNotSupportedException(
+                        JetErrorCode.FeatureNotSupported,
+                        $"IndexDefinition '{def.Name}' references column '{columnName}' whose type is {GetTypeDisplayName(column.Type)}; Microsoft Access does not permit indexes on this column type.",
+                        new JetErrorInfo { IndexName = def.Name, ColumnName = columnName });
                 }
 
                 IndexMaintainer.ThrowIfTextCollationUnsupported(column, "new table");
@@ -485,31 +487,30 @@ internal static class IndexHelpers
     {
         byte[][] pieces = new byte[idx.KeyColumns.Count][];
         int total = 0;
-        try
+        for (int i = 0; i < idx.KeyColumns.Count; i++)
         {
-            for (int i = 0; i < idx.KeyColumns.Count; i++)
+            ParentSeekKeyColumn col = idx.KeyColumns[i];
+            if (col.ForeignColumnIndex < 0 || col.ForeignColumnIndex >= values.Length)
             {
-                ParentSeekKeyColumn col = idx.KeyColumns[i];
-                if (col.ForeignColumnIndex < 0 || col.ForeignColumnIndex >= values.Length)
-                {
-                    return null;
-                }
-
-                // Partial-Null composite relationships retain the parent's Null marker.
-                pieces[i] = EncodeSeekKeyColumn(
-                    col.ColumnType,
-                    values[col.ForeignColumnIndex],
-                    col.Ascending,
-                    col.NumericScale,
-                    col.LegacyNumeric,
-                    col.TextSortOrder,
-                    col.FixedBinaryLength);
-                total += pieces[i].Length;
+                return null;
             }
-        }
-        catch (Exception ex) when (ex is NotSupportedException or ArgumentException or OverflowException)
-        {
-            return null;
+
+            // Partial-Null composite relationships retain the parent's Null marker.
+            byte[]? encoded = TryEncodeSeekKeyColumn(
+                col.ColumnType,
+                values[col.ForeignColumnIndex],
+                col.Ascending,
+                col.NumericScale,
+                col.LegacyNumeric,
+                col.TextSortOrder,
+                col.FixedBinaryLength);
+            if (encoded is null)
+            {
+                return null;
+            }
+
+            pieces[i] = encoded;
+            total += pieces[i].Length;
         }
 
         byte[] composite = new byte[total];
@@ -543,25 +544,24 @@ internal static class IndexHelpers
 
         byte[][] pieces = new byte[idx.KeyColumns.Count][];
         int total = 0;
-        try
+        for (int i = 0; i < idx.KeyColumns.Count; i++)
         {
-            for (int i = 0; i < idx.KeyColumns.Count; i++)
+            ChildSeekKeyColumn col = idx.KeyColumns[i];
+            byte[]? encoded = TryEncodeSeekKeyColumn(
+                col.ColumnType,
+                parentPkValues[i],
+                col.Ascending,
+                col.NumericScale,
+                col.LegacyNumeric,
+                col.TextSortOrder,
+                col.FixedBinaryLength);
+            if (encoded is null)
             {
-                ChildSeekKeyColumn col = idx.KeyColumns[i];
-                pieces[i] = EncodeSeekKeyColumn(
-                    col.ColumnType,
-                    parentPkValues[i],
-                    col.Ascending,
-                    col.NumericScale,
-                    col.LegacyNumeric,
-                    col.TextSortOrder,
-                    col.FixedBinaryLength);
-                total += pieces[i].Length;
+                return null;
             }
-        }
-        catch (Exception ex) when (ex is NotSupportedException or ArgumentException or OverflowException)
-        {
-            return null;
+
+            pieces[i] = encoded;
+            total += pieces[i].Length;
         }
 
         byte[] composite = new byte[total];
@@ -575,7 +575,7 @@ internal static class IndexHelpers
         return composite;
     }
 
-    private static byte[] EncodeSeekKeyColumn(
+    private static byte[]? TryEncodeSeekKeyColumn(
         ColumnType columnType,
         object? value,
         bool ascending,
@@ -583,21 +583,7 @@ internal static class IndexHelpers
         bool legacyNumeric,
         JetDatabaseWriter.Indexes.Collation.TextSortOrder textSortOrder,
         int fixedBinaryLength)
-    {
-        if (columnType is TextType or MemoType)
-        {
-            return IndexKeyEncoder.EncodeTextEntry(textSortOrder, value, ascending);
-        }
-
-        if (columnType == BinaryType)
-        {
-            value = IndexKeyEncoder.NormalizeFixedBinaryValue(value, fixedBinaryLength);
-        }
-
-        return columnType == NumericType
-            ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, numericScale, legacyNumeric)
-            : IndexKeyEncoder.EncodeEntry(columnType, value, ascending);
-    }
+        => IndexKeyEncoder.TryEncodeColumnEntry(columnType, value, ascending, numericScale, legacyNumeric, textSortOrder, fixedBinaryLength);
 
     /// <summary>
     /// Lexicographic byte-array compare matching the JET index-key sort order
@@ -817,7 +803,7 @@ internal static class IndexHelpers
     /// </summary>
     /// <param name="original">The original.</param>
     /// <param name="ops">The intermediate operations.</param>
-    /// <exception cref="InvalidOperationException">Thrown when an unknown intermediate op type is encountered or an invalid operation sequence occurs.</exception>
+    /// <exception cref="JetOperationException">Thrown when an unknown intermediate op type is encountered or an invalid operation sequence occurs.</exception>
     public static List<DecodedIntermediateEntry> ApplyIntermediateOps(
         List<DecodedIntermediateEntry> original,
         List<IntermediateOp> ops)
@@ -872,7 +858,7 @@ internal static class IndexHelpers
                         break;
 
                     default:
-                        throw new InvalidOperationException($"Unknown intermediate op type: {op.Type}");
+                        throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Unknown intermediate op type: {op.Type}", new JetErrorInfo { Reason = "Unknown intermediate index operation" });
                 }
             }
 

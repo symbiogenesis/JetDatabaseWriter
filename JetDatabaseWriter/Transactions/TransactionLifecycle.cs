@@ -487,6 +487,7 @@ internal sealed class TransactionLifecycle(
     /// <exception cref="JetOperationException">A mutation was called from an active mutation callback.</exception>
     private async ValueTask RunSerializedAsync(Func<ValueTask> work, CancellationToken cancellationToken)
     {
+        DiagnosticTrace.ThrowIfReentrant();
         if (this.mutationActive.Value is { IsActive: true })
         {
             throw new JetOperationException(JetErrorCode.ReentrantWriterCall, "A writer mutation cannot be called from another writer mutation's callback.");

@@ -40,7 +40,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
     /// <param name="format">The database's format profile.</param>
     /// <param name="paramName">The public parameter that carries <paramref name="definition"/>, for <see cref="ArgumentException.ParamName"/>.</param>
     /// <returns>The column's type code.</returns>
-    /// <exception cref="NotSupportedException">The format cannot hold the column, including a Jet3 decimal column whose precision or scale Currency cannot hold.</exception>
+    /// <exception cref="JetNotSupportedException">The format cannot hold the column, including a Jet3 decimal column whose precision or scale Currency cannot hold.</exception>
     /// <exception cref="JetNotSupportedException">An Int64/Large Number column is declared on an MDB format.</exception>
     /// <exception cref="ArgumentException">A calculated column has no expression, the definition's flags conflict, a Hyperlink column is not a Memo, or (<see cref="ArgumentOutOfRangeException"/>) the precision or scale of a decimal column, or of a multi-value column's decimal items, is out of range.</exception>
     internal static ColumnType ValidateColumnForFormat(ColumnDefinition definition, JetFormat format, string paramName)
@@ -58,7 +58,8 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
         if (type == DateTimeExtendedType && !format.SupportsDateTimeExtended)
         {
-            throw new NotSupportedException(
+            throw new JetNotSupportedException(
+                JetErrorCode.FeatureNotSupported,
                 $"Column '{definition.Name}': Date/Time Extended columns are only supported in ACCDB databases.");
         }
 
@@ -66,7 +67,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
         {
             if (!format.SupportsBigBinary)
             {
-                throw new NotSupportedException($"Column '{definition.Name}': BIGBINARY is a Jet4-only system-table type.");
+                throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Column '{definition.Name}': BIGBINARY is a Jet4-only system-table type.");
             }
 
             int width = definition.SourceColumn?.Size ?? definition.MaxLength;
@@ -75,13 +76,14 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 || definition.ForceVariableLengthStorage
                 || (definition.DescriptorFlagsOverride is byte binaryFlags && (binaryFlags & Constants.ColumnDescriptorFlags.Fixed) == 0))
             {
-                throw new NotSupportedException($"Column '{definition.Name}': BIGBINARY requires its native 3992-byte fixed descriptor.");
+                throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Column '{definition.Name}': BIGBINARY requires its native 3992-byte fixed descriptor.");
             }
         }
 
         if (type == ComplexType && !format.SupportsComplexColumns)
         {
-            throw new NotSupportedException(
+            throw new JetNotSupportedException(
+                JetErrorCode.FeatureNotSupported,
                 $"Column '{definition.Name}': Attachment and multi-value columns are an Access 2007+ ACE feature; declare them only on .accdb databases.");
         }
 
@@ -253,9 +255,9 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
         (byte[][]? pages, int[]? firstDpOffsets, int[] _) = this.BuildTDefPagesWithIndexOffsets(tableDef, indexes);
         if (pages.Length != 1)
         {
-            throw new NotSupportedException(
-                $"Table definition produced a {pages.Length}-page TDEF chain, but the single-page builder was used. "
-                + "Route this caller through BuildTDefPagesWithIndexOffsets / the multi-page write path.");
+            throw new JetNotSupportedException(
+                JetErrorCode.FeatureNotSupported,
+                $"Table definition produced a {pages.Length}-page TDEF chain, but the single-page builder was used. Route this caller through BuildTDefPagesWithIndexOffsets / the multi-page write path.");
         }
 
         return (pages[0], firstDpOffsets);
@@ -391,7 +393,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             {
                 if (col.RawDescriptor.Count != format.ColumnDescriptor.Size)
                 {
-                    throw new NotSupportedException("The source column descriptor does not match the database format's descriptor width.");
+                    throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "The source column descriptor does not match the database format's descriptor width.");
                 }
 
                 for (int byteIndex = 0; byteIndex < col.RawDescriptor.Count; byteIndex++)
@@ -408,9 +410,9 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             byte[] nameRecord = format.EncodeTDefNameRecord(col.Name);
             if (namePos + nameRecord.Length > page.Length)
             {
-                throw new NotSupportedException(
-                    "Table definition exceeds the TDEF logical-buffer capacity. Increase "
-                    + "the logical capacity or reduce column-name lengths.");
+                throw new JetNotSupportedException(
+                    JetErrorCode.FeatureNotSupported,
+                    "Table definition exceeds the TDEF logical-buffer capacity. Increase the logical capacity or reduce column-name lengths.");
             }
 
             Buffer.BlockCopy(nameRecord, 0, page, namePos, nameRecord.Length);
@@ -428,9 +430,9 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             int totalIdxBytesLowerBound = anchors.LogIdxNamesStart - realIdxPhysStart;
             if (realIdxPhysStart + totalIdxBytesLowerBound > page.Length)
             {
-                throw new NotSupportedException(
-                    "Table definition (with indexes) exceeds the TDEF logical-buffer capacity. Increase "
-                    + "BuildTDefPagesWithIndexOffsets's logicalCapacity or reduce the index count.");
+                throw new JetNotSupportedException(
+                    JetErrorCode.FeatureNotSupported,
+                    "Table definition (with indexes) exceeds the TDEF logical-buffer capacity. Increase BuildTDefPagesWithIndexOffsets's logicalCapacity or reduce the index count.");
             }
 
             for (int i = 0; i < numIdx; i++)
@@ -510,9 +512,9 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 byte[] nameRecord = format.EncodeTDefNameRecord(indexes[i].Name);
                 if (npos + nameRecord.Length > page.Length)
                 {
-                    throw new NotSupportedException(
-                        "Table definition exceeds the TDEF logical-buffer capacity. Increase "
-                        + "the logical capacity or reduce index-name lengths.");
+                    throw new JetNotSupportedException(
+                        JetErrorCode.FeatureNotSupported,
+                        "Table definition exceeds the TDEF logical-buffer capacity. Increase the logical capacity or reduce index-name lengths.");
                 }
 
                 Buffer.BlockCopy(nameRecord, 0, page, npos, nameRecord.Length);

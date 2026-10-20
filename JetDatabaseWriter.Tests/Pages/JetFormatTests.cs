@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -149,7 +150,7 @@ public sealed class JetFormatTests
         for (int version = 7; version <= byte.MaxValue; version++)
         {
             header[0x14] = (byte)version;
-            Assert.Throws<NotSupportedException>(() => JetFormat.DetectFormat(header));
+            Assert.Throws<JetNotSupportedException>(() => JetFormat.DetectFormat(header));
         }
     }
 
@@ -189,7 +190,7 @@ public sealed class JetFormatTests
     {
         byte[] header = new byte[Constants.DatabaseHeader.Length];
         header[0x01] = 0x01;
-        NotSupportedException ex = Assert.Throws<NotSupportedException>(() => JetFormat.FromHeader(header));
+        JetNotSupportedException ex = Assert.Throws<JetNotSupportedException>(() => JetFormat.FromHeader(header));
         Assert.Contains("code page 17019", ex.Message, StringComparison.Ordinal);
     }
 

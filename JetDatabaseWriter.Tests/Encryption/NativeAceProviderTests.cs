@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -55,7 +56,7 @@ public sealed class NativeAceProviderTests
     [InlineData("Upstream-db2007-oldenc.accdb")]
     [InlineData("Upstream-db2007-enc.accdb")]
     public async Task HistoricalProvidersRejectWrongPassword(string name)
-        => await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        => await StructuredFormatAssert.ThrowsAsync<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, async () =>
         {
             await using AccessReader reader = await AccessReader.OpenAsync(Path.Combine(TestDatabases.EncryptedRoot, name), new AccessReaderOptions("wrong") { UseLockFile = false }, TestContext.Current.CancellationToken);
         });
@@ -115,7 +116,7 @@ public sealed class NativeAceProviderTests
         byte[] bytes = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "Upstream-db2007-oldenc.accdb"), TestContext.Current.CancellationToken);
         byte[] header = bytes.AsSpan(0, 4096).ToArray();
         BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(0x29B + relativeOffset), value);
-        Assert.Throws<InvalidDataException>(() => NativeStandardPageCodec.Open(header, "Test123", 1_000_000, 4096, cancellationToken: TestContext.Current.CancellationToken));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptEncryptionDescriptor, () => NativeStandardPageCodec.Open(header, "Test123", 1_000_000, 4096, cancellationToken: TestContext.Current.CancellationToken));
     }
 
     /// <summary>A package-authored verifier and published key validate native Standard derivation; the assembled header is a synthetic vector.</summary>

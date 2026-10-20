@@ -82,14 +82,14 @@ internal sealed class CompactRowRelocationMap
     /// <param name="cancellationToken">Cancels lookup and each source read.</param>
     /// <returns>The unchanged key with its destination page and row slot.</returns>
     /// <exception cref="JetCorruptDataException">The bookmark has no mapping or the ledger length changed.</exception>
-    /// <exception cref="InvalidOperationException">Another lookup is already active.</exception>
+    /// <exception cref="JetOperationException">Another lookup is already active.</exception>
     /// <exception cref="JetLimitationException">Lookup exhausts the cumulative read allowance.</exception>
     internal async ValueTask<IndexEntry> RelocateAsync(IndexEntry entry, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (Interlocked.CompareExchange(ref this.active, 1, 0) != 0)
         {
-            throw new InvalidOperationException("Relocation lookups must run serially.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "Relocation lookups must run serially.");
         }
 
         try

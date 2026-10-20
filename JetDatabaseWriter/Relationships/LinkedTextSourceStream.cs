@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 
 /// <summary>Owns a forward-only text source and bounds bytes delivered to its decoder.</summary>
 /// <param name="source">The opened source stream.</param>
@@ -95,6 +96,5 @@ internal sealed class LinkedTextSourceStream(Stream source, long? maxBytes, stri
         this.consumed += read;
     }
 
-    private void ThrowSizeLimitExceeded() => throw new InvalidDataException(
-        $"Linked text table '{tableName}' source file exceeds AccessReaderOptions.{nameof(AccessReaderOptions.LinkedTextMaxSourceFileBytes)} ({maxBytes}).");
+    private void ThrowSizeLimitExceeded() => throw new JetLimitationException(JetErrorCode.LinkedSourceBudgetExceeded, $"Linked text table '{tableName}' source file exceeds AccessReaderOptions.{nameof(AccessReaderOptions.LinkedTextMaxSourceFileBytes)} ({maxBytes}).", new JetErrorInfo { TableName = tableName });
 }

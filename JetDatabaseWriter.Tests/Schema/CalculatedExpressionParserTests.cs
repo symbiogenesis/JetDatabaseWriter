@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Schema;
 using System;
 using System.Linq;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
 using Xunit;
@@ -68,7 +69,7 @@ public sealed class CalculatedExpressionParserTests
     {
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse("UnknownAccessFunction(1)");
 
-        Assert.Throws<NotSupportedException>(() => plan.Evaluate(Context()));
+        Assert.Throws<JetNotSupportedException>(() => plan.Evaluate(Context()));
     }
 
     [Theory]

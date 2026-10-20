@@ -43,6 +43,12 @@ internal static partial class GeneralTextIndexEncoder
     public static byte[] Encode(string? text, bool ascending)
         => Encode(text, ascending, trimTrailingSpaces: true);
 
+    /// <summary>Encodes a candidate entry, returning null when its long-row suffix is unsupported.</summary>
+    /// <param name="text">The text.</param>
+    /// <param name="ascending">The direction.</param>
+    internal static byte[]? TryEncode(string text, bool ascending)
+        => GeneralLegacyTextIndexEncoder.TryEncodeGeneralEntry(text, ascending, Codes.Value, ExtCodes.Value, TryComputeV2010LongRowSuffix);
+
     /// <summary>Encodes whole comparison text without index-entry limits or suffix.</summary>
     /// <param name="text">The comparison text.</param>
     /// <param name="trimTrailingSpaces">Whether to trim trailing spaces.</param>

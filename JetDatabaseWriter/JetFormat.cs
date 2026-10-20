@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Pages;
@@ -62,11 +63,11 @@ internal sealed partial class JetFormat
         }
         catch (ArgumentException ex)
         {
-            throw new NotSupportedException($"Database code page {codePage} is not supported.", ex);
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Database code page {codePage} is not supported.", new JetErrorInfo { ObjectName = codePage.ToString(System.Globalization.CultureInfo.InvariantCulture), PageNumber = 0 }, ex);
         }
         catch (NotSupportedException ex)
         {
-            throw new NotSupportedException($"Database code page {codePage} is not supported.", ex);
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Database code page {codePage} is not supported.", new JetErrorInfo { ObjectName = codePage.ToString(System.Globalization.CultureInfo.InvariantCulture), PageNumber = 0 }, ex);
         }
 
         this.CodePage = codePage;
@@ -301,6 +302,17 @@ internal sealed partial class JetFormat
         return new JetFormat(kind, codePage, order);
     }
 
+    /// <summary>Validates the native file signature before decoding masked profile fields.</summary>
+    /// <param name="header">The stored header bytes.</param>
+    /// <exception cref="JetCorruptDataException">The native file signature is absent.</exception>
+    internal static void ValidateNativeSignature(ReadOnlySpan<byte> header)
+    {
+        if (header.Length < 4 || header[0] != 0 || header[1] != 1 || header[2] != 0 || header[3] != 0)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptDatabaseHeader, "The source does not have a native JET/ACE file signature.", new JetErrorInfo { PageNumber = 0 });
+        }
+    }
+
     /// <summary>
     /// Builds the profile of a new database of <paramref name="format"/>, with
     /// code page 1252, which the writer stamps into every new database.
@@ -321,13 +333,13 @@ internal sealed partial class JetFormat
     /// </summary>
     /// <param name="header">The header, as stored; the version byte precedes the masked region.</param>
     /// <returns>The format.</returns>
-    /// <exception cref="ArgumentException"><paramref name="header"/> does not contain the version byte.</exception>
-    /// <exception cref="NotSupportedException">The file uses an unknown JET/ACE format version.</exception>
+    /// <exception cref="JetCorruptDataException"><paramref name="header"/> does not contain the version byte.</exception>
+    /// <exception cref="JetNotSupportedException">The file uses an unknown JET/ACE format version.</exception>
     internal static DatabaseFormat DetectFormat(byte[] header)
     {
         if (header.Length <= 0x14)
         {
-            throw new ArgumentException("The database header does not contain a format version.", nameof(header));
+            throw new JetCorruptDataException(JetErrorCode.CorruptDatabaseHeader, "The database header does not contain a format version.", new JetErrorInfo { PageNumber = 0 });
         }
 
         // mdbtools file.c recognizes the named 2007, 2010, 2013, 2016 and
@@ -338,7 +350,7 @@ internal sealed partial class JetFormat
             0 => DatabaseFormat.Jet3Mdb,
             1 => DatabaseFormat.Jet4Mdb,
             >= 2 and <= 6 => DatabaseFormat.AceAccdb,
-            _ => throw new NotSupportedException($"Unsupported JET/ACE format version: {header[0x14]}."),
+            _ => throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Unsupported JET/ACE format version: {header[0x14]}.", new JetErrorInfo { PageNumber = 0 }),
         };
     }
 
@@ -475,23 +487,24 @@ internal sealed partial class JetFormat
             return null;
         }
 
-        try
+        var fallback = new CharacterProbeFallback();
+        var encoding = (Encoding)this.AnsiEncoding.Clone();
+        encoding.EncoderFallback = fallback;
+        _ = encoding.GetByteCount(text);
+        if (fallback.Unknown is not { } unknown)
         {
-            _ = this.ansiTextEncoder.GetByteCount(text);
             return null;
         }
-        catch (EncoderFallbackException ex)
-        {
-            if (ex.CharUnknownHigh != '\0')
-            {
-                return $"'{ex.CharUnknownHigh}{ex.CharUnknownLow}' (U+{char.ConvertToUtf32(ex.CharUnknownHigh, ex.CharUnknownLow):X4})";
-            }
 
-            // A lone surrogate is not printable on its own.
-            return char.IsSurrogate(ex.CharUnknown)
-                ? $"the unpaired surrogate U+{(int)ex.CharUnknown:X4}"
-                : $"'{ex.CharUnknown}' (U+{(int)ex.CharUnknown:X4})";
+        if (fallback.LowSurrogate is { } low)
+        {
+            return $"'{unknown}{low}' (U+{char.ConvertToUtf32(unknown, low):X4})";
         }
+
+        // A lone surrogate is not printable on its own.
+        return char.IsSurrogate(unknown)
+            ? $"the unpaired surrogate U+{(int)unknown:X4}"
+            : $"'{unknown}' (U+{(int)unknown:X4})";
     }
 
     /// <summary>

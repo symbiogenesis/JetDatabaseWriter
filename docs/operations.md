@@ -196,26 +196,28 @@ come only from `LinkedSourcePasswordResolver`, after stream authorization.
 
 ## Error Handling
 
-Constraint, lookup, schema, lock, transaction-state and selected corruption exceptions implement `IJetException` in `JetDatabaseWriter.Exceptions`. Use `ErrorCode` for programmatic handling and `ErrorInfo` for available table, column, index, relationship and page context. Avoid matching exception messages.
+Library-detected corruption, encryption, unsupported-format, size, constraint, lookup and state failures implement `IJetException` in `JetDatabaseWriter.Exceptions`. Use `ErrorCode` for programmatic handling and `ErrorInfo` for available table, column, index, relationship, object and page context. Messages describe failures for people; their wording is not a programmatic contract.
 
-Some corruption and encryption paths still use BCL exceptions. Also handle ordinary I/O and argument errors as appropriate for your application.
+Actual storage exceptions propagate unchanged, including exceptions from caller streams. Ordinary argument validation, cancellation, disposal, system cryptographic-provider failures and caller callback failures retain their .NET contracts. A malformed in-memory compressed payload is classified as corruption; a stream failure is not treated as malformed data or a lenient missing value.
 
-Trace diagnostics report operation, schema or physical-page context and exception types. They omit cell values, passwords, lock-file paths and machine/user identities. Diagnostic listener failures are ignored; required file operations still propagate their original I/O failures.
+Trace diagnostics report operation, schema or physical-page context and exception types. They omit cell values, passwords, lock-file paths and machine/user identities. Delivery occurs outside page, pager and physical-I/O locks. Listener failures are ignored and recursive diagnostic delivery is suppressed. Database operations and disposal entered from a diagnostic callback are refused with `ReentrantDiagnosticCall` before taking a gate or beginning disposal.
+
+Call `JetDiagnostics.EnableCounters()` before opening databases to register the optional `JetDatabaseWriter` EventSource. An EventListener or diagnostic collector can enable its EventCounters: `failures`, `corruptions`, `diagnostics` and `listener-failures`. These process-wide totals count constructed structured exceptions, corruption exceptions, diagnostic delivery attempts and suppressed listener failures, respectively; wrapping an exception can increment the failure total again. They contain no database names, paths or values. Recording a metric only updates an atomic integer and never initializes the provider or invokes a callback under a database lock. The library owns the returned provider.
 
 | Exception | Typical cause |
 |---|---|
 | `JetObjectNotFoundException` | A named table or other database object is missing; inspect `ErrorCode`. |
-| `JetCorruptDataException` | A malformed catalog, table, index or selected scalar value; inspect `ErrorCode` and available physical page/column context. |
+| `JetCorruptDataException` | A malformed header, catalog, table, index, encryption descriptor, journal or value; inspect `ErrorCode` and available physical page/column context. |
 | `JetLockException` | A lockfile or page-lock refusal, such as `DatabaseInUse` or `LockTimeout`. |
 | `JetLimitationException` | A row or schema exceeds a supported limit, or a table's indexes cannot be maintained. |
+| `JetAccessDeniedException` | Missing/incorrect password or a linked source that was not authorized. |
+| `JetNotSupportedException` | An unsupported format, encryption provider, type or operation. |
+| `JetOperationException` | An invalid operation or transaction state, including diagnostic reentry. |
 | `ArgumentException` | Invalid names, definitions or values. |
-| `UnauthorizedAccessException` | Missing or incorrect database password. |
-| `InvalidDataException` | Corrupt or invalid database data. |
-| `NotSupportedException` | An unsupported format, encryption provider or type. |
 | `IOException` | File, sharing or storage failure; structured corruption and lock exceptions also derive from this type. |
 | `ObjectDisposedException` | The reader or writer has been disposed. |
 
-These examples are not an exhaustive exception list. See [remaining structured-error work](todo.md#s--hostile-file-parsing-and-schema-preservation).
+These examples are not an exhaustive exception list. Catch a specific structured type or inspect `IJetException` before treating an `IOException` as a physical storage failure.
 
 ## Encryption options
 

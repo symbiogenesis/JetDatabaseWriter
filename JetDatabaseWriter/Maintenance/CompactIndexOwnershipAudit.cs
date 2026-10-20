@@ -311,7 +311,7 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
 
         if (this.failed || this.completed)
         {
-            throw new InvalidOperationException("The ownership audit already completed or refused and cannot consume more observations.");
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "The ownership audit already completed or refused and cannot consume more observations.");
         }
     }
 

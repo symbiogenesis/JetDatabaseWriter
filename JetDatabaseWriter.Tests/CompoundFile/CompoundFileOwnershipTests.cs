@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
+using JetDatabaseWriter.Exceptions;
 using Xunit;
 
 public sealed class CompoundFileOwnershipTests
@@ -198,7 +199,7 @@ public sealed class CompoundFileOwnershipTests
     private static async Task AssertRejectedAsync(byte[] bytes)
     {
         await using var stream = new MemoryStream(bytes);
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        await StructuredFormatAssert.ThrowsAsync<JetCorruptDataException>(JetErrorCode.CorruptCompoundFile, () =>
             CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
     }
 

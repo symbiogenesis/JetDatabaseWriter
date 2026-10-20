@@ -204,7 +204,7 @@ public sealed class ComplexColumnsWriterTests
         var ms = new MemoryStream();
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet4Mdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        NotSupportedException ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        JetNotSupportedException ex = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
             await writer.CreateTableAsync(
                 "Documents",
                 [
@@ -609,7 +609,7 @@ public sealed class ComplexColumnsWriterTests
         {
             await ComplexColumnTestSupport.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () =>
                     await writer.CreateTableAsync("Docs", DocsColumns(), TestContext.Current.CancellationToken));
                 Assert.Contains("MSysComplexColumns", error.Message, StringComparison.Ordinal);
                 Assert.Contains("ComplexID", error.Message, StringComparison.Ordinal);

@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Mapping;
@@ -216,7 +217,7 @@ public sealed class EntityColumnMappingTests(DatabaseCache db) : IClassFixture<D
         // so a second attempt reports the same error.
         for (int attempt = 0; attempt < 2; attempt++)
         {
-            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(
                 async () => await reader.Rows<DuplicateColumn>(Table, cancellationToken: ct).ToListAsync(ct));
             Assert.Contains(nameof(DuplicateColumn.First), ex.Message, StringComparison.Ordinal);
             Assert.Contains(nameof(DuplicateColumn.Second), ex.Message, StringComparison.Ordinal);

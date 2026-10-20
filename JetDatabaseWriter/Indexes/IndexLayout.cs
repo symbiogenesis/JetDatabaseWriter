@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Indexes;
 using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -416,14 +417,15 @@ internal readonly struct IndexLayout
     /// <param name="columnNumbers">The key columns' <c>col_num</c> values, at most <see cref="Constants.TableDefinition.ColMapSlotCount"/>.</param>
     /// <param name="flags">The real-idx <c>flags</c> byte.</param>
     /// <param name="firstDp">The index root page.</param>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="columnNumbers"/> names more columns than a <c>col_map</c> holds.</exception>
+    /// <exception cref="JetLimitationException">The index names more columns than a <c>col_map</c> holds.</exception>
     public void WriteRealIdxDescriptor(Span<byte> td, int physStart, ReadOnlySpan<int> columnNumbers, byte flags, long firstDp)
     {
         if (columnNumbers.Length > Constants.TableDefinition.ColMapSlotCount)
         {
-            throw new ArgumentException(
+            throw new JetLimitationException(
+                JetErrorCode.ColumnCountLimit,
                 $"A real index holds at most {Constants.TableDefinition.ColMapSlotCount} key columns; got {columnNumbers.Length}.",
-                nameof(columnNumbers));
+                new JetErrorInfo { Reason = "Index key-column capacity exceeded" });
         }
 
         Span<byte> phys = td.Slice(physStart, this.RealIdxPhysSize);

@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -85,7 +86,7 @@ public sealed class NativeStandardDatabaseTests
     {
         byte[] original = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceStandard.accdb"), TestContext.Current.CancellationToken);
         byte[] header = original.AsSpan(0, 4096).ToArray();
-        Assert.Throws<UnauthorizedAccessException>(() => NativeStandardPageCodec.Open(header, "wrong", 50_000, 4096, cancellationToken: TestContext.Current.CancellationToken));
+        StructuredFormatAssert.Throws<JetAccessDeniedException>(JetErrorCode.PasswordIncorrect, () => NativeStandardPageCodec.Open(header, "wrong", 50_000, 4096, cancellationToken: TestContext.Current.CancellationToken));
         Assert.Throws<JetDatabaseWriter.Exceptions.JetLimitationException>(() => NativeStandardPageCodec.Open(header, "Password1234_", 49_999, 4096, cancellationToken: TestContext.Current.CancellationToken));
     }
 

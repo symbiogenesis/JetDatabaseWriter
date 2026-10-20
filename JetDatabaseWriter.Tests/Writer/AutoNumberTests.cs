@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -528,7 +529,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
         await using AccessWriter writer = await OpenWriterAsync(ms, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
             await writer.CreateTableAsync(
                 tableName,
                 [new("Id", clrType) { IsAutoIncrement = true, IsNullable = false }],

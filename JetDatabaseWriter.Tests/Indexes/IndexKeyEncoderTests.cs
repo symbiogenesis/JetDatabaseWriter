@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Indexes;
 
 using System;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Schema;
 using Xunit;
@@ -391,7 +392,7 @@ public sealed class IndexKeyEncoderTests
     [Theory]
     [InlineData(NumericType)]
     [InlineData(BigBinaryType)]
-    public void UnsupportedColumnType_Throws(ColumnType columnType) => Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(columnType, 1, ascending: true));
+    public void UnsupportedColumnType_Throws(ColumnType columnType) => Assert.Throws<JetNotSupportedException>(() => IndexKeyEncoder.EncodeEntry(columnType, 1, ascending: true));
 
     /// <summary>
     /// Access indexes every complex column (unique, Required, named
@@ -1099,8 +1100,9 @@ public sealed class IndexKeyEncoderTests
         // 79228162514264337593543950335 (29 digits, scale 0).
         // Re-encoding at scale 28 needs 29+28 = 57 digits, well beyond 128 bits.
         const decimal big = decimal.MaxValue;
-        Assert.Throws<NotSupportedException>(() =>
+        JetLimitationException failure = Assert.Throws<JetLimitationException>(() =>
             IndexKeyEncoder.EncodeNumericEntry(big, ascending: true, targetScale: 28, legacy: false));
+        Assert.Equal(JetErrorCode.NumericOverflow, failure.ErrorCode);
     }
 
     [Fact]

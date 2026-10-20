@@ -96,7 +96,8 @@ public sealed class CompactIndexOwnershipAuditTests
         CompactIndexOwnershipRecord contradiction = Assert.Single(records, static record => record.Kind == "ownership-contradiction");
         Assert.NotEqual(contradiction.OwnerTDefPage, contradiction.RelatedOwnerTDefPage);
         Assert.DoesNotContain(records, static record => record.Kind == "ownership-terminal");
-        await Assert.ThrowsAsync<InvalidOperationException>(async () => await audit.CompleteAsync(Visit, Ct));
+        JetOperationException failure = await Assert.ThrowsAsync<JetOperationException>(async () => await audit.CompleteAsync(Visit, Ct));
+        Assert.Equal(JetErrorCode.InvalidOperationState, failure.ErrorCode);
 
         ValueTask Visit(CompactIndexOwnershipRecord record, CancellationToken token)
         {

@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.ValueDecoding;
 using System;
 using System.Buffers;
 using System.Collections.Generic;
-using System.IO;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -429,7 +428,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
                             ? await longValues.ReadLongValueRawBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
                             : await longValues.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
                     }
-                    catch (InvalidDataException ex)
+                    catch (JetCorruptDataException ex)
                     {
                         buffer[i] = LongValueReadPolicy.MissingValue(decodePlan.GetColumnName(i), ex, strictParsing);
                     }
@@ -464,7 +463,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
         {
             bytes = await longValues.ReadLongValueBytesExactAsync(page, start, length, cancellationToken).ConfigureAwait(false);
         }
-        catch (InvalidDataException ex)
+        catch (JetCorruptDataException ex)
         {
             return new UnreadableLongValue(columnName, ex.Message);
         }
@@ -499,7 +498,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
             {
                 raw = await longValues.ReadLongValueBytesExactAsync(page, reference.Start, reference.Len, cancellationToken).ConfigureAwait(false);
             }
-            catch (InvalidDataException ex)
+            catch (JetCorruptDataException ex)
             {
                 return new UnreadableLongValue(decodePlan.GetColumnName(columnIndex), ex.Message);
             }
@@ -510,7 +509,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
             {
                 raw = await longValues.ReadLongValueRawBytesAsync(page, reference.Start, reference.Len, cancellationToken).ConfigureAwait(false);
             }
-            catch (InvalidDataException ex)
+            catch (JetCorruptDataException ex)
             {
                 return LongValueReadPolicy.MissingValue(decodePlan.GetColumnName(columnIndex), ex, strictParsing);
             }

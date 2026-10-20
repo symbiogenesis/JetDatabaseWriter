@@ -2,10 +2,10 @@ namespace JetDatabaseWriter.Catalog;
 
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
@@ -132,7 +132,7 @@ internal sealed class CatalogArtifactWriter(
     /// pages, and a writer-owned usage map.
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidDataException">Thrown when the bootstrap TDEF unexpectedly spans multiple pages.</exception>
+    /// <exception cref="JetCorruptDataException">Thrown when the bootstrap TDEF unexpectedly spans multiple pages.</exception>
     internal async ValueTask InitializeFreshCatalogIndexesAsync(CancellationToken cancellationToken)
     {
         IReadOnlyList<ColumnDefinition> columns = BuildFullCatalogColumnDefinitions();
@@ -147,7 +147,7 @@ internal sealed class CatalogArtifactWriter(
         (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = tdefPageBuilder.BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
         if (tdefPages.Length != 1)
         {
-            throw new InvalidDataException("Fresh MSysObjects bootstrap unexpectedly produced a multi-page TDEF.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "Fresh MSysObjects bootstrap unexpectedly produced a multi-page TDEF.");
         }
 
         tdefPages[0][format.TDef.TableType] = Constants.TableDefinition.SystemTableType;
@@ -264,7 +264,7 @@ internal sealed class CatalogArtifactWriter(
         (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = tdefPageBuilder.BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
         if (tableArtifact.ReservedTdefPageNumber > 0 && tdefPages.Length != 1)
         {
-            throw new InvalidDataException("Reserved fresh system-table TDEF slots support only single-page TDEFs.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "Reserved fresh system-table TDEF slots support only single-page TDEFs.");
         }
 
         if (tableArtifact.MarkSystemTableTdef && IsSystemCatalogFlags(tableArtifact.CatalogFlags))

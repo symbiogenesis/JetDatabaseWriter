@@ -49,31 +49,9 @@ internal sealed class IndexRowReader(
     AsyncReentrantOperationGate operations)
 {
     private static bool CanEncodePlan(JetFormat format, TableDef definition, string tableName, IndexPlan plan)
-    {
-        try
-        {
-            if (plan.Criteria.Values is not null)
-            {
-                _ = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Values, nameof(plan));
-            }
-
-            if (plan.Criteria.Lower is not null)
-            {
-                _ = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Lower.Values, nameof(plan));
-            }
-
-            if (plan.Criteria.Upper is not null)
-            {
-                _ = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Upper.Values, nameof(plan));
-            }
-
-            return true;
-        }
-        catch (Exception ex) when (ex is NotSupportedException or ArgumentException or OverflowException)
-        {
-            return false;
-        }
-    }
+        => (plan.Criteria.Values is null || IndexKeyEncoder.CanEncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Values))
+            && (plan.Criteria.Lower is null || IndexKeyEncoder.CanEncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Lower.Values))
+            && (plan.Criteria.Upper is null || IndexKeyEncoder.CanEncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Upper.Values));
 
     private static int TextCollationFamily(JetDatabaseWriter.Indexes.Collation.TextSortOrder order)
     {
@@ -395,7 +373,7 @@ internal sealed class IndexRowReader(
 
         if (!this.CanSeek)
         {
-            throw new NotSupportedException("Index seeks are currently supported for Jet4/ACE databases only.");
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Index seeks are currently supported for Jet4/ACE databases only.", new JetErrorInfo { TableName = tableName, IndexName = indexName });
         }
 
         CatalogEntry entry = resolved.Entry;

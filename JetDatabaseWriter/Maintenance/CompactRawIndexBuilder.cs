@@ -132,7 +132,7 @@ internal static class CompactRawIndexBuilder
             int read = await stream.ReadAsync(bytes.AsMemory(offset), token).ConfigureAwait(false);
             if (read == 0)
             {
-                throw new EndOfStreamException("The private fence stream ended before a complete record.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The private fence stream ended before a complete record.");
             }
 
             offset += read;
@@ -229,7 +229,7 @@ internal static class CompactRawIndexBuilder
 
                 if (inputFences.Position != inputFences.Length)
                 {
-                    throw new InvalidDataException("The private fence stream changed during construction.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The private fence stream changed during construction.");
                 }
 
                 await this.WriteIntermediateAsync(group, levelBase, lastLeaf, more: false, outputFences, token).ConfigureAwait(false);
@@ -250,7 +250,7 @@ internal static class CompactRawIndexBuilder
             token.ThrowIfCancellationRequested();
             if (destination.Length != (firstPage + this.pageCount) * format.PageSize)
             {
-                throw new InvalidDataException("The private destination allocation changed during its final flush.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The private destination allocation changed during its final flush.");
             }
 
             return new(root, firstPage, lastLeaf, this.pageCount, this.entryCount, levels, this.fenceBytes);
@@ -294,14 +294,14 @@ internal static class CompactRawIndexBuilder
             long offset = page * format.PageSize;
             if (destination.Length != offset)
             {
-                throw new InvalidDataException("The private destination append allocation changed during construction.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The private destination append allocation changed during construction.");
             }
 
             destination.Position = offset;
             await destination.WriteAsync(bytes.AsMemory(), token).ConfigureAwait(false);
             if (destination.Length != offset + format.PageSize)
             {
-                throw new IOException("The private destination did not append one complete index page.");
+                throw new JetOperationException(JetErrorCode.InvalidOperationState, "The private destination did not append one complete index page.");
             }
         }
 
@@ -326,7 +326,7 @@ internal static class CompactRawIndexBuilder
             long child = BinaryPrimitives.ReadUInt32LittleEndian(this.fenceHeader.AsSpan(8, 4));
             if (length < 0 || length > this.capacity - 8 || child < firstPage || child >= firstPage + this.pageCount || (bookmark >> 8) == 0)
             {
-                throw new InvalidDataException("The private fence stream contains an invalid bounded entry.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The private fence stream contains an invalid bounded entry.");
             }
 
             Charge(ref this.fenceBytes, length, budget.MaxFenceBytes, nameof(budget.MaxFenceBytes));

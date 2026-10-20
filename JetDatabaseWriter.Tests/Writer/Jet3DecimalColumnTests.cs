@@ -128,7 +128,7 @@ public sealed class Jet3DecimalColumnTests
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false }, ct))
         {
-            NotSupportedException ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            JetNotSupportedException ex = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
                 await writer.CreateTableAsync(TableName, [new ColumnDefinition("Id", typeof(int)), amount], ct));
             Assert.Contains("'Amt'", ex.Message, StringComparison.Ordinal);
             Assert.Contains("Currency", ex.Message, StringComparison.Ordinal);
@@ -280,7 +280,7 @@ public sealed class Jet3DecimalColumnTests
                 new ColumnDefinition("Fee", typeof(decimal)),
             })
             {
-                NotSupportedException ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+                JetNotSupportedException ex = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
                     await writer.AddColumnAsync(TableName, column, ct));
                 Assert.Contains("'Fee'", ex.Message, StringComparison.Ordinal);
             }
@@ -447,7 +447,7 @@ public sealed class Jet3DecimalColumnTests
         await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet3Mdb, ct);
         await using AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false }, ct);
         byte[] before = ms.ToArray();
-        await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.CreateTableAsync(
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.CreateTableAsync(
             TableName,
             [new ColumnDefinition("Amt", typeof(decimal)) { ColumnTypeOverride = ColumnType.NumericType }],
             ct));

@@ -8,6 +8,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
@@ -445,7 +446,7 @@ internal static class DirectRowDecoderBuilder
             OleType or
             MemoType or
             ComplexType or
-            _ => throw new InvalidOperationException($"BuildReadExpression invoked for unsupported type {JetTypeInfo.GetTypeDisplayName(column.Type)}."),
+            _ => throw new JetOperationException(JetErrorCode.InvalidOperationState, $"BuildReadExpression invoked for unsupported type {JetTypeInfo.GetTypeDisplayName(column.Type)}."),
         };
 
     private static MethodInfo GetRequiredMethod([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods | DynamicallyAccessedMemberTypes.NonPublicMethods)] Type declaringType, string name, BindingFlags bindingAttr) =>

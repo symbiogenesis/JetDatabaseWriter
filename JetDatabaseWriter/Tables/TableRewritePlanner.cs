@@ -129,7 +129,7 @@ internal sealed class TableRewritePlanner(
 
         if (newDefs.Count > Constants.TableDefinition.MaxTableColumns)
         {
-            throw new JetLimitationException($"Table '{tableName}' would have {newDefs.Count} columns; a Microsoft Access table holds at most {Constants.TableDefinition.MaxTableColumns}.");
+            throw new JetLimitationException(JetErrorCode.ColumnCountLimit, $"Table '{tableName}' would have {newDefs.Count} columns; a Microsoft Access table holds at most {Constants.TableDefinition.MaxTableColumns}.", new JetErrorInfo { TableName = tableName });
         }
 
         // Carry renamed columns into the expressions that name them, and refuse
@@ -295,7 +295,7 @@ internal sealed class TableRewritePlanner(
     /// <param name="newDefs">The projected columns, updated in place.</param>
     /// <param name="mapColumnName">Maps a current column name to its name after the rewrite, or to <see langword="null"/> for a dropped column.</param>
     /// <exception cref="ArgumentException">A renamed reference would push an expression past the engine's limits.</exception>
-    /// <exception cref="InvalidOperationException">A surviving column's expression names a dropped column.</exception>
+    /// <exception cref="JetOperationException">A surviving column's expression names a dropped column.</exception>
     private static void ProjectExpressionReferences(
         string tableName,
         List<ColumnDefinition> existingDefs,
@@ -744,7 +744,7 @@ internal sealed class TableRewritePlanner(
             case NumericType:
             case BigIntType:
                 Type clrType = GetClrType(valueType)
-                    ?? throw new NotSupportedException($"Column '{column.Name}' has unsupported type {GetTypeDisplayName(valueType)}.");
+                    ?? throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Column '{column.Name}' has unsupported type {GetTypeDisplayName(valueType)}.", new JetErrorInfo { ColumnName = column.Name });
                 baseDef = new ColumnDefinition(column.Name, clrType)
                 {
                     ColumnTypeOverride = valueType,
@@ -758,7 +758,7 @@ internal sealed class TableRewritePlanner(
                 };
                 break;
             default:
-                throw new InvalidOperationException($"Column '{column.Name}' has unknown type {GetTypeDisplayName(valueType)}.");
+                throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Column '{column.Name}' has unknown type {GetTypeDisplayName(valueType)}.", new JetErrorInfo { ColumnName = column.Name });
         }
 
         // Surface the persisted TDEF flag bits as ColumnDefinition properties so the

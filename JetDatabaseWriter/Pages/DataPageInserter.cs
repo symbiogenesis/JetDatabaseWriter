@@ -2,10 +2,10 @@ namespace JetDatabaseWriter.Pages;
 
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -192,7 +192,7 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
                 if (!UsageMap.TryGetRowBound(map, format.DataPage, format.PageSize, tdef[format.TDef.FreePages], out RowBound bound)
                     || !await UsageMap.TryEnumeratePagesAsync(map, bound, format.PageSize, pager.PageCount, 1, true, pager.ReadPageAsync, PageBuffers.Return, candidates, cancellationToken).ConfigureAwait(false))
                 {
-                    throw new InvalidDataException("The table free-space map is malformed.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The table free-space map is malformed.");
                 }
             }
             finally
@@ -212,7 +212,7 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
             if (page[0] != Constants.PageTypes.Data || Ri32(page, format.DataPage.TDefOff) != tdefPage)
             {
                 PageBuffers.Return(page);
-                throw new InvalidDataException("The table free-space map names a page owned by another object.");
+                throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The table free-space map names a page owned by another object.");
             }
 
             if (this.CanInsertRow(page, rowLength))
@@ -380,7 +380,7 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
         int freeSpace = rowStart - (format.DataPage.RowsStart + ((numRows + 1) * 2));
         if (freeSpace < 0)
         {
-            throw new InvalidDataException("Insufficient free space remained on the target page.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptPage, "Insufficient free space remained on the target page.");
         }
 
         Buffer.BlockCopy(rowBytes, 0, page, rowStart, rowBytes.Length);
@@ -545,7 +545,7 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
                     {
                         if (!UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, pointer.RowIndex, out rows[group]))
                         {
-                            throw new InvalidDataException("The index usage-map row has invalid bounds.");
+                            throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The index usage-map row has invalid bounds.");
                         }
                     }
                     else
@@ -558,7 +558,7 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
                 int slotTableEnd = format.DataPage.RowsStart + (rowCount * 2);
                 if (page[0] != Constants.PageTypes.Data || rowCount > byte.MaxValue + 1 || rowStart < slotTableEnd)
                 {
-                    throw new InvalidDataException("The usage-map page has no room for the index rows.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The usage-map page has no room for the index rows.");
                 }
 
                 // Access-authored rows need not be 69 bytes or sit at index+2.
@@ -615,13 +615,13 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
                 int slotTableEnd = format.DataPage.RowsStart + (rowCount * 2);
                 if (page[0] != Constants.PageTypes.Data || rowCount > byte.MaxValue + 1 || slotTableEnd > format.PageSize)
                 {
-                    throw new InvalidDataException("The index usage-map page has an invalid row directory.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The index usage-map page has an invalid row directory.");
                 }
 
                 int rowStart = this.GetFirstRowStart(page, rowCount);
                 if (rowStart < slotTableEnd)
                 {
-                    throw new InvalidDataException("The index usage-map page has invalid row bounds.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The index usage-map page has invalid row bounds.");
                 }
 
                 int capacity = Math.Min(byte.MaxValue + 1 - rowCount, (rowStart - slotTableEnd) / (format.UsageMapRowSize + 2));
