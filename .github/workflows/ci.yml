@@ -164,67 +164,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  infersharp:
-    name: InferSharp (${{ matrix.tf }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        tf: [netstandard2.1, net10.0]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          global-json-file: global.json
-          cache: true
-          cache-dependency-path: '*/packages.lock.json'
-      - name: Restore
-        run: dotnet restore JetDatabaseWriter --locked-mode
-      # The package embeds its symbols. Give InferSharp portable PDBs, and analyze
-      # only our library rather than third-party dependencies or test fixtures.
-      # The Windows lanes retain the strict Roslyn analysis and package builds.
-      - name: Build analysis input
-        run: >-
-          dotnet build JetDatabaseWriter -c Release --no-restore -f ${{ matrix.tf }}
-          -p:RunAnalyzers=false -p:DebugType=portable -p:DebugSymbols=true
-      - name: Stage analysis input
-        shell: bash
-        env:
-          TARGET_FRAMEWORK: ${{ matrix.tf }}
-        run: |
-          mkdir -p artifacts/infersharp-input
-          cp "JetDatabaseWriter/bin/Release/$TARGET_FRAMEWORK/JetDatabaseWriter.dll" artifacts/infersharp-input/
-          cp "JetDatabaseWriter/bin/Release/$TARGET_FRAMEWORK/JetDatabaseWriter.pdb" artifacts/infersharp-input/
-      # Use the v1.5 container directly so translation coverage survives alongside
-      # the reports. The GitHub action exports reports but drops this diagnostic.
-      - name: Run InferSharp
-        shell: bash
-        run: |
-          mkdir -p artifacts/infersharp
-          docker run --rm \
-            --volume "$GITHUB_WORKSPACE:/workspace" --workdir /infersharp \
-            --entrypoint /bin/bash \
-            mcr.microsoft.com/infersharp@sha256:030eb68fb99f86f6c6351672f444a7092dceb0fdf15ac5f24ddf9f9e198484cd \
-            -c 'set -euo pipefail; ./run_infersharp.sh /workspace/artifacts/infersharp-input --output-folder /workspace/artifacts/infersharp 2>&1 | tee /workspace/artifacts/infersharp/analysis.log'
-      - name: Upload InferSharp reports
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: infersharp-${{ matrix.tf }}
-          path: artifacts/infersharp/
-          if-no-files-found: error
-          retention-days: 7
-      - name: Require no unreviewed InferSharp findings
-        shell: pwsh
-        run: |
-          Get-Content -LiteralPath artifacts/infersharp/report.txt
-          ./scripts/assert-infersharp.ps1 -ReportPath artifacts/infersharp/report.sarif -TranslationLogPath artifacts/infersharp/analysis.log -BaselinePath .github/infersharp-baseline.json -TargetFramework ${{ matrix.tf }} | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-
   aot:
     name: Trimmed and NativeAOT consumers
     runs-on: windows-latest

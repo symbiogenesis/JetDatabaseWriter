@@ -105,18 +105,7 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract ($testStep.Contains('JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}')) 'Ordinary tests must retain normalized golden specimens in their framework lane.'
     $golden = [regex]::Match($analyze, '(?ms)^      - name: Upload golden diagnostics\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($golden.Contains('if: ${{ !cancelled() && matrix.runner }}') -and $golden.Contains('name: golden-bytes-${{ matrix.tf }}') -and $golden.Contains('path: artifacts/golden/${{ matrix.tf }}/')) 'Golden diagnostics must be uploaded after failing tests as well as successful tests.'
-    # Memory-safety analysis must cover both actual library assets and retain evidence
-    # before findings fail the job. Roslyn gates above remain independent.
-    $infer = Get-CiJob $Workflow 'infersharp'
-    Assert-Contract ($infer.Contains('runs-on: ubuntu-latest') -and $infer.Contains('tf: [netstandard2.1, net10.0]')) 'InferSharp must analyze both library frameworks on Linux.'
-    Assert-Contract ($infer -notmatch 'continue-on-error:|(?m)^    if:') 'InferSharp must remain a required CI gate.'
-    Assert-Contract ($infer.Contains('dotnet restore JetDatabaseWriter --locked-mode') -and $infer.Contains('dotnet build JetDatabaseWriter -c Release --no-restore -f ${{ matrix.tf }}')) 'InferSharp must build the locked Release library asset for each framework.'
-    Assert-Contract ($infer.Contains('-p:DebugType=portable') -and $infer.Contains('-p:DebugSymbols=true')) 'InferSharp must receive source symbols.'
-    Assert-Contract ($infer.Contains('mcr.microsoft.com/infersharp@sha256:030eb68fb99f86f6c6351672f444a7092dceb0fdf15ac5f24ddf9f9e198484cd') -and $infer.Contains('tee /workspace/artifacts/infersharp/analysis.log')) 'InferSharp must pin v1.5 and preserve translation coverage.'
-    $reportsPosition = $infer.IndexOf('      - name: Upload InferSharp reports', [StringComparison]::Ordinal)
-    $gatePosition = $infer.IndexOf('      - name: Require no unreviewed InferSharp findings', [StringComparison]::Ordinal)
-    Assert-Contract ($reportsPosition -ge 0 -and $gatePosition -gt $reportsPosition -and $infer.Contains('if: ${{ !cancelled() }}') -and $infer.Contains('name: infersharp-${{ matrix.tf }}') -and $infer.Contains('if-no-files-found: error')) 'InferSharp must retain reports before gating findings.'
-    Assert-Contract ($infer.Contains('./scripts/assert-infersharp.ps1 -ReportPath artifacts/infersharp/report.sarif -TranslationLogPath artifacts/infersharp/analysis.log -BaselinePath .github/infersharp-baseline.json -TargetFramework ${{ matrix.tf }}')) 'InferSharp must reject findings and empty translation.'
+    Assert-Contract ($Workflow -notmatch '(?i)infersharp') 'InferSharp must remain in its independent workflow.'
 }
 
 function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedError, [xml] $Props = $buildProps, [xml] $Tests = $testProject) {
@@ -169,7 +158,5 @@ Assert-Scenario 'runtime stays on installed 10' ($workflow.Replace("'LatestMajor
 Assert-Scenario 'prerelease runtime excluded' ($workflow.Replace("DOTNET_ROLL_FORWARD_TO_PRERELEASE:", 'REMOVED_PRERELEASE:')) 'Test lanes must select and verify their intended runtime'
 Assert-Scenario 'runtime assertion disabled' ($workflow.Replace('JDW_EXPECTED_RUNTIME_MAJOR:', 'REMOVED_RUNTIME_ASSERTION:')) 'Test lanes must select and verify their intended runtime'
 
-Assert-Scenario 'InferSharp missing framework coverage' ($workflow.Replace('tf: [netstandard2.1, net10.0]', 'tf: [net10.0]')) 'InferSharp must analyze both library frameworks'
-Assert-Scenario 'InferSharp allowed to fail' ($workflow.Replace("  infersharp:`n", "  infersharp:`n    continue-on-error: true`n")) 'InferSharp must remain a required CI gate'
-Assert-Scenario 'InferSharp missing finding gate' ($workflow.Replace('./scripts/assert-infersharp.ps1', './scripts/removed-infersharp.ps1')) 'InferSharp must reject findings and empty translation'
-Assert-Scenario 'InferSharp missing translation log' ($workflow.Replace('tee /workspace/artifacts/infersharp/analysis.log', 'cat')) 'InferSharp must pin v1.5 and preserve translation coverage'
+Assert-Scenario 'InferSharp added to ordinary CI' ($workflow + '
+# InferSharp') 'InferSharp must remain in its independent workflow.'
