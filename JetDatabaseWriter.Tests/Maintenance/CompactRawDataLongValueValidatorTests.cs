@@ -51,6 +51,29 @@ public sealed class CompactRawDataLongValueValidatorTests
     }
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task Validate_ChangedNativeLvalPageTokenRefusesEvenWhenRowsAndPointersMatch(DatabaseFormat kind)
+    {
+        (SourceImage source, TDefImage definition, _) = await CreateSourceAsync(kind, false);
+        var session = new CompactDiscoverySession(source, source.Format, new());
+        await using var destination = new MemoryStream();
+        destination.SetLength(5L * source.PageSize);
+        await using var ledger = new MemoryStream();
+        CompactRawDataBuilderResult data = await CompactRawDataBuilder.BuildAsync(session, source.Format, 2, 2, destination, ledger, new(), Ct);
+        CompactRowRelocationMap map = await CompactRowRelocationMap.OpenAsync(ledger, data.RowCount, 4096, Ct);
+        CompactRawDataLongValueRelocatorResult values = await CompactRawDataLongValueRelocator.RelocateAsync(session, source.Format, 2, 2, definition, data, map, destination, new(), Ct);
+        byte[] bytes = destination.ToArray();
+        bytes[checked((int)(values.FirstPageNumber * source.PageSize)) + 8] ^= 1;
+        await using var reopened = new MemoryStream(bytes, writable: false);
+        await using var reopenedLedger = new MemoryStream(ledger.ToArray(), writable: false);
+
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CompactRawDataLongValueValidator.ValidateAsync(session, 2, 2, definition, reopened, reopenedLedger, data, values, new(), Ct));
+
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(2)]

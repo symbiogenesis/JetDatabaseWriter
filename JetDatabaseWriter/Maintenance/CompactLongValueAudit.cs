@@ -198,6 +198,7 @@ internal static class CompactLongValueAudit
                         Kind = "lval-row",
                         RawBytes = page.AsMemory(start, size),
                         PageNumber = number,
+                        PageToken = format.IsJet3 ? null : Ru32(page, 8),
                         Pointer = current,
                         NextPointer = descriptor.IsSinglePage || shortPrefix ? null : next,
                         RowStart = start,

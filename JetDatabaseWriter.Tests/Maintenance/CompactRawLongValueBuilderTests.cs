@@ -136,6 +136,50 @@ public sealed class CompactRawLongValueBuilderTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task Build_PreservesObservedPageTokensAndSeparatesDifferingTokensWithoutChangingJet3Rows(DatabaseFormat kind)
+    {
+        var source = new ImagePages(kind, 6);
+        source.SetRows(3, Chain(0x400, [0x11]));
+        source.SetRows(4, Chain(0x500, [0x22]));
+        source.SetRows(5, Chain(0, [0x33]));
+        if (!source.Format.IsJet3)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(source.Pages[3].AsSpan(8), 0x11111111);
+            BinaryPrimitives.WriteUInt32LittleEndian(source.Pages[4].AsSpan(8), 0x11111111);
+            BinaryPrimitives.WriteUInt32LittleEndian(source.Pages[5].AsSpan(8), 0x22222222);
+        }
+
+        byte[] column = Column(LongValueDescriptor.Chained(3, 0x300, 0xDEADBEEF));
+        var session = new CompactDiscoverySession(source, source.Format, new());
+        await using var destination = new MemoryStream();
+        destination.SetLength(5L * source.PageSize);
+
+        CompactRawLongValueBuilderResult result = await CompactRawLongValueBuilder.BuildAsync(session, source.Format, column, destination, new(), Ct);
+
+        Assert.Equal(source.Format.IsJet3 ? 1 : 2, result.PageCount);
+        Assert.Equal(column.AsSpan(8).ToArray(), result.Column.Span[8..].ToArray());
+        byte[] bytes = destination.ToArray();
+        if (!source.Format.IsJet3)
+        {
+            Assert.Equal(0x11111111u, BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan((5 * source.PageSize) + 8)));
+            Assert.Equal(0x22222222u, BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan((6 * source.PageSize) + 8)));
+        }
+        else
+        {
+            Assert.Equal(3, BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan((5 * source.PageSize) + 8)));
+        }
+
+        List<byte[]> rows = await ReadRowsAsync(new ImagePages(kind, bytes), result.Column);
+        Assert.Equal(Chain(0x501, [0x11]), rows[0]);
+        Assert.Equal(Chain(source.Format.IsJet3 ? 0x502u : 0x600u, [0x22]), rows[1]);
+        Assert.Equal(Chain(0, [0x33]), rows[2]);
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
     public async Task Build_PatchesPreviousPageBeforeFlushingAndKeepsMaximumRawRows(DatabaseFormat kind)
     {
         var source = new ImagePages(kind, 5);

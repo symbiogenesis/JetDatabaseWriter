@@ -281,6 +281,12 @@ internal static class CompactRawDataLongValueValidator
 
             this.AddRawBytes(record.RawBytes.Length);
             ReadOnlyMemory<byte> stored = await this.ReadRowAsync(this.lvalPages, true, token).ConfigureAwait(false);
+            uint? pageToken = format.IsJet3 ? null : BinaryPrimitives.ReadUInt32LittleEndian(this.lvalPages.Buffer.AsSpan(8));
+            if (pageToken != record.PageToken)
+            {
+                throw Corrupt("A private LVAL page token differs from its independently observed original page token.");
+            }
+
             int prefix = record.NextPointer.HasValue ? sizeof(uint) : 0;
             if (stored.Length != record.RawBytes.Length || stored.Length < prefix
                 || !stored.Span[prefix..].SequenceEqual(record.RawBytes.Span[prefix..]))

@@ -131,7 +131,8 @@ internal static class CompactRawLongValueBuilder
             }
 
             bool nextPage = this.rowCount >= Constants.DataPage.MaxRowsPerPage
-                || this.rowStart - bytes.Length < format.DataPage.RowsStart + ((this.rowCount + 1) * sizeof(ushort));
+                || this.rowStart - bytes.Length < format.DataPage.RowsStart + ((this.rowCount + 1) * sizeof(ushort))
+                || (!format.IsJet3 && this.rowCount > 0 && record.PageToken != BinaryPrimitives.ReadUInt32LittleEndian(this.page.AsSpan(8)));
             long number = firstPage + this.pageCount + (nextPage ? 1 : 0);
             if (number > 0xFFFFFF || ((this.rowCount == 0 || nextPage)
                 && (number - firstPage >= budget.MaxPages || number - firstPage >= budget.MaxOutputBytes / format.PageSize)))
@@ -159,6 +160,10 @@ internal static class CompactRawLongValueBuilder
                 this.page[0] = Constants.PageTypes.Data;
                 this.page[1] = 1;
                 "LVAL"u8.CopyTo(this.page.AsSpan(4));
+                if (!format.IsJet3 && record.PageToken is uint pageToken)
+                {
+                    BinaryPrimitives.WriteUInt32LittleEndian(this.page.AsSpan(8), pageToken);
+                }
             }
 
             this.rowStart -= bytes.Length;

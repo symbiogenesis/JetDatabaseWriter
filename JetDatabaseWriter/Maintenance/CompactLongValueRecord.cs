@@ -14,6 +14,9 @@ internal sealed record CompactLongValueRecord
     /// <summary>Gets the physical page containing an external row or the target of a reference.</summary>
     public long PageNumber { get; init; }
 
+    /// <summary>Gets the independently observed Jet4/ACE LVAL page token at bytes 8..11; null for Jet3 or non-row observations.</summary>
+    public uint? PageToken { get; init; }
+
     /// <summary>Gets the encoded external row pointer being observed.</summary>
     public uint? Pointer { get; init; }
 

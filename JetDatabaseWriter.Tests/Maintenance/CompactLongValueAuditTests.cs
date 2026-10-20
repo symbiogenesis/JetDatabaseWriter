@@ -109,11 +109,19 @@ public sealed class CompactLongValueAuditTests
         var source = new SyntheticPages(format);
         source.SetRow(3, Chained(1024, [0x11, 0x22, 0x33]));
         source.SetRow(4, Chained(0, [0x80, 0xFF]));
+        if (!source.Format.IsJet3)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(source.Pages[3].AsSpan(8), 0x11111111);
+            BinaryPrimitives.WriteUInt32LittleEndian(source.Pages[4].AsSpan(8), 0x22222222);
+        }
+
         byte[] column = Column(LongValueDescriptor.Chained(2, 768, 0xFEEDABCD), [0x55]);
         List<CompactLongValueRecord> records = await AuditAsync(source, column);
 
         CompactLongValueRecord[] rows = records.FindAll(item => item.Kind == "lval-row").ToArray();
         Assert.Equal(2, rows.Length);
+        Assert.Equal(source.Format.IsJet3 ? (uint?)null : 0x11111111u, rows[0].PageToken);
+        Assert.Equal(source.Format.IsJet3 ? (uint?)null : 0x22222222u, rows[1].PageToken);
         Assert.Equal(Chained(1024, [0x11, 0x22, 0x33]), rows[0].RawBytes.ToArray());
         Assert.Equal(2, rows[0].DeclaredPayloadBytes);
         Assert.Equal(1, rows[0].TrailingBytes);

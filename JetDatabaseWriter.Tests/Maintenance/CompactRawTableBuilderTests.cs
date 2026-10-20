@@ -404,7 +404,8 @@ public sealed class CompactRawTableBuilderTests
                             $actualId=$rs.Fields.Item('Id').Value
                             $rawMemo=$rs.Fields.Item('Memo').Value
                             [string]$actualMemo=$rawMemo
-                            if($actualId -ne $count -or -not [string]::Equals($actualMemo,$expected,[StringComparison]::Ordinal)) { throw "Native raw table value mismatch path=$path row=$count id=$actualId memoLength=$($actualMemo.Length) expectedLength=$textLength actualType=$($rawMemo.GetType().FullName) expectedType=$($expected.GetType().FullName) codes=$([string]::Join(',', [int[]][char[]]($actualMemo.Substring(0,[Math]::Min(8,$actualMemo.Length)))))" }
+                            $actualType=if($null -eq $rawMemo){'<null>'}else{$rawMemo.GetType().FullName}
+                            if($actualId -ne $count -or -not [string]::Equals($actualMemo,$expected,[StringComparison]::Ordinal)) { throw "Native raw table value mismatch path=$path row=$count id=$actualId memoLength=$($actualMemo.Length) expectedLength=$textLength actualType=$actualType expectedType=$($expected.GetType().FullName) codes=$([string]::Join(',', [int[]][char[]]($actualMemo.Substring(0,[Math]::Min(8,$actualMemo.Length)))))" }
                             [byte[]]$bytes=$rs.Fields.Item('Binary').Value
                             if($bytes.Length -ne $binaryLength) { throw 'Native raw table binary length mismatch' }
                             foreach($value in $bytes) { if($value -ne $count+1) { throw 'Native raw table binary byte mismatch' } }
