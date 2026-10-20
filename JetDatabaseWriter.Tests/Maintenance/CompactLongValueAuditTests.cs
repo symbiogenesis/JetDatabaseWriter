@@ -120,8 +120,8 @@ public sealed class CompactLongValueAuditTests
 
         CompactLongValueRecord[] rows = records.FindAll(item => item.Kind == "lval-row").ToArray();
         Assert.Equal(2, rows.Length);
-        Assert.Equal(source.Format.IsJet3 ? (uint?)null : 0x11111111u, rows[0].PageToken);
-        Assert.Equal(source.Format.IsJet3 ? (uint?)null : 0x22222222u, rows[1].PageToken);
+        Assert.Equal(source.Format.IsJet3 ? null : 0x11111111u, rows[0].PageToken);
+        Assert.Equal(source.Format.IsJet3 ? null : 0x22222222u, rows[1].PageToken);
         Assert.Equal(Chained(1024, [0x11, 0x22, 0x33]), rows[0].RawBytes.ToArray());
         Assert.Equal(2, rows[0].DeclaredPayloadBytes);
         Assert.Equal(1, rows[0].TrailingBytes);
