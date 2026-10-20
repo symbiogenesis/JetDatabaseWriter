@@ -654,7 +654,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             FlatTable? flat = await this.ResolveFlatTableAsync(column, cancellationToken).ConfigureAwait(false);
             return flat == null ? ComplexColumnKind.Unknown : ClassifyFlatTable(flat.Definition, column.ColumnName);
         }
-        catch (JetCorruptDataException ex) when (!rows.StrictParsing)
+        catch (JetCorruptDataException ex) when (!rows.StrictParsing && ex.ErrorCode != JetErrorCode.CorruptCatalog)
         {
             this.TraceBestEffortFallback(nameof(ClassifyFromFlatTableAsync), ex);
             return ComplexColumnKind.Unknown;
@@ -680,7 +680,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                 elementType = valueIndex >= 0 ? flat.Definition.Columns[valueIndex].Type : null;
             }
         }
-        catch (JetCorruptDataException ex) when (!rows.StrictParsing)
+        catch (JetCorruptDataException ex) when (!rows.StrictParsing && ex.ErrorCode != JetErrorCode.CorruptCatalog)
         {
             this.TraceBestEffortFallback(nameof(DescribeMultiValueTypeAsync), ex);
         }
@@ -890,7 +890,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
             return matchedPage;
         }
-        catch (JetCorruptDataException ex) when (!rows.StrictParsing)
+        catch (JetCorruptDataException ex) when (!rows.StrictParsing && ex.ErrorCode != JetErrorCode.CorruptCatalog)
         {
             this.TraceBestEffortFallback(nameof(GetComplexFlatTablePageAsync), ex);
         }
@@ -899,10 +899,11 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     }
 
     /// <summary>
-    /// Best-effort <see cref="GetComplexColumnsAsync"/> for table scans: a damaged
-    /// parent TDEF, <c>MSysComplexColumns</c> or <c>MSysObjects</c> is traced and
+    /// Best-effort <see cref="GetComplexColumnsAsync"/> for table scans: recoverable damage to a
+    /// parent TDEF is traced and
     /// yields no descriptors, so <see cref="LoadColumnCellsAsync"/> falls back to
     /// finding each flat table through its parent/column catalog mapping instead of failing the whole read.
+    /// Missing or ambiguous required catalog structure remains a corruption failure in every mode.
     /// </summary>
     /// <param name="tableName">The parent table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -912,7 +913,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         {
             return await this.GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
         }
-        catch (JetCorruptDataException ex) when (!rows.StrictParsing)
+        catch (JetCorruptDataException ex) when (!rows.StrictParsing && ex.ErrorCode != JetErrorCode.CorruptCatalog)
         {
             this.TraceBestEffortFallback(nameof(TryGetComplexColumnsAsync), ex);
         }
@@ -972,7 +973,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
             return cells.Count > 0 ? cells : null;
         }
-        catch (JetCorruptDataException ex) when (!rows.StrictParsing)
+        catch (JetCorruptDataException ex) when (!rows.StrictParsing && ex.ErrorCode != JetErrorCode.CorruptCatalog)
         {
             this.TraceBestEffortFallback(nameof(LoadColumnCellsAsync), ex);
             return null;

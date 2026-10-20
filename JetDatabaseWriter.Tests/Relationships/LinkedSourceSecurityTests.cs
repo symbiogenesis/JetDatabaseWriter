@@ -51,9 +51,10 @@ public sealed class LinkedSourceSecurityTests
     public async Task LinkedSource_DeniedCapability_DoesNotRequestCredentials()
     {
         int passwordRequests = 0;
+        var denied = new UnauthorizedAccessException("Denied capability.");
         var options = new AccessReaderOptions
         {
-            LinkedSourceResolver = static (_, _, _) => throw new UnauthorizedAccessException("Denied capability."),
+            LinkedSourceResolver = (_, _, _) => throw denied,
             LinkedSourcePasswordResolver = (_, _) =>
             {
                 passwordRequests++;
@@ -62,7 +63,7 @@ public sealed class LinkedSourceSecurityTests
         };
         var policy = new LinkedSourcePolicy(options, Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "host.accdb"));
         var link = new LinkedTableInfo { Name = "Denied", Kind = LinkedTableKind.Access, SourcePath = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "denied.accdb"), SourceObjectName = "Data" };
-        _ = await Assert.ThrowsAsync<JetAccessDeniedException>(async () => await LinkedTableManager.OpenLinkedSourceAsync(policy, link, TestContext.Current.CancellationToken));
+        Assert.Same(denied, await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await LinkedTableManager.OpenLinkedSourceAsync(policy, link, TestContext.Current.CancellationToken)));
         Assert.Equal(0, passwordRequests);
     }
 

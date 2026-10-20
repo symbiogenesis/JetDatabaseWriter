@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Transactions;
 using Xunit;
@@ -72,10 +73,11 @@ public sealed class RecoveryLockFileTests
 
             await File.WriteAllBytesAsync(path + ".jdw-journal", [1], TestContext.Current.CancellationToken);
             await File.WriteAllBytesAsync(lockPath, lockBytes, TestContext.Current.CancellationToken);
-            await Assert.ThrowsAsync<IOException>(async () =>
+            JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             {
                 await using AccessWriter rejected = await AccessWriter.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
             });
+            Assert.Equal(JetErrorCode.CorruptRecoveryJournal, failure.ErrorCode);
             Assert.Equal(lockBytes, await File.ReadAllBytesAsync(lockPath, TestContext.Current.CancellationToken));
             Assert.True(File.Exists(path + ".jdw-journal"));
         }

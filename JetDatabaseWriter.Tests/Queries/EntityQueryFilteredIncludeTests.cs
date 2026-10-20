@@ -7,7 +7,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
-using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -128,7 +127,7 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
 
         // The count is read while the query is translated; the getter's own exception
         // must surface, not a TargetInvocationException around it.
-        JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(async () =>
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await reader.Query<FiCustomer>("FiCustomer")
                 .Include(c => c.Orders.Take(paging.Count))
                 .ToListAsync(ct));

@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using Xunit;
@@ -21,8 +20,8 @@ public sealed class TableSchemaResolutionTests
         Assert.Equal("Id", Assert.Single(definition.Columns).Name);
         Assert.Equal(typeof(int), Assert.Single(definition.ClrTypes));
         Assert.False(definition.HasVarColumns);
-        Assert.Throws<JetNotSupportedException>(() => ((IList<Type>)definition.ClrTypes)[0] = typeof(string));
-        Assert.Throws<JetNotSupportedException>(() => ((IList<ColumnInfo>)definition.Columns)[0] = source[0]);
+        Assert.Throws<NotSupportedException>(() => ((IList<Type>)definition.ClrTypes)[0] = typeof(string));
+        Assert.Throws<NotSupportedException>(() => ((IList<ColumnInfo>)definition.Columns)[0] = source[0]);
     }
 
     [Theory]
@@ -35,7 +34,7 @@ public sealed class TableSchemaResolutionTests
         TDefImage image = TDefCodec.Parse(format, new byte[format.PageSize])!;
         var schema = new TableSchema(image, properties: null, propertiesLoaded: false);
         TableDef first = schema.CreateDefinition();
-        Assert.Throws<JetNotSupportedException>(() => ((IList<ColumnInfo>)first.Columns).Add(new ColumnInfo { Name = "Injected", Type = ColumnType.LongIntegerType }));
+        Assert.Throws<NotSupportedException>(() => ((IList<ColumnInfo>)first.Columns).Add(new ColumnInfo { Name = "Injected", Type = ColumnType.LongIntegerType }));
         TableDef second = schema.CreateDefinition();
         Assert.Same(first, second);
         Assert.Empty(second.Columns);

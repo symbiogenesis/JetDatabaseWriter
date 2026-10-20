@@ -604,7 +604,7 @@ public sealed class LinkedTableTests : IDisposable
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<JetAccessDeniedException>(async () => await reader.ReadTableAsync("LinkedBlocked", cancellationToken: TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.ReadTableAsync("LinkedBlocked", cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -637,7 +637,7 @@ public sealed class LinkedTableTests : IDisposable
         };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
-        await Assert.ThrowsAsync<JetAccessDeniedException>(async () =>
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             await reader.ReadTableAsync("LinkedSibling", cancellationToken: ct));
     }
 

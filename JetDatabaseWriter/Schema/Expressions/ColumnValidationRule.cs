@@ -88,7 +88,8 @@ internal sealed class ColumnValidationRule
             or FormatException
             or InvalidCastException
             or ArithmeticException
-            or IndexOutOfRangeException;
+            or IndexOutOfRangeException
+            or JetLimitationException;
 
     /// <summary>
     /// Evaluates the rule against the row behind <paramref name="context"/>. Returns

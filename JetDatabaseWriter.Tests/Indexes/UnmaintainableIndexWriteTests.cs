@@ -305,12 +305,13 @@ public sealed class UnmaintainableIndexWriteTests
     public async Task Write_InvalidTDefContinuation_ThrowsBeforeChangingAnything(DatabaseFormat format, TableWrite write, WriteMode mode)
     {
         const DamagedTable layout = DamagedTable.ChainHeaderHit101;
-        await using MemoryStream stream = await CreateDamagedTableAsync(format, layout);
+        long expectedContinuation = 0;
+        await using MemoryStream stream = await CreateDamagedTableAsync(format, layout, damagedContinuation: page => expectedContinuation = page);
         byte[] before = stream.ToArray();
         await Assert.ThrowsAsync<JetCorruptDataException>(() => CountIndexesAsync(stream));
         string lastColumn = ColumnName(ColumnCountOf(layout) - 1);
 
-        _ = await WriteExpectingRefusalAsync<InvalidDataException>(
+        JetCorruptDataException failure = await WriteExpectingRefusalAsync<JetCorruptDataException>(
             stream,
             mode,
             async writer =>
@@ -340,6 +341,8 @@ public sealed class UnmaintainableIndexWriteTests
                 }
             });
 
+        Assert.Equal(JetErrorCode.CorruptTableDefinition, failure.ErrorCode);
+        Assert.Equal(expectedContinuation, failure.ErrorInfo.PageNumber);
         Assert.Equal(before, stream.ToArray());
         await Assert.ThrowsAsync<JetCorruptDataException>(() => CountIndexesAsync(stream));
     }
@@ -501,8 +504,9 @@ public sealed class UnmaintainableIndexWriteTests
     /// <param name="format">The database format.</param>
     /// <param name="layout">The layout.</param>
     /// <param name="addRelatedTables">Run with the writer once the table's rows are written and before the damage, to add other tables and relationships to it; <see langword="null"/> for none.</param>
+    /// <param name="damagedContinuation">Observes the continuation page whose header is damaged.</param>
     /// <returns>The database, positioned at its start.</returns>
-    private static async Task<MemoryStream> CreateDamagedTableAsync(DatabaseFormat format, DamagedTable layout, Func<AccessWriter, Task>? addRelatedTables = null)
+    private static async Task<MemoryStream> CreateDamagedTableAsync(DatabaseFormat format, DamagedTable layout, Func<AccessWriter, Task>? addRelatedTables = null, Action<long>? damagedContinuation = null)
     {
         int columnCount = ColumnCountOf(layout);
         var columns = new List<ColumnDefinition>(columnCount);
@@ -549,6 +553,7 @@ public sealed class UnmaintainableIndexWriteTests
                     // page's type, so the entire chain must be refused.
                     byte[] continuation = await harness.Database.Pages.ReadPageCopyAsync(intact.PageNumbers[1], Ct);
                     Assert.Equal((byte)0x04, continuation[0]);
+                    damagedContinuation?.Invoke(intact.PageNumbers[1]);
                     await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
                         await harness.Database.TableDefs.ReadTDefChainAsync(table.Entry.TDefPage, Ct));
                 }

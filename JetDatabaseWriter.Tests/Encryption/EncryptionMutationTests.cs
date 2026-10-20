@@ -137,7 +137,8 @@ public sealed class EncryptionMutationTests
             }
 
             byte[] journalBytes = await File.ReadAllBytesAsync(journalPath, TestContext.Current.CancellationToken);
-            await Assert.ThrowsAsync<IOException>(async () => await AccessDatabaseEncryption.ChangePasswordAsync(path, "Native123".AsMemory(), "Changed123".AsMemory(), new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken));
+            JetOperationException error = await Assert.ThrowsAsync<JetOperationException>(async () => await AccessDatabaseEncryption.ChangePasswordAsync(path, "Native123".AsMemory(), "Changed123".AsMemory(), new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken));
+            Assert.Equal(JetErrorCode.HotJournalConflict, error.ErrorCode);
             Assert.Equal(original, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
             Assert.Equal(journalBytes, await File.ReadAllBytesAsync(journalPath, TestContext.Current.CancellationToken));
             Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + ".reenc-*.tmp"));

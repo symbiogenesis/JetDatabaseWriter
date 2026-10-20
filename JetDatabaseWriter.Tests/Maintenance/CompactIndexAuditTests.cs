@@ -804,7 +804,7 @@ public sealed class CompactIndexAuditTests
         var failure = new InvalidDataException("source read failed");
         source = CreateTree(format);
         source.Failure = failure;
-        JetCorruptDataException actual = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(source, format));
+        InvalidDataException actual = await Assert.ThrowsAsync<InvalidDataException>(async () => await ScanAsync(source, format));
         Assert.Same(failure, actual);
     }
 

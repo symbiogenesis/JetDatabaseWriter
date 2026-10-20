@@ -618,7 +618,7 @@ public sealed class CalculatedColumnWriteTests
     }
 
     [Fact]
-    public async Task InsertRow_CalculatedExpressionGeneratedTextTooLarge_ThrowsArgumentException()
+    public async Task InsertRow_CalculatedExpressionGeneratedTextTooLarge_ReportsSizeLimit()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
@@ -634,13 +634,15 @@ public sealed class CalculatedColumnWriteTests
             ],
             TestContext.Current.CancellationToken);
 
-        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
+        JetLimitationException exception = await StructuredFormatAssert.ThrowsAsync<JetLimitationException>(JetErrorCode.ValueTooLarge, async () =>
             await writer.InsertRowAsync(
                 "CalcHugeText",
                 [DBNull.Value],
                 TestContext.Current.CancellationToken));
 
         Assert.Contains("generated text length", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("CalcHugeText", exception.ErrorInfo.TableName);
+        Assert.Equal("HugeText", exception.ErrorInfo.ColumnName);
     }
 
     [Theory]
@@ -1005,11 +1007,13 @@ public sealed class CalculatedColumnWriteTests
         {
             await writer.InsertRowAsync("CalcUnsupportedPercent", [1, 50, 0.5d], TestContext.Current.CancellationToken);
 
-            ArgumentException insert = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetOperationException insert = await StructuredFormatAssert.ThrowsAsync<JetOperationException>(JetErrorCode.InvalidExpression, async () =>
                 await writer.InsertRowAsync("CalcUnsupportedPercent", [2, 60, DBNull.Value], TestContext.Current.CancellationToken));
             Assert.Contains("[R]%", insert.Message, StringComparison.Ordinal);
+            Assert.Equal("CalcUnsupportedPercent", insert.ErrorInfo.TableName);
+            Assert.Equal("C", insert.ErrorInfo.ColumnName);
 
-            ArgumentException update = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetOperationException update = await StructuredFormatAssert.ThrowsAsync<JetOperationException>(JetErrorCode.InvalidExpression, async () =>
                 await writer.UpdateRowsAsync(
                     "CalcUnsupportedPercent",
                     "Id",
@@ -1017,6 +1021,8 @@ public sealed class CalculatedColumnWriteTests
                     new Dictionary<string, object?> { ["R"] = 70 },
                     TestContext.Current.CancellationToken));
             Assert.Contains("[R]%", update.Message, StringComparison.Ordinal);
+            Assert.Equal("CalcUnsupportedPercent", update.ErrorInfo.TableName);
+            Assert.Equal("C", update.ErrorInfo.ColumnName);
 
             await writer.AddColumnAsync("CalcUnsupportedPercent", new("Note", typeof(string), maxLength: 10), TestContext.Current.CancellationToken);
         }
@@ -1075,9 +1081,11 @@ public sealed class CalculatedColumnWriteTests
         {
             await writer.InsertRowAsync("CalcUnparsed", [1, 42], TestContext.Current.CancellationToken);
 
-            ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetOperationException exception = await StructuredFormatAssert.ThrowsAsync<JetOperationException>(JetErrorCode.InvalidExpression, async () =>
                 await writer.InsertRowAsync("CalcUnparsed", [2, DBNull.Value], TestContext.Current.CancellationToken));
             Assert.Contains("[Score] 2", exception.Message, StringComparison.Ordinal);
+            Assert.Equal("CalcUnparsed", exception.ErrorInfo.TableName);
+            Assert.Equal("Calc", exception.ErrorInfo.ColumnName);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);

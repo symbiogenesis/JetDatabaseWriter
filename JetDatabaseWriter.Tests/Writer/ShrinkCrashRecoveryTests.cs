@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -77,10 +78,11 @@ public sealed class ShrinkCrashRecoveryTests
                 Assert.Equal(!successful, File.Exists(path + ".jdw-journal"));
                 if (!successful)
                 {
-                    await Assert.ThrowsAnyAsync<IOException>(async () =>
+                    JetOperationException conflict = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     {
                         await using AccessReader rejected = await AccessReader.OpenAsync(path, new AccessReaderOptions(password) { UseLockFile = false }, TestContext.Current.CancellationToken);
                     });
+                    Assert.Equal(JetErrorCode.HotJournalConflict, conflict.ErrorCode);
                 }
 
                 if (!successful)

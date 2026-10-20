@@ -821,7 +821,7 @@ internal sealed class RowDecodePlan
         {
             throw;
         }
-        catch (JetCorruptDataException exception) when (JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
+        catch (JetCorruptDataException exception) when (exception.ErrorCode != JetErrorCode.MalformedValue && JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
         {
             _ = LongValueReadPolicy.MissingValue(column.Name, exception, this.strictParsing);
             return null!;
@@ -891,7 +891,7 @@ internal sealed class RowDecodePlan
         {
             throw;
         }
-        catch (JetCorruptDataException exception) when (JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
+        catch (JetCorruptDataException exception) when (exception.ErrorCode != JetErrorCode.MalformedValue && JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
         {
             _ = LongValueReadPolicy.MissingValue(column.Name, exception, this.strictParsing);
             return null!;

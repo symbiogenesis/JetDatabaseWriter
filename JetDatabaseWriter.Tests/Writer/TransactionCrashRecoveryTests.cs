@@ -7,6 +7,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -128,10 +129,11 @@ public sealed class TransactionCrashRecoveryTests
                     File.Copy(baselinePath, path);
                     AssertCrashChild(path, password, format, encrypted, write, explicitTransaction);
                     Assert.True(File.Exists(path + ".jdw-journal"), "The interrupted write must leave durable recovery evidence.");
-                    await Assert.ThrowsAnyAsync<IOException>(async () =>
+                    JetOperationException conflict = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     {
                         await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions(password) { UseLockFile = false }, TestContext.Current.CancellationToken);
                     });
+                    Assert.Equal(JetErrorCode.HotJournalConflict, conflict.ErrorCode);
                     await using (AccessWriter recovered = await AccessWriter.OpenAsync(path, Options(password), TestContext.Current.CancellationToken))
                     {
                         Assert.NotNull(recovered);

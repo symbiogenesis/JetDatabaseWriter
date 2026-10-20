@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -308,17 +309,17 @@ public sealed class ComplexColumnsRowReadTests(DatabaseCache db) : IClassFixture
     }
 
     [Fact]
-    public void ComplexCellValue_WrongKind_ThrowsFormatException()
+    public void ComplexCellValue_WrongKind_ReportsStructuredCorruption()
     {
         byte[] multiValueCell = ComplexCellValue.EncodeMultiValueItems(7, [new MultiValueItem { ConceptualTableId = 7, Value = 1 }]);
         byte[] attachmentCell = ComplexCellValue.EncodeAttachments(7, [new AttachmentRecord { ConceptualTableId = 7, FileName = "a.txt" }]);
         byte[] versionHistoryCell = ComplexCellValue.EncodeVersionHistoryItems(7, [new MultiValueItem { ConceptualTableId = 7, Value = "v", Modified = DateTime.UnixEpoch }]);
 
-        Assert.Throws<FormatException>(() => ComplexCellValue.ReadAttachments(versionHistoryCell));
-        Assert.Throws<FormatException>(() => ComplexCellValue.ReadAttachments(multiValueCell));
-        Assert.Throws<FormatException>(() => ComplexCellValue.ReadMultiValueItems(attachmentCell));
-        Assert.Throws<FormatException>(() => ComplexCellValue.ReadAttachments([1, 2, 3]));
-        Assert.Throws<FormatException>(() => ComplexCellValue.ReadAttachments(attachmentCell.AsSpan(0, attachmentCell.Length - 1).ToArray()));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptComplexColumn, () => ComplexCellValue.ReadAttachments(versionHistoryCell));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptComplexColumn, () => ComplexCellValue.ReadAttachments(multiValueCell));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptComplexColumn, () => ComplexCellValue.ReadMultiValueItems(attachmentCell));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptComplexColumn, () => ComplexCellValue.ReadAttachments([1, 2, 3]));
+        StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.CorruptComplexColumn, () => ComplexCellValue.ReadAttachments(attachmentCell.AsSpan(0, attachmentCell.Length - 1).ToArray()));
     }
 
     [Fact]

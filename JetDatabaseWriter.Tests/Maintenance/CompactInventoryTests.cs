@@ -379,7 +379,7 @@ public sealed class CompactInventoryTests
         var invalidData = new InvalidDataException("caller stream failure");
         var lateSource = new ObservedPageSource(file.Pages) { Failure = invalidData, FailureAfterReads = file.Pages.PageCount + 1 };
         using var lateDefinitions = new TableDefReader(lateSource, file.Format, cacheResults: false);
-        JetCorruptDataException lateActual = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CompactStorageInventory.ScanAsync(
+        InvalidDataException lateActual = await Assert.ThrowsAsync<InvalidDataException>(async () => await CompactStorageInventory.ScanAsync(
             lateSource, file.Format, lateDefinitions, new(), (_, _) => ValueTask.CompletedTask, Ct));
         Assert.Same(invalidData, lateActual);
     }

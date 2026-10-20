@@ -333,7 +333,8 @@ Delivered:
   for `AddColumnAsync`. The checks run in this order, all before any catalog
   I/O: the table name, then whether the format can hold each column (ACCDB
   only, a result type and no AutoNumber, Attachment, multi-value or Hyperlink
-  flag; `NotSupportedException`), then the expression syntax, then that the
+  flag; `JetNotSupportedException` with `FeatureNotSupported`), then the
+  expression syntax, then that the
   column declares no `DefaultValue` or `DefaultValueExpression`, which a
   calculated column cannot have (`ArgumentException`). The "already
   exists" check comes last. Columns carried over by a table rewrite are not
@@ -341,9 +342,9 @@ Delivered:
   table that already stores such an expression. Its rows still read, and
   an insert that supplies the calculated value keeps it, but an insert that
   leaves the column Null and every `UpdateRowsAsync` (which re-evaluates all
-  calculated columns) throw the same `ArgumentException`, much as a stored
-  expression that calls an unsupported function makes them throw
-  `NotSupportedException`.
+  calculated columns) throw `JetOperationException` with `InvalidExpression`
+  and table/column context. A stored expression that calls an unsupported
+  function throws `JetNotSupportedException` with `UnsupportedExpression`.
 - Each referenced field's value is converted to that field's declared type
   before evaluation, with the same `Convert` call the row encoder stores it
   with. The writer accepts `"10"` for an Integer field and `10` for a Text
@@ -437,7 +438,9 @@ Delivered:
   was not checked. `ValidationRule` terms are still joined by the rule's own
   `And`/`Or` logic, which only combines Boolean terms.
 - An evaluation failure carries a structured code: result overflow uses
-  `JetLimitationException` with `NumericOverflow`, unsupported evaluation uses
+  `JetLimitationException` with `NumericOverflow`, a generated text result
+  exceeding its safety limit uses `JetLimitationException` with `ValueTooLarge`,
+  unsupported evaluation uses
   `JetNotSupportedException` with `UnsupportedExpression`, and other evaluation
   failures use `JetOperationException` with `InvalidExpression`. Its context
   names the table and calculated column, and its message

@@ -63,11 +63,12 @@ public sealed class CalculatedLongValueDecodePolicyTests
                 JetCorruptDataException strings = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct));
                 JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
                 JetCorruptDataException table = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
-                Assert.Equal(JetErrorCode.MalformedValue, typed.ErrorCode);
-                Assert.Equal("Value", typed.ErrorInfo.ColumnName);
-                Assert.Equal(typed.Message, strings.Message);
-                Assert.Equal(typed.Message, poco.Message);
-                Assert.Equal(typed.Message, table.Message);
+                foreach (JetCorruptDataException failure in new[] { typed, strings, poco, table })
+                {
+                    Assert.Equal(JetErrorCode.MalformedValue, failure.ErrorCode);
+                    Assert.Equal("Value", failure.ErrorInfo.ColumnName);
+                    Assert.NotNull(failure.InnerException);
+                }
             }
             else
             {

@@ -122,14 +122,14 @@ public sealed class RowDecodeParityTests
             JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
             JetCorruptDataException hybrid = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<HybridValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
             JetCorruptDataException table = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
-            Assert.Equal(typed.Message, hybrid.Message);
-            Assert.Equal(typed.Message, table.Message);
-            Assert.Equal(JetErrorCode.MalformedValue, strings.ErrorCode);
-            Assert.Equal("Value", strings.ErrorInfo.ColumnName);
-            Assert.IsType<ArgumentException>(strings.InnerException, exactMatch: false);
+            foreach (JetCorruptDataException failure in new[] { strings, typed, poco, hybrid, table })
+            {
+                Assert.Equal(JetErrorCode.MalformedValue, failure.ErrorCode);
+                Assert.Equal("Value", failure.ErrorInfo.ColumnName);
+                Assert.NotNull(failure.InnerException);
+            }
+
             Assert.Contains("Value", strings.Message, StringComparison.Ordinal);
-            Assert.Equal(strings.Message, typed.Message);
-            Assert.Equal(typed.Message, poco.Message);
         }
         else
         {

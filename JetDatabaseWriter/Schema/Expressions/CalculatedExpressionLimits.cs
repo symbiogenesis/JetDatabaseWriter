@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
+using JetDatabaseWriter.Exceptions;
 
 internal static class CalculatedExpressionLimits
 {
@@ -79,8 +80,10 @@ internal static class CalculatedExpressionLimits
     {
         if (length > MaxGeneratedTextLength)
         {
-            throw new ArgumentException(
-                $"Calculated-column generated text length {length} exceeds the safety limit of {MaxGeneratedTextLength} characters.");
+            throw new JetLimitationException(
+                JetErrorCode.ValueTooLarge,
+                $"Calculated-column generated text length {length} exceeds the safety limit of {MaxGeneratedTextLength} characters.",
+                new JetErrorInfo { Reason = "Calculated generated text exceeds its character budget" });
         }
     }
 }

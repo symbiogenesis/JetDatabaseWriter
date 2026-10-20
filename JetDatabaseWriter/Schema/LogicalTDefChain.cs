@@ -69,7 +69,7 @@ internal sealed class LogicalTDefChain
                 cancellationToken.ThrowIfCancellationRequested();
                 if (seen?.Add(pageNumber) == false)
                 {
-                    throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"TDEF chain contains a cycle at page {pageNumber}.");
+                    throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"TDEF chain contains a cycle at page {pageNumber}.", new JetErrorInfo { PageNumber = pageNumber });
                 }
 
                 int bytesToCopy = pageIndex == 0 ? pageSizeBytes : pageSizeBytes - 8;
@@ -84,7 +84,7 @@ internal sealed class LogicalTDefChain
                 {
                     if (page.Length < pageSizeBytes)
                     {
-                        throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"TDEF page {pageNumber} is truncated.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"TDEF page {pageNumber} is truncated.", new JetErrorInfo { PageNumber = pageNumber });
                     }
 
                     if (page[0] != Constants.PageTypes.TableDefinition)
@@ -94,7 +94,7 @@ internal sealed class LogicalTDefChain
                             return null;
                         }
 
-                        throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"TDEF continuation page {pageNumber} has an invalid page type.");
+                        throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"TDEF continuation page {pageNumber} has an invalid page type.", new JetErrorInfo { PageNumber = pageNumber });
                     }
 
                     long nextPage = Ru32(page, 4);

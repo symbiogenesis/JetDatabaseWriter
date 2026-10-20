@@ -62,11 +62,16 @@ public sealed class ComplexColumnCatalogValidationTests
 
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: ComplexColumnTestSupport.Ct);
-        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.GetComplexColumnsAsync("Docs", ComplexColumnTestSupport.Ct));
-        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.GetComplexColumnsAsync("Docs", ComplexColumnTestSupport.Ct));
+        Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
+        Assert.Equal("Docs", error.ErrorInfo.TableName);
+        JetCorruptDataException metadataError = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.GetColumnMetadataAsync("Docs", ComplexColumnTestSupport.Ct));
+        Assert.Equal(JetErrorCode.CorruptCatalog, metadataError.ErrorCode);
+        JetCorruptDataException scanError = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
         {
             using DataTable rejected = await reader.ReadTableAsync("Docs", cancellationToken: ComplexColumnTestSupport.Ct);
         });
+        Assert.Equal(JetErrorCode.CorruptCatalog, scanError.ErrorCode);
     }
 
     [Theory]
@@ -422,6 +427,9 @@ public sealed class ComplexColumnCatalogValidationTests
         JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.GetComplexColumnsAsync("Docs", ComplexColumnTestSupport.Ct));
         Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
         Assert.Equal("MSysComplexColumns", error.ErrorInfo.TableName);
+        Assert.Equal(missing, error.ErrorInfo.ColumnName);
+        JetCorruptDataException metadataError = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.GetColumnMetadataAsync("Docs", ComplexColumnTestSupport.Ct));
+        Assert.Equal(JetErrorCode.CorruptCatalog, metadataError.ErrorCode);
         JetCorruptDataException scanError = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
         {
             using DataTable rejected = await reader.ReadTableAsync("Docs", cancellationToken: ComplexColumnTestSupport.Ct);

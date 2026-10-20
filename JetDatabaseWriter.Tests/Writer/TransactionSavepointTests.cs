@@ -50,7 +50,9 @@ public sealed class TransactionSavepointTests
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         await writer.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<JetCorruptDataException>(() => writer.InsertRowsAsync("Items", FailingRows(), TestContext.Current.CancellationToken).AsTask());
+        var failure = new InvalidDataException("Producer failed after its first row.");
+        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(() => writer.InsertRowsAsync("Items", FailingRows(failure), TestContext.Current.CancellationToken).AsTask());
+        Assert.Same(failure, error);
         await writer.InsertRowAsync("Items", [2], TestContext.Current.CancellationToken);
         await transaction.CommitAsync(TestContext.Current.CancellationToken);
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
@@ -123,13 +125,15 @@ public sealed class TransactionSavepointTests
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await harness.BeginTransactionAsync(TestContext.Current.CancellationToken);
         SortedSet<long> before = await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<JetCorruptDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
+        var failure = new InvalidDataException("Failure after freeing the table's pages.");
+        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
             async token =>
             {
                 await harness.Services.Schema.DropTableAsync("Items", token);
-                throw new InvalidDataException("Failure after freeing the table's pages.");
+                throw failure;
             },
             TestContext.Current.CancellationToken).AsTask());
+        Assert.Same(failure, error);
         Assert.Equal(before, await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, TestContext.Current.CancellationToken));
         await harness.CreateTableAsync("Other", [new ColumnDefinition("Id", typeof(int))], [], TestContext.Current.CancellationToken);
         await harness.InsertRowAsync("Other", [2], TestContext.Current.CancellationToken);
@@ -153,13 +157,15 @@ public sealed class TransactionSavepointTests
 
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await harness.BeginTransactionAsync(TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<JetCorruptDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
+        var failure = new InvalidDataException("Failure after creating the table.");
+        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
             async token =>
             {
                 await harness.Services.Schema.CreateDeclaredTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], [], token);
-                throw new InvalidDataException("Failure after creating the table.");
+                throw failure;
             },
             TestContext.Current.CancellationToken).AsTask());
+        Assert.Same(failure, error);
         Assert.Null(await harness.Services.Catalog.GetCatalogEntryAsync("Items", TestContext.Current.CancellationToken));
         await harness.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], [], TestContext.Current.CancellationToken);
         await harness.InsertRowAsync("Items", [1], TestContext.Current.CancellationToken);
@@ -183,13 +189,15 @@ public sealed class TransactionSavepointTests
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await harness.BeginTransactionAsync(TestContext.Current.CancellationToken);
         SortedSet<long> before = await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<JetCorruptDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
+        var failure = new InvalidDataException("Failure after the cascade freed pages.");
+        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
             async token =>
             {
                 _ = await harness.Services.Data.DeleteRowsAsync("Parent", RowCriteria.All(), token);
-                throw new InvalidDataException("Failure after the cascade freed pages.");
+                throw failure;
             },
             TestContext.Current.CancellationToken).AsTask());
+        Assert.Same(failure, error);
         Assert.Equal(before, await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, TestContext.Current.CancellationToken));
         await harness.InsertRowAsync("Parent", [2], TestContext.Current.CancellationToken);
         await harness.InsertRowAsync("Child", [2, 2], TestContext.Current.CancellationToken);
@@ -366,9 +374,9 @@ public sealed class TransactionSavepointTests
         yield return [2];
     }
 
-    private static IEnumerable<object?[]> FailingRows()
+    private static IEnumerable<object?[]> FailingRows(InvalidDataException failure)
     {
         yield return [1];
-        throw new InvalidDataException("Producer failed after its first row.");
+        throw failure;
     }
 }

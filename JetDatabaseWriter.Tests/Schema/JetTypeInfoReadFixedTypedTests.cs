@@ -286,9 +286,9 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [Fact]
     public void Numeric_StrictMode_BufferTooShort_Throws()
     {
-        byte[] row = new byte[8]; // far less than the 16 bytes Numeric needs
+        byte[] row = new byte[8]; // shorter than the 17-byte Numeric payload
 
-        _ = Assert.Throws<JetLimitationException>(() =>
+        _ = StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.MalformedValue, () =>
             JetTypeInfo.ReadFixedTyped(row, start: 0, NumericType, size: 17, strictNumeric: true));
     }
 

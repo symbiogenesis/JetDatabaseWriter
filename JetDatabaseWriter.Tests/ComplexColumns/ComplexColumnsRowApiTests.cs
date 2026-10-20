@@ -152,7 +152,9 @@ public sealed class ComplexColumnsRowApiTests
         ];
 
         byte[] rawBody = wrapped.AsSpan(8, BinaryPrimitives.ReadInt32LittleEndian(wrapped.AsSpan(4, 4))).ToArray();
-        Assert.Throws<JetCorruptDataException>(() => InflateZlib(rawBody));
+
+        // The independent BCL inflater reports its own malformed-input exception.
+        Assert.Throws<InvalidDataException>(() => InflateZlib(rawBody));
 
         bool ok = AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded, cancellationToken: TestContext.Current.CancellationToken);
 

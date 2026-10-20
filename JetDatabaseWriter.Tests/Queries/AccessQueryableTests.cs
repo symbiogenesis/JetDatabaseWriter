@@ -7,7 +7,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
-using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -387,7 +386,7 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
         await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
-        await Assert.ThrowsAsync<JetOperationException>(async () =>
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await reader.Query<JdwItem>("JdwItem").FirstAsync(i => i.Score > 1000, ct));
     }
 
@@ -399,7 +398,7 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         // Ids 1 and 6 both score 30, so SingleOrDefaultAsync must throw rather than pick one.
-        await Assert.ThrowsAsync<JetOperationException>(async () =>
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await reader.Query<JdwItem>("JdwItem").SingleOrDefaultAsync(i => i.Score == 30, ct));
     }
 
@@ -434,7 +433,7 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
         await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
-        await Assert.ThrowsAsync<JetOperationException>(async () =>
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await reader.Query<JdwItem>("JdwItem").Where(i => i.Score > 1000).FirstAsync(ct));
     }
 
@@ -470,7 +469,7 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
         // Ids 1 and 6 both score 30, so SingleAsync must throw.
-        await Assert.ThrowsAsync<JetOperationException>(async () =>
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await reader.Query<JdwItem>("JdwItem").Where(i => i.Score == 30).SingleAsync(ct));
     }
 
