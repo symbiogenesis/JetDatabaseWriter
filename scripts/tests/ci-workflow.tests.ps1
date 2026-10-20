@@ -114,9 +114,9 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract ($infer.Contains('-p:DebugType=portable') -and $infer.Contains('-p:DebugSymbols=true')) 'InferSharp must receive source symbols.'
     Assert-Contract ($infer.Contains('mcr.microsoft.com/infersharp@sha256:030eb68fb99f86f6c6351672f444a7092dceb0fdf15ac5f24ddf9f9e198484cd') -and $infer.Contains('tee /workspace/artifacts/infersharp/analysis.log')) 'InferSharp must pin v1.5 and preserve translation coverage.'
     $reportsPosition = $infer.IndexOf('      - name: Upload InferSharp reports', [StringComparison]::Ordinal)
-    $gatePosition = $infer.IndexOf('      - name: Require no InferSharp findings', [StringComparison]::Ordinal)
+    $gatePosition = $infer.IndexOf('      - name: Require no unreviewed InferSharp findings', [StringComparison]::Ordinal)
     Assert-Contract ($reportsPosition -ge 0 -and $gatePosition -gt $reportsPosition -and $infer.Contains('if: ${{ !cancelled() }}') -and $infer.Contains('name: infersharp-${{ matrix.tf }}') -and $infer.Contains('if-no-files-found: error')) 'InferSharp must retain reports before gating findings.'
-    Assert-Contract ($infer.Contains('./scripts/assert-infersharp.ps1 -ReportPath artifacts/infersharp/report.sarif -TranslationLogPath artifacts/infersharp/analysis.log')) 'InferSharp must reject findings and empty translation.'
+    Assert-Contract ($infer.Contains('./scripts/assert-infersharp.ps1 -ReportPath artifacts/infersharp/report.sarif -TranslationLogPath artifacts/infersharp/analysis.log -BaselinePath .github/infersharp-baseline.json -TargetFramework ${{ matrix.tf }}')) 'InferSharp must reject findings and empty translation.'
 }
 
 function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedError, [xml] $Props = $buildProps, [xml] $Tests = $testProject) {

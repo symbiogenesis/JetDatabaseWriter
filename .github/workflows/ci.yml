@@ -219,11 +219,11 @@ jobs:
           path: artifacts/infersharp/
           if-no-files-found: error
           retention-days: 7
-      - name: Require no InferSharp findings
+      - name: Require no unreviewed InferSharp findings
         shell: pwsh
         run: |
           Get-Content -LiteralPath artifacts/infersharp/report.txt
-          ./scripts/assert-infersharp.ps1 -ReportPath artifacts/infersharp/report.sarif -TranslationLogPath artifacts/infersharp/analysis.log | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          ./scripts/assert-infersharp.ps1 -ReportPath artifacts/infersharp/report.sarif -TranslationLogPath artifacts/infersharp/analysis.log -BaselinePath .github/infersharp-baseline.json -TargetFramework ${{ matrix.tf }} | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
   aot:
     name: Trimmed and NativeAOT consumers

@@ -1,0 +1,415 @@
+{
+  "version": 1,
+  "analyzer": "InferSharp v1.5",
+  "reviewedRevision": "189a915a7894c00c93db1dd01272309de8f46276",
+  "sources": {
+    "JetDatabaseWriter/AccessDatabaseEncryption.cs": "f5cc1542ee78302e997859ef20cbc63873d957415c6643784c0a23112439c5a8",
+    "JetDatabaseWriter/AccessReader.cs": "bac7ee46dc75b6bd845b72dfa95e6c012c1c5a286b2dc9333aa2ca6e9b3d42f6",
+    "JetDatabaseWriter/Catalog/CatalogReader.cs": "6cbff8798b496372086ddde78f3e7e5d9b405a5d1e20bc4bcb2f4c56b87a33d1",
+    "JetDatabaseWriter/Catalog/TableCatalog.cs": "2dd1c1764ce8a68a6863e2347a0eb0635685d8d90977befd7d0f4256014382f6",
+    "JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs": "f4e839d3685f36dba5c63252a8606abe1720f44f292b3d7abc3e1f701e67512b",
+    "JetDatabaseWriter/DatabaseFile.cs": "6e7aec4d0282d11554763f8568d1ae3f2e80921bf10a907a1c7ae67920d04536",
+    "JetDatabaseWriter/Encryption/OfficeCryptoStandard.cs": "df4ed1f39d8e0e5053601db56328a9b7f6ce9c60d0fa5417413a4f1809fea392",
+    "JetDatabaseWriter/Mapping/MaterializerCache.cs": "7867d93830aed211d83fcf4567c47f7c507a342fa7cce720e1f05c637f8552cf",
+    "JetDatabaseWriter/Pages/Paging/PageBuffers.cs": "8fd94c8c6b997dd94df77be4c1282a276f6b562125f72d5ecef2338ea0e26d00",
+    "JetDatabaseWriter/Pages/Paging/PageFile.cs": "8d79d9c19ce0ac989924ed616755e86343ae7a7dd2115c4dd3d6215f6257706a",
+    "JetDatabaseWriter/Pages/Paging/Pager.cs": "befc98664e4f76a9765a601871cfa9d970f3910fb83d2220430ca37d90097abe",
+    "JetDatabaseWriter/Pages/ReaderPageCache.cs": "fa6defce8c720bb3a8f717e71968edefb52e7742dbc087b025d8e6f20edd1bd6",
+    "JetDatabaseWriter/ReaderServices.cs": "659fc6874eaab3445b8ab4f6dafc992403f5b1034112846fb42ad533327e711c",
+    "JetDatabaseWriter/Relationships/LinkedTableManager.cs": "2167d5e1d518ddebdd1818379a4548affc921f820b4a225eb05f2b00e0348450",
+    "JetDatabaseWriter/Schema/TableDefReader.cs": "386db6af10dd4c165640cb90ea8b38076976330b2510c2fc4a1123fa9d82f72d",
+    "JetDatabaseWriter/Tables/TableReader.cs": "3230bef021eae1f345f1c01c6f52d2484da299c369bb28655a3b34e3375a971d",
+    "JetDatabaseWriter/Transactions/LockFileCoordinator.cs": "c0ff1b36f3722124cf8b9b9ed104096361c048afea63b62a2548d84fa292a9f4",
+    "JetDatabaseWriter/Transactions/LockFileSlotWriter.cs": "f0fc65d7098d01f3837978dcc6cffbf34fdfe4915ca05f4306b200d714ae88a8",
+    "JetDatabaseWriter/Transactions/TransactionLifecycle.cs": "f9a4b3c305b05fad06254f4098105ff2b596c05e40dde2f411b04f3a21b21baa",
+    "JetDatabaseWriter/ValueDecoding/RowMapper.cs": "b71ca4d07cf5d536406068fd2c0ba143acf3655bacefbbb83188dc7d26c74c8b",
+    "JetDatabaseWriter/WriterServices.cs": "5ee98e009b9f605d8a3e4a6c29d9f3172c5cf2d80c18e4a2d772b48849c44aa1",
+    "JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs": "bf810bda25b02f8d17b7e2597729339e5ad70ce3612215250a91e392957b6b61",
+    "JetDatabaseWriter/Pages/Paging/StreamPageStore.cs": "ef2c31dbc79bf5813199391d4d1df327104972dfdfdcd0c0589ab056527ecea4",
+    "JetDatabaseWriter/Relationships/LinkedTextSourceStream.cs": "42e29a44ddc7c995df717c9d8291dddd248ee9719d9d8f67173166fb6945e583",
+    "JetDatabaseWriter/AccessWriterOptions.cs": "009f18152d9cd9e848fade74346447433482d43dc0e3d4aaaf5ddb3f20c5d302",
+    "JetDatabaseWriter/AccessWriter.cs": "4abc0c2682e8a8e66be85f7072f1f731e4edc7a3397cd02187f3194cfb4b6da1"
+  },
+  "targets": {
+    "netstandard2.1": [
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/AccessDatabaseEncryption.cs",
+        "line": 209,
+        "fingerprint": "bff3d62f4f59b19868c9b31c7f8c42d1",
+        "symbol": "AccessDatabaseEncryption.cs|ConvertFileAsync|PULSE_RESOURCE_LEAK",
+        "reason": "ConvertFileAsync owns fileLock in using; LockFileCoordinator.Dispose closes its acquired slot, whose LockFileSlotWriter.Dispose closes FileStream in finally. InferSharp loses ownership through the coordinator."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/AccessReader.cs",
+        "line": 16707566,
+        "fingerprint": "a27b557948b2aa031017dbc22b400987",
+        "symbol": "AccessReader.cs|OpenAsync|PULSE_RESOURCE_LEAK",
+        "reason": "OpenAsync transfers its owned stream to DatabaseFile/PageFile; OpenCoreAsync closes it on failure and AccessReader disposal closes it on success. The reported line 16707566 is a hidden async sequence point."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Catalog/TableCatalog.cs",
+        "line": 190,
+        "fingerprint": "5422673907fdf3060f113c8c02e826fa",
+        "symbol": "TableCatalog.cs|Invalidate|THREAD_SAFETY_VIOLATION",
+        "reason": "userTables is a volatile reference publishing complete immutable snapshots. Reader invalidation happens after operation leases drain during disposal; writer reads and invalidation share mutationGate serialization. Reader and writer own separate catalogs."
+      },
+      {
+        "ruleId": "NULLPTR_DEREFERENCE",
+        "path": "JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs",
+        "line": 312,
+        "fingerprint": "06065cdd592fa0bfc3b0210eb509c575",
+        "symbol": "ComplexColumnManager.cs|CreateMSysComplexColumnsAsync|NULLPTR_DEREFERENCE",
+        "reason": "CreateMSysComplexColumnsAsync initializes columns from a collection expression whose elements are new ColumnDefinition instances. A successfully created array cannot be null; this is unsupported collection-expression lowering."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/DatabaseFile.cs",
+        "line": 41,
+        "fingerprint": "3e4d44320ba9b935fbcaf475e2bad24a",
+        "symbol": "DatabaseFile.cs|.ctor|PULSE_RESOURCE_LEAK",
+        "reason": "DatabaseFile owns Pages; successful construction transfers cleanup to the outer reader/writer, whose normal disposal and failed outer construction dispose Pages. PageFile closes IoGate and Pager closes frameGate. After Pages assignment the constructor only allocates caches; public writer construction validates the cache size first."
+      },
+      {
+        "ruleId": "NULLPTR_DEREFERENCE",
+        "path": "JetDatabaseWriter/Encryption/OfficeCryptoStandard.cs",
+        "line": 344,
+        "fingerprint": "6ba1ac661e180f964ac5e33da7b7814a",
+        "symbol": "OfficeCryptoStandard.cs|VerifyPassword|NULLPTR_DEREFERENCE",
+        "reason": "The trace assumes unsummarized Aes.Create returns null. The parameterless framework factory returns an Aes implementation or throws; using owns it and the crypto transform. The real factory contract excludes this null path."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/ReaderServices.cs",
+        "line": 30,
+        "fingerprint": "371a7fcb51d42236ed5d434b553e01bf",
+        "symbol": "ReaderServices.cs|.ctor|PULSE_RESOURCE_LEAK",
+        "reason": "ReaderServices owns PageCache and disposes it in Dispose. AccessReader invokes that on normal disposal and failed construction; remaining service constructors allocate the graph without further validation or IO."
+      },
+      {
+        "ruleId": "NULLPTR_DEREFERENCE",
+        "path": "JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
+        "line": 108,
+        "fingerprint": "feaebe3908fcc4492f72e632fba5cf93",
+        "symbol": "TransactionLifecycle.cs|<BeginTransactionAsync>b__0|NULLPTR_DEREFERENCE",
+        "reason": "The trace treats ConfiguredValueTaskAwaiter<JournalGate>.GetResult as nullable. Pager.EnterJournalGateAsync returns new JournalGate or throws; the scoped using cannot receive null. InferSharp lacks this awaited-result summary."
+      },
+      {
+        "ruleId": "NULLPTR_DEREFERENCE",
+        "path": "JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
+        "line": 108,
+        "fingerprint": "9bf8c3d0317aedafd9a3b2bf8deabf07",
+        "symbol": "TransactionLifecycle.cs|<BeginTransactionAsync>b__0|NULLPTR_DEREFERENCE",
+        "reason": "The trace treats ConfiguredValueTaskAwaiter<JournalGate>.GetResult as nullable. Pager.EnterJournalGateAsync returns new JournalGate or throws; the scoped using cannot receive null. InferSharp lacks this awaited-result summary."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
+        "line": 176,
+        "fingerprint": "6c2973a2a9e9eb50b22f6235c51768d6",
+        "symbol": "TransactionLifecycle.cs|BeginTransactionCoreAsync|PULSE_RESOURCE_LEAK",
+        "reason": "The acquired JournalGate is in synchronous using after the awaited acquisition. Its Dispose releases IoGate and frameGate on every exit; InferSharp loses the ownership of the ValueTask result."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
+        "line": 412,
+        "fingerprint": "db46cb8cbee71deec06b3785ae2b0f1b",
+        "symbol": "TransactionLifecycle.cs|RollbackTransactionCoreAsync|PULSE_RESOURCE_LEAK",
+        "reason": "The acquired JournalGate is in synchronous using after the awaited acquisition. Its Dispose releases IoGate and frameGate on every exit; InferSharp loses the ownership of the ValueTask result."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
+        "line": 523,
+        "fingerprint": "ce8c03ed6b292acc48ca3484eefeadfe",
+        "symbol": "TransactionLifecycle.cs|RunInSavepointAsync|PULSE_RESOURCE_LEAK",
+        "reason": "The acquired JournalGate is in synchronous using after the awaited acquisition. Its Dispose releases IoGate and frameGate on every exit; InferSharp loses the ownership of the ValueTask result."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
+        "line": 532,
+        "fingerprint": "ce8c03ed6b292acc48ca3484eefeadfe",
+        "symbol": "TransactionLifecycle.cs|RunInSavepointAsync|PULSE_RESOURCE_LEAK",
+        "reason": "The acquired JournalGate is in synchronous using after the awaited acquisition. Its Dispose releases IoGate and frameGate on every exit; InferSharp loses the ownership of the ValueTask result."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/ValueDecoding/RowMapper.cs",
+        "line": 103,
+        "fingerprint": "4a096686a961568c59f506ccfb8a1bab",
+        "symbol": "RowMapper.cs|Build|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/ValueDecoding/RowMapper.cs",
+        "line": 113,
+        "fingerprint": "2dfaa472aa12d7cdb3683452a3f58568",
+        "symbol": "RowMapper.cs|Build|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/ValueDecoding/RowMapper.cs",
+        "line": 145,
+        "fingerprint": "71be074ef515071203c65602a7b7344d",
+        "symbol": "RowMapper.cs|GetHybrid|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/ValueDecoding/RowMapper.cs",
+        "line": 159,
+        "fingerprint": "0fdac20f97eb3c199805daa3c81dc68f",
+        "symbol": "RowMapper.cs|GetHybrid|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+      }
+    ],
+    "net10.0": [
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/AccessDatabaseEncryption.cs",
+        "line": 209,
+        "fingerprint": "bff3d62f4f59b19868c9b31c7f8c42d1",
+        "symbol": "AccessDatabaseEncryption.cs|ConvertFileAsync|PULSE_RESOURCE_LEAK",
+        "reason": "ConvertFileAsync owns fileLock in using; LockFileCoordinator.Dispose closes its acquired slot, whose LockFileSlotWriter.Dispose closes FileStream in finally. InferSharp loses ownership through the coordinator."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Catalog/CatalogReader.cs",
+        "line": 124,
+        "fingerprint": "80b2e9a7ed3dffb5f826e18d359d517f",
+        "symbol": "CatalogReader.cs|ReadTableDefAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Catalog/CatalogReader.cs",
+        "line": 139,
+        "fingerprint": "af3f0e50477f88cc53f6375dae856d65",
+        "symbol": "CatalogReader.cs|ReadValidatedObjectsAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Catalog/CatalogReader.cs",
+        "line": 149,
+        "fingerprint": "65c7ac29958586eaeeca77e4d20b09af",
+        "symbol": "CatalogReader.cs|GetMSysObjectsTableDefAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Catalog/CatalogReader.cs",
+        "line": 177,
+        "fingerprint": "9878546901be771aa3c8ba549cfd4490",
+        "symbol": "CatalogReader.cs|ReadLvPropForTableAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Catalog/TableCatalog.cs",
+        "line": 109,
+        "fingerprint": "4cc082ba9328bb8dd691bf024256b8fb",
+        "symbol": "TableCatalog.cs|ResolveRequiredTableAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Catalog/TableCatalog.cs",
+        "line": 125,
+        "fingerprint": "3292642672b604077f92aad6839de987",
+        "symbol": "TableCatalog.cs|ReadTableDefAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Catalog/TableCatalog.cs",
+        "line": 142,
+        "fingerprint": "e71ad8158c8c0d9c9516655fcffdf8ea",
+        "symbol": "TableCatalog.cs|GetSchemaAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Catalog/TableCatalog.cs",
+        "line": 164,
+        "fingerprint": "978081c8800e726b4fb30b7752302c89",
+        "symbol": "TableCatalog.cs|GetSchemaAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Catalog/TableCatalog.cs",
+        "line": 190,
+        "fingerprint": "5422673907fdf3060f113c8c02e826fa",
+        "symbol": "TableCatalog.cs|Invalidate|THREAD_SAFETY_VIOLATION",
+        "reason": "userTables is a volatile reference publishing complete immutable snapshots. Reader invalidation happens after operation leases drain during disposal; writer reads and invalidation share mutationGate serialization. Reader and writer own separate catalogs."
+      },
+      {
+        "ruleId": "NULLPTR_DEREFERENCE",
+        "path": "JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs",
+        "line": 312,
+        "fingerprint": "06065cdd592fa0bfc3b0210eb509c575",
+        "symbol": "ComplexColumnManager.cs|CreateMSysComplexColumnsAsync|NULLPTR_DEREFERENCE",
+        "reason": "CreateMSysComplexColumnsAsync initializes columns from a collection expression whose elements are new ColumnDefinition instances. A successfully created array cannot be null; this is unsupported collection-expression lowering."
+      },
+      {
+        "ruleId": "NULLPTR_DEREFERENCE",
+        "path": "JetDatabaseWriter/Encryption/OfficeCryptoStandard.cs",
+        "line": 344,
+        "fingerprint": "6ba1ac661e180f964ac5e33da7b7814a",
+        "symbol": "OfficeCryptoStandard.cs|VerifyPassword|NULLPTR_DEREFERENCE",
+        "reason": "The trace assumes unsummarized Aes.Create returns null. The parameterless framework factory returns an Aes implementation or throws; using owns it and the crypto transform. The real factory contract excludes this null path."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/ReaderServices.cs",
+        "line": 30,
+        "fingerprint": "371a7fcb51d42236ed5d434b553e01bf",
+        "symbol": "ReaderServices.cs|.ctor|PULSE_RESOURCE_LEAK",
+        "reason": "ReaderServices owns PageCache and disposes it in Dispose. AccessReader invokes that on normal disposal and failed construction; remaining service constructors allocate the graph without further validation or IO."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/Relationships/LinkedTableManager.cs",
+        "line": 1137,
+        "fingerprint": "5e9100ea7247c46534a07587a13d0105",
+        "symbol": "LinkedTableManager.cs|MoveNext|PULSE_RESOURCE_LEAK",
+        "reason": "OpenAsync disposes records in finally until ownership transfers to the returned LinkedTextRowReader. Its Dispose closes records, StreamReader, wrapper and source; every row-reader consumer uses using."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Tables/TableReader.cs",
+        "line": 210,
+        "fingerprint": "960b2d6fa871085df6936ae275710457",
+        "symbol": "TableReader.cs|ThrowIfLinkedExecutionUnavailableAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Tables/TableReader.cs",
+        "line": 218,
+        "fingerprint": "8d76eed9edacfe9f7d1d6b8dcc41fd1a",
+        "symbol": "TableReader.cs|ResolveLocalTableAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Tables/TableReader.cs",
+        "line": 230,
+        "fingerprint": "bd35ff4ea75b7db652fd9d30423513b3",
+        "symbol": "TableReader.cs|ThrowIfLinkedLocalReadAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Tables/TableReader.cs",
+        "line": 256,
+        "fingerprint": "319f863f209b3ff0ff6f409a387e9dcf",
+        "symbol": "TableReader.cs|ReadFirstTableAsStringsAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Tables/TableReader.cs",
+        "line": 505,
+        "fingerprint": "b6890118a22f55d10cd55e74efcddb27",
+        "symbol": "TableReader.cs|ReadTableAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/Tables/TableReader.cs",
+        "line": 546,
+        "fingerprint": "f421c30303e50632b325d84e9f25fc04",
+        "symbol": "TableReader.cs|ReadTableAsStringsAsync|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "NULLPTR_DEREFERENCE",
+        "path": "JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
+        "line": 108,
+        "fingerprint": "9bf8c3d0317aedafd9a3b2bf8deabf07",
+        "symbol": "TransactionLifecycle.cs|<BeginTransactionAsync>b__0|NULLPTR_DEREFERENCE",
+        "reason": "The trace treats ConfiguredValueTaskAwaiter<JournalGate>.GetResult as nullable. Pager.EnterJournalGateAsync returns new JournalGate or throws; the scoped using cannot receive null. InferSharp lacks this awaited-result summary."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
+        "line": 176,
+        "fingerprint": "6c2973a2a9e9eb50b22f6235c51768d6",
+        "symbol": "TransactionLifecycle.cs|BeginTransactionCoreAsync|PULSE_RESOURCE_LEAK",
+        "reason": "The acquired JournalGate is in synchronous using after the awaited acquisition. Its Dispose releases IoGate and frameGate on every exit; InferSharp loses the ownership of the ValueTask result."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
+        "line": 412,
+        "fingerprint": "db46cb8cbee71deec06b3785ae2b0f1b",
+        "symbol": "TransactionLifecycle.cs|RollbackTransactionCoreAsync|PULSE_RESOURCE_LEAK",
+        "reason": "The acquired JournalGate is in synchronous using after the awaited acquisition. Its Dispose releases IoGate and frameGate on every exit; InferSharp loses the ownership of the ValueTask result."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
+        "line": 523,
+        "fingerprint": "ce8c03ed6b292acc48ca3484eefeadfe",
+        "symbol": "TransactionLifecycle.cs|RunInSavepointAsync|PULSE_RESOURCE_LEAK",
+        "reason": "The acquired JournalGate is in synchronous using after the awaited acquisition. Its Dispose releases IoGate and frameGate on every exit; InferSharp loses the ownership of the ValueTask result."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
+        "line": 532,
+        "fingerprint": "ce8c03ed6b292acc48ca3484eefeadfe",
+        "symbol": "TransactionLifecycle.cs|RunInSavepointAsync|PULSE_RESOURCE_LEAK",
+        "reason": "The acquired JournalGate is in synchronous using after the awaited acquisition. Its Dispose releases IoGate and frameGate on every exit; InferSharp loses the ownership of the ValueTask result."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/ValueDecoding/RowMapper.cs",
+        "line": 96,
+        "fingerprint": "22b49e478db9e15e07df75a524ab5f6b",
+        "symbol": "RowMapper.cs|Build|THREAD_SAFETY_VIOLATION",
+        "reason": "MaterializerCache.Get guards every entries/recent access with lock(this.gate). The net10 target uses System.Threading.Lock.EnterScope; v1.5 CallParser models Monitor.Enter/Exit but not this newer lock lowering."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/ValueDecoding/RowMapper.cs",
+        "line": 103,
+        "fingerprint": "4a096686a961568c59f506ccfb8a1bab",
+        "symbol": "RowMapper.cs|Build|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/ValueDecoding/RowMapper.cs",
+        "line": 113,
+        "fingerprint": "2dfaa472aa12d7cdb3683452a3f58568",
+        "symbol": "RowMapper.cs|Build|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/ValueDecoding/RowMapper.cs",
+        "line": 145,
+        "fingerprint": "71be074ef515071203c65602a7b7344d",
+        "symbol": "RowMapper.cs|GetHybrid|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+      },
+      {
+        "ruleId": "THREAD_SAFETY_VIOLATION",
+        "path": "JetDatabaseWriter/ValueDecoding/RowMapper.cs",
+        "line": 159,
+        "fingerprint": "0fdac20f97eb3c199805daa3c81dc68f",
+        "symbol": "RowMapper.cs|GetHybrid|THREAD_SAFETY_VIOLATION",
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+      }
+    ]
+  }
+}
