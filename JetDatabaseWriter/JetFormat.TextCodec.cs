@@ -224,7 +224,7 @@ internal sealed partial class JetFormat
             else
             {
                 int runStart = i;
-                while (i + 1 < end && !(bytes[i] == 0x00 && bytes[i + 1] == 0x00))
+                while (i + 1 < end && bytes[i] != 0x00)
                 {
                     i += 2;
                 }
@@ -237,7 +237,7 @@ internal sealed partial class JetFormat
                 }
 
                 compressed = true;
-                i += 2;
+                i++;
             }
         }
 
@@ -266,7 +266,7 @@ internal sealed partial class JetFormat
             else
             {
                 int runStart = i;
-                while (i + 1 < end && !(bytes[i] == 0x00 && bytes[i + 1] == 0x00))
+                while (i + 1 < end && bytes[i] != 0x00)
                 {
                     i += 2;
                 }
@@ -283,7 +283,7 @@ internal sealed partial class JetFormat
                 }
 
                 compressed = true;
-                i += 2;
+                i++;
             }
         }
     }

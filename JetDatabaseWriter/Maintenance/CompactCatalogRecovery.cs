@@ -579,17 +579,19 @@ internal static class CompactCatalogRecovery
                 }
                 else
                 {
+                    if (stored[offset] == 0)
+                    {
+                        compressed = true;
+                        offset++;
+                        continue;
+                    }
+
                     if (offset > stored.Length - 2)
                     {
                         throw Corrupt(location.DataPageNumber, "The secondary catalog identity Name contains an incomplete compressed Unicode code unit.");
                     }
 
-                    compressed = stored[offset] == 0 && stored[offset + 1] == 0;
-                    if (!compressed)
-                    {
-                        ValidateUnicodeUnit(stored[offset] | (stored[offset + 1] << 8), ref pendingSurrogate, location.DataPageNumber);
-                    }
-
+                    ValidateUnicodeUnit(stored[offset] | (stored[offset + 1] << 8), ref pendingSurrogate, location.DataPageNumber);
                     offset += 2;
                 }
             }

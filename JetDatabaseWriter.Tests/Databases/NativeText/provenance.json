@@ -1,0 +1,195 @@
+{
+  "Date": "2026-10-19",
+  "EngineProgId": "DAO.DBEngine.120",
+  "HostArchitecture": "x64",
+  "Schema": "Writer-created Jet4/ACE T with Id LONG, VYes variable Text(255) UnicodeCompression=true, VNo Text(255) UnicodeCompression=false; native field payloads inserted through DAO SQL.",
+  "Scope": "Raw field slices only. Complete native database controls and process logs retained in session evidence. The malformed odd-tail control made DAO read the next field byte61, producing U+614E; the managed decoder must retain its bounded policy and must not emulate that out-of-slice read.",
+  "Vectors": [
+    {
+      "File": "native-mixed-transition.bin",
+      "Sha256": "BEEC04B7D7AA7314C130288890FF8F16831837769227CDDAF1DF2117122F8BEB",
+      "Kind": "DAO-authored field",
+      "RawHex": "FFFE616263002D4E00646566",
+      "BoundedExpectedUtf16Units": "0061 0062 0063 4E2D 0064 0065 0066",
+      "Observations": [
+        {
+          "Format": "Jet4Mdb",
+          "Database": "native.mdb",
+          "Sha256": "20E27AAD5912BC2FE783EC84F80635408716619CC6BF78934ECE075DA5B80AF8",
+          "Page": 512,
+          "Row": 1,
+          "FieldByteOffset": 4038,
+          "Column": "VYes",
+          "CompressionFlag": true,
+          "DaoUtf16Units": "0061 0062 0063 4E2D 0064 0065 0066"
+        },
+        {
+          "Format": "AceAccdb",
+          "Database": "native.accdb",
+          "Sha256": "0B187DDAACF8449533820DAA36A9BA5338E041E9EFB1ACD2988E9CC3D70D4D28",
+          "Page": 512,
+          "Row": 1,
+          "FieldByteOffset": 4038,
+          "Column": "VYes",
+          "CompressionFlag": true,
+          "DaoUtf16Units": "0061 0062 0063 4E2D 0064 0065 0066"
+        }
+      ]
+    },
+    {
+      "File": "native-longer-transition.bin",
+      "Sha256": "9342E1D4480F908B2246A7A5AA273D2D5A12205F8E4E0237B35B52310A638FDA",
+      "Kind": "DAO-authored field",
+      "RawHex": "FFFE616263646566002D4E006768696A6B6C",
+      "BoundedExpectedUtf16Units": "0061 0062 0063 0064 0065 0066 4E2D 0067 0068 0069 006A 006B 006C",
+      "Observations": [
+        {
+          "Format": "Jet4Mdb",
+          "Database": "native.mdb",
+          "Sha256": "20E27AAD5912BC2FE783EC84F80635408716619CC6BF78934ECE075DA5B80AF8",
+          "Page": 512,
+          "Row": 2,
+          "FieldByteOffset": 3979,
+          "Column": "VYes",
+          "CompressionFlag": true,
+          "DaoUtf16Units": "0061 0062 0063 0064 0065 0066 4E2D 0067 0068 0069 006A 006B 006C"
+        },
+        {
+          "Format": "AceAccdb",
+          "Database": "native.accdb",
+          "Sha256": "0B187DDAACF8449533820DAA36A9BA5338E041E9EFB1ACD2988E9CC3D70D4D28",
+          "Page": 512,
+          "Row": 2,
+          "FieldByteOffset": 3979,
+          "Column": "VYes",
+          "CompressionFlag": true,
+          "DaoUtf16Units": "0061 0062 0063 0064 0065 0066 4E2D 0067 0068 0069 006A 006B 006C"
+        }
+      ]
+    },
+    {
+      "File": "native-low-zero-plain.bin",
+      "Sha256": "DB8D73AD60C9693311E98AD18F2D6DB3F1A3FBE3FDC3FC45E0ABDD03563818E8",
+      "Kind": "DAO-authored field",
+      "RawHex": "6100620063000001640065006600",
+      "BoundedExpectedUtf16Units": "0061 0062 0063 0100 0064 0065 0066",
+      "Observations": [
+        {
+          "Format": "Jet4Mdb",
+          "Database": "native.mdb",
+          "Sha256": "20E27AAD5912BC2FE783EC84F80635408716619CC6BF78934ECE075DA5B80AF8",
+          "Page": 512,
+          "Row": 4,
+          "FieldByteOffset": 3909,
+          "Column": "VYes",
+          "CompressionFlag": true,
+          "DaoUtf16Units": "0061 0062 0063 0100 0064 0065 0066"
+        },
+        {
+          "Format": "AceAccdb",
+          "Database": "native.accdb",
+          "Sha256": "0B187DDAACF8449533820DAA36A9BA5338E041E9EFB1ACD2988E9CC3D70D4D28",
+          "Page": 512,
+          "Row": 4,
+          "FieldByteOffset": 3909,
+          "Column": "VYes",
+          "CompressionFlag": true,
+          "DaoUtf16Units": "0061 0062 0063 0100 0064 0065 0066"
+        }
+      ]
+    },
+    {
+      "File": "specified-low-zero-compressed.bin",
+      "Sha256": "0ABDDC4869A6B1DA84FD0A5DC95536A691C3D740FC8444BE9B9B452EE0F5BC74",
+      "Kind": "Independently specified bytes read by DAO",
+      "RawHex": "FFFE000001620063000044454647",
+      "BoundedExpectedUtf16Units": "0001 0062 0063 0044 0045 0046 0047",
+      "Observations": [
+        {
+          "Format": "Jet4Mdb",
+          "Database": "interpretation.mdb",
+          "Sha256": "61B041BBC4F4F56A8556B680C02F56900A27A543DC9132CD498436E9EE7B4159",
+          "Page": 20,
+          "Row": 4,
+          "FieldByteOffset": 3899,
+          "Column": "VYes",
+          "CompressionFlag": true,
+          "DaoUtf16Units": "0001 0062 0063 0044 0045 0046 0047"
+        },
+        {
+          "Format": "AceAccdb",
+          "Database": "interpretation.accdb",
+          "Sha256": "86C383C08722933A8E2F5049A16FBBB08C123E47B61F96DBA43EA7285155F635",
+          "Page": 20,
+          "Row": 4,
+          "FieldByteOffset": 3899,
+          "Column": "VYes",
+          "CompressionFlag": true,
+          "DaoUtf16Units": "0001 0062 0063 0044 0045 0046 0047"
+        }
+      ]
+    },
+    {
+      "File": "specified-mode-only-suffix.bin",
+      "Sha256": "B0E04A1094C56FF95A3E499DE343EF2E85A99A927089572A0417C822B15D7A6C",
+      "Kind": "Independently specified bytes read by DAO",
+      "RawHex": "FFFE61626364002D4E0064656600",
+      "BoundedExpectedUtf16Units": "0061 0062 0063 0064 4E2D 0064 0065 0066",
+      "Observations": [
+        {
+          "Format": "Jet4Mdb",
+          "Database": "interpretation.mdb",
+          "Sha256": "61B041BBC4F4F56A8556B680C02F56900A27A543DC9132CD498436E9EE7B4159",
+          "Page": 20,
+          "Row": 1,
+          "FieldByteOffset": 4036,
+          "Column": "VYes",
+          "CompressionFlag": true,
+          "DaoUtf16Units": "0061 0062 0063 0064 4E2D 0064 0065 0066"
+        },
+        {
+          "Format": "AceAccdb",
+          "Database": "interpretation.accdb",
+          "Sha256": "86C383C08722933A8E2F5049A16FBBB08C123E47B61F96DBA43EA7285155F635",
+          "Page": 20,
+          "Row": 1,
+          "FieldByteOffset": 4036,
+          "Column": "VYes",
+          "CompressionFlag": true,
+          "DaoUtf16Units": "0061 0062 0063 0064 4E2D 0064 0065 0066"
+        }
+      ]
+    },
+    {
+      "File": "specified-odd-unicode-tail.bin",
+      "Sha256": "589C0421CCE1533B04D805C029E9D34441857D875684C99D449E1270C9E6E42C",
+      "Kind": "Malformed independently specified bytes; bounded read policy retains complete code units",
+      "RawHex": "FFFE6162636465002D4E00646566004E",
+      "BoundedExpectedUtf16Units": "0061 0062 0063 0064 0065 4E2D 0064 0065 0066",
+      "Observations": [
+        {
+          "Format": "Jet4Mdb",
+          "Database": "interpretation.mdb",
+          "Sha256": "61B041BBC4F4F56A8556B680C02F56900A27A543DC9132CD498436E9EE7B4159",
+          "Page": 20,
+          "Row": 5,
+          "FieldByteOffset": 3852,
+          "Column": "VYes",
+          "CompressionFlag": true,
+          "DaoUtf16Units": "0061 0062 0063 0064 0065 4E2D 0064 0065 0066 614E"
+        },
+        {
+          "Format": "AceAccdb",
+          "Database": "interpretation.accdb",
+          "Sha256": "86C383C08722933A8E2F5049A16FBBB08C123E47B61F96DBA43EA7285155F635",
+          "Page": 20,
+          "Row": 5,
+          "FieldByteOffset": 3852,
+          "Column": "VYes",
+          "CompressionFlag": true,
+          "DaoUtf16Units": "0061 0062 0063 0064 0065 4E2D 0064 0065 0066 614E"
+        }
+      ]
+    }
+  ]
+}
