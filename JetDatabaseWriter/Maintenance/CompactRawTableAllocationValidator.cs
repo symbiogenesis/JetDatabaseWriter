@@ -28,7 +28,7 @@ internal static class CompactRawTableAllocationValidator
     /// <param name="rowLedger">The reopened immutable complete row relocation ledger.</param>
     /// <param name="allocationLedger">The reopened immutable complete twelve-byte per-column allocation ledger.</param>
     /// <param name="allocation">The complete private table staging evidence.</param>
-    /// <param name="budget">The separate raw row/LVAL comparison limits and additional fixed-buffer storage limit.</param>
+    /// <param name="budget">The raw row/LVAL comparison limits; working admission includes this wrapper and its nested raw comparison together.</param>
     /// <param name="maxAllocationReadBytes">The separate cumulative allocation-ledger read admission, including partial retries.</param>
     /// <param name="cancellationToken">Cancels every source scan, comparison and private read.</param>
     /// <param name="hydratedColumns">Optional verified persisted ResultType projections.</param>
@@ -68,15 +68,25 @@ internal static class CompactRawTableAllocationValidator
             throw Corrupt("The complete per-column LVAL allocation ledger has invalid geometry.");
         }
 
-        if (budget.MaxWorkingBytes < 4096)
+        if (budget.MaxWorkingBytes <= 4096)
         {
             throw new JetLimitationException(JetErrorCode.ValueTooLarge, "Per-column LVAL ledger validation exceeds MaxWorkingBytes.");
         }
 
         using IDisposable admission = session.Accounting.ReserveWorkingBytes(4096, owner);
         var validator = new Validator(allocationLedger, allocation.AllocationRecords, maxAllocationReadBytes);
+        var rawBudget = new CompactRawDataLongValueValidatorBudget
+        {
+            MaxDataRows = budget.MaxDataRows,
+            MaxValues = budget.MaxValues,
+            MaxLongValueRows = budget.MaxLongValueRows,
+            MaxPages = budget.MaxPages,
+            MaxRawBytes = budget.MaxRawBytes,
+            MaxReadBytes = budget.MaxReadBytes,
+            MaxWorkingBytes = budget.MaxWorkingBytes - 4096,
+        };
         CompactRawDataLongValueValidatorResult raw = await CompactRawDataLongValueValidator.ValidateAsync(
-            session, owner, owner, definition, destination, rowLedger, allocation.Data, allocation.LongValues, budget, cancellationToken, hydratedColumns, validator.CompareAsync).ConfigureAwait(false);
+            session, owner, owner, definition, destination, rowLedger, allocation.Data, allocation.LongValues, rawBudget, cancellationToken, hydratedColumns, validator.CompareAsync).ConfigureAwait(false);
         validator.RequireComplete();
         cancellationToken.ThrowIfCancellationRequested();
         return new(raw, validator.Records, validator.ReadBytes);

@@ -30,7 +30,7 @@ internal sealed class CompactRawTableBuilderBudget
     /// <summary>Gets the cumulative private destination and ledger read admission, including partial retries.</summary>
     public long MaxReadBytes { get; init; } = 32L * 1024 * 1024 * 1024;
 
-    /// <summary>Gets the additional assembly-owned image, column and fixed-buffer storage allowance.</summary>
+    /// <summary>Gets the additional assembly-owned image, parser, retained per-column result and fixed-buffer storage allowance.</summary>
     /// <remarks>Component reservations also consume the discovery session's simultaneous storage allowance.</remarks>
     public long MaxWorkingBytes { get; init; } = 1024 * 1024;
 }

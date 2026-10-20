@@ -185,6 +185,107 @@ public sealed class CompactRawTableBuilderTests
         Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
     }
 
+    [Fact]
+    public async Task Build_ManyMapRecordsRequireStorageAdmissionBeforeParsingOrStaging()
+    {
+        (byte[] original, long owner) = await CreateAsync(DatabaseFormat.Jet4Mdb, true);
+        await using var sourceStream = new MemoryStream(original, writable: false);
+        await using AccessReader source = await TestDatabase.OpenReaderAsync(sourceStream, cancellationToken: Ct);
+        JetFormat format = source.Database.Format;
+        TDefImage image = Assert.IsType<TDefImage>(await source.Database.TableDefs.ReadImageAsync(owner, Ct));
+        Assert.True(LongValueUsageMaps.TryRead(format, image.CopyBytes(), out List<LongValueUsageMap> maps, out _));
+        int trailer = maps[0].OwnedOffset - 2;
+        int end = trailer + (Constants.TableDefinition.MaxColumns * 10) + 10;
+        byte[] bytes = new byte[end];
+        image.Bytes[..trailer].CopyTo(bytes);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(8), end - 8);
+        for (int column = 0; column < Constants.TableDefinition.MaxColumns; column++)
+        {
+            BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(trailer + (column * 10)), checked((ushort)column));
+        }
+
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(end - 10), ushort.MaxValue);
+        TDefImage manyMaps = Assert.IsType<TDefImage>(TDefCodec.Parse(format, bytes));
+        var session = new CompactDiscoverySession(source.Database.Pages, format, new());
+        await using var destination = new MemoryStream();
+        await destination.WriteAsync(original, Ct);
+        await using var rows = new MemoryStream();
+        await using var values = new MemoryStream();
+
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await CompactRawTableBuilder.BuildAsync(session, format, owner, manyMaps, destination, rows, values, [], new() { MaxWorkingBytes = 300_000 }, Ct));
+
+        Assert.Equal(original, destination.ToArray());
+        Assert.Equal(0, rows.Length);
+        Assert.Equal(0, values.Length);
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Build_WorkingAllowanceIncludesRetainedMapResultsBeforeStaging(bool oneByteShort)
+    {
+        (byte[] original, long owner) = await CreateAsync(DatabaseFormat.Jet4Mdb, true);
+        await using var sourceStream = new MemoryStream(original, writable: false);
+        await using AccessReader source = await TestDatabase.OpenReaderAsync(sourceStream, cancellationToken: Ct);
+        JetFormat format = source.Database.Format;
+        TDefImage image = Assert.IsType<TDefImage>(await source.Database.TableDefs.ReadImageAsync(owner, Ct));
+        Assert.True(LongValueUsageMaps.TryRead(format, image.CopyBytes(), out List<LongValueUsageMap> maps, out _));
+        long working = (2L * image.LogicalByteLength) + format.PageSize + 131_072
+            + (256L * Math.Min(Constants.TableDefinition.MaxColumns, image.LogicalByteLength / 10)) + (256L * maps.Count);
+        var session = new CompactDiscoverySession(source.Database.Pages, format, new());
+        await using var destination = new MemoryStream();
+        await destination.WriteAsync(original, Ct);
+        await using var rows = new MemoryStream();
+        await using var values = new MemoryStream();
+        var budget = new CompactRawTableBuilderBudget { MaxWorkingBytes = working - (oneByteShort ? 1 : 0) };
+        if (oneByteShort)
+        {
+            await Assert.ThrowsAsync<JetLimitationException>(async () => await CompactRawTableBuilder.BuildAsync(session, format, owner, image, destination, rows, values, [], budget, Ct));
+            Assert.Equal(original, destination.ToArray());
+            Assert.Equal(0, rows.Length);
+            Assert.Equal(0, values.Length);
+        }
+        else
+        {
+            CompactRawTableBuilderResult result = await CompactRawTableBuilder.BuildAsync(session, format, owner, image, destination, rows, values, [], budget, Ct);
+            Assert.Equal(maps.Count, result.LongValueMaps.Count);
+        }
+
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Validate_WorkingAllowanceIncludesLedgerAndNestedRawComparison(bool oneByteShort)
+    {
+        (byte[] original, long owner) = await CreateAsync(DatabaseFormat.Jet4Mdb, true);
+        await using var sourceStream = new MemoryStream(original, writable: false);
+        await using AccessReader source = await TestDatabase.OpenReaderAsync(sourceStream, cancellationToken: Ct);
+        JetFormat format = source.Database.Format;
+        TDefImage image = Assert.IsType<TDefImage>(await source.Database.TableDefs.ReadImageAsync(owner, Ct));
+        var session = new CompactDiscoverySession(source.Database.Pages, format, new());
+        await using var destination = new MemoryStream();
+        await destination.WriteAsync(original, Ct);
+        await using var rows = new MemoryStream();
+        await using var values = new MemoryStream();
+        CompactRawTableBuilderResult result = await CompactRawTableBuilder.BuildAsync(session, format, owner, image, destination, rows, values, [], new(), Ct);
+        long working = (3L * format.PageSize) + 65_536 + 4096;
+        var budget = new CompactRawDataLongValueValidatorBudget { MaxWorkingBytes = working - (oneByteShort ? 1 : 0) };
+        if (oneByteShort)
+        {
+            await Assert.ThrowsAsync<JetLimitationException>(async () => await CompactRawTableAllocationValidator.ValidateAsync(session, owner, image, destination, rows, values, result, budget, 0, Ct));
+        }
+        else
+        {
+            CompactRawTableAllocationValidatorResult validated = await CompactRawTableAllocationValidator.ValidateAsync(session, owner, image, destination, rows, values, result, budget, 0, Ct);
+            Assert.Equal(0, validated.AllocationRecords);
+        }
+
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+    }
+
     [Theory]
     [InlineData("column")]
     [InlineData("swap")]
@@ -266,6 +367,8 @@ public sealed class CompactRawTableBuilderTests
     {
         await using var native = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.CompactRawTable", databaseExtension: kind == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb");
         (byte[] original, long owner) = await CreateAsync(kind, false);
+        string control = native.CreateDatabasePath("control");
+        await File.WriteAllBytesAsync(control, original, Ct);
         await using (var sourceStream = new MemoryStream(original, writable: false))
         await using (AccessReader source = await TestDatabase.OpenReaderAsync(sourceStream, cancellationToken: Ct))
         await using (var destination = new MemoryStream())
@@ -286,6 +389,7 @@ public sealed class CompactRawTableBuilderTests
         // mutable native acceptance requires separate global allocation assembly.
         string sourcePath = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(native.SourcePath);
         string compactedPath = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(native.CompactedPath);
+        string controlPath = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(control);
         string script = $$"""
             function Assert-Contents([string]$path) {
                 $db=$engine.OpenDatabase($path,$false,$true)
@@ -297,7 +401,10 @@ public sealed class CompactRawTableBuilderTests
                             $textLength=if($count -eq 0){10}else{10000+$count}
                             $expected=(''+[char](97+$count))*$textLength
                             $binaryLength=if($count -eq 0){7}else{9000+$count}
-                            if($rs.Fields.Item('Id').Value -ne $count -or $rs.Fields.Item('Memo').Value -cne $expected) { throw 'Native raw table value mismatch' }
+                            $actualId=$rs.Fields.Item('Id').Value
+                            $rawMemo=$rs.Fields.Item('Memo').Value
+                            [string]$actualMemo=$rawMemo
+                            if($actualId -ne $count -or $actualMemo -cne $expected) { throw "Native raw table value mismatch path=$path row=$count id=$actualId memoLength=$($actualMemo.Length) expectedLength=$textLength actualType=$($rawMemo.GetType().FullName) expectedType=$($expected.GetType().FullName) codes=$([string]::Join(',', [int[]][char[]]($actualMemo.Substring(0,[Math]::Min(8,$actualMemo.Length)))))" }
                             [byte[]]$bytes=$rs.Fields.Item('Binary').Value
                             if($bytes.Length -ne $binaryLength) { throw 'Native raw table binary length mismatch' }
                             foreach($value in $bytes) { if($value -ne $count+1) { throw 'Native raw table binary byte mismatch' } }
@@ -308,6 +415,7 @@ public sealed class CompactRawTableBuilderTests
                     } finally { $rs.Close() }
                 } finally { $db.Close() }
             }
+            Assert-Contents {{controlPath}}
             Assert-Contents {{sourcePath}}
             $engine.CompactDatabase({{sourcePath}},{{compactedPath}})
             Assert-Contents {{compactedPath}}

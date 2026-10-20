@@ -83,7 +83,8 @@ internal static class CompactRawTableBuilder
             throw new ArgumentException("The private destination and both ledgers must have distinct backing storage.", nameof(allocationLedger));
         }
 
-        long reservation = (2L * definition.LogicalByteLength) + format.PageSize + 131_072;
+        long possibleMaps = Math.Min(Constants.TableDefinition.MaxColumns, definition.LogicalByteLength / 10);
+        long reservation = (2L * definition.LogicalByteLength) + format.PageSize + 131_072 + (256 * possibleMaps);
         if (reservation > budget.MaxWorkingBytes)
         {
             throw Limit("Raw table assembly exceeds MaxWorkingBytes.");
@@ -94,6 +95,14 @@ internal static class CompactRawTableBuilder
         {
             throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, "Raw table assembly requires complete known LVAL trailer boundaries.");
         }
+
+        long resultReservation = 256L * maps.Count;
+        if (resultReservation > budget.MaxWorkingBytes - reservation)
+        {
+            throw Limit("Raw table assembly's retained per-column map results exceed MaxWorkingBytes.");
+        }
+
+        using IDisposable resultAdmission = session.Accounting.ReserveWorkingBytes(resultReservation, owner);
 
         var io = new IoAdmission(budget, privateDestination.Length, format.PageSize);
         await using var destination = new AdmittedStream(privateDestination, io, boundsOutput: true);
