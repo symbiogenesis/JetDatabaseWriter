@@ -220,7 +220,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
             List<(string? Value, byte[] Key)> encoded = values
                 .ConvertAll(v => (Value: v, Key: GeneralTextIndexEncoder.Encode(v, keyCol.IsAscending)))
 ;
-            encoded.Sort((a, b) => CompareBytesUnsignedPrefix(a.Key, b.Key));
+            encoded.Sort(static (a, b) => a.Key.AsSpan().SequenceCompareTo(b.Key));
 
             Assert.Equal(encoded.Count, onDiskKeys.Count);
 
@@ -405,39 +405,5 @@ public sealed class GeneralEncoderLongRowPrefixTests
         }
 
         return result;
-    }
-
-    /// <summary>
-    /// Sorts encoder outputs by the prefix that we know matches Access on disk
-    /// (the proprietary suffix at <c>[508..509]</c> would otherwise perturb the
-    /// order). Ties on the prefix fall back to full-length unsigned compare,
-    /// keeping the sort total — the on-disk keys break ties identically since
-    /// Access's own suffix is a deterministic function of the entry body.
-    /// </summary>
-    /// <param name="a">The first value to compare.</param>
-    /// <param name="b">The second value or byte buffer.</param>
-    private static int CompareBytesUnsignedPrefix(byte[] a, byte[] b)
-    {
-        int prefix = Math.Min(Math.Min(a.Length, b.Length), PrefixMatchLength);
-        for (int i = 0; i < prefix; i++)
-        {
-            int diff = a[i] - b[i];
-            if (diff != 0)
-            {
-                return diff;
-            }
-        }
-
-        int min = Math.Min(a.Length, b.Length);
-        for (int i = prefix; i < min; i++)
-        {
-            int diff = a[i] - b[i];
-            if (diff != 0)
-            {
-                return diff;
-            }
-        }
-
-        return a.Length - b.Length;
     }
 }

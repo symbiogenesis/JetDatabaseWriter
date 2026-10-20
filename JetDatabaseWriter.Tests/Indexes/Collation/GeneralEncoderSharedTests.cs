@@ -168,24 +168,9 @@ public sealed class GeneralEncoderSharedTests
         byte[][] encoded = sortedInputs.Select(s => encode(s, ascending: true)).ToArray();
         for (int i = 1; i < encoded.Length; i++)
         {
-            int cmp = CompareUnsigned(encoded[i - 1], encoded[i]);
+            int cmp = encoded[i - 1].AsSpan().SequenceCompareTo(encoded[i]);
             string msg = $"Encoding[{i - 1}] (\"{sortedInputs[i - 1]}\") should sort before encoding[{i}] (\"{sortedInputs[i]}\") but unsigned-byte comparison returned {cmp}.";
             Assert.True(cmp < 0, msg);
         }
-    }
-
-    private static int CompareUnsigned(byte[] a, byte[] b)
-    {
-        int min = Math.Min(a.Length, b.Length);
-        for (int i = 0; i < min; i++)
-        {
-            int diff = a[i] - b[i];
-            if (diff != 0)
-            {
-                return diff;
-            }
-        }
-
-        return a.Length - b.Length;
     }
 }
