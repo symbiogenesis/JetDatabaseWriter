@@ -37,11 +37,23 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="attachmentReads">The operation budget context shared by nested and linked reads.</param>
 internal sealed class ComplexColumnReader(JetFormat format, TableDefReader tableDefs, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled, int maxAttachmentContentBytes = 64 * 1024 * 1024, int maxComplexDiscoveryEntries = 65536, long maxAttachmentContentBytesPerOperation = 256 * 1024 * 1024, long maxAttachmentDecodeWorkBytesPerOperation = 2L * 1024 * 1024 * 1024, AttachmentReadContext? attachmentReads = null)
 {
+    private const int DescriptorCacheCapacity = 64;
+    private const int ObjectNameCacheCapacity = 4096;
+
     /// <summary>The <c>MSysComplexColumns</c> columns the descriptor join reads.</summary>
     private static readonly string[] ComplexColumnJoinColumns = ["ColumnName", "ComplexID", "FlatTableID", "ConceptualTableID", "ComplexTypeObjectID"];
 
     /// <summary>The <c>MSysComplexColumns</c> columns the flat-table lookup by column name reads.</summary>
     private static readonly string[] FlatTableLookupColumns = ["ColumnName", "ConceptualTableID", "FlatTableID", "ComplexTypeObjectID"];
+
+#if NET9_0_OR_GREATER
+    private readonly Lock metadataGate = new();
+#else
+    private readonly object metadataGate = new();
+#endif
+    private readonly Dictionary<string, IReadOnlyList<ComplexColumnInfo>> descriptors = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<long, CatalogRow>? objectNames;
+    private int metadataGeneration = -1;
 
     /// <summary>
     /// Replaces each complex column's <see cref="ComplexIdRef"/> in a typed row
@@ -100,9 +112,19 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
     internal async ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!format.SupportsComplexColumns)
         {
             return [];
+        }
+
+        int generation = this.ReadMetadataGeneration();
+        lock (this.metadataGate)
+        {
+            if (catalog.Generation == generation && this.metadataGeneration == generation && this.descriptors.TryGetValue(tableName, out IReadOnlyList<ComplexColumnInfo>? cached))
+            {
+                return cached;
+            }
         }
 
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -111,20 +133,8 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             return [];
         }
 
-        byte[]? td = await tableDefs.ReadTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        if (td == null)
-        {
-            return [];
-        }
-
-        List<ColumnInfo>? columns = TDefCodec.ReadColumns(format, td, out _, out _, out _, out _);
-        if (columns is null)
-        {
-            return [];
-        }
-
         var byComplexId = new Dictionary<int, (string Name, ColumnType Type)>();
-        foreach (ColumnInfo column in columns)
+        foreach (ColumnInfo column in resolved.Definition.Columns)
         {
             if (column.Type is ComplexType && (column.Misc <= 0 || !byComplexId.TryAdd(column.Misc, (column.Name, column.Type))))
             {
@@ -132,9 +142,36 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             }
         }
 
-        return byComplexId.Count == 0
+        IReadOnlyList<ComplexColumnInfo> result = byComplexId.Count == 0
             ? []
             : await this.JoinComplexColumnsAsync(byComplexId, resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+
+        // A lenient join can omit damaged entries. Retrying it must retain its
+        // validation and diagnostics instead of turning the omission into a hit.
+        if (result.Count == byComplexId.Count)
+        {
+            var retained = new ComplexColumnInfo[result.Count];
+            for (int index = 0; index < result.Count; index++)
+            {
+                retained[index] = result[index];
+            }
+
+            result = Array.AsReadOnly(retained);
+            lock (this.metadataGate)
+            {
+                if (catalog.Generation == generation && this.metadataGeneration == generation)
+                {
+                    if (this.descriptors.Count >= DescriptorCacheCapacity)
+                    {
+                        this.descriptors.Clear();
+                    }
+
+                    this.descriptors[tableName] = result;
+                }
+            }
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -689,14 +726,54 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         return elementType is ColumnType type ? "Multi-value " + GetTypeDisplayName(type) : null;
     }
 
+    private int ReadMetadataGeneration()
+    {
+        lock (this.metadataGate)
+        {
+            int generation = catalog.Generation;
+            if (this.metadataGeneration != generation)
+            {
+                this.descriptors.Clear();
+                this.objectNames = null;
+                this.metadataGeneration = generation;
+            }
+
+            return generation;
+        }
+    }
+
     private async ValueTask<Dictionary<long, CatalogRow>> BuildObjectNameLookupAsync(CancellationToken cancellationToken, int? maxEntries = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        int generation = this.ReadMetadataGeneration();
+        int limit = maxEntries ?? maxComplexDiscoveryEntries;
+        lock (this.metadataGate)
+        {
+            if (catalog.Generation == generation && this.metadataGeneration == generation && this.objectNames is { } cached)
+            {
+                if (cached.Count > limit)
+                {
+                    throw new JetLimitationException(JetErrorCode.ComplexDiscoveryBudgetExceeded, "Catalog discovery exceeds MaxComplexDiscoveryEntries.");
+                }
+
+                return cached;
+            }
+        }
+
         var map = new Dictionary<long, CatalogRow>();
-        foreach (CatalogRow entry in await catalog.ReadValidatedObjectsAsync(cancellationToken, maxEntries ?? maxComplexDiscoveryEntries).ConfigureAwait(false))
+        foreach (CatalogRow entry in await catalog.ReadValidatedObjectsAsync(cancellationToken, limit).ConfigureAwait(false))
         {
             if (!map.TryAdd(entry.Id, entry))
             {
                 throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects contains duplicate object identities.");
+            }
+        }
+
+        lock (this.metadataGate)
+        {
+            if (map.Count <= ObjectNameCacheCapacity && catalog.Generation == generation && this.metadataGeneration == generation)
+            {
+                this.objectNames = map;
             }
         }
 
