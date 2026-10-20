@@ -35,8 +35,9 @@ internal readonly record struct DataPageLayout(int TDefOff, int NumRows, int Row
 /// page number. The row count and row-offset table sit where
 /// <see cref="DataPage"/> puts them on any data page; the rest follows the
 /// pages Access writes. Every row ends at the page boundary. On Jet4/ACE a full chained row starts at offset 20,
-/// leaving 4 bytes of free space, and bytes 8-11 are unused (Access leaves
-/// them zero; the writer stores its LVAL token there). On Jet3, Access 97
+/// leaving 4 bytes of free space. Bytes 8-11 carry the LVAL token: native
+/// single-row fixtures use zero, while native chained pages also have nonzero
+/// descriptor-matching tokens. On Jet3, Access 97
 /// starts a full chained row at 12, right after the one-entry row-offset
 /// table, packs a single-page row or the last chunk at the end of the page,
 /// and stores no token anywhere, since offset 8 is the row count (measured on
@@ -44,7 +45,7 @@ internal readonly record struct DataPageLayout(int TDefOff, int NumRows, int Row
 /// </summary>
 /// <param name="DataPage">The data-page header layout (row count and row-offset table).</param>
 /// <param name="MinRowStart">The lowest row start of a one-row LVAL page; a row's payload capacity is the page size minus this.</param>
-/// <param name="WritesToken">Whether bytes 8-11 are free for the LVAL token (Jet4/ACE only).</param>
+/// <param name="WritesToken">Whether bytes 8-11 carry the native LVAL token (Jet4/ACE only).</param>
 internal readonly record struct LvalPageLayout(DataPageLayout DataPage, int MinRowStart, bool WritesToken)
 {
     /// <summary>Gets the Jet3 LVAL page layout, which Access 97 writes.</summary>

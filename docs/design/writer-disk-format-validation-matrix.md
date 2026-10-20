@@ -369,6 +369,8 @@ real I/O errors are covered. The result establishes complete private allocation
 coverage and preservation of supplied observations, not source completeness,
 key/value semantics, global ownership or native acceptance of a compact database.
 
+Raw LVAL staging and its independent reopened validator retain and compare observed Jet4/ACE page-header tokens, including nonzero native chained tokens. Differing source tokens force separate private pages; changing an output token refuses validation even when payload bytes and pointers agree. Native mixed Memo/OLE controls distinguish healthy originals from the previously unreadable staged output and verify the correction; Jet3 never treats its row count at offset 8 as a token.
+
 `CompactLongValueAuditTests` checks preservation observations for complete column
 slices, defined external references and complete external rows, including
 zero-length descriptors, trailing bytes and extra chain rows. Synthetic dangling

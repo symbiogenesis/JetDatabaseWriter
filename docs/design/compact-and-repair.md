@@ -116,6 +116,8 @@ The compact-copy engine must avoid the existing table rewrite snapshots; it can
 implement the required bounded raw copy without completing I6's separate
 in-place-update and seek optimizations.
 
+Raw LVAL streaming preserves observed Jet4/ACE page-header tokens, including nonzero tokens; independent reopened validation compares each row's page token with its source observation. Token changes require separate private pages. Jet3 retains its row-count field at offset 8.
+
 Raw LVAL streaming copies the descriptor-declared stored payload without text,
 OLE or calculated-value interpretation. Byte and chain-row budgets bound the
 copy, and each destination write finishes before its source page is released.
