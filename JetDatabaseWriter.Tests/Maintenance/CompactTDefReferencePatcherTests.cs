@@ -86,6 +86,32 @@ public sealed class CompactTDefReferencePatcherTests
         Assert.Throws<JetCorruptDataException>(() => CompactTDefReferencePatcher.Patch(format, malformed, new(2, 100), new(3, 100), indexes, values, 1_000_000, Ct));
     }
 
+    [Fact]
+    public void Patch_ManyLongValueMapRecordsRequireCompleteParserStorageAdmission()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        byte[] original = Definition(format);
+        Assert.True(LongValueUsageMaps.TryRead(format, original, out List<LongValueUsageMap> maps, out _));
+        int trailer = maps[0].OwnedOffset - 2;
+        int end = trailer + (Constants.TableDefinition.MaxColumns * 10) + 10;
+        byte[] bytes = new byte[end];
+        original.AsSpan(0, trailer).CopyTo(bytes);
+        Wi32(bytes, 8, end - 8);
+        var replacements = new CompactTDefLongValueReferences[Constants.TableDefinition.MaxColumns];
+        for (int column = 0; column < replacements.Length; column++)
+        {
+            Wu16(bytes, trailer + (column * 10), column);
+            replacements[column] = new(column, new(0, 100), new(1, 100));
+        }
+
+        Wu16(bytes, end - 10, ushort.MaxValue);
+        TDefImage image = Assert.IsType<TDefImage>(TDefCodec.Parse(format, bytes));
+
+        Assert.Throws<JetLimitationException>(() => CompactTDefReferencePatcher.Patch(format, image, new(2, 100), new(3, 100), [new(101, new(4, 100))], replacements, 150_000, Ct));
+
+        Assert.Equal(bytes, image.CopyBytes());
+    }
+
     private static byte[] Definition(JetFormat format, bool wide = false)
     {
         byte[] columnName = format.EncodeTDefNameRecord(wide ? new string('C', 60) : "Memo");

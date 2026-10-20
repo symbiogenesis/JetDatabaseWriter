@@ -54,7 +54,9 @@ internal static class CompactTDefReferencePatcher
         Guard.NotNull(longValues, nameof(longValues));
         Guard.InRange(maxWorkingBytes, 1L, long.MaxValue, nameof(maxWorkingBytes));
         cancellationToken.ThrowIfCancellationRequested();
-        if (image.LogicalByteLength + 65_536L > maxWorkingBytes)
+        long possibleMaps = Math.Min(Constants.TableDefinition.MaxColumns, image.LogicalByteLength / 10);
+        long reservation = image.LogicalByteLength + 65_536L + (256 * possibleMaps);
+        if (reservation > maxWorkingBytes)
         {
             throw new JetLimitationException(JetErrorCode.ValueTooLarge, "Raw TDEF reference patching exceeds MaxWorkingBytes.");
         }
