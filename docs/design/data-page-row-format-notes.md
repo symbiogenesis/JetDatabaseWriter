@@ -109,7 +109,7 @@ external storage. Preparation, direct encoding, materialized reads and
 write-back snapshots use that distinction.
 
 DAO120 controls accept compressed single-row Latin-1 values through 2048
-characters; larger compressed expansions can read as Null, and compressed bytes
+characters; larger compressed expansions can fail exact native reads, and compressed bytes
 in chained storage read as plain UTF-16. The writer conservatively compresses
 ordinary Latin-1 Memo only through that verified boundary, then emits plain
 UTF-16. This is a safe writer policy, not a universal statement of native

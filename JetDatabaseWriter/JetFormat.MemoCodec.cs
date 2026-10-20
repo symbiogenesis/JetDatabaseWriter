@@ -18,7 +18,7 @@ internal sealed partial class JetFormat
         }
 
         // DAO120 reads compressed single-row values through 2048 Latin-1 characters;
-        // larger expansions can return Null, and chained Memo payloads are plain UTF-16.
+        // larger expansions can fail exact native reads; chained payloads are plain UTF-16.
         // Native writers can choose plain chained storage below this conservative cap.
         byte[] bytes = EncodeJet4Text(value, compress && value.Length <= 2048);
         if (value.Length == 0 || value[0] != '\uFEFF' || value.Length > 2048)
