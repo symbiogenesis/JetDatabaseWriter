@@ -108,7 +108,10 @@ public sealed class QualifiedExpressionReferenceTests
     public void QualifiedReference_WithScientificOrRadixLiteralRetainsNumericToken(string expression, double expected)
     {
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(expression);
-        Assert.Equal((decimal)expected, Assert.IsType<decimal>(plan.Evaluate(Context("T"))));
+        decimal actual = Assert.IsType<decimal>(plan.Evaluate(Context("T")));
+
+        // Keep this tokenization check at the literals' double precision across runtime conversions.
+        Assert.Equal(expected, decimal.ToDouble(actual));
     }
 
     [Theory]
