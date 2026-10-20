@@ -96,7 +96,7 @@ internal sealed class IndexRowReader(
 
         if (linkKind == LinkedTableKind.Access)
         {
-            return await linked.TryReadAccessAsync(tableName, (source, name) => source.ListIndexesAsync(name, cancellationToken), cancellationToken).ConfigureAwait(false) ?? [];
+            return await linked.TryListIndexesAsync(tableName, cancellationToken).ConfigureAwait(false) ?? [];
         }
 
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -407,7 +407,7 @@ internal sealed class IndexRowReader(
 
         if (await linked.IsLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false))
         {
-            await foreach (TRow row in linked.ReadAccessIndexAsync(tableName, (source, name) => source.Services.Indexes.EnumerateIndexRowsAsync(name, indexName, criteria, createProjection, cancellationToken), cancellationToken).ConfigureAwait(false))
+            await foreach (TRow row in linked.ReadAccessIndexAsync(tableName, (source, name) => source.EnumerateIndexRowsAsync(name, indexName, criteria, createProjection, cancellationToken), cancellationToken).ConfigureAwait(false))
             {
                 yield return row;
                 operation.Resume();

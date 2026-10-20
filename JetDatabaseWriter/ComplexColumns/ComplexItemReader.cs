@@ -36,7 +36,7 @@ internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, Tabl
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         cancellationToken.ThrowIfCancellationRequested();
 
-        IReadOnlyList<AttachmentRecord>? linkedItems = await linked.TryReadAccessAsync(tableName, (source, name) => source.GetAttachmentsAsync(name, columnName, cancellationToken), cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<AttachmentRecord>? linkedItems = await linked.TryGetAttachmentsAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
         if (linkedItems is not null)
         {
             return linkedItems;
@@ -65,7 +65,7 @@ internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, Tabl
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         cancellationToken.ThrowIfCancellationRequested();
 
-        IReadOnlyList<MultiValueItem>? linkedItems = await linked.TryReadAccessAsync(tableName, (source, name) => source.GetMultiValueItemsAsync(name, columnName, cancellationToken), cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<MultiValueItem>? linkedItems = await linked.TryGetMultiValueItemsAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
         if (linkedItems is not null)
         {
             return linkedItems;

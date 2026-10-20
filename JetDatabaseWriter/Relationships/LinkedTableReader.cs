@@ -11,6 +11,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tables;
 using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>
@@ -200,13 +201,43 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
             (source, link) => source.GetColumnMetadataAsync(link.SourceObjectName, cancellationToken),
             cancellationToken);
 
+    /// <summary>Lists indexes on an approved Access source without exposing its facade.</summary>
+    /// <param name="tableName">The host table name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The source indexes, or null when this is not an Access link.</returns>
+    internal ValueTask<IReadOnlyList<IndexMetadata>?> TryListIndexesAsync(string tableName, CancellationToken cancellationToken) =>
+        this.TryReadAccessAsync(tableName, (source, name) => source.ListIndexesAsync(name, cancellationToken), cancellationToken);
+
+    /// <summary>Describes complex columns on an approved Access source.</summary>
+    /// <param name="tableName">The host table name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The source columns, or null when this is not an Access link.</returns>
+    internal ValueTask<IReadOnlyList<ComplexColumnInfo>?> TryGetComplexColumnsAsync(string tableName, CancellationToken cancellationToken) =>
+        this.TryReadAccessAsync(tableName, (source, name) => source.GetComplexColumnsAsync(name, cancellationToken), cancellationToken);
+
+    /// <summary>Reads attachments from an approved Access source.</summary>
+    /// <param name="tableName">The host table name.</param>
+    /// <param name="columnName">The complex column name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The source attachments, or null when this is not an Access link.</returns>
+    internal ValueTask<IReadOnlyList<AttachmentRecord>?> TryGetAttachmentsAsync(string tableName, string columnName, CancellationToken cancellationToken) =>
+        this.TryReadAccessAsync(tableName, (source, name) => source.GetAttachmentsAsync(name, columnName, cancellationToken), cancellationToken);
+
+    /// <summary>Reads multi-value items from an approved Access source.</summary>
+    /// <param name="tableName">The host table name.</param>
+    /// <param name="columnName">The complex column name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The source items, or null when this is not an Access link.</returns>
+    internal ValueTask<IReadOnlyList<MultiValueItem>?> TryGetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken) =>
+        this.TryReadAccessAsync(tableName, (source, name) => source.GetMultiValueItemsAsync(name, columnName, cancellationToken), cancellationToken);
+
     /// <summary>Runs a metadata or complex-item read against an approved Access source.</summary>
     /// <typeparam name="TResult">The detached read result.</typeparam>
     /// <param name="tableName">The host table name.</param>
     /// <param name="read">The source operation.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The source result, or null when this is not an Access link.</returns>
-    internal async ValueTask<TResult?> TryReadAccessAsync<TResult>(string tableName, Func<AccessReader, string, ValueTask<TResult>> read, CancellationToken cancellationToken)
+    private async ValueTask<TResult?> TryReadAccessAsync<TResult>(string tableName, Func<AccessReader, string, ValueTask<TResult>> read, CancellationToken cancellationToken)
         where TResult : class
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -226,7 +257,7 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
     /// <param name="read">The source operation.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <exception cref="JetNotSupportedException">Text links have no index storage.</exception>
-    internal async IAsyncEnumerable<TRow> ReadAccessIndexAsync<TRow>(string tableName, Func<AccessReader, string, IAsyncEnumerable<TRow>> read, [EnumeratorCancellation] CancellationToken cancellationToken)
+    internal async IAsyncEnumerable<TRow> ReadAccessIndexAsync<TRow>(string tableName, Func<IndexRowReader, string, IAsyncEnumerable<TRow>> read, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         LinkedTableInfo? link = await this.FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -242,7 +273,7 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
         }
 
         await using AccessReader source = await LinkedTableManager.OpenLinkedSourceAsync(policy, link, cancellationToken).ConfigureAwait(false);
-        await foreach (TRow row in read(source, link.SourceObjectName).WithCancellation(cancellationToken).ConfigureAwait(false))
+        await foreach (TRow row in read(source.Services.Indexes, link.SourceObjectName).WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             yield return row;
         }

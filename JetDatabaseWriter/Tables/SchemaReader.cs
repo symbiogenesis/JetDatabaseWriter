@@ -324,7 +324,7 @@ internal sealed class SchemaReader(
             return [];
         }
 
-        return await linked.TryReadAccessAsync(tableName, (source, name) => source.GetComplexColumnsAsync(name, cancellationToken), cancellationToken).ConfigureAwait(false)
+        return await linked.TryGetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false)
             ?? await complexColumns.GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
     }
 
