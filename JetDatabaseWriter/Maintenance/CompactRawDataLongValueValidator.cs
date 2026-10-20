@@ -36,6 +36,7 @@ internal static class CompactRawDataLongValueValidator
     /// <param name="budget">The aggregate private validation limits.</param>
     /// <param name="cancellationToken">Cancels source auditing, directory checks and every private read.</param>
     /// <param name="hydratedColumns">Optional verified projections changing only persisted ResultType metadata.</param>
+    /// <param name="allocationVisitor">Optional awaited delivery of independently compared nonempty external allocations with their original field identities; later failure still refuses completion.</param>
     /// <returns>Independent comparison evidence, without authorizing publication or source reclamation.</returns>
     /// <exception cref="ArgumentException">Streams, definitions or projections cannot be validated independently.</exception>
     /// <exception cref="JetCorruptDataException">Stored bytes, pointers, ownership, coverage or evidence disagree.</exception>
@@ -51,7 +52,8 @@ internal static class CompactRawDataLongValueValidator
         CompactRawDataLongValueRelocatorResult longValues,
         CompactRawDataLongValueValidatorBudget budget,
         CancellationToken cancellationToken,
-        IReadOnlyList<ColumnInfo>? hydratedColumns = null)
+        IReadOnlyList<ColumnInfo>? hydratedColumns = null,
+        Func<CompactRawField, CompactPageRun, CancellationToken, ValueTask>? allocationVisitor = null)
     {
         Guard.NotNull(session, nameof(session));
         Guard.NotNull(definition, nameof(definition));
@@ -105,7 +107,7 @@ internal static class CompactRawDataLongValueValidator
         }
 
         using IDisposable admission = session.Accounting.ReserveWorkingBytes(reservation, sourceOwner);
-        return await new Validator(session, format, destinationOwner, definition, destination, ledger, data, longValues, budget, hydratedColumns, length)
+        return await new Validator(session, format, destinationOwner, definition, destination, ledger, data, longValues, budget, hydratedColumns, allocationVisitor, length)
             .RunAsync(sourceOwner, cancellationToken).ConfigureAwait(false);
     }
 
@@ -159,6 +161,7 @@ internal static class CompactRawDataLongValueValidator
         CompactRawDataLongValueRelocatorResult longValues,
         CompactRawDataLongValueValidatorBudget budget,
         IReadOnlyList<ColumnInfo>? columns,
+        Func<CompactRawField, CompactPageRun, CancellationToken, ValueTask>? allocationVisitor,
         long destinationLength)
     {
         private readonly PageCursor dataPages = new(format, data.FirstPageNumber, data.PageCount);
@@ -251,8 +254,17 @@ internal static class CompactRawDataLongValueValidator
                 this.pointerBytes += sizeof(uint);
             }
 
+            long firstPage = longValues.FirstPageNumber + this.lvalPages.Pages;
             await session.AuditLongValueAsync(field.RawBytes, this.CompareLongValueRecordAsync, token).ConfigureAwait(false);
             this.lvalPages.RequireValueComplete();
+            long pageCount = longValues.FirstPageNumber + this.lvalPages.Pages - firstPage;
+            if (pageCount > 0 && allocationVisitor is not null)
+            {
+                session.Accounting.Charge(CompactDiscoveryCharge.Records, 1, field.Location.PageNumber);
+                await allocationVisitor(field, new(firstPage, pageCount), token).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+                this.CheckLengths();
+            }
         }
 
         private async ValueTask CompareLongValueRecordAsync(CompactLongValueRecord record, CancellationToken token)
