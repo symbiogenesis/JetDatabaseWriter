@@ -278,18 +278,18 @@ internal sealed class AppendOnlyHistorySchemaEditor(
         }
 
         ColumnPropertyBlock? properties = await snapshots.ReadLvPropBlockAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        bool propertyChanges = properties?.Targets.Any(target => string.Equals(target.Name, oldName, StringComparison.OrdinalIgnoreCase)) == true;
+        bool propertyChanges = properties?.Targets.Any(target => target.ChunkType == ColumnPropertyChunkType.PropertyBlockAlt1 && string.Equals(target.Name, oldName, StringComparison.OrdinalIgnoreCase)) == true;
         byte[]? projectedProperties = null;
         if (propertyChanges)
         {
             var builder = ColumnPropertyBlockBuilder.FromBlock(properties!);
             if (newName is null)
             {
-                builder.Targets.RemoveAll(target => string.Equals(target.Name, oldName, StringComparison.OrdinalIgnoreCase));
+                builder.Targets.RemoveAll(target => target.ChunkType == ColumnPropertyChunkType.PropertyBlockAlt1 && string.Equals(target.Name, oldName, StringComparison.OrdinalIgnoreCase));
             }
             else
             {
-                foreach (ColumnPropertyTargetBuilder target in builder.Targets.Where(target => string.Equals(target.Name, oldName, StringComparison.OrdinalIgnoreCase)))
+                foreach (ColumnPropertyTargetBuilder target in builder.Targets.Where(target => target.ChunkType == ColumnPropertyChunkType.PropertyBlockAlt1 && string.Equals(target.Name, oldName, StringComparison.OrdinalIgnoreCase)))
                 {
                     target.Name = newName;
                 }

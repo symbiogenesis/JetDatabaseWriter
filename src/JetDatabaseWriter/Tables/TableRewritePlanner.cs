@@ -141,9 +141,6 @@ internal sealed class TableRewritePlanner(
         // before anything is written: the rebuilt table's catalog row carries them.
         this.ThrowIfDisplayPropertiesUnmaintainable(tableName, originalProperties, existingDefs, mapColumnName);
         originalProperties = this.ProjectTableRuleReferences(tableName, originalProperties, existingDefs, mapColumnName);
-        ColumnPropertyBlock persistedProperties =
-            PersistedPropertyProjector.ProjectForRewrite(originalProperties, existingDefs, newDefs, mapColumnName, format);
-        byte[]? persistedLvProp = persistedProperties.ToBytes(format);
 
         // Capture the table's relationship state, and refuse to drop a
         // relationship key column, before anything is written.
@@ -170,6 +167,31 @@ internal sealed class TableRewritePlanner(
         // renamed through mapColumnName, with its flags. FK indexes are
         // re-emitted below by the relationship manager.
         List<IndexDefinition> projectedIndexes = IndexHelpers.ProjectIndexes(existingIndexes, newDefs, mapColumnName);
+        ReserveShortcutPrimaryKeyName(newDefs, projectedIndexes, existingIndexes, originalProperties);
+
+        var survivingIndexNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (IndexDefinition index in projectedIndexes)
+        {
+            survivingIndexNames.Add(index.Name);
+        }
+
+        foreach (FkLogicalIndexSnapshot index in relationshipState.FkEntries)
+        {
+            survivingIndexNames.Add(index.Name);
+        }
+
+        var droppedIndexNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (IndexMetadata index in existingIndexes)
+        {
+            if (!survivingIndexNames.Contains(index.Name))
+            {
+                droppedIndexNames.Add(index.Name);
+            }
+        }
+
+        ColumnPropertyBlock persistedProperties =
+            PersistedPropertyProjector.ProjectForRewrite(originalProperties, existingDefs, newDefs, mapColumnName, format, droppedIndexNames);
+        byte[]? persistedLvProp = persistedProperties.ToBytes(format);
 
         // Project every row before creating the temp table, so a MEMO / OLE value
         // the snapshot could not read refuses the rewrite before anything changes.
@@ -262,6 +284,69 @@ internal sealed class TableRewritePlanner(
             renamedComplex,
             autoNumberHighWater,
             complexHighWater);
+    }
+
+    /// <summary>Names a new shortcut primary key without taking an existing index or opaque index map's identity.</summary>
+    /// <param name="columns">The projected columns.</param>
+    /// <param name="indexes">The projected ordinary indexes.</param>
+    /// <param name="originalIndexes">Every source logical index, including foreign keys.</param>
+    /// <param name="properties">The source property maps.</param>
+    private static void ReserveShortcutPrimaryKeyName(
+        List<ColumnDefinition> columns,
+        List<IndexDefinition> indexes,
+        IReadOnlyList<IndexMetadata> originalIndexes,
+        ColumnPropertyBlock? properties)
+    {
+        if (indexes.Exists(static index => index.IsPrimaryKey))
+        {
+            return;
+        }
+
+        var keys = new List<string>();
+        foreach (ColumnDefinition column in columns)
+        {
+            if (column.IsPrimaryKey)
+            {
+                keys.Add(column.Name);
+            }
+        }
+
+        if (keys.Count == 0)
+        {
+            return;
+        }
+
+        var names = new List<string>();
+        foreach (IndexMetadata index in originalIndexes)
+        {
+            names.Add(index.Name);
+        }
+
+        if (properties is not null)
+        {
+            foreach (ColumnPropertyTarget target in properties.Targets)
+            {
+                if (target.ChunkType == ColumnPropertyChunkType.PropertyBlockAlt2)
+                {
+                    names.Add(target.Name);
+                }
+            }
+        }
+
+        string name = IndexHelpers.MakeUniqueLogicalIdxName("PrimaryKey", names);
+        if (string.Equals(name, "PrimaryKey", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        indexes.Add(new IndexDefinition(name, keys) { IsPrimaryKey = true });
+        for (int index = 0; index < columns.Count; index++)
+        {
+            if (columns[index].IsPrimaryKey)
+            {
+                columns[index] = columns[index] with { IsPrimaryKey = false, IsNullable = false };
+            }
+        }
     }
 
     /// <summary>
@@ -472,7 +557,7 @@ internal sealed class TableRewritePlanner(
 
             foreach (ColumnPropertyTarget target in properties.Targets)
             {
-                if (target.Name.Length != 0)
+                if (target.Name.Length != 0 || target.ChunkType != ColumnPropertyChunkType.PropertyBlock)
                 {
                     continue;
                 }
@@ -519,7 +604,7 @@ internal sealed class TableRewritePlanner(
         bool changed = false;
         foreach (ColumnPropertyTargetBuilder target in builder.Targets)
         {
-            if (target.Name.Length != 0)
+            if (target.Name.Length != 0 || target.ChunkType != ColumnPropertyChunkType.PropertyBlock)
             {
                 continue;
             }

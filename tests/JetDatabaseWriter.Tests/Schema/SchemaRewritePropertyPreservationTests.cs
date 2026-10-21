@@ -12,6 +12,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -304,15 +305,89 @@ public sealed class SchemaRewritePropertyPreservationTests
         await using MemoryStream ms = await CopyFixtureAsync(TestDatabases.CalcFieldTestV2010);
         List<TargetView> before = await ReadTargetsAsync(ms, "Table1");
 
+        byte[] originalBytes = ms.ToArray();
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
+            Dictionary<string, object[]> calculated = await ReadCalculatedValuesAsync(writer);
             await using JetTransaction transaction = await writer.BeginTransactionAsync(Ct);
             await writer.RenameColumnAsync("Table1", "City", "Town", Ct);
+            AssertCalculatedValues(calculated, await ReadCalculatedValuesAsync(writer));
             await writer.DropColumnAsync("Table1", "BoolTest", Ct);
+            AssertCalculatedValues(calculated, await ReadCalculatedValuesAsync(writer));
             await transaction.RollbackAsync(Ct);
         }
 
+        Assert.Equal(originalBytes, ms.ToArray());
         AssertSameTargets(before, await ReadTargetsAsync(ms, "Table1"));
+    }
+
+    /// <summary>Native calculated result types remain hydrated after index and relationship topology refreshes.</summary>
+    /// <param name="mode">The writer mode.</param>
+    /// <param name="withRelationship">Whether FK emission refreshes the replacement definition too.</param>
+    /// <returns>The asynchronous regression check.</returns>
+    [Theory]
+    [InlineData(WriteMode.Direct, false)]
+    [InlineData(WriteMode.AutoCommit, false)]
+    [InlineData(WriteMode.ExplicitCommit, false)]
+    [InlineData(WriteMode.Direct, true)]
+    [InlineData(WriteMode.AutoCommit, true)]
+    [InlineData(WriteMode.ExplicitCommit, true)]
+    public async Task NativeCalculatedValues_SurviveConsecutiveSchemaRewrites(WriteMode mode, bool withRelationship)
+    {
+        await using MemoryStream ms = await CopyFixtureAsync(TestDatabases.CalcFieldTestV2010);
+        Dictionary<string, object[]> expected;
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
+        {
+            if (withRelationship)
+            {
+                IndexMetadata primary = Assert.Single(await writer.Services.Snapshots.ReadIndexMetadataSnapshotAsync("Table1", Ct), index => index.Kind == IndexKind.PrimaryKey);
+                string key = Assert.Single(primary.Columns).Name;
+                await writer.CreateRelationshipAsync(new RelationshipDefinition("CalculatedSelf", "Table1", key, "Table1", key), Ct);
+            }
+
+            ResolvedTable original = await writer.Services.Catalog.ResolveRequiredTableAsync("Table1", Ct);
+            ColumnInfo weekly = Assert.Single(original.Definition.Columns, column => column.Name == "WeeklySalary");
+            Assert.Equal(ColumnType.DoubleType, weekly.Type);
+            Assert.Equal(ColumnType.NumericType, weekly.CalculatedResultType);
+            expected = await ReadCalculatedValuesAsync(writer);
+            Assert.NotEmpty(expected["WeeklySalary"]);
+            await WriteModes.RunAsync(
+                writer,
+                mode,
+                async () =>
+                {
+                    await writer.RenameColumnAsync("Table1", "City", "Town", Ct);
+                    AssertCalculatedValues(expected, await ReadCalculatedValuesAsync(writer));
+                    await writer.DropColumnAsync("Table1", "BoolTest", Ct);
+                    AssertCalculatedValues(expected, await ReadCalculatedValuesAsync(writer));
+                    await writer.AddColumnAsync("Table1", new ColumnDefinition("Added", typeof(int)), Ct);
+                    AssertCalculatedValues(expected, await ReadCalculatedValuesAsync(writer));
+                },
+                Ct);
+        }
+
+        await using AccessWriter reopened = await OpenWriterAsync(ms, WriteMode.Direct);
+        Dictionary<string, object[]> persisted = await ReadCalculatedValuesAsync(reopened);
+        AssertCalculatedValues(expected, persisted);
+        Assert.All(persisted["WeeklySalary"].Where(value => value is not DBNull), value => Assert.IsType<decimal>(value));
+    }
+
+    private static async Task<Dictionary<string, object[]>> ReadCalculatedValuesAsync(AccessWriter writer)
+    {
+        ResolvedTable table = await writer.Services.Catalog.ResolveRequiredTableAsync("Table1", Ct);
+        List<LocatedRow> rows = await writer.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, Ct);
+        return table.Definition.Columns.Select((column, index) => (column, index))
+            .Where(item => item.column.IsCalculated && item.column.Name != "BoolTest")
+            .ToDictionary(item => item.column.Name, item => rows.Select(row => row.Values[item.index]).ToArray(), StringComparer.Ordinal);
+    }
+
+    private static void AssertCalculatedValues(Dictionary<string, object[]> expected, Dictionary<string, object[]> actual)
+    {
+        Assert.Equal(expected.Keys, actual.Keys);
+        foreach ((string column, object[] values) in expected)
+        {
+            Assert.Equal(values, actual[column]);
+        }
     }
 
     /// <summary>

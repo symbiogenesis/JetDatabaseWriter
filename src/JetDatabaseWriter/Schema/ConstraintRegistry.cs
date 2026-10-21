@@ -179,6 +179,13 @@ internal sealed class ConstraintRegistry(
         var targets = new Dictionary<string, Dictionary<string, ColumnPropertyEntry>>(StringComparer.OrdinalIgnoreCase);
         foreach (ColumnPropertyTarget target in properties.Targets)
         {
+            if (target.Name.Length == 0
+                ? target.ChunkType != ColumnPropertyChunkType.PropertyBlock
+                : target.ChunkType != ColumnPropertyChunkType.PropertyBlockAlt1)
+            {
+                continue;
+            }
+
             if (!targets.TryGetValue(target.Name, out Dictionary<string, ColumnPropertyEntry>? entries))
             {
                 entries = new Dictionary<string, ColumnPropertyEntry>(StringComparer.OrdinalIgnoreCase);

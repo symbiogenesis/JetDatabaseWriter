@@ -9,13 +9,13 @@ namespace JetDatabaseWriter.Schema.Models;
 /// </remarks>
 internal enum ColumnPropertyChunkType : ushort
 {
-    /// <summary>Property block targeted at an object — column, table, or index.</summary>
+    /// <summary>Object-level property block; an empty target name identifies the table.</summary>
     PropertyBlock = 0x0000,
 
-    /// <summary>Property block subtype 1. mdbtools treats identically to <see cref="PropertyBlock"/>.</summary>
+    /// <summary>Column property block.</summary>
     PropertyBlockAlt1 = 0x0001,
 
-    /// <summary>Property block subtype 2. mdbtools treats identically to <see cref="PropertyBlock"/>.</summary>
+    /// <summary>Index property block, whose name can also identify a column.</summary>
     PropertyBlockAlt2 = 0x0002,
 
     /// <summary>Name-pool chunk — exactly one per blob, must precede any property block.</summary>

@@ -281,7 +281,7 @@ public sealed class TableValidationRuleTests(DatabaseCache db) : IClassFixture<D
         repeated.Entries[0].DdlFlag = 0;
         repeated.Entries[0].Padding = [0x56, 0x78];
         builder.Targets.Add(repeated);
-        var empty = new ColumnPropertyTargetBuilder { Name = string.Empty, ChunkType = ColumnPropertyChunkType.PropertyBlockAlt2 };
+        var empty = new ColumnPropertyTargetBuilder { Name = string.Empty, ChunkType = ColumnPropertyChunkType.PropertyBlock };
         empty.AddText(Constants.ColumnPropertyNames.Description, "unchanged", harness.Database.Format);
         builder.Targets.Add(empty);
         byte[] bytes = Assert.IsType<byte[]>(builder.ToBytes(harness.Database.Format));

@@ -127,7 +127,7 @@ internal sealed class ColumnPropertyBlockBuilder
     {
         foreach (ColumnPropertyTargetBuilder t in this.Targets)
         {
-            if (t.Name.Length == 0)
+            if (t.ChunkType == ColumnPropertyChunkType.PropertyBlock && t.Name.Length == 0)
             {
                 return t;
             }
@@ -139,22 +139,22 @@ internal sealed class ColumnPropertyBlockBuilder
     }
 
     /// <summary>
-    /// Adds (or returns an existing) target by case-insensitive name. New targets
-    /// default to chunk-type <c>0x01</c> (the property-block subtype DAO emits for new columns).
+    /// Adds (or returns an existing) target by subtype and case-insensitive name.
     /// </summary>
     /// <param name="name">The name.</param>
-    public ColumnPropertyTargetBuilder GetOrAddTarget(string name)
+    /// <param name="chunkType">The target subtype; new column metadata uses subtype 1.</param>
+    public ColumnPropertyTargetBuilder GetOrAddTarget(string name, ColumnPropertyChunkType chunkType = ColumnPropertyChunkType.PropertyBlockAlt1)
     {
         Guard.NotNullOrEmpty(name, nameof(name));
         foreach (ColumnPropertyTargetBuilder t in this.Targets)
         {
-            if (string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
+            if (t.ChunkType == chunkType && string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
             {
                 return t;
             }
         }
 
-        var nt = new ColumnPropertyTargetBuilder { Name = name, ChunkType = ColumnPropertyChunkType.PropertyBlockAlt1, TextEncoding = this.sourceTextEncoding };
+        var nt = new ColumnPropertyTargetBuilder { Name = name, ChunkType = chunkType, TextEncoding = this.sourceTextEncoding };
         this.Targets.Add(nt);
         return nt;
     }
@@ -164,11 +164,12 @@ internal sealed class ColumnPropertyBlockBuilder
     /// No-op if no such target exists. Returns <see langword="true"/> when a target was removed.
     /// </summary>
     /// <param name="name">The name.</param>
-    public bool RemoveTarget(string name)
+    /// <param name="chunkType">The target subtype; column metadata uses subtype 1.</param>
+    public bool RemoveTarget(string name, ColumnPropertyChunkType chunkType = ColumnPropertyChunkType.PropertyBlockAlt1)
     {
         for (int i = 0; i < this.Targets.Count; i++)
         {
-            if (string.Equals(this.Targets[i].Name, name, StringComparison.OrdinalIgnoreCase))
+            if (this.Targets[i].ChunkType == chunkType && string.Equals(this.Targets[i].Name, name, StringComparison.OrdinalIgnoreCase))
             {
                 this.Targets.RemoveAt(i);
                 return true;
@@ -184,12 +185,13 @@ internal sealed class ColumnPropertyBlockBuilder
     /// </summary>
     /// <param name="oldName">The old name.</param>
     /// <param name="newName">The new name.</param>
-    public void RenameTarget(string oldName, string newName)
+    /// <param name="chunkType">The target subtype; column metadata uses subtype 1.</param>
+    public void RenameTarget(string oldName, string newName, ColumnPropertyChunkType chunkType = ColumnPropertyChunkType.PropertyBlockAlt1)
     {
         Guard.NotNullOrEmpty(newName, nameof(newName));
         foreach (ColumnPropertyTargetBuilder t in this.Targets)
         {
-            if (string.Equals(t.Name, oldName, StringComparison.OrdinalIgnoreCase))
+            if (t.ChunkType == chunkType && string.Equals(t.Name, oldName, StringComparison.OrdinalIgnoreCase))
             {
                 t.Name = newName;
                 return;

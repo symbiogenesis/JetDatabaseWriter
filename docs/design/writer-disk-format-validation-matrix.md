@@ -41,6 +41,24 @@ shared sparse histories, Memo rename/drop, native reads/updates and compact.
 These controls establish the covered ACE history layouts; the broader format,
 collation and property corpora remain governed by the open validation matrix items.
 
+## Schema projection and native metadata
+
+`TDefRewriteBytePreservationTests` marks opaque header, sentinel/trailer,
+continuation-header and padding bytes independently of native compatibility,
+including definition growth and shrinkage. `NativeTDefChainPreservationTests`
+starts with DAO3.6 Jet3 and DAO120 Jet4/ACE wide tables, then checks Add/Drop/Rename,
+retained chain bytes, sort metadata, values, indexed reads, relationships and the
+absence of temporary catalog objects. Native reads, valid insert/update/delete,
+uniqueness and FK enforcement, compact and reopened reads validate the edited files.
+
+`PropertyTargetIdentityTests` and `NativePropertyTargetIdentityTests` keep same-name
+column and index property maps separate by subtype. Only maps of explicitly
+dropped logical indexes are removed; unrelated and orphan index maps survive.
+`IndexDescriptorPreservationTests` checks source physical-index sharing, distinct
+metadata identities and descending FK keys across schema edits. Synthetic marker
+and native-accepted layout variants remain separate from Microsoft-authored fixtures.
+`NativeSchemaPreservationTests` and `NativeSchemaDaoTests` additionally retain
+Microsoft-authored Table4 column identities and multi-page attachment table metadata.
 ## Microsoft interoperability evidence
 
 Validation on 2026-10-06 used revision

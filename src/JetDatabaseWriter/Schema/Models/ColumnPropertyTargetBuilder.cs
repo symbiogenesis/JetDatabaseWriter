@@ -5,13 +5,13 @@ using System.Text;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 
-/// <summary>Mutable builder for a single property target (table or column).</summary>
+/// <summary>Mutable builder for a single object, column or index property target.</summary>
 internal sealed class ColumnPropertyTargetBuilder
 {
-    /// <summary>Gets or sets the target name (column name, or empty for the table-level target).</summary>
+    /// <summary>Gets or sets the target name (column or index name, or empty for the table-level target).</summary>
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>Gets or sets the chunk-type code. Defaults to <see cref="ColumnPropertyChunkType.PropertyBlock"/> (<c>0x0000</c>), the subtype this library emits for new targets.</summary>
+    /// <summary>Gets or sets the chunk-type code. Defaults to the object subtype; column helpers explicitly use subtype 1.</summary>
     public ColumnPropertyChunkType ChunkType { get; set; }
 
     /// <summary>Gets the mutable list of property entries in emission order.</summary>

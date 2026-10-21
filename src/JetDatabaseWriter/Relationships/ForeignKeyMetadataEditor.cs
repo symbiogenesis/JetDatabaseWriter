@@ -66,6 +66,12 @@ internal sealed class ForeignKeyMetadataEditor(
     /// <param name="NewLeafPageNumber">The new leaf page number.</param>
     private readonly record struct FkSidePlan(int RealIdxNum, int LogicalIdxNum, bool AllocatesNewRealIdx, long NewLeafPageNumber)
     {
+        /// <summary>Gets the native directions when a schema rewrite creates a replacement tree.</summary>
+        public IReadOnlyList<bool>? Ascending { get; init; }
+
+        /// <summary>Gets the source physical flags when rebuilding an existing native tree.</summary>
+        public byte? Flags { get; init; }
+
         /// <summary>
         /// RealIdxNum:           real-idx slot index used for index_num2 on this side.
         /// LogicalIdxNum:        logical-idx number written as index_num for this side.
@@ -424,12 +430,22 @@ internal sealed class ForeignKeyMetadataEditor(
         // stays zero.
         if (sidePlan.AllocatesNewRealIdx)
         {
+            int descriptor = newRealIdxDescStart + oldRealIdxPhysLen;
             lay.WriteRealIdxDescriptor(
                 newTd,
-                newRealIdxDescStart + oldRealIdxPhysLen,
+                descriptor,
                 columnNumbers,
-                this.format.IsJet3 ? (byte)0 : Constants.TableDefinition.UnknownIndexFlag,
+                sidePlan.Flags ?? (this.format.IsJet3 ? (byte)0 : Constants.TableDefinition.UnknownIndexFlag),
                 sidePlan.NewLeafPageNumber);
+            if (sidePlan.Ascending is not null)
+            {
+                for (int key = 0; key < columnNumbers.Length; key++)
+                {
+                    newTd[lay.ColMapSlotOffset(descriptor, key) + 2] = sidePlan.Ascending[key]
+                        ? Constants.TableDefinition.ColMapAscendingFlag
+                        : Constants.TableDefinition.ColMapDescendingFlag;
+                }
+            }
         }
 
         // Logical-idx entries and names stay in the native case-insensitive
@@ -707,6 +723,7 @@ internal sealed class ForeignKeyMetadataEditor(
         }
 
         int nextIndexNumber = NextLogicalIdxNumber(this.format.Index, chain.Bytes, in layout);
+        var physicalIndexes = new Dictionary<int, int>();
         for (int i = state.FkEntries.Count - 1; i >= 0; i--)
         {
             newIndexNumbers[state.FkEntries[i].IndexNumber] = nextIndexNumber++;
@@ -720,11 +737,10 @@ internal sealed class ForeignKeyMetadataEditor(
                 ? partnerNumber
                 : entry.RelIdxNum;
 
-            // A parent-side entry shares a unique covering real index,
-            // as in CreateRelationshipAsync.
-            bool preferUnique = entry.RelTblType == Constants.TableDefinition.ParentRelationshipTableType;
-            (FkSidePlan plan, List<string> existingNames) = await this.PrepareFkSideAsync(targetTdefPage, columnNumbers[i], preferUnique, cancellationToken).ConfigureAwait(false);
-            plan = plan with { LogicalIdxNum = newIndexNumbers[entry.IndexNumber] };
+            // Identical keys do not establish shared native ownership. Preserve
+            // the original physical-index graph, including FK-only trees.
+            (FkSidePlan plan, List<string> existingNames) = await this.PrepareRewriteFkSideAsync(targetTdefPage, entry, physicalIndexes, cancellationToken).ConfigureAwait(false);
+            plan = plan with { LogicalIdxNum = newIndexNumbers[entry.IndexNumber], Ascending = entry.Ascending, Flags = entry.Flags };
             var runs = new ReservedPageRuns(this.pageAllocator);
             try
             {
@@ -754,6 +770,52 @@ internal sealed class ForeignKeyMetadataEditor(
         }
 
         return newIndexNumbers;
+    }
+
+    /// <summary>Finds the replacement of one exact source physical index, allocating only its first FK-only occurrence.</summary>
+    /// <param name="tdefPage">The private replacement definition.</param>
+    /// <param name="entry">The captured native logical index.</param>
+    /// <param name="physicalIndexes">The source-to-replacement physical identities already emitted.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The emission plan and existing names.</returns>
+    /// <exception cref="JetCorruptDataException">The replacement definition has malformed index metadata.</exception>
+    /// <exception cref="JetOperationException">An ordinary index sharing the source physical identity is missing.</exception>
+    private async ValueTask<(FkSidePlan Plan, List<string> ExistingNames)> PrepareRewriteFkSideAsync(
+        long tdefPage,
+        FkLogicalIndexSnapshot entry,
+        Dictionary<int, int> physicalIndexes,
+        CancellationToken cancellationToken)
+    {
+        LogicalTDefChain chain = await this.ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (!this.TryParseFkTDefLayout(chain.Bytes, out FkTDefLayout layout))
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"The replacement TDEF at page {tdefPage} has malformed index metadata.", new JetErrorInfo { PageNumber = tdefPage });
+        }
+
+        List<string> names = IndexCatalogReader.ReadLogicalIdxNames(this.format, chain.Bytes, layout.LogIdxNamesStart, layout.NumIdx);
+        if (physicalIndexes.TryGetValue(entry.RealIndexNumber, out int existing))
+        {
+            return (new FkSidePlan(existing, 0, false, 0), names);
+        }
+
+        if (entry.SharedIndexName is not null)
+        {
+            for (int logical = 0; logical < names.Count; logical++)
+            {
+                if (string.Equals(names[logical], entry.SharedIndexName, StringComparison.OrdinalIgnoreCase))
+                {
+                    int fields = this.format.Index.LogicalIdxFieldsOffset(layout.LogIdxStart, logical);
+                    int physical = Ri32(chain.Bytes, fields + Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset);
+                    physicalIndexes.Add(entry.RealIndexNumber, physical);
+                    return (new FkSidePlan(physical, 0, false, 0), names);
+                }
+            }
+
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Native index '{entry.SharedIndexName}' sharing foreign-key index '{entry.Name}' is missing from the replacement table.", new JetErrorInfo { PageNumber = tdefPage, IndexName = entry.Name });
+        }
+
+        physicalIndexes.Add(entry.RealIndexNumber, layout.NumRealIdx);
+        return (new FkSidePlan(layout.NumRealIdx, 0, true, 0), names);
     }
 
     /// <summary>
@@ -794,13 +856,14 @@ internal sealed class ForeignKeyMetadataEditor(
 
             int realIdxNum = Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset);
             if (realIdxNum < 0 || realIdxNum >= layout.NumRealIdx
-                || !this.format.Index.TryReadRealIdxSlotWithKeyColumns(td, layout.RealIdxDescStart, realIdxNum, out _, out List<KeyColumn> keyColumns)
+                || !this.format.Index.TryReadRealIdxSlotWithKeyColumns(td, layout.RealIdxDescStart, realIdxNum, out RealIdxSlot physicalSlot, out List<KeyColumn> keyColumns)
                 || keyColumns.Count == 0)
             {
                 continue;
             }
 
             var keyColumnNames = new List<string>(keyColumns.Count);
+            var ascending = new List<bool>(keyColumns.Count);
             foreach (KeyColumn keyColumn in keyColumns)
             {
                 if (!columnNames.TryGetValue(keyColumn.ColNum, out string? columnName))
@@ -809,6 +872,7 @@ internal sealed class ForeignKeyMetadataEditor(
                 }
 
                 keyColumnNames.Add(columnName);
+                ascending.Add(keyColumn.Ascending);
             }
 
             if (keyColumnNames.Count != keyColumns.Count)
@@ -816,10 +880,26 @@ internal sealed class ForeignKeyMetadataEditor(
                 continue;
             }
 
+            string? sharedIndexName = null;
+            for (int ordinary = 0; ordinary < layout.NumIdx && ordinary < names.Count; ordinary++)
+            {
+                int fields = this.format.Index.LogicalIdxFieldsOffset(layout.LogIdxStart, ordinary);
+                if (td[fields + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset] != (byte)IndexKind.ForeignKey
+                    && Ri32(td, fields + Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset) == realIdxNum)
+                {
+                    sharedIndexName = names[ordinary];
+                    break;
+                }
+            }
+
             result.Add(new FkLogicalIndexSnapshot(
                 names[li],
                 Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset),
                 keyColumnNames,
+                realIdxNum,
+                physicalSlot.Flags,
+                ascending,
+                sharedIndexName,
                 td[f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblTypeOffset],
                 Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset),
                 Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset),

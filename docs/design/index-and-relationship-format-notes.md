@@ -40,22 +40,30 @@ The Jet4/ACE maintained index-row count uses the replacement value while its
 surrounding opaque bookkeeping words survive. Jet3 statistics remain estimates
 rather than being replaced by live row counts. Invalid logical-to-physical index
 references refuse mutation before temporary storage is created.
-If several source descriptors would merge into one replacement tree, their
-preserved metadata must agree. Incompatible metadata refuses the rewrite with
-`IndexesUnmaintainable` and rolls back its temporary storage.
-Sparse column-map slots retain their original positions while active column
-numbers are retargeted by key ordinal. A source FK sort direction that differs
-from its regenerated tree also refuses the rewrite rather than emitting
-descriptor flags that disagree with the tree. Preserving such standalone
-descending FK trees remains a schema-rewrite requirement.
+
+Source physical-index sharing is retained before FK emission. Distinct source
+descriptors remain distinct even when their keys match; aliases of one source
+physical index retain that shared tree. FK-only trees use the source key
+directions and physical flags before rebuilding, including `IgnoreNulls` key membership. Ordinary covering indexes are reused only when they shared the
+same source physical identity. Sparse column-map slots retain their original
+positions while active column numbers are retargeted by key ordinal. Metadata
+agreement, logical-kind and direction checks remain guards against an inconsistent replacement. A newly added shortcut primary key receives a unique name reserved against every source logical index and retained index property map, so it cannot take an existing FK or orphan map identity.
 
 `IndexDescriptorPreservationTests` compares synthetic opaque bytes across all
 formats, schema operations and write modes, including shared self-FK trees,
-index reads, uniqueness, complete rollback and incompatible-merge refusal.
+index reads, uniqueness, complete rollback, standalone descending FK trees and distinct native descriptor identities.
 Separate DAO-authored sources exercise native metadata, reads, constraints,
 mutation and compact/reopen. Synthetic marker preservation does not establish
 native acceptance of those invented marker bytes or a general relocation
 contract for opaque metadata.
+
+Native-accepted planted variants are checked before any writer edit with positive
+and negative DML. Descending FK controls match both endpoints' directions;
+changing only one endpoint is not an accepted native layout. DAO3.6 and DAO120
+normalize the matched descending FK trees to ascending during compact, including
+an independent compact of the original control. Writer edits preserve the source
+direction before compact; compacted output follows that independently observed
+native normalization.
 
 In the Microsoft-authored `ComplexFields.accdb` `Documents` table, physical
 descriptor byte 47 is `02` on the attachment-supporting index. DAO120 omits

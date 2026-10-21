@@ -95,7 +95,7 @@ internal sealed class TableSchemaEditor(
         ColumnType textType = ColumnType.TextType;
         foreach (ColumnPropertyTargetBuilder target in builder.Targets)
         {
-            if (target.Name.Length != 0)
+            if (target.Name.Length != 0 || target.ChunkType != ColumnPropertyChunkType.PropertyBlock)
             {
                 continue;
             }
@@ -115,7 +115,7 @@ internal sealed class TableSchemaEditor(
 
         foreach (ColumnPropertyTargetBuilder target in builder.Targets)
         {
-            if (target.Name.Length == 0)
+            if (target.Name.Length == 0 && target.ChunkType == ColumnPropertyChunkType.PropertyBlock)
             {
                 UpdateTableRuleProperty(target, Constants.ColumnPropertyNames.ValidationRule, rule?.Expression, ruleType, format);
                 UpdateTableRuleProperty(target, Constants.ColumnPropertyNames.ValidationText, rule?.ValidationText, textType, format);

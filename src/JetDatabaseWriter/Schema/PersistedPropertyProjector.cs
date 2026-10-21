@@ -36,13 +36,15 @@ internal static class PersistedPropertyProjector
     /// <param name="newDefs">The rebuilt table's columns.</param>
     /// <param name="mapColumnName">Maps a current column name to its name after the rewrite, or to <see langword="null"/> for a dropped column.</param>
     /// <param name="format">The database format.</param>
+    /// <param name="droppedIndexNames">Names of source logical indexes removed by the rewrite; other index maps survive.</param>
     /// <returns>The projected properties; <see cref="ColumnPropertyBlock.Empty"/> when nothing is left.</returns>
     internal static ColumnPropertyBlock ProjectForRewrite(
         ColumnPropertyBlock? original,
         IReadOnlyList<ColumnDefinition> existingDefs,
         IReadOnlyList<ColumnDefinition> newDefs,
         Func<string, string?> mapColumnName,
-        JetFormat format)
+        JetFormat format,
+        IReadOnlyCollection<string>? droppedIndexNames = null)
     {
         Guard.NotNull(existingDefs, nameof(existingDefs));
         Guard.NotNull(newDefs, nameof(newDefs));
@@ -55,7 +57,7 @@ internal static class PersistedPropertyProjector
             _ = newNames.Add(column.Name);
         }
 
-        RetargetColumns(builder, existingDefs, newNames, mapColumnName);
+        RetargetColumns(builder, existingDefs, newNames, mapColumnName, droppedIndexNames);
 
         var survivors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (ColumnDefinition existing in existingDefs)
@@ -90,19 +92,32 @@ internal static class PersistedPropertyProjector
     /// <param name="existingDefs">The table's columns before the rewrite.</param>
     /// <param name="newNames">The rebuilt table's column names.</param>
     /// <param name="mapColumnName">Maps a current column name to its new name, or to <see langword="null"/>.</param>
+    /// <param name="droppedIndexNames">Names of source logical indexes removed by the rewrite.</param>
     private static void RetargetColumns(
         ColumnPropertyBlockBuilder builder,
         IReadOnlyList<ColumnDefinition> existingDefs,
         HashSet<string> newNames,
-        Func<string, string?> mapColumnName)
+        Func<string, string?> mapColumnName,
+        IReadOnlyCollection<string>? droppedIndexNames)
     {
+        HashSet<string>? indexNames = droppedIndexNames is null ? null : new(droppedIndexNames, StringComparer.OrdinalIgnoreCase);
         var kept = new List<ColumnPropertyTargetBuilder>(builder.Targets.Count);
         foreach (ColumnPropertyTargetBuilder target in builder.Targets)
         {
-            if (target.Name.Length == 0)
+            if (target.ChunkType == ColumnPropertyChunkType.PropertyBlock && target.Name.Length == 0)
             {
                 _ = target.Entries.RemoveAll(static e => string.Equals(e.Name, NameMap, StringComparison.OrdinalIgnoreCase));
                 kept.Add(target);
+                continue;
+            }
+
+            if (target.ChunkType != ColumnPropertyChunkType.PropertyBlockAlt1)
+            {
+                if (target.ChunkType != ColumnPropertyChunkType.PropertyBlockAlt2 || indexNames?.Contains(target.Name) != true)
+                {
+                    kept.Add(target);
+                }
+
                 continue;
             }
 
@@ -160,7 +175,8 @@ internal static class PersistedPropertyProjector
             bool found = false;
             foreach (ColumnPropertyTargetBuilder target in builder.Targets)
             {
-                if (!string.Equals(target.Name, projected.Name, StringComparison.OrdinalIgnoreCase))
+                if (target.ChunkType != ColumnPropertyChunkType.PropertyBlockAlt1
+                    || !string.Equals(target.Name, projected.Name, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -193,7 +209,8 @@ internal static class PersistedPropertyProjector
             {
                 foreach (ColumnPropertyTargetBuilder target in builder.Targets)
                 {
-                    if (string.Equals(target.Name, projected.Name, StringComparison.OrdinalIgnoreCase))
+                    if (target.ChunkType == ColumnPropertyChunkType.PropertyBlockAlt1
+                        && string.Equals(target.Name, projected.Name, StringComparison.OrdinalIgnoreCase))
                     {
                         _ = target.Entries.RemoveAll(e => string.Equals(e.Name, entry.Name, StringComparison.OrdinalIgnoreCase));
                     }

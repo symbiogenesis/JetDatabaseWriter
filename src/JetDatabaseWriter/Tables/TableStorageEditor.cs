@@ -80,7 +80,7 @@ internal sealed class TableStorageEditor(
         }
 
         await catalogWriter.DeleteCatalogRowsByTdefPagesAsync([template.Entry.TDefPage], cancellationToken).ConfigureAwait(false);
-        await this.ReclaimTableStoragePagesAsync(template.Entry.TDefPage, template.Definition, includeTDefRoot: true, cancellationToken).ConfigureAwait(false);
+        await this.ReclaimTableStoragePagesAsync(template.Entry.TDefPage, template.Definition, includeTDefChain: true, cancellationToken).ConfigureAwait(false);
         catalog.Invalidate();
     }
 
@@ -102,6 +102,11 @@ internal sealed class TableStorageEditor(
         CatalogEntry tempEntry = tempTable.Entry;
         TableDef tempDef = tempTable.Definition;
 
+        await IndexRewriteTopology.PreserveSharingAsync(format, plan.SourceImage, tempEntry.TDefPage, tableDefs, pager, pageAllocator, catalogRows, cancellationToken).ConfigureAwait(false);
+
+        // Row encoding requires persisted calculated result types after descriptor edits.
+        tempDef = (await catalog.ResolveRequiredTableAsync(tempName, cancellationToken).ConfigureAwait(false)).Definition;
+
         // Build FK leaves privately; self references name the original identity
         // that the replacement will occupy once publication completes.
         IReadOnlyDictionary<int, int> fkIndexNumbers = await relationships.EmitFkEntriesForRewriteAsync(
@@ -112,7 +117,7 @@ internal sealed class TableStorageEditor(
             cancellationToken).ConfigureAwait(false);
         if (fkIndexNumbers.Count > 0)
         {
-            tempDef = await tableDefs.ReadRequiredTableDefAsync(tempEntry.TDefPage, tempName, cancellationToken).ConfigureAwait(false);
+            tempDef = (await catalog.ResolveRequiredTableAsync(tempName, cancellationToken).ConfigureAwait(false)).Definition;
         }
 
         // The temp TDEF starts with its AutoNumber and complex AutoNumber
@@ -202,6 +207,11 @@ internal sealed class TableStorageEditor(
             if (!originalIndexes.TryGetValue(index.Name, out TDefLogicalIndexDescriptor? source))
             {
                 continue;
+            }
+
+            if (source.Entry.IndexType != index.Entry.IndexType)
+            {
+                throw CreateUnpreservableIndexException(plan, index.Name, "The replacement logical index uses a different kind");
             }
 
             int sourceNumber = source.Entry.IndexNum2;
@@ -339,7 +349,7 @@ internal sealed class TableStorageEditor(
 
         foreach ((string name, int complexId) in plan.DroppedComplexColumns)
         {
-            await complexColumns.DropSingleComplexChildAsync(plan.Entry.TDefPage, name, complexId, (page, definition, token) => this.ReclaimTableStoragePagesAsync(page, definition, includeTDefRoot: true, token), cancellationToken).ConfigureAwait(false);
+            await complexColumns.DropSingleComplexChildAsync(plan.Entry.TDefPage, name, complexId, (page, definition, token) => this.ReclaimTableStoragePagesAsync(page, definition, includeTDefChain: true, token), cancellationToken).ConfigureAwait(false);
         }
 
         foreach ((string oldName, string newName, int complexId) in plan.RenamedComplexColumns)
@@ -359,17 +369,13 @@ internal sealed class TableStorageEditor(
     {
         long originalTdefPage = plan.Entry.TDefPage;
         long tempTdefPage = copy.Entry.TDefPage;
-        byte[] tempTdef = await pager.ReadPageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await this.ReclaimTableStoragePagesAsync(originalTdefPage, plan.Definition, includeTDefRoot: false, cancellationToken).ConfigureAwait(false);
-            await this.PatchReplacementPageOwnersAsync(copy, originalTdefPage, cancellationToken).ConfigureAwait(false);
-            await pager.WritePageAsync(originalTdefPage, tempTdef, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            PageBuffers.Return(tempTdef);
-        }
+        LogicalTDefChain original = await tableDefs.ReadTDefChainAsync(originalTdefPage, cancellationToken).ConfigureAwait(false);
+        LogicalTDefChain replacement = await tableDefs.ReadTDefChainAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] bytes = TDefRewriteComposer.Compose(format, plan.SourceImage, replacement.Bytes, plan.MapColumnName, Math.Min(tableDefs.MaxLogicalBytes, tableDefs.MaxSchemaTraversalBytes));
+        int usedLength = checked(Ri32(bytes, 8) + 8);
+        await this.ReclaimTableStoragePagesAsync(originalTdefPage, plan.Definition, includeTDefChain: false, cancellationToken).ConfigureAwait(false);
+        await this.PatchReplacementPageOwnersAsync(copy, originalTdefPage, cancellationToken).ConfigureAwait(false);
+        await original.WriteAsync(bytes, usedLength, pageAllocator.AllocatePageAsync, pager.WritePageAsync, pageAllocator.DeallocatePageAsync, format.WritesTDefFreeSpace, cancellationToken).ConfigureAwait(false);
 
         await catalogWriter.UpdateTablePropertiesAsync(
             plan.TableName,
@@ -386,7 +392,10 @@ internal sealed class TableStorageEditor(
             missingMessage: null,
             cancellationToken).ConfigureAwait(false);
         await catalogWriter.DeleteAceRowsForObjectIdsAsync([tempTdefPage], cancellationToken).ConfigureAwait(false);
-        await pageAllocator.DeallocatePageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
+        foreach (long pageNumber in replacement.PageNumbers)
+        {
+            await pageAllocator.DeallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        }
 
         constraints.Unregister(plan.TableName);
         constraints.Rename(copy.Name, plan.TableName);
@@ -452,14 +461,14 @@ internal sealed class TableStorageEditor(
 
         foreach (long parentTdefPage in deletedPages)
         {
-            await complexColumns.DropComplexChildrenForTableAsync(parentTdefPage, (page, definition, token) => this.ReclaimTableStoragePagesAsync(page, definition, includeTDefRoot: true, token), cancellationToken).ConfigureAwait(false);
+            await complexColumns.DropComplexChildrenForTableAsync(parentTdefPage, (page, definition, token) => this.ReclaimTableStoragePagesAsync(page, definition, includeTDefChain: true, token), cancellationToken).ConfigureAwait(false);
         }
 
         await catalogWriter.DeleteAceRowsForObjectIdsAsync(deletedPages, cancellationToken).ConfigureAwait(false);
 
         foreach (long tdefPage in deletedPages)
         {
-            await this.ReclaimTableStoragePagesAsync(tdefPage, definitions.GetValueOrDefault(tdefPage), includeTDefRoot: true, cancellationToken).ConfigureAwait(false);
+            await this.ReclaimTableStoragePagesAsync(tdefPage, definitions.GetValueOrDefault(tdefPage), includeTDefChain: true, cancellationToken).ConfigureAwait(false);
         }
 
         constraints.Unregister(tableName);
@@ -503,10 +512,10 @@ internal sealed class TableStorageEditor(
     /// catalog row was deleted; <see langword="null"/> reads it from the TDEF, by
     /// descriptor type alone.
     /// </param>
-    /// <param name="includeTDefRoot">Whether to free the first TDEF page too; a transplant keeps it.</param>
+    /// <param name="includeTDefChain">Whether to free the complete TDEF chain; a rewrite retains it for projection.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that completes when the pages are freed.</returns>
-    private async ValueTask ReclaimTableStoragePagesAsync(long tdefPage, TableDef? tableDef, bool includeTDefRoot, CancellationToken cancellationToken)
+    private async ValueTask ReclaimTableStoragePagesAsync(long tdefPage, TableDef? tableDef, bool includeTDefChain, CancellationToken cancellationToken)
     {
         var pagesToFree = new SortedSet<long>();
         var longValueRoots = new List<LongValueDescriptor>();
@@ -550,7 +559,7 @@ internal sealed class TableStorageEditor(
                     break;
                 }
 
-                if (includeTDefRoot || currentTdefPage != tdefPage)
+                if (includeTDefChain)
                 {
                     _ = pagesToFree.Add(currentTdefPage);
                 }

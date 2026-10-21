@@ -33,8 +33,8 @@ internal sealed class ColumnPropertyBlock
     public JetFormat Format { get; private init; } = null!;
 
     /// <summary>
-    /// Gets the parsed property targets, in source order: one per column that has
-    /// properties, named after it, and the table itself, under an empty name
+    /// Gets the parsed property targets, in source order: columns and indexes
+    /// have distinct subtypes and can share names; the table has an empty name
     /// (see <see cref="FindTableTarget"/>).
     /// </summary>
     public IReadOnlyList<ColumnPropertyTarget> Targets { get; private init; } = [];
@@ -166,15 +166,16 @@ internal sealed class ColumnPropertyBlock
 
     /// <summary>
     /// Returns the property target whose <see cref="ColumnPropertyTarget.Name"/>
-    /// matches <paramref name="name"/> case-insensitively, or <see langword="null"/>
+    /// matches <paramref name="name"/> case-insensitively and has the requested subtype, or <see langword="null"/>
     /// if no such target exists.
     /// </summary>
     /// <param name="name">The name.</param>
-    public ColumnPropertyTarget? FindTarget(string name)
+    /// <param name="chunkType">The target subtype; column metadata uses subtype 1.</param>
+    public ColumnPropertyTarget? FindTarget(string name, ColumnPropertyChunkType chunkType = ColumnPropertyChunkType.PropertyBlockAlt1)
     {
         foreach (ColumnPropertyTarget t in this.Targets)
         {
-            if (string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
+            if (t.ChunkType == chunkType && string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
             {
                 return t;
             }
@@ -184,7 +185,7 @@ internal sealed class ColumnPropertyBlock
     }
 
     /// <summary>
-    /// Returns the table-level target: the first target with an empty name, or
+    /// Returns the table-level target: the first subtype-0 target with an empty name, or
     /// <see langword="null"/> when there is none. Access writes it as a
     /// property block of chunk type <c>0x00</c> that can sit anywhere in the
     /// blob: usually first in Jet3 and Jet4 blobs and usually last in ACCDB
@@ -196,7 +197,7 @@ internal sealed class ColumnPropertyBlock
     {
         foreach (ColumnPropertyTarget t in this.Targets)
         {
-            if (t.Name.Length == 0)
+            if (t.ChunkType == ColumnPropertyChunkType.PropertyBlock && t.Name.Length == 0)
             {
                 return t;
             }
@@ -205,7 +206,7 @@ internal sealed class ColumnPropertyBlock
         return null;
     }
 
-    /// <summary>Finds a property target; native table metadata comes only from its first empty-name block.</summary>
+    /// <summary>Finds native column metadata or the first subtype-0 empty-name table map.</summary>
     /// <param name="targetName">The table or column target name.</param>
     /// <param name="propertyName">The property name.</param>
     /// <returns>The matching target, or null when the property is absent.</returns>
@@ -219,7 +220,8 @@ internal sealed class ColumnPropertyBlock
 
         foreach (ColumnPropertyTarget target in this.Targets)
         {
-            if (string.Equals(target.Name, targetName, StringComparison.OrdinalIgnoreCase)
+            if (target.ChunkType == ColumnPropertyChunkType.PropertyBlockAlt1
+                && string.Equals(target.Name, targetName, StringComparison.OrdinalIgnoreCase)
                 && target.Find(propertyName) is not null)
             {
                 return target;
