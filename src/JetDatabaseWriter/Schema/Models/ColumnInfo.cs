@@ -38,9 +38,7 @@ internal sealed record ColumnInfo
     /// </summary>
     internal int NativeIdentity
     {
-        get => this.nativeIdentity ?? (this.rawDescriptor.Count == ColumnDescriptorLayout.Jet4.Size
-            ? this.rawDescriptor[ColumnDescriptorLayout.Jet4.NativeIdentityOff] | (this.rawDescriptor[ColumnDescriptorLayout.Jet4.NativeIdentityOff + 1] << 8)
-            : this.ColNum);
+        get => this.nativeIdentity ?? (this.rawDescriptor.Count == ColumnDescriptorLayout.Jet4.Size ? this.rawDescriptor[ColumnDescriptorLayout.Jet4.NativeIdentityOff] | (this.rawDescriptor[ColumnDescriptorLayout.Jet4.NativeIdentityOff + 1] << 8) : this.ColNum);
         init => this.nativeIdentity = value;
     }
 

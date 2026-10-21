@@ -569,10 +569,7 @@ internal sealed class ConstraintRegistry(
 
         string expression = JetExpressionConverter.ToJetExpression(value)!;
         Type targetType = def.ClrType == typeof(Hyperlink) ? typeof(string) : def.ClrType;
-        return ColumnDefaultValue.Compile(expression).TryEvaluate(
-            targetType,
-            static () => new CalculatedExpressionEvaluationContext(new TableDef(), [], [], force: false),
-            out object evaluated)
+        return ColumnDefaultValue.Compile(expression).TryEvaluate(targetType, static () => new CalculatedExpressionEvaluationContext(new TableDef(), [], [], force: false), out object evaluated)
             ? evaluated
             : null;
     }

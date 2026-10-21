@@ -206,10 +206,9 @@ internal sealed class OwnedPageIndex(IPageSource pages, JetFormat format) : IPag
     }
 
     private long ReadUnreadableOwner(ReadOnlySpan<byte> page)
-        => page.Length >= format.DataPage.TDefOff + 4
-            && page[0] is not (0 or Constants.PageTypes.Data or Constants.PageTypes.TableDefinition or Constants.PageTypes.IndexIntermediate
-                or Constants.PageTypes.IndexLeaf or Constants.PageTypes.UsageMap or Constants.PageTypes.Freed)
-            ? Ri32(page, format.DataPage.TDefOff) : 0;
+        => page.Length >= format.DataPage.TDefOff + 4 && page[0] is not (0 or Constants.PageTypes.Data or Constants.PageTypes.TableDefinition or Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf or Constants.PageTypes.UsageMap or Constants.PageTypes.Freed)
+            ? Ri32(page, format.DataPage.TDefOff)
+            : 0;
 
     private long[] FindOwnedPages(long owner)
         => this.owners.TryGetValue(owner, out List<long>? ownedPages) ? ownedPages.ToArray() : [];

@@ -865,7 +865,8 @@ internal sealed class RelationshipEnforcer(
     {
         string columns = string.Join(", ", rel.ForeignColumns);
         return kind == FkCheckKind.Update
-            ? new JetConstraintException(JetErrorCode.ForeignKeyMissingParent, $"UPDATE of '{foreignTable}' violates foreign-key constraint '{rel.Name}': no matching row in '{rel.PrimaryTable}' for the new {columns} value(s).", new JetErrorInfo { TableName = foreignTable, RelationshipName = rel.Name }) : new JetConstraintException(JetErrorCode.ForeignKeyMissingParent, $"INSERT into '{foreignTable}' violates foreign-key constraint '{rel.Name}': no matching row in '{rel.PrimaryTable}' for the supplied {columns} value(s).", new JetErrorInfo { TableName = foreignTable, RelationshipName = rel.Name });
+            ? new JetConstraintException(JetErrorCode.ForeignKeyMissingParent, $"UPDATE of '{foreignTable}' violates foreign-key constraint '{rel.Name}': no matching row in '{rel.PrimaryTable}' for the new {columns} value(s).", new JetErrorInfo { TableName = foreignTable, RelationshipName = rel.Name })
+            : new JetConstraintException(JetErrorCode.ForeignKeyMissingParent, $"INSERT into '{foreignTable}' violates foreign-key constraint '{rel.Name}': no matching row in '{rel.PrimaryTable}' for the supplied {columns} value(s).", new JetErrorInfo { TableName = foreignTable, RelationshipName = rel.Name });
     }
 
     /// <summary>

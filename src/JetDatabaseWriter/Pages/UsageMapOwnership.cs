@@ -135,8 +135,10 @@ internal static class UsageMapOwnership
         foreach (long root in roots)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] definition = root == ownerTdefPage ? target : await tableDefs.ReadTDefBytesAsync(root, cancellationToken).ConfigureAwait(false)
-                ?? throw InvalidMap(root, "A local table definition is unreadable.");
+            byte[] definition = root == ownerTdefPage
+                ? target
+                : await tableDefs.ReadTDefBytesAsync(root, cancellationToken).ConfigureAwait(false)
+                    ?? throw InvalidMap(root, "A local table definition is unreadable.");
             if (definition.Length > budget)
             {
                 throw InvalidMap(root, "The aggregate usage-map ownership definition budget is exceeded.");

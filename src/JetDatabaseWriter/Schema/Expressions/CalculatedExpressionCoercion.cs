@@ -146,10 +146,9 @@ internal static class CalculatedExpressionCoercion
             return value!;
         }
 
-        return (IsStoredScalarType(declaredType) || declaredType == typeof(Guid))
-            && ScalarConversion.TryConvert(value, declaredType, out object? converted)
-                ? converted!
-                : value!;
+        return (IsStoredScalarType(declaredType) || declaredType == typeof(Guid)) && ScalarConversion.TryConvert(value, declaredType, out object? converted)
+            ? converted!
+            : value!;
     }
 
     internal static object CompareValues(object left, object right, Func<int, bool> predicate, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)

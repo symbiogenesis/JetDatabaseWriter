@@ -1866,9 +1866,7 @@ internal static class DaoBaselineProbe
     }
 
     private static string Join(List<long> pages) =>
-        pages.Count == 0 ? "(none)"
-        : string.Join(", ", pages.Take(64).Select(p => p.ToString(CultureInfo.InvariantCulture)))
-          + (pages.Count > 64 ? ", …" : string.Empty);
+        pages.Count == 0 ? "(none)" : string.Join(", ", pages.Take(64).Select(p => p.ToString(CultureInfo.InvariantCulture))) + (pages.Count > 64 ? ", …" : string.Empty);
 
     private static string Md(string s) =>
         (s ?? string.Empty).Replace("|", "\\|", StringComparison.Ordinal).Replace("`", "'", StringComparison.Ordinal);

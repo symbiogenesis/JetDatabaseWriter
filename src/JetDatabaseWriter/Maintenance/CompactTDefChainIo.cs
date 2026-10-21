@@ -59,7 +59,8 @@ internal sealed class CompactTDefChainIo
             TDefImage image = installation.Original;
             int length = image.LogicalByteLength;
             long end = (long)image.Header.LogicalLength + 8;
-            long expectedLength = end <= this.pageSize ? this.pageSize
+            long expectedLength = end <= this.pageSize
+                ? this.pageSize
                 : this.pageSize + ((((end - this.pageSize - 1) / (this.pageSize - 8)) + 1) * (this.pageSize - 8));
             if (installation.RootPage is <= 0 or > 0xFFFFFF || installation.RootPage >= this.sourcePages
                 || installation.RootPage >= this.destinationLength / this.pageSize

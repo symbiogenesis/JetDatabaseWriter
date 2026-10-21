@@ -6,15 +6,6 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 
-/// <summary>The stored assignment state of a field, without interpreting its payload.</summary>
-internal enum CompactRawFieldKind
-{
-    Absent = 0,
-    Null = 1,
-    Boolean = 2,
-    Stored = 3,
-}
-
 /// <summary>One borrowed physical field slot, including retained bytes behind an unset assignment bit.</summary>
 /// <param name="Column">The original definition's column identity and storage descriptor.</param>
 /// <param name="Location">The header bookmark and resolved payload location of its row.</param>

@@ -217,11 +217,9 @@ internal sealed class SchemaReader(
             return new ColumnMetadata
             {
                 Name = col.Name,
-                TypeName = col.Type is ComplexType
-                    && complexTypeNames != null
-                    && complexTypeNames.TryGetValue(col.Misc, out string? complexTypeName)
-                        ? complexTypeName
-                        : ResolveTypeName(col),
+                TypeName = col.Type is ComplexType && complexTypeNames != null && complexTypeNames.TryGetValue(col.Misc, out string? complexTypeName)
+                    ? complexTypeName
+                    : ResolveTypeName(col),
                 ClrType = ResolveClrType(col),
                 MaxLength = GetMetadataMaxLength(col),
                 IsNullable = ResolveIsNullable(col, properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.Required)),

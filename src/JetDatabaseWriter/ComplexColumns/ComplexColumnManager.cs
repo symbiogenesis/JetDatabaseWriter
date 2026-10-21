@@ -327,13 +327,15 @@ internal sealed class ComplexColumnManager(
 
         await catalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan(
-                [new CatalogTableArtifact(
-                    Constants.SystemTableNames.ComplexColumns,
-                    columns,
-                    indexes,
-                    Constants.SystemObjects.SystemObjectFlag,
-                    EmitLvProp: false,
-                    MarkSystemTableTdef: false)],
+                [
+                    new CatalogTableArtifact(
+                        Constants.SystemTableNames.ComplexColumns,
+                        columns,
+                        indexes,
+                        Constants.SystemObjects.SystemObjectFlag,
+                        EmitLvProp: false,
+                        MarkSystemTableTdef: false),
+                ],
                 []),
             cancellationToken).ConfigureAwait(false);
     }
@@ -512,13 +514,15 @@ internal sealed class ComplexColumnManager(
 
             long[] flatTablePages = await catalogArtifacts.ExecutePlanAsync(
                 new CatalogArtifactPlan(
-                    [new CatalogTableArtifact(
-                        flatTableName,
-                        flatCols,
-                        flatIndexes,
-                        Constants.SystemObjects.ComplexFlatTableFlags,
-                        MarkSystemTableTdef: false,
-                        EmitAceRows: true)],
+                    [
+                        new CatalogTableArtifact(
+                            flatTableName,
+                            flatCols,
+                            flatIndexes,
+                            Constants.SystemObjects.ComplexFlatTableFlags,
+                            MarkSystemTableTdef: false,
+                            EmitAceRows: true),
+                    ],
                     []),
                 cancellationToken).ConfigureAwait(false);
             long flatTdefPage = flatTablePages[0];

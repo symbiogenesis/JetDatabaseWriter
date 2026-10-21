@@ -395,12 +395,14 @@ internal static class LinkedTableManager
         await catalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan(
                 [],
-                [CatalogObjectArtifact.LinkedTable(
-                    linkedTableName,
-                    sourceDatabasePath,
-                    foreignTableName,
-                    connectString: null,
-                    objectType: Constants.SystemObjects.LinkedTableType)]),
+                [
+                    CatalogObjectArtifact.LinkedTable(
+                        linkedTableName,
+                        sourceDatabasePath,
+                        foreignTableName,
+                        connectString: null,
+                        objectType: Constants.SystemObjects.LinkedTableType),
+                ]),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -453,13 +455,15 @@ internal static class LinkedTableManager
         await catalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan(
                 [],
-                [CatalogObjectArtifact.LinkedTable(
-                    linkedTableName,
-                    sourceDatabasePath: null,
-                    foreignName: foreignTableName,
-                    connectString: normalizedConnect,
-                    objectType: Constants.SystemObjects.LinkedOdbcType,
-                    cachedSchemaLvProp: lvProp)]),
+                [
+                    CatalogObjectArtifact.LinkedTable(
+                        linkedTableName,
+                        sourceDatabasePath: null,
+                        foreignName: foreignTableName,
+                        connectString: normalizedConnect,
+                        objectType: Constants.SystemObjects.LinkedOdbcType,
+                        cachedSchemaLvProp: lvProp),
+                ]),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -499,12 +503,14 @@ internal static class LinkedTableManager
         await catalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan(
                 [],
-                [CatalogObjectArtifact.LinkedTable(
-                    linkedTableName,
-                    sourceDirectoryPath,
-                    foreignFileName,
-                    connectString,
-                    Constants.SystemObjects.LinkedTableType)]),
+                [
+                    CatalogObjectArtifact.LinkedTable(
+                        linkedTableName,
+                        sourceDirectoryPath,
+                        foreignFileName,
+                        connectString,
+                        Constants.SystemObjects.LinkedTableType),
+                ]),
             cancellationToken).ConfigureAwait(false);
     }
 

@@ -81,9 +81,7 @@ internal static class General97TextIndexEncoder
     {
         if (text is null)
         {
-            return [ascending
-                ? AscendingNull
-                : DescendingNull];
+            return [ascending ? AscendingNull : DescendingNull];
         }
 
         // Per Jackcess GeneralLegacyIndexCodes.toIndexCharSequence — same

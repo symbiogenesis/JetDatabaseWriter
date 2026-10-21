@@ -306,16 +306,18 @@ internal static class CompactStorageInventory
                 try
                 {
                     hash.AppendData(page, 0, format.PageSize);
-                    string role = pageNumber == 0 ? "database-header" : page[0] switch
-                    {
-                        Constants.PageTypes.Data => "data-or-map-or-lval",
-                        Constants.PageTypes.TableDefinition => "table-definition-page",
-                        Constants.PageTypes.IndexIntermediate => "index-intermediate-page",
-                        Constants.PageTypes.IndexLeaf => "index-leaf-page",
-                        Constants.PageTypes.UsageMap => "usage-bitmap-page",
-                        Constants.PageTypes.Freed => "freed-marker-page",
-                        _ => "opaque-page",
-                    };
+                    string role = pageNumber == 0
+                        ? "database-header"
+                        : page[0] switch
+                        {
+                            Constants.PageTypes.Data => "data-or-map-or-lval",
+                            Constants.PageTypes.TableDefinition => "table-definition-page",
+                            Constants.PageTypes.IndexIntermediate => "index-intermediate-page",
+                            Constants.PageTypes.IndexLeaf => "index-leaf-page",
+                            Constants.PageTypes.UsageMap => "usage-bitmap-page",
+                            Constants.PageTypes.Freed => "freed-marker-page",
+                            _ => "opaque-page",
+                        };
                     await this.EmitAsync(
                 new CompactStorageRecord
                 {

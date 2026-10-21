@@ -530,8 +530,11 @@ internal static class FormatProbeApplication
         // Note: NorthwindTraders.accdb has NO MSysIndexes/MSysIndexColumns catalog tables —
         // index metadata in modern ACCDB lives ONLY in TDEF blocks. Confirms a key correction
         // to docs/design/index-and-relationship-format-notes.md §6.
-        string[] alwaysInclude = ["MSysObjects", "MSysIndexes", "MSysIndexColumns",
-                              "MSysRelationships", "MSysComplexColumns", "MSysQueries"];
+        string[] alwaysInclude =
+        [
+            "MSysObjects", "MSysIndexes", "MSysIndexColumns",
+            "MSysRelationships", "MSysComplexColumns", "MSysQueries",
+        ];
 
         var picked = new HashSet<long>();
         foreach (string name in alwaysInclude)
@@ -980,12 +983,12 @@ internal static class FormatProbeApplication
         string[] candidates =
         [
             Path.Combine("Jackcess", "V1997", "indexTestV1997.mdb"),
-        Path.Combine("Jackcess", "V1997", "compIndexTestV1997.mdb"),
-        Path.Combine("Jackcess", "V1997", "testIndexCodesV1997.mdb"),
-        Path.Combine("Jackcess", "V1997", "testV1997.mdb"),
-        Path.Combine("mdbtools", "nwind.mdb"),
-        "Jet3Test.mdb",
-    ];
+            Path.Combine("Jackcess", "V1997", "compIndexTestV1997.mdb"),
+            Path.Combine("Jackcess", "V1997", "testIndexCodesV1997.mdb"),
+            Path.Combine("Jackcess", "V1997", "testV1997.mdb"),
+            Path.Combine("mdbtools", "nwind.mdb"),
+            "Jet3Test.mdb",
+        ];
 
         var sb = new StringBuilder();
         _ = sb.AppendLine("# Format probe appendix: Jet3 index TDEF + leaf-page layouts");

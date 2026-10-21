@@ -103,11 +103,9 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             bool isReference = value.Length > prefix.Length + suffix.Length
                 && value.StartsWith(prefix, StringComparison.Ordinal)
                 && value.EndsWith(suffix, StringComparison.Ordinal);
-            row[i] = isReference
-                && int.TryParse(value.AsSpan(prefix.Length, value.Length - prefix.Length - suffix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out int complexId)
-                && TryGetCell(complexData, i, complexId, out byte[] cell)
-                    ? "data:application/octet-stream;base64," + Convert.ToBase64String(cell)
-                    : string.Empty;
+            row[i] = isReference && int.TryParse(value.AsSpan(prefix.Length, value.Length - prefix.Length - suffix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out int complexId) && TryGetCell(complexData, i, complexId, out byte[] cell)
+                ? "data:application/octet-stream;base64," + Convert.ToBase64String(cell)
+                : string.Empty;
         }
     }
 

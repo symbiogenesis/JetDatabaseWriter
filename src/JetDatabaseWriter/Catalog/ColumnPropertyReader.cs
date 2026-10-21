@@ -30,10 +30,7 @@ internal sealed class ColumnPropertyReader(JetFormat format, TableDefReader tabl
     internal static ColumnType ResolveCalculatedResultType(ColumnPropertyTarget? target)
     {
         ColumnPropertyEntry? rt = target?.Find(Constants.ColumnPropertyNames.ResultType);
-        return rt?.Value.Length >= 1
-            && (rt.DataType == ByteType
-                || rt.DataType == IntegerType
-                || rt.DataType == LongIntegerType)
+        return rt?.Value.Length >= 1 && (rt.DataType == ByteType || rt.DataType == IntegerType || rt.DataType == LongIntegerType)
             ? (ColumnType)rt.Value[0]
             : default;
     }

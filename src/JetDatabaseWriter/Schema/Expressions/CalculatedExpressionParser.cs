@@ -80,17 +80,19 @@ internal sealed class CalculatedExpressionParser
             };
         }
 
-        return token.Kind != TokenKind.Word ? null : token.Text.ToUpperInvariant() switch
-        {
-            "IMP" => new BinaryOperatorInfo("IMP", 1),
-            "EQV" => new BinaryOperatorInfo("EQV", 2),
-            "XOR" => new BinaryOperatorInfo("XOR", 3),
-            "OR" => new BinaryOperatorInfo("OR", 4),
-            "AND" => new BinaryOperatorInfo("AND", 5),
-            "IS" or "LIKE" or "BETWEEN" or "IN" or "NOT" => new BinaryOperatorInfo(token.Text.ToUpperInvariant(), 6),
-            "MOD" => new BinaryOperatorInfo("MOD", 9),
-            _ => null,
-        };
+        return token.Kind != TokenKind.Word
+            ? null
+            : token.Text.ToUpperInvariant() switch
+            {
+                "IMP" => new BinaryOperatorInfo("IMP", 1),
+                "EQV" => new BinaryOperatorInfo("EQV", 2),
+                "XOR" => new BinaryOperatorInfo("XOR", 3),
+                "OR" => new BinaryOperatorInfo("OR", 4),
+                "AND" => new BinaryOperatorInfo("AND", 5),
+                "IS" or "LIKE" or "BETWEEN" or "IN" or "NOT" => new BinaryOperatorInfo(token.Text.ToUpperInvariant(), 6),
+                "MOD" => new BinaryOperatorInfo("MOD", 9),
+                _ => null,
+            };
     }
 
     private static CalculatedExpressionFunctionNode Function(string name, params CalculatedExpressionNode[] args)

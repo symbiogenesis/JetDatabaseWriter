@@ -21,7 +21,9 @@ internal sealed class TableDef
 
     public IReadOnlyList<ColumnInfo> Columns
     {
-        get => field ??= Array.AsReadOnly(Array.Empty<ColumnInfo>());
+        get =>
+            field ??= Array.AsReadOnly(Array.Empty<ColumnInfo>());
+
         init
         {
             field = Array.AsReadOnly(value.ToArray());

@@ -223,7 +223,8 @@ internal sealed class Pager : PageFile
         {
             this.ThrowIfDisposed();
             long pageNumber = this.journal is { } active
-                ? active.ReserveZeroedPage(existingPageNumber) : existingPageNumber ?? this.PageCount;
+                ? active.ReserveZeroedPage(existingPageNumber)
+                : existingPageNumber ?? this.PageCount;
 
             lock (this.frameSync)
             {
@@ -553,7 +554,8 @@ internal sealed class Pager : PageFile
     private async ValueTask WriteCoreAsync(long pageNumber, byte[] page, CancellationToken cancellationToken)
     {
         byte[]? before = this.observers.Length != 0 && pageNumber < this.PageCount
-            ? await this.ReadBeforeWriteAsync(pageNumber, cancellationToken).ConfigureAwait(false) : null;
+            ? await this.ReadBeforeWriteAsync(pageNumber, cancellationToken).ConfigureAwait(false)
+            : null;
         try
         {
             await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
