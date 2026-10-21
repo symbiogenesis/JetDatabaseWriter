@@ -264,9 +264,9 @@ public sealed class ComplexColumnsRowReadTests(DatabaseCache db) : IClassFixture
     {
         MultiValueItem[] items =
         [
-            new() { ConceptualTableId = 3, Value = "first", Modified = new DateTime(2011, 9, 12, 21, 21, 19) },
-            new() { ConceptualTableId = 3, Value = "second", Modified = null },
-            new() { ConceptualTableId = 3, Value = null, Modified = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc) },
+            new() { Id = 1, ConceptualTableId = 3, Value = "first", MemoColumnName = "Notes", Modified = new DateTime(2011, 9, 12, 21, 21, 19) },
+            new() { Id = 2, ConceptualTableId = 3, Value = "second", MemoColumnName = "Other", Modified = null },
+            new() { Id = 3, ConceptualTableId = 3, Value = null, Modified = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc) },
         ];
 
         byte[] cell = ComplexCellValue.EncodeVersionHistoryItems(3, items);
@@ -328,13 +328,14 @@ public sealed class ComplexColumnsRowReadTests(DatabaseCache db) : IClassFixture
         var guid = Guid.NewGuid();
         var when = new DateTime(2024, 5, 6, 7, 8, 9, DateTimeKind.Utc);
         object?[] values = [null, true, (byte)7, (short)-3, 42, 1L << 40, 1.5f, 2.25d, 12.345m, guid, when, "text", new byte[] { 1, 2, 3 }];
-        MultiValueItem[] items = values.Select(v => new MultiValueItem { ConceptualTableId = 9, Value = v }).ToArray();
+        MultiValueItem[] items = values.Select((v, index) => new MultiValueItem { Id = index + 1, ConceptualTableId = 9, Value = v }).ToArray();
 
         IReadOnlyList<MultiValueItem> decoded = ComplexCellValue.ReadMultiValueItems(ComplexCellValue.EncodeMultiValueItems(9, items));
 
         Assert.Equal(values.Length, decoded.Count);
         for (int i = 0; i < values.Length; i++)
         {
+            Assert.Equal(i + 1, decoded[i].Id);
             Assert.Equal(9, decoded[i].ConceptualTableId);
             Assert.Equal(values[i], decoded[i].Value);
             Assert.Equal(values[i]?.GetType(), decoded[i].Value?.GetType());
@@ -342,6 +343,7 @@ public sealed class ComplexColumnsRowReadTests(DatabaseCache db) : IClassFixture
 
         var attachment = new AttachmentRecord
         {
+            Id = 19,
             ConceptualTableId = 9,
             FileName = "naïve.txt",
             FileType = "txt",
@@ -358,6 +360,7 @@ public sealed class ComplexColumnsRowReadTests(DatabaseCache db) : IClassFixture
         Assert.Equal(expected.Count, actual.Count);
         for (int i = 0; i < expected.Count; i++)
         {
+            Assert.Equal(expected[i].Id, actual[i].Id);
             Assert.Equal(expected[i].ConceptualTableId, actual[i].ConceptualTableId);
             Assert.Equal(expected[i].FileName, actual[i].FileName);
             Assert.Equal(expected[i].FileType, actual[i].FileType);

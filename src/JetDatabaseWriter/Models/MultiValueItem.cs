@@ -11,6 +11,13 @@ using JetDatabaseWriter.Interfaces;
 public sealed record MultiValueItem
 {
     /// <summary>
+    /// Gets the stable AutoNumber identity of this item in the hidden flat
+    /// child table. This identifies an individual item; <see cref="ConceptualTableId"/>
+    /// identifies its parent row. The identity is unique within this complex column.
+    /// </summary>
+    public int Id { get; init; }
+
+    /// <summary>
     /// Gets the per-parent-row complex reference joining this flat-table
     /// row back to its parent. Equal to the 4-byte value stored in the parent
     /// row's complex column slot.
@@ -23,6 +30,13 @@ public sealed record MultiValueItem
     /// Memo column.
     /// </summary>
     public object? Value { get; init; }
+
+    /// <summary>
+    /// Gets the parent append-only Memo column whose version this item stores.
+    /// A shared history flat table can hold versions of several Memo columns.
+    /// <see langword="null"/> for a multi-value item.
+    /// </summary>
+    public string? MemoColumnName { get; init; }
 
     /// <summary>
     /// Gets, for a version-history column, when Access recorded this version:

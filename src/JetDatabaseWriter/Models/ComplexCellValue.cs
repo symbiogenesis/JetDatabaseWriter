@@ -31,9 +31,10 @@ using JetDatabaseWriter.Interfaces;
 /// <para>
 /// Cell layout (little-endian; strings are length-prefixed UTF-8 as written by
 /// <see cref="BinaryWriter.Write(string)"/>):
-/// <c>"JCX"</c>, one kind byte (<c>'A'</c> attachments, <c>'M'</c> multi-value
+/// <c>"JC2"</c>, one kind byte (<c>'A'</c> attachments, <c>'M'</c> multi-value
 /// values, <c>'V'</c> version-history versions), the <c>Int32</c> per-row complex
-/// reference, the <c>Int32</c> item count, then each item. An attachment item is
+/// reference, the <c>Int32</c> item count, then each item prefixed by its
+/// <c>Int32</c> stable item ID. An attachment item is
 /// FileName, FileType, a presence byte plus FileURL, a presence byte plus
 /// FileTimeStamp (<see cref="DateTime.ToBinary"/>), and the <c>Int32</c> length
 /// and bytes of the decoded (unwrapped and decompressed) file data. A multi-value
@@ -42,6 +43,7 @@ using JetDatabaseWriter.Interfaces;
 /// (<see cref="DateTime.ToBinary"/>), 11 String, 12 byte[] (<c>Int32</c> length
 /// and bytes). Values of any other type are stored as their invariant-culture
 /// string. A version-history item is a multi-value item followed by a presence
+/// byte plus its <see cref="MultiValueItem.MemoColumnName"/> string, then a presence
 /// byte plus its <see cref="MultiValueItem.Modified"/> timestamp
 /// (<see cref="DateTime.ToBinary"/>).
 /// </para>
@@ -66,7 +68,7 @@ public static class ComplexCellValue
     private const byte StringTag = 11;
     private const byte BytesTag = 12;
 
-    private static readonly byte[] Magic = [(byte)'J', (byte)'C', (byte)'X'];
+    private static readonly byte[] Magic = [(byte)'J', (byte)'C', (byte)'2'];
 
     /// <summary>
     /// Decodes an Attachment column cell into one <see cref="AttachmentRecord"/>
@@ -81,9 +83,11 @@ public static class ComplexCellValue
         using BinaryReader reader = OpenCell(cell, AttachmentKind, AttachmentKind, out _, out int conceptualTableId, out int count);
         try
         {
+            var identities = new HashSet<int>();
             var result = new List<AttachmentRecord>(count);
             for (int i = 0; i < count; i++)
             {
+                int id = ReadItemId(reader, identities);
                 string fileName = reader.ReadString();
                 string fileType = reader.ReadString();
                 string? fileUrl = reader.ReadBoolean() ? reader.ReadString() : null;
@@ -91,6 +95,7 @@ public static class ComplexCellValue
                 byte[] fileData = ReadByteArray(reader);
                 result.Add(new AttachmentRecord
                 {
+                    Id = id,
                     ConceptualTableId = conceptualTableId,
                     FileName = fileName,
                     FileType = fileType,
@@ -122,14 +127,18 @@ public static class ComplexCellValue
         using BinaryReader reader = OpenCell(cell, MultiValueKind, VersionHistoryKind, out byte kind, out int conceptualTableId, out int count);
         try
         {
+            var identities = new HashSet<int>();
             var result = new List<MultiValueItem>(count);
             for (int i = 0; i < count; i++)
             {
+                int id = ReadItemId(reader, identities);
                 object? value = ReadValue(reader);
                 result.Add(new MultiValueItem
                 {
+                    Id = id,
                     ConceptualTableId = conceptualTableId,
                     Value = value,
+                    MemoColumnName = kind == VersionHistoryKind && reader.ReadBoolean() ? reader.ReadString() : null,
                     Modified = kind == VersionHistoryKind && reader.ReadBoolean() ? DateTime.FromBinary(reader.ReadInt64()) : null,
                 });
             }
@@ -152,6 +161,7 @@ public static class ComplexCellValue
         {
             foreach (AttachmentRecord attachment in attachments)
             {
+                writer.Write(attachment.Id);
                 writer.Write(attachment.FileName ?? string.Empty);
                 writer.Write(attachment.FileType ?? string.Empty);
                 writer.Write(attachment.FileURL != null);
@@ -185,6 +195,7 @@ public static class ComplexCellValue
         {
             foreach (MultiValueItem item in items)
             {
+                writer.Write(item.Id);
                 WriteValue(writer, item.Value);
             }
         }
@@ -206,7 +217,14 @@ public static class ComplexCellValue
         {
             foreach (MultiValueItem item in items)
             {
+                writer.Write(item.Id);
                 WriteValue(writer, item.Value);
+                writer.Write(item.MemoColumnName != null);
+                if (item.MemoColumnName != null)
+                {
+                    writer.Write(item.MemoColumnName);
+                }
+
                 writer.Write(item.Modified.HasValue);
                 if (item.Modified.HasValue)
                 {
@@ -269,6 +287,20 @@ public static class ComplexCellValue
         }
 
         return reader;
+    }
+
+    private static int ReadItemId(BinaryReader reader, HashSet<int> identities)
+    {
+        int id = reader.ReadInt32();
+        if (id <= 0 || !identities.Add(id))
+        {
+            throw new JetCorruptDataException(
+                JetErrorCode.CorruptComplexColumn,
+                "The complex column cell has an invalid or duplicate item identity.",
+                new JetErrorInfo { ColumnName = nameof(AttachmentRecord.Id) });
+        }
+
+        return id;
     }
 
     private static byte[] ReadByteArray(BinaryReader reader)

@@ -288,6 +288,25 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         return flat == null ? [] : await this.ReadMultiValueItemsAsync(flat, column.ColumnName, column.Kind, cancellationToken).ConfigureAwait(false);
     }
 
+    private static bool HasMatchingHistoryTemplate(TableDef flat, TableDef template, string columnName)
+    {
+        if (ClassifyFlatTable(flat, columnName) != ComplexColumnKind.VersionHistory)
+        {
+            return false;
+        }
+
+        foreach (ColumnInfo column in template.Columns)
+        {
+            ColumnInfo? payload = flat.FindColumn(column.Name);
+            if (payload is null || payload.Type != column.Type || payload.IsAutoNumber || payload.IsCalculated)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static bool ConceptualTableMatches(string tableIdStr, long targetTdefPage, string? tableName)
     {
         if (targetTdefPage <= 0)
@@ -347,14 +366,14 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     /// with no type template (<c>ComplexTypeObjectID</c> 0, as files written
     /// before the template tables existed hold): a <c>FileData</c> column marks
     /// an attachment; leaving out the foreign key and the AutoNumber key, one
-    /// value column marks a multi-value column, and a Memo plus a Date/Time
-    /// column a version history.
+    /// value column marks a multi-value column, and one or more Memo columns
+    /// plus one Date/Time column mark a version history.
     /// </summary>
     /// <param name="flat">The flat table's definition.</param>
     /// <param name="columnName">The parent's complex column name.</param>
     private static ComplexColumnKind ClassifyFlatTable(TableDef flat, string columnName)
     {
-        if (flat.FindColumnIndex("FileData") >= 0)
+        if (flat.FindColumn("FileData")?.Type == OleType)
         {
             return ComplexColumnKind.Attachment;
         }
@@ -369,12 +388,14 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             }
         }
 
-        return valueTypes.Count switch
+        if (valueTypes.Count == 1)
         {
-            1 => ComplexColumnKind.MultiValue,
-            2 when valueTypes.Contains(MemoType) && valueTypes.Contains(DateTimeType) => ComplexColumnKind.VersionHistory,
-            _ => ComplexColumnKind.Unknown,
-        };
+            return ComplexColumnKind.MultiValue;
+        }
+
+        return valueTypes.Count >= 2 && valueTypes.Remove(DateTimeType) && valueTypes.TrueForAll(static type => type == MemoType)
+            ? ComplexColumnKind.VersionHistory
+            : ComplexColumnKind.Unknown;
     }
 
     /// <summary>
@@ -845,7 +866,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                 valid &= info.Kind != ComplexColumnKind.MultiValue
                     || (expected is not null && template.Columns.Count == 1 && (template.Columns[0].Type == expected || opaqueScalar) && string.Equals(template.Columns[0].Name, "Value", StringComparison.OrdinalIgnoreCase));
                 valid &= info.Kind != ComplexColumnKind.Attachment || (IsAttachmentTemplate(template) && HasAttachmentPayloadSchema(flat));
-                valid &= info.Kind != ComplexColumnKind.VersionHistory || ClassifyFlatTable(flat, info.ColumnName) == ComplexColumnKind.VersionHistory;
+                valid &= info.Kind != ComplexColumnKind.VersionHistory || HasMatchingHistoryTemplate(flat, template, info.ColumnName);
             }
         }
 
@@ -1082,7 +1103,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         TableDef? td = tdefPage > 0 ? await tableDefs.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
         if (td?.Columns.Count > 0)
         {
-            return new FlatTable(tdefPage, td);
+            return new FlatTable(tdefPage, td, column.FlatTableName);
         }
 
         if (string.IsNullOrEmpty(column.FlatTableName))
@@ -1091,19 +1112,27 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         }
 
         ResolvedTable? resolved = await catalog.ResolveTableAsync(column.FlatTableName, cancellationToken).ConfigureAwait(false);
-        return resolved == null ? null : new FlatTable(resolved.Entry.TDefPage, resolved.Definition);
+        return resolved == null ? null : new FlatTable(resolved.Entry.TDefPage, resolved.Definition, column.FlatTableName);
     }
 
     private async ValueTask<FlatTable?> FindFlatTableFallbackAsync(string tableName, string columnName, DiscoveryBudget discovery, CancellationToken cancellationToken)
     {
         long tdefPage = await this.GetComplexFlatTablePageAsync(tableName, columnName, discovery, cancellationToken).ConfigureAwait(false);
         TableDef? td = tdefPage > 0 ? await tableDefs.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
-        return td == null ? null : new FlatTable(tdefPage, td);
+        return td == null ? null : new FlatTable(tdefPage, td, string.Empty);
     }
 
     private async ValueTask<IReadOnlyList<AttachmentRecord>> ReadAttachmentsAsync(FlatTable flat, string columnName, AttachmentWrapper.ContentBudget attachmentContent, CancellationToken cancellationToken)
     {
         TableDef td = flat.Definition;
+        int idxId = this.FindItemIdentityIndex(flat, columnName);
+        if (idxId < 0)
+        {
+            return [];
+        }
+
+        var seenIds = new HashSet<int>();
+        var ambiguousIds = new HashSet<int>();
         int idxFk = FindForeignKeyIndex(td, columnName);
         int idxFileUrl = td.FindColumnIndex("FileURL");
         int idxFileName = td.FindColumnIndex("FileName");
@@ -1114,6 +1143,11 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         var result = new List<AttachmentRecord>();
         await foreach (object?[] row in rows.EnumerateTypedRowsForTdefAsync(flat.TDefPage, td, cancellationToken).ConfigureAwait(false))
         {
+            if (!this.AcceptItemIdentity(flat, row, idxId, seenIds, ambiguousIds, out int id))
+            {
+                continue;
+            }
+
             byte[] fileData = idxFileData >= 0 && row[idxFileData] is byte[] stored ? stored : [];
             string fileType = ReadStringOrNull(row, idxFileType) ?? string.Empty;
             if (fileData.Length > 0)
@@ -1132,6 +1166,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
             result.Add(new AttachmentRecord
             {
+                Id = id,
                 ConceptualTableId = ReadInt32OrZero(row, idxFk),
                 FileName = ReadStringOrNull(row, idxFileName) ?? string.Empty,
                 FileType = fileType,
@@ -1141,17 +1176,17 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             });
         }
 
+        result.RemoveAll(item => ambiguousIds.Contains(item.Id));
         return result;
     }
 
     /// <summary>
     /// Reads every row of a multi-value or version-history flat table, in
-    /// flat-table order. For a version history, as in Jackcess
-    /// <c>VersionHistoryColumnInfoImpl</c>, the value is the first Memo column
-    /// that is neither the foreign key nor the AutoNumber key, and
-    /// <see cref="MultiValueItem.Modified"/> is the first Date/Time column
-    /// (<c>Modified_&lt;GUID&gt;</c>). Jackcess sorts versions newest first;
-    /// this keeps the stored order.
+    /// flat-table order. Each version-history row assigns one Memo payload;
+    /// its name identifies the source parent Memo when several columns share
+    /// the history table. The Date/Time column (<c>Modified_&lt;GUID&gt;</c>) supplies
+    /// <see cref="MultiValueItem.Modified"/>. Rows left without a payload after
+    /// a native Memo drop are omitted. Versions retain their stored order.
     /// </summary>
     /// <param name="flat">The flat table.</param>
     /// <param name="columnName">The parent's complex column name.</param>
@@ -1160,17 +1195,26 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     private async ValueTask<IReadOnlyList<MultiValueItem>> ReadMultiValueItemsAsync(FlatTable flat, string columnName, ComplexColumnKind kind, CancellationToken cancellationToken)
     {
         TableDef td = flat.Definition;
+        int idxId = this.FindItemIdentityIndex(flat, columnName);
+        if (idxId < 0)
+        {
+            return [];
+        }
+
+        var seenIds = new HashSet<int>();
+        var ambiguousIds = new HashSet<int>();
         int idxFk = FindForeignKeyIndex(td, columnName);
         int idxValue = -1;
         int idxModified = -1;
+        var historyValues = new List<int>();
         if (kind == ComplexColumnKind.VersionHistory)
         {
             for (int i = 0; i < td.Columns.Count; i++)
             {
                 ColumnInfo column = td.Columns[i];
-                if (idxValue < 0 && column.Type == MemoType && i != idxFk && (column.Flags & Constants.ColumnDescriptorFlags.AutoNumber) == 0)
+                if (column.Type == MemoType && i != idxFk && !column.IsAutoNumber)
                 {
-                    idxValue = i;
+                    historyValues.Add(i);
                 }
                 else if (idxModified < 0 && column.Type == DateTimeType)
                 {
@@ -1187,15 +1231,123 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         var result = new List<MultiValueItem>();
         await foreach (object?[] row in rows.EnumerateTypedRowsForTdefAsync(flat.TDefPage, td, cancellationToken).ConfigureAwait(false))
         {
+            if (!this.AcceptItemIdentity(flat, row, idxId, seenIds, ambiguousIds, out int id))
+            {
+                continue;
+            }
+
+            int valueIndex = kind == ComplexColumnKind.VersionHistory ? this.FindHistoryValueIndex(flat, row, historyValues) : idxValue;
+            if (kind == ComplexColumnKind.VersionHistory && valueIndex < 0)
+            {
+                // Native DROP of a Memo removes its payload column but retains
+                // that column's historical rows, now with every payload null.
+                continue;
+            }
+
             result.Add(new MultiValueItem
             {
+                Id = id,
                 ConceptualTableId = ReadInt32OrZero(row, idxFk),
-                Value = idxValue >= 0 && row[idxValue] is not (null or DBNull) ? row[idxValue] : null,
+                Value = valueIndex >= 0 && row[valueIndex] is not (null or DBNull) ? row[valueIndex] : null,
+                MemoColumnName = kind == ComplexColumnKind.VersionHistory ? td.Columns[valueIndex].Name : null,
                 Modified = idxModified >= 0 && row[idxModified] is DateTime modified ? modified : null,
             });
         }
 
+        result.RemoveAll(item => ambiguousIds.Contains(item.Id));
         return result;
+    }
+
+    private int FindHistoryValueIndex(FlatTable flat, object?[] row, List<int> payloadIndexes)
+    {
+        int selected = -1;
+        foreach (int index in payloadIndexes)
+        {
+            if (index >= row.Length || row[index] is null or DBNull)
+            {
+                continue;
+            }
+
+            if (selected >= 0)
+            {
+                var error = new JetCorruptDataException(
+                    JetErrorCode.CorruptComplexColumn,
+                    "A version-history item assigns more than one Memo payload.",
+                    new JetErrorInfo { TableName = flat.Name, ColumnName = flat.Definition.Columns[index].Name, PageNumber = flat.TDefPage });
+                if (rows.StrictParsing)
+                {
+                    throw error;
+                }
+
+                this.TraceBestEffortFallback(nameof(FindHistoryValueIndex), error);
+                return -1;
+            }
+
+            selected = index;
+        }
+
+        return selected;
+    }
+
+    private int FindItemIdentityIndex(FlatTable flat, string columnName)
+    {
+        int identity = -1;
+        for (int index = 0; index < flat.Definition.Columns.Count; index++)
+        {
+            ColumnInfo column = flat.Definition.Columns[index];
+            if (!column.IsAutoNumber)
+            {
+                continue;
+            }
+
+            if (identity >= 0 || column.Type != LongIntegerType)
+            {
+                identity = -1;
+                break;
+            }
+
+            identity = index;
+        }
+
+        if (identity < 0)
+        {
+            this.RejectItemIdentity(flat, columnName, "The complex flat table has no unambiguous Long Integer AutoNumber item identity.");
+        }
+
+        return identity;
+    }
+
+    private bool AcceptItemIdentity(FlatTable flat, object?[] row, int index, HashSet<int> seen, HashSet<int> ambiguous, out int identity)
+    {
+        identity = index < row.Length && row[index] is int value ? value : 0;
+        if (identity <= 0)
+        {
+            this.RejectItemIdentity(flat, flat.Definition.Columns[index].Name, "The complex item has an invalid AutoNumber identity.");
+            return false;
+        }
+
+        if (!seen.Add(identity))
+        {
+            ambiguous.Add(identity);
+            this.RejectItemIdentity(flat, flat.Definition.Columns[index].Name, "The complex flat table contains duplicate item identities.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private void RejectItemIdentity(FlatTable flat, string columnName, string message)
+    {
+        var error = new JetCorruptDataException(
+            JetErrorCode.CorruptComplexColumn,
+            message,
+            new JetErrorInfo { TableName = flat.Name, ColumnName = columnName, PageNumber = flat.TDefPage });
+        if (rows.StrictParsing)
+        {
+            throw error;
+        }
+
+        this.TraceBestEffortFallback(nameof(AcceptItemIdentity), error);
     }
 
     private void TraceBestEffortFallback(string operation, Exception exception)
@@ -1235,5 +1387,6 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     /// <summary>A complex column's hidden flat child table.</summary>
     /// <param name="TDefPage">The flat table's TDEF page.</param>
     /// <param name="Definition">The flat table's definition.</param>
-    private sealed record FlatTable(long TDefPage, TableDef Definition);
+    /// <param name="Name">The catalog name, when available.</param>
+    private sealed record FlatTable(long TDefPage, TableDef Definition, string Name);
 }

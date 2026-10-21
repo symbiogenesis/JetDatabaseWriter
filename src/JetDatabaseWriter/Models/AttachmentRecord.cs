@@ -18,6 +18,13 @@ using JetDatabaseWriter.Interfaces;
 public sealed record AttachmentRecord
 {
     /// <summary>
+    /// Gets the stable AutoNumber identity of this item in the hidden flat
+    /// child table. This identifies an individual item; <see cref="ConceptualTableId"/>
+    /// identifies its parent row. The identity is unique within this complex column.
+    /// </summary>
+    public int Id { get; init; }
+
+    /// <summary>
     /// Gets the per-parent-row complex reference joining this flat-table
     /// row back to its parent. Equal to the 4-byte value stored in the parent
     /// row's complex column slot.

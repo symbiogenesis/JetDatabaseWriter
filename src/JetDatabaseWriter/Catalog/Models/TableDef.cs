@@ -172,11 +172,12 @@ internal sealed class TableDef
     /// child table: the single <c>LongInteger</c> (type code <c>0x04</c>) column whose
     /// name starts with <c>"_"</c> per <see href="complex-columns-format-notes.md" /> §2.4,
     /// falling back to the first <c>LongInteger</c> column when no underscore-prefixed
-    /// candidate exists. Throws when no <c>LongInteger</c> column is present.
+    /// candidate exists. AutoNumber identities are never candidates. Throws when
+    /// no non-AutoNumber <c>LongInteger</c> column is present.
     /// </summary>
     /// <exception cref="JetCorruptDataException">Thrown when the flat child table has no Long FK back-reference column.</exception>
-    public ColumnInfo FindFlatTableForeignKeyColumn() => this.Columns.FirstOrDefault(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
-            ?? this.Columns.FirstOrDefault(c => c.Type == LongIntegerType)
+    public ColumnInfo FindFlatTableForeignKeyColumn() => this.Columns.FirstOrDefault(c => c.Type == LongIntegerType && !c.IsAutoNumber && c.Name.StartsWith('_'))
+            ?? this.Columns.FirstOrDefault(c => c.Type == LongIntegerType && !c.IsAutoNumber)
             ?? throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "Flat child table is missing a Long FK back-reference column.");
 
     /// <summary>

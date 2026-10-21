@@ -44,6 +44,7 @@ using JetDatabaseWriter.ValueDecoding.Models;
 /// <param name="constraints">Applies defaults, AutoNumber, required, validation, and calculated-column rules.</param>
 /// <param name="enforcer">Enforces and cascades foreign-key constraints.</param>
 /// <param name="complexColumns">Cascades deletes into complex-column child rows.</param>
+/// <param name="history">Appends native Memo version snapshots.</param>
 /// <param name="snapshots">Reads the decoded rows that update and delete predicates are evaluated against.</param>
 internal sealed class TableDataWriter(
     JetFormat format,
@@ -56,6 +57,7 @@ internal sealed class TableDataWriter(
     ConstraintRegistry constraints,
     RelationshipEnforcer enforcer,
     ComplexColumnManager complexColumns,
+    AppendOnlyHistoryWriter history,
     TableSnapshotReader snapshots)
 {
     private static object[] NormalizePublicRow(object?[] values, string paramName)
@@ -362,6 +364,34 @@ internal sealed class TableDataWriter(
             await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, rows, pendingUpdates, cancellationToken).ConfigureAwait(false);
         }
 
+        var historyRows = new List<object[]>(pendingUpdates.Count);
+        foreach ((_, _, object[] newRow) in pendingUpdates)
+        {
+            historyRows.Add(newRow);
+        }
+
+        List<AppendOnlyHistoryWriter.HistoryBatch> historyBatches = await history.PrepareAsync(tableName, tableDef, historyRows, updateIndexes.Keys, insertAssignments: null, cancellationToken).ConfigureAwait(false);
+        foreach (CascadeUpdate cascade in cascades)
+        {
+            List<LocatedRow> originals = await snapshots.ReadRowsAsync(cascade.Table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            foreach ((RowLocation location, object[] newRow) in cascade.Rows)
+            {
+                object[] oldRow = originals.Find(row => row.Location == location).Values;
+                var assigned = new List<int>();
+                for (int index = 0; index < newRow.Length; index++)
+                {
+                    if (!Equals(oldRow[index], newRow[index]))
+                    {
+                        assigned.Add(index);
+                    }
+                }
+
+                historyBatches.AddRange(await history.PrepareAsync(cascade.TableName, cascade.Table.Definition, [newRow], assigned, insertAssignments: null, cancellationToken).ConfigureAwait(false));
+            }
+        }
+
+        await history.ValidateAsync(historyBatches, cancellationToken).ConfigureAwait(false);
+
         // The statement journal can discard a partial row rewrite before write-back.
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -403,6 +433,7 @@ internal sealed class TableDataWriter(
             await autoNumbers.UpdateHighWaterAsync(entry.TDefPage, tableDef, newRows, cancellationToken).ConfigureAwait(false);
         }
 
+        await history.ApplyAsync(historyBatches, cancellationToken).ConfigureAwait(false);
         return pendingUpdates.Count;
     }
 
@@ -540,7 +571,7 @@ internal sealed class TableDataWriter(
         IReadOnlyList<FkRelationship> relationships = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         FkContext? fkContext = relationships.Count > 0 ? new FkContext(relationships) : null;
 
-        (List<object[]> pendingRows, List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints) =
+        (List<object[]> pendingRows, List<ICollection<int>> insertAssignments, List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints) =
             await this.PrepareInsertBatchAsync(
                 tableName,
                 tableDef,
@@ -554,12 +585,13 @@ internal sealed class TableDataWriter(
             entry.TDefPage,
             tableDef,
             pendingRows,
+            insertAssignments,
             autoCheckpoints,
             fkContext,
             cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask<(List<object[]> PendingRows, List<(ColumnConstraint Constraint, long? PreviousValue)>? AutoCheckpoints)> PrepareInsertBatchAsync<TItem>(
+    private async ValueTask<(List<object[]> PendingRows, List<ICollection<int>> InsertAssignments, List<(ColumnConstraint Constraint, long? PreviousValue)>? AutoCheckpoints)> PrepareInsertBatchAsync<TItem>(
         string tableName,
         TableDef tableDef,
         IEnumerable<TItem> items,
@@ -569,6 +601,7 @@ internal sealed class TableDataWriter(
         where TItem : class
     {
         var pendingRows = new List<object[]>();
+        var insertAssignments = new List<ICollection<int>>();
         List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints = null;
 
         try
@@ -579,6 +612,15 @@ internal sealed class TableDataWriter(
                 Guard.NotNull(item, itemParamName);
 
                 object[] row = mapRow(tableDef, item);
+                var assigned = new HashSet<int>();
+                for (int index = 0; index < Math.Min(row.Length, tableDef.Columns.Count); index++)
+                {
+                    if (tableDef.Columns[index].Type == ColumnType.MemoType && row[index] is not DbDefault)
+                    {
+                        assigned.Add(index);
+                    }
+                }
+
                 List<(ColumnConstraint Constraint, long? PreviousValue)>? rowCheckpoints =
                     await constraints.ApplyAsync(tableName, tableDef, row, cancellationToken).ConfigureAwait(false);
                 if (rowCheckpoints != null)
@@ -588,6 +630,7 @@ internal sealed class TableDataWriter(
 
                 this.ThrowIfTextNotStorable(tableName, tableDef, row);
                 pendingRows.Add(row);
+                insertAssignments.Add(assigned);
             }
         }
         catch
@@ -596,7 +639,7 @@ internal sealed class TableDataWriter(
             throw;
         }
 
-        return (pendingRows, autoCheckpoints);
+        return (pendingRows, insertAssignments, autoCheckpoints);
     }
 
     private async ValueTask<int> InsertPreparedBatchAsync(
@@ -604,6 +647,7 @@ internal sealed class TableDataWriter(
         long tdefPage,
         TableDef tableDef,
         List<object[]> pendingRows,
+        List<ICollection<int>> insertAssignments,
         List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints,
         FkContext? fkContext,
         CancellationToken cancellationToken)
@@ -621,6 +665,8 @@ internal sealed class TableDataWriter(
                 pendingRows,
                 cancellationToken).ConfigureAwait(false);
 
+            List<AppendOnlyHistoryWriter.HistoryBatch> historyBatches = await history.PrepareAsync(tableName, tableDef, pendingRows, assignedColumns: null, insertAssignments, cancellationToken).ConfigureAwait(false);
+            await history.ValidateAsync(historyBatches, cancellationToken).ConfigureAwait(false);
             var batchHintRows = new List<(RowLocation Loc, object[] Row)>(pendingRows.Count);
 
             // Row and index writes remain private until statement write-back.
@@ -659,6 +705,7 @@ internal sealed class TableDataWriter(
 
                 await autoNumbers.UpdateHighWaterAsync(tdefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
                 await autoNumbers.UpdateComplexHighWaterAsync(tdefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
+                await history.ApplyAsync(historyBatches, cancellationToken).ConfigureAwait(false);
             }
         }
         catch

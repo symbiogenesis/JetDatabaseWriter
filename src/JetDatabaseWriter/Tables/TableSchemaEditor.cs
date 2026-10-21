@@ -52,6 +52,7 @@ using JetDatabaseWriter.Schema.Models;
 /// <param name="snapshots">Reads rows, index metadata, and persisted column properties before a rebuild.</param>
 /// <param name="rewritePlanner">Prepares validated rewrite projections.</param>
 /// <param name="tableStorage">Copies, transfers and reclaims table storage.</param>
+/// <param name="historySchemas">Retargets the private payloads of append-only Memo fields.</param>
 internal sealed class TableSchemaEditor(
     JetFormat format,
     Pager pager,
@@ -63,7 +64,8 @@ internal sealed class TableSchemaEditor(
     RelationshipManager relationships,
     TableSnapshotReader snapshots,
     TableRewritePlanner rewritePlanner,
-    TableStorageEditor tableStorage)
+    TableStorageEditor tableStorage,
+    AppendOnlyHistorySchemaEditor historySchemas)
 {
     /// <summary>Changes only the table rule properties after validating existing rows.</summary>
     /// <param name="tableName">The table name.</param>
@@ -357,39 +359,54 @@ internal sealed class TableSchemaEditor(
             cancellationToken);
     }
 
-    internal ValueTask DropColumnAsync(string tableName, string columnName, CancellationToken cancellationToken)
+    internal async ValueTask DropColumnAsync(string tableName, string columnName, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         pager.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        int dropIndex = -1;
-        return this.RewriteTableAsync(
+        AppendOnlyHistorySchemaEditor.HistorySchemaPlan history = await historySchemas.PrepareAsync(tableName, columnName, newName: null, cancellationToken).ConfigureAwait(false);
+        var droppedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { columnName };
+        if (history.DroppedReferenceColumn is { } hiddenColumn)
+        {
+            droppedNames.Add(hiddenColumn);
+        }
+
+        var droppedIndexes = new HashSet<int>();
+        await this.RewriteTableAsync(
             tableName,
             (existing, _) =>
             {
-                dropIndex = existing.FindIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+                int dropIndex = existing.FindIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
                 if (dropIndex < 0)
                 {
                     throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName), errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = columnName });
                 }
 
-                if (existing.Count == 1)
+                for (int index = 0; index < existing.Count; index++)
+                {
+                    if (droppedNames.Contains(existing[index].Name))
+                    {
+                        droppedIndexes.Add(index);
+                    }
+                }
+
+                if (existing.Count == droppedIndexes.Count)
                 {
                     throw new JetOperationException(JetErrorCode.LastColumn, $"Cannot drop the last remaining column from table '{tableName}'.", errorInfo: new JetErrorInfo { TableName = tableName });
                 }
 
                 var next = new List<ColumnDefinition>(existing);
-                next.RemoveAt(dropIndex);
+                next.RemoveAll(column => droppedNames.Contains(column.Name));
                 return next;
             },
             (oldRow, _) =>
             {
-                object[] next = new object[oldRow.Length - 1];
+                object[] next = new object[oldRow.Length - droppedIndexes.Count];
                 int j = 0;
                 for (int i = 0; i < oldRow.Length; i++)
                 {
-                    if (i == dropIndex)
+                    if (droppedIndexes.Contains(i))
                     {
                         continue;
                     }
@@ -399,8 +416,9 @@ internal sealed class TableSchemaEditor(
 
                 return next;
             },
-            name => string.Equals(name, columnName, StringComparison.OrdinalIgnoreCase) ? null : name,
-            cancellationToken);
+            name => droppedNames.Contains(name) ? null : name,
+            cancellationToken).ConfigureAwait(false);
+        await historySchemas.ApplyAsync(history, tableStorage.DropHistoryTemplateAsync, cancellationToken).ConfigureAwait(false);
     }
 
     internal async ValueTask RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken cancellationToken)
@@ -432,6 +450,7 @@ internal sealed class TableSchemaEditor(
             }
         }
 
+        AppendOnlyHistorySchemaEditor.HistorySchemaPlan history = await historySchemas.PrepareAsync(tableName, oldColumnName, newColumnName, cancellationToken).ConfigureAwait(false);
         await this.RewriteTableAsync(
             tableName,
             (existing, _) =>
@@ -464,6 +483,7 @@ internal sealed class TableSchemaEditor(
             (oldRow, _) => oldRow,
             name => string.Equals(name, oldColumnName, StringComparison.OrdinalIgnoreCase) ? newColumnName : name,
             cancellationToken).ConfigureAwait(false);
+        await historySchemas.ApplyAsync(history, tableStorage.DropHistoryTemplateAsync, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Updates every repeated table property without changing its stored entry structure.</summary>

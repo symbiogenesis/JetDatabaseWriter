@@ -52,13 +52,14 @@ internal sealed class WriterServices
 
         TableCatalog catalog = this.Catalog;
 
+        var snapshotCatalog = new CatalogReader(db.Format, db.TableDefs, catalog, this.CatalogRows, snapshotRows);
         var snapshots = new TableSnapshotReader(
             db.Format,
             db.Pages,
             db.TableDefs,
             db.OwnedPages,
             snapshotRows,
-            new CatalogReader(db.Format, db.TableDefs, catalog, this.CatalogRows, snapshotRows));
+            snapshotCatalog);
         this.Snapshots = snapshots;
         var tdefPageBuilder = new TDefPageBuilder(db.Format, pager);
         var longValueEncoder = new LongValueEncoder(db.Format, pager, this.PageAllocator, options, new LongValueUsageMapMaintainer(db.Format, pager, this.PageAllocator, db.TableDefs, this.CatalogRows, catalog));
@@ -105,7 +106,10 @@ internal sealed class WriterServices
         this.CatalogArtifacts = new CatalogArtifactWriter(db.Format, pager, catalog, this.PageAllocator, tdefPageBuilder, dataPages, this.OwnedMaps, catalogWriter, constraints);
         this.SystemCatalog = new SystemCatalogBootstrapper(db.Format, db.TableDefs, pager, this.Indexes, this.CatalogArtifacts);
         var uniqueIndexes = new UniqueIndexChecker(db.Format, db.Pages, db.TableDefs, snapshots);
-        this.ComplexColumns = new ComplexColumnManager(db.Format, db.TableDefs, db.OwnedPages, pager, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, uniqueIndexes, autoNumbers, complexReferenceSeeds, this.Snapshots);
+        var complexReader = new ComplexColumnReader(db.Format, db.TableDefs, snapshotCatalog, snapshotRows, diagnosticsEnabled: false);
+        this.ComplexColumns = new ComplexColumnManager(db.Format, db.TableDefs, db.OwnedPages, pager, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, uniqueIndexes, autoNumbers, complexReferenceSeeds, this.Snapshots, complexReader);
+        var history = new AppendOnlyHistoryWriter(db.Format, catalog, complexReader, snapshots, complexReferenceSeeds, tableRows, this.Indexes, constraints, uniqueIndexes, autoNumbers);
+        var historySchemas = new AppendOnlyHistorySchemaEditor(db.Format, pager, db.TableDefs, this.PageAllocator, catalog, complexReader, snapshots, catalogWriter, catalogRows);
 
         var relationshipCatalog = new RelationshipCatalogStore(db.Format, db.TableDefs, db.OwnedPages, this.Indexes, this.CatalogRows, snapshots, catalog);
         var enforcer = new RelationshipEnforcer(db.Format, db.Pages, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots, constraints);
@@ -123,6 +127,7 @@ internal sealed class WriterServices
             constraints,
             enforcer,
             this.ComplexColumns,
+            history,
             snapshots);
         this.RewritePlanner = new TableRewritePlanner(db.Format, catalog, this.Indexes, this.CatalogArtifacts, constraints, this.Relationships, snapshots, autoNumbers);
         var tableStorage = new TableStorageEditor(
@@ -152,7 +157,8 @@ internal sealed class WriterServices
             this.Relationships,
             snapshots,
             this.RewritePlanner,
-            tableStorage);
+            tableStorage,
+            historySchemas);
     }
 
     /// <summary>Gets the explicit and auto-commit transaction lifecycle.</summary>

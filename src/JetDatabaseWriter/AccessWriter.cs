@@ -446,7 +446,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNull(parentRowKey, nameof(parentRowKey));
         Guard.NotNull(attachment, nameof(attachment));
         return this.RunAutoCommitAsync(
-            _ => this.Services.ComplexColumns.AddComplexItemCoreAsync(tableName, columnName, parentRowKey, attachment, expectAttachment: true, cancellationToken),
+            _ => this.Services.ComplexColumns.WriteComplexItemCoreAsync(tableName, columnName, parentRowKey, attachment, expectAttachment: true, itemId: null, remove: false, cancellationToken),
             cancellationToken);
     }
 
@@ -460,7 +460,44 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     {
         Guard.NotNull(parentRowKey, nameof(parentRowKey));
         return this.RunAutoCommitAsync(
-            _ => this.Services.ComplexColumns.AddComplexItemCoreAsync(tableName, columnName, parentRowKey, value, expectAttachment: false, cancellationToken),
+            _ => this.Services.ComplexColumns.WriteComplexItemCoreAsync(tableName, columnName, parentRowKey, value, expectAttachment: false, itemId: null, remove: false, cancellationToken),
+            cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public ValueTask ReplaceAttachmentAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, int itemId, AttachmentInput attachment, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(parentRowKey, nameof(parentRowKey));
+        Guard.NotNull(attachment, nameof(attachment));
+        return this.RunAutoCommitAsync(
+            _ => this.Services.ComplexColumns.WriteComplexItemCoreAsync(tableName, columnName, parentRowKey, attachment, expectAttachment: true, itemId, remove: false, cancellationToken),
+            cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public ValueTask RemoveAttachmentAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, int itemId, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(parentRowKey, nameof(parentRowKey));
+        return this.RunAutoCommitAsync(
+            _ => this.Services.ComplexColumns.WriteComplexItemCoreAsync(tableName, columnName, parentRowKey, payload: null, expectAttachment: true, itemId, remove: true, cancellationToken),
+            cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public ValueTask ReplaceMultiValueItemAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, int itemId, object? value, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(parentRowKey, nameof(parentRowKey));
+        return this.RunAutoCommitAsync(
+            _ => this.Services.ComplexColumns.WriteComplexItemCoreAsync(tableName, columnName, parentRowKey, value, expectAttachment: false, itemId, remove: false, cancellationToken),
+            cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public ValueTask RemoveMultiValueItemAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, int itemId, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(parentRowKey, nameof(parentRowKey));
+        return this.RunAutoCommitAsync(
+            _ => this.Services.ComplexColumns.WriteComplexItemCoreAsync(tableName, columnName, parentRowKey, payload: null, expectAttachment: false, itemId, remove: true, cancellationToken),
             cancellationToken);
     }
 

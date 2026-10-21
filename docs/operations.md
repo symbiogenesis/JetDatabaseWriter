@@ -296,7 +296,7 @@ If a row still cannot fit after those values move, the writer throws `JetLimitat
 
 ### Feature and format coverage
 
-- Complex-column APIs read and add attachments and multi-value items. Individual replacement/removal and append-only MEMO history maintenance remain incomplete.
+- Complex-column APIs expose native item IDs and atomically add, replace and remove attachments and multi-value entries. Existing append-only MEMO columns record native version history during inserts and assigned updates; history entries are read-only. See [complex-item mutation](writing.md#complex-item-mutation).
 - Newly created Jet3 databases lack the system-table bootstrap needed to create relationships.
 - Writes are refused when the writer cannot maintain a table's indexes, including unsupported collations or BIGBINARY keys.
 - Access-file linked tables support read-through. ODBC links expose cached catalog metadata but do not execute queries; see [linked tables](writing.md#linked-tables).

@@ -459,7 +459,7 @@ ordinary catalog, row and stored-index reads. Those specimens retain original
 global maps and every original page. They establish private component composition,
 not native mutation acceptance, complete database coverage or reclaimed space.
 
-Individual attachment editing/history (R8), query planning, cache performance,
+Query planning, cache performance,
 benchmarks and the custom-stream recovery contract are not prerequisites for a
 path-based compact-copy implementation that preserves existing raw identities.
 Unsupported encryption providers cannot be treated as decryptable; refusal must

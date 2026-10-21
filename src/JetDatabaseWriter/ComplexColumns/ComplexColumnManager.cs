@@ -50,6 +50,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="autoNumbers">Advances a flat table's persisted AutoNumber high-water value after a row-level insert, a parent table's complex AutoNumber after a reference is allocated, and <c>MSysComplexColumns</c>' ComplexID counter.</param>
 /// <param name="seeds">Resolves flat tables and reads the per-row complex references a parent table already uses.</param>
 /// <param name="snapshots">Streams strict typed projected parent rows.</param>
+/// <param name="complexReader">Validates native complex descriptors and their kinds.</param>
 internal sealed class ComplexColumnManager(
     JetFormat format,
     TableDefReader tableDefs,
@@ -64,7 +65,8 @@ internal sealed class ComplexColumnManager(
     UniqueIndexChecker uniqueIndexes,
     AutoNumberMaintainer autoNumbers,
     ComplexReferenceSeedReader seeds,
-    TableSnapshotReader snapshots)
+    TableSnapshotReader snapshots,
+    ComplexColumnReader complexReader)
 {
     private const int ComplexTypeTemplateTextLength = 255;
 
@@ -740,12 +742,14 @@ internal sealed class ComplexColumnManager(
     // ── Row-level APIs for complex (Attachment / MultiValue) columns ──
     // See docs/design/complex-columns-format-notes.md §2.1 / §2.4 / §3.
 
-    public async ValueTask AddComplexItemCoreAsync(
+    public async ValueTask WriteComplexItemCoreAsync(
         string tableName,
         string columnName,
         IReadOnlyDictionary<string, object?> parentRowKey,
         object? payload,
         bool expectAttachment,
+        int? itemId,
+        bool remove,
         CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
@@ -753,6 +757,11 @@ internal sealed class ComplexColumnManager(
         Guard.NotNull(parentRowKey, nameof(parentRowKey));
         this.pager.ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
+
+        if (itemId is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(itemId), "An item ID must be positive.");
+        }
 
         if (parentRowKey.Count == 0)
         {
@@ -786,7 +795,19 @@ internal sealed class ComplexColumnManager(
         }
 
         TableDef flatDef = await this.tableDefs.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
-        ComplexColumnKind kind = ClassifyComplexColumnKind(flatDef);
+        ComplexColumnInfo? descriptor = (await complexReader.GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false))
+            .FirstOrDefault(column => string.Equals(column.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+        if (descriptor is null || CatalogValueReader.TdefPageFromId(descriptor.FlatTableId) != flatTdefPage)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The complex column has no unambiguous native descriptor.", new JetErrorInfo { TableName = tableName, ColumnName = columnName });
+        }
+
+        ComplexColumnKind kind = descriptor.Kind;
+        if (kind == ComplexColumnKind.VersionHistory)
+        {
+            throw new JetNotSupportedException(JetErrorCode.VersionHistoryNotEditable, "Version history changes only when its append-only Memo is written.", new JetErrorInfo { TableName = tableName, ColumnName = columnName });
+        }
+
         if (kind == ComplexColumnKind.Unknown)
         {
             throw new JetNotSupportedException(JetErrorCode.ComplexColumnsNotSupported, $"Column '{tableName}.{columnName}' is a complex column, but its subtype could not be determined from the flat child table.", new JetErrorInfo { TableName = tableName });
@@ -802,7 +823,7 @@ internal sealed class ComplexColumnManager(
             throw new JetNotSupportedException(JetErrorCode.ComplexColumnsNotSupported, $"Column '{tableName}.{columnName}' is an Attachment column; call AddAttachmentAsync instead.", new JetErrorInfo { TableName = tableName });
         }
 
-        if (!expectAttachment && flatDef.FindColumn("Value") is { Type: TextType } valueColumn
+        if (!remove && !expectAttachment && flatDef.FindColumn("Value") is { Type: TextType } valueColumn
             && payload is not null and not DBNull)
         {
             string text = Convert.ToString(payload, CultureInfo.InvariantCulture) ?? string.Empty;
@@ -854,10 +875,81 @@ internal sealed class ComplexColumnManager(
             complexCol,
             cancellationToken).ConfigureAwait(false);
 
+        string flatTableName = await this.ResolveFlatTableNameAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
+        await indexes.ThrowIfIndexesUnmaintainableAsync(flatTdefPage, flatDef, flatTableName, cancellationToken).ConfigureAwait(false);
+        List<LocatedRow>? existingRows = null;
+        int target = -1;
+        int identityIndex = -1;
+        if (itemId.HasValue)
+        {
+            identityIndex = flatDef.FindColumnIndex(static column => column.IsAutoNumber && column.Type == LongIntegerType);
+            int foreignKeyIndex = flatDef.FindColumnIndex(column => column == flatDef.FindFlatTableForeignKeyColumn());
+            if (identityIndex < 0 || flatDef.Columns.Count(static column => column.IsAutoNumber) != 1)
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The complex flat table has no integer item identity.", new JetErrorInfo { TableName = tableName, ColumnName = columnName });
+            }
+
+            existingRows = await snapshots.ReadRowsAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
+            for (int index = 0; index < existingRows.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                object[] row = existingRows[index].Values;
+                if (row[identityIndex] is int id && id == itemId.Value)
+                {
+                    if (target >= 0)
+                    {
+                        throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The complex flat table contains duplicate item identities.", new JetErrorInfo { TableName = tableName, ColumnName = columnName });
+                    }
+
+                    target = index;
+                }
+            }
+
+            if (target < 0 || existingRows[target].Values[foreignKeyIndex] is not int reference || reference != conceptualTableId)
+            {
+                throw new JetOperationException(JetErrorCode.RowNotFound, $"Item {itemId.Value} was not found for the supplied parent in '{tableName}.{columnName}'.", errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = columnName });
+            }
+
+            if (remove)
+            {
+                RowLocation location = existingRows[target].Location;
+                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, flatDef, cancellationToken).ConfigureAwait(false);
+                await tableRows.AdjustTDefRowCountAsync(flatTdefPage, -1, cancellationToken).ConfigureAwait(false);
+                await indexes.MaintainIndexesAsync(flatTdefPage, flatDef, flatTableName, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+        }
+
         // Build the flat-table row values.
         object[] flatValues = expectAttachment
             ? BuildAttachmentFlatRow(flatDef, conceptualTableId, (AttachmentInput)payload!)
             : BuildMultiValueFlatRow(flatDef, conceptualTableId, payload);
+
+        if (itemId.HasValue)
+        {
+            object[] replacement = (object[])existingRows![target].Values.Clone();
+            string[] payloadColumns = expectAttachment
+                ? ["FileURL", "FileName", "FileType", "FileTimeStamp", "FileData"]
+                : ["Value"];
+            int[] assignedColumns = new int[payloadColumns.Length];
+            for (int index = 0; index < payloadColumns.Length; index++)
+            {
+                int columnIndex = flatDef.FindColumnIndex(payloadColumns[index]);
+                replacement[columnIndex] = flatValues[columnIndex];
+                assignedColumns[index] = columnIndex;
+            }
+
+            flatValues = replacement;
+            await constraints.ApplyUpdateAsync(flatTableName, flatDef, flatValues, assignedColumns, cancellationToken).ConfigureAwait(false);
+            IReadOnlyDictionary<int, byte[]>? fixedText = existingRows[target].GetPreservedFixedText(flatValues, assignedColumns);
+            _ = tableRows.EncodeRow(flatDef, flatValues, fixedText);
+            await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(flatTdefPage, flatDef, flatTableName, existingRows!, [(target, existingRows![target].Values, flatValues)], cancellationToken).ConfigureAwait(false);
+            RowLocation location = existingRows[target].Location;
+            await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, flatDef, cancellationToken).ConfigureAwait(false);
+            _ = await tableRows.InsertRowDataLocAsync(flatTdefPage, flatDef, flatValues, updateTDefRowCount: false, fixedTextBytes: fixedText, cancellationToken).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(flatTdefPage, flatDef, flatTableName, cancellationToken).ConfigureAwait(false);
+            return;
+        }
 
         // The flat table carries an autoincrement scalar PK column.
         // ConstraintRegistry.ApplyAsync hydrates the constraint registry from the
@@ -865,7 +957,6 @@ internal sealed class ComplexColumnManager(
         // larger of the flat table's TDEF AutoNumber counter and its existing
         // rows, so AddAttachmentAsync / AddMultiValueItemAsync stay a
         // single-call surface. The counter is raised after the insert below.
-        string flatTableName = await this.ResolveFlatTableNameAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
         await constraints.ApplyAsync(flatTableName, flatDef, flatValues, cancellationToken).ConfigureAwait(false);
         await uniqueIndexes.CheckUniqueIndexesPreInsertAsync(flatTdefPage, flatDef, flatTableName, [flatValues], cancellationToken).ConfigureAwait(false);
 
@@ -874,24 +965,9 @@ internal sealed class ComplexColumnManager(
         await autoNumbers.UpdateHighWaterAsync(flatTdefPage, flatDef, [flatValues], cancellationToken).ConfigureAwait(false);
     }
 
-    private static ComplexColumnKind ClassifyComplexColumnKind(TableDef flatDef)
-    {
-        if (flatDef.FindColumn("FileData") != null && flatDef.FindColumn("FileName") != null)
-        {
-            return ComplexColumnKind.Attachment;
-        }
-
-        if (flatDef.FindColumn("Value") != null)
-        {
-            return ComplexColumnKind.MultiValue;
-        }
-
-        return ComplexColumnKind.Unknown;
-    }
-
     /// <summary>
     /// Resolves a hidden flat-child-table TDEF page back to its
-    /// <c>MSysObjects.Name</c>. Used by <see cref="AddComplexItemCoreAsync"/>
+    /// <c>MSysObjects.Name</c>. Used by <see cref="WriteComplexItemCoreAsync"/>
     /// to drive <c>ApplyConstraintsAsync</c> for the autoincrement
     /// scalar PK column emitted by the complex-column scaffold.
     /// </summary>

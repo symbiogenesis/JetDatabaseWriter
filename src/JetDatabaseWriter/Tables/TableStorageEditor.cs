@@ -68,6 +68,22 @@ internal sealed class TableStorageEditor(
         await this.ReplaceOriginalAsync(plan, copy, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Removes a private history template after its final catalog reference is removed.</summary>
+    /// <param name="template">The validated, unreferenced history template.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="JetCorruptDataException">The template has no native private history name.</exception>
+    internal async ValueTask DropHistoryTemplateAsync(ResolvedTable template, CancellationToken cancellationToken)
+    {
+        if (!template.Entry.Name.StartsWith(Constants.ComplexTypeNames.VersionHistoryPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The history template does not have a native private identity.");
+        }
+
+        await catalogWriter.DeleteCatalogRowsByTdefPagesAsync([template.Entry.TDefPage], cancellationToken).ConfigureAwait(false);
+        await this.ReclaimTableStoragePagesAsync(template.Entry.TDefPage, template.Definition, includeTDefRoot: true, cancellationToken).ConfigureAwait(false);
+        catalog.Invalidate();
+    }
+
     /// <summary>Reports a rewrite that cannot preserve a surviving native index.</summary>
     /// <param name="plan">The table's rewrite plan.</param>
     /// <param name="indexName">The surviving index.</param>

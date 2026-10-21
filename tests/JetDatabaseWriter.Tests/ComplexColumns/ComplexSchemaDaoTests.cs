@@ -173,7 +173,21 @@ public sealed class ComplexSchemaDaoTests
             foreach ((string columnName, IReadOnlyList<MultiValueItem> expected) in values)
             {
                 IReadOnlyList<MultiValueItem> actual = await compacted.GetMultiValueItemsAsync(tableName, columnName, Ct);
-                Assert.Equal(expected.OrderBy(ItemIdentity), actual.OrderBy(ItemIdentity));
+                if (complex.Single(column => column.ColumnName == columnName).Kind == ComplexColumnKind.VersionHistory)
+                {
+                    var originalIds = expected.Select(item => item.Id).ToHashSet();
+                    Assert.Equal(expected.OrderBy(ItemIdentity), actual.Where(item => originalIds.Contains(item.Id)).OrderBy(ItemIdentity));
+                    MultiValueItem inserted = Assert.Single(actual, item => !originalIds.Contains(item.Id));
+                    Assert.Equal(seed + 1, inserted.ConceptualTableId);
+                    Assert.Equal("\0", inserted.Value);
+                    Assert.Equal("append-memo-data", inserted.MemoColumnName);
+                    Assert.NotNull(inserted.Modified);
+                    Assert.True(inserted.Id > originalIds.Max());
+                }
+                else
+                {
+                    Assert.Equal(expected.OrderBy(ItemIdentity), actual.OrderBy(ItemIdentity));
+                }
             }
 
             if (nativeWrites)

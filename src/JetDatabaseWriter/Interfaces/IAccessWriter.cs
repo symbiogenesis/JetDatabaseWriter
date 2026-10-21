@@ -242,4 +242,46 @@ public interface IAccessWriter : IAccessBase
     /// Thrown when no row, or more than one row, matches <paramref name="parentRowKey"/>.
     /// </exception>
     public ValueTask AddMultiValueItemAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, object? value, CancellationToken cancellationToken = default);
+
+    /// <summary>Atomically replaces an attachment's payload and metadata, retaining its native item ID and parent reference.</summary>
+    /// <param name="tableName">The parent table name.</param>
+    /// <param name="columnName">The attachment column name.</param>
+    /// <param name="parentRowKey">Typed column values identifying exactly one parent row, compared using the stored column types and collations.</param>
+    /// <param name="itemId">The positive <c>AttachmentRecord.Id</c> belonging to that parent's column.</param>
+    /// <param name="attachment">The replacement file and metadata.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous operation.</returns>
+    /// <exception cref="System.InvalidOperationException">The parent is missing or ambiguous, or the item does not belong to that parent and column.</exception>
+    public ValueTask ReplaceAttachmentAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, int itemId, AttachmentInput attachment, CancellationToken cancellationToken = default);
+
+    /// <summary>Atomically removes one attachment without changing sibling items or reusing its native ID.</summary>
+    /// <param name="tableName">The parent table name.</param>
+    /// <param name="columnName">The attachment column name.</param>
+    /// <param name="parentRowKey">Typed column values identifying exactly one parent row.</param>
+    /// <param name="itemId">The positive <c>AttachmentRecord.Id</c> belonging to that parent's column.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous operation.</returns>
+    /// <exception cref="System.InvalidOperationException">The parent is missing or ambiguous, or the item does not belong to that parent and column.</exception>
+    public ValueTask RemoveAttachmentAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, int itemId, CancellationToken cancellationToken = default);
+
+    /// <summary>Atomically replaces one multi-value entry while retaining its native item ID. Version history is read-only.</summary>
+    /// <param name="tableName">The parent table name.</param>
+    /// <param name="columnName">The multi-value column name.</param>
+    /// <param name="parentRowKey">Typed column values identifying exactly one parent row.</param>
+    /// <param name="itemId">The positive <c>MultiValueItem.Id</c> belonging to that parent's column.</param>
+    /// <param name="value">The replacement value, or null for database Null.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous operation.</returns>
+    /// <exception cref="System.InvalidOperationException">The parent is missing or ambiguous, or the item does not belong to that parent and column.</exception>
+    public ValueTask ReplaceMultiValueItemAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, int itemId, object? value, CancellationToken cancellationToken = default);
+
+    /// <summary>Atomically removes one multi-value entry without changing sibling entries or reusing its native ID. Version history is read-only.</summary>
+    /// <param name="tableName">The parent table name.</param>
+    /// <param name="columnName">The multi-value column name.</param>
+    /// <param name="parentRowKey">Typed column values identifying exactly one parent row.</param>
+    /// <param name="itemId">The positive <c>MultiValueItem.Id</c> belonging to that parent's column.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous operation.</returns>
+    /// <exception cref="System.InvalidOperationException">The parent is missing or ambiguous, or the item does not belong to that parent and column.</exception>
+    public ValueTask RemoveMultiValueItemAsync(string tableName, string columnName, IReadOnlyDictionary<string, object?> parentRowKey, int itemId, CancellationToken cancellationToken = default);
 }

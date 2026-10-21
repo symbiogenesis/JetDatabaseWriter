@@ -307,6 +307,37 @@ DataTable csvRows = await reader.ReadTableAsync("LinkedOrdersCsv", cancellationT
 
 > ODBC links remain metadata-only. Fixed-width text links and schema.ini type inference are not part of the managed text reader. Use `ListLinkedTablesAsync()` to enumerate linked entries and inspect their `Kind`, `ConnectString`, `SourcePath`, and `SourceObjectName` metadata.
 
+### Complex-item mutation
+
+Attachments and multi-value entries expose their native flat-table `Id`. Use that
+ID with the parent table, complex column and typed parent key to change one item:
+
+```csharp
+var key = new Dictionary<string, object?> { ["Id"] = 12 };
+await writer.ReplaceAttachmentAsync("Documents", "Files", key, attachment.Id,
+    new AttachmentInput("updated.pdf", fileBytes));
+await writer.RemoveAttachmentAsync("Documents", "Files", key, attachment.Id);
+await writer.ReplaceMultiValueItemAsync("Documents", "Tags", key, tag.Id, "reviewed");
+await writer.RemoveMultiValueItemAsync("Documents", "Tags", key, tag.Id);
+```
+
+Replacement retains the item ID and parent reference. Removal does not reuse the
+ID. Each operation maintains child indexes and counts atomically, including inside
+an explicit transaction. A missing item, wrong parent or ambiguous parent key
+refuses the operation. Parent predicates use complete typed values and the stored
+text collation; numeric operands are not rounded into a match, and a fixed binary
+key must include its stored padding. IDs are scoped to their complex column.
+
+On an existing native append-only Memo, inserts and explicitly assigned updates
+record Access-compatible history in the parent statement. Assigning the current
+value records another version; an omitted Memo that remains Null has no version.
+Explicit Null and empty-string assignments record the native U+0000 history payload.
+`GetMultiValueItemsAsync` on the history column returns the version's `Id`,
+`MemoColumnName`, `Value` and local-wall-clock `Modified` time. Several Memo fields
+can share one history column. History records are read-only; update the Memo field
+to record a new version. Renaming a Memo retargets its history, and dropping it
+removes its history payload while preserving surviving Memo histories.
+
 ### Foreign-key relationships
 
 Declare a relationship between two existing tables. The library appends one row per FK column to the `MSysRelationships` catalog (which Microsoft Access reads to populate the Relationships designer) and emits the matching per-TDEF foreign-key logical-index entries on both sides so the relationship is visible to readers immediately. On Jet3 (Access 97) files the entries take the layout Access 97 writes.

@@ -15,7 +15,7 @@ All items belong to a workstream; independent items may run immediately without 
 
 | Workstream | Scope | Initial independent work | Dependencies |
 |---|---|---|---|
-| R — Relationships and constraints | Remaining R items | Expression semantics; complex-item mutation | Coordinate schema/expression changes with F and S |
+| R — Relationships and constraints | Remaining R items | Expression semantics | Coordinate schema/expression changes with F and S |
 | F — Real formats and encryption | Remaining F items | Real encryption inventory | Page-codec integration with I; schema preservation with S |
 | S — Hostile-file parsing and schema preservation | Remaining S items | Exact long-value reads; corrupt catalog/property handling | Complex writes and schema edits coordinate with R/F/I |
 | I — Indexes, storage, APIs and validation | Remaining I and E items | Hosted gates; index ownership and evidence | Integrator owns shared files; major storage changes need fault sweeps |
@@ -23,7 +23,6 @@ All items belong to a workstream; independent items may run immediately without 
 ## R — Relationships and constraints
 
 - **R4 — Complete Access expression semantics.** Verify CurrentUser against native and workgroup behavior; match native Null semantics for stale bracketed calculated qualifiers after table rename (repro: DAO retains `[T].[Price]`/`[T]![Price]`/`[T].Price` text, yields Null and refuses compact with error 3790; the writer currently refuses recalculation before mutation; plan R4, see the calculated-column notes), and support domain aggregates and Eval through bounded, non-executing interpretation. Carry VBA numeric Variant subtypes through arithmetic and subtype-sensitive functions; `CStr(1/3)` currently differs. Verify radix-literal acceptance in native Access expression contexts; Access Eval refuses `TypeName(&H10)` despite VBA literal typing. Check named date/time/number formats against the database locale, date arithmetic, three-valued/bitwise operators, `%`, time-only dates and rounding against Access. Represent and preserve native calculation errors independently of ordinary Null: DAO120 stores a 39-byte Byte error envelope with first UInt32 6 and payload length 0 for Boolean True and out-of-range numeric results; ordinary Null is a 23-byte zero envelope. Public reads currently conflate them, and writers refuse result overflow rather than persisting the native error envelope. Complete error-envelope read/write/update semantics against Microsoft-authored fixtures and extend context-specific function/conversion evidence. Never run VBA, macros, external commands or arbitrary CLR code to evaluate database content.
-- **R8 — Support complex-item mutation and history.** Expose stable item IDs, remove/replace individual attachments and multi-value entries atomically, maintain flat-table indexes/counts, and verify typed parent-key matching against DAO across supported collations. Updating append-only Memo must write Access-compatible version history; version-history records must not be arbitrarily editable. Test DateTime, GUID, decimal, binary and MEMO parent keys and DAO compact/extraction.
 
 ## F — Real formats and encryption
 
