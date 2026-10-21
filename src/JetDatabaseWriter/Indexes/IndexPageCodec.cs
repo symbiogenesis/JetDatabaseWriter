@@ -66,81 +66,8 @@ internal static class IndexPageCodec
         long tailPage,
         bool enablePrefixCompression,
         int? maxPrefixLength = null)
-    {
-        if (!CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength, out int prefLen))
-        {
-            throw new JetLimitationException(JetErrorCode.IndexEntryTooLarge, "Leaf page capacity exceeded.", new JetErrorInfo { PageNumber = parentTdefPage });
-        }
-
-        if (pageSize <= layout.FirstEntryOffset)
-        {
-            throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {layout.FirstEntryOffset}.");
-        }
-
-        Guard.NotNull(entries, nameof(entries));
-
-        byte[] page = new byte[pageSize];
-        WriteIndexPageHeader(
-            page,
-            Constants.IndexLeafPage.PageTypeLeaf,
-            layout,
-            parentTdefPage,
-            prevPage,
-            nextPage,
-            tailPage);
-
-        if (layout.PrefLenOffset == Constants.IndexLeafPage.Jet3.PrefLenOffset)
-        {
-            page[layout.PrefLenOffset] = (byte)prefLen;
-        }
-        else
-        {
-            Wu16(page, layout.PrefLenOffset, prefLen);
-        }
-
-        int payloadCursor = layout.FirstEntryOffset;
-        int payloadLimit = pageSize;
-
-        for (int i = 0; i < entries.Count; i++)
-        {
-            IndexEntry entry = entries[i];
-            int keyOffset = i == 0 ? 0 : prefLen;
-            int keyLen = entry.Key.Length - keyOffset;
-            int entryLen = keyLen + LeafTrailerSize;
-            int entryStart = payloadCursor;
-
-            if (entryStart + entryLen > payloadLimit)
-            {
-                string message = $"Index entries do not fit on a single leaf page (need {entryStart + entryLen} bytes, have {payloadLimit}). B-tree splitting is required for tables this large.";
-                throw new JetLimitationException(JetErrorCode.IndexEntryTooLarge, message, new JetErrorInfo { PageNumber = parentTdefPage });
-            }
-
-            Buffer.BlockCopy(entry.Key, keyOffset, page, entryStart, keyLen);
-
-            long dataPage = entry.DataPage;
-            if (dataPage is < 0 or > 0xFFFFFF)
-            {
-                throw new ArgumentOutOfRangeException(nameof(entries), $"Index entry data page {dataPage} exceeds the 24-bit range.");
-            }
-
-            int rowPointerOffset = entryStart + keyLen;
-            WriteUInt24BigEndian(page, rowPointerOffset, (int)dataPage);
-            page[rowPointerOffset + 3] = entry.DataRow;
-
-            SetEntryStartBit(
-                layout,
-                page,
-                entryStart,
-                isFirstEntry: i == 0,
-                parameterName: nameof(entries),
-                overflowMessage: "Bitmask overflow: too many entries for a single leaf page.");
-            payloadCursor += entryLen;
-        }
-
-        SetSentinelBit(layout, page, payloadCursor, entries.Count > 0);
-        Wu16(page, 2, payloadLimit - payloadCursor);
-        return page;
-    }
+        => TryBuildLeafPage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength)
+            ?? throw new JetLimitationException(JetErrorCode.IndexEntryTooLarge, "Leaf page capacity exceeded.", new JetErrorInfo { PageNumber = parentTdefPage });
 
     /// <summary>
     /// Builds a single-page leaf with zeroed sibling/tail pointers — the
@@ -231,9 +158,7 @@ internal static class IndexPageCodec
         long tailPage,
         bool enablePrefixCompression,
         int? maxPrefixLength = null)
-        => CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength, out _)
-            ? BuildLeafPage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength)
-            : null;
+        => TryBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength);
 
     /// <summary>
     /// Builds an intermediate index page using the supplied per-format layout.
@@ -257,94 +182,8 @@ internal static class IndexPageCodec
         long nextPage,
         long tailPage,
         int? maxPrefixLength = null)
-    {
-        if (!CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry.Entry, static entry => entry.ChildPage, prevPage, nextPage, tailPage, true, maxPrefixLength, out int prefLen))
-        {
-            throw new JetLimitationException(JetErrorCode.IndexEntryTooLarge, "Intermediate page capacity exceeded.", new JetErrorInfo { PageNumber = parentTdefPage });
-        }
-
-        if (pageSize <= layout.FirstEntryOffset)
-        {
-            throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {layout.FirstEntryOffset}.");
-        }
-
-        Guard.NotNull(entries, nameof(entries));
-        if (entries.Count == 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(entries), "Intermediate pages require at least one entry.");
-        }
-
-        byte[] page = new byte[pageSize];
-        WriteIndexPageHeader(
-            page,
-            Constants.IndexLeafPage.PageTypeIntermediate,
-            layout,
-            parentTdefPage,
-            prevPage,
-            nextPage,
-            tailPage);
-
-        if (layout.PrefLenOffset == Constants.IndexLeafPage.Jet3.PrefLenOffset)
-        {
-            page[layout.PrefLenOffset] = (byte)prefLen;
-        }
-        else
-        {
-            Wu16(page, layout.PrefLenOffset, prefLen);
-        }
-
-        int payloadCursor = layout.FirstEntryOffset;
-        int payloadLimit = pageSize;
-
-        for (int i = 0; i < entries.Count; i++)
-        {
-            DecodedIntermediateEntry decoded = entries[i];
-            IndexEntry summary = decoded.Entry;
-            byte[] key = summary.Key;
-            int keyOffset = i == 0 ? 0 : prefLen;
-            int keyLen = key.Length - keyOffset;
-            int entryLen = keyLen + IntermediateTrailerSize;
-            int entryStart = payloadCursor;
-
-            if (entryStart + entryLen > payloadLimit)
-            {
-                throw new JetLimitationException(JetErrorCode.IndexEntryTooLarge, "Intermediate page overflow.", new JetErrorInfo { PageNumber = parentTdefPage });
-            }
-
-            Buffer.BlockCopy(key, keyOffset, page, entryStart, keyLen);
-
-            long dataPage = summary.DataPage;
-            if (dataPage is < 0 or > 0xFFFFFF)
-            {
-                throw new ArgumentOutOfRangeException(nameof(entries), $"Index entry data page {dataPage} exceeds the 24-bit range.");
-            }
-
-            int rowPointerOffset = entryStart + keyLen;
-            WriteUInt24BigEndian(page, rowPointerOffset, (int)dataPage);
-            page[rowPointerOffset + 3] = summary.DataRow;
-
-            long childPage = decoded.ChildPage;
-            if (childPage is < 0 or > 0xFFFFFFFFL)
-            {
-                throw new ArgumentOutOfRangeException(nameof(entries), "Child page exceeds 32-bit range.");
-            }
-
-            BinaryPrimitives.WriteUInt32BigEndian(page.AsSpan(rowPointerOffset + LeafTrailerSize, 4), (uint)childPage);
-
-            SetEntryStartBit(
-                layout,
-                page,
-                entryStart,
-                isFirstEntry: i == 0,
-                parameterName: nameof(entries),
-                overflowMessage: "Bitmask overflow on intermediate page.");
-            payloadCursor += entryLen;
-        }
-
-        SetSentinelBit(layout, page, payloadCursor, hasEntries: true);
-        Wu16(page, 2, payloadLimit - payloadCursor);
-        return page;
-    }
+        => TryBuildIntermediatePage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, maxPrefixLength)
+            ?? throw new JetLimitationException(JetErrorCode.IndexEntryTooLarge, "Intermediate page capacity exceeded.", new JetErrorInfo { PageNumber = parentTdefPage });
 
     /// <summary>
     /// Attempts to build an intermediate index page, returning <see langword="null"/> on overflow.
@@ -366,9 +205,7 @@ internal static class IndexPageCodec
         long nextPage,
         long tailPage,
         int? maxPrefixLength = null)
-        => CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry.Entry, static entry => entry.ChildPage, prevPage, nextPage, tailPage, true, maxPrefixLength, out _)
-            ? BuildIntermediatePage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, maxPrefixLength)
-            : null;
+        => TryBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry.Entry, static entry => entry.ChildPage, prevPage, nextPage, tailPage, true, maxPrefixLength);
 
     /// <summary>
     /// Writes all sibling pointer fields in an index page header.
@@ -1019,6 +856,60 @@ internal static class IndexPageCodec
     /// <param name="entries">The entries for this phase.</param>
     internal static void ValidateLeafMetadata(IndexPageLayout layout, int pageSize, long parentTdefPage, IReadOnlyList<IndexEntry> entries)
         => _ = CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, 0, 0, 0, false, null, out _);
+
+    private static byte[]? TryBuildPage<T>(
+        IndexPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<T> entries,
+        Func<T, IndexEntry> getEntry,
+        Func<T, long>? getChild,
+        long prevPage,
+        long nextPage,
+        long tailPage,
+        bool enablePrefixCompression,
+        int? maxPrefixLength)
+    {
+        if (!CanBuildPage(layout, pageSize, parentTdefPage, entries, getEntry, getChild, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength, out int prefix))
+        {
+            return null;
+        }
+
+        byte[] page = new byte[pageSize];
+        WriteIndexPageHeader(page, getChild is null ? Constants.IndexLeafPage.PageTypeLeaf : Constants.IndexLeafPage.PageTypeIntermediate, layout, parentTdefPage, prevPage, nextPage, tailPage);
+        if (layout.PrefLenOffset == Constants.IndexLeafPage.Jet3.PrefLenOffset)
+        {
+            page[layout.PrefLenOffset] = (byte)prefix;
+        }
+        else
+        {
+            Wu16(page, layout.PrefLenOffset, prefix);
+        }
+
+        int cursor = layout.FirstEntryOffset;
+        for (int i = 0; i < entries.Count; i++)
+        {
+            T item = entries[i];
+            IndexEntry entry = getEntry(item);
+            int keyOffset = i == 0 ? 0 : prefix;
+            int keyLength = entry.Key.Length - keyOffset;
+            Buffer.BlockCopy(entry.Key, keyOffset, page, cursor, keyLength);
+            int pointerOffset = cursor + keyLength;
+            WriteUInt24BigEndian(page, pointerOffset, (int)entry.DataPage);
+            page[pointerOffset + 3] = entry.DataRow;
+            if (getChild is not null)
+            {
+                BinaryPrimitives.WriteUInt32BigEndian(page.AsSpan(pointerOffset + LeafTrailerSize, 4), (uint)getChild(item));
+            }
+
+            SetEntryStartBit(layout, page, cursor, isFirstEntry: i == 0, parameterName: nameof(entries), overflowMessage: "Bitmask overflow on index page.");
+            cursor = pointerOffset + (getChild is null ? LeafTrailerSize : IntermediateTrailerSize);
+        }
+
+        SetSentinelBit(layout, page, cursor, entries.Count > 0);
+        Wu16(page, 2, pageSize - cursor);
+        return page;
+    }
 
     private static bool CanBuildPage<T>(
         IndexPageLayout layout,

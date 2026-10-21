@@ -470,6 +470,8 @@ seek so a stored index prefix cannot create a false match.
 
 ## 7. Implementation phases (writer)
 
+Leaf and intermediate pages share one validated emitter. Throwing and nullable builders use the same metadata, shared-prefix, payload and bitmask checks; invalid pointers are checked across every entry before capacity refusal. Validated values are emitted once with their original pointer widths and prefix limits.
+
 This is the historical phase log for writer-side index support; every phase below has shipped (see the per-row ✅ status). Early rows record what a phase did *at the time* — e.g. W2 lists the types it initially left as `NotSupportedException` — and later phases (W7/W12/W13/W19) lift those limits, so read the table as a cumulative history rather than a current limitation list. The reader-side foundation (R1+R2) these phases build on landed long ago.
 
 | Phase | Scope | Cost (rough) | Status |

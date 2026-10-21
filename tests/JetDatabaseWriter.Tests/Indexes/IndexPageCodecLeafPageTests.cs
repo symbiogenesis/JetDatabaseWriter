@@ -62,6 +62,38 @@ public sealed class IndexPageCodecLeafPageTests
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
+    public void IntermediatePage_PreservesPointersAndCappedPrefix(DatabaseFormat format)
+    {
+        int pageSize = PageSizeOf(format);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
+        DecodedIntermediateEntry[] entries =
+        [
+            new(new([0x10, 0x20, 0x30], 0x123456, 7), 0x12345678),
+            new(new([0x10, 0x20, 0x40], 0x654321, 8), 0x23456789),
+        ];
+        byte[] page = IndexPageCodec.BuildIntermediatePage(layout, pageSize, 42, entries, 11, 12, 13, maxPrefixLength: 1);
+        byte[]? attempted = IndexPageCodec.TryBuildIntermediatePage(layout, pageSize, 42, entries, 11, 12, 13, maxPrefixLength: 1);
+
+        Assert.Equal(page, attempted);
+        Assert.Equal(3, page[0]);
+        Assert.Equal(42, ReadI32(page, 4));
+        Assert.Equal((11L, 12L, 13L), IndexPageCodec.ReadSiblingPointers(layout, page));
+        Assert.Equal(1, IndexPageCodec.ReadPrefixLength(layout, page));
+        Assert.Equal(pageSize - layout.FirstEntryOffset - 21, ReadU16(page, 2));
+        byte[] expectedPayload =
+        [
+            0x10, 0x20, 0x30, 0x12, 0x34, 0x56, 7, 0x12, 0x34, 0x56, 0x78,
+            0x20, 0x40, 0x65, 0x43, 0x21, 8, 0x23, 0x45, 0x67, 0x89,
+        ];
+        Assert.Equal(expectedPayload, page.AsSpan(layout.FirstEntryOffset, expectedPayload.Length).ToArray());
+        Assert.Equal(0b0000_1000, page[layout.BitmaskOffset + 1]);
+        Assert.Equal(0b0010_0000, page[layout.BitmaskOffset + 2]);
+        Assert.Equal(2, IndexPageCodec.DecodeIntermediateEntries(layout, page, pageSize).Count);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     public void EmptyPage_HasCorrectHeaderAndFreeSpace(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
