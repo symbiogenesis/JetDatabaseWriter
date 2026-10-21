@@ -207,7 +207,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
             Regression: writer-authored Customers TDEF stamps a different (LCID, sort-version) than DAO.
             DAO baseline (mode across NorthwindTraders TEXT/MEMO columns): LCID=0x{{expectedLcid:X4}} version={{expectedVersion}}.
             Writer mismatches: [{{string.Join("; ", mismatches)}}].
-            Update JetDatabaseWriter/Schema/TDefPageBuilder.cs to match the observed DAO baseline for this database format.
+            Update src/JetDatabaseWriter/Schema/TDefPageBuilder.cs to match the observed DAO baseline for this database format.
             """;
 
         Assert.True(mismatches.Length == 0, failureMessage);

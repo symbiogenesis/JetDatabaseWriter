@@ -12,16 +12,16 @@ The **JetDatabaseWriter.Scaffold** CLI tool reads the schema of every user table
 
 ```bash
 # Positional argument
-dotnet run --project JetDatabaseWriter.Scaffold -- Northwind.mdb
+dotnet run --project src/JetDatabaseWriter.Scaffold -- Northwind.mdb
 
 # Named options
-dotnet run --project JetDatabaseWriter.Scaffold -- --database Northwind.mdb --output ./Entities --namespace MyApp.Models
+dotnet run --project src/JetDatabaseWriter.Scaffold -- --database Northwind.mdb --output ./Entities --namespace MyApp.Models
 
 # Emit records with nullable reference types
-dotnet run --project JetDatabaseWriter.Scaffold -- Northwind.mdb --records --nullable
+dotnet run --project src/JetDatabaseWriter.Scaffold -- Northwind.mdb --records --nullable
 
 # Password-protected database
-dotnet run --project JetDatabaseWriter.Scaffold -- Secure.accdb --password secret
+dotnet run --project src/JetDatabaseWriter.Scaffold -- Secure.accdb --password secret
 ```
 
 ### Options

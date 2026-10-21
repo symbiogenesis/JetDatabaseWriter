@@ -23,7 +23,7 @@ function git {
     elseif ($arguments -contains '--name-only') {
         Assert-Check ($arguments -contains '-z') 'Changed paths must bypass Git quoting for Unicode and spaces.'
         $path = @($arguments | Where-Object { $_.StartsWith('--output=', [StringComparison]::Ordinal) })[0].Substring(9)
-        [IO.File]::WriteAllText($path, "JetDatabaseWriter/Changed.cs$([char]0)JetDatabaseWriter/Café File.cs$([char]0)", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($path, "src/JetDatabaseWriter/Changed.cs$([char]0)src/JetDatabaseWriter/Café File.cs$([char]0)", [Text.UTF8Encoding]::new($false))
     }
     elseif ($arguments -contains 'diff') {
         $output = @($arguments | Where-Object { $_.StartsWith('--output=', [StringComparison]::Ordinal) })
@@ -70,8 +70,8 @@ foreach ($command in $commands | Select-Object -Skip 1) {
     if ($command.Arguments[0] -eq 'build') {
         Assert-Check ($command.Arguments -contains '--no-restore' -and $command.Arguments -contains 'Release') 'Both compiler passes must cover the Release solution without restoring again.'
     } else {
-        Assert-Check ($command.Arguments -contains '--no-restore' -and $command.Arguments -contains '--include' -and $command.Arguments -contains 'JetDatabaseWriter/Changed.cs') 'Format only changed source files without restoring.'
-        Assert-Check ($command.Arguments -contains 'JetDatabaseWriter/Café File.cs') 'Unicode and spaced file names must remain single formatter arguments.'
+        Assert-Check ($command.Arguments -contains '--no-restore' -and $command.Arguments -contains '--include' -and $command.Arguments -contains 'src/JetDatabaseWriter/Changed.cs') 'Format only changed source files without restoring.'
+        Assert-Check ($command.Arguments -contains 'src/JetDatabaseWriter/Café File.cs') 'Unicode and spaced file names must remain single formatter arguments.'
         Assert-Check ($command.Configuration -eq 'Release') 'Formatter workspace must use Release configuration.'
     }
 }

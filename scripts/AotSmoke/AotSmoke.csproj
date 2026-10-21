@@ -13,7 +13,7 @@
     <AdditionalFiles Remove="@(AdditionalFiles)" />
     <AdditionalFiles Include="../../BannedSymbols.txt" />
     <AdditionalFiles Include="../../stylecop.json" />
-    <ProjectReference Include="../../JetDatabaseWriter/JetDatabaseWriter.csproj" />
+    <ProjectReference Include="../../src/JetDatabaseWriter/JetDatabaseWriter.csproj" />
     <Compile Include="$(GeneratedModels)/*.cs" Condition="'$(GeneratedModels)' != ''" />
   </ItemGroup>
 </Project>

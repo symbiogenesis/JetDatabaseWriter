@@ -33,15 +33,15 @@ jobs:
         with:
           global-json-file: global.json
           cache: true
-          cache-dependency-path: '*/packages.lock.json'
+          cache-dependency-path: '**/packages.lock.json'
       - name: Restore
-        run: dotnet restore JetDatabaseWriter --locked-mode
+        run: dotnet restore src/JetDatabaseWriter --locked-mode
       # The package embeds its symbols. Give InferSharp portable PDBs, and analyze
       # only our library rather than third-party dependencies or test fixtures.
       # The Windows lanes retain the strict Roslyn analysis and package builds.
       - name: Build analysis input
         run: >-
-          dotnet build JetDatabaseWriter -c Release --no-restore -f ${{ matrix.tf }}
+          dotnet build src/JetDatabaseWriter -c Release --no-restore -f ${{ matrix.tf }}
           -p:RunAnalyzers=false -p:DebugType=portable -p:DebugSymbols=true
       - name: Stage analysis input
         shell: bash
@@ -49,8 +49,8 @@ jobs:
           TARGET_FRAMEWORK: ${{ matrix.tf }}
         run: |
           mkdir -p artifacts/infersharp-input
-          cp "JetDatabaseWriter/bin/Release/$TARGET_FRAMEWORK/JetDatabaseWriter.dll" artifacts/infersharp-input/
-          cp "JetDatabaseWriter/bin/Release/$TARGET_FRAMEWORK/JetDatabaseWriter.pdb" artifacts/infersharp-input/
+          cp "src/JetDatabaseWriter/bin/Release/$TARGET_FRAMEWORK/JetDatabaseWriter.dll" artifacts/infersharp-input/
+          cp "src/JetDatabaseWriter/bin/Release/$TARGET_FRAMEWORK/JetDatabaseWriter.pdb" artifacts/infersharp-input/
       # Use the v1.5 container directly so translation coverage survives alongside
       # the reports. The GitHub action exports reports but drops this diagnostic.
       - name: Run InferSharp

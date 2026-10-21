@@ -117,16 +117,17 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          dotnet restore JetDatabaseWriter.Benchmarks --locked-mode
-          dotnet build JetDatabaseWriter.Benchmarks -c Release --no-restore
+          dotnet restore benchmarks/JetDatabaseWriter.Benchmarks --locked-mode
+          dotnet build benchmarks/JetDatabaseWriter.Benchmarks -c Release --no-restore
 
       - name: Build the baseline
         if: needs.prerequisite.outputs.baseline != ''
         shell: pwsh
         working-directory: ${{ runner.temp }}/baseline
         run: |
-          dotnet restore JetDatabaseWriter.Benchmarks --locked-mode
-          dotnet build JetDatabaseWriter.Benchmarks -c Release --no-restore
+          $project = & "$env:GITHUB_WORKSPACE/scripts/resolve-benchmark-project.ps1" -Repository (Get-Location).Path
+          dotnet restore $project --locked-mode
+          dotnet build $project -c Release --no-restore
 
       - name: Run the measurements
         shell: pwsh

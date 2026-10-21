@@ -53,8 +53,10 @@ Check 'Ratios, error margins and zero allocations' {
 }
 $checkout = Join-Path $root 'head checkout'
 $baselineCheckout = Join-Path $root 'baseline checkout'
-[IO.Directory]::CreateDirectory($checkout) | Out-Null
-[IO.Directory]::CreateDirectory($baselineCheckout) | Out-Null
+[IO.Directory]::CreateDirectory((Join-Path $checkout 'benchmarks/JetDatabaseWriter.Benchmarks')) | Out-Null
+[IO.Directory]::CreateDirectory((Join-Path $baselineCheckout 'JetDatabaseWriter.Benchmarks')) | Out-Null
+[IO.File]::WriteAllText((Join-Path $checkout 'benchmarks/JetDatabaseWriter.Benchmarks/JetDatabaseWriter.Benchmarks.csproj'), '<Project />')
+[IO.File]::WriteAllText((Join-Path $baselineCheckout 'JetDatabaseWriter.Benchmarks/JetDatabaseWriter.Benchmarks.csproj'), '<Project />')
 $global:BenchmarkCheckInvocations = [Collections.Generic.List[object]]::new()
 $global:BenchmarkCheckMean = 100
 $global:BenchmarkCheckAllocation = 0
@@ -94,6 +96,9 @@ Check 'Controlled measurement order and arguments' {
     foreach ($call in $global:BenchmarkCheckInvocations) {
         Assert (($call.Arguments -join ' ').Contains('--filter *Read* *Write* --job dry --exporters json github')) 'Filter, job or exporter arguments changed.'
         Assert ($call.Arguments -contains '--stopOnFirstError') 'A controlled run could continue after a failed benchmark.'
+        $project = $call.Arguments[[Array]::IndexOf($call.Arguments, '--project') + 1]
+        $expected = if ($call.Checkout -eq $baselineCheckout) { 'JetDatabaseWriter.Benchmarks/JetDatabaseWriter.Benchmarks.csproj' } else { 'benchmarks/JetDatabaseWriter.Benchmarks/JetDatabaseWriter.Benchmarks.csproj' }
+        Assert ($project -eq $expected) 'Each checkout must use its own benchmark project layout, including historical baselines.'
     }
 }
 Check 'Failed baseline stops the pair and preserves partial artifacts' {

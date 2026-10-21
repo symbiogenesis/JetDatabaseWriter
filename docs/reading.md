@@ -281,7 +281,7 @@ For a version-history column (an append-only Memo column's history), `ReadMultiV
 
 ### Hyperlink columns
 
-Hyperlink columns are MEMO columns whose TDEF flag byte has the `HYPERLINK_FLAG_MASK = 0x80` bit set. Microsoft Access stores the value as a single `#`-delimited string (`displaytext#address#subaddress#screentip`); the library round-trips that structure as a strongly-typed [`Hyperlink`](../JetDatabaseWriter/Models/Hyperlink.cs) record.
+Hyperlink columns are MEMO columns whose TDEF flag byte has the `HYPERLINK_FLAG_MASK = 0x80` bit set. Microsoft Access stores the value as a single `#`-delimited string (`displaytext#address#subaddress#screentip`); the library round-trips that structure as a strongly-typed [`Hyperlink`](../src/JetDatabaseWriter/Models/Hyperlink.cs) record.
 
 ```csharp
 await writer.CreateTableAsync("Bookmarks",

@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 $testRoot = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) ([Guid]::NewGuid().ToString('N'))
 $fixtureRoot = Join-Path $testRoot 'fixture'
 $fixtureScripts = Join-Path $fixtureRoot 'scripts'
-$fixtureCorpus = Join-Path $fixtureRoot 'JetDatabaseWriter.Tests/Databases'
+$fixtureCorpus = Join-Path $fixtureRoot 'tests/JetDatabaseWriter.Tests/Databases'
 [IO.Directory]::CreateDirectory($fixtureScripts) | Out-Null
 [IO.Directory]::CreateDirectory($fixtureCorpus) | Out-Null
 $subject = Join-Path $fixtureScripts 'run-hosted-fuzz.ps1'

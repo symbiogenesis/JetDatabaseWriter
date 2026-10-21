@@ -7,17 +7,17 @@
         <NoWarn>$(NoWarn);CA1515;CA1707;CA1034;CA1822</NoWarn>
     </PropertyGroup>
     <ItemGroup>
-        <ProjectReference Include="..\JetDatabaseWriter\JetDatabaseWriter.csproj" />
-        <ProjectReference Include="..\JetDatabaseWriter.TestSupport\JetDatabaseWriter.TestSupport.csproj" />
+        <ProjectReference Include="..\..\src\JetDatabaseWriter\JetDatabaseWriter.csproj" />
+        <ProjectReference Include="..\..\tests\JetDatabaseWriter.TestSupport\JetDatabaseWriter.TestSupport.csproj" />
     </ItemGroup>
     <ItemGroup>
         <PackageReference Include="BenchmarkDotNet" />
     </ItemGroup>
     <ItemGroup>
-        <None Include="..\JetDatabaseWriter.Tests\Databases\Encrypted\NativeAceAgile.accdb" Link="NativeAceAgile.accdb">
+        <None Include="..\..\tests\JetDatabaseWriter.Tests\Databases\Encrypted\NativeAceAgile.accdb" Link="NativeAceAgile.accdb">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
-        <None Include="..\JetDatabaseWriter.Tests\Databases\NorthwindTraders.accdb" Link="NorthwindTraders.accdb">
+        <None Include="..\..\tests\JetDatabaseWriter.Tests\Databases\NorthwindTraders.accdb" Link="NorthwindTraders.accdb">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
     </ItemGroup>

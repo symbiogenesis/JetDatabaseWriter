@@ -8,7 +8,7 @@
       "args": [
         "test",
         "--project",
-        "JetDatabaseWriter.Tests",
+        "tests/JetDatabaseWriter.Tests",
         "--filter-not-trait",
         "Category=Fuzz"
       ],
@@ -29,7 +29,7 @@
       "args": [
         "test",
         "--project",
-        "JetDatabaseWriter.Tests",
+        "tests/JetDatabaseWriter.Tests",
         "--filter-trait",
         "Category=Fuzz",
         "--explicit",
@@ -49,7 +49,7 @@
       "args": [
         "test",
         "--project",
-        "JetDatabaseWriter.Tests",
+        "tests/JetDatabaseWriter.Tests",
         "--filter-class",
         "${input:testClass}"
       ],
@@ -67,7 +67,7 @@
       "args": [
         "test",
         "--project",
-        "JetDatabaseWriter.Tests",
+        "tests/JetDatabaseWriter.Tests",
         "--filter-method",
         "${input:testMethod}"
       ],
@@ -85,7 +85,7 @@
       "args": [
         "test",
         "--project",
-        "JetDatabaseWriter.Tests",
+        "tests/JetDatabaseWriter.Tests",
         "--filter-namespace",
         "${input:testNamespace}"
       ],
@@ -103,7 +103,7 @@
       "args": [
         "test",
         "--project",
-        "JetDatabaseWriter.Tests",
+        "tests/JetDatabaseWriter.Tests",
         "--filter-not-trait",
         "Category=Fuzz",
         "--stop-on-fail",
@@ -120,7 +120,7 @@
       "label": "test: list tests",
       "type": "process",
       "command": "dotnet",
-      "args": ["test", "--project", "JetDatabaseWriter.Tests", "--list-tests"],
+      "args": ["test", "--project", "tests/JetDatabaseWriter.Tests", "--list-tests"],
       "group": "test",
       "problemMatcher": [],
       "presentation": {

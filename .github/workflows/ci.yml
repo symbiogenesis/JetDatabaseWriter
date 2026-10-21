@@ -39,7 +39,7 @@ jobs:
         include:
           # Both target frameworks of the library, then the package.
           - name: library
-            project: JetDatabaseWriter
+            project: src/JetDatabaseWriter
             pack: true
           # Every other project but the tests; the library builds without analyzers here.
           - name: tools
@@ -48,18 +48,18 @@ jobs:
           # The test project once per target framework; the projects it references build
           # without analyzers here.
           - name: tests net10.0
-            project: JetDatabaseWriter.Tests
+            project: tests/JetDatabaseWriter.Tests
             options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
             tf: net10.0
             runner: true
           - name: tests net10.0 netstandard
-            project: JetDatabaseWriter.Tests
+            project: tests/JetDatabaseWriter.Tests
             options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true
             restore-options: -p:TestNetStandard=true
             tf: net10.0-netstandard
             runner: true
           - name: tests net11.0
-            project: JetDatabaseWriter.Tests
+            project: tests/JetDatabaseWriter.Tests
             options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
             tf: net11.0
             runner: true
@@ -88,7 +88,7 @@ jobs:
         with:
           global-json-file: global.json
           cache: true
-          cache-dependency-path: '*/packages.lock.json'
+          cache-dependency-path: '**/packages.lock.json'
 
       - name: Setup .NET 11 runtime
         if: matrix.tf == 'net11.0'
@@ -109,7 +109,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dao-test-runner-${{ matrix.tf }}
-          path: JetDatabaseWriter.Tests/bin/Release/net10.0/
+          path: tests/JetDatabaseWriter.Tests/bin/Release/net10.0/
           if-no-files-found: error
           retention-days: 3
 
@@ -124,7 +124,7 @@ jobs:
           JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}
         run: >-
           dotnet test --test-modules JetDatabaseWriter.Tests.dll
-          --root-directory JetDatabaseWriter.Tests/bin/Release/net10.0
+          --root-directory tests/JetDatabaseWriter.Tests/bin/Release/net10.0
           --minimum-expected-tests 1
           --long-running 60 --xunit-diagnostics on --no-ansi --output Detailed --timeout 80m
           --report-xunit-xml --report-xunit-xml-filename tests.xml
@@ -150,7 +150,7 @@ jobs:
 
       - name: Pack
         if: matrix.pack
-        run: dotnet pack JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-build -o artifacts/nupkg
+        run: dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-build -o artifacts/nupkg
 
       # publish.yml pushes this artifact only when every job of the run has passed, so a
       # release publishes the package this run built from the tested commit instead of
@@ -202,23 +202,23 @@ jobs:
         with:
           global-json-file: global.json
           cache: true
-          cache-dependency-path: '*/packages.lock.json'
+          cache-dependency-path: '**/packages.lock.json'
       - name: Setup .NET 11 runtime
         if: matrix.tf == 'net11.0'
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: .github/dotnet11/global.json
       - name: Restore
-        run: dotnet restore JetDatabaseWriter.Tests --locked-mode
+        run: dotnet restore tests/JetDatabaseWriter.Tests --locked-mode
       - name: Build
-        run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f net10.0 -p:RunAnalyzers=false
+        run: dotnet build tests/JetDatabaseWriter.Tests -c Release --no-restore -f net10.0 -p:RunAnalyzers=false
       - name: Test managed recovery, encryption replacement and linked-source boundaries
         env:
           JDW_EXPECTED_RUNTIME_MAJOR: ${{ matrix.tf == 'net11.0' && '11' || '10' }}
           DOTNET_ROLL_FORWARD: ${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}
           DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
         run: >-
-          dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f net10.0
+          dotnet test --project tests/JetDatabaseWriter.Tests -c Release --no-build -f net10.0
           --filter-class JetDatabaseWriter.Tests.Infrastructure.LibraryTargetTests
           JetDatabaseWriter.Tests.Encryption.AtomicReplacementTests
           JetDatabaseWriter.Tests.Encryption.ReplacementCancellationTests

@@ -29,7 +29,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\JetDatabaseWriter\JetDatabaseWriter.csproj" />
+    <ProjectReference Include="..\..\src\JetDatabaseWriter\JetDatabaseWriter.csproj" />
     <ProjectReference Include="..\JetDatabaseWriter.TestSupport\JetDatabaseWriter.TestSupport.csproj" />
   </ItemGroup>
 
@@ -38,7 +38,7 @@
     standard-asset lane so the runner cannot load a mixture of library builds.
   -->
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0' and '$(TestNetStandard)' != 'true'">
-    <ProjectReference Include="..\JetDatabaseWriter.Scaffold\JetDatabaseWriter.Scaffold.csproj" />
+    <ProjectReference Include="..\..\src\JetDatabaseWriter.Scaffold\JetDatabaseWriter.Scaffold.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' != 'net10.0' or '$(TestNetStandard)' == 'true'">

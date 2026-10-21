@@ -9,8 +9,8 @@
     <NoWarn>$(NoWarn);CA1031;CA1303</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\JetDatabaseWriter\JetDatabaseWriter.csproj" />
-    <ProjectReference Include="..\JetDatabaseWriter.TestSupport\JetDatabaseWriter.TestSupport.csproj" />
+    <ProjectReference Include="..\..\src\JetDatabaseWriter\JetDatabaseWriter.csproj" />
+    <ProjectReference Include="..\..\tests\JetDatabaseWriter.TestSupport\JetDatabaseWriter.TestSupport.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.CommandLine" />

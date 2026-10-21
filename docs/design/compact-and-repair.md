@@ -38,7 +38,7 @@ outside the checkout:
 
 ```powershell
 $report = Join-Path ([IO.Path]::GetTempPath()) ("jdw-storage-audit-" + [Guid]::NewGuid().ToString('N') + '.ndjson')
-dotnet run --project JetDatabaseWriter.FormatProbe -c Release -- storage-audit --input C:\data\source.accdb --output $report
+dotnet run --project tools/JetDatabaseWriter.FormatProbe -c Release -- storage-audit --input C:\data\source.accdb --output $report
 ```
 
 The command opens the source read-only, refuses pending recovery journals and

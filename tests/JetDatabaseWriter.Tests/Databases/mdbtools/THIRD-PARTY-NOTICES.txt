@@ -32,7 +32,7 @@ code, binaries, or generated vectors.
 They are reproduced here under the same fair-use rationale that the upstream
 project relies on (research / interoperability testing of a documented file
 format). They are not part of any shipped artefact and are excluded from the
-NuGet package; they live solely under JetDatabaseWriter.Tests/.
+NuGet package; they live solely under tests/JetDatabaseWriter.Tests/.
 
 If you are an author of one of these files and want it removed, please open an
 issue on https://github.com/diegoripera/JetDatabaseWriter.

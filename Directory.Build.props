@@ -38,10 +38,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <AdditionalFiles Include="..\BannedSymbols.txt">
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt">
       <Link>BannedSymbols.txt</Link>
     </AdditionalFiles>
-    <AdditionalFiles Include="..\stylecop.json">
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)stylecop.json">
       <Link>stylecop.json</Link>
     </AdditionalFiles>
   </ItemGroup>

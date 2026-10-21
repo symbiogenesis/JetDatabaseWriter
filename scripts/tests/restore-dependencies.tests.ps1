@@ -26,12 +26,12 @@ function New-Fixture {
     $context.Version = '10.0.402'
     $context.MissingNative = $false
     $context.EmptyLibrary = $false
-    [IO.Directory]::CreateDirectory((Join-Path $fixture 'Library')) | Out-Null
+    [IO.Directory]::CreateDirectory((Join-Path $fixture 'src/Library')) | Out-Null
     [IO.Directory]::CreateDirectory((Join-Path $scripts 'AotSmoke')) | Out-Null
     [IO.File]::WriteAllText((Join-Path $fixture 'global.json'), "{`r`n  `"sdk`": { `"version`": `"10.0.401`", `"rollForward`": `"disable`" }`r`n}`r`n")
-    [IO.File]::WriteAllText((Join-Path $fixture 'JetDatabaseWriter.slnx'), '<Solution><Project Path="Library/Library.csproj" /></Solution>')
-    [IO.File]::WriteAllText((Join-Path $fixture 'Library/packages.lock.json'), "original library`r`n")
-    [IO.File]::WriteAllText((Join-Path $fixture 'Library/packages.netstandard.lock.json'), "original standard`r`n")
+    [IO.File]::WriteAllText((Join-Path $fixture 'JetDatabaseWriter.slnx'), '<Solution><Folder Name="/src/"><Project Path="src/Library/Library.csproj" /></Folder></Solution>')
+    [IO.File]::WriteAllText((Join-Path $fixture 'src/Library/packages.lock.json'), "original library`r`n")
+    [IO.File]::WriteAllText((Join-Path $fixture 'src/Library/packages.netstandard.lock.json'), "original standard`r`n")
     [IO.File]::WriteAllText((Join-Path $scripts 'AotSmoke/AotSmoke.csproj'), '<Project />')
     foreach ($mode in 'seed', 'trimmed', 'native') {
         [IO.File]::WriteAllText((Join-Path $scripts ("AotSmoke/packages.$mode.lock.json")), "original $mode`r`n")
@@ -50,8 +50,8 @@ function dotnet {
         $lock = if ($mode.Count) {
             Join-Path $scripts ('AotSmoke/packages.' + $mode[0].Split('=')[1] + '.lock.json')
         } elseif ($arguments -contains '-p:TestNetStandard=true') {
-            Join-Path $fixture 'Library/packages.netstandard.lock.json'
-        } else { Join-Path $fixture 'Library/packages.lock.json' }
+            Join-Path $fixture 'src/Library/packages.netstandard.lock.json'
+        } else { Join-Path $fixture 'src/Library/packages.lock.json' }
         [IO.File]::WriteAllText($lock, "updated $($context.Version)`n")
     }
 }
@@ -65,11 +65,11 @@ function Invoke-Scenario([string] $Name, [string] $ExpectedError = '') {
     if ($ExpectedError) {
         Assert-Check ($caught.Contains($ExpectedError)) "$Name expected '$ExpectedError', got '$caught'."
         Assert-Check (([IO.File]::ReadAllText((Join-Path $fixture 'global.json')) | ConvertFrom-Json).sdk.version -eq '10.0.401') "$Name kept a partial SDK update."
-        $libraryLock = Join-Path $fixture 'Library/packages.lock.json'
+        $libraryLock = Join-Path $fixture 'src/Library/packages.lock.json'
         Assert-Check ([IO.File]::Exists($libraryLock)) "$Name deleted an existing library lock."
         $expectedLibrary = if ($context.EmptyLibrary) { '' } else { "original library`r`n" }
         Assert-Check ([IO.File]::ReadAllText($libraryLock) -eq $expectedLibrary) "$Name did not restore the original library lock bytes."
-        Assert-Check ([IO.File]::ReadAllText((Join-Path $fixture 'Library/packages.netstandard.lock.json')) -eq "original standard`r`n") "$Name did not restore the standard-asset lock bytes."
+        Assert-Check ([IO.File]::ReadAllText((Join-Path $fixture 'src/Library/packages.netstandard.lock.json')) -eq "original standard`r`n") "$Name did not restore the standard-asset lock bytes."
         foreach ($mode in 'seed', 'trimmed', 'native') {
             $path = Join-Path $scripts ("AotSmoke/packages.$mode.lock.json")
             if ($mode -eq 'native' -and $context.MissingNative) {
@@ -118,7 +118,7 @@ for ($i = 0; $i -lt 5; $i++) {
 Assert-Check (([IO.File]::ReadAllText((Join-Path $fixture 'global.json')) | ConvertFrom-Json).sdk.version -eq '10.0.402') 'The SDK pin was not updated.'
 Assert-Check ([IO.File]::ReadAllText((Join-Path $scripts 'AotSmoke/packages.native.lock.json')) -eq "updated 10.0.402`r`n") 'Generated locks were not normalized to CRLF.'
 
-Assert-Check ([IO.File]::ReadAllText((Join-Path $fixture 'Library/packages.netstandard.lock.json')) -eq "updated 10.0.402`r`n") 'The standard-asset lock was not refreshed and normalized.'
+Assert-Check ([IO.File]::ReadAllText((Join-Path $fixture 'src/Library/packages.netstandard.lock.json')) -eq "updated 10.0.402`r`n") 'The standard-asset lock was not refreshed and normalized.'
 
 foreach ($stage in 1, 2, 3, 4, 5, 6, 10) {
     New-Fixture
@@ -128,7 +128,7 @@ foreach ($stage in 1, 2, 3, 4, 5, 6, 10) {
 }
 New-Fixture
 $context.EmptyLibrary = $true
-[IO.File]::WriteAllBytes((Join-Path $fixture 'Library/packages.lock.json'), [byte[]]@())
+[IO.File]::WriteAllBytes((Join-Path $fixture 'src/Library/packages.lock.json'), [byte[]]@())
 $context.FailAt = 2
 Invoke-Scenario 'existing empty locks survive rollback' 'failed with exit code 7'
 New-Fixture

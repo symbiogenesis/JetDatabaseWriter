@@ -228,7 +228,7 @@ Delivered:
   `CalculatedResultType` properties.
 - `AccessReader.GetColumnMetadataAsync` extracts `Expression` / `ResultType`
   from LvProp.
-- Tests: `JetDatabaseWriter.Tests/Schema/CalculatedColumnUtilTests.cs`,
+- Tests: `tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnUtilTests.cs`,
   expanded metadata fixture coverage.
 
 ### Phase 1B — Write & round-trip the persisted value **(DONE)**
@@ -262,11 +262,11 @@ Delivered:
 - `AccessReader` unwraps calculated cached values on the string, typed
   `DataTable`, and POCO paths; the compiled direct POCO decoder falls back to
   the unwrap-aware path for any bound calculated column.
-- Tests: `JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`,
+- Tests: `tests/JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`,
   updated Access-authored fixture coverage in
-  `JetDatabaseWriter.Tests/Schema/CalculatedColumnFixtureTests.cs`, and
+  `tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnFixtureTests.cs`, and
   byte-level cached-payload assertions in
-  `JetDatabaseWriter.Tests/Schema/CalculatedColumnPayloadTests.cs` (including
+  `tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnPayloadTests.cs` (including
   DAO-authored `IIf` / `Switch` calculated fields on Access-equipped hosts).
 
 ### Phase 2 — Subset expression evaluator **(DONE)**
@@ -500,9 +500,9 @@ that resemble spreadsheet cells resolve as Access field names;
 recalculation and DAO compact for the bare `A1` field name.
 
 Tests: focused insert/update/POCO coverage in
-`JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`, precedence and
+`tests/JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`, precedence and
 value-semantics cases in
-`JetDatabaseWriter.Tests/Schema/CalculatedExpressionAccessSemanticsTests.cs`,
+`tests/JetDatabaseWriter.Tests/Schema/CalculatedExpressionAccessSemanticsTests.cs`,
 plus the Phase 1B Access-authored fixture coverage, which also re-evaluates
 every Access-authored fixture expression against the values Access cached.
 

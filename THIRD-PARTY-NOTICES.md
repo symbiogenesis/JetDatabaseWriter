@@ -5,12 +5,12 @@ It also documents reference-only projects used to guide interoperability and
 coverage work where no source code, binaries, or fixtures were copied.
 
 Third-party notices for database test fixture sets are included alongside the corresponding fixtures:
-   - [Jackcess database fixtures](JetDatabaseWriter.Tests/Databases/Jackcess/THIRD-PARTY-NOTICES.txt)
-   - [mdbtools/mdbtestdata database fixtures](JetDatabaseWriter.Tests/Databases/mdbtools/THIRD-PARTY-NOTICES.txt)
+   - [Jackcess database fixtures](tests/JetDatabaseWriter.Tests/Databases/Jackcess/THIRD-PARTY-NOTICES.txt)
+   - [mdbtools/mdbtestdata database fixtures](tests/JetDatabaseWriter.Tests/Databases/mdbtools/THIRD-PARTY-NOTICES.txt)
 
 ## Sep
 
-The internal delimited-text parser under `JetDatabaseWriter/DelimitedText/`
+The internal delimited-text parser under `src/JetDatabaseWriter/DelimitedText/`
 and its focused test coverage are adapted from concepts, terminology, and edge
 case coverage in Sep, including separator/header/row/column terminology,
 quoted rows spanning multiple line endings, no-`Peek` reader behavior, and
@@ -55,12 +55,12 @@ from the Apache Jackcess project resource files
 Source: https://github.com/jahlborn/jackcess
 
 The character-handler state machine in
-`JetDatabaseWriter/Indexes/Collation/GeneralLegacyTextIndexEncoder.cs` is a C# port of
+`src/JetDatabaseWriter/Indexes/Collation/GeneralLegacyTextIndexEncoder.cs` is a C# port of
 `com.healthmarketscience.jackcess.impl.GeneralLegacyIndexCodes` from the same
 project.
 
 Calculated-column expression operator and built-in function behavior in
-`JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs` is
+`src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs` is
 translated and adapted from Jackcess's `Expressionator` and `Default*Functions`
 classes, with storage-specific behavior implemented locally for this library.
 
@@ -83,7 +83,7 @@ limitations under the License.
 ## OpenMcdf (test fixtures)
 
 The Compound File Binary test fixtures under
-`JetDatabaseWriter.Tests/Cfb/` (`TestStream_v*.cfs`,
+`tests/JetDatabaseWriter.Tests/Cfb/` (`TestStream_v*.cfs`,
 `MultipleStorage*.cfs`, `FatChainLoop_v3.cfs`,
 `LibreOfficeBlankSample_v25.8.*`, `Office365BlankSample_v2507.*`,
 `VSPro_v17.suo`) are taken verbatim from the OpenMcdf project's

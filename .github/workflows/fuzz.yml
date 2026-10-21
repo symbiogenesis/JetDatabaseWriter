@@ -48,9 +48,9 @@ jobs:
         with:
           global-json-file: .github/dotnet11/global.json
       - name: Restore
-        run: dotnet restore JetDatabaseWriter.Tests --locked-mode
+        run: dotnet restore tests/JetDatabaseWriter.Tests --locked-mode
       - name: Build
-        run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f net10.0 -p:RunAnalyzers=false
+        run: dotnet build tests/JetDatabaseWriter.Tests -c Release --no-restore -f net10.0 -p:RunAnalyzers=false
       - name: Bounded process fuzz cases
         shell: pwsh
         env:
@@ -59,7 +59,7 @@ jobs:
           DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
           FUZZ_CASES: ${{ inputs.cases }}
           FUZZ_SEED: ${{ inputs.seed }}
-        run: ./scripts/run-hosted-fuzz.ps1 -Runner JetDatabaseWriter.Tests/bin/Release/net10.0/JetDatabaseWriter.Tests.exe -Cases ([int]$env:FUZZ_CASES) -Seed ([int]$env:FUZZ_SEED)
+        run: ./scripts/run-hosted-fuzz.ps1 -Runner tests/JetDatabaseWriter.Tests/bin/Release/net10.0/JetDatabaseWriter.Tests.exe -Cases ([int]$env:FUZZ_CASES) -Seed ([int]$env:FUZZ_SEED)
       - name: Summarize mutation and operation coverage
         if: always()
         shell: pwsh

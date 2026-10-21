@@ -92,7 +92,7 @@ public sealed partial class FormatKnowledgeTests
 
     /// <summary>
     /// Finds the library project's folder: the <c>JetDatabaseWriter</c>
-    /// folder beside <c>JetDatabaseWriter.slnx</c>, found by walking up from
+    /// folder under <c>src</c> beside <c>JetDatabaseWriter.slnx</c>, found by walking up from
     /// the test binaries.
     /// </summary>
     /// <returns>The absolute path of the library project's folder.</returns>
@@ -103,7 +103,7 @@ public sealed partial class FormatKnowledgeTests
         {
             if (File.Exists(Path.Combine(directory.FullName, "JetDatabaseWriter.slnx")))
             {
-                return Path.Combine(directory.FullName, "JetDatabaseWriter");
+                return Path.Combine(directory.FullName, "src", "JetDatabaseWriter");
             }
         }
 

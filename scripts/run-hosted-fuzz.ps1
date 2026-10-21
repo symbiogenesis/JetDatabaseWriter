@@ -143,7 +143,7 @@ function Invoke-FuzzProcess([string] $InputPath, [string] $Method, [string] $Pre
 
 try {
     $runnerPath = (Resolve-Path -LiteralPath $Runner).Path
-    $corpus = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'JetDatabaseWriter.Tests/Databases') -Recurse -File |
+    $corpus = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'tests/JetDatabaseWriter.Tests/Databases') -Recurse -File |
         Where-Object { $_.Extension -in '.mdb', '.accdb' -and $_.Length -le 16MB } | Sort-Object FullName)
     if ($corpus.Count -eq 0) { throw 'No bounded database corpus found.' }
     $plan = Get-FuzzReaderPlan $corpus $Seed

@@ -33,7 +33,7 @@ try {
     Invoke-DotNet @('run', '--project', $project, '-c', 'Release', '-p:SmokeMode=seed', '-p:RestoreLockedMode=true', '-p:AnalyzeOnly=AotSmoke', '--artifacts-path', $build, '--', $seed)
     foreach ($kind in @('classes', 'records')) {
         $models = Join-Path $OutputDirectory ($kind + '-models')
-        $scaffoldArguments = @('run', '--project', 'JetDatabaseWriter.Scaffold', '-c', 'Release', '-p:RestoreLockedMode=true', '-p:AnalyzeOnly=AotSmoke', '--artifacts-path', $build)
+        $scaffoldArguments = @('run', '--project', 'src/JetDatabaseWriter.Scaffold', '-c', 'Release', '-p:RestoreLockedMode=true', '-p:AnalyzeOnly=AotSmoke', '--artifacts-path', $build)
         if ($kind -eq 'records') {
             $scaffoldArguments += @('--no-build', '--no-restore')
         }

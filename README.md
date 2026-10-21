@@ -64,7 +64,7 @@ Beyond functional tests, the codebase is validated by:
 - **Continuous integration** — [GitHub Actions](.github/workflows/ci.yml) builds the solution in Release and runs the test suite on .NET 10 and .NET 11 on Windows, with a separate .NET 10 lane for the `netstandard2.1` build, on every push to main and every pull request; a release tag runs the same checks and publishes the package that run built only after it passes
 - **Reproducible builds** — deterministic compilation via [DotNet.ReproducibleBuilds](https://github.com/dotnet/reproducible-builds); reproduction requires matching locked dependencies, SDK, version and build inputs
 - **Access Compact & Repair checks** — DAO-guarded tests exercise tables, indexes, relationships and complex values. The [validation matrix](docs/design/writer-disk-format-validation-matrix.md) records the tested revision, native-engine results and unresolved gaps.
-- **Index key fixture parity** — long text/MEMO index keys with embedded line breaks are validated against Access-authored fixtures: Jet4 (V2000 / V2003 / V2007) is byte-exact, and V2010 ACE is byte-exact for the checked-in Access-authored `Table11` / `Table11_desc` long rows. The V2010 encoder also includes the DAO-derived 65-character contribution tables for the plain, auxiliary, row10, row11, and row12 long-row suffix contexts, with probe validation showing zero mismatches across the exported matrices and observed double-space sweeps. See [GeneralLegacyEncoderFixtureTests.cs](JetDatabaseWriter.Tests/Indexes/Collation/GeneralLegacyEncoderFixtureTests.cs), [GeneralEncoderFixtureTests.cs](JetDatabaseWriter.Tests/Indexes/Collation/GeneralEncoderFixtureTests.cs).
+- **Index key fixture parity** — long text/MEMO index keys with embedded line breaks are validated against Access-authored fixtures: Jet4 (V2000 / V2003 / V2007) is byte-exact, and V2010 ACE is byte-exact for the checked-in Access-authored `Table11` / `Table11_desc` long rows. The V2010 encoder also includes the DAO-derived 65-character contribution tables for the plain, auxiliary, row10, row11, and row12 long-row suffix contexts, with probe validation showing zero mismatches across the exported matrices and observed double-space sweeps. See [GeneralLegacyEncoderFixtureTests.cs](tests/JetDatabaseWriter.Tests/Indexes/Collation/GeneralLegacyEncoderFixtureTests.cs), [GeneralEncoderFixtureTests.cs](tests/JetDatabaseWriter.Tests/Indexes/Collation/GeneralEncoderFixtureTests.cs).
 - **Fuzz testing** — an explicit hosted workflow runs deterministic corpus mutations and truncations with per-process time and memory limits; reproductions and logs are retained on failure
 - **Memory safety analysis** — [InferSharp v1.5](https://github.com/microsoft/infersharp/releases/tag/v1.5) analyzes both library targets in its [own workflow](.github/workflows/infersharp.yml), available through manual dispatch only (`gh workflow run infersharp.yml --ref main`). Unreviewed findings fail the lane; text and SARIF reports plus translation coverage are retained as `infersharp-<framework>` artifacts. Empty translation fails the lane; partially translated methods remain a coverage limitation. The [reviewed exceptions](.github/infersharp-baseline.json) identify exact false positives, explain their ownership or synchronization evidence, and pin the reviewed source hashes. New findings, changed reviewed source, and obsolete exceptions fail the gate
 
@@ -189,11 +189,13 @@ JetDatabaseWriter reads and writes the database's pages directly: the catalog id
 
 Issues and pull requests are welcome. Please open an issue to discuss larger changes before submitting a PR.
 
+The library and scaffolding CLI live under `src/`, tests and their shared helpers under `tests/`, benchmarks under `benchmarks/`, and FormatProbe under `tools/`. Run solution commands from the repository root.
+
 Local builds and targeted tests are welcome, for example:
 
 ```bash
 dotnet build JetDatabaseWriter.slnx -c Release
-dotnet test --project JetDatabaseWriter.Tests -c Release -f net10.0 --no-build --filter-class "JetDatabaseWriter.Tests.Indexes.IndexWriterTests"
+dotnet test --project tests/JetDatabaseWriter.Tests -c Release -f net10.0 --no-build --filter-class "JetDatabaseWriter.Tests.Indexes.IndexWriterTests"
 ```
 
 Full test suites run only on CI, including a full run of one target framework. All benchmarks also run only on CI, even single-case, short, or dry runs. Local builds and selected tests do not replace the required CI gate. See [AGENTS.md](AGENTS.md#local-execution-and-ci) for the execution policy and hosted workflow commands.

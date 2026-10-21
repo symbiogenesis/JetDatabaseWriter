@@ -30,7 +30,7 @@ If a test needs a smaller or cleaner trusted base than Northwind, create that ba
 
 ## Fixture Choice
 
-Prefer Access-authored fixtures such as [NorthwindTraders.accdb](../../JetDatabaseWriter.Tests/Databases/NorthwindTraders.accdb) for DAO compact tests that validate writer mutations. That keeps the trusted base in Microsoft Access bytes and isolates the writer-owned changes.
+Prefer Access-authored fixtures such as [NorthwindTraders.accdb](../../tests/JetDatabaseWriter.Tests/Databases/NorthwindTraders.accdb) for DAO compact tests that validate writer mutations. That keeps the trusted base in Microsoft Access bytes and isolates the writer-owned changes.
 
 DAO-created scratch databases are acceptable trusted hosts when the scenario only needs a small engine-authored container, for example direct DAO OpenRecordset or index-seek probes over writer-added user tables.
 

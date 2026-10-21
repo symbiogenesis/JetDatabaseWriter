@@ -4,7 +4,7 @@ Only the `JetDatabaseWriter` library is published to nuget.org. The scaffolding 
 
 ## How the version is set
 
-[MinVer](https://github.com/adamralph/minver) sets the package, assembly file and informational versions from git tags when the library builds. The settings are in `JetDatabaseWriter/JetDatabaseWriter.csproj`:
+[MinVer](https://github.com/adamralph/minver) sets the package, assembly file and informational versions from git tags when the library builds. The settings are in `src/JetDatabaseWriter/JetDatabaseWriter.csproj`:
 
 - `MinVerTagPrefix` is `v`, so the tag `v4.0.0` gives version `4.0.0`.
 - `MinVerMinimumMajorMinor` is `4.0`, so until a `v4.*` tag exists, every build is `4.0.0-alpha.0.<height>`, where the height is the number of commits since the last tag (or since the first commit).
@@ -53,12 +53,12 @@ Once a version is on nuget.org, also validate against it:
 
 1. Add `<PackageValidationBaselineVersion>4.0.0</PackageValidationBaselineVersion>` to the library project. The baseline package must exist on nuget.org, or the restore fails with `NU1101`; before the first release, <https://api.nuget.org/v3-flatcontainer/jetdatabasewriter/index.json> returns 404.
 2. After each release, move the baseline to the version just published.
-3. A pack that breaks the baseline's public API then fails (for example `CP0002` for a removed member). For an intentional break, either release a new major version or generate a suppression file with `dotnet pack JetDatabaseWriter/JetDatabaseWriter.csproj -c Release -p:ApiCompatGenerateSuppressionFile=true`, review the generated `CompatibilitySuppressions.xml`, and commit it.
+3. A pack that breaks the baseline's public API then fails (for example `CP0002` for a removed member). For an intentional break, either release a new major version or generate a suppression file with `dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release -p:ApiCompatGenerateSuppressionFile=true`, review the generated `CompatibilitySuppressions.xml`, and commit it.
 
 ## Packing locally
 
 ```bash
-dotnet pack JetDatabaseWriter/JetDatabaseWriter.csproj -c Release -o artifacts/nupkg
+dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release -o artifacts/nupkg
 ```
 
 This produces the same package CI would, with the version MinVer computes for your checkout.

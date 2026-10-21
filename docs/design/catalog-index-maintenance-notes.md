@@ -6,7 +6,7 @@
 
 - **C3 is closed for supported writer-created catalog mutations.** `TrySpliceCatalogIndexEntryAsync` supports Jet4/ACE and Jet3 catalog indexes. Leaf-split cases with a clean ancestor path still use in-place propagation; root-leaf splits, overshoot/no-clean-path splits, and overflowing ancestor-summary rewrites now fall back to rebuilding only the affected index tree from existing index entries plus the inserted row pointer. Remaining `false` returns are fail-fast guards for malformed index pages, impossible catalog-key encoding, single entries too large to pack, or unexpected append-position mismatches; they are not open C3 behavior. Catalog callers fail fast on that return instead of leaving unmaintained catalog indexes; linked-table catalog insertion also removes the just-inserted Type 4/6 row when the splice fails before ACE insertion.
 
-**Driver:** Two pinned round-trip tests in [JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs):
+**Driver:** Two pinned round-trip tests in [tests/JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs](../../tests/JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs):
 
 - `SinglePk_AndSingleColumnFk_SurviveCompactAndRepair`
 - `CompositePk_AndMultiColumnFk_SurviveCompactAndRepair`

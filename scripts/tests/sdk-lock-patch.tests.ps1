@@ -9,13 +9,13 @@ if (-not $OutputDirectory) {
 }
 $testRoot = [IO.Path]::GetFullPath($OutputDirectory)
 $fixture = Join-Path $testRoot 'fixture'
-[IO.Directory]::CreateDirectory((Join-Path $fixture 'Library')) | Out-Null
+[IO.Directory]::CreateDirectory((Join-Path $fixture 'src/Library')) | Out-Null
 [IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts/AotSmoke')) | Out-Null
-[IO.File]::WriteAllText((Join-Path $fixture 'JetDatabaseWriter.slnx'), '<Solution><Project Path="Library/Library.csproj" /></Solution>')
-$expectedPaths = @('global.json', 'Library/packages.lock.json', 'Library/packages.netstandard.lock.json', 'scripts/AotSmoke/packages.native.lock.json', 'scripts/AotSmoke/packages.seed.lock.json', 'scripts/AotSmoke/packages.trimmed.lock.json')
+[IO.File]::WriteAllText((Join-Path $fixture 'JetDatabaseWriter.slnx'), '<Solution><Folder Name="/src/"><Project Path="src/Library/Library.csproj" /></Folder></Solution>')
+$expectedPaths = @('global.json', 'src/Library/packages.lock.json', 'src/Library/packages.netstandard.lock.json', 'scripts/AotSmoke/packages.native.lock.json', 'scripts/AotSmoke/packages.seed.lock.json', 'scripts/AotSmoke/packages.trimmed.lock.json')
 foreach ($path in $expectedPaths) { [IO.File]::WriteAllText((Join-Path $fixture $path), 'generated SDK file') }
 [IO.File]::WriteAllText((Join-Path $fixture 'Unrelated.cs'), '// Other work must be excluded')
-[IO.File]::WriteAllText((Join-Path $fixture 'Library/packages.unrelated.lock.json'), 'Other lock must be excluded')
+[IO.File]::WriteAllText((Join-Path $fixture 'src/Library/packages.unrelated.lock.json'), 'Other lock must be excluded')
 $context = @{
     Calls = [Collections.Generic.List[object]]::new()
     Visible = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)

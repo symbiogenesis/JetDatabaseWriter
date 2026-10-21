@@ -26,7 +26,7 @@ function Assert-Workflow([string] $Workflow) {
     $infer = Get-CiJob $Workflow 'infersharp'
     Assert-Contract ($infer.Contains('runs-on: ubuntu-latest') -and $infer.Contains('tf: [netstandard2.1, net10.0]')) 'InferSharp must analyze both library frameworks on Linux.'
     Assert-Contract ($infer -notmatch 'continue-on-error:|(?m)^    if:') 'InferSharp must retain strict failure handling.'
-    Assert-Contract ($infer.Contains('dotnet restore JetDatabaseWriter --locked-mode') -and $infer.Contains('dotnet build JetDatabaseWriter -c Release --no-restore -f ${{ matrix.tf }}')) 'InferSharp must build the locked Release library asset for each framework.'
+    Assert-Contract ($infer.Contains('dotnet restore src/JetDatabaseWriter --locked-mode') -and $infer.Contains('dotnet build src/JetDatabaseWriter -c Release --no-restore -f ${{ matrix.tf }}')) 'InferSharp must build the locked Release library asset for each framework.'
     Assert-Contract ($infer.Contains('-p:DebugType=portable') -and $infer.Contains('-p:DebugSymbols=true')) 'InferSharp must receive source symbols.'
     Assert-Contract ($infer.Contains('mcr.microsoft.com/infersharp@sha256:030eb68fb99f86f6c6351672f444a7092dceb0fdf15ac5f24ddf9f9e198484cd') -and $infer.Contains('tee /workspace/artifacts/infersharp/analysis.log')) 'InferSharp must pin v1.5 and preserve translation coverage.'
     $reportsPosition = $infer.IndexOf('      - name: Upload InferSharp reports', [StringComparison]::Ordinal)

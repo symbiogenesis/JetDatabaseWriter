@@ -5,11 +5,11 @@ Date: 2026-06-16
 Last updated: 2026-10-19
 
 This note is the single, canonical description of the synchronization model used
-by [AccessReader](../../JetDatabaseWriter/AccessReader.cs),
-[AccessWriter](../../JetDatabaseWriter/AccessWriter.cs), their services, and the
-[DatabaseFile](../../JetDatabaseWriter/DatabaseFile.cs) each facade owns, with its page file: a
-read-only [PageFile](../../JetDatabaseWriter/Pages/Paging/PageFile.cs) for the reader, the
-writer's [Pager](../../JetDatabaseWriter/Pages/Paging/Pager.cs). It exists to answer one
+by [AccessReader](../../src/JetDatabaseWriter/AccessReader.cs),
+[AccessWriter](../../src/JetDatabaseWriter/AccessWriter.cs), their services, and the
+[DatabaseFile](../../src/JetDatabaseWriter/DatabaseFile.cs) each facade owns, with its page file: a
+read-only [PageFile](../../src/JetDatabaseWriter/Pages/Paging/PageFile.cs) for the reader, the
+writer's [Pager](../../src/JetDatabaseWriter/Pages/Paging/Pager.cs). It exists to answer one
 question that the code alone makes hard to verify: **when more than one
 synchronization primitive is involved, which one is outer and which is inner?**
 
@@ -134,8 +134,8 @@ spans the open database lifetime.
 
 ### Writer statement commit
 
-`InsertRowsAsync` → `RunAutoCommitAsync` ([AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs))
-→ `TransactionLifecycle.RunAutoCommitAsync` ([TransactionLifecycle.cs](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs))
+`InsertRowsAsync` → `RunAutoCommitAsync` ([AccessWriter.cs](../../src/JetDatabaseWriter/AccessWriter.cs))
+→ `TransactionLifecycle.RunAutoCommitAsync` ([TransactionLifecycle.cs](../../src/JetDatabaseWriter/Transactions/TransactionLifecycle.cs))
 → `mutationGate` → `BeginTransactionCoreAsync` → *work* → `CommitTransactionCoreAsync`.
 
 ```
@@ -207,7 +207,7 @@ File readers retain read-only sharing for their lifetime; path writers request e
 Every public reader operation opens with
 `using AsyncReentrantOperationGate.Lease operation = operations.Enter();` in the
 reader service that implements it (for example `TableReader.Rows` in
-[TableReader.cs](../../JetDatabaseWriter/Tables/TableReader.cs)). The
+[TableReader.cs](../../src/JetDatabaseWriter/Tables/TableReader.cs)). The
 LINQ provider and the index-query handles call those services directly, so they
 enter the same gate.
 
@@ -254,7 +254,7 @@ never block on a page read.
 
 ### Disposal
 
-Reader — `DisposeAsync` ([AccessReader.cs](../../JetDatabaseWriter/AccessReader.cs)):
+Reader — `DisposeAsync` ([AccessReader.cs](../../src/JetDatabaseWriter/AccessReader.cs)):
 
 ```
 operationGate.TryBeginDispose(out waitForOperations)
@@ -275,7 +275,7 @@ completion source with `Volatile.Read`. The full fences ensure that either
 disposal observes zero operations or the final operation observes the published
 notification; both may safely try to complete it.
 
-Writer — `DisposeAsync` ([AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs)) waits for `mutationGate` and checks disposal again under the gate before teardown:
+Writer — `DisposeAsync` ([AccessWriter.cs](../../src/JetDatabaseWriter/AccessWriter.cs)) waits for `mutationGate` and checks disposal again under the gate before teardown:
 
 ```
 lockFileCoordinator.DisposeAfterAsync(

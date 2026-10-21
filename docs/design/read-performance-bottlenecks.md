@@ -29,21 +29,21 @@ guidance below to produce new evidence before changing the core reader.
 
 - Row decode results: `BenchmarkDotNet.Artifacts/results/JetDatabaseWriter.Benchmarks.Reader.AccessReaderRowDecodeBenchmarks-report-github.md`
 - Open-floor results: `BenchmarkDotNet.Artifacts/results/JetDatabaseWriter.Benchmarks.AccessReaderOpenBenchmarks-report-github.md`
-- Owned-page discovery benchmarks: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderOwnedPageDiscoveryBenchmarks.cs`
-- Table-scan read-ahead benchmarks: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderTableScanReadAheadBenchmarks.cs`
-- Read-ahead eligibility benchmarks (long-value tables, small or disabled caches): `JetDatabaseWriter.Benchmarks/Reader/AccessReaderReadAheadEligibilityBenchmarks.cs`
-- Long values longer than the page cache: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderLargeLongValueBenchmarks.cs`
-- Concurrent scans on one shared reader versus one reader per scan, plain and AES-encrypted, in `Disabled` (page reads through the reader's I/O gate) and `Auto`: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderConcurrentScanBenchmarks.cs`
-- `Query<T>().Include(...)` over a related customer/order pair: `JetDatabaseWriter.Benchmarks/Queries/QueryIncludeBenchmarks.cs`
-- The per-call cost of typed reads and `Query<T>()` (materializer cache lookup and predicate compilation, translation, the in-memory tail, index-ordered reads and inferred range seeks): `JetDatabaseWriter.Benchmarks/Queries/QueryBenchmarks.cs`
-- Aggregate allocation scaling at 1,000 and 25,000 rows: `JetDatabaseWriter.Benchmarks/Queries/QueryAggregateAllocationBenchmarks.cs` compares `Query_SumAsync_Large` with a direct `Rows<T>` sum over the same entities. Total allocations include one materialized entity per row on both paths; compare the difference between those paths to check that the query aggregate adds constant overhead and no growing row buffer.
-- Attachment reads (`GetAttachmentsAsync`, `Rows()`, `Rows<T>()` with `ComplexCellValue.ReadAttachments`), writer-authored and Access-authored: `JetDatabaseWriter.Benchmarks/Reader/ComplexColumnReadBenchmarks.cs`
-- Public seek APIs (`SeekRowsAsync`, `FromIndex`, inferred `Rows<T>(predicate)`) against a client-side scan: `JetDatabaseWriter.Benchmarks/Indexes/PublicSeekBenchmarks.cs`
-- Opening and scanning a file the OS has not cached (Windows only): `JetDatabaseWriter.Benchmarks/Reader/AccessReaderColdScanBenchmarks.cs`
-- Benchmark fixture sizes: `JetDatabaseWriter.Benchmarks/Infrastructure/SyntheticDatabases.cs`
-- Main read path: `JetDatabaseWriter/Tables/TableReader.cs` (table scans), `JetDatabaseWriter/ValueDecoding/RowDecoder.cs` (row decode), and `JetDatabaseWriter/Pages/ReaderPageCache.cs` (page and row-bound caches)
-- Page I/O: `JetDatabaseWriter/Pages/Paging/PageFile.cs` (the writer's `Pager.cs` beside it); owned pages and row directories: `JetDatabaseWriter/Pages/OwnedDataPages.cs` and `DataPageRows.cs`; text decode helpers: `JetDatabaseWriter/Schema/JetTypeInfo.cs`
-- Long-value decode path: `JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs` plus shared LVAL chain traversal in `JetDatabaseWriter/LongValues/LongValueStore.cs`
+- Owned-page discovery benchmarks: `benchmarks/JetDatabaseWriter.Benchmarks/Reader/AccessReaderOwnedPageDiscoveryBenchmarks.cs`
+- Table-scan read-ahead benchmarks: `benchmarks/JetDatabaseWriter.Benchmarks/Reader/AccessReaderTableScanReadAheadBenchmarks.cs`
+- Read-ahead eligibility benchmarks (long-value tables, small or disabled caches): `benchmarks/JetDatabaseWriter.Benchmarks/Reader/AccessReaderReadAheadEligibilityBenchmarks.cs`
+- Long values longer than the page cache: `benchmarks/JetDatabaseWriter.Benchmarks/Reader/AccessReaderLargeLongValueBenchmarks.cs`
+- Concurrent scans on one shared reader versus one reader per scan, plain and AES-encrypted, in `Disabled` (page reads through the reader's I/O gate) and `Auto`: `benchmarks/JetDatabaseWriter.Benchmarks/Reader/AccessReaderConcurrentScanBenchmarks.cs`
+- `Query<T>().Include(...)` over a related customer/order pair: `benchmarks/JetDatabaseWriter.Benchmarks/Queries/QueryIncludeBenchmarks.cs`
+- The per-call cost of typed reads and `Query<T>()` (materializer cache lookup and predicate compilation, translation, the in-memory tail, index-ordered reads and inferred range seeks): `benchmarks/JetDatabaseWriter.Benchmarks/Queries/QueryBenchmarks.cs`
+- Aggregate allocation scaling at 1,000 and 25,000 rows: `benchmarks/JetDatabaseWriter.Benchmarks/Queries/QueryAggregateAllocationBenchmarks.cs` compares `Query_SumAsync_Large` with a direct `Rows<T>` sum over the same entities. Total allocations include one materialized entity per row on both paths; compare the difference between those paths to check that the query aggregate adds constant overhead and no growing row buffer.
+- Attachment reads (`GetAttachmentsAsync`, `Rows()`, `Rows<T>()` with `ComplexCellValue.ReadAttachments`), writer-authored and Access-authored: `benchmarks/JetDatabaseWriter.Benchmarks/Reader/ComplexColumnReadBenchmarks.cs`
+- Public seek APIs (`SeekRowsAsync`, `FromIndex`, inferred `Rows<T>(predicate)`) against a client-side scan: `benchmarks/JetDatabaseWriter.Benchmarks/Indexes/PublicSeekBenchmarks.cs`
+- Opening and scanning a file the OS has not cached (Windows only): `benchmarks/JetDatabaseWriter.Benchmarks/Reader/AccessReaderColdScanBenchmarks.cs`
+- Benchmark fixture sizes: `benchmarks/JetDatabaseWriter.Benchmarks/Infrastructure/SyntheticDatabases.cs`
+- Main read path: `src/JetDatabaseWriter/Tables/TableReader.cs` (table scans), `src/JetDatabaseWriter/ValueDecoding/RowDecoder.cs` (row decode), and `src/JetDatabaseWriter/Pages/ReaderPageCache.cs` (page and row-bound caches)
+- Page I/O: `src/JetDatabaseWriter/Pages/Paging/PageFile.cs` (the writer's `Pager.cs` beside it); owned pages and row directories: `src/JetDatabaseWriter/Pages/OwnedDataPages.cs` and `DataPageRows.cs`; text decode helpers: `src/JetDatabaseWriter/Schema/JetTypeInfo.cs`
+- Long-value decode path: `src/JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs` plus shared LVAL chain traversal in `src/JetDatabaseWriter/LongValues/LongValueStore.cs`
 
 ## Benchmark workload selection
 

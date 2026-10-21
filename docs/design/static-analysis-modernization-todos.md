@@ -58,7 +58,7 @@ remaining gaps are in the [vulnerability review](../cve-vulnerability-analysis.m
 - Several StyleCop/code-analysis rules are explicitly configured in
   [.editorconfig](../../.editorconfig), so StyleCop is retained as a partial
   style/documentation layer rather than the central quality gate.
-- [JetDatabaseWriter.Tests.csproj](../../JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj)
+- [JetDatabaseWriter.Tests.csproj](../../tests/JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj)
   disables `RunAnalyzersDuringBuild`, `EnforceCodeStyleInBuild`, and XML
   documentation generation for non-Release builds. That is the right shape for
   a fast test inner loop; Release remains strict.
@@ -132,7 +132,7 @@ Analyzer totals by compiler invocation:
 ### Library Project
 
 A 2026-05-27 forced Release rebuild of
-[JetDatabaseWriter.csproj](../../JetDatabaseWriter/JetDatabaseWriter.csproj)
+[JetDatabaseWriter.csproj](../../src/JetDatabaseWriter/JetDatabaseWriter.csproj)
 with `-p:ReportAnalyzer=true` showed these analyzer execution-time groups for
 the two target frameworks:
 
@@ -148,7 +148,7 @@ the two target frameworks:
 ### Test Project
 
 A 2026-05-27 forced Release rebuild of
-[JetDatabaseWriter.Tests.csproj](../../JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj)
+[JetDatabaseWriter.Tests.csproj](../../tests/JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj)
 with `TreatWarningsAsErrors=false` produced about `19.356s` of concurrent
 analyzer execution time.
 
@@ -170,7 +170,7 @@ before the clean solution baseline above was captured.
 ### FormatProbe Spot Check
 
 A warmed forced Release rebuild of
-[JetDatabaseWriter.FormatProbe.csproj](../../JetDatabaseWriter.FormatProbe/JetDatabaseWriter.FormatProbe.csproj)
+[JetDatabaseWriter.FormatProbe.csproj](../../tools/JetDatabaseWriter.FormatProbe/JetDatabaseWriter.FormatProbe.csproj)
 showed the same rough ranking at smaller scale: `SecurityCodeScan.VS2019` about
 1.224s, SDK C# .NET analyzers about 1.161s with `CA1508` about 1.056s,
 `StyleCop.Analyzers` about 0.560s, `Roslynator.Analyzers` about 0.340s, and
@@ -453,7 +453,7 @@ cleaned remaining Roslyn style drift, and validated with:
 ```powershell
 dotnet format style JetDatabaseWriter.slnx --verify-no-changes --no-restore --verbosity minimal
 dotnet build JetDatabaseWriter.slnx --configuration Release --no-restore -m
-dotnet test --project JetDatabaseWriter.Tests --filter-not-trait Category=Fuzz
+dotnet test --project tests/JetDatabaseWriter.Tests --filter-not-trait Category=Fuzz
 ```
 
 These commands record historical validation. For future work, local builds and targeted tests are allowed, but the full-suite test command above is CI-only; excluding fuzz tests does not make it a targeted run. All benchmark runs are also CI-only. See [AGENTS.md](../../AGENTS.md#local-execution-and-ci).

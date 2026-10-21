@@ -9,7 +9,7 @@ if (-not $WorkflowPath) { $WorkflowPath = Join-Path $repoRoot '.github/workflows
 $workflow = [IO.File]::ReadAllText($WorkflowPath).Replace("`r`n", "`n")
 $solution = [xml][IO.File]::ReadAllText((Join-Path $repoRoot 'JetDatabaseWriter.slnx'))
 $buildProps = [xml][IO.File]::ReadAllText((Join-Path $repoRoot 'Directory.Build.props'))
-$testProject = [xml][IO.File]::ReadAllText((Join-Path $repoRoot 'JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj'))
+$testProject = [xml][IO.File]::ReadAllText((Join-Path $repoRoot 'tests/JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj'))
 
 function Assert-Contract([bool] $Condition, [string] $Message) {
     if (-not $Condition) { throw $Message }
@@ -44,14 +44,14 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     # the solution lane covers all remaining projects and all of their frameworks.
     $projects = @($Solution.SelectNodes('//Project[@Path]') | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.Path) })
     Assert-Contract ('JetDatabaseWriter' -in $projects -and 'JetDatabaseWriter.Tests' -in $projects) 'The solution must include the library and test projects.'
-    $library = @($lanes | Where-Object project -eq 'JetDatabaseWriter')
+    $library = @($lanes | Where-Object project -eq 'src/JetDatabaseWriter')
     Assert-Contract ($library.Count -eq 1 -and -not $library[0].options) 'The library lane must analyze every library framework.'
     $tools = @($lanes | Where-Object project -eq 'JetDatabaseWriter.slnx')
     Assert-Contract ($tools.Count -eq 1 -and $tools[0].options -eq '-p:AnalyzeExcept=JetDatabaseWriter JetDatabaseWriter.Tests') 'The tools lane must analyze the complete solution except the separately analyzed library and tests.'
 
     $frameworks = @($TestProject.SelectNodes('/Project/PropertyGroup/TargetFrameworks') | ForEach-Object { $_.InnerText.Split(';', [StringSplitOptions]::RemoveEmptyEntries) } | Sort-Object -Unique)
     Assert-Contract ($frameworks.Count -gt 0) 'The test project framework declaration is missing.'
-    $testLanes = @($lanes | Where-Object project -eq 'JetDatabaseWriter.Tests')
+    $testLanes = @($lanes | Where-Object project -eq 'tests/JetDatabaseWriter.Tests')
     Assert-Contract (($frameworks -join ';') -eq 'net10.0') 'Tests must build locally with the pinned .NET 10 SDK.'
     Assert-Contract ($testLanes.Count -eq 3) 'Native .NET 10, netstandard and .NET 11 must have analyzer lanes.'
     foreach ($framework in 'net10.0', 'net10.0-netstandard', 'net11.0') {
@@ -81,7 +81,7 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     # Each runtime leg executes its own Release analyzer output in the same job.
     # The artifact remains available for focused DAO checks on Access hosts.
     $runnerName = 'name: dao-test-runner-${{ matrix.tf }}'
-    $runnerPath = 'path: JetDatabaseWriter.Tests/bin/Release/net10.0/'
+    $runnerPath = 'path: tests/JetDatabaseWriter.Tests/bin/Release/net10.0/'
     $upload = [regex]::Match($analyze, '(?ms)^      - name: Upload DAO test runner\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($upload -match '(?m)^        if: matrix.runner$' -and $upload.Contains($runnerName) -and $upload.Contains($runnerPath) -and $upload -match 'uses: actions/upload-artifact@[0-9a-f]{40}(?:\s|$)' -and $upload.Contains('if-no-files-found: error')) 'Analyzer jobs must publish the complete matching test runner with a pinned action.'
     Assert-Contract ($analyze -notmatch '(?m)^    needs:') 'Test analyzer lanes must start independently of other analyzer lanes.'
@@ -100,7 +100,7 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     if ($testCommand -eq '>-') {
         $testCommand = ([regex]::Matches($testStep, '(?m)^          (?<line>[^\n]+)$') | ForEach-Object { $_.Groups['line'].Value.Trim() }) -join ' '
     }
-    Assert-Contract ($testCommand.Contains('--test-modules JetDatabaseWriter.Tests.dll') -and $testCommand.Contains('--root-directory JetDatabaseWriter.Tests/bin/Release/net10.0') -and $testCommand -match '(?:^| )--minimum-expected-tests 1(?: |$)') 'Ordinary tests must launch the validated module and reject empty discovery.'
+    Assert-Contract ($testCommand.Contains('--test-modules JetDatabaseWriter.Tests.dll') -and $testCommand.Contains('--root-directory tests/JetDatabaseWriter.Tests/bin/Release/net10.0') -and $testCommand -match '(?:^| )--minimum-expected-tests 1(?: |$)') 'Ordinary tests must launch the validated module and reject empty discovery.'
     Assert-Contract ($testCommand -notmatch '(?:^| )--(?:filter|list-tests|explicit|project|solution)\b') 'Ordinary test jobs must run the full ordinary suite from the downloaded module.'
     Assert-Contract ($testStep.Contains('JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}')) 'Ordinary tests must retain normalized golden specimens in their framework lane.'
     $golden = [regex]::Match($analyze, '(?ms)^      - name: Upload golden diagnostics\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
@@ -120,7 +120,7 @@ function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedE
 }
 
 Assert-Scenario 'hosted coverage and immediate validated binary execution' $workflow
-Assert-Scenario 'incomplete solution analysis' ($workflow.Replace('project: JetDatabaseWriter.slnx', 'project: JetDatabaseWriter.TestSupport')) 'The tools lane must analyze the complete solution'
+Assert-Scenario 'incomplete solution analysis' ($workflow.Replace('project: JetDatabaseWriter.slnx', 'project: tests/JetDatabaseWriter.TestSupport')) 'The tools lane must analyze the complete solution'
 Assert-Scenario 'Debug analyzer build' ($workflow.Replace('dotnet build ${{ matrix.project }} -c Release', 'dotnet build ${{ matrix.project }} -c Debug')) 'The analyzer build must use Release'
 Assert-Scenario 'disabled analyzers' ($workflow.Replace('dotnet build ${{ matrix.project }}', 'dotnet build -p:RunAnalyzers=false ${{ matrix.project }}')) 'Analyzer jobs must retain all strict build guarantees'
 Assert-Scenario 'ordinary suite disabled' ($workflow.Replace("      - name: Test`n        if: matrix.runner", "      - name: Test`n        if: false")) 'Every test analyzer lane must run its full ordinary suite'
@@ -131,8 +131,8 @@ $testStep = [regex]::Match($analyzeJob, '(?ms)^      - name: Test\n.*?(?=^      
 Assert-Scenario 'missing ordinary suite' ($workflow.Replace($testStep, '')) 'Every test analyzer lane must execute the ordinary suite exactly once'
 Assert-Scenario 'duplicate ordinary suite' ($workflow.Replace($testStep, $testStep + $testStep)) 'Every test analyzer lane must execute the ordinary suite exactly once'
 Assert-Scenario 'tests before validation' ($workflow.Replace($testStep, '').Replace('      - name: Build', $testStep + '      - name: Build')) 'Ordinary tests must follow their successful Release analyzer build'
-Assert-Scenario 'redundant ordinary test build' ($workflow.Replace($testStep, "      - name: Rebuild`n        run: dotnet build JetDatabaseWriter.Tests -c Release`n" + $testStep)) 'Ordinary tests must execute the validated binaries without rebuilding'
-Assert-Scenario 'redundant multiline test build' ($workflow.Replace($testStep, "      - name: Rebuild`n        run: >-`n          dotnet build JetDatabaseWriter.Tests -c Release`n" + $testStep)) 'Ordinary tests must execute the validated binaries without rebuilding'
+Assert-Scenario 'redundant ordinary test build' ($workflow.Replace($testStep, "      - name: Rebuild`n        run: dotnet build tests/JetDatabaseWriter.Tests -c Release`n" + $testStep)) 'Ordinary tests must execute the validated binaries without rebuilding'
+Assert-Scenario 'redundant multiline test build' ($workflow.Replace($testStep, "      - name: Rebuild`n        run: >-`n          dotnet build tests/JetDatabaseWriter.Tests -c Release`n" + $testStep)) 'Ordinary tests must execute the validated binaries without rebuilding'
 Assert-Scenario 'empty test discovery accepted' ($workflow.Replace('--minimum-expected-tests 1', '--minimum-expected-tests 0')) 'Ordinary tests must launch the validated module and reject empty discovery'
 Assert-Scenario 'partial ordinary test selection' ($workflow.Replace('--minimum-expected-tests 1', '--minimum-expected-tests 1 --filter-class Example')) 'Ordinary test jobs must run the full ordinary suite'
 Assert-Scenario 'golden evidence disabled' ($workflow.Replace('JDW_GOLDEN_OUTPUT_DIRECTORY:', 'REMOVED_GOLDEN_OUTPUT_DIRECTORY:')) 'Ordinary tests must retain normalized golden specimens'

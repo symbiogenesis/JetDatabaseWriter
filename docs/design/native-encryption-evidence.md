@@ -4,7 +4,7 @@ The following small fixtures were created by Microsoft's `DAO.DBEngine.120` on
 2026-10-06, using the x64 COM server `ACEDAO.DLL` version 16.0.20430.20092.
 They contain only synthetic test data: table `T`, `Id = 7`, and
 `Label = "Native encrypted row"`. Their test password is `Native123`.
-The files are under `JetDatabaseWriter.Tests/Databases/Encrypted`.
+The files are under `tests/JetDatabaseWriter.Tests/Databases/Encrypted`.
 
 | File | Bytes | SHA-256 | Creation options |
 |---|---:|---|---|

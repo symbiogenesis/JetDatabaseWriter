@@ -13,7 +13,7 @@ This document describes the architecture and folder organization of the `JetData
 ## Directory layout
 
 ```
-JetDatabaseWriter/
+src/JetDatabaseWriter/
 ├── AccessBase.cs                          (public base: format, page size, code page; owns the facade's DatabaseFile)
 ├── AccessReader.cs                        (public read API — facade; every operation forwards to one reader service)
 ├── AccessWriter.cs                        (public write API — facade; every operation forwards to one writer service)

@@ -10,10 +10,18 @@
     <File Path="stylecop.json" />
     <File Path="THIRD-PARTY-NOTICES.md" />
   </Folder>
-  <Project Path="JetDatabaseWriter.Benchmarks/JetDatabaseWriter.Benchmarks.csproj" />
-  <Project Path="JetDatabaseWriter.FormatProbe/JetDatabaseWriter.FormatProbe.csproj" />
-  <Project Path="JetDatabaseWriter.Scaffold/JetDatabaseWriter.Scaffold.csproj" />
-  <Project Path="JetDatabaseWriter.TestSupport/JetDatabaseWriter.TestSupport.csproj" />
-  <Project Path="JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj" />
-  <Project Path="JetDatabaseWriter/JetDatabaseWriter.csproj" />
+  <Folder Name="/src/">
+    <Project Path="src/JetDatabaseWriter/JetDatabaseWriter.csproj" />
+    <Project Path="src/JetDatabaseWriter.Scaffold/JetDatabaseWriter.Scaffold.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj" />
+    <Project Path="tests/JetDatabaseWriter.TestSupport/JetDatabaseWriter.TestSupport.csproj" />
+  </Folder>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/JetDatabaseWriter.Benchmarks/JetDatabaseWriter.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/JetDatabaseWriter.FormatProbe/JetDatabaseWriter.FormatProbe.csproj" />
+  </Folder>
 </Solution>

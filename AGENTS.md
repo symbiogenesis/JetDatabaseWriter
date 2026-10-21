@@ -13,14 +13,14 @@ Reference material, read when a task needs it:
 
 JetDatabaseWriter reads and writes Microsoft Access databases in pure .NET: Jet3 (Access 97) and Jet4 `.mdb` files, and ACE `.accdb` files. The solution file is `JetDatabaseWriter.slnx`, and `global.json` pins the .NET 10 SDK.
 
-| Project | Targets | Role |
+| Project path | Targets | Role |
 |---|---|---|
-| `JetDatabaseWriter` | netstandard2.1, net10.0 | The library and NuGet package |
-| `JetDatabaseWriter.Tests` | net10.0 | xUnit v3 on Microsoft Testing Platform. CI runs on .NET 10 and .NET 11; a separate .NET 10 lane loads the netstandard2.1 library |
-| `JetDatabaseWriter.TestSupport` | net10.0 | Non-packable helpers that the tests and FormatProbe share |
-| `JetDatabaseWriter.Benchmarks` | net10.0 | BenchmarkDotNet |
-| `JetDatabaseWriter.FormatProbe` | net10.0 | Diagnostics against real Access files |
-| `JetDatabaseWriter.Scaffold` | net10.0 | Entity scaffolding tool |
+| `src/JetDatabaseWriter` | netstandard2.1, net10.0 | The library and NuGet package |
+| `tests/JetDatabaseWriter.Tests` | net10.0 | xUnit v3 on Microsoft Testing Platform. CI runs on .NET 10 and .NET 11; a separate .NET 10 lane loads the netstandard2.1 library |
+| `tests/JetDatabaseWriter.TestSupport` | net10.0 | Non-packable helpers that the tests and FormatProbe share |
+| `benchmarks/JetDatabaseWriter.Benchmarks` | net10.0 | BenchmarkDotNet |
+| `tools/JetDatabaseWriter.FormatProbe` | net10.0 | Diagnostics against real Access files |
+| `src/JetDatabaseWriter.Scaffold` | net10.0 | Entity scaffolding tool |
 
 Version 4.0.0 has never been released. The tags v1.0.0 to v2.2.0 are upstream history and must never be pushed, and MinVer takes the version from `v`-prefixed tags. Break APIs freely: add no compatibility shims, `[Obsolete]` wrappers, flags kept only for old behaviour, migration notes, or "breaking change" callouts in the README.
 
@@ -40,7 +40,7 @@ When a design decision is left to you, choose what Microsoft Access does, then t
 ## Build
 
 - `dotnet build JetDatabaseWriter.slnx -c Release` must report 0 warnings and 0 errors. `Directory.Build.props` turns on `TreatWarningsAsErrors`, `AnalysisLevel` latest-all, `EnforceCodeStyleInBuild`, XML documentation and nullable reference types for every project. CI analyzes every project and target framework in Release, so an analyzer finding in test code fails it too.
-- The analyzers take most of a Release build. `-p:AnalyzeOnly=<project names>` analyzes only the named projects and `-p:AnalyzeExcept=<project names>` every project but those (names separated by spaces); the other projects compile without analyzers, and source generators run either way. CI's analyze jobs use them, and `dotnet build JetDatabaseWriter.Tests -c Release -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests` checks test code alone.
+- The analyzers take most of a Release build. `-p:AnalyzeOnly=<project names>` analyzes only the named projects and `-p:AnalyzeExcept=<project names>` every project but those (names separated by spaces); the other projects compile without analyzers, and source generators run either way. CI's analyze jobs use them, and `dotnet build tests/JetDatabaseWriter.Tests -c Release -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests` checks test code alone.
 - `JetDatabaseWriter.Tests` turns off `RunAnalyzersDuringBuild`, `EnforceCodeStyleInBuild` and `GenerateDocumentationFile` in non-Release builds, for speed; keep Release strict. Its `NoWarn` holds only `CA1707` and `SA1615`, and nothing else may be added. Fix any other finding in test code. Where a rule works against what a test checks, suppress it at the site with `#pragma warning disable <id> // <reason>`, for example CA1812 on a POCO that only reflection, `Rows<T>` or an expression tree creates.
 - `JetDatabaseWriter.FormatProbe` does not turn off its analyzers.
 - CI restores with `--locked-mode`. After changing a package reference or a target framework, restore once without it and commit the updated `packages.lock.json` files.
@@ -79,13 +79,13 @@ Expected results in all three ordinary test lanes:
 
 The Microsoft Testing Platform summary counts guarded DAO cases and the three explicit-only fuzz harnesses together as skipped. Check the skip reasons against the current guarded cases; any other skip is a regression.
 
-For a quick local loop, build in Release and run a selected test: `dotnet test --project JetDatabaseWriter.Tests -c Release -f net10.0 --filter-method "<Namespace.Class.Method>"`. To use an existing build directly, run `JetDatabaseWriter.Tests/bin/Release/<tf>/JetDatabaseWriter.Tests.exe -method "<Namespace.Class.Method>" -longRunning 300`. Always include a focused test selection for local execution; unfiltered test runs belong on CI.
+For a quick local loop, build in Release and run a selected test: `dotnet test --project tests/JetDatabaseWriter.Tests -c Release -f net10.0 --filter-method "<Namespace.Class.Method>"`. To use an existing build directly, run `tests/JetDatabaseWriter.Tests/bin/Release/<tf>/JetDatabaseWriter.Tests.exe -method "<Namespace.Class.Method>" -longRunning 300`. Always include a focused test selection for local execution; unfiltered test runs belong on CI.
 
 xUnit v3 on Microsoft Testing Platform:
 
 - Use the stable xUnit v3 framework (`xunit.v3`); the current stable 4.x package supports per-test parallelism. Do not use prerelease packages. Test projects are executables: keep `<OutputType>Exe</OutputType>`.
 - Use `using Xunit;`. Do not add `Xunit.Abstractions`, `xunit.runner.visualstudio`, `xunit.abstractions` or `xunit.assert`.
-- The base command is `dotnet test --project JetDatabaseWriter.Tests`; locally, add a focused inclusion filter such as `--filter-method` or `--filter-class`. The unfiltered command is for CI only. Pass Microsoft Testing Platform options straight to `dotnet test`, with no `--` separator. Do not use VSTest filters (`--filter "FullyQualifiedName~..."`) or `--nologo`; use `--verbosity quiet` for quieter output.
+- The base command is `dotnet test --project tests/JetDatabaseWriter.Tests`; locally, add a focused inclusion filter such as `--filter-method` or `--filter-class`. The unfiltered command is for CI only. Pass Microsoft Testing Platform options straight to `dotnet test`, with no `--` separator. Do not use VSTest filters (`--filter "FullyQualifiedName~..."`) or `--nologo`; use `--verbosity quiet` for quieter output.
   - One target framework: `-f net10.0`.
   - One method: `--filter-method "<Namespace.Class.Method>"`.
   - One class: `--filter-class "<Namespace.Class>"`.
@@ -94,7 +94,7 @@ xUnit v3 on Microsoft Testing Platform:
   - Traits: `--filter-trait Category=Fuzz` and `--filter-not-trait Category=Fuzz`.
   - Several values go after one switch, separated by spaces (`--filter-class Foo Bar`).
   - Other switches: `--list-tests`, `--stop-on-fail on`, and `-?`.
-- Fuzz harnesses are `[Fact(Explicit = true)]` with `[Trait("Category", "Fuzz")]`. Run them only on purpose: `dotnet test --project JetDatabaseWriter.Tests --filter-trait Category=Fuzz --explicit only`.
+- Fuzz harnesses are `[Fact(Explicit = true)]` with `[Trait("Category", "Fuzz")]`. Run them only on purpose: `dotnet test --project tests/JetDatabaseWriter.Tests --filter-trait Category=Fuzz --explicit only`.
 - Test code compiles for net10.0. CI runs the native library on .NET 10 and .NET 11, and the netstandard2.1 library on .NET 10 using `-p:TestNetStandard=true`. `LibraryTarget.IsNetStandard` reports the loaded asset. The standard lane excludes scaffolding tests. The root SDK pin stays on .NET 10; `.github/dotnet11/global.json` pins the CI-only runtime installation.
 - Helpers that the tests and FormatProbe share go in `JetDatabaseWriter.TestSupport`, never in the library. Run child processes through `PowerShellProcessRunner`, not by reading a redirected stream to its end before `WaitForExit`, which ignores the timeout.
 - Writing tests:

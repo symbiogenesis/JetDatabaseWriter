@@ -27,7 +27,7 @@ Push-Location $repository
 try {
     if (-not $AotOnly) {
         Invoke-Restore @('JetDatabaseWriter.slnx')
-        Invoke-Restore @('JetDatabaseWriter.Tests', '-p:TestNetStandard=true')
+        Invoke-Restore @('tests/JetDatabaseWriter.Tests', '-p:TestNetStandard=true')
     }
     foreach ($mode in 'seed', 'trimmed', 'native') {
         Invoke-Restore @('scripts/AotSmoke/AotSmoke.csproj', "-p:SmokeMode=$mode")

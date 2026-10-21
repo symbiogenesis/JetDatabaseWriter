@@ -8,7 +8,7 @@ table's and an index's pages. The page layout is the same in
 Jet3, Jet4 and ACE apart from the header offsets. The reference is
 [Jackcess](https://github.com/jahlborn/jackcess) `TableImpl` (`findRowStart`,
 `findRowEnd`, `positionAtRowData`, `deleteRow`, `updateRow`), checked against
-the Access-authored fixtures in `JetDatabaseWriter.Tests/Databases`.
+the Access-authored fixtures in `tests/JetDatabaseWriter.Tests/Databases`.
 
 ## Value decode policy
 

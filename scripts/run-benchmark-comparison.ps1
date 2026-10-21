@@ -80,10 +80,11 @@ $manifest = [ordered]@{ Head = $headSha; Baseline = $baselineSha; Mode = $Mode; 
 [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json))
 foreach ($run in $runs.GetEnumerator()) {
     $outputPath = Join-Path $Results $run.Key
+    $project = & (Join-Path $PSScriptRoot 'resolve-benchmark-project.ps1') -Repository $run.Value
     Push-Location -LiteralPath $run.Value
     try {
         # A setup or generated-build failure invalidates this comparison; retain its report and stop timing other cases.
-        dotnet run --project JetDatabaseWriter.Benchmarks -c Release --no-build -- --filter @filters @jobArgs --exporters json github --artifacts $outputPath --stopOnFirstError
+        dotnet run --project $project -c Release --no-build -- --filter @filters @jobArgs --exporters json github --artifacts $outputPath --stopOnFirstError
         if ($LASTEXITCODE -ne 0) { throw "The $($run.Key) benchmark process failed." }
     }
     finally { Pop-Location }

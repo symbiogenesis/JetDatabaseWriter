@@ -11,7 +11,7 @@ The tests require each approved binary and verify its hash independently of the 
 For a deliberate format correction, inspect the differences and independent native evidence, then update the affected binary and pinned hash together. Do not replace fixtures automatically from a failing run. The original fixture capture was verified against all existing pinned hashes; no hash was changed to accept that capture.
 
 The Jet3 metadata specimens incorporate the DAO3.6-verified corrections in
-[Jet3 definition metadata](../../../docs/design/jet3-definition-metadata.md).
+[Jet3 definition metadata](../../../../docs/design/jet3-definition-metadata.md).
 The bootstrap changes only odd offsets `0x601`–`0x7FF` from zero to one.
 The table changes descriptor byte 7 from zero to one for its 17 new columns,
 and changes the two physical index flags from `80`/`81` to `00`/`01`.
@@ -35,4 +35,4 @@ from DAO3.6/DAO120-authored column trailers and the mutation, constraint and
 compact/reopen checks in `LongValueUsageMapTests`, `Jet3SystemUsageMapDaoTests`
 and the native free-space tests. The generated specimens remain writer byte
 contracts rather than Microsoft-authored fixtures; see
-[usage-map maintenance](../../../docs/design/usage-map-maintenance.md).
+[usage-map maintenance](../../../../docs/design/usage-map-maintenance.md).

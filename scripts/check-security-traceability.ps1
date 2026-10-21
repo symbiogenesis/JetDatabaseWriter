@@ -31,7 +31,7 @@ $mapped = @{}
 $traitPattern = '\[Trait\("CveAnalogue", "(?<cve>CVE-\d{4}-\d+)"\)\](?=\s*(?:\[Trait\("CveAnalogue", "CVE-\d{4}-\d+"\)\]\s*)*public\s+(?:async\s+)?(?:Task|ValueTask|void)\s+(?<method>\w+)\s*\()'
 function Get-TestSource {
     $directories = [Collections.Generic.Stack[string]]::new()
-    $directories.Push((Join-Path $repoRoot 'JetDatabaseWriter.Tests'))
+    $directories.Push((Join-Path $repoRoot 'tests/JetDatabaseWriter.Tests'))
     while ($directories.Count -gt 0) {
         $directory = $directories.Pop()
         foreach ($file in [IO.Directory]::EnumerateFiles($directory, '*.cs')) { $file }
