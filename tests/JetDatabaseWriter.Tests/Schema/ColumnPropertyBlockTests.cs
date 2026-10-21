@@ -384,6 +384,74 @@ public class ColumnPropertyBlockTests
     }
 
     [Fact]
+    public void RoundTrip_EmptyNamePoolChunks_KeepActiveDictionaryAndRemainEmptyAfterEdits()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        using var stream = new MemoryStream();
+        WriteMagic(stream, mr2: true);
+        WriteChunk(stream, 0x0080, BuildNamePoolPayload(["Description"]));
+        WriteChunk(stream, 0x0080, []);
+        WriteChunk(stream, 0x0001, BuildPropertyBlockPayload("A", [new SyntheticEntry(0, ColumnType.TextType, 0, Encoding.Unicode.GetBytes("Keep"))]));
+        WriteChunk(stream, 0x0080, []);
+        WriteChunk(stream, 0x0001, BuildPropertyBlockPayload("B", [new SyntheticEntry(0, ColumnType.TextType, 0, Encoding.Unicode.GetBytes("Other"))]));
+        WriteChunk(stream, 0x0080, []);
+        byte[] original = stream.ToArray();
+        ColumnPropertyBlock parsed = Assert.IsType<ColumnPropertyBlock>(ColumnPropertyBlock.Parse(original, format));
+        Assert.Equal(original, parsed.ToBytes(format));
+        Assert.Equal("Keep", parsed.FindTarget("A")!.GetTextValue("Description", format));
+        Assert.Equal("Other", parsed.FindTarget("B")!.GetTextValue("Description", format));
+        var builder = ColumnPropertyBlockBuilder.FromBlock(parsed);
+        builder.RenameTarget("A", "Renamed");
+        builder.GetOrAddTarget("B").AddByte("NewProperty", 23);
+        builder.GetOrAddTarget("New").AddText("Description", "Added", format);
+        ColumnPropertyBlock edited = Assert.IsType<ColumnPropertyBlock>(ColumnPropertyBlock.Parse(builder.ToBytes(format), format));
+        Assert.Equal("Keep", edited.FindTarget("Renamed")!.GetTextValue("Description", format));
+        Assert.Equal(new byte[] { 23 }, edited.FindTarget("B")!.Find("NewProperty")!.Value);
+        Assert.Equal("Added", edited.FindTarget("New")!.GetTextValue("Description", format));
+        Assert.Equal(["Description", "NewProperty"], Assert.IsType<string[]>(edited.SourceChunks[0].Names));
+        foreach (int chunk in new[] { 1, 3, 5 })
+        {
+            Assert.Empty(Assert.IsType<string[]>(edited.SourceChunks[chunk].Names));
+            Assert.Empty(edited.SourceChunks[chunk].Payload);
+        }
+    }
+
+    [Fact]
+    public void RoundTrip_EmptyOnlyNamePools_AddingPropertiesPutsDictionaryBeforeEmptyChunks()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        using var stream = new MemoryStream();
+        WriteMagic(stream, mr2: true);
+        WriteChunk(stream, 0x0080, []);
+        WriteChunk(stream, 0x0080, []);
+        ColumnPropertyBlock parsed = Assert.IsType<ColumnPropertyBlock>(ColumnPropertyBlock.Parse(stream.ToArray(), format));
+        Assert.Equal(stream.ToArray(), parsed.ToBytes(format));
+        var builder = ColumnPropertyBlockBuilder.FromBlock(parsed);
+        builder.GetOrAddTableTarget().AddText("ValidationRule", "[Id] > 0", format);
+        ColumnPropertyBlock edited = Assert.IsType<ColumnPropertyBlock>(ColumnPropertyBlock.Parse(builder.ToBytes(format), format));
+        Assert.Equal(["ValidationRule"], Assert.IsType<string[]>(edited.SourceChunks[0].Names));
+        Assert.Empty(Assert.IsType<string[]>(edited.SourceChunks[1].Names));
+        Assert.Empty(Assert.IsType<string[]>(edited.SourceChunks[2].Names));
+        Assert.Equal("[Id] > 0", edited.FindTableTarget()!.GetTextValue("ValidationRule", format));
+    }
+
+    [Fact]
+    public void FindTableProperty_DoesNotCombineSplitTableTargets()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        byte[] bytes = BuildBlob(
+            magicMr2: true,
+            ["ValidationRule", "ValidationText"],
+            [
+                new SyntheticBlock(string.Empty, 0x0000, [new SyntheticEntry(0, ColumnType.TextType, 0, Encoding.Unicode.GetBytes("[Id] > 0"))]),
+                new SyntheticBlock(string.Empty, 0x0000, [new SyntheticEntry(1, ColumnType.TextType, 0, Encoding.Unicode.GetBytes("ignored"))]),
+            ]);
+        ColumnPropertyBlock parsed = Assert.IsType<ColumnPropertyBlock>(ColumnPropertyBlock.Parse(bytes, format));
+        Assert.Equal("[Id] > 0", parsed.FindPropertyTarget(string.Empty, "ValidationRule")!.GetTextValue("ValidationRule", format));
+        Assert.Null(parsed.FindPropertyTarget(string.Empty, "ValidationText"));
+    }
+
+    [Fact]
     public void RoundTrip_MagicOnly_KeepsPresentValue()
     {
         var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);

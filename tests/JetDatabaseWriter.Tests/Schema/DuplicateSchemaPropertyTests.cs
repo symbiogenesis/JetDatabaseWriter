@@ -152,7 +152,15 @@ public sealed class DuplicateSchemaPropertyTests
             Assert.Equal($"[{expectedSource}] + 1", keep.DefaultValueExpression);
             Assert.Equal($"[{expectedSource}] > 0", keep.ValidationRuleExpression);
             Assert.Equal($"[{expectedSource}] * 2", Assert.Single(await reader.GetColumnMetadataAsync("T", Ct), column => column.Name == "Calc").CalculationExpression);
-            Assert.Equal($"[{expectedSource}] > 0", Assert.IsType<TableValidationRule>(await reader.GetTableValidationRuleAsync("T", Ct)).Expression);
+            TableValidationRule? tableRule = await reader.GetTableValidationRuleAsync("T", Ct);
+            if (splitTargets)
+            {
+                Assert.Null(tableRule);
+            }
+            else
+            {
+                Assert.Equal($"[{expectedSource}] > 0", Assert.IsType<TableValidationRule>(tableRule).Expression);
+            }
         }
 
         stream.Position = 0;

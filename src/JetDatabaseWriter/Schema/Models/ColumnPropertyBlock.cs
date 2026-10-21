@@ -120,9 +120,15 @@ internal sealed class ColumnPropertyBlock
             switch (chunkType)
             {
                 case ColumnPropertyChunkType.NamePool:
-                    nameTable.Clear();
-                    ReadNamePool(blob, payloadStart, payloadLen, stringEncoding, nameTable);
-                    sourceNames = nameTable.ToArray();
+                    var poolNames = new List<string>();
+                    ReadNamePool(blob, payloadStart, payloadLen, stringEncoding, poolNames);
+                    sourceNames = poolNames.ToArray();
+                    if (poolNames.Count > 0)
+                    {
+                        nameTable.Clear();
+                        nameTable.AddRange(poolNames);
+                    }
+
                     sourcePayload = blob.AsSpan(payloadStart, payloadLen).ToArray();
                     break;
 
@@ -199,12 +205,18 @@ internal sealed class ColumnPropertyBlock
         return null;
     }
 
-    /// <summary>Finds the first target carrying a property across repeated target blocks.</summary>
+    /// <summary>Finds a property target; native table metadata comes only from its first empty-name block.</summary>
     /// <param name="targetName">The table or column target name.</param>
     /// <param name="propertyName">The property name.</param>
     /// <returns>The matching target, or null when the property is absent.</returns>
     internal ColumnPropertyTarget? FindPropertyTarget(string targetName, string propertyName)
     {
+        if (targetName.Length == 0)
+        {
+            ColumnPropertyTarget? table = this.FindTableTarget();
+            return table?.Find(propertyName) is null ? null : table;
+        }
+
         foreach (ColumnPropertyTarget target in this.Targets)
         {
             if (string.Equals(target.Name, targetName, StringComparison.OrdinalIgnoreCase)

@@ -77,6 +77,36 @@ Payload is a sequence of length-prefixed strings until the chunk payload is cons
 ```
 
 There is **no** count field. Walk the payload until exhausted.
+DAO3.6 (Jet3) and DAO120 (Jet4/ACE) accept extra empty `0x80` chunks after
+an existing populated dictionary. Empty chunks preserve the current name
+binding. The reader retains them, and the builder leaves them empty while
+appending new names to the active populated pool. If the source has only empty
+pools, a newly needed populated dictionary precedes them.
+`ColumnPropertyBlockTests` checks exact preservation and new-target/name placement.
+`DaoPropertyMutationTests` verifies metadata, valid native insertion/deletion,
+rule enforcement and compact after property/schema edits.
+`NativePropertyVariantsTests` independently checks the Jet3 empty-chunk control.
+
+Both native engines reject the tested interleaved populated dictionaries and
+adjacent globally indexed split dictionaries before writer edits. This does
+not establish that every possible multiple-populated-pool layout is invalid.
+Replacement binding for successive populated pools still lacks a native-accepted
+specimen; that requirement remains in S4.
+
+Additional corpus checks read complete `MSysObjects.LvProp` values, including
+external chains and application/system objects, without executing stored code.
+Every inspected value in these author-distributed samples has one dictionary:
+
+| Sample | SHA-256 of extracted database |
+|---|---|
+| [ViewLvFields v1.2](https://www.isladogs.co.uk/lv-fields/files/ViewLvFields_v1.2.zip) | `8399C609AD6A4039A6F2E3A5E8387974402AD3CAC4ECD91792F84278BC211554` |
+| [Version Control v5.0.1 ACCDA](https://github.com/joyfullservice/msaccess-vcs-addin/releases/download/v5.0.1/Version_Control_v5.0.1.zip) | `7C844E43AC11A91AB6BD3AE88F6790EC143CCD0E4C9B5CB6A0C035355F1DECF0` |
+
+DAO120-created Jet4 and ACE controls with 16 text columns and distinct
+61-character custom property names reached a 65,383-byte `LvProp` value with
+447 dictionary names. The next append failed with native "Property value is too
+large" rather than producing a second dictionary. This characterizes those
+controls, without establishing a universal native property-size limit.
 
 ### 2.4 Property-block chunk (type `0x00`)
 
@@ -132,7 +162,7 @@ Expression and descriptive properties can use Text (`0x0A`) or Memo (`0x0C`); ed
 
 ## 4. Property-block subtype variation
 
-mdbtools accepts chunk types `0x00`, `0x01`, and `0x02` as property blocks and treats all three identically. The exact meaning of the subtype is unconfirmed — it may distinguish table vs column vs index property blocks — but it is reverse-engineered and neither mdbtools nor Jackcess depends on (or documents) the distinction.
+The current [mdbtools notes](https://github.com/mdbtools/mdbtools/blob/dev/HACKING.md#properties) and [Jackcess model](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/PropertyMaps.java) identify `0x00` as the object/table, `0x01` as a column and `0x02` as an index. Jackcess distinguishes maps by both name and subtype because an index can share a column name. DAO3.6 Jet3 and DAO120 Jet4/ACE controls independently create a column and an index both named Score with distinct Description/SharedCustom values. Native serialization emits separate `0x01` and `0x02` targets in one shared dictionary, retains their separate values through native edits and compact, and corroborates that subtype distinction. Name-only library lookup/projection still cannot safely preserve every same-name index target during column edits (S7). Arbitrary synthetic subtype substitutions have no established native acceptance.
 
 The 2026-05-11 DAO FK baseline found that programmatic DAO table creation emits column property blocks with subtype `0x01` for the simple Short Text / Long / AutoNumber schema under test. Subtype `0x00` remains readable, but `0x01` is the closer DAO shape for newly-authored column targets.
 
@@ -160,7 +190,7 @@ These LvProp differences were real DAO deltas, but matching them was not suffici
 
 Observed linked-table facts:
 
-- The ODBC Type 4 fixture row stores a 6,465-byte `MR2\0` `LvProp` payload with 21 parsed targets, no unknown chunks, and a table-level `NameMap` property. The parser/builder pair retains opaque inner headers, raw name-pool bytes and indices, entry padding and source chunk positions. Guarded DAO120 checks accept edited single-pool Jet4/ACE output with nonzero entry padding and duplicate/unused names, including rule enforcement and Compact & Repair. These added bytes are synthetic variants of DAO-created sources. A second identical name pool causes DAO120 to omit the table rule and refuse insertion as corrupt before writer edits, so library multi-pool preservation tests do not establish native acceptance; Microsoft-authored or native-accepted multiple-pool layouts and Jet3 edits remain unverified.
+- The ODBC Type 4 fixture row stores a 6,465-byte `MR2\0` `LvProp` payload with 21 parsed targets, no unknown chunks, and a table-level `NameMap` property. The parser/builder pair retains opaque inner headers, raw name-pool bytes and indices, entry padding and source chunk positions. Guarded DAO120 checks accept edited single-pool Jet4/ACE output with nonzero entry padding and duplicate/unused names, including rule enforcement and Compact & Repair. These added bytes are synthetic variants of DAO-created sources. Native empty-pool and repeated-target controls are described in sections 2.3 and 8. Multiple populated pools remain unverified.
 - The linked Access Type 6 comparison fixture also stores a real `MR2\0` cache in this older Access-authored Jackcess corpus, but DAO-authored Access-file and text links are separately observed to tolerate null `Lv`/`LvProp`/`LvModule`/`LvExtra` cache columns.
 - `NameMap` is `dataType = 0x0B` and remains partly opaque. The probe extracts recognizable UTF-16 string runs for human inspection, while the writer now synthesizes a conservative generated `NameMap` with table/column GUID records and source table/column names. The generated payload is parseable and structurally useful, but it is not expected to be byte-identical to Access-authored ODBC caches.
 - Linked-cache `GUID` properties appear as `dataType = 0x09` Binary with 16-byte GUID payloads, not `dataType = 0x0F`.
@@ -188,7 +218,7 @@ AddColumn, DropColumn and RenameColumn rebuild a table and write its blob again.
 - The table-level block keeps its position and every entry except `NameMap`, which is dropped.
 - A dropped column's block is removed, and a renamed column's block takes the new name, keeping its chunk type and entries.
 - A block that names no column is kept, unless a column of the rebuilt table takes its name.
-- A surviving column keeps every entry byte for byte, except a property the writer models (one [`JetExpressionConverter.ApplyColumn`](../../src/JetDatabaseWriter/Schema/JetExpressionConverter.cs) emits: `DefaultValue`, `ValidationRule`, `ValidationText`, `Description`, `Required`, `AllowZeroLength`, `Expression`, `ResultType`) whose value the rewrite changes, such as an expression that names a renamed column. That entry takes the new value in place, keeping its data type when both are text (Access stores `DefaultValue`, `ValidationRule` and `Expression` as Memo, `0x0C`), DDL flag, padding, original name index and position. Table-rule replacement updates every equivalent repeated rule/text entry across all table targets, retaining each entry's metadata; removal clears every matching rule/text entry. Contradictory original repeats refuse before writing. Modeled Required, default, validation and calculation properties resolve per property across repeated targets after consistency checks, so a property stored only in a later target remains active after reopen. Schema projection changes every matching entry while retaining target and source-chunk structure. Contradictory calculated Expression/ResultType repeats also refuse mutation. These repeated-entry/target layouts have synthetic library regression evidence; native acceptance remains unverified.
+- A surviving column keeps every entry byte for byte, except a property the writer models (one [`JetExpressionConverter.ApplyColumn`](../../src/JetDatabaseWriter/Schema/JetExpressionConverter.cs) emits: `DefaultValue`, `ValidationRule`, `ValidationText`, `Description`, `Required`, `AllowZeroLength`, `Expression`, `ResultType`) whose value the rewrite changes, such as an expression that names a renamed column. That entry takes the new value in place, keeping its data type when both are text (Access stores `DefaultValue`, `ValidationRule` and `Expression` as Memo, `0x0C`), DDL flag, padding, original name index and position. Table-rule replacement updates every equivalent repeated rule/text entry across all table targets, retaining each entry's metadata; removal clears every matching rule/text entry. Contradictory original repeats refuse before writing. Table metadata binds only to the first empty-name target, matching DAO3.6 and DAO120: a rule or message stored only in a later table target is inactive. Column properties currently resolve per property across repeated targets after consistency checks. Schema projection changes every matching entry while retaining target and source-chunk structure. Contradictory calculated Expression/ResultType repeats also refuse mutation. The guarded `NativePropertyVariantsTests` verify original Jet3 property edits and equivalent repeated rule/text entries and same-subtype table targets on DAO3.6 Jet3 and DAO120 Jet4/ACE sources, with native read/write, enforcement and compact after Set/Rename/Add/Drop. Its split table-target control verifies that native metadata ignores later-only text; managed table-rule reads retain that binding. The repeated layouts are synthetic variants accepted by native engines, not Microsoft-authored repeated-layout fixtures.
 - An added column gets the entries `ApplyColumn` emits for its definition.
 - Unknown chunks retain their source positions relative to surviving chunks. Existing name pools retain their raw content and placement; new names append without renumbering prior entries.
 

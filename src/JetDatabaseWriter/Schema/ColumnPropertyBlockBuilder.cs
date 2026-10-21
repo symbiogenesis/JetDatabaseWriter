@@ -214,7 +214,7 @@ internal sealed class ColumnPropertyBlockBuilder
         Encoding stringEncoding = this.sourceTextEncoding ?? format.PropertyTextEncoding;
 
         // Keep every original pool in place, including unused and duplicate names.
-        // A target uses the last pool preceding its original chunk.
+        // Empty chunks do not replace the active name pool in native Access.
         var pools = new Dictionary<int, List<string>> { [-1] = [] };
         var poolIndices = new Dictionary<int, Dictionary<string, int>> { [-1] = new(StringComparer.Ordinal) };
         var sourceTargetPools = new Dictionary<int, int>();
@@ -226,7 +226,10 @@ internal sealed class ColumnPropertyBlockBuilder
             {
                 pools.Add(chunkIndex, [.. names]);
                 poolIndices.Add(chunkIndex, IndexNames(names));
-                currentPool = chunkIndex;
+                if (names.Length > 0)
+                {
+                    currentPool = chunkIndex;
+                }
             }
             else if (chunk.UnknownIndex < 0)
             {
@@ -288,7 +291,12 @@ internal sealed class ColumnPropertyBlockBuilder
         var chunks = new List<(ColumnPropertyChunkType Type, byte[] Payload)>();
         var retainedUnknown = new HashSet<ColumnPropertyUnknownChunk>(this.UnknownChunks);
         var emittedUnknown = new HashSet<ColumnPropertyUnknownChunk>();
-        bool insertedPool = false;
+        bool insertedPool = currentPool < 0 && pools[-1].Count > 0;
+        if (insertedPool)
+        {
+            chunks.Add((ColumnPropertyChunkType.NamePool, BuildNamePoolPayload(pools[-1], stringEncoding)));
+        }
+
         for (int chunkIndex = 0; chunkIndex < this.sourceChunks.Count; chunkIndex++)
         {
             ColumnPropertySourceChunk chunk = this.sourceChunks[chunkIndex];

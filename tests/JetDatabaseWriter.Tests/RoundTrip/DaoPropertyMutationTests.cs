@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.RoundTrip;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -50,8 +51,10 @@ public sealed class DaoPropertyMutationTests
         VerifyWithDao(session, "Score", "[Score] > 0", "positive score", added: false, dropped: false);
 
         await PlantLayoutVariantsAsync(session.SourcePath, paddedEntries: true, duplicateNames: true, multiplePools: false);
+        await PlantEmptyNamePoolsAsync(session.SourcePath);
         ColumnPropertyBlock planted = await ReadPropertiesAsync(session.SourcePath);
-        ColumnPropertySourceChunk pool = Assert.Single(planted.SourceChunks, chunk => chunk.Names is not null);
+        ColumnPropertySourceChunk pool = Assert.Single(planted.SourceChunks, chunk => chunk.Names is { Length: > 0 });
+        Assert.Equal(3, planted.SourceChunks.Count(chunk => chunk.Names is { Length: 0 }));
         string[] names = Assert.IsType<string[]>(pool.Names);
         Assert.Contains("UnusedNativeCheck", names);
         Assert.Equal(2, names.Count(name => name == Constants.ColumnPropertyNames.ValidationRule));
@@ -126,6 +129,43 @@ public sealed class DaoPropertyMutationTests
         Assert.Contains("MULTIPOOL_INSERT=REFUSED", result.StdOut, StringComparison.Ordinal);
     }
 
+    [Theory(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task EmptyOnlyNamePools_AddingRuleKeepsNativeBinding(DatabaseFormat format)
+    {
+        await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.EmptyPools", databaseExtension: format == DatabaseFormat.Jet4Mdb ? ".mdb" : ".accdb");
+        CreateNativeTable(session, format);
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(session.SourcePath, cancellationToken: Ct))
+        {
+            CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("PropertyVariants", Ct));
+            ColumnPropertyBlock original = Assert.IsType<ColumnPropertyBlock>(await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct));
+            await using var stream = new MemoryStream();
+            await using var writer = new BinaryWriter(stream, Encoding.Unicode, leaveOpen: true);
+            writer.Write(original.Magic);
+            WriteChunk(writer, ColumnPropertyChunkType.NamePool, []);
+            WriteChunk(writer, ColumnPropertyChunkType.NamePool, []);
+            await harness.Services.CatalogWriter.UpdateTablePropertiesAsync("PropertyVariants", entry.TDefPage, stream.ToArray(), cancellationToken: Ct);
+        }
+
+        const string insertScript = """
+            $db.Execute('INSERT INTO [PropertyVariants] ([Id], [Score]) VALUES (99, 2)', 128)
+            $db.Execute('DELETE FROM [PropertyVariants] WHERE [Id] = 99', 128)
+            Write-Output "RULE=[$($db.TableDefs('PropertyVariants').ValidationRule)]"
+            """;
+        AccessRoundTripEnvironment.CompactResult baseline = session.RunDaoDatabaseScript(session.SourcePath, insertScript, DaoTimeout);
+        AssertDaoSucceeded(baseline);
+        Assert.Contains("RULE=[]", baseline.StdOut, StringComparison.Ordinal);
+        await MutateAsync(session.SourcePath, WriteMode.Direct, writer => writer.SetTableValidationRuleAsync("PropertyVariants", new TableValidationRule("[Score] > 0", "positive"), Ct));
+        AccessRoundTripEnvironment.CompactResult edited = session.RunDaoDatabaseScript(session.SourcePath, insertScript, DaoTimeout);
+        AssertDaoSucceeded(edited);
+        Assert.Contains("RULE=[[Score] > 0]", edited.StdOut, StringComparison.Ordinal);
+        session.RunDaoCompact();
+    }
+
     private static void CreateNativeTable(AccessRoundTripSession session, DatabaseFormat format)
     {
         string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
@@ -179,6 +219,8 @@ public sealed class DaoPropertyMutationTests
                 $rs.Fields({{score}}).Value = 2
                 $rs.Update()
             } finally { $rs.Close() }
+            $db.Execute('INSERT INTO [PropertyVariants] ([Id], [{{scoreColumn}}]) VALUES (99, 2)', 128)
+            $db.Execute('DELETE FROM [PropertyVariants] WHERE [Id] = 99', 128)
             $negativeAccepted = $false
             try {
                 $db.Execute('INSERT INTO [PropertyVariants] ([Id], [{{scoreColumn}}]) VALUES (-1, -1)', 128)
@@ -206,6 +248,30 @@ public sealed class DaoPropertyMutationTests
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(path, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("PropertyVariants", Ct));
         return Assert.IsType<ColumnPropertyBlock>(await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct));
+    }
+
+    private static async Task PlantEmptyNamePoolsAsync(string path)
+    {
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(path, cancellationToken: Ct);
+        CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("PropertyVariants", Ct));
+        ColumnPropertyBlock original = Assert.IsType<ColumnPropertyBlock>(await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct));
+        byte[] bytes = Assert.IsType<byte[]>(original.ToBytes(original.Format));
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(bytes.AsMemory(0, sizeof(uint)), Ct);
+        int chunkIndex = 0;
+        for (int offset = sizeof(uint); offset < bytes.Length; chunkIndex++)
+        {
+            int length = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));
+            await stream.WriteAsync(bytes.AsMemory(offset, length), Ct);
+            offset += length;
+            if (chunkIndex < 2 || offset == bytes.Length)
+            {
+                byte[] emptyPool = [6, 0, 0, 0, 0x80, 0];
+                await stream.WriteAsync(emptyPool, Ct);
+            }
+        }
+
+        await harness.Services.CatalogWriter.UpdateTablePropertiesAsync("PropertyVariants", entry.TDefPage, stream.ToArray(), cancellationToken: Ct);
     }
 
     private static async Task PlantLayoutVariantsAsync(string path, bool paddedEntries, bool duplicateNames, bool multiplePools)
@@ -268,7 +334,13 @@ public sealed class DaoPropertyMutationTests
         for (int index = 0; index < originalPools.Length; index++)
         {
             string[] names = Assert.IsType<string[]>(originalPools[index].Names);
-            Assert.Equal(names, Assert.IsType<string[]>(editedPools[index].Names).Take(names.Length));
+            string[] editedNames = Assert.IsType<string[]>(editedPools[index].Names);
+            Assert.Equal(names, editedNames.Take(names.Length));
+            if (names.Length == 0)
+            {
+                Assert.Empty(editedNames);
+                Assert.Equal(originalPools[index].Payload, editedPools[index].Payload);
+            }
         }
 
         foreach (ColumnPropertyTarget originalTarget in before.Targets)
