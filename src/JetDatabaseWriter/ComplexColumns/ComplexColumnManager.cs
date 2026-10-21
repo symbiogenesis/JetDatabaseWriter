@@ -1343,135 +1343,67 @@ internal sealed class ComplexColumnManager(
     /// <param name="newColumnName">The new column name.</param>
     /// <param name="complexId">The complex id.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    public async ValueTask RenameComplexColumnArtifactsAsync(string oldColumnName, string newColumnName, int complexId, CancellationToken cancellationToken)
+    public ValueTask RenameComplexColumnArtifactsAsync(string oldColumnName, string newColumnName, int complexId, CancellationToken cancellationToken)
+        => this.RewriteComplexMetadataAsync(complexId, "ColumnName", newColumnName, oldColumnName, cancellationToken);
+
+    public ValueTask UpdateComplexColumnParentTableIdAsync(int complexId, int parentTdefPage, CancellationToken cancellationToken)
+        => this.RewriteComplexMetadataAsync(complexId, "ConceptualTableID", parentTdefPage, oldColumnName: null, cancellationToken);
+
+    private async ValueTask RewriteComplexMetadataAsync(int complexId, string assignedColumn, object value, string? oldColumnName, CancellationToken cancellationToken)
     {
-        long msysCxPg = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        if (msysCxPg == 0)
+        const string tableName = Constants.SystemTableNames.ComplexColumns;
+        long page = await catalogRows.FindSystemTableTdefPageAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (page == 0)
         {
             return;
         }
 
-        TableDef msysCxDef = await this.tableDefs.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
-        ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
-        if (nameCol == null || cxIdCol == null)
+        TableDef definition = await this.tableDefs.ReadRequiredTableDefAsync(page, tableName, cancellationToken).ConfigureAwait(false);
+        int idIndex = definition.FindColumnIndex("ComplexID");
+        int assignedIndex = definition.FindColumnIndex(assignedColumn);
+        int nameIndex = definition.FindColumnIndex("ColumnName");
+        if (idIndex < 0 || assignedIndex < 0 || (oldColumnName is not null && nameIndex < 0))
         {
             return;
         }
 
-        var matched = new List<(RowLocation Loc, object[] Values)>();
-        await this.ownedPages.ForEachLiveTableRowAsync(
-            msysCxPg,
-            (row, _) =>
+        var replacements = new List<(LocatedRow Original, object[] Values, IReadOnlyDictionary<int, byte[]>? FixedText)>();
+        foreach (LocatedRow original in await snapshots.ReadRowsAsync(page, cancellationToken).ConfigureAwait(false))
+        {
+            if (original.Values[idIndex] is not int id || id != complexId
+                || (oldColumnName is not null && !string.Equals(original.Values[nameIndex] as string, oldColumnName, StringComparison.OrdinalIgnoreCase)))
             {
-                string rowName = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
-                if (!string.Equals(rowName, oldColumnName, StringComparison.OrdinalIgnoreCase))
-                {
-                    return new ValueTask<bool>(true);
-                }
+                continue;
+            }
 
-                string idText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
-                if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
-                {
-                    return new ValueTask<bool>(true);
-                }
-
-                object[] values = new object[msysCxDef.Columns.Count];
-                for (int i = 0; i < values.Length; i++)
-                {
-                    string text = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, msysCxDef.Columns[i]);
-                    values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
-                }
-
-                msysCxDef.SetValueByName(values, "ColumnName", newColumnName);
-                matched.Add((row.Location, values));
-                return new ValueTask<bool>(true);
-            },
-            cancellationToken).ConfigureAwait(false);
-
-        foreach ((RowLocation loc, object[] _) in matched)
-        {
-            await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, msysCxDef, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+            object[] values = (object[])original.Values.Clone();
+            values[assignedIndex] = value;
+            IReadOnlyDictionary<int, byte[]>? fixedText = original.GetPreservedFixedText(values, [assignedIndex]);
+            _ = tableRows.EncodeRow(definition, values, fixedText);
+            replacements.Add((original, values, fixedText));
         }
 
-        foreach ((RowLocation _, object[] values) in matched)
-        {
-            await indexes.InsertSystemRowAndMaintainAsync(
-                msysCxPg,
-                msysCxDef,
-                Constants.SystemTableNames.ComplexColumns,
-                values,
-                updateTDefRowCount: false,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-
-        if (matched.Count > 0)
-        {
-            await indexes.MaintainIndexesAsync(msysCxPg, msysCxDef, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-            this.catalog.Invalidate();
-        }
-    }
-
-    public async ValueTask UpdateComplexColumnParentTableIdAsync(int complexId, int parentTdefPage, CancellationToken cancellationToken)
-    {
-        long msysCxPg = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        if (msysCxPg == 0)
+        if (replacements.Count == 0)
         {
             return;
         }
 
-        TableDef msysCxDef = await this.tableDefs.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-        ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
-        if (cxIdCol == null)
+        var deleted = new List<(RowLocation Loc, object[] Row)>(replacements.Count);
+        var inserted = new List<(RowLocation Loc, object[] Row)>(replacements.Count);
+        foreach ((LocatedRow original, _, _) in replacements)
         {
-            return;
+            await tableRows.MarkRowDeletedAsync(original.Location.PageNumber, original.Location.RowIndex, definition, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+            deleted.Add((original.Location, original.Values));
         }
 
-        var matched = new List<(RowLocation Loc, object[] Values)>();
-        await this.ownedPages.ForEachLiveTableRowAsync(
-            msysCxPg,
-            (row, _) =>
-            {
-                string idText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
-                if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
-                {
-                    return new ValueTask<bool>(true);
-                }
-
-                object[] values = new object[msysCxDef.Columns.Count];
-                for (int i = 0; i < values.Length; i++)
-                {
-                    string text = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, msysCxDef.Columns[i]);
-                    values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
-                }
-
-                msysCxDef.SetValueByName(values, "ConceptualTableID", parentTdefPage);
-                matched.Add((row.Location, values));
-                return new ValueTask<bool>(true);
-            },
-            cancellationToken).ConfigureAwait(false);
-
-        foreach ((RowLocation loc, object[] _) in matched)
+        foreach ((_, object[] values, IReadOnlyDictionary<int, byte[]>? fixedText) in replacements)
         {
-            await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, msysCxDef, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+            RowLocation location = await tableRows.InsertRowDataLocAsync(page, definition, values, updateTDefRowCount: false, fixedTextBytes: fixedText, cancellationToken).ConfigureAwait(false);
+            inserted.Add((location, values));
         }
 
-        foreach ((RowLocation _, object[] values) in matched)
-        {
-            await indexes.InsertSystemRowAndMaintainAsync(
-                msysCxPg,
-                msysCxDef,
-                Constants.SystemTableNames.ComplexColumns,
-                values,
-                updateTDefRowCount: false,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-
-        if (matched.Count > 0)
-        {
-            await indexes.MaintainIndexesAsync(msysCxPg, msysCxDef, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
-            this.catalog.Invalidate();
-        }
+        _ = await indexes.MaintainSystemTableIndexesIncrementallyAsync(page, definition, tableName, inserted, deleted, cancellationToken).ConfigureAwait(false);
+        this.catalog.Invalidate();
     }
 
     /// <summary>

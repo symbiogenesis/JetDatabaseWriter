@@ -1,13 +1,13 @@
 {
   "version": 1,
   "analyzer": "InferSharp v1.5",
-  "reviewedRevision": "189a915a7894c00c93db1dd01272309de8f46276",
+  "reviewedRevision": "83195d631cce8406894c0fb4784345096c4ce165",
   "sources": {
     "src/JetDatabaseWriter/AccessDatabaseEncryption.cs": "f5cc1542ee78302e997859ef20cbc63873d957415c6643784c0a23112439c5a8",
     "src/JetDatabaseWriter/AccessReader.cs": "bac7ee46dc75b6bd845b72dfa95e6c012c1c5a286b2dc9333aa2ca6e9b3d42f6",
     "src/JetDatabaseWriter/Catalog/CatalogReader.cs": "6cbff8798b496372086ddde78f3e7e5d9b405a5d1e20bc4bcb2f4c56b87a33d1",
     "src/JetDatabaseWriter/Catalog/TableCatalog.cs": "2dd1c1764ce8a68a6863e2347a0eb0635685d8d90977befd7d0f4256014382f6",
-    "src/JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs": "4ac465cb16d3916fa18b8c061e86af9b42585a8a62de924081bb82f3e47e9aa3",
+    "src/JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs": "f9851783686e2ba753b2b0c5578dd021c081fb40b8848d3739950481700619e4",
     "src/JetDatabaseWriter/DatabaseFile.cs": "6e7aec4d0282d11554763f8568d1ae3f2e80921bf10a907a1c7ae67920d04536",
     "src/JetDatabaseWriter/Encryption/OfficeCryptoStandard.cs": "df4ed1f39d8e0e5053601db56328a9b7f6ce9c60d0fa5417413a4f1809fea392",
     "src/JetDatabaseWriter/Mapping/MaterializerCache.cs": "7867d93830aed211d83fcf4567c47f7c507a342fa7cce720e1f05c637f8552cf",

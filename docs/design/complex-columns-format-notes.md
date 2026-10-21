@@ -86,6 +86,8 @@ The rows above are in the catalog's logical column order; the `fixed_off` values
 
 `ComplexID` is an AutoNumber column. The `MSysComplexColumns` TDEF counter at offset 20 holds the last ID handed out, including dropped columns: 1 in `ComplexFields.accdb`, 7 in both `complexDataTest*.accdb` (largest remaining ID 4) and 3 in `NorthwindTraders.accdb`. `GetNextComplexIdAsync` validates the required descriptor and stored IDs against that counter and refuses inconsistent metadata instead of recovering an ID from existing rows. A new column takes counter + 1, and `InsertMSysComplexColumnsRowAsync` raises the counter after insertion. Transaction rollback discards that raise with the other page writes. Native-fixture and corruption tests cover allocation, dropping columns, rollback and refusal without mutation.
 
+Complex-column renames and parent-identity rebinding prepare typed catalog replacements before writing. Unassigned values retain their CLR types, empty strings, Nulls and fixed Text bytes. Each replacement batch clears the old row payloads and updates the system indexes once through the incremental system-table path; an unsupported index mutation refuses the operation instead of rebuilding the catalog.
+
 There is **no** `ParentTable` / `ParentColumn` column in `MSysComplexColumns`.
 Parent complex descriptors require positive, unique IDs. The reader joins them
 to `ComplexID` and verifies both the parent `ConceptualTableID` and column name.
