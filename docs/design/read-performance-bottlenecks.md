@@ -105,7 +105,9 @@ release-quality benchmark results justify reopening a specific area.
 - `RowMapper<T>.Build` caches an expression-tree
   `Func<object?[], T>` that typed reads use when no direct page-to-POCO decoder
   applies (and that index and linked-table reads always use); type mismatches flow through
-  `Mapping/ValueCoercer`, which `Include`'s `RuntimeRowMapper` shares, and the
+  `Mapping/ValueCoercer`. `Include` resolves the same compiled mapper once for
+  each related table after filtering matching keys, reusing the bounded shape
+  cache and propagating setter exceptions directly. The
   `ToRow` / `Accessor` API remains available for writer-side mapping.
   One LRU cache retains at most 64 immutable row shapes per entity type across
   read, write and direct-decoder delegates. Shapes include ordered names, source

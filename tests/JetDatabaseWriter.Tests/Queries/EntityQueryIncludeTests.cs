@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Queries;
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -105,6 +106,19 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
 
         await Assert.ThrowsAsync<JetOperationException>(async () =>
             await reader.Query<JdwChild>("JdwChild").Include(c => c.Stray).ToListAsync(ct));
+    }
+
+    [Fact]
+    public async Task Include_StructWithExplicitConstructor_ThrowsTheNavigationTypeError()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        await using AccessReader reader = await OpenReaderAsync(temp, ct);
+
+        JetOperationException exception = await Assert.ThrowsAsync<JetOperationException>(async () =>
+            await reader.Query<JdwChild>("JdwChild").Include(c => c.InvalidParent).ToListAsync(ct));
+        Assert.Equal(JetErrorCode.InvalidOperationState, exception.ErrorCode);
+        Assert.Contains("concrete class", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -215,6 +229,16 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
         return temp;
     }
 
+    internal static class ValueNavigation
+    {
+        internal struct JdwParent
+        {
+            public JdwParent() => this.Id = -1;
+
+            public int Id { get; set; }
+        }
+    }
+
     internal sealed class JdwParent
     {
         public int Id { get; set; }
@@ -235,6 +259,8 @@ public sealed class EntityQueryIncludeTests(DatabaseCache db) : IClassFixture<Da
         public JdwParent? Parent { get; set; }
 
         public Nonexistent? Stray { get; set; }
+
+        public ValueNavigation.JdwParent InvalidParent { get; set; }
     }
 
 #pragma warning disable CA1812 // A navigation the include must reject; never instantiated.

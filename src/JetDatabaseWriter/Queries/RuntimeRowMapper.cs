@@ -9,6 +9,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Mapping;
+using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>
 /// Maps an <c>object?[]</c> row (keyed by column headers) onto a new instance of a
@@ -21,59 +22,30 @@ using JetDatabaseWriter.Mapping;
 [RequiresDynamicCode("LINQ queries and Include construct generic types at runtime. Use typed row readers for NativeAOT applications.")]
 internal static class RuntimeRowMapper
 {
-    private static readonly ConcurrentDictionary<Type, Func<object>> InstanceFactories = new();
     private static readonly ConcurrentDictionary<Type, Func<IList>> ListFactories = new();
 
+    private delegate Func<object?[], object> MapperFactory(IReadOnlyList<string> headers, IReadOnlyList<Type>? sourceTypes);
+
     /// <summary>
-    /// Creates an instance of <paramref name="type"/> and assigns each column to the
-    /// property <see cref="EntityMap"/> maps it to.
+    /// Gets the generic row mapper for a runtime-resolved entity type, reusing its bounded
+    /// shape cache. Binding the factory as a delegate keeps user exceptions unwrapped.
     /// </summary>
     /// <param name="type">The target POCO type (must have a parameterless constructor).</param>
-    /// <param name="headers">Column headers aligned with <paramref name="row"/>.</param>
-    /// <param name="row">The decoded row values.</param>
-    /// <returns>The populated instance.</returns>
-    /// <exception cref="InvalidCastException">A value cannot be converted to the type of the property its column maps to.</exception>
-    public static object Map(Type type, IReadOnlyList<string> headers, object?[] row)
+    /// <param name="headers">Column headers aligned with the decoded row values.</param>
+    /// <returns>The compiled row mapper.</returns>
+    /// <exception cref="JetOperationException">The generic row mapper factory cannot be reflected.</exception>
+    public static Func<object?[], object> Build(Type type, IReadOnlyList<string> headers)
     {
-        object instance = CreateInstance(type);
-        var map = EntityMap.For(type);
-
-        int count = Math.Min(headers.Count, row.Length);
-        for (int i = 0; i < count; i++)
-        {
-            if (map.FindByColumn(headers[i])?.Property is not PropertyInfo property)
-            {
-                continue;
-            }
-
-            object? value = row[i];
-            if (value is null or DBNull)
-            {
-                continue;
-            }
-
-            object? coerced = ValueCoercer.Coerce(value, property.PropertyType, headers[i], property);
-            if (coerced is not null)
-            {
-                property.SetValue(instance, coerced);
-            }
-        }
-
-        return instance;
+        MethodInfo build = typeof(RowMapper<>).MakeGenericType(type).GetMethod(
+            nameof(RowMapper<>.Build), [typeof(IReadOnlyList<string>), typeof(IReadOnlyList<Type>)])
+            ?? throw new JetOperationException(JetErrorCode.InvalidOperationState, "The generic row mapper factory could not be reflected.");
+#if NET6_0_OR_GREATER
+        MapperFactory factory = build.CreateDelegate<MapperFactory>();
+#else
+        var factory = (MapperFactory)build.CreateDelegate(typeof(MapperFactory));
+#endif
+        return factory(headers, null);
     }
-
-    internal static object CreateInstance(Type type) =>
-        InstanceFactories.GetOrAdd(type, static t =>
-        {
-            // Activator is banned in this project, so construction goes through a
-            // compiled new T() expression factory (as the generic row mapper does).
-            if (t.IsAbstract || t.IsInterface || t.GetConstructor(Type.EmptyTypes) is null)
-            {
-                throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Type '{t}' must be a concrete class with a parameterless constructor.");
-            }
-
-            return Expression.Lambda<Func<object>>(Expression.Convert(Expression.New(t), typeof(object))).Compile();
-        })();
 
     internal static IList CreateList(Type elementType) =>
         ListFactories.GetOrAdd(elementType, static et =>

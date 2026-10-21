@@ -266,6 +266,7 @@ internal static class IncludeLoader
         CancellationToken cancellationToken)
     {
         var map = new Dictionary<string, object>(StringComparer.Ordinal);
+        Func<object?[], object>? mapper = null;
         await foreach ((string key, string[] headers, object[] row) in ReadMatchesAsync(
             metadata, table, keyColumns, distinctKeys, firstPerKey: true, cancellationToken).ConfigureAwait(false))
         {
@@ -275,7 +276,8 @@ internal static class IncludeLoader
                 continue;
             }
 
-            map.Add(key, RuntimeRowMapper.Map(type, headers, row));
+            mapper ??= RuntimeRowMapper.Build(type, headers);
+            map.Add(key, mapper(row));
             if (map.Count == distinctKeys.Count)
             {
                 break;
@@ -294,6 +296,7 @@ internal static class IncludeLoader
         CancellationToken cancellationToken)
     {
         var map = new Dictionary<string, List<object>>(StringComparer.Ordinal);
+        Func<object?[], object>? mapper = null;
         await foreach ((string key, string[] headers, object[] row) in ReadMatchesAsync(
             metadata, table, keyColumns, distinctKeys, firstPerKey: false, cancellationToken).ConfigureAwait(false))
         {
@@ -303,7 +306,8 @@ internal static class IncludeLoader
                 map[key] = list;
             }
 
-            list.Add(RuntimeRowMapper.Map(type, headers, row));
+            mapper ??= RuntimeRowMapper.Build(type, headers);
+            list.Add(mapper(row));
         }
 
         return map;
@@ -753,7 +757,7 @@ internal static class IncludeLoader
 
     private static void EnsureConstructible(Type type, PropertyInfo navigation)
     {
-        if (type.IsAbstract || type.IsInterface || type.GetConstructor(Type.EmptyTypes) is null)
+        if (!type.IsClass || type.IsAbstract || type.GetConstructor(Type.EmptyTypes) is null)
         {
             throw new JetOperationException(
                 JetErrorCode.InvalidOperationState,
