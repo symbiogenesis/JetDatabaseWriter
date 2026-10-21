@@ -16,7 +16,7 @@ using Xunit;
 
 /// <summary>
 /// Round-trip tests for the leaf-merge (leaf merge on delete underflow) path
-/// inside <c>IndexBTreeEditor.TrySurgicalCrossLeafMaintainAsync</c>. When a
+/// inside <c>IndexBTreeEditor.TrySurgicalMultiLevelMaintainAsync</c>. When a
 /// per-leaf splice empties the affected leaf, the cross-leaf path drops
 /// the leaf from its parent intermediate and patches the leaf-sibling
 /// chain to skip it. Successful maintenance reclaims detached pages after

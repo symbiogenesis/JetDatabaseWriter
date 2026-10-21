@@ -12,7 +12,7 @@ using Xunit;
 
 /// <summary>
 /// Round-trip tests for the cross-leaf surgical multi-level mutation path in
-/// <c>AccessWriter.TrySurgicalCrossLeafMaintainAsync</c>. The in-place leaf rewrite /
+/// <c>IndexBTreeEditor.TrySurgicalMultiLevelMaintainAsync</c>. The in-place leaf rewrite /
 /// single-leaf surgical path bails the moment two change-set keys
 /// descend to different leaves; cross-leaf surgical picks up that case by grouping the
 /// change-set per target leaf and aggregating per-parent-intermediate
@@ -29,6 +29,35 @@ using Xunit;
 public sealed class IndexSurgicalCrossLeafMutationTests
 {
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClusteredBatches_KeepTheExistingIndexPages(bool crossLeaf)
+    {
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
+        {
+            await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int))], [new IndexDefinition("IX_Id", "Id")], this.ct);
+            await writer.InsertRowsAsync("T", Enumerable.Range(0, 1000).Select(id => new object?[] { id * 100 }), this.ct);
+        }
+
+        int indexPages = CountIndexPages(stream.ToArray());
+        int[] additions = crossLeaf ? [.. Enumerable.Range(1, 16), .. Enumerable.Range(80_001, 16)] : [.. Enumerable.Range(1, 16)];
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
+        {
+            Assert.Equal(additions.Length, await writer.InsertRowsAsync("T", additions.Select(id => new object?[] { id }), this.ct));
+        }
+
+        Assert.Equal(indexPages, CountIndexPages(stream.ToArray()));
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
+        DataTable table = await reader.ReadTableAsync("T", cancellationToken: this.ct);
+        Assert.Equal(1000 + additions.Length, table.Rows.Count);
+        foreach (int id in additions)
+        {
+            Assert.Contains(table.Rows.Cast<DataRow>(), row => (int)row["Id"] == id);
+        }
+    }
 
     [Fact]
     public async Task CrossLeafBulkInsert_TwoLeavesNoMaxChange_AppendsZeroIndexPages()

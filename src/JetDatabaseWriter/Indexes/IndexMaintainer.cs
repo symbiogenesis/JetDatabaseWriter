@@ -2114,59 +2114,23 @@ internal sealed class IndexMaintainer(
                     }
                 }
 
-                // Surgical multi-level mutation.
-                // When every change in this batch lands on the SAME leaf and
-                // the spliced entry list either still fits one page or splits cleanly into two pages whose
-                // new summary entries fit into the parent intermediate,
-                // mutate the affected leaf
-                // (and possibly its right sibling + parent / ancestors) in
-                // place at their existing page numbers — no orphaned pages,
-                // no fresh page-range allocation. Returns true when handled,
-                // false on any bail trigger (multi-leaf change-set, leaf
-                // becomes empty, leaf needs 3+ pages, parent intermediate
-                // overflows, descent overshoots into a tail_page chain, or
-                // the encoder/IO chain hits a malformed page). The caller
-                // falls through to the bulk rebuild on false. See
-                // docs/design/index-and-relationship-format-notes.md §7.
-                bool surgicalHandled = await this.btreeEditor.TrySurgicalMultiLevelMaintainAsync(
-                    layout,
-                    tdefPage,
-                    firstDp,
-                    addEntries,
-                    removeEntries,
-                    cancellationToken).ConfigureAwait(false);
-                if (surgicalHandled)
-                {
-                    continue;
-                }
-
-                // Cross-leaf surgical mutation. When
-                // the change-set spans multiple leaves the single-leaf paths
-                // bail; group changes by target leaf and
-                // mutate each leaf in place, aggregating per-parent summary
-                // updates. Bails on underflow or parent overflow,
-                // in which case the bulk path below resnaps the tree.
+                // Link any earlier rebuilt index before the editor can install a new root.
                 if (metadata.Dirty)
                 {
-                    // This write links every tree rebuilt so far.
                     runs.MarkLinked();
                     await tdefWriter.WriteChainInPlaceAsync(metadata.Chain, cancellationToken).ConfigureAwait(false);
                     metadata.Dirty = false;
                 }
 
-                bool crossLeafHandled = await this.btreeEditor.TrySurgicalCrossLeafMaintainAsync(
-                    layout,
-                    tdefPage,
-                    firstDp,
-                    rie.FirstDpOffset,
-                    addEntries,
-                    removeEntries,
-                    cancellationToken).ConfigureAwait(false);
-                if (crossLeafHandled)
+                (bool handled, bool rootChanged) = await this.btreeEditor.TrySurgicalMultiLevelMaintainAsync(
+                    layout, tdefPage, firstDp, rie.FirstDpOffset, addEntries, removeEntries, cancellationToken).ConfigureAwait(false);
+                if (handled)
                 {
-                    // The editor may have patched this index's first_dp on
-                    // disk; pick up the chain it wrote.
-                    metadata.Chain = await tableDefs.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+                    if (rootChanged)
+                    {
+                        metadata.Chain = await tableDefs.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+                    }
+
                     continue;
                 }
 

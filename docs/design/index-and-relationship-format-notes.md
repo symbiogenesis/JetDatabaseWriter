@@ -912,25 +912,31 @@ Current helpers:
 - `IndexPageCodec.TryBuildLeafPage(layout, pageSize, parentTdef, entries, prev, next, tail)` — overload that preserves a non-root leaf's sibling-chain header fields. Returns `null` on overflow.
 - `IndexBTreeBuilder.TryBuildIntermediatePage(layout, pageSize, parentTdef, entries, prev, next, tail)` — re-emits a single `0x03` page from an arbitrary list of `(summaryKey, dataPage, dataRow, childPage)` tuples, preserving sibling-chain headers. Returns `null` on overflow.
 
-Writer-side code now lives in `IndexBTreeEditor.TrySurgicalMultiLevelMaintainAsync(layout, tdefPage, firstDp, addEntries, removeEntries, ct)` — called by `IndexMaintainer.TryMaintainIndexesIncrementalAsync` before the W4-D rebuild branch, after the W18 tail-append fast path. Pipeline:
+`IndexMaintainer.TryMaintainIndexesIncrementalAsync` calls the shared
+`IndexBTreeEditor.TrySurgicalMultiLevelMaintainAsync` planner after the tail-append
+fast path. It supplies the index root's TDEF offset as well as the encoded changes.
 
-1. **Path-capturing descent** with the FIRST change-set key (`DescendCapturingAsync`) — records `(pageNumber, pageBytes, decodedSummaryEntries, takenChildIndex)` at every intermediate level down to the target leaf. Bails on overshoot (search key `>` every summary on a page; the cursor would normally follow `tail_page`, but the surgical path needs a clean (page, child-index) pair at every level for an in-place ancestor rewrite).
-2. **Same-leaf verification** — for every other key in the change-set (`ConfirmKeyTargetsSamePath`), walk the captured path and assert each level picks the same child entry. Multi-leaf change-sets bail to W4-D.
-3. **W4-C-3 in-place leaf rewrite** — try `IndexPageCodec.TryBuildLeafPage` with the original leaf's `prev_page` / `next_page` / `tail_page`. On success, compare the new max key to the old max key:
-   - **Unchanged max** → just `WritePageAsync(targetLeafPage, rebuilt)`. Done.
-   - **Changed max** → call `PrepareAncestorReplaceWrites` to build the in-place rewrite list for the parent intermediate (replace its summary entry for this leaf with the new max). When the changed entry was the LAST on its parent, the parent's own max key changes too, so the pipeline walks up replacing each ancestor's last-entry summary until either a non-last position is reached or the root is rewritten. Bail to W4-D if any intermediate would overflow on rebuild (no recursive intermediate split this phase).
-4. **W4-C-4 leaf split** — when the spliced entry list overflows one page, `TryGreedySplitInTwo` greedy-fills a left half until overflow, then puts the remainder on the right; bails on 3+ pages. Allocates one new page at end of file for the right half, builds both halves with proper sibling pointers, calls `PrepareAncestorSplitWrites` to insert one new summary entry into the parent intermediate in place. When the parent's affected entry was its last, the right summary becomes the parent's new max and is propagated up via `PrepareAncestorReplaceWrites`. Bails on parent overflow or if the next-sibling leaf cannot be patched. Commit order: append right page → patch `leafNext.prev_page` → rewrite original leaf as left half → rewrite ancestors.
+1. Capture the first key's descent and confirm whether the remaining changes use
+   that path. The one-leaf case retains its small representation and stages the
+   spliced leaf once.
+2. If that leaf needs grouped ancestor handling, continue with its prepared splice,
+   siblings and original maximum key. General planning groups changes by target
+   leaf; clustered keys reuse captured paths instead of descending again.
+3. Stage leaf replacements, splits, merges and ancestor updates before publication.
+   The single-group and general cases share the same publication plan and commit
+   code. Catalog-specific ancestor helpers remain available separately.
+4. Publish appended pages, neighbor patches and dependent leaf/ancestor rewrites
+   before an optional root-pointer update. Reserved pages are released if planning
+   or reservation cannot complete. Pending changes to earlier index descriptors
+   are flushed before this publication can patch the TDEF.
+5. Return both whether the mutation was handled and whether its root changed.
+   The maintainer reloads TDEF bytes only after a root change.
 
-Bail triggers (caller falls through to W4-D bulk rebuild):
-
-- Multi-leaf change-set (different keys land on different leaves).
-- Leaf becomes empty after splice (W4-C-5 underflow scope).
-- 3+ page split needed.
-- Parent intermediate overflow on summary update or new entry insertion (recursive intermediate split is a future W4 sub-phase).
-- Descent overshoot (search key sorts above every summary on some intermediate; the W18 `tail_page` chain is reachable but the surgical path needs a deterministic (page, child-index) pair at every level).
-- Encoder rejects any change-set key (text outside General Legacy, etc.) — the existing W4-D pre-checks catch this before the surgical path is invoked.
-
-Side effect: `EnforceFkOnInsertAsync` and friends already passed `removeEntries` (with row pointers), but the surgical path also needs the encoded delete keys for path verification. `TryMaintainIndexesIncrementalAsync` now calls `EncodeHintEntries(deletedRows, keyColInfos)` and derives `removePtrs` from the result; existing W4-C-1/W4-C-2 and W4-D paths are unaffected (they consume only the pointer list).
+Malformed or unsupported paths, unsafe neighbor relationships and bounded-group
+refusals retain their bulk fallback. Relationship-backed indexes retain their
+separate native-interoperability rebuild policy. The phase notes below describe
+the historical split/merge extensions; the current planner shares their staging
+and publication machinery.
 
 Validation:
 
@@ -983,7 +989,7 @@ W23 caveats:
 
 ### 7.14 W4-C-6-v2 — what shipped (2026-04-27)
 
-W4-C-6-v2 closes the rightmost-leaf-merge bail in `AccessWriter.TrySurgicalCrossLeafMaintainAsync`. Before this phase, when the dead leaf was the parent intermediate's last child (`mergeParent.TakenIndex == mergeParent.Entries.Count - 1`) the cross-leaf path bailed because removing that child would shrink the parent's `tail_page` header (§4.5) and the surgical commit had no way to recompute it. After this phase the merge engages on the rightmost-child case as well, and the new `tail_page` value cascades up every captured ancestor whose own rightmost child is the parent we just modified.
+W4-C-6-v2 closes the rightmost-leaf-merge bail in `AccessWriter.TrySurgicalMultiLevelMaintainAsync`. Before this phase, when the dead leaf was the parent intermediate's last child (`mergeParent.TakenIndex == mergeParent.Entries.Count - 1`) the cross-leaf path bailed because removing that child would shrink the parent's `tail_page` header (§4.5) and the surgical commit had no way to recompute it. After this phase the merge engages on the rightmost-child case as well, and the new `tail_page` value cascades up every captured ancestor whose own rightmost child is the parent we just modified.
 
 What changed in `TryStageIntermediateRewrites` (the deepest-first intermediate-rewrite loop):
 
@@ -1018,7 +1024,7 @@ W4-C-6-v2 caveats:
 
 The new `GetEffectiveTailPageAsync(intermediatePage, overrides, rewrites, ct)` helper returns the rightmost-leaf page reachable through the supplied intermediate's subtree, consulting (in order) the per-page `intermediateTailOverrides` dictionary populated as deeper intermediates are processed in this batch, the staged `existingPageRewrites` byte map, and finally the cache-backed live page. After splitting any intermediate, both halves' tail values are recorded in `intermediateTailOverrides` so a shallower split that subsequently looks up either page picks up the post-split value rather than the now-stale live header.
 
-Mutable plumbing: the `ref nextAllocatedPageNumber` + `out long? newRootPage` parameters could not survive the conversion to async, so the new `IntermediateStagingState` class wraps both and is passed by reference through `TrySurgicalCrossLeafMaintainAsync` → `TryStageIntermediateRewritesAsync`.
+Mutable plumbing: the `ref nextAllocatedPageNumber` + `out long? newRootPage` parameters could not survive the conversion to async, so the new `IntermediateStagingState` class wraps both and is passed by reference through `TrySurgicalMultiLevelMaintainAsync` → `TryStageIntermediateRewritesAsync`.
 
 Tests: 3 new round-trip tests in [`IndexSurgicalRecursiveIntermediateSplitTests`](../../tests/JetDatabaseWriter.Tests/Indexes/IndexSurgicalRecursiveIntermediateSplitTests.cs) exercise multi-level (composite 255-byte TEXT key) trees through bulk insert + cross-leaf delete, drip-feed inserts that cascade splits up through mid-level intermediates, and delete-and-reinsert cycles. Representative ACE/Jet4 DAO CompactDatabase coverage for advanced key encodings and post-insert update/delete/insert B-tree maintenance now lives in `AdvancedIndexKeysAndBTreeMaintenance_SurviveCompactAndRepair`; byte-for-byte Access-authored parity remains tracked in §8.
 
@@ -1061,14 +1067,14 @@ Shortened logical TDEF chains no longer leave unreachable continuation pages beh
 
 ### 7.17 W4-C-8 — what shipped (2026-04-27)
 
-Closes the last remaining incremental B-tree bail. Both surgical paths (single-leaf `TrySurgicalMultiLevelMaintainAsync` and cross-leaf `TrySurgicalCrossLeafMaintainAsync`) now handle leaf and intermediate splits of arbitrary width — the previous "3+ pages → fall through to W4-D bulk rebuild" floor is gone.
+The single-leaf and grouped phases of `TrySurgicalMultiLevelMaintainAsync` handle leaf and intermediate splits of arbitrary width — the previous "3+ pages → fall through to W4-D bulk rebuild" floor is gone.
 
 What changed:
 
 - **`TryGreedySplitInTwo` → `TryGreedySplitLeafInN`** ([`AccessWriter.cs`](../../src/JetDatabaseWriter/AccessWriter.cs)). Greedy left-fill of a spliced leaf entry list; opens a new page each time the next entry would overflow the per-page payload area. Returns the full ordered page list (`Count >= 2` on success). Bails only when a single entry's encoded key + 4-byte slot offset exceeds the entire page payload area (degenerate input — same case the old 2-way splitter rejected). No artificial N-cap — Access itself splits as needed and we match.
 - **`TryGreedySplitIntermediateInN`** packs groups with the codec's incremental prefix-aware size calculation. Appending a key that shortens the shared prefix increases the stored size of every prior compressed entry; the calculation accounts for that change and the entry-start bitmask before admitting the key. Partitioning scans the input without candidate page buffers or repeated list copies. Bulk tree construction retains its uncompressed packing policy, and balanced leaf splitting measures capacity without emitting trial pages.
 - **`PrepareAncestorSplitWrites`** generalised from `(leftSummary, rightSummary)` to `(leftSummary, rightSummaries[])`. Inserts N-1 new summary entries at `path[^1].TakenIndex + 1`. When the original entry was the last on the parent, the right-most new summary is propagated upward via `PrepareAncestorReplaceWrites`.
-- **`IntermediateOp` aggregator** in `TrySurgicalCrossLeafMaintainAsync` emits one `Replace` + (N-1) `InsertAfter` ops at the same `OriginalIndex`. `ApplyIntermediateOps`'s existing declaration-order tie-break keeps the new summaries left-to-right.
+- **`IntermediateOp` aggregator** in `TrySurgicalMultiLevelMaintainAsync` emits one `Replace` + (N-1) `InsertAfter` ops at the same `OriginalIndex`. `ApplyIntermediateOps`'s existing declaration-order tie-break keeps the new summaries left-to-right.
 - **Sibling chain stitching** for both leaf and intermediate N-way splits: `pages[0]` reuses the original page number; `pages[1..N-1]` get freshly allocated page numbers. Page `i`'s `prev_page` = `pages[i-1]`, `next_page` = `pages[i+1]` (or the original `next_page` for the last page). The far-side neighbour's `prev_page` is patched to point at the LAST new page.
 - **`tail_page` cascade (§4.5)** — when the splitting page is the rightmost in any captured ancestor's subtree, the new rightmost is the LAST appended page. The existing `intermediateTailOverrides` plumbing picks this up automatically because `lastChildPage = newEntries[newEntries.Count - 1].ChildPage` now resolves to the LAST `InsertAfter` op's `NewChildPage`.
 - **Recursive intermediate split through any level** for the intermediate-side N-way too: when an N-way intermediate split has a grandparent, it emits a `Replace` + (N-1) `InsertAfter` ops on the grandparent and re-enqueues it; when there is no grandparent (the split was at the root), the new root intermediate carries N summary entries (one per split page) with `tail_page` = the LAST split page's tail.
@@ -1094,7 +1100,7 @@ What changed:
 
 - **Cascade-collapse branch in `TryStageIntermediateRewritesAsync`** ([`AccessWriter.cs`](../../src/JetDatabaseWriter/AccessWriter.cs)). When `newEntries.Count == 0`, look up `intermediateGrandparent[deepest]`, stage a `Remove` op on the grandparent at the captured `IndexInParent`, push the grandparent onto the `pending` worklist, and `continue` — successful metadata commit can reclaim the dead intermediate after excluding every currently reachable or native-map-owned page.
 - **`tail_page` lookup via `GetEffectiveTailPageAsync`** for the non-parent-of-leaf branch. When recomputing an intermediate's `tail_page` after a cascade-induced child rewrite, the previous `intermediateTailOverrides.TryGetValue(...)` lookup only found pages already staged THIS pass; deeper-up cascades read through to the live page header. The new helper consults staged overrides first, then falls back to the on-disk header — matching the W4-C-7-v2 plumbing already used on the split side.
-- **`emptyingLeaves` pre-pass in `TrySurgicalCrossLeafMaintainAsync`**. Before the per-group T8 neighbour-bail check, speculatively splice each group's leaf to discover which leaves will end up empty after the batch. A leaf whose neighbour is also marked emptying is no longer a bail trigger — neighbours that disappear together don't need cross-rewrite coordination.
+- **`emptyingLeaves` pre-pass in `TrySurgicalMultiLevelMaintainAsync`**. Before the per-group T8 neighbour-bail check, speculatively splice each group's leaf to discover which leaves will end up empty after the batch. A leaf whose neighbour is also marked emptying is no longer a bail trigger — neighbours that disappear together don't need cross-rewrite coordination.
 - **Run-boundary stitching** for contiguous emptying-leaves runs. A new pre-Phase-C pass walks each run rightward and leftward to compute the surviving outer neighbours, then patches `leafPrevPointerPatches[deadPrev] = surv` / `leafNextPointerPatches[deadNext] = survLeft` with idempotent collision handling so the surviving non-unique-key spillover chain stays consistent across the orphaned run.
 
 Tests: 3 new round-trip tests in [`IndexSurgicalCascadingIntermediateCollapseTests`](../../tests/JetDatabaseWriter.Tests/Indexes/IndexSurgicalCascadingIntermediateCollapseTests.cs):
@@ -1107,7 +1113,7 @@ Running the full 2348-test suite passes. Validation gap §8 still applies.
 
 W4-C-8+ caveats:
 
-- **The cascade-collapse branch is dormant defense-in-depth on current CRUD workloads.** The two `TrySurgicalCrossLeafMaintainAsync` bails still upstream (T8 neighbour-in-groups for partial-content boundary leaves, plus several pre-flight invariant checks) divert most cascading-underflow workloads to the W4-D bulk rebuild before reaching `TryStageIntermediateRewritesAsync`. The new code is exercised by the round-trip tests above (which validate end-to-end correctness regardless of which path runs) and is in place for any future surgical-path improvements that lift those upstream bails.
+- **The cascade-collapse branch is dormant defense-in-depth on current CRUD workloads.** The two `TrySurgicalMultiLevelMaintainAsync` bails still upstream (T8 neighbour-in-groups for partial-content boundary leaves, plus several pre-flight invariant checks) divert most cascading-underflow workloads to the W4-D bulk rebuild before reaching `TryStageIntermediateRewritesAsync`. The new code is exercised by the round-trip tests above (which validate end-to-end correctness regardless of which path runs) and is in place for any future surgical-path improvements that lift those upstream bails.
 - **Validation gap (§8):** ACE/Jet4 DAO CompactDatabase coverage now includes a representative advanced-index maintenance path in `AdvancedIndexKeysAndBTreeMaintenance_SurviveCompactAndRepair`; remaining W4-C risk is Access-authored byte-level parity for individual sub-phases rather than lack of compact automation.
 
 ### 7.19 Jet3 FK logical-index entries — what shipped (2026-10)

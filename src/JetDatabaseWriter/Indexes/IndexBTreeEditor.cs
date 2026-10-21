@@ -581,175 +581,161 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         return true;
     }
 
-    /// <summary>
-    /// Surgical single-leaf mutation: when every change in the batch lands on
-    /// the same leaf (verified by path-capturing descent) and the spliced
-    /// entries either fit one page or split N-way without overflowing the
-    /// parent intermediate, rewrites the affected leaf (and any ancestor
-    /// summaries) in place at their existing page numbers. Returns
-    /// <see langword="false"/> on any bail (multi-leaf change-set, leaf
-    /// becomes empty, parent overflow, descent overshoot into a tail-page
-    /// chain, malformed page, or encoder rejection); the caller then falls
-    /// through to the bulk rebuild.
-    /// </summary>
-    /// <param name="layout">The layout.</param>
-    /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="firstDp">The first data page.</param>
-    /// <param name="addEntries">The add entries.</param>
-    /// <param name="removeEntries">The remove entries.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<bool> TrySurgicalMultiLevelMaintainAsync(
+    /// <summary>Plans a single- or cross-leaf mutation once and publishes its validated pages.</summary>
+    /// <param name="layout">The index layout.</param>
+    /// <param name="tdefPage">The owner table definition.</param>
+    /// <param name="firstDp">The current index root.</param>
+    /// <param name="firstDpOffset">The logical TDEF offset of the root pointer.</param>
+    /// <param name="addEntries">The encoded additions.</param>
+    /// <param name="removeEntries">The encoded removals.</param>
+    /// <param name="cancellationToken">Cancels before publication and between writes.</param>
+    /// <returns>Whether maintenance completed and whether it installed a new root.</returns>
+    internal async ValueTask<(bool Handled, bool RootChanged)> TrySurgicalMultiLevelMaintainAsync(
         IndexPageLayout layout,
         long tdefPage,
         long firstDp,
+        int firstDpOffset,
         List<IndexEntry> addEntries,
         List<IndexEntry> removeEntries,
         CancellationToken cancellationToken)
     {
         if (addEntries.Count == 0 && removeEntries.Count == 0)
         {
-            return true;
+            return (true, false);
         }
 
-        LeafMutationPlan? plan = await this.PrepareMultiLevelPlanAsync(layout, tdefPage, firstDp, addEntries, removeEntries, cancellationToken).ConfigureAwait(false);
-        if (plan is null || !this.ValidateLeafMutationPlan(plan))
+        byte[] firstKey = addEntries.Count > 0 ? addEntries[0].Key : removeEntries[0].Key;
+        var path = new List<DescentStep>();
+        long leafPage = await this.DescendCapturingAsync(layout, firstDp, firstKey, path, cancellationToken).ConfigureAwait(false);
+        if (leafPage <= 0 || path.Count == 0)
         {
-            return false;
+            return (false, false);
         }
 
-        return await this.CommitLeafMutationPlanAsync(plan, cancellationToken).ConfigureAwait(false);
+        bool singleGroup = true;
+        foreach (IndexEntry entry in addEntries)
+        {
+            if (!IndexHelpers.ConfirmKeyTargetsSamePath(path, entry.Key))
+            {
+                singleGroup = false;
+                break;
+            }
+        }
+
+        foreach (IndexEntry entry in singleGroup ? removeEntries : [])
+        {
+            if (!IndexHelpers.ConfirmKeyTargetsSamePath(path, entry.Key))
+            {
+                singleGroup = false;
+                break;
+            }
+        }
+
+        IndexMutationPlan? plan;
+        if (singleGroup)
+        {
+            var removePtrs = new List<(long DataPage, byte DataRow)>(removeEntries.Count);
+            foreach (IndexEntry entry in removeEntries)
+            {
+                removePtrs.Add((entry.DataPage, entry.DataRow));
+            }
+
+            LeafSplicePlan? splice = await this.PrepareLeafSpliceAsync(layout, leafPage, addEntries, removePtrs, cancellationToken).ConfigureAwait(false);
+            if (splice is not { } prepared)
+            {
+                return (false, false);
+            }
+
+            plan = await this.PrepareSingleLeafPlanAsync(layout, tdefPage, leafPage, path, prepared, cancellationToken).ConfigureAwait(false);
+            if (plan is null)
+            {
+                var group = new LeafGroup(leafPage, path, addEntries, removePtrs);
+
+                // Parent overflow or an empty leaf needs the general ancestor planner,
+                // but its leaf bytes and splice have already been read and validated.
+                plan = await this.PrepareCrossLeafPlanAsync(layout, tdefPage, new() { [leafPage] = group }, new() { [leafPage] = prepared }, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else
+        {
+            Dictionary<long, LeafGroup>? groups = await this.GroupChangesByTargetLeafAsync(layout, firstDp, addEntries, removeEntries, new LeafGroup(leafPage, path), cancellationToken).ConfigureAwait(false);
+            plan = groups is null ? null : await this.PrepareCrossLeafPlanAsync(layout, tdefPage, groups, null, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (plan is null)
+        {
+            return (false, false);
+        }
+
+        bool handled = await this.CommitIndexMutationPlanAsync(tdefPage, firstDpOffset, plan, cancellationToken).ConfigureAwait(false);
+        return (handled, handled && plan.NewRootPage is not null);
     }
 
-    /// <summary>Prepares leaf, ancestor and neighbor bytes without publishing a link.</summary>
-    /// <param name="layout">The index page layout.</param>
-    /// <param name="tdefPage">The owner table definition.</param>
-    /// <param name="firstDp">The current root.</param>
-    /// <param name="addEntries">The encoded additions.</param>
-    /// <param name="removeEntries">The encoded removals.</param>
-    /// <param name="cancellationToken">Cancels planning before any page write.</param>
-    private async ValueTask<LeafMutationPlan?> PrepareMultiLevelPlanAsync(
-        IndexPageLayout layout,
-        long tdefPage,
-        long firstDp,
-        List<IndexEntry> addEntries,
-        List<IndexEntry> removeEntries,
-        CancellationToken cancellationToken)
+    private async ValueTask<LeafSplicePlan?> PrepareLeafSpliceAsync(IndexPageLayout layout, long leafPage, List<IndexEntry> additions, IReadOnlyList<(long DataPage, byte DataRow)> removals, CancellationToken cancellationToken)
     {
-        bool hasAdds = addEntries.Count > 0;
-        byte[] firstKey = hasAdds ? addEntries[0].Key : removeEntries[0].Key;
-        var path = new List<DescentStep>();
-        long targetLeafPage = await this.DescendCapturingAsync(layout, firstDp, firstKey, path, cancellationToken).ConfigureAwait(false);
-        if (targetLeafPage <= 0 || path.Count == 0)
-        {
-            // Either descent overshot (search key > every summary, follows
-            // tail_page) or the root was a leaf (single-root-leaf path
-            // should have caught it). Either way: bail.
-            return null;
-        }
-
-        int firstUncheckedAdd = hasAdds ? 1 : 0;
-        for (int i = firstUncheckedAdd; i < addEntries.Count; i++)
-        {
-            if (!IndexHelpers.ConfirmKeyTargetsSamePath(path, addEntries[i].Key))
-            {
-                return null;
-            }
-        }
-
-        int firstUncheckedRemove = hasAdds ? 0 : 1;
-        for (int i = firstUncheckedRemove; i < removeEntries.Count; i++)
-        {
-            if (!IndexHelpers.ConfirmKeyTargetsSamePath(path, removeEntries[i].Key))
-            {
-                return null;
-            }
-        }
-
-        byte[] leaf = await pager.ReadPageCopyAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
-
+        byte[] leaf = await pager.ReadPageCopyAsync(leafPage, cancellationToken).ConfigureAwait(false);
         if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
         {
             return null;
         }
 
-        List<IndexEntry> existingLeafEntries = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
-        if (existingLeafEntries.Count == 0)
+        List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
+        List<IndexEntry>? spliced = existing.Count == 0 ? null : IndexEntrySplicer.Splice(existing, additions, removals);
+        return spliced is null ? null : new LeafSplicePlan(spliced, IndexPageCodec.ReadPrevPage(layout, leaf), IndexPageCodec.ReadNextPage(layout, leaf), IndexPageCodec.ReadTailPage(layout, leaf), IndexPageCodec.ReadPrefixLength(layout, leaf), existing[^1].Key);
+    }
+
+    private async ValueTask<IndexMutationPlan?> PrepareSingleLeafPlanAsync(IndexPageLayout layout, long tdefPage, long leafPage, List<DescentStep> path, LeafSplicePlan splice, CancellationToken cancellationToken)
+    {
+        List<IndexEntry> spliced = splice.Spliced;
+        if (spliced.Count == 0)
         {
-            // Empty leaf — descent shouldn't normally land here. Bail.
             return null;
         }
 
-        var removePtrs = new List<(long DataPage, byte DataRow)>(removeEntries.Count);
-        for (int i = 0; i < removeEntries.Count; i++)
-        {
-            IndexEntry removeEntry = removeEntries[i];
-            removePtrs.Add((removeEntry.DataPage, removeEntry.DataRow));
-        }
-
-        List<IndexEntry>? spliced = IndexEntrySplicer.Splice(existingLeafEntries, addEntries, removePtrs);
-        if (spliced is not { Count: > 0 })
-        {
-            // Splice rejection and empty-leaf underflow are out of scope for this path.
-            return null;
-        }
-
-        long leafPrev = IndexPageCodec.ReadPrevPage(layout, leaf);
-        long leafNext = IndexPageCodec.ReadNextPage(layout, leaf);
-        long leafTail = IndexPageCodec.ReadTailPage(layout, leaf);
-        int originalPrefLen = IndexPageCodec.ReadPrefixLength(layout, leaf);
-
-        byte[] oldMaxKey = existingLeafEntries[^1].Key;
-
-        byte[]? rebuilt = IndexPageCodec.TryBuildLeafPage(
-            layout, format.PageSize, tdefPage, spliced, leafPrev, leafNext, leafTail);
-        if (rebuilt != null)
+        byte[]? rebuilt = IndexPageCodec.TryBuildLeafPage(layout, format.PageSize, tdefPage, spliced, splice.Prev, splice.Next, splice.Tail);
+        if (rebuilt is not null)
         {
             IndexEntry newLast = spliced[^1];
-            List<(long PageNum, byte[] Bytes)>? ancestorWrites = null;
-
-            if (IndexHelpers.CompareKeyBytes(newLast.Key, oldMaxKey) != 0)
+            List<(long PageNum, byte[] Bytes)>? writes = null;
+            if (IndexHelpers.CompareKeyBytes(newLast.Key, splice.OldMaxKey) != 0)
             {
-                var newSummary = new DecodedIntermediateEntry(new(newLast.Key, newLast.DataPage, newLast.DataRow), ChildPage: targetLeafPage);
-                ancestorWrites = this.PrepareAncestorReplaceWrites(layout, tdefPage, path, newSummary);
-                if (ancestorWrites is null)
+                var summary = new DecodedIntermediateEntry(newLast, leafPage);
+                List<(long PageNum, byte[] Bytes)>? ancestors = this.PrepareAncestorReplaceWrites(layout, tdefPage, path, summary);
+                if (ancestors is null)
                 {
                     return null;
                 }
+
+                writes = ancestors;
             }
 
-            return new LeafMutationPlan(pager.PageCount, [], [], targetLeafPage, rebuilt, ancestorWrites ?? []);
+            if (writes is null)
+            {
+                return new(pager.PageCount, [], [(leafPage, rebuilt)], [], null);
+            }
+
+            writes.Insert(0, (leafPage, rebuilt));
+            return new(pager.PageCount, [], writes, [], null);
         }
 
-        // Bails only if a single entry exceeds page payload area.
         SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, format.PageSize, spliced);
         if (splitPages is null)
         {
             return null;
         }
 
-        // First page reuses the original leaf page; remaining pages are
-        // freshly appended at end-of-file.
-        int splitCount = splitPages.Count;
         long firstFreshPage = pager.PageCount;
-        long[] pageNumbers = AllocateSplitPageNumbers(targetLeafPage, splitCount, firstFreshPage);
-
-        byte[][]? pageBytesAll = this.TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
-        if (pageBytesAll is null)
+        long[] pageNumbers = AllocateSplitPageNumbers(leafPage, splitPages.Count, firstFreshPage);
+        byte[][]? bytes = this.TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, splice.Prev, splice.Next, splice.PrefLen);
+        List<(long PageNum, byte[] Bytes)>? ancestorWrites = bytes is null ? null : this.PrepareAncestorSplitWrites(layout, tdefPage, path, BuildSplitSummaries(splitPages, pageNumbers));
+        if (ancestorWrites is null || bytes is null)
         {
             return null;
         }
 
-        DecodedIntermediateEntry[] summaries = BuildSplitSummaries(splitPages, pageNumbers);
-        List<(long PageNum, byte[] Bytes)>? splitAncestorWrites = this.PrepareAncestorSplitWrites(
-            layout, tdefPage, path, summaries);
-        if (splitAncestorWrites is null)
-        {
-            return null;
-        }
-
-        List<(long PageNum, byte[] Bytes)> neighborWrites = await this.StageNeighborWritesAsync(
-            layout, leafNext > 0 ? new Dictionary<long, long> { [leafNext] = pageNumbers[^1] } : [], [], cancellationToken).ConfigureAwait(false);
-        return new LeafMutationPlan(firstFreshPage, new ArraySegment<byte[]>(pageBytesAll, 1, splitCount - 1), neighborWrites, targetLeafPage, pageBytesAll[0], splitAncestorWrites);
+        List<(long PageNum, byte[] Bytes)> neighbors = await this.StageNeighborWritesAsync(layout, splice.Next > 0 ? new Dictionary<long, long> { [splice.Next] = pageNumbers[^1] } : [], [], cancellationToken).ConfigureAwait(false);
+        ancestorWrites.Insert(0, (leafPage, bytes[0]));
+        return new(firstFreshPage, new ArraySegment<byte[]>(bytes, 1, bytes.Length - 1), ancestorWrites, neighbors, null);
     }
 
     /// <summary>
@@ -1006,7 +992,9 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// </summary>
     /// <param name="leafPage">The leaf page.</param>
     /// <param name="path">Captured root-to-leaf descent path for this leaf.</param>
-    private sealed class LeafGroup(long leafPage, List<DescentStep> path)
+    /// <param name="additions">An existing single-group addition list, or null for an empty bucket.</param>
+    /// <param name="removals">Existing removal pointers, or null for an empty bucket.</param>
+    private sealed class LeafGroup(long leafPage, List<DescentStep> path, List<IndexEntry>? additions = null, List<(long DataPage, byte DataRow)>? removals = null)
     {
         /// <summary>Gets the page number of the target leaf.</summary>
         public long LeafPage { get; } = leafPage;
@@ -1015,10 +1003,10 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         public List<DescentStep> Path { get; } = path;
 
         /// <summary>Gets the encoded inserts that landed on this leaf.</summary>
-        public List<IndexEntry> Adds { get; } = [];
+        public List<IndexEntry> Adds { get; } = additions ?? [];
 
         /// <summary>Gets the row pointers whose entries should be removed from this leaf.</summary>
-        public List<(long DataPage, byte DataRow)> RemovePtrs { get; } = [];
+        public List<(long DataPage, byte DataRow)> RemovePtrs { get; } = removals ?? [];
     }
 
     /// <summary>
@@ -1040,72 +1028,19 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         int PrefLen,
         byte[] OldMaxKey);
 
-    /// <summary>
-    /// Cross-leaf surgical mutation. Invoked by
-    /// <see cref="IndexMaintainer.TryMaintainIndexesIncrementalAsync"/> after
-    /// the single-leaf path (<see cref="TrySurgicalMultiLevelMaintainAsync"/>)
-    /// bails. Groups every change-set key by its target leaf via
-    /// path-capturing descent, applies a per-leaf splice (in-place rewrite,
-    /// N-way split, or merge-out), and aggregates all parent-intermediate
-    /// updates into one rewrite per intermediate page. Returns
-    /// <see langword="true"/> when every leaf was mutated at its existing page
-    /// number (plus any appended split/root pages); returns
-    /// <see langword="false"/> on any bail trigger, so the caller falls
-    /// through to the bulk rebuild. Bail triggers:
-    /// <list type="bullet">
-    ///   <item>More than 64 distinct target leaves (the bulk walk is then faster).</item>
-    ///   <item>Any per-leaf splice would need 3+ pages.</item>
-    ///   <item>Any parent intermediate would overflow on its aggregated
-    ///   summary updates.</item>
-    ///   <item>A split's sibling-pointer patch would land on a leaf another
-    ///   group is also mutating.</item>
-    ///   <item>Any descent overshoots into a tail_page chain.</item>
-    /// </list>
-    /// </summary>
-    /// <param name="layout">The layout.</param>
-    /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="firstDp">The first data page.</param>
-    /// <param name="firstDpOffset">The first data page offset.</param>
-    /// <param name="addEntries">The add entries.</param>
-    /// <param name="removeEntries">The remove entries.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<bool> TrySurgicalCrossLeafMaintainAsync(
+    /// <summary>Aggregates leaf changes and ancestor rewrites, reusing any prepared single-leaf splice.</summary>
+    /// <param name="layout">The index layout.</param>
+    /// <param name="tdefPage">The owner table definition.</param>
+    /// <param name="groups">Changes grouped by target leaf.</param>
+    /// <param name="preparedPlans">Previously read and spliced leaves, or null.</param>
+    /// <param name="cancellationToken">Cancels planning before any publication.</param>
+    private async ValueTask<IndexMutationPlan?> PrepareCrossLeafPlanAsync(
         IndexPageLayout layout,
         long tdefPage,
-        long firstDp,
-        int firstDpOffset,
-        List<IndexEntry> addEntries,
-        List<IndexEntry> removeEntries,
+        Dictionary<long, LeafGroup> groups,
+        Dictionary<long, LeafSplicePlan>? preparedPlans,
         CancellationToken cancellationToken)
     {
-        const int maxLeafGroupCount = 64;
-
-        if (addEntries.Count == 0 && removeEntries.Count == 0)
-        {
-            return true;
-        }
-
-        // ── Phase A: per-key descent → group by leaf ─────────────────
-        Dictionary<long, LeafGroup>? groups = await this.GroupChangesByTargetLeafAsync(
-            layout,
-            firstDp,
-            addEntries,
-            removeEntries,
-            maxLeafGroupCount,
-            cancellationToken).ConfigureAwait(false);
-        if (groups is null)
-        {
-            return false;
-        }
-
-        // A single group reaching here means the single-leaf path bailed
-        // (e.g. parent overflow); the code below still handles it (including
-        // leaf-merge). Zero groups = nothing to do.
-        if (groups.Count == 0)
-        {
-            return true;
-        }
-
         // ── Phase B: per-leaf splice + classify outcome ──────────────
         // Everything is staged in memory; we commit only after every leaf
         // plan and aggregated intermediate rewrite validates.
@@ -1129,39 +1064,24 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         // and capture everything the processing pass needs (sibling pointers,
         // prefix length, old max key). Classifying emptying leaves up front
         // lets the merge logic below tolerate contiguous runs of dead leaves.
-        var plans = new Dictionary<long, LeafSplicePlan>(groups.Count);
+        Dictionary<long, LeafSplicePlan> plans = preparedPlans ?? new Dictionary<long, LeafSplicePlan>(groups.Count);
         var emptyingLeaves = new HashSet<long>();
         foreach (LeafGroup group in groups.Values)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] leaf = await pager.ReadPageCopyAsync(group.LeafPage, cancellationToken).ConfigureAwait(false);
-            if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
+            if (!plans.TryGetValue(group.LeafPage, out LeafSplicePlan prepared))
             {
-                return false;
+                LeafSplicePlan? splice = await this.PrepareLeafSpliceAsync(layout, group.LeafPage, group.Adds, group.RemovePtrs, cancellationToken).ConfigureAwait(false);
+                if (splice is not { } value)
+                {
+                    return null;
+                }
+
+                prepared = value;
+                plans.Add(group.LeafPage, prepared);
             }
 
-            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
-            if (existing.Count == 0)
-            {
-                return false;
-            }
-
-            List<IndexEntry>? spliced = IndexEntrySplicer.Splice(existing, group.Adds, group.RemovePtrs);
-            if (spliced is null)
-            {
-                return false;
-            }
-
-            plans[group.LeafPage] = new LeafSplicePlan(
-                spliced,
-                IndexPageCodec.ReadPrevPage(layout, leaf),
-                IndexPageCodec.ReadNextPage(layout, leaf),
-                IndexPageCodec.ReadTailPage(layout, leaf),
-                IndexPageCodec.ReadPrefixLength(layout, leaf),
-                existing[^1].Key);
-
-            if (spliced.Count == 0)
+            if (prepared.Spliced.Count == 0)
             {
                 emptyingLeaves.Add(group.LeafPage);
             }
@@ -1192,17 +1112,17 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 DescentStep mergeParent = group.Path[^1];
                 if (mergeParent.Entries.Count < 2)
                 {
-                    return false;
+                    return null;
                 }
 
                 if (leafPrev > 0 && groups.ContainsKey(leafPrev) && !emptyingLeaves.Contains(leafPrev))
                 {
-                    return false;
+                    return null;
                 }
 
                 if (leafNext > 0 && groups.ContainsKey(leafNext) && !emptyingLeaves.Contains(leafNext))
                 {
-                    return false;
+                    return null;
                 }
 
                 emptyingLeafSiblings[group.LeafPage] = (leafPrev, leafNext);
@@ -1224,7 +1144,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 {
                     // Two groups targeted the same leaf — shouldn't happen
                     // (groups are keyed by leaf page). Defensive bail.
-                    return false;
+                    return null;
                 }
 
                 IndexEntry newLast = spliced[^1];
@@ -1243,7 +1163,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, format.PageSize, spliced);
             if (splitPages is null)
             {
-                return false;
+                return null;
             }
 
             int splitCount = splitPages.Count;
@@ -1256,12 +1176,12 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             byte[][]? pageBytesAll = this.TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
             if (pageBytesAll is null)
             {
-                return false;
+                return null;
             }
 
             if (!existingPageRewrites.TryAdd(group.LeafPage, pageBytesAll[0]))
             {
-                return false;
+                return null;
             }
 
             for (int p = 1; p < splitCount; p++)
@@ -1276,14 +1196,14 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             {
                 if (groups.ContainsKey(leafNext))
                 {
-                    return false;
+                    return null;
                 }
 
                 if (!leafNextPointerPatches.TryAdd(leafNext, pageNumbers[splitCount - 1]))
                 {
                     // Two splits both want to patch the same neighbour leaf.
                     // Should not happen (each leaf has one prev), but defensive.
-                    return false;
+                    return null;
                 }
             }
 
@@ -1334,13 +1254,13 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             if (prevIsLeftBoundary && deadPrev > 0 && !groups.ContainsKey(deadPrev) && !leafPrevPointerPatches.TryAdd(deadPrev, survRight) &&
                     leafPrevPointerPatches[deadPrev] != survRight)
             {
-                return false;
+                return null;
             }
 
             if (nextIsRightBoundary && deadNext > 0 && !groups.ContainsKey(deadNext) && !leafNextPointerPatches.TryAdd(deadNext, survLeft) &&
                     leafNextPointerPatches[deadNext] != survLeft)
             {
-                return false;
+                return null;
             }
         }
 
@@ -1364,12 +1284,25 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
 
         if (!stagingOk)
         {
-            return false;
+            return null;
         }
 
         List<(long PageNum, byte[] Bytes)> neighborWrites = await this.StageNeighborWritesAsync(layout, leafNextPointerPatches, leafPrevPointerPatches, cancellationToken).ConfigureAwait(false);
-        var commitPlan = new CrossLeafMutationPlan(pager.PageCount, newPageAppends, existingPageRewrites, neighborWrites, stagingState.NewRootPage);
-        return await this.CommitCrossLeafPlanAsync(tdefPage, firstDpOffset, commitPlan, cancellationToken).ConfigureAwait(false);
+        foreach ((long page, _) in neighborWrites)
+        {
+            if (existingPageRewrites.ContainsKey(page))
+            {
+                return null;
+            }
+        }
+
+        var writes = new List<(long PageNum, byte[] Bytes)>(existingPageRewrites.Count);
+        foreach ((long page, byte[] bytes) in existingPageRewrites)
+        {
+            writes.Add((page, bytes));
+        }
+
+        return new(pager.PageCount, newPageAppends, writes, neighborWrites, stagingState.NewRootPage);
     }
 
     /// <summary>
@@ -1378,33 +1311,36 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// across all keys that landed on the same leaf. Returns
     /// <see langword="null"/> on any descent failure (overshoot into
     /// tail_page chain, malformed page, encoder mismatch) or when the
-    /// distinct-leaf count exceeds the cap supplied by the caller.
+    /// distinct-leaf count exceeds the bounded surgical batch size.
     /// </summary>
     /// <param name="layout">The layout.</param>
     /// <param name="firstDp">The first data page.</param>
     /// <param name="addEntries">The add entries.</param>
     /// <param name="removeEntries">The remove entries.</param>
-    /// <param name="maxLeafGroupCount">The max leaf group count.</param>
+    /// <param name="initialGroup">The first captured descent, reused while grouping.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<Dictionary<long, LeafGroup>?> GroupChangesByTargetLeafAsync(
         IndexPageLayout layout,
         long firstDp,
         List<IndexEntry> addEntries,
         List<IndexEntry> removeEntries,
-        int maxLeafGroupCount,
+        LeafGroup initialGroup,
         CancellationToken cancellationToken)
     {
-        var groups = new Dictionary<long, LeafGroup>();
+        const int maxLeafGroupCount = 64;
+        var groups = new Dictionary<long, LeafGroup> { [initialGroup.LeafPage] = initialGroup };
+        LeafGroup previous = initialGroup;
 
         for (int i = 0; i < addEntries.Count; i++)
         {
             (byte[] key, long dp, byte dr) = addEntries[i];
-            LeafGroup? g = await this.DescendOrLookupGroupAsync(layout, firstDp, key, groups, cancellationToken).ConfigureAwait(false);
+            LeafGroup? g = await this.DescendOrLookupGroupAsync(layout, firstDp, key, groups, previous, cancellationToken).ConfigureAwait(false);
             if (g is null)
             {
                 return null;
             }
 
+            previous = g;
             var decoded = new IndexEntry(key, dp, dr);
             g.Adds.Add(decoded);
 
@@ -1417,12 +1353,13 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         for (int i = 0; i < removeEntries.Count; i++)
         {
             (byte[] key, long dp, byte dr) = removeEntries[i];
-            LeafGroup? g = await this.DescendOrLookupGroupAsync(layout, firstDp, key, groups, cancellationToken).ConfigureAwait(false);
+            LeafGroup? g = await this.DescendOrLookupGroupAsync(layout, firstDp, key, groups, previous, cancellationToken).ConfigureAwait(false);
             if (g is null)
             {
                 return null;
             }
 
+            previous = g;
             g.RemovePtrs.Add((dp, dr));
             if (groups.Count > maxLeafGroupCount)
             {
@@ -1438,11 +1375,17 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         long firstDp,
         byte[] key,
         Dictionary<long, LeafGroup> groups,
+        LeafGroup previous,
         CancellationToken cancellationToken)
     {
-        // Always descend: the page cache amortises the cost, and the
-        // captured path lets us verify the key actually landed there
-        // (reusing a stale path could mis-route a key that overshoots).
+        cancellationToken.ThrowIfCancellationRequested();
+        if (IndexHelpers.ConfirmKeyTargetsSamePath(previous.Path, key))
+        {
+            return previous;
+        }
+
+        // No writes occur during grouping, so a path is reusable only when
+        // every original ancestor selects the same child for this key.
         var path = new List<DescentStep>();
         long leafPage = await this.DescendCapturingAsync(layout, firstDp, key, path, cancellationToken).ConfigureAwait(false);
         if (leafPage <= 0 || path.Count == 0)
@@ -1462,7 +1405,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
 
     /// <summary>
     /// Mutable staging state shared between
-    /// <see cref="TrySurgicalCrossLeafMaintainAsync"/> and
+    /// <see cref="PrepareCrossLeafPlanAsync"/> and
     /// <see cref="TryStageIntermediateRewritesAsync"/>. Replaces the
     /// <c>ref</c>/<c>out</c> parameters that the original synchronous helper
     /// used (async signatures cannot carry <c>ref</c>/<c>out</c>).
@@ -2014,45 +1957,6 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         byte[][] Pages,
         List<(long PageNum, byte[] Bytes)>? AncestorWrites);
 
-    /// <summary>Verifies that planned append addresses still name the end of the file.</summary>
-    /// <param name="plan">The prepared leaf plan.</param>
-    private bool ValidateLeafMutationPlan(LeafMutationPlan plan)
-        => plan.FirstNewPage == pager.PageCount && plan.LeafBytes.Length == format.PageSize;
-
-    /// <summary>Publishes prepared pages in append, neighbor, leaf and ancestor order.</summary>
-    /// <param name="plan">The complete prepared plan.</param>
-    /// <param name="cancellationToken">Cancels before publishing and between writes.</param>
-    private async ValueTask<bool> CommitLeafMutationPlanAsync(LeafMutationPlan plan, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var runs = new ReservedPageRuns(pageAllocator);
-        try
-        {
-            if (!this.ValidateLeafMutationPlan(plan) || !await this.TryAppendContiguousAsync(plan.NewPages, runs, cancellationToken).ConfigureAwait(false))
-            {
-                return false;
-            }
-
-            runs.MarkLinked();
-            foreach ((long page, byte[] bytes) in plan.NeighborWrites)
-            {
-                await pager.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
-            }
-
-            await pager.WritePageAsync(plan.LeafPage, plan.LeafBytes, cancellationToken).ConfigureAwait(false);
-            foreach ((long page, byte[] bytes) in plan.AncestorWrites)
-            {
-                await pager.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
-            }
-
-            return true;
-        }
-        finally
-        {
-            await runs.ReleaseAsync().ConfigureAwait(false);
-        }
-    }
-
     /// <summary>Stages every fallible sibling read before appending or linking pages.</summary>
     /// <param name="layout">The index header layout.</param>
     /// <param name="previousPointers">Pages whose previous pointer changes.</param>
@@ -2094,24 +1998,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         return writes;
     }
 
-    /// <summary>A leaf mutation whose bytes and external reads are complete before commit.</summary>
-    /// <param name="FirstNewPage">Expected append address.</param>
-    /// <param name="NewPages">Prepared new right leaves.</param>
-    /// <param name="NeighborWrites">Prepared sibling patches.</param>
-    /// <param name="LeafPage">Original leaf to replace.</param>
-    /// <param name="LeafBytes">Prepared original leaf bytes.</param>
-    /// <param name="AncestorWrites">Prepared ancestor summaries, deepest first.</param>
-    private sealed record LeafMutationPlan(
-        long FirstNewPage,
-        IReadOnlyList<byte[]> NewPages,
-        List<(long PageNum, byte[] Bytes)> NeighborWrites,
-        long LeafPage,
-        byte[] LeafBytes,
-        List<(long PageNum, byte[] Bytes)> AncestorWrites);
-
-    /// <summary>Validates append addresses and disjoint page ownership before any cross-leaf write.</summary>
-    /// <param name="plan">All prepared pages and external neighbor patches.</param>
-    private bool ValidateCrossLeafPlan(CrossLeafMutationPlan plan)
+    private bool ValidateIndexMutationPlan(IndexMutationPlan plan)
     {
         if (plan.FirstNewPage != pager.PageCount
             || (plan.NewRootPage is long root && (root < plan.FirstNewPage || root >= plan.FirstNewPage + plan.NewPages.Count)))
@@ -2119,9 +2006,9 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             return false;
         }
 
-        foreach ((long page, _) in plan.NeighborWrites)
+        foreach ((_, byte[] bytes) in plan.ExistingPages)
         {
-            if (plan.ExistingPages.ContainsKey(page))
+            if (bytes.Length != format.PageSize)
             {
                 return false;
             }
@@ -2130,25 +2017,25 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         return true;
     }
 
-    /// <summary>Commits a fully staged cross-leaf mutation in dependency order.</summary>
+    /// <summary>Commits a fully staged index mutation in dependency order.</summary>
     /// <param name="tdefPage">The tdefPage for this phase.</param>
     /// <param name="firstDpOffset">The firstDpOffset for this phase.</param>
     /// <param name="plan">The plan for this phase.</param>
     /// <param name="cancellationToken">The cancellationToken for this phase.</param>
-    private async ValueTask<bool> CommitCrossLeafPlanAsync(
+    private async ValueTask<bool> CommitIndexMutationPlanAsync(
         long tdefPage,
         int firstDpOffset,
-        CrossLeafMutationPlan plan,
+        IndexMutationPlan plan,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        List<byte[]> newPageAppends = plan.NewPages;
-        if (!this.ValidateCrossLeafPlan(plan))
+        IReadOnlyList<byte[]> newPageAppends = plan.NewPages;
+        if (!this.ValidateIndexMutationPlan(plan))
         {
             return false;
         }
 
-        Dictionary<long, byte[]> existingPageRewrites = plan.ExistingPages;
+        IReadOnlyList<(long PageNum, byte[] Bytes)> existingPageRewrites = plan.ExistingPages;
 
         // ── Phase D: validate + Phase E: commit ──────────────────────
         // Validation is already done implicitly (every staged page was built
@@ -2189,16 +2076,16 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         }
     }
 
-    /// <summary>Validated page bytes and links awaiting an ordered cross-leaf commit.</summary>
+    /// <summary>Validated page bytes and links awaiting an ordered index commit.</summary>
     /// <param name="FirstNewPage">Expected first append address.</param>
     /// <param name="NewPages">The NewPages for this phase.</param>
     /// <param name="ExistingPages">The ExistingPages for this phase.</param>
     /// <param name="NeighborWrites">Prepared neighboring pages.</param>
     /// <param name="NewRootPage">The NewRootPage for this phase.</param>
-    private sealed record CrossLeafMutationPlan(
+    private sealed record IndexMutationPlan(
         long FirstNewPage,
-        List<byte[]> NewPages,
-        Dictionary<long, byte[]> ExistingPages,
+        IReadOnlyList<byte[]> NewPages,
+        IReadOnlyList<(long PageNum, byte[] Bytes)> ExistingPages,
         List<(long PageNum, byte[] Bytes)> NeighborWrites,
         long? NewRootPage);
 

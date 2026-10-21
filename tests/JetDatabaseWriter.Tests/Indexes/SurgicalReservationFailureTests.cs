@@ -169,7 +169,7 @@ public sealed class SurgicalReservationFailureTests
         return entries;
     }
 
-    private static ValueTask<bool> SplitAsync(AccessWriter writer, long root, bool crossLeaf, CancellationToken cancellationToken)
+    private static async ValueTask<bool> SplitAsync(AccessWriter writer, long root, bool crossLeaf, CancellationToken cancellationToken)
     {
         var additions = new List<IndexEntry>();
         byte[] key = OriginalEntries()[1].Key;
@@ -179,9 +179,12 @@ public sealed class SurgicalReservationFailureTests
         }
 
         var editor = new IndexBTreeEditor(writer.Database.Format, writer.Pager, writer.Services.TDefWriter, writer.Services.PageAllocator);
-        return crossLeaf
-            ? editor.TrySurgicalCrossLeafMaintainAsync(writer.Database.Format.IndexPage, 2, root, 0, additions, [], cancellationToken)
-            : editor.TrySurgicalMultiLevelMaintainAsync(writer.Database.Format.IndexPage, 2, root, additions, [], cancellationToken);
+        if (crossLeaf)
+        {
+            additions.Add(new IndexEntry(OriginalEntries()[150].Key, 2000, 0));
+        }
+
+        return (await editor.TrySurgicalMultiLevelMaintainAsync(writer.Database.Format.IndexPage, 2, root, 0, additions, [], cancellationToken)).Handled;
     }
 
     private static async Task<byte[]> CreatePublicBaselineAsync(DatabaseFormat format)
