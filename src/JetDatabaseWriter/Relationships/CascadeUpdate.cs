@@ -11,11 +11,11 @@ using JetDatabaseWriter.Pages.Models;
 /// <param name="TableName">The table's name.</param>
 /// <param name="Table">The table's catalog entry and definition.</param>
 /// <param name="Rows">
-/// Each row to replace, and its new values in table-column order, carrying
-/// every key change the update cascades to that row. A row appears once,
-/// however many relationships reach it.
+/// Each row to replace, its original values and its new values in table-column
+/// order, carrying every key change the update cascades to that row. A row
+/// appears once, however many relationships reach it.
 /// </param>
-internal sealed record CascadeUpdate(string TableName, ResolvedTable Table, List<(RowLocation Location, object[] NewRow)> Rows)
+internal sealed record CascadeUpdate(string TableName, ResolvedTable Table, List<(RowLocation Location, object[] OldRow, object[] NewRow)> Rows)
 {
     /// <summary>Gets unchanged fixed Text slots retained by each planned row rewrite.</summary>
     internal Dictionary<RowLocation, IReadOnlyDictionary<int, byte[]>?> FixedTextBytes { get; } = [];

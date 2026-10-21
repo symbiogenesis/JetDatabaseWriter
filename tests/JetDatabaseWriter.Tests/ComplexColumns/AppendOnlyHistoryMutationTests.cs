@@ -19,7 +19,7 @@ public sealed class AppendOnlyHistoryMutationTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    /// <summary>Every changed, non-null Memo value is versioned without replacing the existing history.</summary>
+    /// <summary>An unrelated cascade preserves history; an assigned Memo adds its version without changing the reference.</summary>
     /// <param name="mode">The write transaction mode.</param>
     [Theory]
     [InlineData(WriteMode.Direct)]
@@ -33,7 +33,14 @@ public sealed class AppendOnlyHistoryMutationTests
         DateTime earliest = DateTimeOffset.Now.DateTime.AddSeconds(-2);
         await using (AccessWriter writer = await OpenWriterAsync(stream, mode))
         {
-            await RunAsync(writer, mode, async () => Assert.Equal(1, await writer.UpdateRowsAsync("Table1", RowCriteria.Where("id", "row3"), new RowValues { ["append-memo-data"] = "library revision" }, Ct)));
+            await RunAsync(writer, mode, async () =>
+            {
+                await writer.CreateTableAsync("HistoryParents", [new ColumnDefinition("Id", typeof(string), before.Definition.Columns[0].Size / 2) { IsPrimaryKey = true }], Ct);
+                await writer.InsertRowsAsync("HistoryParents", before.Rows.Select(row => new[] { row[0] }), Ct);
+                await writer.CreateRelationshipAsync(new RelationshipDefinition("HistoryParent", "HistoryParents", "Id", "Table1", "id") { CascadeUpdates = true }, Ct);
+                Assert.Equal(1, await writer.UpdateRowsAsync("HistoryParents", RowCriteria.Where("Id", "row3"), new RowValues { ["Id"] = "moved3" }, Ct));
+                Assert.Equal(1, await writer.UpdateRowsAsync("Table1", RowCriteria.Where("id", "moved3"), new RowValues { ["append-memo-data"] = "library revision" }, Ct));
+            });
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);

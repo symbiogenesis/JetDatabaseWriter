@@ -232,7 +232,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "A", "B", "C");
     }
 
-    /// <summary>A non-null cascading key refreshes the child's stored calculated result.</summary>
+    /// <summary>A non-null cascading key refreshes the child's stored numeric and Memo calculated results.</summary>
     /// <param name="mode">The write mode.</param>
     /// <returns>The asynchronous test.</returns>
     [Theory]
@@ -251,14 +251,15 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("ParentId", typeof(int)),
                     new ColumnDefinition("TwiceParentId", typeof(int)) { IsCalculated = true, CalculationExpression = "[ParentId] * 2" },
+                    new ColumnDefinition("ParentMemo", typeof(string)) { IsCalculated = true, CalculationExpression = "[ParentId] & \" memo\"" },
                 ],
                 Ct);
             Assert.Equal(1, await writer.InsertRowsAsync("P", [[1]], Ct));
-            Assert.Equal(1, await writer.InsertRowsAsync("C", [[1, 1, null]], Ct));
+            Assert.Equal(1, await writer.InsertRowsAsync("C", [[1, 1, null, null]], Ct));
             await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_C_P", "P", "Id", "C", "ParentId") { CascadeUpdates = true }, Ct);
         }
 
-        Assert.Equal(["1|1|2"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
+        Assert.Equal(["1|1|2|1 memo"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
         await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
@@ -266,8 +267,48 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         }
 
         Assert.Equal(["5"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
-        Assert.Equal(["1|5|10"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
+        Assert.Equal(["1|5|10|5 memo"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
         await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "P", "C");
+    }
+
+    /// <summary>A prepared cascade keeps its original Memo instead of reading it again for FK and history checks.</summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task Update_Cascade_ReadsOriginalLongValueOnlyWhilePlanning(DatabaseFormat format)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateAsync(db, format, [[1, "one"], [2, "two"]], []);
+        string memo = UnreadableMemoMarker + new string('m', 6000);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("M", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int)), new ColumnDefinition("Notes", typeof(string))], Ct);
+            await writer.InsertRowAsync("M", [1, 1, memo], Ct);
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_M_P", "P", "Id", "M", "ParentId") { CascadeUpdates = true }, Ct);
+        }
+
+        byte[] bytes = ms.ToArray();
+        int offset = bytes.AsSpan().IndexOf(Encoding.ASCII.GetBytes(UnreadableMemoMarker));
+        if (offset < 0)
+        {
+            offset = bytes.AsSpan().IndexOf(Encoding.Unicode.GetBytes(UnreadableMemoMarker));
+        }
+
+        Assert.True(offset >= 0, "The child's original Memo page was not found.");
+        long memoPage = offset / 4096;
+        var counting = new CountingStream(ms);
+        ms.Position = 0;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(counting, new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, PageCacheSize = 0 }, leaveOpen: true, Ct))
+        {
+            Assert.Equal(1, await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 2), new RowValues { ["Name"] = "deux" }, Ct));
+            counting.Reset();
+            Assert.Equal(1, await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 3 }, Ct));
+            long reads = counting.ReadCounts(4096)[memoPage];
+            Assert.True(reads <= 7, $"The original Memo page was read {reads} times; retained cascade values should avoid the two extra FK and history snapshots.");
+        }
+
+        Assert.Equal([$"1|3|{memo}"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "M"));
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "P", "M");
     }
 
     /// <summary>A non-null cascaded value obeys the child's persisted column rule before writing.</summary>

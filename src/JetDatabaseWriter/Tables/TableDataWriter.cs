@@ -373,10 +373,8 @@ internal sealed class TableDataWriter(
         List<AppendOnlyHistoryWriter.HistoryBatch> historyBatches = await history.PrepareAsync(tableName, tableDef, historyRows, updateIndexes.Keys, insertAssignments: null, cancellationToken).ConfigureAwait(false);
         foreach (CascadeUpdate cascade in cascades)
         {
-            List<LocatedRow> originals = await snapshots.ReadRowsAsync(cascade.Table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-            foreach ((RowLocation location, object[] newRow) in cascade.Rows)
+            foreach ((_, object[] oldRow, object[] newRow) in cascade.Rows)
             {
-                object[] oldRow = originals.Find(row => row.Location == location).Values;
                 var assigned = new List<int>();
                 for (int index = 0; index < newRow.Length; index++)
                 {

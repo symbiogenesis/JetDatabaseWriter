@@ -219,7 +219,7 @@ internal sealed class RelationshipEnforcer(
                 replacements[cascade.TableName] = tableReplacements;
             }
 
-            foreach ((RowLocation location, object[] newRow) in cascade.Rows)
+            foreach ((RowLocation location, _, object[] newRow) in cascade.Rows)
             {
                 tableReplacements[(location.PageNumber, location.RowIndex)] = newRow;
             }
@@ -272,17 +272,7 @@ internal sealed class RelationshipEnforcer(
         await this.EnforceFkOnForeignUpdateAsync(primaryTable, primaryDef, CreateOrdinals(primaryDef.Columns.Count), rows, ctx, cancellationToken).ConfigureAwait(false);
         foreach (CascadeUpdate cascade in cascades)
         {
-            var changes = new List<(RowLocation Location, object[] OldRow, object[] NewRow)>();
-            Dictionary<(long PageNumber, int RowIndex), object[]> finalRows = replacements[cascade.TableName];
-            foreach (LocatedRow stored in await snapshots.ReadRowsAsync(cascade.Table.Entry.TDefPage, cancellationToken).ConfigureAwait(false))
-            {
-                if (finalRows.TryGetValue((stored.Location.PageNumber, stored.Location.RowIndex), out object[]? replacement))
-                {
-                    changes.Add((stored.Location, stored.Values, replacement));
-                }
-            }
-
-            await this.EnforceFkOnForeignUpdateAsync(cascade.TableName, cascade.Table.Definition, CreateOrdinals(cascade.Table.Definition.Columns.Count), changes, ctx, cancellationToken).ConfigureAwait(false);
+            await this.EnforceFkOnForeignUpdateAsync(cascade.TableName, cascade.Table.Definition, CreateOrdinals(cascade.Table.Definition.Columns.Count), cascade.Rows, ctx, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -456,7 +446,6 @@ internal sealed class RelationshipEnforcer(
         var plannedTables = new Dictionary<long, (CascadeUpdate Cascade, Dictionary<(long PageNumber, int RowIndex), int> Positions)>();
         var ownRowChanges = new List<(object[] NewRow, int[] ForeignColumnIndexes, object[] NewPkSubset)>();
         var keyAssignments = new Dictionary<object[], (string TableName, TableDef Definition, HashSet<int> Columns)>();
-        var originalRows = new Dictionary<(long PageNumber, int RowIndex), object[]>();
         var assignmentSources = new Dictionary<(object[] Row, int Column), Dictionary<string, int>>();
         int depth = 0;
         while (true)
@@ -536,7 +525,7 @@ internal sealed class RelationshipEnforcer(
                     cascades.Add(planned.Cascade);
                 }
 
-                List<(RowLocation Location, object[] NewRow)> rewrites = planned.Cascade.Rows;
+                List<(RowLocation Location, object[] OldRow, object[] NewRow)> rewrites = planned.Cascade.Rows;
                 foreach ((LocatedRow row, object[] newPkSubset) in dependents)
                 {
                     // A row an earlier relationship already rewrites takes this
@@ -549,10 +538,9 @@ internal sealed class RelationshipEnforcer(
                     }
                     else
                     {
-                        originalRows[slot] = row.Values;
                         newRow = (object[])row.Values.Clone();
                         planned.Positions[slot] = rewrites.Count;
-                        rewrites.Add((row.Location, newRow));
+                        rewrites.Add((row.Location, row.Values, newRow));
                     }
 
                     CheckAssignments(newRow, fkIdx, newPkSubset, rel, change.ChildTable.Definition);
@@ -641,13 +629,7 @@ internal sealed class RelationshipEnforcer(
             keyChanges = await this.ResolveReferencedKeyChangesAsync(primaryTable, primaryDef, CreateOrdinals(primaryDef.Columns.Count), rows, ctx, cancellationToken).ConfigureAwait(false);
             foreach (CascadeUpdate cascade in cascades)
             {
-                var pending = new List<(RowLocation Location, object[] OldRow, object[] NewRow)>();
-                foreach ((RowLocation location, object[] newRow) in cascade.Rows)
-                {
-                    pending.Add((location, originalRows[(location.PageNumber, location.RowIndex)], newRow));
-                }
-
-                keyChanges.AddRange(await this.ResolveReferencedKeyChangesAsync(cascade.TableName, cascade.Table.Definition, CreateOrdinals(cascade.Table.Definition.Columns.Count), pending, ctx, cancellationToken).ConfigureAwait(false));
+                keyChanges.AddRange(await this.ResolveReferencedKeyChangesAsync(cascade.TableName, cascade.Table.Definition, CreateOrdinals(cascade.Table.Definition.Columns.Count), cascade.Rows, ctx, cancellationToken).ConfigureAwait(false));
             }
         }
 
@@ -667,11 +649,11 @@ internal sealed class RelationshipEnforcer(
         {
             string tableName = cascade.TableName;
             ResolvedTable table = cascade.Table;
-            List<(RowLocation Location, object[] NewRow)> rewrites = cascade.Rows;
+            List<(RowLocation Location, object[] OldRow, object[] NewRow)> rewrites = cascade.Rows;
             await indexes.ThrowIfIndexesUnmaintainableAsync(table.Entry.TDefPage, table.Definition, tableName, cancellationToken).ConfigureAwait(false);
             List<LocatedRow> existingRows = await snapshots.ReadRowsAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
             var replacements = new Dictionary<(long PageNumber, int RowIndex), object[]>();
-            foreach ((RowLocation location, object[] newRow) in rewrites)
+            foreach ((RowLocation location, _, object[] newRow) in rewrites)
             {
                 replacements[(location.PageNumber, location.RowIndex)] = newRow;
             }
@@ -697,7 +679,7 @@ internal sealed class RelationshipEnforcer(
             }
 
             await this.uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(table.Entry.TDefPage, table.Definition, tableName, existingRows, pendingUpdates, cancellationToken).ConfigureAwait(false);
-            foreach ((RowLocation location, object[] newRow) in rewrites)
+            foreach ((RowLocation location, _, object[] newRow) in rewrites)
             {
                 LocatedRow stored = storedRows[location];
                 IReadOnlyDictionary<int, byte[]>? fixedTextBytes = stored.GetPreservedFixedText(newRow, keyAssignments[newRow].Columns);
@@ -745,7 +727,7 @@ internal sealed class RelationshipEnforcer(
         foreach (CascadeUpdate cascade in cascades)
         {
             ResolvedTable table = cascade.Table;
-            foreach ((RowLocation location, object[] newRow) in cascade.Rows)
+            foreach ((RowLocation location, _, object[] newRow) in cascade.Rows)
             {
                 await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, table.Definition, CancellationToken.None).ConfigureAwait(false);
                 _ = await tableRows.InsertRowDataLocAsync(table.Entry.TDefPage, table.Definition, newRow, updateTDefRowCount: false, fixedTextBytes: cascade.FixedTextBytes[location], cancellationToken: CancellationToken.None).ConfigureAwait(false);
