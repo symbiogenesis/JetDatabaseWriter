@@ -202,7 +202,7 @@ public sealed class CompactCalculatedColumnHydratorTests
             target.Entries[0].Value = [(byte)(equivalent ? ColumnType.MemoType : ColumnType.TextType)];
             if (repeatedTarget)
             {
-                target = new ColumnPropertyTargetBuilder { Name = "cAcHeD" };
+                target = new ColumnPropertyTargetBuilder { Name = "cAcHeD", ChunkType = target.ChunkType };
                 builder.Targets.Add(target);
             }
 
@@ -241,7 +241,7 @@ public sealed class CompactCalculatedColumnHydratorTests
             ColumnPropertyTargetBuilder target = builder.Targets[0];
             if (repeatedTarget)
             {
-                target = new ColumnPropertyTargetBuilder { Name = "cAcHeD" };
+                target = new ColumnPropertyTargetBuilder { Name = "cAcHeD", ChunkType = target.ChunkType };
                 builder.Targets.Add(target);
             }
 
@@ -268,6 +268,65 @@ public sealed class CompactCalculatedColumnHydratorTests
         Assert.Equal(0, accounting.ActiveWorkingBytes);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public async Task Hydrate_ObjectOrIndexMapCannotEstablishColumnStorage(int subtype)
+    {
+        var fixture = new HydrationFixture(customize: builder => builder.Targets[0].ChunkType = (ColumnPropertyChunkType)subtype);
+        fixture.AddRow(7, fixture.Payload);
+        var accounting = new CompactDiscoveryAccounting(new());
+        using (CompactCalculatedColumnHydrator hydrator = fixture.Create(new(), accounting))
+        {
+            await hydrator.WithColumnsAsync(
+                7,
+                fixture.Table,
+                (columns, _) =>
+                {
+                    ColumnInfo column = Assert.Single(Assert.IsType<IReadOnlyList<ColumnInfo>>(columns, exactMatch: false));
+                    Assert.Equal(default, column.CalculatedResultType);
+                    Assert.False(new CompactRawField(column, default, CompactRawFieldKind.Stored, 0, default, false).IsStorageTypeKnown);
+                    return ValueTask.CompletedTask;
+                },
+                Ct);
+        }
+
+        Assert.Equal(0, accounting.ActiveWorkingBytes);
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(0, true)]
+    [InlineData(2, false)]
+    [InlineData(2, true)]
+    public async Task Hydrate_SameNameObjectOrIndexMapCannotOverrideColumnResultType(int subtype, bool first)
+    {
+        var fixture = new HydrationFixture(customize: builder =>
+        {
+            var target = new ColumnPropertyTargetBuilder { Name = "cAcHeD", ChunkType = (ColumnPropertyChunkType)subtype };
+            target.AddByte(Constants.ColumnPropertyNames.ResultType, (byte)ColumnType.TextType);
+            builder.Targets.Insert(first ? 0 : builder.Targets.Count, target);
+        });
+        fixture.AddRow(7, fixture.Payload);
+        var accounting = new CompactDiscoveryAccounting(new());
+        using (CompactCalculatedColumnHydrator hydrator = fixture.Create(new(), accounting))
+        {
+            await hydrator.WithColumnsAsync(
+                7,
+                fixture.Table,
+                (columns, _) =>
+                {
+                    ColumnInfo column = Assert.Single(Assert.IsType<IReadOnlyList<ColumnInfo>>(columns, exactMatch: false));
+                    Assert.Equal(ColumnType.MemoType, column.CalculatedResultType);
+                    Assert.True(new CompactRawField(column, default, CompactRawFieldKind.Stored, 0, default, false).IsStorageTypeKnown);
+                    return ValueTask.CompletedTask;
+                },
+                Ct);
+        }
+
+        Assert.Equal(0, accounting.ActiveWorkingBytes);
+    }
+
     private sealed class HydrationFixture
     {
         private readonly JetFormat format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
@@ -279,7 +338,7 @@ public sealed class CompactCalculatedColumnHydratorTests
         internal HydrationFixture(bool invalidResultType = false, bool overflowingResultType = false, Action<ColumnPropertyBlockBuilder>? customize = null)
         {
             var builder = new ColumnPropertyBlockBuilder();
-            var target = new ColumnPropertyTargetBuilder { Name = "Cached" };
+            var target = new ColumnPropertyTargetBuilder { Name = "Cached", ChunkType = ColumnPropertyChunkType.PropertyBlockAlt1 };
             if (invalidResultType)
             {
                 target.Entries.Add(new ColumnPropertyEntryBuilder

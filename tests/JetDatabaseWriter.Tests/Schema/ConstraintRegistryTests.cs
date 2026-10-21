@@ -679,7 +679,7 @@ public sealed class ConstraintRegistryTests
         ColumnPropertyTargetBuilder second = first;
         if (separateTargets)
         {
-            second = new ColumnPropertyTargetBuilder { Name = "sCORE" };
+            second = new ColumnPropertyTargetBuilder { Name = "sCORE", ChunkType = first.ChunkType };
             builder.Targets.Add(second);
         }
 

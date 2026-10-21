@@ -164,11 +164,11 @@ Expression and descriptive properties can use Text (`0x0A`) or Memo (`0x0C`); ed
 
 The current [mdbtools notes](https://github.com/mdbtools/mdbtools/blob/dev/HACKING.md#properties) and [Jackcess model](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/PropertyMaps.java) identify `0x00` as the object/table, `0x01` as a column and `0x02` as an index. Jackcess distinguishes maps by both name and subtype because an index can share a column name. DAO3.6 Jet3 and DAO120 Jet4/ACE controls independently create a column and an index both named Score with distinct Description/SharedCustom values. Native serialization emits separate `0x01` and `0x02` targets in one shared dictionary, retains their separate values through native edits and compact, and corroborates that subtype distinction. Library lookup, constraint hydration and projection bind column properties only to subtype `0x01`, table properties to empty-name subtype `0x00`, and retain subtype `0x02` index maps independently. `PropertyTargetIdentityTests` checks index-first source ordering, and `NativePropertyTargetIdentityTests` checks the distinct native values through Add/Drop/Rename and native mutation/compact in all writer modes. Index maps are removed only when their logical index is dropped. Arbitrary synthetic subtype substitutions have no established native acceptance.
 
-The 2026-05-11 DAO FK baseline found that programmatic DAO table creation emits column property blocks with subtype `0x01` for the simple Short Text / Long / AutoNumber schema under test. Subtype `0x00` remains readable, but `0x01` is the closer DAO shape for newly-authored column targets.
+The 2026-05-11 DAO FK baseline found that programmatic DAO table creation emits column property blocks with subtype `0x01` for the simple Short Text / Long / AutoNumber schema under test. Subtype `0x00` remains parseable as an object/table map; column lookup and hydration bind only subtype `0x01`.
 
 This library:
 - **Reads:** accepts all three chunk subtypes as property blocks; unknown chunk types are preserved as opaque bytes for round-trip.
-- **Writes:** should preserve parsed subtypes on round-trip and prefer `0x01` for newly-created column property targets when pursuing DAO Compact & Repair compatibility.
+- **Writes:** preserves parsed subtypes on round-trip and uses `0x01` for newly-created column property targets.
 
 ## 5. DAO-created column property facts (2026-05-11)
 

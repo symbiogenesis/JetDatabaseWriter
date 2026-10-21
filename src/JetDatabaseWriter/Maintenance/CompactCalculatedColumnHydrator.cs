@@ -176,7 +176,8 @@ internal sealed class CompactCalculatedColumnHydrator(
         {
             cancellationToken.ThrowIfCancellationRequested();
             accounting.Charge(CompactDiscoveryCharge.GraphSteps, 1, root);
-            if (!target.Name.Equals(columnName, StringComparison.OrdinalIgnoreCase))
+            if (target.ChunkType != ColumnPropertyChunkType.PropertyBlockAlt1
+                || !target.Name.Equals(columnName, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
