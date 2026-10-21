@@ -1,7 +1,7 @@
 {
   "version": 1,
   "analyzer": "InferSharp v1.5",
-  "reviewedRevision": "83195d631cce8406894c0fb4784345096c4ce165",
+  "reviewedRevision": "5de4704daf38215058a08231af9260bdfa0d6202",
   "sources": {
     "src/JetDatabaseWriter/AccessDatabaseEncryption.cs": "f5cc1542ee78302e997859ef20cbc63873d957415c6643784c0a23112439c5a8",
     "src/JetDatabaseWriter/AccessReader.cs": "bac7ee46dc75b6bd845b72dfa95e6c012c1c5a286b2dc9333aa2ca6e9b3d42f6",
@@ -23,12 +23,12 @@
     "src/JetDatabaseWriter/Transactions/LockFileSlotWriter.cs": "f0fc65d7098d01f3837978dcc6cffbf34fdfe4915ca05f4306b200d714ae88a8",
     "src/JetDatabaseWriter/Transactions/TransactionLifecycle.cs": "f9a4b3c305b05fad06254f4098105ff2b596c05e40dde2f411b04f3a21b21baa",
     "src/JetDatabaseWriter/ValueDecoding/RowMapper.cs": "b71ca4d07cf5d536406068fd2c0ba143acf3655bacefbbb83188dc7d26c74c8b",
-    "src/JetDatabaseWriter/WriterServices.cs": "5ee98e009b9f605d8a3e4a6c29d9f3172c5cf2d80c18e4a2d772b48849c44aa1",
+    "src/JetDatabaseWriter/WriterServices.cs": "33a4a7b1df3a36ba8f6b63bc8fc563e9a3554e6d561997ebc28c1e81a5986f52",
     "src/JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs": "bf810bda25b02f8d17b7e2597729339e5ad70ce3612215250a91e392957b6b61",
     "src/JetDatabaseWriter/Pages/Paging/StreamPageStore.cs": "ef2c31dbc79bf5813199391d4d1df327104972dfdfdcd0c0589ab056527ecea4",
     "src/JetDatabaseWriter/Relationships/LinkedTextSourceStream.cs": "42e29a44ddc7c995df717c9d8291dddd248ee9719d9d8f67173166fb6945e583",
     "src/JetDatabaseWriter/AccessWriterOptions.cs": "009f18152d9cd9e848fade74346447433482d43dc0e3d4aaaf5ddb3f20c5d302",
-    "src/JetDatabaseWriter/AccessWriter.cs": "4abc0c2682e8a8e66be85f7072f1f731e4edc7a3397cd02187f3194cfb4b6da1"
+    "src/JetDatabaseWriter/AccessWriter.cs": "fb00830303f1e30fbc178f80c25e1a577b4f6edb79321ea2c7704e15b1b1de5b"
   },
   "targets": {
     "netstandard2.1": [
@@ -59,7 +59,7 @@
       {
         "ruleId": "NULLPTR_DEREFERENCE",
         "path": "src/JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs",
-        "line": 312,
+        "line": 314,
         "fingerprint": "06065cdd592fa0bfc3b0210eb509c575",
         "symbol": "ComplexColumnManager.cs|CreateMSysComplexColumnsAsync|NULLPTR_DEREFERENCE",
         "reason": "CreateMSysComplexColumnsAsync initializes columns from a collection expression whose elements are new ColumnDefinition instances. A successfully created array cannot be null; this is unsupported collection-expression lowering."
@@ -253,7 +253,7 @@
       {
         "ruleId": "NULLPTR_DEREFERENCE",
         "path": "src/JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs",
-        "line": 312,
+        "line": 314,
         "fingerprint": "06065cdd592fa0bfc3b0210eb509c575",
         "symbol": "ComplexColumnManager.cs|CreateMSysComplexColumnsAsync|NULLPTR_DEREFERENCE",
         "reason": "CreateMSysComplexColumnsAsync initializes columns from a collection expression whose elements are new ColumnDefinition instances. A successfully created array cannot be null; this is unsupported collection-expression lowering."
