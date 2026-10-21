@@ -96,8 +96,7 @@ internal static class IndexBTreeBuilder
             throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {layout.FirstEntryOffset}.");
         }
 
-        IndexPageCodec.ValidateLeafMetadata(layout, pageSize, parentTdefPage, entries);
-        Guard.NotNull(entries, nameof(entries));
+        List<List<IndexEntry>>? splitPages = IndexPageCodec.PartitionPages(layout, pageSize, parentTdefPage, entries, static entry => entry, null, enablePrefixCompression: false);
         Guard.InRange(firstPageNumber, 0, long.MaxValue, nameof(firstPageNumber));
         if (firstPageNumber > 0xFFFFFF)
         {
@@ -106,61 +105,18 @@ internal static class IndexBTreeBuilder
 
         int entryAreaSize = pageSize - layout.FirstEntryOffset;
 
-        // ── Step 1: Pack entries into leaves greedily, in input order, and
-        // remember the last entry of each leaf for the level above. Each leaf
-        // entry occupies EncodedKey.Length + 4 bytes (3-byte BE data page +
-        // 1-byte data row). The entry-start bitmask spans the area from
-        // 0x1B..0x1DF — 485 bytes = 3880 bits. The largest entry stride is
-        // limited by the entry area (3616 bytes on a 4096-byte page) so the
-        // bitmask never overflows in practice.
-        // ──────────────────────────────────────────────────────────────────
-        // Rough capacity estimate: assume average entry ~64 bytes ⇒
-        // entryAreaSize / 64 entries per leaf. Errs on the high side which is
-        // cheap; underestimating just causes extra resizes.
-
-        // Step 1: Pack entries into split pages (SplitPages) greedily, in input order.
-        // Each inner list in SplitPages contains the IndexEntry objects for a single page after splitting.
-        // This is sometimes called a "leaf group" in legacy comments, but that term is non-standard and discouraged.
-        int estSplitPageCount = entries.Count == 0
-            ? 1
-            : Math.Max(1, ((entries.Count * 64) + entryAreaSize - 1) / entryAreaSize);
-
-        var splitPages = new SplitPages(estSplitPageCount);
-        var splitPageLastEntries = new List<IndexEntry>(estSplitPageCount);
-        if (entries.Count == 0)
+        if (splitPages is null)
         {
-            splitPages.Add([]);
-
-            // No last entry for an empty placeholder;
-            // the splitPageCount == 1 path below short-circuits before consulting splitPageLastEntries.
+            return null;
         }
-        else
+
+        var splitPageLastEntries = new List<IndexEntry>(splitPages.Count);
+        foreach (List<IndexEntry> group in splitPages)
         {
-            var current = new List<IndexEntry>();
-            int currentSize = 0;
-            for (int i = 0; i < entries.Count; i++)
+            if (group.Count > 0)
             {
-                IndexEntry e = entries[i];
-                int entryLen = e.Key.Length + 4;
-                if (entryLen > entryAreaSize)
-                {
-                    return null;
-                }
-
-                if (currentSize + entryLen > entryAreaSize)
-                {
-                    splitPages.Add(current);
-                    splitPageLastEntries.Add(current[^1]);
-                    current = [];
-                    currentSize = 0;
-                }
-
-                current.Add(e);
-                currentSize += entryLen;
+                splitPageLastEntries.Add(group[^1]);
             }
-
-            splitPages.Add(current);
-            splitPageLastEntries.Add(current[^1]);
         }
 
         // Step 2: Validate split page-number range. Pages are sequential starting at firstPageNumber,
@@ -301,33 +257,6 @@ internal static class IndexBTreeBuilder
             tailPage,
             maxPrefixLength);
     }
-
-    /// <summary>
-    /// Builds a single-page intermediate with zeroed sibling/tail pointers — the
-    /// shape used by size-probing helpers (such as greedy intermediate splitting)
-    /// that emit a candidate page in isolation without preserving an existing
-    /// sibling chain.
-    /// </summary>
-    /// <param name="layout">The layout.</param>
-    /// <param name="pageSize">The page size.</param>
-    /// <param name="parentTdefPage">The parent TDEF page.</param>
-    /// <param name="entries">The entries.</param>
-    /// <param name="maxPrefixLength">The max prefix length.</param>
-    public static byte[]? TryBuildIntermediatePage(
-        IndexPageLayout layout,
-        int pageSize,
-        long parentTdefPage,
-        IReadOnlyList<DecodedIntermediateEntry> entries,
-        int? maxPrefixLength = null)
-        => TryBuildIntermediatePage(
-            layout,
-            pageSize,
-            parentTdefPage,
-            entries,
-            prevPage: 0,
-            nextPage: 0,
-            tailPage: 0,
-            maxPrefixLength);
 
     private static (List<List<DecodedIntermediateEntry>> Groups, List<IndexEntry> LastPerGroup) PackIntermediate(
         long childPageBase,

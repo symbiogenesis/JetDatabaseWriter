@@ -849,13 +849,83 @@ internal static class IndexPageCodec
     public static int CompareKeyBytes(byte[] left, byte[] right)
         => left.AsSpan().SequenceCompareTo(right);
 
-    /// <summary>Validates every leaf entry and layout before multi-page packing chooses capacity fallbacks.</summary>
-    /// <param name="layout">The layout for this phase.</param>
-    /// <param name="pageSize">The pageSize for this phase.</param>
-    /// <param name="parentTdefPage">The parentTdefPage for this phase.</param>
-    /// <param name="entries">The entries for this phase.</param>
-    internal static void ValidateLeafMetadata(IndexPageLayout layout, int pageSize, long parentTdefPage, IReadOnlyList<IndexEntry> entries)
-        => _ = CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, 0, 0, 0, false, null, out _);
+    /// <summary>Measures a valid leaf without allocating or emitting its page bytes.</summary>
+    /// <param name="layout">The page layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="entries">The leaf entries.</param>
+    /// <param name="maxPrefixLength">The prefix ceiling to preserve.</param>
+    /// <param name="freeSpace">The remaining payload bytes when the entries fit.</param>
+    internal static bool TryMeasureLeafPage(IndexPageLayout layout, int pageSize, IReadOnlyList<IndexEntry> entries, int maxPrefixLength, out int freeSpace)
+        => CanBuildPage(layout, pageSize, 0, entries, static entry => entry, null, 0, 0, 0, true, maxPrefixLength, out _, out freeSpace);
+
+    /// <summary>Packs entries greedily using exact payload sizes, without building candidate pages.</summary>
+    /// <typeparam name="T">The leaf or intermediate entry representation.</typeparam>
+    /// <param name="layout">The page layout.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="parentTdefPage">The owner table definition.</param>
+    /// <param name="entries">The entries in input order.</param>
+    /// <param name="getEntry">Reads the key and row pointer.</param>
+    /// <param name="getChild">Reads an intermediate child pointer, or null for leaves.</param>
+    /// <param name="enablePrefixCompression">Whether partitioning accounts for shared prefixes.</param>
+    internal static List<List<T>>? PartitionPages<T>(
+        IndexPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<T> entries,
+        Func<T, IndexEntry> getEntry,
+        Func<T, long>? getChild,
+        bool enablePrefixCompression)
+    {
+        // Validate every pointer before a capacity refusal, including later entries.
+        _ = CanBuildPage(layout, pageSize, parentTdefPage, entries, getEntry, getChild, 0, 0, 0, enablePrefixCompression, null, out _, out _);
+        var groups = new List<List<T>>();
+        var current = new List<T>();
+        long rawSize = 0;
+        int sharedPrefix = 0;
+        int prefixLimit = layout.PrefLenOffset == Constants.IndexLeafPage.Jet3.PrefLenOffset ? byte.MaxValue : ushort.MaxValue;
+        int trailerSize = getChild is null ? LeafTrailerSize : IntermediateTrailerSize;
+        int payloadArea = pageSize - layout.FirstEntryOffset;
+        foreach (T item in entries)
+        {
+            byte[] key = getEntry(item).Key;
+            long entrySize = (long)key.Length + trailerSize;
+            if (entrySize > payloadArea)
+            {
+                return null;
+            }
+
+            int prefix = 0;
+            if (enablePrefixCompression && current.Count > 0)
+            {
+                byte[] first = getEntry(current[0]).Key;
+                int limit = Math.Min(sharedPrefix, key.Length);
+                while (prefix < limit && first[prefix] == key[prefix])
+                {
+                    prefix++;
+                }
+            }
+
+            long candidateSize = rawSize + entrySize - ((long)current.Count * prefix);
+            long entryStart = rawSize - ((long)(current.Count - 1) * prefix);
+            if (candidateSize > payloadArea || (current.Count > 0 && layout.BitmaskOffset + (entryStart / 8) >= layout.FirstEntryOffset))
+            {
+                groups.Add(current);
+                current = [];
+                rawSize = 0;
+            }
+
+            sharedPrefix = current.Count == 0 ? Math.Min(key.Length, prefixLimit) : prefix;
+            current.Add(item);
+            rawSize += entrySize;
+        }
+
+        if (current.Count > 0 || entries.Count == 0)
+        {
+            groups.Add(current);
+        }
+
+        return groups;
+    }
 
     private static byte[]? TryBuildPage<T>(
         IndexPageLayout layout,
@@ -870,7 +940,7 @@ internal static class IndexPageCodec
         bool enablePrefixCompression,
         int? maxPrefixLength)
     {
-        if (!CanBuildPage(layout, pageSize, parentTdefPage, entries, getEntry, getChild, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength, out int prefix))
+        if (!CanBuildPage(layout, pageSize, parentTdefPage, entries, getEntry, getChild, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength, out int prefix, out _))
         {
             return null;
         }
@@ -923,8 +993,10 @@ internal static class IndexPageCodec
         long tailPage,
         bool enablePrefixCompression,
         int? maxPrefixLength,
-        out int prefix)
+        out int prefix,
+        out int freeSpace)
     {
+        freeSpace = 0;
         Guard.NotNull(entries, nameof(entries));
         if (pageSize <= layout.FirstEntryOffset || pageSize - layout.FirstEntryOffset > ushort.MaxValue)
         {
@@ -1003,6 +1075,7 @@ internal static class IndexPageCodec
             }
         }
 
+        freeSpace = pageSize - checked((int)cursor);
         return getChild is null || entries.Count > 0;
     }
 

@@ -11,7 +11,6 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
-using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Plans and applies in-place JET index B-tree mutations for <see cref="IndexMaintainer"/>.
@@ -362,8 +361,8 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         {
             List<IndexEntry> left = entries.GetRange(0, splitIndex);
             List<IndexEntry> right = entries.GetRange(splitIndex, entries.Count - splitIndex);
-            if (!this.TryMeasureLeafFreeSpace(layout, left, maxPrefixLength, out int leftFree)
-                || !this.TryMeasureLeafFreeSpace(layout, right, maxPrefixLength, out int rightFree))
+            if (!IndexPageCodec.TryMeasureLeafPage(layout, format.PageSize, left, maxPrefixLength, out int leftFree)
+                || !IndexPageCodec.TryMeasureLeafPage(layout, format.PageSize, right, maxPrefixLength, out int rightFree))
             {
                 continue;
             }
@@ -399,26 +398,6 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             OriginalIndex: originalIndex,
             Type: type,
             NewEntry: newEntry));
-
-    private bool TryMeasureLeafFreeSpace(
-        IndexPageLayout layout,
-        List<IndexEntry> entries,
-        int maxPrefixLength,
-        out int freeSpace)
-    {
-        byte[]? page = IndexPageCodec.TryBuildLeafPage(
-                layout,
-                format.PageSize,
-                parentTdefPage: 0,
-                entries,
-                prevPage: 0,
-                nextPage: 0,
-                tailPage: 0,
-                enablePrefixCompression: true,
-                maxPrefixLength: maxPrefixLength);
-        freeSpace = page is null ? 0 : Ru16(page, 2);
-        return page is not null;
-    }
 
     /// <summary>
     /// Builds one summary entry (max key + child-page pointer) per page of a

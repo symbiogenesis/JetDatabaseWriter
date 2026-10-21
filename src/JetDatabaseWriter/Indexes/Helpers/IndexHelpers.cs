@@ -636,57 +636,14 @@ internal static class IndexHelpers
         int pageSize,
         List<IndexEntry> entries)
     {
-        int payloadArea = pageSize - layout.FirstEntryOffset;
-        if (entries.Count < 2)
-        {
-            return null;
-        }
-
-        var pages = new SplitPages();
-        var current = new List<IndexEntry>();
-        int currentSize = 0;
-
-        for (int i = 0; i < entries.Count; i++)
-        {
-            int len = entries[i].Key.Length + 4;
-            if (len > payloadArea)
-            {
-                // A single entry's encoded key + slot offset exceeds an
-                // entire page's payload area — no split arrangement helps.
-                return null;
-            }
-
-            if (currentSize + len > payloadArea && current.Count > 0)
-            {
-                pages.Add(current);
-                current = [];
-                currentSize = 0;
-            }
-
-            current.Add(entries[i]);
-            currentSize += len;
-        }
-
-        if (current.Count > 0)
-        {
-            pages.Add(current);
-        }
-
-        if (pages.Count < 2)
-        {
-            // Whole thing fits on one page — caller should have used the
-            // in-place rewrite instead of asking for a split. Bail
-            // so the call site falls through cleanly.
-            return null;
-        }
-
-        return pages;
+        List<List<IndexEntry>>? groups = IndexPageCodec.PartitionPages(layout, pageSize, 0, entries, static entry => entry, null, enablePrefixCompression: false);
+        return groups is { Count: >= 2 } ? [.. groups] : null;
     }
 
     /// <summary>
     /// greedy left-fill N-way split of an
     /// INTERMEDIATE page's entry list. Each candidate page is validated by
-    /// <see cref="IndexBTreeBuilder.TryBuildIntermediatePage(IndexPageLayout, int, long, IReadOnlyList{DecodedIntermediateEntry}, int?)"/>
+    /// the codec's exact prefix-aware size calculation
     /// so the per-page byte budget — including the §4.4 prefix-compression
     /// savings the simpler leaf splitter cannot model — is respected exactly.
     /// </summary>
@@ -700,52 +657,8 @@ internal static class IndexHelpers
         long parentTdefPage,
         List<DecodedIntermediateEntry> entries)
     {
-        if (entries.Count < 2)
-        {
-            return null;
-        }
-
-        var pages = new List<List<DecodedIntermediateEntry>>();
-        int i = 0;
-        while (i < entries.Count)
-        {
-            // Grow [i, end) until either (a) end == entries.Count and the
-            // remainder fits, or (b) the next extension overflows. Linear
-            // probe is fine — TryBuildIntermediatePage is O(slice size) and
-            // the total work across all probes is O(N²) where N is the
-            // intermediate's entry count (typically ≤ a few hundred).
-            int end = i + 1;
-            byte[]? lastFit = IndexBTreeBuilder.TryBuildIntermediatePage(
-                layout, pageSize, parentTdefPage, entries.GetRange(i, 1));
-            if (lastFit is null)
-            {
-                // A single entry won't fit — degenerate, bail.
-                return null;
-            }
-
-            while (end < entries.Count)
-            {
-                List<DecodedIntermediateEntry> probe = entries.GetRange(i, end - i + 1);
-                byte[]? probeBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
-                    layout, pageSize, parentTdefPage, probe);
-                if (probeBytes is null)
-                {
-                    break;
-                }
-
-                end++;
-            }
-
-            pages.Add(entries.GetRange(i, end - i));
-            i = end;
-        }
-
-        if (pages.Count < 2)
-        {
-            return null;
-        }
-
-        return pages;
+        List<List<DecodedIntermediateEntry>>? groups = IndexPageCodec.PartitionPages(layout, pageSize, parentTdefPage, entries, static entry => entry.Entry, static entry => entry.ChildPage, enablePrefixCompression: true);
+        return groups is { Count: >= 2 } ? groups : null;
     }
 
     /// <summary>
