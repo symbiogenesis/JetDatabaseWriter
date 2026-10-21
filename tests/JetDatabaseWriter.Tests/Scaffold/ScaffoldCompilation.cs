@@ -60,6 +60,6 @@ internal static class ScaffoldCompilation
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             .Append(typeof(AccessReader).Assembly.Location)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(path => MetadataReference.CreateFromFile(path))];
+            .Select(path => MetadataReference.CreateFromFile(path)),];
     }
 }

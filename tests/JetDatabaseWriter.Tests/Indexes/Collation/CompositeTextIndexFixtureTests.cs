@@ -67,7 +67,7 @@ public sealed class CompositeTextIndexFixtureTests
             IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
             List<IndexMetadata> textIndexes = [.. indexes.Where(index =>
                 index.Columns.Count >= 2 && !index.IsForeignKey && index.FirstDp > 0
-                && index.Columns.All(c => colByName.TryGetValue(c.Name, out ColumnMetadata? cm) && cm.ClrType == typeof(string)))];
+                && index.Columns.All(c => colByName.TryGetValue(c.Name, out ColumnMetadata? cm) && cm.ClrType == typeof(string))),];
             if (textIndexes.Count == 0)
             {
                 continue;

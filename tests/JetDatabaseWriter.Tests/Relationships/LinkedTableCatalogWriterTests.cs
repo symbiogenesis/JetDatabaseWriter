@@ -709,7 +709,8 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                     Constants.SystemObjects.LinkedTableType,
                     Constants.SystemObjects.LinkedTableFlags,
                     Constants.SystemObjects.DefaultOwnerBlob,
-                    null)]),
+                    null),
+                ]),
             cancellationToken);
 
     private static string GetLockFilePath(string databasePath) =>

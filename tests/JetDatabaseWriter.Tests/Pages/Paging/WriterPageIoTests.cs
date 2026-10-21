@@ -72,7 +72,8 @@ public sealed class WriterPageIoTests(ITestOutputHelper output)
         await using AccessWriter writer = await TestDatabase.OpenWriterAsync(trace, Options(256, mode == WriteMode.AutoCommit), cancellationToken: TestContext.Current.CancellationToken);
         await writer.InsertRowAsync("PageIo", [1], TestContext.Current.CancellationToken);
         await using JetTransaction? transaction = mode == WriteMode.ExplicitCommit
-            ? await writer.BeginTransactionAsync(TestContext.Current.CancellationToken) : null;
+            ? await writer.BeginTransactionAsync(TestContext.Current.CancellationToken)
+            : null;
         writer.Pager.InvalidateAll();
         trace.Reset();
         for (int iteration = 0; iteration < 3; iteration++)

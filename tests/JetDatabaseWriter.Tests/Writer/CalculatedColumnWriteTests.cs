@@ -1136,7 +1136,7 @@ public sealed class CalculatedColumnWriteTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataRow[] rows = [.. (await reader.ReadTableAsync("CalcInputTypes", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable()
-            .OrderBy(r => Convert.ToInt32(r["Id"], CultureInfo.InvariantCulture))];
+            .OrderBy(r => Convert.ToInt32(r["Id"], CultureInfo.InvariantCulture)),];
         Assert.Equal(2, rows.Length);
 
         Assert.Equal(19, Convert.ToInt32(rows[0]["Sum"], CultureInfo.InvariantCulture));

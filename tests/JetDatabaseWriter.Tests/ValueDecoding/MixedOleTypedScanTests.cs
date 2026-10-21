@@ -540,7 +540,9 @@ public sealed class MixedOleTypedScanTests
 
         public string? Name
         {
-            get => this.name;
+            get =>
+                this.name;
+
             set
             {
                 if (this.Filter is null)

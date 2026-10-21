@@ -177,19 +177,21 @@ public sealed class DaoCascadeDepthTests
     {
         await using var session = AccessRoundTripSession.CreateEmpty(databaseExtension: format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb");
         CreateNativeChain(session, format, depth);
-        string mutation = depth == 50 ? """
-            $db.Execute('UPDATE T0 SET Id=5 WHERE Id=1',128)
-            """ : """
-            $refused=$false
-            try {$db.Execute('UPDATE T0 SET Id=5 WHERE Id=1',128)}
-            catch {
-                foreach($errorRecord in $engine.Errors) {
-                    if($errorRecord.Number -eq 3000 -and $errorRecord.Description -match '-1623') {$refused=$true}
+        string mutation = depth == 50
+            ? """
+                $db.Execute('UPDATE T0 SET Id=5 WHERE Id=1',128)
+                """
+            : """
+                $refused=$false
+                try {$db.Execute('UPDATE T0 SET Id=5 WHERE Id=1',128)}
+                catch {
+                    foreach($errorRecord in $engine.Errors) {
+                        if($errorRecord.Number -eq 3000 -and $errorRecord.Description -match '-1623') {$refused=$true}
+                    }
+                    if(-not $refused){throw}
                 }
-                if(-not $refused){throw}
-            }
-            if(-not $refused){throw 'Expected native update-depth refusal'}
-            """;
+                if(-not $refused){throw 'Expected native update-depth refusal'}
+                """;
         string expected = depth == 50 ? "2,5" : "1,2";
         string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
         string script = $$"""

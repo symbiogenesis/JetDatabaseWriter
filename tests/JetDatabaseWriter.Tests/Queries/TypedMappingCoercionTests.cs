@@ -274,14 +274,13 @@ public sealed class TypedMappingCoercionTests(DatabaseCache db) : IClassFixture<
     private async Task<MemoryStream> CreateAsync(DatabaseFormat format, bool indexEveryColumn = false)
     {
         IndexDefinition[] indexes = indexEveryColumn
-            ?
-            [
+            ? [
                 new IndexDefinition("IX_Shade", "Shade"),
                 new IndexDefinition("IX_ShadeName", "ShadeName"),
                 new IndexDefinition("IX_Token", "Token"),
                 new IndexDefinition("IX_RawToken", "RawToken"),
                 new IndexDefinition("IX_Big", "Big"),
-            ]
+                ]
             : [];
         MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
         await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct))

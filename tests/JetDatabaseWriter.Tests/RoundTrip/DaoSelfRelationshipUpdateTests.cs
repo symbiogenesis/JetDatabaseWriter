@@ -344,7 +344,7 @@ public sealed class DaoSelfRelationshipUpdateTests
             string[] actual = [.. result.StdOut.Split('\n')
                 .Where(line => line.StartsWith(prefix, StringComparison.Ordinal))
                 .Select(line => line[prefix.Length..].TrimEnd('\r'))
-                .Order(StringComparer.Ordinal)];
+                .Order(StringComparer.Ordinal),];
             Assert.Equal(expected, actual);
         }
     }

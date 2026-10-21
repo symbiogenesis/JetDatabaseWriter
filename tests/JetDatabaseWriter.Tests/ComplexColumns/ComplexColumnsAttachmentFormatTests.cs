@@ -179,7 +179,7 @@ public sealed class ComplexColumnsAttachmentFormatTests
         return [.. (await harness.Services.Snapshots.ReadRowsAsync(flatTdefPage, Ct)).Select(row => new StoredAttachment(
             (string)row.Values[fileName],
             (string)row.Values[fileType],
-            (byte[])row.Values[fileData]))];
+            (byte[])row.Values[fileData])),];
     }
 
     /// <summary>One flat-table attachment row with its <c>FileData</c> as stored.</summary>

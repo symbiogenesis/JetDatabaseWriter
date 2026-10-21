@@ -126,25 +126,27 @@ public sealed class ComplexSchemaDaoTests
         // Keep that macro intact and verify native reads/compact for this fixture.
         bool nativeWrites = tableName != "ProductCategories";
         string nativeMarker = nativeWrites ? "NATIVE_MUTATION_OK" : "NATIVE_READ_OK";
-        string nativeEdit = nativeWrites ? $$"""
-            $rs = $db.OpenRecordset({{tableLiteral}})
-            try {
-                $rs.Edit()
-                $child = $rs.Fields('RenamedFiles').Value
+        string nativeEdit = nativeWrites
+            ? $$"""
+                $rs = $db.OpenRecordset({{tableLiteral}})
                 try {
-                    $child.AddNew()
-                    $child.Fields('FileData').LoadFromFile({{Quote(payloadPath)}})
-                    $child.Update()
-                } finally { $child.Close() }
-                $child = $rs.Fields('AddedTags').Value
-                try {
-                    $child.AddNew()
-                    $child.Fields('Value').Value = 'native-tag'
-                    $child.Update()
-                } finally { $child.Close() }
-                $rs.Update()
-            } finally { $rs.Close() }
-            """ : string.Empty;
+                    $rs.Edit()
+                    $child = $rs.Fields('RenamedFiles').Value
+                    try {
+                        $child.AddNew()
+                        $child.Fields('FileData').LoadFromFile({{Quote(payloadPath)}})
+                        $child.Update()
+                    } finally { $child.Close() }
+                    $child = $rs.Fields('AddedTags').Value
+                    try {
+                        $child.AddNew()
+                        $child.Fields('Value').Value = 'native-tag'
+                        $child.Update()
+                    } finally { $child.Close() }
+                    $rs.Update()
+                } finally { $rs.Close() }
+                """
+            : string.Empty;
         string nativeMutation = $$"""
             $table = $db.TableDefs({{tableLiteral}})
             foreach ($columnName in @('RenamedFiles','AddedTags')) {
@@ -203,7 +205,7 @@ public sealed class ComplexSchemaDaoTests
         // Retain application blobs (including data macros) as well as security
         // and dates; a schema rewrite changes only the projected properties.
         return [.. objects.Columns.Cast<DataColumn>().Where(column => column.ColumnName != "LvProp").Select(column =>
-            column.ColumnName + "=" + (row[column] is byte[] bytes ? Convert.ToHexString(bytes) : Convert.ToString(row[column], CultureInfo.InvariantCulture)))];
+            column.ColumnName + "=" + (row[column] is byte[] bytes ? Convert.ToHexString(bytes) : Convert.ToString(row[column], CultureInfo.InvariantCulture))),];
     }
 
     private static RowValues BuildNewRow(DataTable snapshot, TableDef definition, IReadOnlyList<IndexMetadata> indexes, string keyColumn)

@@ -74,7 +74,7 @@ public sealed class ComplexColumnIndexFixtureTests
 
         List<byte[]> expected = [.. table.Rows
             .Select(row => IndexKeyEncoder.EncodeEntry(columnType, Slot(table, row, key.Name), key.IsAscending))
-            .OrderBy(k => k, ByteArrayComparer.Instance)];
+            .OrderBy(k => k, ByteArrayComparer.Instance),];
         List<byte[]> onDisk = await ReadIndexLeafKeysAsync(ms, tableName, indexName);
 
         Assert.NotEmpty(expected);
@@ -143,7 +143,7 @@ public sealed class ComplexColumnIndexFixtureTests
             IndexMetadata index = Assert.Single(await reader.ListIndexesAsync("Table1", Ct), i => i.Columns.Count == 1 && i.Columns[0].Name == column);
             List<byte[]> expected = [.. remaining.Rows
                 .Select(r => IndexKeyEncoder.EncodeEntry(ColumnType.ComplexType, Slot(remaining, r, column)))
-                .OrderBy(k => k, ByteArrayComparer.Instance)];
+                .OrderBy(k => k, ByteArrayComparer.Instance),];
             Assert.Equal(expected, await ReadIndexLeafKeysAsync(ms, "Table1", index.Name));
         }
     }
@@ -209,7 +209,7 @@ public sealed class ComplexColumnIndexFixtureTests
             {
                 List<byte[]> expected = [.. rewritten.Rows
                     .Select(row => IndexKeyEncoder.EncodeEntry(type, Slot(rewritten, row, first.Name), first.IsAscending))
-                    .OrderBy(key => key, ByteArrayComparer.Instance)];
+                    .OrderBy(key => key, ByteArrayComparer.Instance),];
                 Assert.Equal(expected, await ReadIndexLeafKeysAsync(stream, tableName, index.Name));
             }
         }

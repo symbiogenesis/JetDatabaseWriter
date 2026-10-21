@@ -247,7 +247,9 @@ public sealed class CompactUsageMapBuilderTests
 
         public override long Position
         {
-            get => this.position;
+            get =>
+                this.position;
+
             set
             {
                 Assert.True(value >= this.prefix, "A private map write must never touch the pinned prefix.");

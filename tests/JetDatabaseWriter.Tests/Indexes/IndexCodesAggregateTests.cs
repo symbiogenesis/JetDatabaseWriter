@@ -79,7 +79,7 @@ public sealed class IndexCodesAggregateTests
             IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
             List<IndexMetadata> textIndexes = [.. indexes.Where(index =>
                 index.Columns.Count == 1 && !index.IsForeignKey && index.FirstDp > 0
-                && colByName.TryGetValue(index.Columns[0].Name, out ColumnMetadata? column) && column.ClrType == typeof(string))];
+                && colByName.TryGetValue(index.Columns[0].Name, out ColumnMetadata? column) && column.ClrType == typeof(string)),];
             if (textIndexes.Count == 0)
             {
                 continue;

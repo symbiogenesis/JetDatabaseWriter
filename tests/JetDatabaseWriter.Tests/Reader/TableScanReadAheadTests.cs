@@ -194,7 +194,7 @@ public sealed class TableScanReadAheadTests(GeneratedDatabaseCache seeds) : IDis
         for (int round = 0; round < 4; round++)
         {
             Task<List<string>>[] scans = [.. Enumerable.Range(0, 8).Select(i =>
-                Task.Run(() => ReadRowSignaturesAsync(reader, i % 2 == 0 ? PlainTable : LongValueTable)))];
+                Task.Run(() => ReadRowSignaturesAsync(reader, i % 2 == 0 ? PlainTable : LongValueTable))),];
             List<string>[] results = await Task.WhenAll(scans);
             for (int i = 0; i < results.Length; i++)
             {
@@ -226,7 +226,7 @@ public sealed class TableScanReadAheadTests(GeneratedDatabaseCache seeds) : IDis
         for (int round = 0; round < 8; round++)
         {
             Task<byte[]>[] reads = [.. Enumerable.Range(1, expected.Length - 1).Select(page =>
-                Task.Run(async () => await db.Pages.ReadPageCopyAsync(page, TestContext.Current.CancellationToken)))];
+                Task.Run(async () => await db.Pages.ReadPageCopyAsync(page, TestContext.Current.CancellationToken))),];
             byte[][] actual = await Task.WhenAll(reads);
             for (int page = 1; page < expected.Length; page++)
             {
@@ -261,7 +261,7 @@ public sealed class TableScanReadAheadTests(GeneratedDatabaseCache seeds) : IDis
         for (int round = 0; round < 4; round++)
         {
             Task<List<string>>[] scans = [.. Enumerable.Range(0, 8).Select(i =>
-                Task.Run(() => ReadRowSignaturesAsync(reader, ConcurrentScanTable(i, withLongValues))))];
+                Task.Run(() => ReadRowSignaturesAsync(reader, ConcurrentScanTable(i, withLongValues)))),];
             List<string>[] results = await Task.WhenAll(scans);
             for (int i = 0; i < results.Length; i++)
             {
@@ -298,7 +298,7 @@ public sealed class TableScanReadAheadTests(GeneratedDatabaseCache seeds) : IDis
         for (int round = 0; round < 4; round++)
         {
             Task<byte[]>[] reads = [.. Enumerable.Range(1, pageCount - 1).Select(page =>
-                Task.Run(async () => await db.Pages.ReadPageCopyAsync(page, TestContext.Current.CancellationToken)))];
+                Task.Run(async () => await db.Pages.ReadPageCopyAsync(page, TestContext.Current.CancellationToken))),];
             byte[][] actual = await Task.WhenAll(reads);
             for (int page = 1; page < pageCount; page++)
             {

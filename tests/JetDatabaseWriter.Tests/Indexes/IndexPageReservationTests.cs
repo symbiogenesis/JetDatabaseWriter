@@ -364,7 +364,8 @@ public sealed class IndexPageReservationTests
                         Constants.SystemObjects.LinkedTableType,
                         Constants.SystemObjects.LinkedTableFlags,
                         Constants.SystemObjects.DefaultOwnerBlob,
-                        null)]),
+                        null),
+                    ]),
                 this.ct);
         }
 

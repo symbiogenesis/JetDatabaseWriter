@@ -283,7 +283,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
             Assert.Contains(table, await reader.ListTablesAsync(Ct));
             names = [.. (await reader.ListRelationshipsAsync(Ct))
                 .Where(r => string.Equals(r.PrimaryTable, table, StringComparison.OrdinalIgnoreCase) || string.Equals(r.ForeignTable, table, StringComparison.OrdinalIgnoreCase))
-                .Select(r => r.Name)];
+                .Select(r => r.Name),];
         }
 
         Assert.NotEmpty(names);

@@ -87,7 +87,7 @@ internal static class TextIndexEncoderFixtureHarness
             List<IndexMetadata> textIndexes = [.. indexes.Where(index =>
                 index.Columns.Count == 1 && !index.IsForeignKey && index.FirstDp > 0
                 && colByName.TryGetValue(index.Columns[0].Name, out ColumnMetadata? column) && column.ClrType == typeof(string)
-                && !(encode is null && fixturePath.Contains("fixedTextTest", StringComparison.OrdinalIgnoreCase) && index.Name == "Users2_8_idx"))];
+                && !(encode is null && fixturePath.Contains("fixedTextTest", StringComparison.OrdinalIgnoreCase) && index.Name == "Users2_8_idx")),];
             if (textIndexes.Count == 0)
             {
                 continue;

@@ -169,10 +169,10 @@ public sealed class TableRewriteFailureTests
         string[] catalog = [.. objects.Columns.Cast<DataColumn>().Select(column => column.ColumnName + "=" + Cell(table[column]))];
         using DataTable aces = await reader.ReadTableAsync("MSysACEs", cancellationToken: Ct);
         string[] permissions = [.. aces.AsEnumerable().Where(row => Equals(row["ObjectId"], checked((int)entry.TDefPage)))
-            .Select(row => string.Join("|", row.ItemArray.Select(Cell))).Order(StringComparer.Ordinal)];
+            .Select(row => string.Join("|", row.ItemArray.Select(Cell))).Order(StringComparer.Ordinal),];
         Assert.NotEmpty(permissions);
         string[] complex = [.. (await reader.GetComplexColumnsAsync("Documents", Ct))
-            .Select(column => $"{column.ColumnName}:{column.ComplexId}:{column.FlatTableId}:{column.ConceptualTableId}").Order(StringComparer.Ordinal)];
+            .Select(column => $"{column.ColumnName}:{column.ComplexId}:{column.FlatTableId}:{column.ConceptualTableId}").Order(StringComparer.Ordinal),];
         string[] kept = [.. (await reader.GetAttachmentsAsync("Documents", "KeepFiles", Ct)).Select(Attachment).Order(StringComparer.Ordinal)];
         string[] changed = target is null ? [] : [.. (await reader.GetAttachmentsAsync("Documents", target, Ct)).Select(Attachment).Order(StringComparer.Ordinal)];
         using DataTable rows = await reader.ReadTableAsync("Documents", cancellationToken: Ct);

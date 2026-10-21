@@ -43,7 +43,7 @@ public sealed class EntityEmitterIdentifierTests
             [new(IsCollection: true, TargetClassName: "Guid", PreferredName: "Children"), new(IsCollection: false, TargetClassName: "DateTime", PreferredName: "Parent")],
             ns,
             useRecords,
-            nullable: true))];
+            nullable: true)),];
         Assembly assembly = ScaffoldCompilation.CompileCleanly(sources);
         Type entity = assembly.GetType(ns + ".Hyperlink", throwOnError: true)!;
         Assert.Equal(typeof(DateTime), entity.GetProperty("CreatedOn")!.PropertyType);

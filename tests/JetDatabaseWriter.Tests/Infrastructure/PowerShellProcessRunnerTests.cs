@@ -467,11 +467,11 @@ public sealed partial class PowerShellProcessRunnerTests
             identity.AccessToken,
             NativeMethods.DisableMaxPrivilege,
             0,
-            IntPtr.Zero,
+            nint.Zero,
             0,
-            IntPtr.Zero,
+            nint.Zero,
             0,
-            IntPtr.Zero,
+            nint.Zero,
             out SafeAccessTokenHandle token))
         {
             throw new Win32Exception();

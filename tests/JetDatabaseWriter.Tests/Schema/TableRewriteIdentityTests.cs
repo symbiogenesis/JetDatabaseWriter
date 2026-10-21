@@ -328,7 +328,7 @@ public sealed class TableRewriteIdentityTests
         DataRow table = Assert.Single(objects.AsEnumerable(), row => Equals(row["Name"], name));
         int id = Assert.IsType<int>(table["Id"]);
         string[] cells = [.. objects.Columns.Cast<DataColumn>().Where(column => column.ColumnName != "LvProp")
-            .Select(column => column.ColumnName + "=" + Cell(table[column]))];
+            .Select(column => column.ColumnName + "=" + Cell(table[column])),];
         if (reader.PageSize == Constants.PageSizes.Jet3)
         {
             return new CatalogSnapshot(id, cells, []);
@@ -336,7 +336,7 @@ public sealed class TableRewriteIdentityTests
 
         using DataTable aces = await reader.ReadTableAsync("MSysACEs", cancellationToken: Ct);
         string[] permissions = [.. aces.AsEnumerable().Where(row => Equals(row["ObjectId"], id))
-            .Select(row => string.Join("|", row.ItemArray.Select(Cell))).Order(StringComparer.Ordinal)];
+            .Select(row => string.Join("|", row.ItemArray.Select(Cell))).Order(StringComparer.Ordinal),];
         return new CatalogSnapshot(id, cells, permissions);
     }
 

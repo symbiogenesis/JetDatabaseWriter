@@ -62,7 +62,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
 
     /// <summary>Mirror of <c>mdb-count nwind.mdb "Umsätze"</c> from mdbtools' test_script.sh.</summary>
     [Fact]
-    public async Task Nwind_Umsätze_HasRows()
+    public async Task Nwind_Umsaetze_HasRows()
     {
         if (!File.Exists(TestDatabases.MdbtoolsNwind))
         {
@@ -84,7 +84,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
     /// reachable for every column in the target table.
     /// </summary>
     [Fact]
-    public async Task Nwind_Umsätze_DumpsColumnPropertiesWithoutError()
+    public async Task Nwind_Umsaetze_DumpsColumnPropertiesWithoutError()
     {
         if (!File.Exists(TestDatabases.MdbtoolsNwind))
         {
@@ -97,7 +97,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
 
     /// <summary>Mirror of <c>mdb-json nwind.mdb "Umsätze"</c> from mdbtools' test_script.sh — every row decodes without throwing.</summary>
     [Fact]
-    public async Task Nwind_Umsätze_StreamsToCompletion()
+    public async Task Nwind_Umsaetze_StreamsToCompletion()
     {
         if (!File.Exists(TestDatabases.MdbtoolsNwind))
         {
@@ -188,7 +188,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
     /// table whose name itself contains a non-ASCII character (Umsätze).
     /// </summary>
     [Fact]
-    public async Task Nwind_Umsätze_NonAsciiTableName_StreamsAtLeastOneRow()
+    public async Task Nwind_Umsaetze_NonAsciiTableName_StreamsAtLeastOneRow()
     {
         if (!File.Exists(TestDatabases.MdbtoolsNwind))
         {

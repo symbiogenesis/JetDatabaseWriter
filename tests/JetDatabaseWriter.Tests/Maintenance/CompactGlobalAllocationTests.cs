@@ -342,7 +342,8 @@ public sealed class CompactGlobalAllocationTests
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             this.RequestedBytes += buffer.Length;
-            return fail ? throw new IOException("Global allocation ledger read failure.")
+            return fail
+                ? throw new IOException("Global allocation ledger read failure.")
                 : base.ReadAsync(shortReads ? buffer[..Math.Min(buffer.Length, 7)] : buffer, cancellationToken);
         }
     }
