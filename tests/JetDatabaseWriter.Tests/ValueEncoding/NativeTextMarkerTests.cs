@@ -23,6 +23,18 @@ public sealed class NativeTextMarkerTests(ITestOutputHelper output)
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void NativeTerminalLowByte_IsAcceptedOnlyForCalculatedText(int value)
+    {
+        byte[] bytes = [0xFF, 0xFE, 0, checked((byte)value)];
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
+        Assert.Equal(((char)value).ToString(), format.DecodeCalculatedText(bytes, 0, bytes.Length));
+        Assert.Equal(string.Empty, JetFormat.DecodeJet4Text(bytes, 0, bytes.Length));
+        Assert.Equal(string.Empty, format.DecodeMemoText(bytes, 0, bytes.Length, compressedStorage: true));
+    }
+
+    [Theory]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task UncompressedText_LeadingMarkerSurvivesEveryReadSurfaceAndWriteBack(DatabaseFormat kind)

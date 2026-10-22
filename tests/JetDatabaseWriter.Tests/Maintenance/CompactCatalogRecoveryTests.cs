@@ -473,7 +473,7 @@ public sealed class CompactCatalogRecoveryTests
             BinaryPrimitives.WriteUInt16LittleEndian(changed.AsSpan(oldOffset + delta, 2), checked((ushort)(value + (variable > name.VarIdx ? delta : 0))));
         }
 
-        Assert.Equal(compressed ? target.Name + "A" : target.Name, ScalarColumnReader.DecodeSimpleColumnValue(format, changed, 0, changed.Length, name));
+        Assert.Equal(target.Name, ScalarColumnReader.DecodeSimpleColumnValue(format, changed, 0, changed.Length, name));
         SetPayload(bytes.AsSpan(payload, format.PageSize), format, changed, Constants.DataPage.DeletedRowFlag);
         DamageMovedOwners(bytes, format, 1);
         CompactCatalogRecovery.Result recovered = await RecoverAsync(bytes, format, alterCatalog: image => WithNameCompression(image, compressed));

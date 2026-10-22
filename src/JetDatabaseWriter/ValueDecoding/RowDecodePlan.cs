@@ -851,7 +851,7 @@ internal sealed class RowDecodePlan
             if (valueType == TextType)
             {
                 byte[] textPayload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
-                return source.DecodeText(textPayload, 0, textPayload.Length);
+                return source.DecodeCalculatedText(textPayload, 0, textPayload.Length);
             }
 
             if (valueType == BinaryType)
@@ -1040,7 +1040,7 @@ internal sealed class RowDecodePlan
             if (valueType == TextType)
             {
                 byte[] textPayload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
-                return source.DecodeText(textPayload, 0, textPayload.Length);
+                return source.DecodeCalculatedText(textPayload, 0, textPayload.Length);
             }
 
             if (valueType == BinaryType)

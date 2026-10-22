@@ -127,6 +127,17 @@ internal sealed partial class JetFormat
     /// <param name="len">The length in bytes.</param>
     /// <returns>The decoded string.</returns>
     internal static string DecodeJet4Text(byte[] bytes, int start, int len)
+        => DecodeJet4TextCore(bytes, start, len, allowTerminalLowByte: false);
+
+    /// <summary>Decodes a native calculated Text payload, including its verified terminal low-byte representation.</summary>
+    /// <param name="bytes">The unwrapped payload bytes.</param>
+    /// <param name="start">The payload start.</param>
+    /// <param name="len">The declared payload length.</param>
+    /// <returns>The native cached Text result without recalculating the expression.</returns>
+    internal string DecodeCalculatedText(byte[] bytes, int start, int len)
+        => this.IsJet3 ? this.DecodeText(bytes, start, len) : DecodeJet4TextCore(bytes, start, len, allowTerminalLowByte: true);
+
+    private static string DecodeJet4TextCore(byte[] bytes, int start, int len, bool allowTerminalLowByte)
     {
         if (len < 2)
         {
@@ -135,7 +146,7 @@ internal sealed partial class JetFormat
 
         if (bytes[start] == 0xFF && bytes[start + 1] == 0xFE)
         {
-            return DecompressJet4(bytes, start + 2, len - 2);
+            return DecompressJet4(bytes, start + 2, len - 2, allowTerminalLowByte);
         }
 
         // Plain UCS-2 LE — length must be even
@@ -151,8 +162,9 @@ internal sealed partial class JetFormat
     /// <param name="bytes">The bytes.</param>
     /// <param name="start">The start.</param>
     /// <param name="len">The length in bytes.</param>
+    /// <param name="allowTerminalLowByte">Whether independently verified calculated Text permits a terminal low byte.</param>
     /// <returns>The decompressed string.</returns>
-    private static string DecompressJet4(byte[] bytes, int start, int len)
+    private static string DecompressJet4(byte[] bytes, int start, int len, bool allowTerminalLowByte)
     {
         // Fast path: if no 0x00 byte appears in the data, the entire string
         // is compressed Latin-1 with no mode switches. This is the overwhelming
@@ -173,7 +185,7 @@ internal sealed partial class JetFormat
             return CreateFromCompressed(bytes, start, len);
         }
 
-        return DecompressJet4Slow(bytes, start, len);
+        return DecompressJet4Slow(bytes, start, len, allowTerminalLowByte);
     }
 
     private static string CreateFromCompressed(byte[] bytes, int start, int len) =>
@@ -192,16 +204,16 @@ internal sealed partial class JetFormat
             });
 #endif
 
-    private static string DecompressJet4Slow(byte[] bytes, int start, int len)
+    private static string DecompressJet4Slow(byte[] bytes, int start, int len, bool allowTerminalLowByte)
     {
-        int charCount = CountDecompressedChars(bytes, start, len);
+        int charCount = CountDecompressedChars(bytes, start, len, allowTerminalLowByte);
         return string.Create(
             charCount,
-            (Bytes: bytes, Start: start, Length: len),
-            static (chars, state) => FillDecompressed(state.Bytes, state.Start, state.Length, chars));
+            (Bytes: bytes, Start: start, Length: len, AllowTerminalLowByte: allowTerminalLowByte),
+            static (chars, state) => FillDecompressed(state.Bytes, state.Start, state.Length, chars, state.AllowTerminalLowByte));
     }
 
-    private static int CountDecompressedChars(ReadOnlySpan<byte> bytes, int start, int len)
+    private static int CountDecompressedChars(ReadOnlySpan<byte> bytes, int start, int len, bool allowTerminalLowByte)
     {
         int count = 0;
         bool compressed = true;
@@ -235,7 +247,7 @@ internal sealed partial class JetFormat
                 {
                     // DAO's native calculated Text controls accept a terminal
                     // uncompressed low byte with an implicit zero high byte.
-                    if (i < end && bytes[i] != 0)
+                    if (allowTerminalLowByte && i < end && bytes[i] != 0)
                     {
                         count++;
                     }
@@ -251,7 +263,7 @@ internal sealed partial class JetFormat
         return count;
     }
 
-    private static void FillDecompressed(ReadOnlySpan<byte> bytes, int start, int len, Span<char> output)
+    private static void FillDecompressed(ReadOnlySpan<byte> bytes, int start, int len, Span<char> output, bool allowTerminalLowByte)
     {
         int pos = 0;
         bool compressed = true;
@@ -286,7 +298,7 @@ internal sealed partial class JetFormat
 
                 if (i + 1 >= end)
                 {
-                    if (i < end && bytes[i] != 0)
+                    if (allowTerminalLowByte && i < end && bytes[i] != 0)
                     {
                         output[pos++] = (char)bytes[i];
                     }
