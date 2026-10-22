@@ -107,8 +107,8 @@ in the corresponding TODO item.
 |---|---|---|
 | Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map inspection; independent catalog Id and unique ParentIdName key evidence despite damaged headers/map hints, including intact original headers with damaged moved owners and complete independently audited key/chain/routing evidence; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/field/LVAL/index work and simultaneous storage through local-table orchestration | S1: complete remaining public-scan accounting and catalog recovery when physical ownership and both supported independent key paths are unavailable; qualify runtime/pool and caller-owned memory separately |
 | Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory refusal; bounded raw row and field streaming with retained assignment states; bounded calculated ResultType hydration and complete defined LVAL-chain observations, including trailing storage; private dense raw-row packing with original-header bookmark mappings and independent reopened raw-allocation/ledger comparison; complete raw LVAL staging with retargeted descriptor/chain pointers installed in verified packed rows and per-column allocation observations; independent reopened data/LVAL byte and private allocation coverage validation; bounded per-table DATA/LVAL/map assembly with original-column allocation-ledger comparison, independent complete table/map and pointer-only image comparison | S3/F8 and the bounded raw-copy part of I6: interpret native error envelopes independently of Null and damaged values without losing their raw representation; install staged table images and assemble catalog, index and global allocation references into a complete compact copy |
-| Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; projected raw header/trailer bytes and source index sharing/directions during schema edits; retained continuation headers and original trailing padding during chain writes; complete known table/index/LVAL pointer patching within pinned raw definitions; all-chain-preflight installation on original page identities and independent reopened header/body comparison | S9: inventory and preserve application, security, replication and unknown objects |
-| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key graph, entry-edge fence and observed leaf-chain checks; separate complete observed-edge key-envelope, conservative key-routing and bookmark-inclusive order proofs; bounded same-owner bookmark-target validation; cross-root declared-owner and incoming-reference observations; stored-key staging with disk-backed fences and monotone disk-backed row-bookmark lookup; independent reopened private stored-key/bookmark, child-maximum and allocation coverage validation; bounded private native usage-map construction from ordered allocation runs and independent reopened exact membership/allocation validation; composed relocated stored-key tree/map assembly with references returned after reopened validation; disk-backed exact whole-destination allocation ledgers retaining the complete source prefix | I2: prove safe sharing and complete incoming-reference ownership beyond known declarations, complete native separator/alias and stored-key/row correspondence validation, and assemble relocated data/index allocations with maps and metadata; F9 only where keys must be regenerated |
+| Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; projected raw header/trailer bytes and source index sharing/directions during schema edits; retained continuation headers and original trailing padding during chain writes; complete known table/index/LVAL pointer patching within pinned raw definitions; all-chain-preflight installation on original page identities and independent reopened header/body comparison; exact complete pinned-prefix comparison permitting only independently reconstructed TDEF pointers and validated native global-map bytes | S9: complete application, security, replication and unknown-object inventory and semantic preservation requirements |
+| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key graph, entry-edge fence and observed leaf-chain checks; separate complete observed-edge key-envelope, conservative key-routing and bookmark-inclusive order proofs; bounded same-owner bookmark-target validation; cross-root declared-owner and incoming-reference observations; stored-key staging with disk-backed fences and monotone disk-backed row-bookmark lookup; independent reopened private stored-key/bookmark, child-maximum and allocation coverage validation; bounded private native usage-map construction from ordered allocation runs and independent reopened exact membership/allocation validation; composed relocated stored-key tree/map assembly with references returned after reopened validation; disk-backed exact whole-destination allocation ledgers retaining the complete source prefix; composed per-table physical stored indexes, maps and pinned chain installation; independent canonical native global-map installation/comparison with self-covered bitmap storage | I2: prove safe sharing and complete incoming-reference ownership beyond known declarations, complete native separator/alias and stored-key/row correspondence validation, and assemble complete catalog/multi-object references with database-wide admission and reopened validation; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
 | Replace the source safely | Private staging, flushed backups and process-interruption tests | E4/F6 and the file-recovery part of I15: coordination, recovery discovery, namespace persistence and actual power-interruption evidence |
 
@@ -448,8 +448,61 @@ ranges supplied to `CompactGlobalAllocationValidator` must cover the destination
 through EOF exactly once. This accounts for
 map storage as well as its members; it neither installs native global free maps
 nor proves that the supplied allocations exhaust unknown incoming references.
-Original pages remain pinned. Native global-map installation, complete database
-assembly, reclamation and reopened database validation are still required.
+Original pages remain pinned. Native global-map installation is a separate
+component; complete database assembly, reclamation and reopened database
+validation are still required.
+
+`CompactPinnedTableAssembly` composes one table's raw DATA/LVAL/maps, every
+physical stored index and pointer-only installation on the original TDEF chain.
+Its independent reopened validator compares original stored entries, both
+immutable ledgers, exact private allocations and installed definition bytes.
+Later table or global-map allocations may follow its exact compared extent;
+their coverage belongs to the complete allocation ledger. Private I/O, observed
+entries/key bytes, output and simultaneous storage have aggregate admission.
+Source traversal allowances apply to one table invocation; a whole-database
+driver still needs cumulative accounting across tables. Physical root/map aliases
+refuse until sharing is independently supported. Logical sharing within one
+physical descriptor retains its original metadata.
+
+`CompactGlobalMapInstaller` replaces only the original page-one global free-map
+row in the private destination. It marks every original and appended page used,
+retains old bitmap storage and appends canonical REFERENCE bitmaps when needed.
+Coverage includes those new bitmap pages themselves, including a boundary that
+requires another window. The separate reopened `CompactGlobalMapValidator`
+derives the expected row and all bitmap bytes from the original page geometry
+and independently recorded pre-map EOF, without trusting installer output.
+Every page-one byte outside the map row remains exact. The complete allocation
+ledger must also account for appended global-map storage owned by page one.
+This conservative map does not reclaim any source page.
+
+`CompactPinnedPrefixValidator` independently reconstructs complete known TDEF
+pointer replacements and compares every physical source-prefix byte. Unlisted
+definitions, application/security/replication storage, page headers and padding
+remain byte-identical. Optional native global-map changes require the concrete
+independent global-map validator; arbitrary mutable-page exceptions are not
+accepted. Definition traversal, cumulative requested reads and retained patch
+storage have bounds. This is a preservation comparison, not proof of complete
+catalog discovery, opaque-reference meaning, ownership or safe reclamation.
+
+`CompactPinnedDatabaseCompositionTests` assembles multiple generated tables on
+Jet3/Jet4/ACE, then independently compares their reopened table/index allocations,
+native global map, complete allocation ledger and entire pinned prefix before
+ordinary row reads. These append-only specimens retain all original storage.
+They establish component composition, not reclaimed space, complete native
+feature coverage or a managed Compact & Repair API.
+
+Focused native global-map controls force REFERENCE storage and compare the
+unchanged original/control content, actual allocation growth during Memo inserts,
+update/delete, duplicate-key refusal, native compact and exact readback. The
+DAO3.6 Jet3 control uses a Microsoft-authored host. An untouched fresh managed
+Jet3 database with three 3,000-character Memo values separately reads through
+DAO3.6 but refuses its first SQL UPDATE with DAO 3049 / HRESULT `0x800A0BE9`
+(`Cannot open database 'UPDATE ...'`). The retained generated control and installed
+subject distinguish that open bootstrap/SQL compatibility gap from the native-host
+map comparison; its underlying cause remains unproven (E2a). DAO120 Jet4/ACE
+mutation acceptance remains an external evidence dependency when that engine
+is unavailable. Controlled native map acceptance does not establish safe
+reclamation or acceptance of a complete managed compact database.
 
 `CompactPinnedTableAssemblyTests` composes these components on generated Jet3,
 Jet4 and ACE tables with a primary index and external Memo storage. It validates

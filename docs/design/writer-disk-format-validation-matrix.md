@@ -501,3 +501,32 @@ despite unchanged raw values. Aggregate output/map growth and conservative
 working-storage boundaries are checked separately. Guarded DAO36 Jet3 and DAO120 Jet4/ACE controls compare original, staged and native-compacted mixed Memo/OLE contents using ordinal text and exact binary comparisons. These are controlled
 writer-created tables; original storage remains pinned and no global allocation
 or reclaimability verdict is implied.
+
+`CompactPinnedTablePipelineTests` compares zero/multiple physical stored-index
+assemblies and exact installed chains against independent original observations
+on generated Jet3/Jet4/ACE tables. Cross-index admission, physical root/map aliases,
+tampered keys/ledgers/images and oversized per-column allocation lists refuse.
+`CompactPinnedPrefixValidatorTests` reconstructs only defined pointer changes and
+requires every other original physical byte to survive, including opaque pages,
+unlisted definitions, continuation headers and padding. Partial-read retries,
+chain overlap, incomplete reference inputs and exhausted work/storage limits
+have focused coverage.
+
+`CompactGlobalMapTests` checks exact all-pinned INLINE/REFERENCE membership and
+self-covered appended bitmap storage, including a bitmap-window boundary.
+Independent reopened validation checks the entire page-one surround, complete
+row directory, every map byte and exact append-point/EOF coverage. Its guarded
+native tests compare read, allocation-growing Memo mutation, primary-key refusal,
+native compact and managed/native exact readback. The DAO3.6 native-host Jet3
+case has local evidence; DAO120 Jet4/ACE cases remain unverified where guarded
+out by the unavailable engine. An untouched generated Jet3 control separately
+refuses its first SQL UPDATE with DAO 3049 despite native reads; the underlying
+cause remains open as E2a. Native-host map acceptance does not resolve that gap.
+
+`CompactPinnedDatabaseCompositionTests` compares multiple tables, native global
+maps, exact complete allocation ledgers and the entire pinned prefix together.
+`CompactPinnedGlobalMapCompositionTests` requires concrete independent map
+validation before accepting any changed page-one byte and includes its reads in
+prefix admission. These are append-only compositions retaining every original
+page; they establish neither reclamation, complete database acceptance nor
+crash-safe replacement.
