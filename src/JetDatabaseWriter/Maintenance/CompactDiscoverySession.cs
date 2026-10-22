@@ -408,12 +408,15 @@ internal sealed class CompactDiscoverySession
     {
         using var recovered = new CompactRecoveredCatalogRows(this.pages, this.SourceFormat, this.budget, this.Accounting);
         using CompactCalculatedColumnHydrator? hydrator = hydrateCalculated ? new CompactCalculatedColumnHydrator(this.SourceFormat, this.budget, this.Accounting, ScanCatalogRowsAsync, this.AuditLongValueAsync) : null;
+        long indexCoordinates = Math.Min(int.MaxValue, this.budget.MaxIndexPages);
+        long mapCoordinates = Math.Min(int.MaxValue, this.budget.MaxObjects);
         using var ownership = new CompactIndexOwnershipAudit(
             this.pages.PageCount,
             new()
             {
                 Accounting = this.Accounting,
-                MaxTrackedPages = checked((int)Math.Min(int.MaxValue, this.budget.MaxIndexPages)),
+                MaxTrackedPages = checked((int)Math.Min(int.MaxValue, indexCoordinates + mapCoordinates)),
+                MaxMapRows = checked((int)Math.Min(int.MaxValue, this.budget.MaxObjects)),
                 MaxRootDescriptors = this.budget.MaxObjects,
                 MaxReferences = this.budget.MaxReferences,
                 MaxGraphSteps = this.budget.MaxGraphSteps,
@@ -444,9 +447,17 @@ internal sealed class CompactDiscoverySession
                 {
                     token.ThrowIfCancellationRequested();
                     TDefIndexDescriptor index = image.RealIndexes[ordinal];
+                    int mapOffset = index.Slot.FirstDpOffset - 4;
+                    if (mapOffset < 0 || mapOffset > image.LogicalByteLength - 4)
+                    {
+                        throw Corrupt(root, "A physical index descriptor has a truncated ownership-map pointer.");
+                    }
+
+                    uint mapPointer = BinaryPrimitives.ReadUInt32LittleEndian(image.Bytes.Slice(mapOffset, 4));
+                    UsageMapPointer ownedPages = new(checked((int)(mapPointer & 0xFFu)), checked((int)(mapPointer >> 8)));
+                    await ownership.DeclareDescriptorAsync(root, index.RootPage, ownedPages, ordinal, ownershipVisitor, token).ConfigureAwait(false);
                     if (index.RootPage != 0)
                     {
-                        await ownership.DeclareRootAsync(root, index.RootPage, ordinal, ownershipVisitor, token).ConfigureAwait(false);
                         await this.ScanIndexBookmarksCoreAsync(
                             root,
                             index.RootPage,

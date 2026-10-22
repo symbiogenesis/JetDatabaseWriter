@@ -27,6 +27,21 @@ internal sealed record CompactIndexOwnershipRecord
     /// <summary>Gets the first declaration's physical descriptor ordinal when a root is shared.</summary>
     public int? RelatedDescriptorIndex { get; init; }
 
+    /// <summary>Gets the exact ownership-map row within its shared physical data page.</summary>
+    public int? MapRowIndex { get; init; }
+
+    /// <summary>Gets the number of physical descriptors presented, including zero roots.</summary>
+    public long DeclaredDescriptorCount { get; init; }
+
+    /// <summary>Gets the number of distinct declared ownership-map rows.</summary>
+    public int DeclaredMapRowCount { get; init; }
+
+    /// <summary>Gets the number of descriptors whose stored root pointer is zero.</summary>
+    public long MissingRootCount { get; init; }
+
+    /// <summary>Gets the number of descriptors whose stored ownership-map pointer is zero.</summary>
+    public long MissingMapCount { get; init; }
+
     /// <summary>Gets the page containing an incoming reference, when applicable.</summary>
     public long? SourcePageNumber { get; init; }
 
@@ -39,7 +54,7 @@ internal sealed record CompactIndexOwnershipRecord
     /// <summary>Gets the count of observed incoming references to this target, including repeated root scans.</summary>
     public long IncomingReferenceCount { get; init; }
 
-    /// <summary>Gets a value indicating whether every declared distinct root supplied a successful raw terminal.</summary>
+    /// <summary>Gets a value indicating whether every declared descriptor has a nonzero root and each distinct root supplied a successful raw terminal.</summary>
     public bool DeclaredRootsObserved { get; init; }
 
     /// <summary>Gets the successful terminal's explicit coverage boundary.</summary>

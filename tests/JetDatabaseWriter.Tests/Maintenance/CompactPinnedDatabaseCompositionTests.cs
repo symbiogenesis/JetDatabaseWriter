@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Maintenance;
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -8,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Maintenance;
 using JetDatabaseWriter.Pages;
@@ -25,6 +27,57 @@ public sealed class CompactPinnedDatabaseCompositionTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task ReopenedDifferentTables_ConsumeOneCumulativeValidationAllowance(DatabaseFormat kind)
+    {
+        byte[] original = await CreateAsync(kind);
+        await using var immutable = new MemoryStream(original, writable: false);
+        await using AccessReader source = await TestDatabase.OpenReaderAsync(immutable, cancellationToken: Ct);
+        JetFormat format = source.Database.Format;
+        var buildSession = new CompactPinnedTableAssemblySession(source.Database.Pages, format, new());
+        await using var destination = new MemoryStream();
+        await destination.WriteAsync(original, Ct);
+        var tables = new List<Table>();
+        foreach (string name in new[] { "Indexed", "Plain" })
+        {
+            long owner = Assert.IsType<CatalogEntry>(await source.GetCatalogEntryAsync(name, Ct)).TDefPage;
+            TDefImage definition = Assert.IsType<TDefImage>(await source.Database.TableDefs.ReadImageAsync(owner, Ct));
+            CompactPinnedTableIndexSource[] indexes = await ObserveAsync(source, owner, definition);
+            await using var rows = new MemoryStream();
+            await using var values = new MemoryStream();
+            await using var first = new MemoryStream();
+            await using var second = new MemoryStream();
+            CompactPinnedTableAssemblyAllocation allocation = await CompactPinnedTableAssembly.BuildAsync(
+                buildSession, owner, definition, indexes, destination, rows, values, first, second, Ct);
+            tables.Add(new(name, definition, allocation, rows.ToArray(), values.ToArray()));
+        }
+
+        var budget = new CompactPinnedTableAssemblyBudget { MaxPages = Math.Max(tables[0].Allocation.PageCount, tables[1].Allocation.PageCount) };
+        foreach (Table table in tables)
+        {
+            await ValidateAsync(new(source.Database.Pages, format, budget), table);
+        }
+
+        var cumulative = new CompactPinnedTableAssemblySession(source.Database.Pages, format, budget);
+        await ValidateAsync(cumulative, tables[0]);
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await ValidateAsync(cumulative, tables[1]));
+        Assert.Equal(tables[0].Allocation.PageCount * format.PageSize, cumulative.OutputBytes);
+        Assert.Equal(0, cumulative.Discovery.Accounting.ActiveWorkingBytes);
+        Assert.Equal(original, immutable.ToArray());
+
+        async Task ValidateAsync(CompactPinnedTableAssemblySession session, Table table)
+        {
+            await using var reopened = new MemoryStream(destination.ToArray(), writable: false);
+            await using var rows = new MemoryStream(table.Rows, writable: false);
+            await using var values = new MemoryStream(table.Values, writable: false);
+            CompactPinnedTableIndexSource[] indexes = await ObserveAsync(source, table.Allocation.Owner, table.Image);
+            await CompactPinnedTableAssembly.ValidateAsync(session, table.Allocation.Owner, table.Image, indexes, reopened, rows, values, table.Allocation, Ct);
+        }
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
     public async Task ReopenedMultipleTables_GlobalMapsAndPinnedBytesCompareIndependently(DatabaseFormat kind)
     {
         byte[] original = await CreateAsync(kind);
@@ -34,6 +87,7 @@ public sealed class CompactPinnedDatabaseCompositionTests
         await using var destination = new MemoryStream();
         await destination.WriteAsync(original, Ct);
         var tables = new List<Table>();
+        var buildSession = new CompactPinnedTableAssemblySession(source.Database.Pages, format, new());
         await using var firstFence = new MemoryStream();
         await using var secondFence = new MemoryStream();
         foreach (string name in new[] { "Indexed", "Plain" })
@@ -46,7 +100,7 @@ public sealed class CompactPinnedDatabaseCompositionTests
             firstFence.SetLength(0);
             secondFence.SetLength(0);
             CompactPinnedTableAssemblyAllocation allocation = await CompactPinnedTableAssembly.BuildAsync(
-                source.Database.Pages, format, owner, image, indexes, destination, rows, values, firstFence, secondFence, new(), Ct);
+                buildSession, owner, image, indexes, destination, rows, values, firstFence, secondFence, Ct);
             tables.Add(new(name, image, allocation, rows.ToArray(), values.ToArray()));
         }
 
@@ -55,6 +109,7 @@ public sealed class CompactPinnedDatabaseCompositionTests
         await using var reopened = new MemoryStream(destination.ToArray(), writable: false);
         CompactGlobalMapResult globalMap = await CompactGlobalMapValidator.ValidateAsync(source.Database.Pages, format, appendPoint, reopened, new(), Ct);
         var expectedDefinitions = new List<CompactPinnedTDefReferences>();
+        var validationSession = new CompactPinnedTableAssemblySession(source.Database.Pages, format, new());
         foreach (Table table in tables)
         {
             CompactPinnedTableAssemblyAllocation allocation = table.Allocation;
@@ -62,7 +117,7 @@ public sealed class CompactPinnedDatabaseCompositionTests
             await using var rows = new MemoryStream(table.Rows, writable: false);
             await using var values = new MemoryStream(table.Values, writable: false);
             CompactPinnedTableAssemblyResult verified = await CompactPinnedTableAssembly.ValidateAsync(
-                source.Database.Pages, format, allocation.Owner, table.Image, indexes, reopened, rows, values, allocation, new(), Ct);
+                validationSession, allocation.Owner, table.Image, indexes, reopened, rows, values, allocation, Ct);
             expectedDefinitions.Add(new(
                 allocation.Owner,
                 table.Image,

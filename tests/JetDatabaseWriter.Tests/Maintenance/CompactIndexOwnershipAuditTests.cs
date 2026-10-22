@@ -17,6 +17,138 @@ public sealed class CompactIndexOwnershipAuditTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
+    public async Task DeclaredMaps_DistinguishRowsAndRetainCrossOwnerAliases()
+    {
+        List<CompactIndexOwnershipRecord> records = [];
+        using var audit = new CompactIndexOwnershipAudit(20, new());
+        await audit.DeclareDescriptorAsync(2, 3, new(0, 8), 0, Visit, Ct);
+        await audit.DeclareDescriptorAsync(7, 4, new(1, 8), 0, Visit, Ct);
+        await audit.DeclareDescriptorAsync(7, 4, new(0, 8), 1, Visit, Ct);
+        await audit.ObserveAsync(Page(2, 3, 3), Visit, Ct);
+        await audit.ObserveAsync(Terminal(2, 3), Visit, Ct);
+        await audit.ObserveAsync(Page(7, 4, 4), Visit, Ct);
+        await audit.ObserveAsync(Terminal(7, 4), Visit, Ct);
+        await audit.CompleteAsync(Visit, Ct);
+
+        CompactIndexOwnershipRecord alias = Assert.Single(records, static record => record.Kind == "shared-map-row");
+        Assert.Equal(8, alias.PageNumber);
+        Assert.Equal(0, alias.MapRowIndex);
+        Assert.Equal(2, alias.RelatedOwnerTDefPage);
+        Assert.Equal(7, alias.OwnerTDefPage);
+        Assert.Equal(3, records.Count(static record => record.Kind is "map-declaration" or "shared-map-row"));
+        Assert.All(records, static record => Assert.True(record.IsPinned));
+        Assert.False(Assert.Single(records, static record => record.Kind == "ownership-terminal").ExclusiveOwnershipProven);
+
+        ValueTask Visit(CompactIndexOwnershipRecord record, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            records.Add(record);
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    [Theory]
+    [InlineData("root-first")]
+    [InlineData("map-first")]
+    [InlineData("page")]
+    [InlineData("reference")]
+    public async Task IndexAndMapPageClaims_RefuseInEitherOrder(string order)
+    {
+        List<CompactIndexOwnershipRecord> records = [];
+        using var audit = new CompactIndexOwnershipAudit(20, new());
+        await audit.DeclareDescriptorAsync(2, 3, new(0, 8), 0, Visit, Ct);
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+        {
+            switch (order)
+            {
+                case "root-first":
+                    await audit.DeclareDescriptorAsync(7, 4, new(0, 3), 0, Visit, Ct);
+                    break;
+                case "map-first":
+                    await audit.DeclareRootAsync(7, 8, 0, Visit, Ct);
+                    break;
+                case "page":
+                    await audit.ObserveAsync(Page(2, 3, 8), Visit, Ct);
+                    break;
+                default:
+                    await audit.ObserveAsync(Reference(2, 3, 3, 8, "next"), Visit, Ct);
+                    break;
+            }
+        });
+        Assert.Single(records, static record => record.Kind == "storage-role-contradiction");
+        Assert.DoesNotContain(records, static record => record.Kind == "ownership-terminal");
+
+        ValueTask Visit(CompactIndexOwnershipRecord record, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            records.Add(record);
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task MissingDescriptorReferences_RemainExplicitAtCompletion()
+    {
+        List<CompactIndexOwnershipRecord> records = [];
+        using var audit = new CompactIndexOwnershipAudit(20, new());
+        await audit.DeclareDescriptorAsync(2, 0, default, 0, Visit, Ct);
+        await audit.DeclareDescriptorAsync(2, 3, default, 1, Visit, Ct);
+        await audit.ObserveAsync(Page(2, 3, 3), Visit, Ct);
+        await audit.ObserveAsync(Terminal(2, 3), Visit, Ct);
+        await audit.CompleteAsync(Visit, Ct);
+
+        Assert.Single(records, static record => record.Kind == "missing-root");
+        Assert.Equal(2, records.Count(static record => record.Kind == "missing-ownership-map"));
+        CompactIndexOwnershipRecord terminal = Assert.Single(records, static record => record.Kind == "ownership-terminal");
+        Assert.Equal(1, terminal.MissingRootCount);
+        Assert.Equal(2, terminal.MissingMapCount);
+        Assert.False(terminal.DeclaredRootsObserved);
+        Assert.False(terminal.ExclusiveOwnershipProven);
+
+        ValueTask Visit(CompactIndexOwnershipRecord record, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            records.Add(record);
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task MapRowsAndZeroRootDeclarations_ConsumeBoundedAllowances()
+    {
+        using var audit = new CompactIndexOwnershipAudit(20, new() { MaxMapRows = 1 });
+        await audit.DeclareDescriptorAsync(2, 0, new(0, 8), 0, Ignore, Ct);
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await audit.DeclareDescriptorAsync(7, 0, new(1, 8), 0, Ignore, Ct));
+        using var missing = new CompactIndexOwnershipAudit(20, new() { MaxRootDescriptors = 1 });
+        await missing.DeclareDescriptorAsync(2, 0, default, 0, Ignore, Ct);
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await missing.DeclareDescriptorAsync(2, 0, default, 1, Ignore, Ct));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DistinctMapRows_ReserveStorageBeforeRetentionAndHoldItUntilDisposal(bool aggregate)
+    {
+        const long allowance = (384 * 19) + 65_536 + 256;
+        var accounting = new CompactDiscoveryAccounting(new() { MaxWorkingBytes = aggregate ? allowance : 1_000_000 });
+        var audit = new CompactIndexOwnershipAudit(20, new() { Accounting = accounting, MaxWorkingBytes = aggregate ? 1_000_000 : allowance });
+        try
+        {
+            long initial = accounting.ActiveWorkingBytes;
+            await audit.DeclareDescriptorAsync(2, 0, new(0, 8), 0, Ignore, Ct);
+            Assert.True(accounting.ActiveWorkingBytes > initial);
+            await Assert.ThrowsAsync<JetLimitationException>(async () => await audit.DeclareDescriptorAsync(2, 0, new(1, 8), 1, Ignore, Ct));
+            Assert.Equal(allowance, accounting.ActiveWorkingBytes);
+        }
+        finally
+        {
+            audit.Dispose();
+        }
+
+        Assert.Equal(0, accounting.ActiveWorkingBytes);
+    }
+
+    [Fact]
     public async Task SameOwnerSharedRootsAndPages_RemainObservableAndPinned()
     {
         List<CompactIndexOwnershipRecord> records = [];

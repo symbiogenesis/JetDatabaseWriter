@@ -242,16 +242,21 @@ or table snapshot is retained. The raw-row entry point still allows explicit
 value work in its awaited visitor.
 
 Both database entry points hold a `CompactIndexOwnershipAudit` through all
-physical descriptor/root scans. Declarations, observed pages and known incoming
-child, tail and sibling references are cross-checked for contradictory expected
-TDEF owners. Same-owner shared roots/pages and unobserved reference targets are
-streamed explicitly. The tracker bounds retained coordinates, descriptor attempts,
+physical descriptor/root scans. Each descriptor declares its root and exact
+ownership-map row. Declarations, observed pages and known incoming child, tail
+and sibling references are cross-checked for contradictory expected TDEF owners.
+An index root, page or reference target cannot also be a declared map data page.
+Exact map-row aliases remain explicit, including aliases between tables; distinct
+map rows can share a data page. Missing roots/maps, same-owner shared roots/pages
+and unobserved reference targets are streamed explicitly. Terminal counts retain
+those gaps instead of treating a missing descriptor reference as complete.
+The tracker bounds retained page and map-row coordinates, descriptor attempts,
 references, inspection work and observations; its conservative storage reservation
 remains held alongside inventory and per-root storage. Incoming counts describe
 observations, including repeated scans, rather than distinct physical edges.
-Its terminal proves only consistency of supplied known observations. Opaque or
-missing incoming references and native sharing semantics remain unverified, so
-all observed storage stays pinned.
+Its terminal proves only consistency of supplied known observations. Map-content
+membership, opaque or missing incoming references and native sharing semantics
+remain unverified, so all observed storage stays pinned.
 
 A damaged owner can still hide an object; this orchestration does not prove
 complete database coverage or validate a compact result. Cumulative allowances
@@ -459,10 +464,19 @@ immutable ledgers, exact private allocations and installed definition bytes.
 Later table or global-map allocations may follow its exact compared extent;
 their coverage belongs to the complete allocation ledger. Private I/O, observed
 entries/key bytes, output and simultaneous storage have aggregate admission.
-Source traversal allowances apply to one table invocation; a whole-database
-driver still needs cumulative accounting across tables. Physical root/map aliases
-refuse until sharing is independently supported. Logical sharing within one
-physical descriptor retains its original metadata.
+`CompactPinnedTableAssemblySession` retains source discovery, private read/write
+requests, original entry/key bytes and output admission across serialized table
+operations. Construction counts append high-water growth before writes, including
+failed requests; independent validation admits each complete compared extent.
+Pinned-chain source reads share the discovery counters. Working reservations
+unwind on every exit, while work charges survive failures and repeated calls.
+Build and independent validation can use separate sessions with separate phase
+allowances. Standalone global-map, prefix and allocation-ledger components still
+have separate budgets; a complete database driver must compose their admission.
+Caller-owned streams, retained result evidence and runtime/pool
+storage remain outside the admitted working-storage estimate. Physical root/map
+aliases refuse until sharing is independently supported. Logical sharing within
+one physical descriptor retains its original metadata.
 
 `CompactGlobalMapInstaller` replaces only the original page-one global free-map
 row in the private destination. It marks every original and appended page used,
@@ -490,6 +504,26 @@ native global map, complete allocation ledger and entire pinned prefix before
 ordinary row reads. These append-only specimens retain all original storage.
 They establish component composition, not reclaimed space, complete native
 feature coverage or a managed Compact & Repair API.
+
+`CompactPinnedCatalogCompositionTests` additionally assembles every local table
+in a generated catalog, including `MSysObjects`, system/security and relationship
+tables, hidden local tables and ACE template tables. The catalog's stored Id,
+ParentId, Name, type, flags and original TDEF roots survive; physical index keys
+retain their bytes while bookmarks follow independently compared row ledgers.
+Reopened table/index, global-map, allocation-ledger and complete-prefix checks
+precede ordinary schema, row, relationship and linked-metadata reads. Linked
+sources are never opened. These specimens establish catalog and multi-object
+composition with cumulative phase admission, while complete native object
+coverage, source-index completeness, opaque incoming ownership and reclamation
+remain open.
+
+A physical recovery scan of an append-only destination can find both pinned
+original catalog rows and relocated active catalog rows with the same identities.
+Ordinary catalog reads use the installed maps, but physical recovery cannot
+discard either copy merely from those hints. Whole-destination validation needs
+independently verified active-row membership to distinguish retained inactive
+prefix copies. Damaged-source duplicate checks must remain strict; successful
+per-table comparisons do not resolve this database-wide inventory dependency.
 
 Focused native global-map controls force REFERENCE storage and compare the
 unchanged original/control content, actual allocation growth during Memo inserts,

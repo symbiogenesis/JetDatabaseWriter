@@ -3,11 +3,9 @@ namespace JetDatabaseWriter.Maintenance;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
-using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -31,8 +29,7 @@ using JetDatabaseWriter.Schema.Models;
 internal static class CompactPinnedTableAssembly
 {
     /// <summary>Stages and installs one private table using caller-supplied independent original stored entries.</summary>
-    /// <param name="source">The immutable decrypted original pages.</param>
-    /// <param name="format">The matching verified native format.</param>
+    /// <param name="assembly">The explicitly serialized source and cumulative database-wide admission.</param>
     /// <param name="owner">The original pinned table identity.</param>
     /// <param name="definition">The complete immutable original raw definition.</param>
     /// <param name="indexes">Complete original observations in physical descriptor order.</param>
@@ -41,7 +38,6 @@ internal static class CompactPinnedTableAssembly
     /// <param name="allocationLedger">The distinct empty readable writable seekable LVAL ledger.</param>
     /// <param name="firstFenceStream">The distinct empty readable writable seekable first fence scratch stream.</param>
     /// <param name="secondFenceStream">The distinct empty readable writable seekable second fence scratch stream.</param>
-    /// <param name="budget">Aggregate private work/I/O and separate bounded component/source allowances.</param>
     /// <param name="cancellationToken">Cancels admission, copying, index enumeration, installation and I/O.</param>
     /// <param name="hydratedColumns">Optional independently verified calculated ResultType projections.</param>
     /// <returns>Unvalidated complete private allocations, requiring independent reopened comparison.</returns>
@@ -49,8 +45,7 @@ internal static class CompactPinnedTableAssembly
     /// <exception cref="JetLimitationException">A cumulative allowance is exhausted or physical sharing is unsupported.</exception>
     /// <exception cref="JetCorruptDataException">Raw storage, stored index entries or pinned chain bytes disagree.</exception>
     internal static async ValueTask<CompactPinnedTableAssemblyAllocation> BuildAsync(
-        IPageSource source,
-        JetFormat format,
+        CompactPinnedTableAssemblySession assembly,
         long owner,
         TDefImage definition,
         IReadOnlyList<CompactPinnedTableIndexSource> indexes,
@@ -59,10 +54,13 @@ internal static class CompactPinnedTableAssembly
         Stream allocationLedger,
         Stream firstFenceStream,
         Stream secondFenceStream,
-        CompactPinnedTableAssemblyBudget budget,
         CancellationToken cancellationToken,
         IReadOnlyList<ColumnInfo>? hydratedColumns = null)
     {
+        Guard.NotNull(assembly, nameof(assembly));
+        IPageSource source = assembly.Source;
+        JetFormat format = assembly.Format;
+        CompactPinnedTableAssemblyBudget budget = assembly.Budget;
         ValidateInputs(source, format, owner, definition, indexes, budget, cancellationToken);
         ValidateStreams(writable: true, privateDestination, rowLedger, allocationLedger, firstFenceStream, secondFenceStream);
         if (privateDestination.Length % format.PageSize != 0 || privateDestination.Length / format.PageSize < source.PageCount)
@@ -71,16 +69,16 @@ internal static class CompactPinnedTableAssembly
         }
 
         long firstPage = privateDestination.Length / format.PageSize;
-        var admission = new Admission(budget, format.PageSize, privateDestination.Length);
+        using CompactPinnedTableAssemblySession.Operation admission = assembly.Enter(privateDestination.Length, cancellationToken);
         await using var destination = new AdmittedStream(privateDestination, admission, destination: true, writable: true);
         await using var rows = new AdmittedStream(rowLedger, admission, destination: false, writable: true);
         await using var values = new AdmittedStream(allocationLedger, admission, destination: false, writable: true);
         await using var firstFence = new AdmittedStream(firstFenceStream, admission, destination: false, writable: true);
         await using var secondFence = new AdmittedStream(secondFenceStream, admission, destination: false, writable: true);
-        var session = new CompactDiscoverySession(source, format, SourceBudget(budget));
+        CompactDiscoverySession session = assembly.Discovery;
         long retained = Reservation(definition, indexes.Count);
         using IDisposable composition = session.Accounting.ReserveWorkingBytes(retained, owner);
-        long activeWorkingBytes = budget.MaxWorkingBytes - retained;
+        long activeWorkingBytes = RemainingWorkingBytes(budget, session);
         CompactTDefIndexReferences[] references = OriginalReferences(indexes);
         CompactRawTableBuilderResult table = await CompactRawTableBuilder.BuildAsync(
             session, format, owner, definition, destination, rows, values, references, TableBuilderBudget(budget.TableBuilder, activeWorkingBytes), cancellationToken, hydratedColumns).ConfigureAwait(false);
@@ -110,15 +108,14 @@ internal static class CompactPinnedTableAssembly
         {
             PatchedDefinition = CompactTDefReferencePatcher.Patch(format, definition, table.OwnedPages.Pointer, table.FreePages.Pointer, references, valueReferences, activeWorkingBytes, cancellationToken),
         };
-        await CompactTDefChainInstaller.InstallAsync(source, format, [new(owner, definition, table.PatchedDefinition)], destination, ChainBudget(budget.Definition, activeWorkingBytes), cancellationToken).ConfigureAwait(false);
+        await CompactTDefChainInstaller.InstallAsync(assembly.DefinitionSource, format, [new(owner, definition, table.PatchedDefinition)], destination, ChainBudget(budget.Definition, activeWorkingBytes), cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         destination.Position = destination.Length;
         return new(owner, firstPage, (destination.Length / format.PageSize) - firstPage, table, Array.AsReadOnly(allocations));
     }
 
     /// <summary>Independently compares a reopened table pipeline using immutable original evidence and reopened ledgers.</summary>
-    /// <param name="source">The immutable original decrypted source pages.</param>
-    /// <param name="format">The matching verified preserved format.</param>
+    /// <param name="assembly">The independent serialized source and cumulative database-wide comparison admission.</param>
     /// <param name="owner">The independently known original pinned table identity.</param>
     /// <param name="definition">The complete independent immutable original definition.</param>
     /// <param name="indexes">Independent immutable original stored entries in physical descriptor order.</param>
@@ -126,7 +123,6 @@ internal static class CompactPinnedTableAssembly
     /// <param name="rowLedger">The distinct reopened complete immutable row ledger.</param>
     /// <param name="allocationLedger">The distinct reopened complete immutable per-column LVAL ledger.</param>
     /// <param name="allocation">The untrusted complete private allocation claim.</param>
-    /// <param name="budget">Aggregate private reads/observations and separate component/source allowances.</param>
     /// <param name="cancellationToken">Cancels admission, every comparison, source observation and private read.</param>
     /// <param name="hydratedColumns">Optional independently verified calculated ResultType projections.</param>
     /// <returns>Private component comparison evidence, without a complete database or ownership verdict.</returns>
@@ -134,8 +130,7 @@ internal static class CompactPinnedTableAssembly
     /// <exception cref="JetCorruptDataException">Raw values, independent observations, allocations, maps or pinned chain bytes disagree.</exception>
     /// <exception cref="JetLimitationException">A cumulative comparison allowance is exhausted or physical sharing is unsupported.</exception>
     internal static async ValueTask<CompactPinnedTableAssemblyResult> ValidateAsync(
-        IPageSource source,
-        JetFormat format,
+        CompactPinnedTableAssemblySession assembly,
         long owner,
         TDefImage definition,
         IReadOnlyList<CompactPinnedTableIndexSource> indexes,
@@ -143,10 +138,13 @@ internal static class CompactPinnedTableAssembly
         Stream rowLedger,
         Stream allocationLedger,
         CompactPinnedTableAssemblyAllocation allocation,
-        CompactPinnedTableAssemblyBudget budget,
         CancellationToken cancellationToken,
         IReadOnlyList<ColumnInfo>? hydratedColumns = null)
     {
+        Guard.NotNull(assembly, nameof(assembly));
+        IPageSource source = assembly.Source;
+        JetFormat format = assembly.Format;
+        CompactPinnedTableAssemblyBudget budget = assembly.Budget;
         ValidateInputs(source, format, owner, definition, indexes, budget, cancellationToken);
         ValidateStreams(writable: false, reopenedDestination, rowLedger, allocationLedger);
         Guard.NotNull(allocation, nameof(allocation));
@@ -167,6 +165,8 @@ internal static class CompactPinnedTableAssembly
             throw Limit("Private table comparison exceeds aggregate MaxPages or MaxOutputBytes.");
         }
 
+        using CompactPinnedTableAssemblySession.Operation admission = assembly.Enter(reopenedDestination.Length, cancellationToken);
+        admission.Compare(allocation.PageCount);
         long next = allocation.FirstPageNumber;
         long allocationEnd = allocation.FirstPageNumber + allocation.PageCount;
         await foreach (CompactGlobalAllocationRecord record in allocation.AllocationsAsync(cancellationToken).ConfigureAwait(false))
@@ -184,11 +184,10 @@ internal static class CompactPinnedTableAssembly
             throw Corrupt("The complete private table extent disagrees with its independently checked allocation sequence.");
         }
 
-        var session = new CompactDiscoverySession(source, format, SourceBudget(budget));
+        CompactDiscoverySession session = assembly.Discovery;
         long retained = Reservation(definition, indexes.Count);
         using IDisposable composition = session.Accounting.ReserveWorkingBytes(retained, owner);
-        long activeWorkingBytes = budget.MaxWorkingBytes - retained;
-        var admission = new Admission(budget, format.PageSize, reopenedDestination.Length);
+        long activeWorkingBytes = RemainingWorkingBytes(budget, session);
         await using var destination = new AdmittedStream(reopenedDestination, admission, destination: true, writable: false);
         await using var rows = new AdmittedStream(rowLedger, admission, destination: false, writable: false);
         await using var values = new AdmittedStream(allocationLedger, admission, destination: false, writable: false);
@@ -205,7 +204,7 @@ internal static class CompactPinnedTableAssembly
         CompactRawTableValidatorResult table = await CompactRawTableValidator.ValidateAsync(
             session, owner, definition, destination, rows, values, allocation.Table, references, TableValidatorBudget(budget.TableValidator, activeWorkingBytes), cancellationToken, hydratedColumns).ConfigureAwait(false);
         CompactTDefChainResult chain = await CompactTDefChainValidator.ValidateAsync(
-            source, format, [new(owner, definition, allocation.Table.PatchedDefinition)], destination, ChainBudget(budget.Definition, activeWorkingBytes), cancellationToken).ConfigureAwait(false);
+            assembly.DefinitionSource, format, [new(owner, definition, allocation.Table.PatchedDefinition)], destination, ChainBudget(budget.Definition, activeWorkingBytes), cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         return new(table, Array.AsReadOnly(verifiedIndexes), chain, admission.ReadBytes);
     }
@@ -267,42 +266,20 @@ internal static class CompactPinnedTableAssembly
         }
     }
 
+    private static long RemainingWorkingBytes(CompactPinnedTableAssemblyBudget budget, CompactDiscoverySession session)
+    {
+        long available = budget.MaxWorkingBytes - session.Accounting.ActiveWorkingBytes;
+        if (available <= 0)
+        {
+            throw Limit("Pinned table composition leaves no active-component MaxWorkingBytes allowance.");
+        }
+
+        return available;
+    }
+
     private static long Reservation(TDefImage definition, int indexes)
         => (2L * definition.LogicalByteLength) + 131_072 + (1024L * indexes)
             + (1024L * Math.Min(Constants.TableDefinition.MaxColumns, definition.LogicalByteLength / 10));
-
-    private static CompactDiscoveryBudget SourceBudget(CompactPinnedTableAssemblyBudget budget)
-    {
-        CompactDiscoveryBudget source = budget.Discovery;
-        return new()
-        {
-            MaxPages = source.MaxPages,
-            MaxPageReads = source.MaxPageReads,
-            MaxObjects = source.MaxObjects,
-            MaxCatalogObjects = source.MaxCatalogObjects,
-            MaxSchemaBytes = source.MaxSchemaBytes,
-            MaxDefinitionBytes = source.MaxDefinitionBytes,
-            MaxMapSteps = source.MaxMapSteps,
-            MaxDiagnostics = source.MaxDiagnostics,
-            MaxRows = source.MaxRows,
-            MaxFields = source.MaxFields,
-            MaxDirectorySlots = source.MaxDirectorySlots,
-            MaxOverflowTargets = source.MaxOverflowTargets,
-            MaxLongValues = source.MaxLongValues,
-            MaxLongValueBytes = source.MaxLongValueBytes,
-            MaxLongValuePayloadBytes = source.MaxLongValuePayloadBytes,
-            MaxLongValueRows = source.MaxLongValueRows,
-            MaxIndexPages = source.MaxIndexPages,
-            MaxIndexEntries = source.MaxIndexEntries,
-            MaxIndexCanonicalBytes = source.MaxIndexCanonicalBytes,
-            MaxReferences = source.MaxReferences,
-            MaxGraphSteps = source.MaxGraphSteps,
-            MaxRecords = source.MaxRecords,
-            MaxWorkingBytes = Math.Min(source.MaxWorkingBytes, budget.MaxWorkingBytes),
-            MaxValueBytes = source.MaxValueBytes,
-            MaxChainRows = source.MaxChainRows,
-        };
-    }
 
     private static CompactRawTableBuilderBudget TableBuilderBudget(CompactRawTableBuilderBudget supplied, long workingBytes)
         => new()
@@ -388,68 +365,12 @@ internal static class CompactPinnedTableAssembly
 
     private static JetLimitationException Limit(string reason) => new(JetErrorCode.ValueTooLarge, reason);
 
-    private sealed class Admission(CompactPinnedTableAssemblyBudget budget, int pageSize, long initialLength)
-    {
-        private long writtenBytes;
-        private long observedEntries;
-        private long observedKeyBytes;
-
-        internal long ReadBytes { get; private set; }
-
-        internal void Read(int count)
-        {
-            if (count > budget.MaxReadBytes - this.ReadBytes)
-            {
-                throw Limit("Pinned table assembly exceeds cumulative MaxReadBytes.");
-            }
-
-            this.ReadBytes += count;
-        }
-
-        internal void Write(long position, int count, bool destination)
-        {
-            if (count > budget.MaxWriteBytes - this.writtenBytes)
-            {
-                throw Limit("Pinned table assembly exceeds cumulative MaxWriteBytes.");
-            }
-
-            if (destination && (position < 0 || position > long.MaxValue - count
-                || position + count - initialLength > Math.Min(budget.MaxOutputBytes, Math.Min(budget.MaxPages, 0x1000000L) * pageSize)))
-            {
-                throw Limit("Pinned table assembly exceeds aggregate MaxPages or MaxOutputBytes.");
-            }
-
-            this.writtenBytes += count;
-        }
-
-        internal async IAsyncEnumerable<IndexEntry> ObserveAsync(IAsyncEnumerable<IndexEntry> entries, [EnumeratorCancellation] CancellationToken token)
-        {
-            await foreach (IndexEntry entry in entries.WithCancellation(token).ConfigureAwait(false))
-            {
-                token.ThrowIfCancellationRequested();
-                if (entry.Key is null)
-                {
-                    throw Corrupt("An immutable original stored-key observation is null.");
-                }
-
-                if (this.observedEntries >= budget.MaxObservedEntries || entry.Key.Length > budget.MaxObservedKeyBytes - this.observedKeyBytes)
-                {
-                    throw Limit("Pinned table assembly exceeds cumulative original-entry or key-byte allowances.");
-                }
-
-                this.observedEntries++;
-                this.observedKeyBytes += entry.Key.Length;
-                yield return entry;
-            }
-        }
-    }
-
     /// <summary>Non-owning wrapper sharing cumulative admission across all private output and scratch streams.</summary>
     /// <param name="inner">The caller stream, whose lifetime remains caller-owned.</param>
     /// <param name="admission">The whole-phase shared admission.</param>
     /// <param name="destination">Whether append output bounds apply in addition to cumulative I/O bounds.</param>
     /// <param name="writable">Whether this phase permits writing.</param>
-    private sealed class AdmittedStream(Stream inner, Admission admission, bool destination, bool writable) : Stream
+    private sealed class AdmittedStream(Stream inner, CompactPinnedTableAssemblySession.Operation admission, bool destination, bool writable) : Stream
     {
         public override bool CanRead => inner.CanRead;
 

@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Pages.Models;
 
 /// <summary>Composes declared physical roots and raw observations into bounded known ownership evidence.</summary>
 /// <remarks>
@@ -20,8 +21,12 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
     private readonly long pageCount;
     private readonly CompactIndexOwnershipBudget budget;
     private readonly IDisposable? reservation;
+    private readonly long storage;
     private Dictionary<long, PageState> pages = [];
+    private Dictionary<UsageMapPointer, MapState> mapRows = [];
     private long descriptors;
+    private long missingRoots;
+    private long missingMaps;
     private long references;
     private long graphSteps;
     private long records;
@@ -38,6 +43,7 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
         Guard.InRange(pageCount, 3L, long.MaxValue, nameof(pageCount));
         Guard.NotNull(budget, nameof(budget));
         Guard.Positive(budget.MaxTrackedPages, nameof(budget));
+        Guard.Positive(budget.MaxMapRows, nameof(budget));
         Guard.InRange(budget.MaxRootDescriptors, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxReferences, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxGraphSteps, 1L, long.MaxValue, nameof(budget));
@@ -47,14 +53,111 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
         this.budget = budget;
 
         // One state per physical coordinate covers declarations, observations and incoming summaries.
-        // Include dictionary growth and object scratch; descriptors and edges are streamed, not retained.
-        long storage = (384L * Math.Min(pageCount - 1, budget.MaxTrackedPages)) + 65_536;
-        if (storage > budget.MaxWorkingBytes)
+        // Include dictionary growth and object scratch. Exact map rows are admitted before insertion.
+        this.storage = (384L * Math.Min(pageCount - 1, budget.MaxTrackedPages)) + 65_536;
+        if (this.storage > budget.MaxWorkingBytes)
         {
             throw Limit(0, "The index ownership storage reservation exceeds MaxWorkingBytes.");
         }
 
-        this.reservation = budget.Accounting?.ReserveWorkingBytes(storage);
+        this.reservation = budget.Accounting?.ReserveWorkingBytes(this.storage);
+    }
+
+    /// <summary>Declares both stored references of one physical index descriptor, including absent references.</summary>
+    /// <param name="ownerTDefPage">The declaring table-definition page.</param>
+    /// <param name="rootPage">The stored root pointer, or zero when absent.</param>
+    /// <param name="ownedPages">The exact stored ownership-map row pointer, or zero when absent.</param>
+    /// <param name="descriptorIndex">The physical descriptor ordinal.</param>
+    /// <param name="visitor">Consumes bounded declarations, missing references and conservative sharing evidence.</param>
+    /// <param name="cancellationToken">Cancels declaration and delivery.</param>
+    /// <returns>A task completing after both references have been inspected.</returns>
+    /// <remarks>Map-row aliases across owners remain ambiguous pinned evidence. Separate rows on one page do not alias.</remarks>
+    internal async ValueTask DeclareDescriptorAsync(long ownerTDefPage, long rootPage, UsageMapPointer ownedPages, int descriptorIndex, Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    {
+        Guard.NotNull(visitor, nameof(visitor));
+        Guard.InRange(descriptorIndex, 0, int.MaxValue, nameof(descriptorIndex));
+        this.CheckAvailable();
+        try
+        {
+            if (rootPage != 0)
+            {
+                await this.DeclareRootAsync(ownerTDefPage, rootPage, descriptorIndex, visitor, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                this.Step(ownerTDefPage, cancellationToken);
+                this.ValidatePage(ownerTDefPage);
+                this.ChargeDescriptor(ownerTDefPage);
+                this.missingRoots++;
+                await this.EmitAsync(new() { Kind = "missing-root", PageNumber = ownerTDefPage, OwnerTDefPage = ownerTDefPage, DescriptorIndex = descriptorIndex }, visitor, cancellationToken).ConfigureAwait(false);
+            }
+
+            this.Step(ownerTDefPage, cancellationToken);
+            CompactIndexOwnershipRecord map = new() { Kind = "map-declaration", PageNumber = ownedPages.PageNumber, MapRowIndex = ownedPages.RowIndex, OwnerTDefPage = ownerTDefPage, RootPageNumber = rootPage, DescriptorIndex = descriptorIndex };
+            if (ownedPages == default)
+            {
+                this.missingMaps++;
+                await this.EmitAsync(map with { Kind = "missing-ownership-map", PageNumber = ownerTDefPage, MapRowIndex = null }, visitor, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            this.ValidatePage(ownedPages.PageNumber);
+            if (ownedPages.RowIndex is < 0 or > byte.MaxValue)
+            {
+                throw Corrupt(ownedPages.PageNumber, "A declared index ownership-map row is outside the stored row-pointer range.");
+            }
+
+            this.ChargeReference(ownerTDefPage);
+            if (this.pages.TryGetValue(ownedPages.PageNumber, out PageState? page))
+            {
+                if (!page.IsMapPage)
+                {
+                    await this.EmitAsync(map with { Kind = "storage-role-contradiction", RelatedOwnerTDefPage = page.Owner, RelatedRootPageNumber = page.FirstRoot, Role = "index-ownership-map" }, visitor, cancellationToken).ConfigureAwait(false);
+                    throw Corrupt(ownedPages.PageNumber, "A physical page is claimed as both an index page or target and an ownership-map data page.");
+                }
+            }
+            else
+            {
+                this.AddPage(ownedPages.PageNumber, new(ownerTDefPage, rootPage) { IsMapPage = true });
+            }
+
+            if (this.mapRows.TryGetValue(ownedPages, out MapState? first))
+            {
+                map = map with { Kind = "shared-map-row", RelatedOwnerTDefPage = first.Owner, RelatedRootPageNumber = first.Root, RelatedDescriptorIndex = first.DescriptorIndex };
+            }
+            else
+            {
+                if (this.mapRows.Count >= this.budget.MaxMapRows)
+                {
+                    throw Limit(ownedPages.PageNumber, "The declared index ownership-map rows exceed MaxMapRows.");
+                }
+
+                // Includes dictionary capacity growth, first-claim state and its accounting lease.
+                const int mapStorage = 256;
+                if ((this.mapRows.Count + 1L) * mapStorage > this.budget.MaxWorkingBytes - this.storage)
+                {
+                    throw Limit(ownedPages.PageNumber, "The retained index ownership-map rows exceed MaxWorkingBytes.");
+                }
+
+                IDisposable? mapReservation = this.budget.Accounting?.ReserveWorkingBytes(mapStorage, ownedPages.PageNumber);
+                try
+                {
+                    this.mapRows.Add(ownedPages, new(ownerTDefPage, rootPage, descriptorIndex, mapReservation));
+                    mapReservation = null;
+                }
+                finally
+                {
+                    mapReservation?.Dispose();
+                }
+            }
+
+            await this.EmitAsync(map, visitor, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            this.failed = true;
+            throw;
+        }
     }
 
     /// <summary>Retains one physical descriptor's declared root, allowing same-owner sharing.</summary>
@@ -74,12 +177,7 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
             this.Step(rootPage, cancellationToken);
             this.ValidatePage(ownerTDefPage);
             this.ValidatePage(rootPage);
-            if (this.descriptors >= this.budget.MaxRootDescriptors)
-            {
-                throw Limit(rootPage, "The physical index declarations exceed MaxRootDescriptors.");
-            }
-
-            this.descriptors++;
+            this.ChargeDescriptor(rootPage);
             CompactIndexOwnershipRecord record = new() { Kind = "root-declaration", PageNumber = rootPage, OwnerTDefPage = ownerTDefPage, RootPageNumber = rootPage, DescriptorIndex = descriptorIndex };
             PageState state = await this.ClaimAsync(record, visitor, cancellationToken).ConfigureAwait(false);
             if (state.DeclaredRoot)
@@ -189,8 +287,12 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
                 new()
                 {
                     Kind = "ownership-terminal",
-                    DeclaredRootsObserved = true,
-                    Coverage = "Every declared distinct physical root supplied a successful raw terminal. Known declared roots, observed index pages and incoming child/tail/previous/next references have consistent expected TDEF owners. Same-owner sharing and targets without page observations remain explicit. Missing roots, opaque incoming references, physical ownership of unobserved targets, allocation, native sharing semantics and exclusive whole-database ownership remain unproven; all storage stays pinned.",
+                    DeclaredDescriptorCount = this.descriptors,
+                    DeclaredMapRowCount = this.mapRows.Count,
+                    MissingRootCount = this.missingRoots,
+                    MissingMapCount = this.missingMaps,
+                    DeclaredRootsObserved = this.missingRoots == 0,
+                    Coverage = "Every declared nonzero distinct physical root supplied a successful raw terminal. Known declared roots, observed index pages and incoming child/tail/previous/next references have consistent expected TDEF owners and do not collide with declared ownership-map data pages. Exact map-row sharing across owners, absent root/map pointers and targets without page observations remain explicit. Map contents and bitmap sharing, missing roots, opaque incoming references, catalog completeness, physical ownership of unobserved targets, allocation, native sharing semantics and exclusive whole-database ownership remain unproven; all storage stays pinned.",
                 },
                 visitor,
                 cancellationToken).ConfigureAwait(false);
@@ -210,6 +312,12 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
         {
             this.disposed = true;
             this.pages = [];
+            foreach (MapState map in this.mapRows.Values)
+            {
+                map.Reservation?.Dispose();
+            }
+
+            this.mapRows = [];
             this.reservation?.Dispose();
         }
     }
@@ -228,13 +336,7 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
         }
 
         this.ValidatePage(target);
-        if (this.references >= this.budget.MaxReferences)
-        {
-            throw Limit(record.PageNumber, "The incoming index observations exceed MaxReferences.");
-        }
-
-        this.budget.Accounting?.Charge(CompactDiscoveryCharge.References, 1, record.PageNumber);
-        this.references++;
+        this.ChargeReference(record.PageNumber);
         CompactIndexOwnershipRecord incoming = new() { Kind = "incoming-reference", PageNumber = target, OwnerTDefPage = record.OwnerTDefPage, RootPageNumber = record.RootPageNumber, SourcePageNumber = record.PageNumber, Role = record.Role, EntryIndex = record.EntryIndex };
         PageState state = await this.ClaimAsync(incoming, visitor, cancellationToken).ConfigureAwait(false);
         state.IncomingReferences++;
@@ -253,13 +355,13 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
     {
         if (!this.pages.TryGetValue(record.PageNumber, out PageState? state))
         {
-            if (this.pages.Count >= this.budget.MaxTrackedPages)
-            {
-                throw Limit(record.PageNumber, "The known index coordinates exceed MaxTrackedPages.");
-            }
-
             state = new(record.OwnerTDefPage, record.RootPageNumber);
-            this.pages.Add(record.PageNumber, state);
+            this.AddPage(record.PageNumber, state);
+        }
+        else if (state.IsMapPage)
+        {
+            await this.EmitAsync(record with { Kind = "storage-role-contradiction", RelatedOwnerTDefPage = state.Owner, RelatedRootPageNumber = state.FirstRoot, Role = "index-ownership-map" }, visitor, cancellationToken).ConfigureAwait(false);
+            throw Corrupt(record.PageNumber, "An index root, page or incoming reference targets a declared ownership-map data page.");
         }
         else if (state.Owner != record.OwnerTDefPage)
         {
@@ -268,6 +370,37 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
         }
 
         return state;
+    }
+
+    private void AddPage(long page, PageState state)
+    {
+        if (this.pages.Count >= this.budget.MaxTrackedPages)
+        {
+            throw Limit(page, "The known index and ownership-map page coordinates exceed MaxTrackedPages.");
+        }
+
+        this.pages.Add(page, state);
+    }
+
+    private void ChargeDescriptor(long page)
+    {
+        if (this.descriptors >= this.budget.MaxRootDescriptors)
+        {
+            throw Limit(page, "The physical index declarations exceed MaxRootDescriptors.");
+        }
+
+        this.descriptors++;
+    }
+
+    private void ChargeReference(long page)
+    {
+        if (this.references >= this.budget.MaxReferences)
+        {
+            throw Limit(page, "The index map and incoming tree references exceed MaxReferences.");
+        }
+
+        this.budget.Accounting?.Charge(CompactDiscoveryCharge.References, 1, page);
+        this.references++;
     }
 
     private async ValueTask EmitAsync(CompactIndexOwnershipRecord record, Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
@@ -315,8 +448,21 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
         }
     }
 
+    private sealed class MapState(long owner, long root, int descriptorIndex, IDisposable? reservation)
+    {
+        internal long Owner { get; } = owner;
+
+        internal long Root { get; } = root;
+
+        internal int DescriptorIndex { get; } = descriptorIndex;
+
+        internal IDisposable? Reservation { get; } = reservation;
+    }
+
     private sealed class PageState(long owner, long root)
     {
+        internal bool IsMapPage { get; init; }
+
         internal long Owner { get; } = owner;
 
         internal long FirstRoot { get; } = root;

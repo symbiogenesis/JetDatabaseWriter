@@ -1,15 +1,15 @@
 namespace JetDatabaseWriter.Maintenance;
 
-/// <summary>Bounds the complete private table pipeline, with separate source and active-component allowances.</summary>
+/// <summary>Bounds the complete private table session, with cumulative source and separate active-component allowances.</summary>
 internal sealed class CompactPinnedTableAssemblyBudget
 {
-    /// <summary>Gets the aggregate appended table, index and map page allowance.</summary>
+    /// <summary>Gets the cumulative appended or independently compared table, index and map page allowance.</summary>
     public long MaxPages { get; init; } = 1_048_576;
 
-    /// <summary>Gets the aggregate appended destination byte allowance.</summary>
+    /// <summary>Gets the cumulative appended or independently compared destination byte allowance.</summary>
     public long MaxOutputBytes { get; init; } = 4L * 1024 * 1024 * 1024;
 
-    /// <summary>Gets cumulative private destination and scratch read requests per phase, including retries.</summary>
+    /// <summary>Gets cumulative private destination and scratch read requests across every invocation, including retries.</summary>
     public long MaxReadBytes { get; init; } = 64L * 1024 * 1024 * 1024;
 
     /// <summary>Gets cumulative destination, ledger and reusable fence write requests during construction.</summary>
@@ -25,7 +25,7 @@ internal sealed class CompactPinnedTableAssemblyBudget
     /// <remarks>Component allowances are capped to the remainder after retained composition; caller evidence, streams and runtime overhead are separate.</remarks>
     public long MaxWorkingBytes { get; init; } = 512L * 1024 * 1024;
 
-    /// <summary>Gets source traversal limits for this table invocation; storage is additionally capped by the pipeline allowance.</summary>
+    /// <summary>Gets source traversal limits shared across every session invocation; storage is additionally capped by the pipeline allowance.</summary>
     public CompactDiscoveryBudget Discovery { get; init; } = new();
 
     /// <summary>Gets raw data, LVAL and table-map construction limits.</summary>

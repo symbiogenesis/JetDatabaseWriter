@@ -402,6 +402,14 @@ fixtures. This establishes observed target readability for those files, not
 key/value correspondence, missing-entry detection, global ownership or native
 acceptance of a managed compact copy.
 
+`CompactIndexOwnershipAuditTests` and database discovery regressions also retain
+each physical descriptor's exact ownership-map row. Exact-row aliases remain
+explicit across tables; different rows may share one map data page. Index
+roots/pages/targets colliding with declared map data pages refuse in either
+declaration order. Missing roots/maps remain counted evidence gaps. These checks
+keep map coordinates separate from the observed index-page allowance and do not
+validate map membership, bitmap sharing or exclusive incoming ownership.
+
 `CompactRawIndexValidatorTests` independently compares reopened private trees
 with original stored keys and relocated bookmarks on Jet3/Jet4/ACE, including
 stored observations from Microsoft-authored catalog fixtures and multilevel
@@ -506,6 +514,10 @@ or reclaimability verdict is implied.
 assemblies and exact installed chains against independent original observations
 on generated Jet3/Jet4/ACE tables. Cross-index admission, physical root/map aliases,
 tampered keys/ledgers/images and oversized per-column allocation lists refuse.
+Reusable assembly sessions additionally retain source traversal, private I/O,
+entry/key and output admission across tables and failed attempts. Construction
+and independently reopened validation have separate phase sessions; releasing
+working reservations does not reset consumed work.
 `CompactPinnedPrefixValidatorTests` reconstructs only defined pointer changes and
 requires every other original physical byte to survive, including opaque pages,
 unlisted definitions, continuation headers and padding. Partial-read retries,
@@ -525,6 +537,15 @@ cause remains open as E2a. Native-host map acceptance does not resolve that gap.
 
 `CompactPinnedDatabaseCompositionTests` compares multiple tables, native global
 maps, exact complete allocation ledgers and the entire pinned prefix together.
+`CompactPinnedCatalogCompositionTests` extends the generated compositions to
+every local catalog table, including `MSysObjects`, system/security tables,
+relationship storage and hidden tables. It compares stored catalog identities,
+all physical stored keys and relocated bookmarks, then ordinary schema, rows,
+relationship partner references and linked-table metadata without opening links.
+Changing appended catalog Id/ParentId/Name bytes passes prefix preservation and
+fails independent raw catalog comparison. Physical recovery still refuses the
+duplicate live Ids in pinned original and appended catalog rows; complete active
+destination inventory remains an I17.4 dependency.
 `CompactPinnedGlobalMapCompositionTests` requires concrete independent map
 validation before accepting any changed page-one byte and includes its reads in
 prefix admission. These are append-only compositions retaining every original
