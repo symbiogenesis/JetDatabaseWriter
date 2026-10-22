@@ -39,9 +39,10 @@ internal sealed class CompactDiscoverySession
     /// <param name="pages">The caller-owned immutable decrypted page source.</param>
     /// <param name="format">The verified source format.</param>
     /// <param name="budget">The immutable whole-session limits.</param>
+    /// <param name="parentAccounting">Optional surrounding admission retaining work and simultaneous storage across child sessions.</param>
     /// <exception cref="JetLimitationException">The source physical size exceeds the session limit.</exception>
     /// <exception cref="JetCorruptDataException">The source geometry disagrees with the verified format.</exception>
-    internal CompactDiscoverySession(IPageSource pages, JetFormat format, CompactDiscoveryBudget budget)
+    internal CompactDiscoverySession(IPageSource pages, JetFormat format, CompactDiscoveryBudget budget, CompactDiscoveryAccounting? parentAccounting = null)
     {
         Guard.NotNull(pages, nameof(pages));
         Guard.NotNull(format, nameof(format));
@@ -51,7 +52,7 @@ internal sealed class CompactDiscoverySession
         Guard.InRange(budget.MaxChainRows, 0, int.MaxValue, nameof(budget));
         Guard.Positive(budget.MaxDefinitionBytes, nameof(budget));
         Guard.InRange(budget.MaxOverflowTargets, 0, int.MaxValue, nameof(budget));
-        this.Accounting = new CompactDiscoveryAccounting(budget);
+        this.Accounting = new CompactDiscoveryAccounting(budget, parentAccounting);
         this.SourceFormat = format;
         this.budget = budget;
         this.SourcePages = pages;

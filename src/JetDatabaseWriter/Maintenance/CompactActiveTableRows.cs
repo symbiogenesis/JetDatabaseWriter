@@ -27,7 +27,9 @@ internal sealed partial class CompactActiveTableRows : IDisposable
     private readonly TDefImage definition;
     private readonly CompactActiveTableBudget budget;
     private readonly CompactDiscoveryAccounting accounting;
+    private readonly CompactDiscoverySession? memoValues;
     private readonly EvidencePages pages;
+    private readonly EvidencePages memoPages;
     private readonly Func<CompactActiveTableRowRecord, CancellationToken, ValueTask> observer;
     private readonly Dictionary<(long Page, int Row), RowEvidence> rows = [];
     private readonly HashSet<long> mappedPages = [];
@@ -52,6 +54,11 @@ internal sealed partial class CompactActiveTableRows : IDisposable
         this.sourcePageCount = source.PageCount;
         this.accounting = new(budget.Work, budget.Accounting);
         this.pages = new(this);
+        this.memoPages = new(this, admitReads: false);
+        if (CompactIndexRowAudit.HasMemoColumn(definition, descriptorIndex))
+        {
+            this.memoValues = new(this.memoPages, format, budget.Work, this.accounting);
+        }
     }
 
     /// <summary>Gets the exact original table owner covered by this evidence.</summary>
@@ -210,6 +217,7 @@ internal sealed partial class CompactActiveTableRows : IDisposable
                         Accounting = this.accounting,
                         MaxRows = this.budget.MaxActiveRows,
                         MaxKeyBytes = this.budget.MaxKeyBytes,
+                        LongValues = this.budget.Work,
                         MaxWorkingBytes = this.budget.Work.MaxWorkingBytes,
                     },
                     cancellationToken,
@@ -261,6 +269,17 @@ internal sealed partial class CompactActiveTableRows : IDisposable
     {
         this.CheckSource(source, definition, cancellationToken);
         return this.pages;
+    }
+
+    /// <summary>Gets exact-source Memo reads whose child session admits each request after this lifetime guard.</summary>
+    /// <param name="source">The exact original source.</param>
+    /// <param name="definition">The exact original definition.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The lifetime-guarded source without a duplicate physical-read charge.</returns>
+    internal IPageSource MemoAuditPages(IPageSource source, TDefImage definition, CancellationToken cancellationToken)
+    {
+        this.CheckSource(source, definition, cancellationToken);
+        return this.memoPages;
     }
 
     /// <summary>Expires this evidence and releases all retained admission, leaving the caller's source open.</summary>
@@ -404,7 +423,7 @@ internal sealed partial class CompactActiveTableRows : IDisposable
                 }
 
                 bool allNull;
-                (key, allNull) = await CompactIndexRowAudit.ReadKeyAsync(this.format, this.definition, this.descriptorIndex, location, payload, this.budget.MaxKeyBytes, this.accounting, rowToken).ConfigureAwait(false);
+                (key, allNull) = await CompactIndexRowAudit.ReadKeyAsync(this.format, this.definition, this.descriptorIndex, location, payload, this.budget.MaxKeyBytes, this.accounting, this.memoValues, this.budget.Work, rowToken).ConfigureAwait(false);
                 if (allNull && (this.definition.RealIndexes[this.descriptorIndex].Slot.Flags & Constants.TableDefinition.IgnoreNullsIndexFlag) != 0)
                 {
                     throw Corrupt(location.PageNumber, "The selected index omits an all-null active row and cannot cover this table.");
@@ -536,7 +555,7 @@ internal sealed partial class CompactActiveTableRows : IDisposable
         internal bool Indexed { get; set; }
     }
 
-    private sealed class EvidencePages(CompactActiveTableRows owner) : IPageSource
+    private sealed class EvidencePages(CompactActiveTableRows owner, bool admitReads = true) : IPageSource
     {
         public int PageSize => owner.format.PageSize;
 
@@ -552,7 +571,11 @@ internal sealed partial class CompactActiveTableRows : IDisposable
                 throw Corrupt(pageNumber, "An active-table physical reference lies outside the immutable source.");
             }
 
-            owner.accounting.Charge(CompactDiscoveryCharge.PageReads, 1, pageNumber);
+            if (admitReads)
+            {
+                owner.accounting.Charge(CompactDiscoveryCharge.PageReads, 1, pageNumber);
+            }
+
             byte[] page = await owner.source.ReadUncachedPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {

@@ -11,6 +11,7 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
@@ -22,7 +23,8 @@ using JetDatabaseWriter.Schema.Models;
 /// Physical discovery covers live same-owner row headers, including verified moved payloads; optional active
 /// membership covers its exact independently agreed rows while retaining unassigned physical originals.
 /// Every included row must appear exactly once; ignored all-null rows must not appear. Complex keys compare
-/// only the stored four-byte parent reference, without following items. Calculated, LVAL and unsupported
+/// only the stored four-byte parent reference, without following items. Ordinary Memo keys follow complete
+/// bounded LVAL storage and decode only its exact declared payload. Calculated and unsupported
 /// keys refuse. Intermediate keys must also match their independent rows, and complete
 /// observed leaf chains, routing, exact separators and bookmark targets must agree. Date keys use their exact
 /// stored double without calendar conversion. Native constraints,
@@ -75,13 +77,33 @@ internal static class CompactIndexRowAudit
             }
 
             if (found?.IsCalculated != false || !SupportedType(found.Type)
-                || (found.Type == ColumnType.TextType && !found.TextSortOrder.IsSupported))
+                || (found.Type is ColumnType.TextType or ColumnType.MemoType && !found.TextSortOrder.IsSupported))
             {
                 return false;
             }
         }
 
         return true;
+    }
+
+    /// <summary>Checks whether an already supported descriptor requires ordinary Memo traversal.</summary>
+    /// <param name="definition">The independently verified definition.</param>
+    /// <param name="descriptorIndex">The supported physical descriptor ordinal.</param>
+    /// <returns>Whether an indexed column stores ordinary Memo values.</returns>
+    internal static bool HasMemoColumn(TDefImage definition, int descriptorIndex)
+    {
+        foreach (KeyColumn key in definition.RealIndexes[descriptorIndex].Columns)
+        {
+            foreach (ColumnInfo column in definition.Columns)
+            {
+                if (column.ColNum == key.ColNum && column.Type == ColumnType.MemoType)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Validates exact leaf-key, bookmark, duplicate-entry and discovered-row coverage correspondence.</summary>
@@ -122,6 +144,15 @@ internal static class CompactIndexRowAudit
         }
 
         TDefIndexDescriptor index = definition.RealIndexes[descriptorIndex];
+        var accounting = CompactDiscoveryAccounting.ForWorkingStorage(budget.MaxWorkingBytes, budget.Accounting);
+        CompactDiscoverySession? memoValues = null;
+        if (HasMemoColumn(definition, descriptorIndex))
+        {
+            Guard.NotNull(budget.LongValues, nameof(budget));
+            IPageSource memoPages = activeRows?.MemoAuditPages(pages, definition, cancellationToken) ?? pages;
+            memoValues = new CompactDiscoverySession(memoPages, format, budget.LongValues, accounting);
+        }
+
         IPageSource indexPages = activeRows?.IndexAuditPages(pages, definition, cancellationToken) ?? pages;
         long scratch = (64L * format.PageSize) + 65_536;
         if (scratch > budget.MaxWorkingBytes)
@@ -129,7 +160,7 @@ internal static class CompactIndexRowAudit
             throw Limit(ownerTDefPage, "Scalar-key scratch storage exceeds MaxWorkingBytes.");
         }
 
-        using IDisposable? scratchReservation = budget.Accounting?.ReserveWorkingBytes(scratch, ownerTDefPage);
+        using IDisposable scratchReservation = accounting.ReserveWorkingBytes(scratch, ownerTDefPage);
         var rows = new Dictionary<(long Page, int Row), KeyEvidence>();
         long sourceRows = 0;
         long indexedRows = 0;
@@ -157,7 +188,7 @@ internal static class CompactIndexRowAudit
                 indexBudget,
                 new()
                 {
-                    Accounting = budget.Accounting,
+                    Accounting = accounting,
                     MaxPageReads = rowBudget.MaxPageReads,
                     MaxDirectorySlots = rowBudget.MaxDirectorySlots,
                     MaxOverflowHops = rowBudget.MaxOverflowHops,
@@ -174,7 +205,7 @@ internal static class CompactIndexRowAudit
             foreach (KeyValuePair<(long Page, int Row), KeyEvidence> row in rows)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                budget.Accounting?.Charge(CompactDiscoveryCharge.GraphSteps, 1, row.Key.Page);
+                accounting.Charge(CompactDiscoveryCharge.GraphSteps, 1, row.Key.Page);
                 if (!row.Value.Observed)
                 {
                     throw Corrupt(row.Key.Page, $"An independently discovered included row is missing from the stored index (owner {ownerTDefPage}, root {index.RootPage}, bookmark {row.Key.Page}/{row.Key.Row}, rows {sourceRows}/{indexedRows}).");
@@ -209,7 +240,7 @@ internal static class CompactIndexRowAudit
             }
 
             sourceRows++;
-            (byte[] key, bool allNull) = await ReadKeyAsync(format, definition, descriptorIndex, location, payload, budget.MaxKeyBytes, budget.Accounting, token).ConfigureAwait(false);
+            (byte[] key, bool allNull) = await ReadKeyAsync(format, definition, descriptorIndex, location, payload, budget.MaxKeyBytes, accounting, memoValues, budget.LongValues, token).ConfigureAwait(false);
             if (allNull && (index.Slot.Flags & Constants.TableDefinition.IgnoreNullsIndexFlag) != 0)
             {
                 excluded++;
@@ -222,7 +253,7 @@ internal static class CompactIndexRowAudit
                 throw Limit(location.PageNumber, "Retained scalar-key row evidence exceeds MaxWorkingBytes.");
             }
 
-            IDisposable? reservation = budget.Accounting?.ReserveWorkingBytes(storage, location.PageNumber);
+            IDisposable? reservation = accounting.ReserveWorkingBytes(storage, location.PageNumber);
             try
             {
                 if (!rows.TryAdd((location.PageNumber, location.RowIndex), new(location, key, reservation)))
@@ -255,7 +286,7 @@ internal static class CompactIndexRowAudit
                 return default;
             }
 
-            budget.Accounting?.Charge(CompactDiscoveryCharge.GraphSteps, 1, record.PageNumber);
+            accounting.Charge(CompactDiscoveryCharge.GraphSteps, 1, record.PageNumber);
             if (!rows.TryGetValue((record.TargetPageNumber!.Value, record.TargetRowIndex!.Value), out KeyEvidence? row))
             {
                 throw Corrupt(record.PageNumber, "A stored index entry names an independently undiscovered or excluded row.");
@@ -295,11 +326,13 @@ internal static class CompactIndexRowAudit
     /// <param name="payload">The borrowed complete stored row.</param>
     /// <param name="maxKeyBytes">The combined key byte allowance.</param>
     /// <param name="accounting">Optional cumulative field admission.</param>
+    /// <param name="memoValues">The admitted source session for complete ordinary Memo traversal.</param>
+    /// <param name="memoBudget">The source session's immutable per-value and cumulative Memo limits.</param>
     /// <param name="cancellationToken">Cancels field inspection.</param>
     /// <returns>The complete native key and whether every key component was null.</returns>
     /// <exception cref="JetNotSupportedException">A stored value has no faithful supported key encoding.</exception>
     /// <exception cref="JetLimitationException">The combined key exceeds its byte allowance.</exception>
-    internal static async ValueTask<(byte[] Key, bool AllNull)> ReadKeyAsync(JetFormat format, TDefImage definition, int descriptorIndex, RowLocation location, ReadOnlyMemory<byte> payload, int maxKeyBytes, CompactDiscoveryAccounting? accounting, CancellationToken cancellationToken)
+    internal static async ValueTask<(byte[] Key, bool AllNull)> ReadKeyAsync(JetFormat format, TDefImage definition, int descriptorIndex, RowLocation location, ReadOnlyMemory<byte> payload, int maxKeyBytes, CompactDiscoveryAccounting? accounting, CompactDiscoverySession? memoValues, CompactDiscoveryBudget memoBudget, CancellationToken cancellationToken)
     {
         TDefIndexDescriptor index = definition.RealIndexes[descriptorIndex];
         byte[][] parts = new byte[index.Columns.Count][];
@@ -316,7 +349,7 @@ internal static class CompactIndexRowAudit
 
         return (key, allNull);
 
-        ValueTask InspectFieldAsync(CompactRawField field, CancellationToken token)
+        async ValueTask InspectFieldAsync(CompactRawField field, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
             accounting?.Charge(CompactDiscoveryCharge.Fields, 1, location.PageNumber);
@@ -328,13 +361,19 @@ internal static class CompactIndexRowAudit
                     continue;
                 }
 
-                object? value = DecodeField(format, field);
-                allNull &= value is null;
+                byte[] encoded;
+                if (field.Column.Type == ColumnType.MemoType && field.Kind == CompactRawFieldKind.Stored)
+                {
+                    encoded = await ReadMemoKeyAsync(format, field, column, memoValues ?? throw Unsupported(location.PageNumber, "An indexed Memo requires an admitted immutable source session."), memoBudget, token).ConfigureAwait(false);
+                    allNull = false;
+                }
+                else
+                {
+                    object? value = DecodeField(format, field);
+                    allNull &= value is null;
+                    encoded = EncodeFieldKey(format, field, column, value);
+                }
 
-                // Date keys use the stored IEEE double without calendar rounding.
-                ColumnType keyType = field.Column.Type == ColumnType.DateTimeType ? ColumnType.DoubleType : field.Column.Type;
-                byte[] encoded = IndexKeyEncoder.TryEncodeColumnEntry(keyType, value, column.Ascending, field.Column.NumericScale, format.LegacyNumericIndexKeys, field.Column.TextSortOrder, field.Column.Type == ColumnType.BinaryType && field.Column.IsFixed ? field.Column.Size : 0)
-                    ?? throw Unsupported(location.PageNumber, "An independently decoded scalar value has no supported exact index-key encoding.");
                 if (encoded.Length > maxKeyBytes - keyLength)
                 {
                     throw Limit(location.PageNumber, "A derived scalar key exceeds MaxKeyBytes.");
@@ -343,15 +382,13 @@ internal static class CompactIndexRowAudit
                 parts[ordinal] = encoded;
                 keyLength += encoded.Length;
             }
-
-            return default;
         }
     }
 
     private static bool SupportedType(ColumnType type)
         => type is ColumnType.ByteType or ColumnType.IntegerType or ColumnType.LongIntegerType
             or ColumnType.MoneyType or ColumnType.GuidType or ColumnType.NumericType or ColumnType.BigIntType
-            or ColumnType.TextType or ColumnType.BinaryType or ColumnType.DateTimeExtendedType
+            or ColumnType.TextType or ColumnType.MemoType or ColumnType.BinaryType or ColumnType.DateTimeExtendedType
             or ColumnType.FloatType or ColumnType.DoubleType or ColumnType.DateTimeType or ColumnType.ComplexType;
 
     private static object? DecodeField(JetFormat format, CompactRawField field)
@@ -402,7 +439,58 @@ internal static class CompactIndexRowAudit
         return value;
     }
 
-    private static string DecodeTextField(JetFormat format, CompactRawField field, byte[] bytes)
+    private static byte[] EncodeFieldKey(JetFormat format, CompactRawField field, KeyColumn column, object? value)
+    {
+        // Date keys use the stored IEEE double without calendar rounding.
+        ColumnType keyType = field.Column.Type == ColumnType.DateTimeType ? ColumnType.DoubleType : field.Column.Type;
+        return IndexKeyEncoder.TryEncodeColumnEntry(keyType, value, column.Ascending, field.Column.NumericScale, format.LegacyNumericIndexKeys, field.Column.TextSortOrder, field.Column.Type == ColumnType.BinaryType && field.Column.IsFixed ? field.Column.Size : 0)
+            ?? throw Unsupported(field.Location.PageNumber, "An independently decoded scalar value has no supported exact index-key encoding.");
+    }
+
+    private static async ValueTask<byte[]> ReadMemoKeyAsync(JetFormat format, CompactRawField field, KeyColumn column, CompactDiscoverySession values, CompactDiscoveryBudget budget, CancellationToken token)
+    {
+        if (!LongValueDescriptor.TryRead(field.RawBytes.Span, out LongValueDescriptor descriptor))
+        {
+            throw Corrupt(field.Location.PageNumber, "An indexed Memo has a truncated native long-value descriptor.");
+        }
+
+        if (descriptor.Length > budget.MaxValueBytes)
+        {
+            throw Limit(field.Location.PageNumber, "An indexed Memo payload exceeds MaxValueBytes.");
+        }
+
+        values.Accounting.Charge(CompactDiscoveryCharge.LongValuePayloadBytes, descriptor.Length, field.Location.PageNumber);
+        using IDisposable storage = values.Accounting.ReserveWorkingBytes((8L * descriptor.Length) + 65_536, field.Location.PageNumber);
+        byte[] payload = new byte[descriptor.Length];
+        int offset = 0;
+        bool terminal = false;
+        await values.AuditLongValueAsync(field.RawBytes, InspectAsync, token).ConfigureAwait(false);
+        if (!terminal || offset != payload.Length)
+        {
+            throw Corrupt(field.Location.PageNumber, "The independently audited indexed Memo payload is incomplete.");
+        }
+
+        string text = DecodeTextField(format, field, payload, descriptor.IsInline || descriptor.IsSinglePage);
+        return EncodeFieldKey(format, field, column, text);
+
+        ValueTask InspectAsync(CompactLongValueRecord record, CancellationToken recordToken)
+        {
+            recordToken.ThrowIfCancellationRequested();
+            if (record.DeclaredPayloadBytes < 0 || record.DeclaredPayloadBytes > payload.Length - offset
+                || record.PayloadOffset < 0 || record.PayloadOffset > record.RawBytes.Length
+                || record.DeclaredPayloadBytes > record.RawBytes.Length - record.PayloadOffset)
+            {
+                throw Corrupt(field.Location.PageNumber, "An indexed Memo audit delivered bytes outside the admitted payload or borrowed row.");
+            }
+
+            record.RawBytes.Slice(record.PayloadOffset, record.DeclaredPayloadBytes).CopyTo(payload.AsMemory(offset));
+            offset += record.DeclaredPayloadBytes;
+            terminal |= record.Kind == "lval-terminal";
+            return default;
+        }
+    }
+
+    private static string DecodeTextField(JetFormat format, CompactRawField field, byte[] bytes, bool? compressedStorage = null)
     {
         if (format.IsJet3)
         {
@@ -422,7 +510,7 @@ internal static class CompactIndexRowAudit
             return text;
         }
 
-        bool compressed = field.Column.IsCompressedUnicode && !field.Column.IsFixed && bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE;
+        bool compressed = (compressedStorage ?? (field.Column.IsCompressedUnicode && !field.Column.IsFixed)) && bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE;
         if (!compressed)
         {
             if (bytes.Length % 2 != 0)

@@ -78,6 +78,17 @@ internal sealed class CompactDiscoveryAccounting
     /// <summary>Gets the currently admitted working storage.</summary>
     internal long ActiveWorkingBytes => Volatile.Read(ref this.activeWorkingBytes);
 
+    /// <summary>Creates simultaneous storage admission without imposing unrelated default work limits.</summary>
+    /// <param name="maxWorkingBytes">The maximum combined working storage in this scope.</param>
+    /// <param name="parent">Optional surrounding work and storage admission.</param>
+    /// <returns>A scope forwarding every work charge to its parent while limiting only its own storage.</returns>
+    internal static CompactDiscoveryAccounting ForWorkingStorage(long maxWorkingBytes, CompactDiscoveryAccounting? parent)
+    {
+        var accounting = new CompactDiscoveryAccounting(new() { MaxWorkingBytes = maxWorkingBytes }, parent);
+        Array.Fill(accounting.limits, long.MaxValue);
+        return accounting;
+    }
+
     /// <summary>Charges work before its allocation, I/O, traversal or delivery. Failed operations retain their charges.</summary>
     /// <param name="charge">The cumulative work category.</param>
     /// <param name="count">The nonnegative amount to charge.</param>

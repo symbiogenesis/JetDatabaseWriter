@@ -12,7 +12,11 @@ internal sealed class CompactIndexRowBudget
     /// <summary>Gets the maximum complete encoded key bytes retained for one row.</summary>
     public int MaxKeyBytes { get; init; } = 65_536;
 
-    /// <summary>Gets conservative retained evidence and scalar-decoding scratch storage admission.</summary>
-    /// <remarks>The simultaneously active raw-row and raw-index scans, caller image, runtime/code-table initialization and shared-pool retention require separate allowances.</remarks>
+    /// <summary>Gets cumulative Memo payload, complete-chain work and simultaneous value-storage admission for this descriptor.</summary>
+    /// <remarks>The enclosing key-evidence allowance additionally admits Memo buffers; a supplied parent retains charges across descriptors and failed attempts.</remarks>
+    public CompactDiscoveryBudget LongValues { get; init; } = new() { MaxChainRows = 65_536, MaxWorkingBytes = 128 * 1024 * 1024 };
+
+    /// <summary>Gets combined retained-key, scalar/Memo decoding and composed bookmark-verification storage admission.</summary>
+    /// <remarks>Raw-row and raw-index scanners retain their own allowances; a supplied parent can additionally admit every scope together. The caller image, runtime/code-table initialization and shared-pool retention require separate allowances.</remarks>
     public long MaxWorkingBytes { get; init; } = 128 * 1024 * 1024;
 }

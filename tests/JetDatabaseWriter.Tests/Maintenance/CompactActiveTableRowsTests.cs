@@ -12,6 +12,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Maintenance;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -254,6 +255,131 @@ public sealed class CompactActiveTableRowsTests
             await Assert.ThrowsAsync<JetLimitationException>(async () => await active.ValidateIndexesAsync(Ct));
             Assert.Equal(measured.PageReads, parent.PageReads);
             Assert.Throws<JetOperationException>(() => active.CheckSource(file.Pages, image, Ct));
+        }
+
+        Assert.Equal(0, parent.ActiveWorkingBytes);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MemoCoveringAndSecondaryIndexes_ShareCompleteLifetimeValueAdmission(bool coveringMemo)
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb, secondaryIndex: true, memo: true);
+        await using DatabaseFile file = Open(bytes);
+        (long owner, TDefImage image) = await FindAsync(file);
+        int ordinal = image.LogicalIndexes.Single(index => index.Name == (coveringMemo ? "ByName" : "PrimaryKey")).Entry.IndexNum2;
+        var parent = new CompactDiscoveryAccounting(new());
+        using (CompactActiveTableRows active = await CompactActiveTableRows.ValidateAsync(file.Pages, file.Format, owner, image, ordinal, new() { Accounting = parent }, static (_, _) => default, Ct))
+        {
+            Assert.Equal(2, await active.ValidateIndexesAsync(Ct));
+            Assert.Equal(coveringMemo ? 6 : 3, parent.ReadCount(CompactDiscoveryCharge.LongValues));
+            Assert.True(parent.ReadCount(CompactDiscoveryCharge.LongValuePayloadBytes) > 0);
+            Assert.Equal(3, active.Result.ActiveRows);
+            Assert.False(active.Result.OwnershipProven);
+        }
+
+        Assert.Equal(0, parent.ActiveWorkingBytes);
+    }
+
+    [Fact]
+    public async Task RepeatedMemoIndexAudits_ExpireAfterCumulativePayloadAdmissionIsExhausted()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb, secondaryIndex: true, memo: true);
+        await using DatabaseFile file = Open(bytes);
+        (long owner, TDefImage image) = await FindAsync(file);
+        int ordinal = image.LogicalIndexes.Single(static index => index.Name == "PrimaryKey").Entry.IndexNum2;
+        var measured = new CompactDiscoveryAccounting(new());
+        using (CompactActiveTableRows active = await CompactActiveTableRows.ValidateAsync(file.Pages, file.Format, owner, image, ordinal, new() { Accounting = measured }, static (_, _) => default, Ct))
+        {
+            Assert.Equal(2, await active.ValidateIndexesAsync(Ct));
+        }
+
+        long admitted = measured.ReadCount(CompactDiscoveryCharge.LongValuePayloadBytes);
+        var parent = new CompactDiscoveryAccounting(new());
+        using (CompactActiveTableRows active = await CompactActiveTableRows.ValidateAsync(file.Pages, file.Format, owner, image, ordinal, new() { Accounting = parent, Work = new() { MaxLongValuePayloadBytes = admitted } }, static (_, _) => default, Ct))
+        {
+            Assert.Equal(2, await active.ValidateIndexesAsync(Ct));
+            await Assert.ThrowsAsync<JetLimitationException>(async () => await active.ValidateIndexesAsync(Ct));
+            Assert.Equal(admitted, parent.ReadCount(CompactDiscoveryCharge.LongValuePayloadBytes));
+            Assert.Throws<JetOperationException>(() => active.CheckSource(file.Pages, image, Ct));
+        }
+
+        Assert.Equal(0, parent.ActiveWorkingBytes);
+    }
+
+    [Fact]
+    public async Task DamagedMemoPayload_ExpiresOtherwiseUnchangedActiveRowEvidence()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb, secondaryIndex: true, memo: true);
+        await using DatabaseFile file = Open(bytes);
+        (long owner, TDefImage image) = await FindAsync(file);
+        int ordinal = image.LogicalIndexes.Single(static index => index.Name == "PrimaryKey").Entry.IndexNum2;
+        var pages = new ChangedPages(file.Pages);
+        byte[]? original = null;
+        await CompactRawRowReader.ScanAsync(
+            file.Pages,
+            file.Format,
+            owner,
+            new(),
+            (location, payload, token) => CompactRawFieldReader.ScanAsync(
+                file.Format,
+                image,
+                location,
+                payload,
+                (field, _) =>
+                {
+                    if (field.Column.Name == "Name")
+                    {
+                        original ??= field.RawBytes.ToArray();
+                    }
+
+                    return default;
+                },
+                token),
+            Ct);
+        Assert.NotNull(original);
+        Assert.True(LongValueDescriptor.TryRead(original, out LongValueDescriptor descriptor));
+        Assert.True(descriptor.UsesChainedPages);
+        var parent = new CompactDiscoveryAccounting(new());
+        using (CompactActiveTableRows active = await CompactActiveTableRows.ValidateAsync(pages, file.Format, owner, image, ordinal, new() { Accounting = parent }, static (_, _) => default, Ct))
+        {
+            long pageNumber = descriptor.FirstDp >> 8;
+            byte[] changed = await file.Pages.ReadPageCopyAsync(pageNumber, Ct);
+            int row = checked((int)(descriptor.FirstDp & 0xFF));
+            int start = BinaryPrimitives.ReadUInt16LittleEndian(changed.AsSpan(file.Format.DataPage.RowsStart + (row * 2)));
+            BinaryPrimitives.WriteUInt32LittleEndian(changed.AsSpan(start), 0);
+            pages.Changes[pageNumber] = changed;
+            await Assert.ThrowsAsync<JetCorruptDataException>(async () => await active.ValidateIndexesAsync(Ct));
+            Assert.Throws<JetOperationException>(() => active.CheckSource(pages, image, Ct));
+        }
+
+        Assert.Equal(0, parent.ActiveWorkingBytes);
+    }
+
+    [Fact]
+    public async Task MemoSourceDisposal_StopsAtFirstAdmittedPayloadRead()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb, secondaryIndex: true, memo: true);
+        await using DatabaseFile file = Open(bytes);
+        (long owner, TDefImage image) = await FindAsync(file);
+        int ordinal = image.LogicalIndexes.Single(static index => index.Name == "PrimaryKey").Entry.IndexNum2;
+        var pages = new ChangedPages(file.Pages);
+        var parent = new CompactDiscoveryAccounting(new());
+        using (CompactActiveTableRows active = await CompactActiveTableRows.ValidateAsync(pages, file.Format, owner, image, ordinal, new() { Accounting = parent }, static (_, _) => default, Ct))
+        {
+            int reads = 0;
+            pages.BeforeRead = _ =>
+            {
+                if (parent.ReadCount(CompactDiscoveryCharge.LongValuePayloadBytes) > 0)
+                {
+                    reads++;
+                    active.Dispose();
+                    Assert.True(parent.ActiveWorkingBytes > 0);
+                }
+            };
+            await Assert.ThrowsAsync<ObjectDisposedException>(async () => await active.ValidateIndexesAsync(Ct));
+            Assert.Equal(1, reads);
         }
 
         Assert.Equal(0, parent.ActiveWorkingBytes);
@@ -573,15 +699,15 @@ public sealed class CompactActiveTableRowsTests
         Assert.Equal(bytes, await ReadAllAsync(file));
     }
 
-    private static async Task<byte[]> CreateAsync(DatabaseFormat kind, bool secondaryIndex = false)
+    private static async Task<byte[]> CreateAsync(DatabaseFormat kind, bool secondaryIndex = false, bool memo = false)
     {
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, kind, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct))
         {
-            await writer.CreateTableAsync("Items", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Name", typeof(string), 40)], secondaryIndex ? [new("ByName", "Name")] : [], Ct);
+            await writer.CreateTableAsync("Items", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Name", typeof(string), memo ? 0 : 40)], secondaryIndex ? [new("ByName", "Name")] : [], Ct);
             for (int index = 1; index <= 3; index++)
             {
-                await writer.InsertRowAsync("Items", [index, "row" + index], Ct);
+                await writer.InsertRowAsync("Items", [index, memo ? new string((char)('a' + index), 6000) : "row" + index], Ct);
             }
         }
 
@@ -634,6 +760,8 @@ public sealed class CompactActiveTableRowsTests
 
         internal Dictionary<long, int> ReadCounts { get; } = [];
 
+        internal Action<long>? BeforeRead { get; set; }
+
         public int PageSize => inner.PageSize;
 
         public long PageCount => inner.PageCount + this.ExtraPages;
@@ -643,6 +771,7 @@ public sealed class CompactActiveTableRowsTests
         public ValueTask<byte[]> ReadPageAsync(long pageNumber, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            this.BeforeRead?.Invoke(pageNumber);
             this.ReadCounts[pageNumber] = this.ReadCounts.GetValueOrDefault(pageNumber) + 1;
             if (!this.Changes.TryGetValue(pageNumber, out byte[]? changed))
             {
