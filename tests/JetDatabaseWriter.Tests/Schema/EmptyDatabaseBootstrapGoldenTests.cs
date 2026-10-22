@@ -52,7 +52,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "7D8BFC1F383166959C39F660206C13822B7F01A22395A110479BEFEA9E9FA9D1")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "2BCAACFE4B355CB51ADBD28C0CD0B71F220439D305595801FEFDCCE94C639E80")]
     [InlineData(DatabaseFormat.Jet4Mdb, "942B0938E09313C3D0E24DE79D1944201D9AAD875CA0ED5C2BE6AE3383A0FBB5")]
     [InlineData(DatabaseFormat.AceAccdb, "547D452B37ECFD21A5B6922C5C6110E241B51C5843B55471D06A7E3DCE6EE5FA")]
     public void BuildEmptyDatabase_MatchesGoldenHash(DatabaseFormat format, string expectedSha256)

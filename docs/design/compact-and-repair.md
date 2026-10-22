@@ -106,9 +106,9 @@ in the corresponding TODO item.
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
 | Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map inspection; independent catalog Id and unique ParentIdName key evidence despite damaged headers/map hints, including intact original headers with damaged moved owners and complete independently audited key/chain/routing evidence; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/field/LVAL/index work and simultaneous storage through local-table orchestration; independent discovered-local-table plan coverage checks original bytes and parsed projections | S1: complete remaining public-scan accounting and catalog recovery when physical ownership and both supported independent key paths are unavailable; qualify runtime/pool and caller-owned memory separately |
-| Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory refusal; bounded raw row and field streaming with retained assignment states; bounded calculated ResultType hydration and complete defined LVAL-chain observations, including trailing storage; private dense raw-row packing with original-header bookmark mappings and independent reopened raw-allocation/ledger comparison; complete raw LVAL staging with retargeted descriptor/chain pointers installed in verified packed rows and per-column allocation observations; independent reopened data/LVAL byte and private allocation coverage validation; bounded per-table DATA/LVAL/map assembly with original-column allocation-ledger comparison, independent complete table/map and pointer-only image comparison | S3/F8 and the bounded raw-copy part of I6: interpret native error envelopes independently of Null and damaged values without losing their raw representation; install staged table images and assemble catalog, index and global allocation references into a complete compact copy |
+| Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory refusal; bounded raw row and field streaming with retained assignment states; bounded calculated ResultType hydration and complete defined LVAL-chain observations, including trailing storage; private dense raw-row packing with original-header bookmark mappings and independent reopened raw-allocation/ledger comparison; complete raw LVAL staging with retargeted descriptor/chain pointers installed in verified packed rows and per-column allocation observations; independent reopened data/LVAL byte and private allocation coverage validation; bounded per-table DATA/LVAL/map assembly with original-column allocation-ledger comparison, independent complete table/map and pointer-only image comparison; bounded serialized whole-database raw assembly and independently reopened active catalog/table/index/global-map/prefix/allocation validation; native-authored calculated Byte error/Null envelope byte preservation through assembly and native compact | S3/F8: interpret remaining native value/error variants independently of Null and damaged values for diagnosis and recovery; complete ownership and source coverage before reclaiming retained storage |
 | Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; projected raw header/trailer bytes and source index sharing/directions during schema edits; retained continuation headers and original trailing padding during chain writes; complete known table/index/LVAL pointer patching within pinned raw definitions; all-chain-preflight installation on original page identities and independent reopened header/body comparison; exact complete pinned-prefix comparison permitting only independently reconstructed TDEF pointers and validated native global-map bytes | S9: complete application, security, replication and unknown-object inventory and semantic preservation requirements |
-| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key graph, entry-edge fence and observed leaf-chain checks; separate complete observed-edge key-envelope, conservative key-routing and bookmark-inclusive order proofs; bounded same-owner bookmark-target validation; cross-root declared-owner and incoming-reference observations; stored-key staging with disk-backed fences and monotone disk-backed row-bookmark lookup; independent reopened private stored-key/bookmark, child-maximum and allocation coverage validation; bounded private native usage-map construction from ordered allocation runs and independent reopened exact membership/allocation validation; composed relocated stored-key tree/map assembly with references returned after reopened validation; disk-backed exact whole-destination allocation ledgers retaining the complete source prefix; composed per-table physical stored indexes, maps and pinned chain installation; independent canonical native global-map installation/comparison with self-covered bitmap storage | I2: prove safe sharing and complete incoming-reference ownership beyond known declarations, complete native separator/alias and stored-key/row correspondence validation, and build a complete compact-copy driver over the composed discovered-table, global-map, prefix and allocation validation; F9 only where keys must be regenerated |
+| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key graph, entry-edge fence and observed leaf-chain checks; separate complete observed-edge key-envelope, conservative key-routing and bookmark-inclusive order proofs; bounded same-owner bookmark-target validation; cross-root declared-owner and incoming-reference observations; stored-key staging with disk-backed fences and monotone disk-backed row-bookmark lookup; independent reopened private stored-key/bookmark, child-maximum and allocation coverage validation; bounded private native usage-map construction from ordered allocation runs and independent reopened exact membership/allocation validation; composed relocated stored-key tree/map assembly with references returned after reopened validation; disk-backed exact whole-destination allocation ledgers retaining the complete source prefix; composed per-table physical stored indexes, maps and pinned chain installation; independent canonical native global-map installation/comparison with self-covered bitmap storage; independent native descriptor-map membership and exact observed separator/child-maximum comparisons; bounded database-wide private assembly driver and exact independently discovered active destination inventory | I2: prove safe sharing and complete incoming-reference ownership beyond known declarations, complete stored-key/row correspondence and native sharing validation, and extend the bounded discovered-table driver and independent active destination inventory into a reclaiming compact copy; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
 | Replace the source safely | Private staging, flushed backups and process-interruption tests | E4/F6 and the file-recovery part of I15: coordination, recovery discovery, namespace persistence and actual power-interruption evidence |
 
@@ -180,6 +180,46 @@ iterative postorder. It compares encoded keys without requiring bookmark ties
 or exact separator/leaf correspondence. A redundant native tail alias can widen
 an envelope and withhold this proof even when conservative key routing succeeds.
 The flag is therefore not a universal native-tree acceptance requirement.
+
+`ObservedChildMaximumSeparatorsValidated` separately compares every stored
+intermediate separator's complete key and bookmark with its child's greatest
+observed leaf entry through every child/tail edge, including aliases. Empty
+descendants, different keys or different bookmark ties withhold this proof.
+Equal-key maxima retain the actual greatest bookmark even when the separate
+optional bookmark-order proof is unavailable. Exact separators do not establish
+that stored keys describe rows or that all source rows and leaves were found.
+
+`CompactIndexRowAudit` independently derives keys from physically readable
+same-owner raw scalar rows and compares every leaf key and bookmark. Included
+rows must appear exactly once; an IgnoreNulls descriptor omits only all-null
+keys. Date keys retain their stored IEEE double rather than converting through
+calendar rounding. Strict lossless text decoding and supported stored
+collations are required. Calculated, long-value, complex and unsupported key
+interpretations refuse. The result covers the physically discovered row set;
+it does not choose which historical same-owner rows remain active or establish
+missing ownership and complete source coverage.
+
+`CompactActiveTableRows` independently reopens one exact ordinary TDEF, strictly
+reads its native table-owned map, audits a supported covering index's complete
+graph, ordered leaf chain, routing, exact child maxima and bookmarks, and derives
+every active scalar key from raw rows. The map, complete covering entries and
+declared row count must agree. Every other readable same-owner row is reported
+with borrowed raw bytes as unassigned and pinned; it is never declared dead or
+reclaimable. Disposable authority is bound to the exact immutable source and
+definition. Every consumption rechecks row coordinates and payload hashes,
+replays unassigned observations and shares lifetime work/storage admission with
+the surrounding session. Failed consumption expires the authority.
+
+The database driver requires an explicit covering-index ordinal and a mandatory
+unassigned-row observer before opting a table into this scope. Independent
+reopened comparison derives fresh source authority and checks active-table and
+unassigned-row counts against construction. Catalog recovery retains its separate
+identity proof and conflicting recovered catalog bookmarks refuse ordinary
+active ownership. Legacy `mdbtools/nwind.mdb` Umsätze (TDEF753) has 830 corroborated active
+rows and 2,049 additional readable same-owner rows. Complete private assembly
+retains and reports all 2,049 in its compared original prefix while rebuilding
+the 830 active rows. This scoped choice establishes neither global discovery,
+exclusive incoming ownership nor permission to reclaim the retained rows.
 
 `CompactIndexBookmarkAudit` composes raw index observations with an explicit
 target check for each leaf and intermediate entry. Its ordinary path verifies a
@@ -255,8 +295,13 @@ references, inspection work and observations; its conservative storage reservati
 remains held alongside inventory and per-root storage. Incoming counts describe
 observations, including repeated scans, rather than distinct physical edges.
 Its terminal proves only consistency of supplied known observations. Map-content
-membership, opaque or missing incoming references and native sharing semantics
-remain unverified, so all observed storage stays pinned.
+membership is independently inspected for every supplied nonzero descriptor map.
+Complete INLINE bits and REFERENCE pointers/bitmap bytes have separate cumulative
+read, inspection, membership and retained-storage admission. Every observed index
+page must occur in each declared map for its root. Shared map rows and bitmap
+pages remain explicit, DATA/index/bitmap role conflicts refuse, and unused map
+members remain pinned gaps. Opaque or missing incoming references and native
+sharing semantics remain unverified, so all observed storage stays pinned.
 
 A damaged owner can still hide an object; this orchestration does not prove
 complete database coverage or validate a compact result. Cumulative allowances
@@ -501,6 +546,65 @@ that allowance. Composed comparisons still do not establish source-index
 completeness, unknown incoming ownership, native acceptance, reclamation or
 permission to publish a compact database.
 
+The coordinator also independently compares the complete discovered source
+catalog with the reopened destination's active catalog. Exact signed Id,
+ParentId, Name, type, flags and local definition membership must match.
+Independently compared raw catalog rows, LVAL/maps, row ledgers and retained
+source DATA bytes establish scoped active membership before destination
+inventory runs. All inventory and membership reads share the coordinator's
+cumulative read admission. Matching discovered inventories do not establish
+damaged-source completeness or opaque reference semantics.
+
+`CompactPinnedDatabaseBuilder` validates the complete discovered-local-table plan
+before creating output, streams the decrypted source prefix one page at a time,
+and serializes all raw table, LVAL, stored-index, map and pinned-definition
+assemblies. Caller factories provide distinct private destinations and sidecars,
+which may remain on disk. One catalog recovery scope spans every table so a
+recovered catalog row with a damaged user-table owner cannot be copied as user
+data. The driver installs the canonical global map and complete allocation
+ledger, closes every output, then independently reopens them for the composed
+private comparison. Construction reads, writes, output growth and retained
+evidence are bounded across phases; reopened validation has a separate bounded
+allowance. Failures retain private partial output and leave the source untouched.
+The driver's internal image is decrypted private staging. Reclamation, complete
+native acceptance and durable publication remain required.
+
+`CompactEncodedDatabaseCopy` encodes closed private staging with its exact
+original native header and password. It checks the complete staging header and
+provider before creating output, preserves every original provider/security
+parameter, streams one page at a time and closes construction handles before
+independently reopening staging and encoded output. A fresh password codec
+compares every decrypted output page with staging. Requested reads, writes,
+output size, scratch and aggregate password hashing across both codec opens have
+explicit bounds. Factories transfer handle ownership, run serially and retain
+partial private output on failure. Supported native Jet3 RC4, Jet4 RC4, ACE
+Agile and ACE Standard fixture assemblies pass managed password reopen and
+native mutation, primary-key refusal, password compact and readback. This is a
+codec-equality proof; it does not establish structural validity, reclaimability,
+durability or publication permission. Unsupported providers remain dependencies.
+
+The controlled Access16.0.20430.20182 fixture in
+`Databases/ApplicationObjects/NativeInertApplicationObjects.accdb` contains an
+inert saved query, blank form/report and one fixed data row. Complete raw catalog,
+application storage, index and prefix comparisons retain their stored identities
+and bytes through private assembly. `CompactPinnedApplicationObjectsTests`
+checks native query metadata and Forms/Reports container names through DAO
+compact without executing the saved query or application objects. Separate
+native SaveAsText controls retain byte-identical form/report exports through
+assembly and native compact. This evidence does not cover macros, VBA modules,
+replication, every security configuration or opaque incoming references.
+
+`CompactPinnedSecurityTests` compares the two frozen native Jet4 workgroup
+password variants and native-authored restricted copies using an isolated copy
+of their MDW. Complete assembly preserves the raw `MSysObjects`/`MSysACEs`
+values, owner/SID/ACL and property LVAL bytes, original header and pinned
+security storage. DAO120 compares ownership/grants through native compact,
+permits owner writes with rollback, distinguishes wrong account password 3029
+from wrong database password 3031, and retains read permission 20 with update
+denial 3108 for the restricted account. These cases do not implement workgroup
+authentication in the managed reader or establish replication and arbitrary
+security variants.
+
 `CompactGlobalMapInstaller` replaces only the original page-one global free-map
 row in the private destination. It marks every original and appended page used,
 retains old bitmap storage and appends canonical REFERENCE bitmaps when needed.
@@ -553,18 +657,25 @@ refuse. Ordinary damaged-source inventory retains strict duplicate-Id refusal.
 This is a scoped active-catalog inventory proof, not complete damaged-source
 recovery, incoming ownership or a database-validity verdict.
 
+Accepted independent catalog recoveries participate in active membership and
+raw assembly through a bounded explicit recovery scope. Physical and recovered
+rows merge in original bookmark order without a whole-table snapshot. Their
+complete raw identities and payload locations are rechecked, and exact accepted
+catalog bookmarks are excluded from conflicting noncatalog owner scans. Active
+destination evidence also scopes whole-database row/field discovery; unrelated
+physical duplicates still refuse.
+
 Focused native global-map controls force REFERENCE storage and compare the
-unchanged original/control content, actual allocation growth during Memo inserts,
-update/delete, duplicate-key refusal, native compact and exact readback. The
-DAO3.6 Jet3 control uses a Microsoft-authored host. An untouched fresh managed
-Jet3 database with three 3,000-character Memo values separately reads through
-DAO3.6 but refuses its first SQL UPDATE with DAO 3049 / HRESULT `0x800A0BE9`
-(`Cannot open database 'UPDATE ...'`). The retained generated control and installed
-subject distinguish that open bootstrap/SQL compatibility gap from the native-host
-map comparison; its underlying cause remains unproven (E2a). DAO120 Jet4/ACE
-mutation acceptance remains an external evidence dependency when that engine
-is unavailable. Controlled native map acceptance does not establish safe
-reclamation or acceptance of a complete managed compact database.
+unchanged original/control content, allocation growth during Memo inserts,
+update/delete, duplicate-key refusal, native compact and exact readback.
+The DAO3.6 Jet3 control uses a Microsoft-authored host. Fresh Jet3 bootstrap
+page-one global-map rows also use the format's native 133-byte width, including
+128 bitmap bytes; Jet4/ACE use 69-byte rows. `Jet3NativeExternalMemoTests`
+compares that geometry with a frozen DAO3.6 specimen and checks fresh external
+Memo mutation, native table allocation, constraints and compact/readback.
+Existing imported map rows retain their declared geometry. Controlled native
+map acceptance does not establish complete managed compact acceptance or safe
+reclamation.
 
 `CompactPinnedTableAssemblyTests` composes these components on generated Jet3,
 Jet4 and ACE tables with a primary index and external Memo storage. It validates

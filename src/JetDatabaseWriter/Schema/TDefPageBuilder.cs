@@ -722,8 +722,10 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
     {
         DataPageLayout dataPage = format.DataPage;
         int pageOffset = pgSz;
-        int rowStart = pgSz - 69;
-        int row1Start = rowStart - 69;
+
+        // Native Jet3 uses 133-byte global rows; shorter rows read but refuse native allocation and LVAL mutation.
+        int rowStart = pgSz - format.UsageMapRowSize;
+        int row1Start = rowStart - format.UsageMapRowSize;
         int slotTableEnd = dataPage.RowsStart + 4;
 
         db[pageOffset] = 0x01;

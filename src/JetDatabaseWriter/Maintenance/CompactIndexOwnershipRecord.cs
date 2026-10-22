@@ -57,6 +57,15 @@ internal sealed record CompactIndexOwnershipRecord
     /// <summary>Gets a value indicating whether every declared descriptor has a nonzero root and each distinct root supplied a successful raw terminal.</summary>
     public bool DeclaredRootsObserved { get; init; }
 
+    /// <summary>Gets a value indicating whether every descriptor has a nonzero independently inspected ownership map.</summary>
+    public bool DeclaredMapsInspected { get; init; }
+
+    /// <summary>Gets a value indicating whether every observed index page belonged to every independently inspected descriptor map for its root, with no descriptor map missing.</summary>
+    public bool ObservedIndexPagesMapped { get; init; }
+
+    /// <summary>Gets a value indicating whether every independently inspected map member was observed under its declared root, with no descriptor map missing.</summary>
+    public bool DeclaredMapMembersObserved { get; init; }
+
     /// <summary>Gets the successful terminal's explicit coverage boundary.</summary>
     public string? Coverage { get; init; }
 

@@ -35,6 +35,8 @@ public sealed class CompactPinnedDatabaseValidatorTests
             fixture.Ledger.Position = 11;
             CompactPinnedDatabaseValidatorResult result = await ValidateAsync(fixture, new());
             Assert.Equal(fixture.Tables.Count, result.Tables);
+            Assert.True(result.CatalogObjects >= result.Tables);
+            Assert.True(result.DestinationInventoryCompared);
             Assert.Equal(fixture.Source.Database.Pages.PageCount, result.Prefix.PinnedPages);
             Assert.Equal(fixture.Destination.Length / fixture.Source.Database.Format.PageSize, result.Allocations.DestinationPages);
             Assert.True(result.ReadBytes > result.Prefix.ReadBytes);
@@ -134,6 +136,14 @@ public sealed class CompactPinnedDatabaseValidatorTests
             await Assert.ThrowsAsync<JetLimitationException>(async () => await ValidateAsync(fixture, new() { MaxReadBytes = completed.ReadBytes - 1 }));
             await Assert.ThrowsAsync<JetLimitationException>(async () => await ValidateAsync(fixture, new() { MaxReadBytes = 0 }));
         });
+
+    [Fact]
+    public Task DestinationInventory_ObjectAdmissionIsEnforced()
+        => WithFixtureAsync(DatabaseFormat.Jet4Mdb, async fixture =>
+            await Assert.ThrowsAsync<JetLimitationException>(async () => await ValidateAsync(fixture, new()
+            {
+                Inventory = new() { MaxObjects = 1 },
+            })));
 
     [Fact]
     public Task PhysicalMembershipAndRetainedStorageAdmission_RefuseBeforeComparison()

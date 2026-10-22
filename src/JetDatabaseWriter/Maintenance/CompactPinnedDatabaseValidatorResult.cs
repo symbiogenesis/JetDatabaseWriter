@@ -6,9 +6,12 @@ namespace JetDatabaseWriter.Maintenance;
 /// <param name="Prefix">The complete retained-prefix and reconstructed pointer comparison.</param>
 /// <param name="Allocations">Exact complete destination coverage by independently compared allocation evidence.</param>
 /// <param name="ReadBytes">Cumulative requested source and private bytes across all comparison phases.</param>
+/// <param name="CatalogObjects">The independently compared complete discovered source and active destination catalog identities.</param>
+/// <param name="ActiveTables">The ordinary tables whose scoped active rows were independently corroborated.</param>
+/// <param name="UnassignedRows">The physical rows outside those corroborated sets; every such row remains pinned and reported.</param>
 /// <remarks>
 /// Known local-table membership is bound to an independent source inventory. Opaque incoming references, complete
-/// discoverability under damaged ownership, active destination catalog recovery, native acceptance, encryption and
+/// discoverability under damaged ownership, native acceptance, encryption and
 /// durable publication remain separate requirements. This result never authorizes database replacement.
 /// </remarks>
 internal sealed record CompactPinnedDatabaseValidatorResult(
@@ -16,8 +19,14 @@ internal sealed record CompactPinnedDatabaseValidatorResult(
     CompactGlobalMapResult GlobalMap,
     CompactPinnedPrefixValidatorResult Prefix,
     CompactGlobalAllocationValidatorResult Allocations,
-    long ReadBytes)
+    long ReadBytes,
+    int CatalogObjects,
+    int ActiveTables,
+    long UnassignedRows)
 {
+    /// <summary>Gets a value indicating whether independently discovered source and active destination inventories matched.</summary>
+    public bool DestinationInventoryCompared { get; } = true;
+
     /// <summary>Gets a value indicating whether the complete database has been validated; always false.</summary>
     public bool DatabaseValidated { get; }
 

@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Maintenance;
 using System;
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -72,6 +73,54 @@ public sealed class CompactRecoveredCatalogRowsTests
                 Ct));
             Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
             Assert.Equal(0, delivered);
+        }
+
+        Assert.Equal(0, accounting.ActiveWorkingBytes);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RecoveredRows_MergeInOriginalBookmarkOrderAndRefusePhysicalDuplicates(bool duplicate)
+    {
+        var pages = new MemoryPages(7);
+        var accounting = new CompactDiscoveryAccounting(new());
+        using (var recovered = new CompactRecoveredCatalogRows(pages, pages.Format, new(), accounting))
+        {
+            recovered.Accept(7, pages.Location, Ct);
+            recovered.SetCatalog(pages.Catalog);
+            var observed = new List<long>();
+            ValueTask VisitAsync(RowLocation location, ReadOnlyMemory<byte> bytes, CancellationToken token)
+            {
+                token.ThrowIfCancellationRequested();
+                observed.Add(location.PageNumber);
+                Assert.Equal(pages.Payload, bytes.ToArray());
+                return default;
+            }
+
+            async ValueTask ScanPhysicalAsync(Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> visitor, CancellationToken token)
+            {
+                await visitor(pages.Location with { PageNumber = 8 }, pages.Payload, token);
+                if (duplicate)
+                {
+                    await visitor(pages.Location, pages.Payload, token);
+                }
+
+                await visitor(pages.Location with { PageNumber = 10 }, pages.Payload, token);
+            }
+
+            if (duplicate)
+            {
+                await Assert.ThrowsAsync<JetCorruptDataException>(async () => await recovered.ScanWithPhysicalAsync(ScanPhysicalAsync, VisitAsync, Ct));
+                Assert.Equal([8L], observed);
+                Assert.Equal(0, pages.Reads);
+            }
+            else
+            {
+                await recovered.ScanWithPhysicalAsync(ScanPhysicalAsync, VisitAsync, Ct);
+                Assert.Equal([8L, 9L, 10L], observed);
+                Assert.Equal(1, pages.Reads);
+            }
         }
 
         Assert.Equal(0, accounting.ActiveWorkingBytes);

@@ -42,6 +42,9 @@ internal sealed record CompactStorageRecord
     /// <summary>Gets the original catalog identity.</summary>
     public long? ObjectId { get; init; }
 
+    /// <summary>Gets the original complete signed catalog parent identity.</summary>
+    public long? ParentId { get; init; }
+
     /// <summary>Gets the original catalog flags.</summary>
     public long? Flags { get; init; }
 

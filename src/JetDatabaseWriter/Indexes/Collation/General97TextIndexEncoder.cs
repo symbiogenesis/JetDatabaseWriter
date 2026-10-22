@@ -50,6 +50,8 @@ internal static class General97TextIndexEncoder
     private static readonly Lazy<GeneralLegacyTextIndexEncoder.CharHandler[]> Codes = new(
         () => GeneralLegacyTextIndexEncoder.LoadCodes(CodesResource, FirstChar, LastChar));
 
+    private static readonly Lazy<bool[]> SignificantWeights = new(CreateSignificantWeights);
+
     private static readonly Lazy<short[]> ExtMappings = new(
         () => LoadMappings(ExtMappingsResource, FirstMapChar, LastMapChar));
 
@@ -112,6 +114,15 @@ internal static class General97TextIndexEncoder
 
         foreach (char currentChar in chars)
         {
+            if (currentChar == '\0')
+            {
+                // Native Jet3 stored text (including MSys Name/Type/Version
+                // keys) gives an embedded NUL its own inline weight. Keep the
+                // table's ignored zero handler for unmapped extended characters.
+                bytes.Add(0x10);
+                continue;
+            }
+
             GeneralLegacyTextIndexEncoder.CharHandler handler = GetCharHandler(currentChar, codes, ref extMappings);
 
             ReadOnlySpan<byte> inline = handler.GetInlineBytes(currentChar);
@@ -122,6 +133,17 @@ internal static class General97TextIndexEncoder
 
             if (handler.Type == CharHandlerType.Simple)
             {
+                if (inline.Length > 1)
+                {
+                    // Expansions such as ß -> ss retain both significant
+                    // positions when a later accent writes its extra nibble.
+                    bool[] significantWeights = SignificantWeights.Value;
+                    foreach (byte weight in inline)
+                    {
+                        significantCharCount += significantWeights[weight] ? 1 : 0;
+                    }
+                }
+
                 continue;
             }
 
@@ -197,7 +219,27 @@ internal static class General97TextIndexEncoder
         return codes[extMappings[extOffset]];
     }
 
-    private static int GetExtraByteCapacity(int charCount) => (charCount + 3) / 2;
+    private static bool[] CreateSignificantWeights()
+    {
+        bool[] weights = new bool[byte.MaxValue + 1];
+        foreach (GeneralLegacyTextIndexEncoder.CharHandler handler in Codes.Value)
+        {
+            if (handler.Type == CharHandlerType.Significant)
+            {
+                foreach (byte weight in handler.GetInlineBytes(default))
+                {
+                    weights[weight] = true;
+                }
+            }
+        }
+
+        return weights;
+    }
+
+    /// <summary>Allows two significant expansion weights per character and both extra-stream bounds.</summary>
+    /// <param name="charCount">The bounded native or comparison character count.</param>
+    /// <returns>The complete nibble-packed scratch capacity.</returns>
+    private static int GetExtraByteCapacity(int charCount) => charCount + 1;
 
     private static int GetByteLength(int nibbleCount) => (nibbleCount + 1) / 2;
 

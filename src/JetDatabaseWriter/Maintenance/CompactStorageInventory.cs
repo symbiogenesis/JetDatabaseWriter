@@ -229,6 +229,7 @@ internal static class CompactStorageInventory
                     Name = row.Name,
                     ObjectType = row.ObjectType,
                     ObjectId = row.Id,
+                    ParentId = row.ParentId,
                     Flags = row.Flags,
                     Detail = "Catalog identity only; application, security and replication payloads remain uninterpreted and pinned.",
                 },

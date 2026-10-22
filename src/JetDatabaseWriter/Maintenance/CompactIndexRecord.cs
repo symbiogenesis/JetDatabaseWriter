@@ -79,6 +79,10 @@ internal sealed record CompactIndexRecord
     /// <remarks>False means the conservative bounded proof is incomplete. Missing leaves, key/row correspondence and incoming-reference ownership remain unverified.</remarks>
     public bool ObservedKeyRoutingValidated { get; init; }
 
+    /// <summary>Gets a value indicating whether every intermediate separator's complete stored key and bookmark equal its child's maximum observed leaf entry across every navigable child/tail edge, including aliases.</summary>
+    /// <remarks>False withholds exact correspondence without refusing uncertain native layouts. Missing leaves, row-value semantics and incoming-reference ownership remain unverified.</remarks>
+    public bool ObservedChildMaximumSeparatorsValidated { get; init; }
+
     /// <summary>Gets a value indicating whether complete tree validity and incoming-reference ownership have been proven.</summary>
     public bool TreeCompletenessProven { get; }
 

@@ -35,13 +35,24 @@ internal sealed class CompactDiscoveryAccounting
     private readonly long[] counts = new long[19];
     private readonly long[] limits;
     private readonly long maxWorkingBytes;
+    private readonly CompactDiscoveryAccounting? parent;
+    private readonly int parentDepth;
     private long activeWorkingBytes;
 
     /// <summary>Initializes a new instance of the <see cref="CompactDiscoveryAccounting"/> class.</summary>
     /// <param name="budget">The fixed whole-session limits.</param>
-    internal CompactDiscoveryAccounting(CompactDiscoveryBudget budget)
+    /// <param name="parent">Optional surrounding admission, bounded to sixteen parent levels.</param>
+    /// <exception cref="ArgumentException">The parent chain exceeds its fixed depth bound.</exception>
+    internal CompactDiscoveryAccounting(CompactDiscoveryBudget budget, CompactDiscoveryAccounting? parent = null)
     {
         Guard.NotNull(budget, nameof(budget));
+        if (parent?.parentDepth >= 16)
+        {
+            throw new ArgumentException("Nested discovery accounting exceeds sixteen parent levels.", nameof(parent));
+        }
+
+        this.parent = parent;
+        this.parentDepth = parent is null ? 0 : parent.parentDepth + 1;
         this.limits = [budget.MaxPageReads, budget.MaxObjects, budget.MaxRows, budget.MaxDirectorySlots, budget.MaxLongValues, budget.MaxLongValueBytes, budget.MaxLongValuePayloadBytes, budget.MaxLongValueRows, budget.MaxIndexPages, budget.MaxIndexEntries, budget.MaxIndexCanonicalBytes, budget.MaxReferences, budget.MaxGraphSteps, budget.MaxRecords, budget.MaxCatalogObjects, budget.MaxSchemaBytes, budget.MaxMapSteps, budget.MaxDiagnostics, budget.MaxFields];
         foreach (long limit in this.limits)
         {
@@ -80,6 +91,10 @@ internal sealed class CompactDiscoveryAccounting
         {
             throw Limit(page, $"The aggregate discovery allowance for {charge} is exhausted.");
         }
+
+        // A refused parent leaves the already admitted child attempt charged;
+        // no caller work has begun. Parent counters follow the same rule.
+        this.parent?.Charge(charge, count, page);
     }
 
     /// <summary>Reserves simultaneous scan-owned storage before allocating it, releasing admission on disposal.</summary>
@@ -95,7 +110,25 @@ internal sealed class CompactDiscoveryAccounting
             throw Limit(page, "The aggregate discovery working-storage reservation exceeds MaxWorkingBytes.");
         }
 
-        return new Reservation(this, bytes);
+        IDisposable? parentReservation = null;
+        try
+        {
+#pragma warning disable CA2000 // Ownership transfers to Reservation on success; finally releases every pending parent lease.
+            parentReservation = this.parent?.ReserveWorkingBytes(bytes, page);
+#pragma warning restore CA2000
+            var reservation = new Reservation(this, bytes, parentReservation);
+            parentReservation = null;
+            return reservation;
+        }
+        catch
+        {
+            this.Release(bytes);
+            throw;
+        }
+        finally
+        {
+            parentReservation?.Dispose();
+        }
     }
 
     /// <summary>Reads one cumulative allowance without resetting it.</summary>
@@ -125,10 +158,17 @@ internal sealed class CompactDiscoveryAccounting
 
     private void Release(long bytes) => Interlocked.Add(ref this.activeWorkingBytes, -bytes);
 
-    private sealed class Reservation(CompactDiscoveryAccounting owner, long bytes) : IDisposable
+    private sealed class Reservation(CompactDiscoveryAccounting owner, long bytes, IDisposable? parentReservation) : IDisposable
     {
         private CompactDiscoveryAccounting? owner = owner;
 
-        public void Dispose() => Interlocked.Exchange(ref this.owner, null)?.Release(bytes);
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref this.owner, null) is { } reserved)
+            {
+                reserved.Release(bytes);
+                parentReservation?.Dispose();
+            }
+        }
     }
 }

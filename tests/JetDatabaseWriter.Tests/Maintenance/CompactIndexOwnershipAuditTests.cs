@@ -129,7 +129,7 @@ public sealed class CompactIndexOwnershipAuditTests
     [InlineData(true)]
     public async Task DistinctMapRows_ReserveStorageBeforeRetentionAndHoldItUntilDisposal(bool aggregate)
     {
-        const long allowance = (384 * 19) + 65_536 + 256;
+        const long allowance = (384 * 19) + 65_536 + 512;
         var accounting = new CompactDiscoveryAccounting(new() { MaxWorkingBytes = aggregate ? allowance : 1_000_000 });
         var audit = new CompactIndexOwnershipAudit(20, new() { Accounting = accounting, MaxWorkingBytes = aggregate ? 1_000_000 : allowance });
         try

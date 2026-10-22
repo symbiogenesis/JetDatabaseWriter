@@ -116,6 +116,7 @@ internal static class CompactIndexAudit
         private bool emptyLeafObserved;
         private bool bookmarkOrderValidated = true;
         private bool allObservedEdgeFencesValidated = true;
+        private bool childMaximumSeparatorsValidated = true;
 
         private static int CompareKeys(ReadOnlyMemory<byte> left, ReadOnlyMemory<byte> right)
             => left.Span[..^4].SequenceCompareTo(right.Span[..^4]);
@@ -134,6 +135,9 @@ internal static class CompactIndexAudit
 
         private static ReadOnlyMemory<byte>? MinimumUpper(ReadOnlyMemory<byte>? left, ReadOnlyMemory<byte>? right)
             => !left.HasValue || (right.HasValue && CompareKeys(left.Value, right.Value) > 0) ? right : left;
+
+        private static ReadOnlyMemory<byte>? MaximumEntry(ReadOnlyMemory<byte>? left, ReadOnlyMemory<byte>? right)
+            => !left.HasValue || (right.HasValue && CompareEntries(left.Value, right.Value) < 0) ? right : left;
 
         private static bool IsBitSet(IndexPageLayout layout, byte[] page, int bit)
             => (page[layout.BitmaskOffset + (bit / 8)] & (1 << (bit % 8))) != 0;
@@ -172,7 +176,8 @@ internal static class CompactIndexAudit
                     ObservedLeafChainOrdered = observedLeafChainOrdered,
                     ObservedKeyRoutingValidated = observedKeyRoutingValidated,
                     BookmarkInclusiveOrderValidated = observedLeafChainOrdered && this.bookmarkOrderValidated,
-                    Coverage = "One root's entry-child/intermediate-tail graph is acyclic with no repeated entry children. Stored keys satisfy in-page order and inclusive separator fences along entry-edge-only paths; all tail edges are excluded from these fences, including paths not proven to be aliases. AllObservedEdgeFencesValidated separately certifies that complete observed leaf-key envelopes satisfy inclusive local fences on every entry-child and intermediate-tail edge, including aliases; false withholds this proof without rejecting uncertain native layouts. That proof compares encoded keys only and does not require separators to name stored leaf entries. ObservedLeafChainOrdered identifies one closed reciprocal chain containing every observed leaf in key order. BookmarkInclusiveOrderValidated additionally certifies bookmark tie breakers for in-page order, entry-edge-only fences and that chain; false withholds that proof without rejecting uncertain native duplicate ordering. ObservedKeyRoutingValidated separately certifies that separator/tail descent for each encoded key present in the observed leaves can start at or before its first matching leaf and continue along that chain; false means this conservative routing proof is incomplete. Bookmark target coverage is identified separately by BookmarkTargetsValidated. Stored-key/row correspondence, missing leaves, shared roots, allocation and incoming-reference ownership remain unverified.",
+                    ObservedChildMaximumSeparatorsValidated = this.childMaximumSeparatorsValidated,
+                    Coverage = "One root's entry-child/intermediate-tail graph is acyclic with no repeated entry children. Stored keys satisfy in-page order and inclusive separator fences along entry-edge-only paths; all tail edges are excluded from these fences, including paths not proven to be aliases. AllObservedEdgeFencesValidated separately certifies that complete observed leaf-key envelopes satisfy inclusive local fences on every entry-child and intermediate-tail edge, including aliases; false withholds this proof without rejecting uncertain native layouts. ObservedChildMaximumSeparatorsValidated separately compares each separator's exact stored key and bookmark with its child's complete observed leaf maximum, including all child/tail aliases and bookmark tie breakers; empty descendants or any mismatch withhold this proof. ObservedLeafChainOrdered identifies one closed reciprocal chain containing every observed leaf in key order. BookmarkInclusiveOrderValidated additionally certifies bookmark tie breakers for in-page order, entry-edge-only fences and that chain; false withholds that proof without rejecting uncertain native duplicate ordering. ObservedKeyRoutingValidated separately certifies that separator/tail descent for each encoded key present in the observed leaves can start at or before its first matching leaf and continue along that chain; false means this conservative routing proof is incomplete. Bookmark target coverage is identified separately by BookmarkTargetsValidated. Stored-key/row correspondence, missing leaves, shared roots, allocation and incoming-reference ownership remain unverified.",
                 },
                 cancellationToken).ConfigureAwait(false);
         }
@@ -256,10 +261,20 @@ internal static class CompactIndexAudit
 
                 if (!intermediate)
                 {
-                    long released = ordinal > 1 ? node.Maximum!.Value.Length : 0;
-                    this.RetainKey(current, canonical.Length, released);
-                    node.Minimum ??= canonical.AsMemory();
-                    node.Maximum = canonical.AsMemory();
+                    if (!node.Minimum.HasValue)
+                    {
+                        this.RetainKey(current, canonical.Length, 0);
+                        node.Minimum = canonical.AsMemory();
+                        node.Maximum = canonical.AsMemory();
+                    }
+                    else if (CompareEntries(canonical, node.Maximum!.Value) > 0)
+                    {
+                        // Native equal-key bookmark order is an optional proof.
+                        // Retain its actual maximum even when the last entry is smaller.
+                        long released = node.Maximum.Value.Equals(node.Minimum.Value) ? 0 : node.Maximum.Value.Length;
+                        this.RetainKey(current, canonical.Length, released);
+                        node.Maximum = canonical.AsMemory();
+                    }
                 }
 
                 await this.EntryAsync(current, ordinal, canonical, intermediate, cancellationToken).ConfigureAwait(false);
@@ -456,11 +471,17 @@ internal static class CompactIndexAudit
                 // tail reaches the same node. Reuse existing canonical buffers;
                 // a wider alias envelope may withhold this optional proof.
                 node.AllMinimum = MinimumUpper(node.AllMinimum, child.AllMinimum);
-                node.AllMaximum = MaximumLower(node.AllMaximum, child.AllMaximum);
+                node.AllMaximum = MaximumEntry(node.AllMaximum, child.AllMaximum);
                 ReadOnlyMemory<byte>? lower = tail ? node.LastSeparator : child.LowerBound;
                 ReadOnlyMemory<byte>? upper = tail ? null : child.UpperBound;
                 this.allObservedEdgeFencesValidated &= (!child.AllMinimum.HasValue || !lower.HasValue || CompareKeys(child.AllMinimum.Value, lower.Value) >= 0)
                     && (!child.AllMaximum.HasValue || !upper.HasValue || CompareKeys(child.AllMaximum.Value, upper.Value) <= 0);
+            }
+
+            if (node.UpperBound.HasValue)
+            {
+                this.childMaximumSeparatorsValidated &= node.AllMaximum.HasValue
+                    && node.AllMaximum.Value.Span.SequenceEqual(node.UpperBound.Value.Span);
             }
 
             if ((node.Minimum.HasValue && node.LowerBound.HasValue && CompareKeys(node.Minimum.Value, node.LowerBound.Value) < 0)

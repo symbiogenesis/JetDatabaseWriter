@@ -28,4 +28,13 @@ internal sealed class CompactPinnedDatabaseValidatorBudget
 
     /// <summary>Gets complete allocation-ledger comparison limits.</summary>
     public CompactGlobalAllocationBudget Allocation { get; init; } = new();
+
+    /// <summary>Gets independent source and active destination catalog, local-definition and map inventory limits.</summary>
+    public CompactTraversalBudget Inventory { get; init; } = new();
+
+    /// <summary>Gets independently compared active catalog membership admission.</summary>
+    public CompactActiveCatalogBudget ActiveCatalog { get; init; } = new();
+
+    /// <summary>Gets independently re-established ordinary active membership limits, also charged to shared comparison admission.</summary>
+    public CompactActiveTableBudget ActiveTables { get; init; } = new();
 }

@@ -529,11 +529,12 @@ self-covered appended bitmap storage, including a bitmap-window boundary.
 Independent reopened validation checks the entire page-one surround, complete
 row directory, every map byte and exact append-point/EOF coverage. Its guarded
 native tests compare read, allocation-growing Memo mutation, primary-key refusal,
-native compact and managed/native exact readback. The DAO3.6 native-host Jet3
-case has local evidence; DAO120 Jet4/ACE cases remain unverified where guarded
-out by the unavailable engine. An untouched generated Jet3 control separately
-refuses its first SQL UPDATE with DAO 3049 despite native reads; the underlying
-cause remains open as E2a. Native-host map acceptance does not resolve that gap.
+native compact and managed/native exact readback through DAO3.6 Jet3 and DAO120
+Jet4/ACE. `Jet3NativeExternalMemoTests` separately verifies fresh Jet3 global-map
+rows against the frozen native 133-byte geometry and native external-Memo
+mutation, table allocation, duplicate-key refusal and compact/readback. Imported
+map rows keep their declared bounds; these controlled native checks do not prove
+reclamation or complete managed Compact & Repair acceptance.
 
 `CompactPinnedDatabaseCompositionTests` compares multiple tables, native global
 maps, exact complete allocation ledgers and the entire pinned prefix together.
@@ -543,11 +544,105 @@ relationship storage and hidden tables. It compares stored catalog identities,
 all physical stored keys and relocated bookmarks, then ordinary schema, rows,
 relationship partner references and linked-table metadata without opening links.
 Changing appended catalog Id/ParentId/Name bytes passes prefix preservation and
-fails independent raw catalog comparison. Physical recovery still refuses the
-duplicate live Ids in pinned original and appended catalog rows; complete active
-destination inventory remains an I17.4 dependency.
+fails independent raw catalog comparison. Independently compared active catalog
+membership scopes reopened destination discovery, including accepted catalog
+recoveries. Exact original and active bookmarks distinguish pinned copies;
+unscoped damaged-source duplicate Ids still refuse.
 `CompactPinnedGlobalMapCompositionTests` requires concrete independent map
 validation before accepting any changed page-one byte and includes its reads in
 prefix admission. These are append-only compositions retaining every original
 page; they establish neither reclamation, complete database acceptance nor
 crash-safe replacement.
+
+`CompactPinnedDatabaseBuilderTests` exercises the bounded disk-backed complete
+private assembly driver, validates the full local-table plan before creating
+output, closes all construction handles before independent reopening, and
+checks cumulative read/write/output admission, cancellation and factory failures.
+`CompactPinnedDatabaseValidatorTests` additionally requires exact independently
+discovered source/active-destination catalog identities and local definition
+membership. Inventories and membership comparisons share cumulative requested
+read admission. Matching discovered inventories do not prove damaged-source
+completeness, unknown incoming ownership, reclamation or durable publication.
+
+`CompactPinnedDatabaseCorpusTests` compares complete private assemblies of
+Microsoft-authored fixed Text, calculated-field, complex-value and Northwind
+relationship/application specimens with their immutable sources. Ordinary rows,
+column metadata, relationships, attachment bytes and complex-item identities
+must survive alongside the raw comparisons. Independently specified invalid row
+directory offsets refuse unchanged. Native encrypted Jet3 RC4, Jet4 RC4, ACE
+Agile and ACE Standard inputs exercise decrypted private staging only; preserved
+header metadata does not turn that internal image into an encoded native file.
+A DAO120-authored Byte calculation-error/Null specimen retains its exact
+39-byte/23-byte envelopes through complete assembly and native compact, with the
+native error/Null distinction independently rechecked. Guarded complete-driver
+controls additionally verify native read, insert, update, delete, primary-key
+refusal and compact through DAO3.6 Jet3 and DAO120 Jet4/ACE. This controlled
+coverage does not establish every native feature variant or reclaimed storage.
+
+`CompactActiveCatalogRowsTests` covers independently corroborated recovered
+headers and moved payloads, retained-byte tampering, bookmark order and exact
+cross-owner exclusions during source and active destination row/field scans.
+`CompactIndexMapAuditTests` independently inspects native INLINE/REFERENCE map
+membership, admits bitmap/pointer/bit work and retained entries, detects missing
+observed members and DATA/index/bitmap role conflicts, and retains extra map
+members and aliases as pinned evidence. Map evidence is bound to one immutable
+page source and format. `CompactIndexSeparatorAuditTests` independently compares
+complete stored separator key/bookmark pairs with observed child maxima through
+all child/tail aliases. These scoped proofs establish neither semantic key/row
+correspondence nor complete incoming ownership.
+
+`CompactIndexRowAuditTests` independently derives supported scalar keys from
+raw rows, preserving stored Date doubles and strictly decoded text. Complete
+leaf key/bookmark correspondence, duplicate and missing rows, IgnoreNulls
+omission and bounded evidence have focused coverage. Unsupported calculated,
+LVAL, complex and collation cases refuse. Frozen DAO3.6 General97 key/bookmark
+fixtures also pin embedded NUL `0x10` and two significant positions for simple
+expansions before later accents. Physical row coverage is scoped to readable
+same-owner headers; it does not establish active or complete source membership.
+
+`CompactActiveTableRowsTests` independently corroborates native table-map rows,
+strict covering-index proofs, complete scalar key/bookmark agreement and declared
+counts across supported ordinary indexes in Jet3/Jet4/ACE fixtures. Source/image
+identity, changed payloads, contradictory native evidence, lifetime bounds and
+released reservations have focused checks. `CompactNestedDiscoveryAccountingTests`
+verifies parent/child attempted-work charges and exactly released simultaneous
+reservations. Complete-driver tests retain and report deliberately duplicated
+same-owner pages across all three formats, require an observer before creating
+output and forward separate independent validation limits. The legacy Umsätze
+driver control rebuilds 830 active rows while reporting and preserving 2,049
+unassigned rows in its independently compared pinned source prefix. None of
+those rows is declared reclaimable, and incomplete source/incoming ownership
+remains explicit.
+
+`CompactPinnedApplicationObjectsTests` uses the controlled native Access
+16.0.20430.20182 fixture whose provenance and SHA-256 are pinned beside it.
+The saved query is never executed. Raw catalog/application rows and complete
+pinned-prefix comparisons preserve stored content and identities, while DAO
+checks query metadata and Forms/Reports names before and after native compact.
+Independent SaveAsText controls retain exact form/report exports through the
+private assembly and native compact. Macro/module, replication and broader
+security variants remain separate evidence requirements.
+
+`CompactPinnedSecurityTests` preserves both native Jet4 workgroup fixtures and
+their isolated native-authored restricted profiles. Raw security/catalog rows,
+property LVAL values, owner/SID/ACL bytes and original header survive the full
+private assembly. DAO120 checks exact owner/grants through native compacts of
+control and assembled copies, owner write/rollback, wrong account password 3029,
+wrong database password 3031, and the restricted account's read permission 20
+with update refusal 3108. Frozen database/MDW bytes remain unchanged. This
+evidence does not establish managed workgroup authentication, replication or
+every native security configuration.
+
+`CompactEncodedDatabaseCopyTests` checks exact page-zero binding before output,
+wrong passwords and unsupported providers, byte/page/working limits, partial
+read requests, cumulative password hashing through independent reopening,
+ciphertext tampering, cancellation and transferred-stream cleanup.
+`CompactEncodedDatabaseNativeTests` encodes complete private assemblies of the
+frozen native Jet3 RC4, Jet4 RC4, ACE Agile and ACE Standard specimens. Original
+header/provider parameters and original/staging bytes remain exact; independent
+reopened codec comparison checks every decrypted page. DAO3.6/DAO120 then read,
+mutate, reject duplicate primary keys and password-compact the encoded copies,
+with exact managed readback. Workgroup security controls use this same bounded
+production codec boundary. These comparisons establish private codec equality
+for the named providers, without complete database, reclaimability or durable
+publication acceptance.

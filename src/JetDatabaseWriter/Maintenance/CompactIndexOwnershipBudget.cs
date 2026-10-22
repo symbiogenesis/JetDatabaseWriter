@@ -18,6 +18,15 @@ internal sealed class CompactIndexOwnershipBudget
     /// <summary>Gets the maximum map-pointer declarations and incoming tree-reference observations, including repeated scans.</summary>
     public long MaxReferences { get; init; } = 8_388_608;
 
+    /// <summary>Gets the maximum uncached reads across independent native index-map inspections.</summary>
+    public long MaxPageReads { get; init; } = 8_388_608;
+
+    /// <summary>Gets the maximum directory-slot, pointer and bitmap-byte inspections across native maps.</summary>
+    public long MaxMapSteps { get; init; } = 67_108_864;
+
+    /// <summary>Gets the maximum retained descriptor-map membership coordinates, including repeated roots with distinct maps.</summary>
+    public long MaxMemberships { get; init; } = 8_388_608;
+
     /// <summary>Gets the maximum declaration, input-observation and final state-inspection steps.</summary>
     public long MaxGraphSteps { get; init; } = 67_108_864;
 

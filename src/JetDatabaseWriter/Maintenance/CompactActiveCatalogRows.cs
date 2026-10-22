@@ -16,7 +16,8 @@ using JetDatabaseWriter.Schema.Models;
 /// <remarks>
 /// The immutable source, destination and ledgers must have distinct backing storage, including through wrappers.
 /// Complete raw table comparison establishes active membership without trusting installed map hints. Every original
-/// catalog-owned data page is separately compared before its exact original row bookmarks may be excluded.
+/// source DATA page is separately compared before exact original catalog bookmarks may be excluded, including
+/// independently recovered damaged-owner headers and moved payloads.
 /// Missing source ownership can still hide identities. This evidence establishes neither complete source discovery,
 /// native behavior, index completeness, incoming ownership nor permission to reclaim, publish or replace storage.
 /// The caller keeps both page sources immutable for the complete evidence lifetime.
@@ -64,6 +65,23 @@ internal sealed class CompactActiveCatalogRows : IDisposable
     /// <exception cref="JetCorruptDataException">Raw storage, membership, retained prefix or catalog identities disagree.</exception>
     /// <exception cref="JetLimitationException">A row, read or working-storage allowance is exhausted.</exception>
     internal static async ValueTask<CompactActiveCatalogRows> ValidateAsync(
+        CompactDiscoverySession source,
+        TDefImage catalog,
+        IPageSource destination,
+        Stream rowLedger,
+        Stream allocationLedger,
+        CompactRawTableBuilderResult allocation,
+        IReadOnlyList<CompactTDefIndexReferences> indexes,
+        CompactActiveCatalogBudget budget,
+        CancellationToken cancellationToken)
+    {
+        Guard.NotNull(source, nameof(source));
+        return await source.WithCatalogRecoveryAsync(
+            token => ValidateCoreAsync(source, catalog, destination, rowLedger, allocationLedger, allocation, indexes, budget, token),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<CompactActiveCatalogRows> ValidateCoreAsync(
         CompactDiscoverySession source,
         TDefImage catalog,
         IPageSource destination,
@@ -150,7 +168,7 @@ internal sealed class CompactActiveCatalogRows : IDisposable
                 byte[] page = await original.ReadUncachedPageAsync(number, cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    if (page[0] != Constants.PageTypes.Data || BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(format.DataPage.TDefOff)) != 2)
+                    if (page[0] != Constants.PageTypes.Data)
                     {
                         continue;
                     }
@@ -271,6 +289,16 @@ internal sealed class CompactActiveCatalogRows : IDisposable
         }
 
         return true;
+    }
+
+    /// <summary>Excludes an exact retained catalog bookmark even when its damaged owner mimics another table.</summary>
+    /// <param name="page">The physically observed live header page.</param>
+    /// <param name="row">The physically observed live header slot.</param>
+    /// <returns>True only for an independently compared retained original catalog bookmark.</returns>
+    internal bool ExcludesRetained(long page, int row)
+    {
+        this.CheckDestination(this.destination, default);
+        return this.inactive.Contains(Bookmark(page, row));
     }
 
     /// <inheritdoc/>

@@ -30,6 +30,10 @@ internal sealed class CompactDiscoverySession
     private readonly DiscoveryPageSource pages;
     private int activeScan;
     private int activeValue;
+    private CompactRecoveredCatalogRows? catalogRecovery;
+    private int activeRecovery;
+    private CompactActiveTableRows? activeTableRows;
+    private int activeTableScope;
 
     /// <summary>Initializes a new instance of the <see cref="CompactDiscoverySession"/> class without reading the source.</summary>
     /// <param name="pages">The caller-owned immutable decrypted page source.</param>
@@ -77,6 +81,108 @@ internal sealed class CompactDiscoverySession
     /// <summary>Gets the exact immutable unwrapped source for independently bound preservation comparisons.</summary>
     internal IPageSource SourcePages { get; }
 
+    /// <summary>Uses independently corroborated active rows for one ordinary table while retaining unassigned source storage.</summary>
+    /// <typeparam name="T">The caller's result type.</typeparam>
+    /// <param name="rows">Live exact-source membership authority, owned by the caller.</param>
+    /// <param name="definition">The exact immutable original definition bound to that authority.</param>
+    /// <param name="operation">The serialized operation using this session's row scans.</param>
+    /// <param name="cancellationToken">Cancels admission and the operation.</param>
+    /// <returns>The operation's result without transferring authority ownership.</returns>
+    /// <exception cref="InvalidOperationException">Another active-table scope or root scan is running.</exception>
+    internal async ValueTask<T> WithActiveTableRowsAsync<T>(CompactActiveTableRows rows, TDefImage definition, Func<CancellationToken, ValueTask<T>> operation, CancellationToken cancellationToken)
+    {
+        Guard.NotNull(rows, nameof(rows));
+        Guard.NotNull(operation, nameof(operation));
+        this.pages.CheckGeometry(rows.OwnerTDefPage, cancellationToken);
+        rows.CheckSource(this.SourcePages, definition, cancellationToken);
+        if (Volatile.Read(ref this.activeScan) != 0 || Interlocked.CompareExchange(ref this.activeTableScope, 1, 0) != 0)
+        {
+            throw new InvalidOperationException("An active-table scope or root scan is already running.");
+        }
+
+        this.activeTableRows = rows;
+        try
+        {
+            return await operation(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            this.activeTableRows = null;
+            Volatile.Write(ref this.activeTableScope, 0);
+        }
+    }
+
+    /// <summary>Retains independently accepted catalog recoveries while raw catalog builders or validators run.</summary>
+    /// <typeparam name="T">The caller's result type.</typeparam>
+    /// <param name="operation">The awaited operation using this immutable session's raw row scans.</param>
+    /// <param name="cancellationToken">Cancels inventory, recovery and the operation.</param>
+    /// <returns>The operation's result after recovery storage has been released.</returns>
+    /// <remarks>Nested scopes reuse accepted evidence. Work remains cumulatively charged; source ownership and discovery completeness remain unproven.</remarks>
+    /// <exception cref="InvalidOperationException">Another catalog recovery scope is already entering admission.</exception>
+    internal async ValueTask<T> WithCatalogRecoveryAsync<T>(Func<CancellationToken, ValueTask<T>> operation, CancellationToken cancellationToken)
+    {
+        Guard.NotNull(operation, nameof(operation));
+        this.pages.CheckGeometry(2, cancellationToken);
+        if (this.catalogRecovery is not null)
+        {
+            return await operation(cancellationToken).ConfigureAwait(false);
+        }
+
+        if (Interlocked.CompareExchange(ref this.activeRecovery, 1, 0) != 0)
+        {
+            throw new InvalidOperationException("Catalog recovery admission is already active.");
+        }
+
+        try
+        {
+            using var recovered = new CompactRecoveredCatalogRows(this.pages, this.SourceFormat, this.budget, this.Accounting);
+            this.EnterScan(cancellationToken);
+            try
+            {
+                await this.ScanInventoryCoreAsync(
+                    static (_, token) =>
+                    {
+                        token.ThrowIfCancellationRequested();
+                        return default;
+                    },
+                    cancellationToken,
+                    (root, image, token) =>
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (root == 2)
+                        {
+                            recovered.SetCatalog(image);
+                        }
+
+                        return default;
+                    },
+                    (evidence, token) =>
+                    {
+                        recovered.Accept(evidence.Identity.Id, evidence.Location, token, evidence.HasDamagedMovedOwner);
+                        return default;
+                    }).ConfigureAwait(false);
+            }
+            finally
+            {
+                Volatile.Write(ref this.activeScan, 0);
+            }
+
+            this.catalogRecovery = recovered;
+            try
+            {
+                return await operation(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                this.catalogRecovery = null;
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref this.activeRecovery, 0);
+        }
+    }
+
     /// <summary>Inventories physical storage and discovered catalog identities using the session's persistent allowances.</summary>
     /// <param name="visitor">The awaited observation consumer, which may audit or copy a long value.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -103,6 +209,7 @@ internal sealed class CompactDiscoverySession
     /// <param name="indexVisitor">The awaited raw-index observation consumer.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="ownershipVisitor">Optionally consumes known cross-root ownership and sharing evidence.</param>
+    /// <param name="activeCatalog">Optional independently compared exact destination catalog membership.</param>
     /// <returns>A task completing after all discovered local tables and defined index roots have been scanned.</returns>
     /// <remarks>
     /// Catalog-only links and opaque objects remain pinned and are never executed. The caller identifies long-value fields in the borrowed rows.
@@ -117,7 +224,8 @@ internal sealed class CompactDiscoverySession
         Func<long, RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> rowVisitor,
         Func<CompactIndexRecord, CancellationToken, ValueTask> indexVisitor,
         CancellationToken cancellationToken,
-        Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask>? ownershipVisitor = null)
+        Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask>? ownershipVisitor = null,
+        CompactActiveCatalogRows? activeCatalog = null)
     {
         Guard.NotNull(storageVisitor, nameof(storageVisitor));
         Guard.NotNull(rowVisitor, nameof(rowVisitor));
@@ -130,7 +238,8 @@ internal sealed class CompactDiscoverySession
                 (root, _, _, location, bytes, token) => rowVisitor(root, location, bytes, token),
                 indexVisitor,
                 ownershipVisitor ?? IgnoreOwnership,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                activeCatalog: activeCatalog).ConfigureAwait(false);
         }
         finally
         {
@@ -145,6 +254,7 @@ internal sealed class CompactDiscoverySession
     /// <param name="indexVisitor">The awaited raw-index observation consumer.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="ownershipVisitor">Optionally consumes known cross-root ownership and sharing evidence.</param>
+    /// <param name="activeCatalog">Optional independently compared exact destination catalog membership.</param>
     /// <returns>A task completing after the discovered fields, long values and index bookmarks have been audited.</returns>
     /// <remarks>
     /// Stored bytes are never converted or recalculated. Native envelope semantics, hidden catalog identities and incoming ownership remain unproven.
@@ -160,7 +270,8 @@ internal sealed class CompactDiscoverySession
         Func<long, CompactRawField, CompactLongValueRecord, CancellationToken, ValueTask> longValueVisitor,
         Func<CompactIndexRecord, CancellationToken, ValueTask> indexVisitor,
         CancellationToken cancellationToken,
-        Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask>? ownershipVisitor = null)
+        Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask>? ownershipVisitor = null,
+        CompactActiveCatalogRows? activeCatalog = null)
     {
         Guard.NotNull(storageVisitor, nameof(storageVisitor));
         Guard.NotNull(fieldVisitor, nameof(fieldVisitor));
@@ -204,7 +315,8 @@ internal sealed class CompactDiscoverySession
                 indexVisitor,
                 ownershipVisitor ?? IgnoreOwnership,
                 cancellationToken,
-                hydrateCalculated: true).ConfigureAwait(false);
+                hydrateCalculated: true,
+                activeCatalog: activeCatalog).ConfigureAwait(false);
         }
         finally
         {
@@ -222,7 +334,33 @@ internal sealed class CompactDiscoverySession
         this.EnterScan(cancellationToken);
         try
         {
-            await this.ScanRowsCoreAsync(ownerTDefPage, visitor, cancellationToken).ConfigureAwait(false);
+            CompactActiveTableRows? active = this.activeTableRows;
+            if (active is not null && active.OwnerTDefPage == ownerTDefPage)
+            {
+                await active.ScanRowsAsync(
+                    (location, bytes, token) => this.catalogRecovery?.Contains(location) == true
+                        ? throw Corrupt(location.DataPageNumber, "Ordinary active-table membership conflicts with independently recovered catalog ownership.")
+                        : visitor(location, bytes, token),
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            CompactRecoveredCatalogRows? recovered = this.catalogRecovery;
+            if (recovered is null)
+            {
+                await this.ScanRowsCoreAsync(ownerTDefPage, visitor, cancellationToken).ConfigureAwait(false);
+            }
+            else if (ownerTDefPage != 2)
+            {
+                await this.ScanRowsCoreAsync(ownerTDefPage, visitor, cancellationToken, recovered.Contains).ConfigureAwait(false);
+            }
+            else
+            {
+                await recovered.ScanWithPhysicalAsync(
+                    (physicalVisitor, token) => this.ScanRowsCoreAsync(ownerTDefPage, physicalVisitor, token, recovered.Contains),
+                    visitor,
+                    cancellationToken).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -408,7 +546,8 @@ internal sealed class CompactDiscoverySession
         Func<CompactIndexRecord, CancellationToken, ValueTask> indexVisitor,
         Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask> ownershipVisitor,
         CancellationToken cancellationToken,
-        bool hydrateCalculated = false)
+        bool hydrateCalculated = false,
+        CompactActiveCatalogRows? activeCatalog = null)
     {
         using var recovered = new CompactRecoveredCatalogRows(this.pages, this.SourceFormat, this.budget, this.Accounting);
         using CompactCalculatedColumnHydrator? hydrator = hydrateCalculated ? new CompactCalculatedColumnHydrator(this.SourceFormat, this.budget, this.Accounting, ScanCatalogRowsAsync, this.AuditLongValueAsync) : null;
@@ -423,6 +562,9 @@ internal sealed class CompactDiscoverySession
                 MaxMapRows = checked((int)Math.Min(int.MaxValue, this.budget.MaxObjects)),
                 MaxRootDescriptors = this.budget.MaxObjects,
                 MaxReferences = this.budget.MaxReferences,
+                MaxPageReads = this.budget.MaxPageReads,
+                MaxMapSteps = this.budget.MaxMapSteps,
+                MaxMemberships = this.budget.MaxReferences,
                 MaxGraphSteps = this.budget.MaxGraphSteps,
                 MaxRecords = this.budget.MaxRecords,
                 MaxWorkingBytes = this.budget.MaxWorkingBytes,
@@ -460,6 +602,11 @@ internal sealed class CompactDiscoverySession
                     uint mapPointer = BinaryPrimitives.ReadUInt32LittleEndian(image.Bytes.Slice(mapOffset, 4));
                     UsageMapPointer ownedPages = new(checked((int)(mapPointer & 0xFFu)), checked((int)(mapPointer >> 8)));
                     await ownership.DeclareDescriptorAsync(root, index.RootPage, ownedPages, ordinal, ownershipVisitor, token).ConfigureAwait(false);
+                    if (index.RootPage != 0 && ownedPages != default)
+                    {
+                        await ownership.InspectMapAsync(this.pages, this.SourceFormat, root, index.RootPage, ownedPages, ownershipVisitor, token).ConfigureAwait(false);
+                    }
+
                     if (index.RootPage != 0)
                     {
                         await this.ScanIndexBookmarksCoreAsync(
@@ -483,16 +630,25 @@ internal sealed class CompactDiscoverySession
             {
                 recovered.Accept(evidence.Identity.Id, evidence.Location, token, evidence.HasDamagedMovedOwner);
                 return default;
-            }).ConfigureAwait(false);
+            },
+            activeCatalog).ConfigureAwait(false);
         await ownership.CompleteAsync(ownershipVisitor, cancellationToken).ConfigureAwait(false);
         this.pages.CheckGeometry(0, cancellationToken);
 
         async ValueTask ScanCatalogRowsAsync(long owner, Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> visitor, CancellationToken token)
         {
-            await this.ScanRowsCoreAsync(owner, visitor, token, recovered.Contains).ConfigureAwait(false);
             if (owner == 2)
             {
-                await recovered.ScanAsync(visitor, token).ConfigureAwait(false);
+                await recovered.ScanWithPhysicalAsync(
+                    (physicalVisitor, rowToken) => this.ScanRowsCoreAsync(owner, physicalVisitor, rowToken, location => recovered.Contains(location)
+                        || activeCatalog?.Include(location.PageNumber, location.RowIndex) == false),
+                    visitor,
+                    token).ConfigureAwait(false);
+            }
+            else
+            {
+                await this.ScanRowsCoreAsync(owner, visitor, token, location => recovered.Contains(location)
+                    || activeCatalog?.ExcludesRetained(location.PageNumber, location.RowIndex) == true).ConfigureAwait(false);
             }
         }
     }

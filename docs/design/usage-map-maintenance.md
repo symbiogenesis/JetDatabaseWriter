@@ -13,6 +13,12 @@ bounds. REFERENCE rows contain bitmap-page pointers; bitmap pages begin
 Index rows spill onto additional native-width map pages when existing pages
 are full, including FK creation. Allocations go through `PageAllocator`.
 
+The page-one global maps in a fresh database use these format-specific widths
+too. Jet3's two rows therefore begin at offsets 1915 and 1782 of its 2048-byte
+page. `Jet3NativeExternalMemoTests` compares the frozen DAO3.6 geometry and checks
+external Memo update/delete, native table allocation, primary-key refusal and
+compact/readback. Existing imported maps retain their actual row bounds.
+
 ## Ownership
 
 Physical page owner zero does not prove that a map row is private.

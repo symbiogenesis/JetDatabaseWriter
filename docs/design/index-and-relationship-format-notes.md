@@ -409,6 +409,13 @@ PK-style indexes that mostly append (e.g. autoincrement) maintain a `tail_page` 
 
 **Status**: text/memo encoding is production-routed by each column's stored sort order for General 97, General Legacy and General (1033 version 1); fixed-type encodings are implemented in W2 / W12 / W13. The General encoder uses V2010 long-row suffix tables that are byte-exact for the checked-in Access-authored `Table11` / `Table11_desc` contexts and the DAO-derived 65-character contribution tables covering plain, auxiliary, row10, row11 and row12 contexts. Broader arbitrary-context V2010 suffix coverage and binary long-key suffix coverage remain future compatibility expansions.
 
+Frozen DAO3.6 General97 keys in `General97EncoderFixtureTests` retain embedded
+U+0000 as inline `0x10`. A simple expansion such as sharp s contributes both
+significant positions before a later accent; its two inline contributions must
+both advance the significance stream. These complete native key/bookmark
+comparisons cover the specified NUL and expansion/accent contexts, without
+establishing arbitrary locale or code-page support.
+
 Per HACKING.md the **General Legacy** encoding (Access 2000–2007, locale 1033 version 0):
 
 | Char range | Encoded bytes |

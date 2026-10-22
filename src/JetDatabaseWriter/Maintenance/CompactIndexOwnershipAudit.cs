@@ -16,7 +16,7 @@ using JetDatabaseWriter.Pages.Models;
 /// unobserved pages, catalog completeness and native sharing semantics remain unproven. No source is written.
 /// Admission stays held across scans and failures until disposal; visitor retention is caller-owned.
 /// </remarks>
-internal sealed class CompactIndexOwnershipAudit : IDisposable
+internal sealed partial class CompactIndexOwnershipAudit : IDisposable
 {
     private readonly long pageCount;
     private readonly CompactIndexOwnershipBudget budget;
@@ -49,6 +49,9 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
         Guard.InRange(budget.MaxGraphSteps, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxRecords, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxWorkingBytes, 1L, long.MaxValue, nameof(budget));
+        Guard.InRange(budget.MaxPageReads, 1L, long.MaxValue, nameof(budget));
+        Guard.InRange(budget.MaxMapSteps, 1L, long.MaxValue, nameof(budget));
+        Guard.InRange(budget.MaxMemberships, 1L, long.MaxValue, nameof(budget));
         this.pageCount = pageCount;
         this.budget = budget;
 
@@ -110,7 +113,7 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
             this.ChargeReference(ownerTDefPage);
             if (this.pages.TryGetValue(ownedPages.PageNumber, out PageState? page))
             {
-                if (!page.IsMapPage)
+                if (!page.IsMapPage || page.IsBitmapPage)
                 {
                     await this.EmitAsync(map with { Kind = "storage-role-contradiction", RelatedOwnerTDefPage = page.Owner, RelatedRootPageNumber = page.FirstRoot, Role = "index-ownership-map" }, visitor, cancellationToken).ConfigureAwait(false);
                     throw Corrupt(ownedPages.PageNumber, "A physical page is claimed as both an index page or target and an ownership-map data page.");
@@ -134,7 +137,7 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
 
                 // Includes dictionary capacity growth, first-claim state and its accounting lease.
                 const int mapStorage = 256;
-                if ((this.mapRows.Count + 1L) * mapStorage > this.budget.MaxWorkingBytes - this.storage)
+                if ((this.mapRows.Count + 1L) * mapStorage > this.budget.MaxWorkingBytes - this.storage - this.mapWorkingBytes)
                 {
                     throw Limit(ownedPages.PageNumber, "The retained index ownership-map rows exceed MaxWorkingBytes.");
                 }
@@ -151,6 +154,7 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
                 }
             }
 
+            this.DeclareMap(ownerTDefPage, rootPage, ownedPages);
             await this.EmitAsync(map, visitor, cancellationToken).ConfigureAwait(false);
         }
         catch
@@ -233,6 +237,7 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
 
                 state.Observed = true;
                 state.ObservedRoot = state.ObservedRoot == 0 ? record.RootPageNumber : state.ObservedRoot;
+                await this.ObserveMapPageAsync(record, visitor, cancellationToken).ConfigureAwait(false);
             }
             else if (record.Kind == "index-reference")
             {
@@ -283,6 +288,7 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
                 }
             }
 
+            bool mapMembersObserved = await this.CompleteMapsAsync(visitor, cancellationToken).ConfigureAwait(false);
             await this.EmitAsync(
                 new()
                 {
@@ -292,7 +298,10 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
                     MissingRootCount = this.missingRoots,
                     MissingMapCount = this.missingMaps,
                     DeclaredRootsObserved = this.missingRoots == 0,
-                    Coverage = "Every declared nonzero distinct physical root supplied a successful raw terminal. Known declared roots, observed index pages and incoming child/tail/previous/next references have consistent expected TDEF owners and do not collide with declared ownership-map data pages. Exact map-row sharing across owners, absent root/map pointers and targets without page observations remain explicit. Map contents and bitmap sharing, missing roots, opaque incoming references, catalog completeness, physical ownership of unobserved targets, allocation, native sharing semantics and exclusive whole-database ownership remain unproven; all storage stays pinned.",
+                    DeclaredMapsInspected = this.missingMaps == 0 && this.inspectedDescriptors == this.descriptors,
+                    ObservedIndexPagesMapped = this.missingMaps == 0 && this.inspectedDescriptors == this.descriptors,
+                    DeclaredMapMembersObserved = mapMembersObserved && this.missingMaps == 0 && this.inspectedDescriptors == this.descriptors,
+                    Coverage = "Every declared nonzero distinct physical root supplied a successful raw terminal. Known declared roots, observed index pages and incoming child/tail/previous/next references have consistent expected TDEF owners and do not collide with declared ownership-map data or inspected bitmap pages. Separately flagged independent map inspection compares each observed tree page against every inspected descriptor map and retains unused map members as pinned gaps. Exact map-row and bitmap sharing across owners, absent root/map pointers and targets without page observations remain explicit. Uninspected maps, missing roots, opaque incoming references, catalog completeness, physical ownership of unobserved targets, allocation, native sharing semantics and exclusive whole-database ownership remain unproven; all storage stays pinned.",
                 },
                 visitor,
                 cancellationToken).ConfigureAwait(false);
@@ -311,6 +320,7 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
         if (!this.disposed)
         {
             this.disposed = true;
+            this.DisposeMaps();
             this.pages = [];
             foreach (MapState map in this.mapRows.Values)
             {
@@ -463,6 +473,8 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
     {
         internal bool IsMapPage { get; init; }
 
+        internal bool IsBitmapPage { get; init; }
+
         internal long Owner { get; } = owner;
 
         internal long FirstRoot { get; } = root;
@@ -476,6 +488,8 @@ internal sealed class CompactIndexOwnershipAudit : IDisposable
         internal bool Observed { get; set; }
 
         internal long ObservedRoot { get; set; }
+
+        internal List<MapInspection>? OwnershipMaps { get; set; }
 
         internal long IncomingReferences { get; set; }
 

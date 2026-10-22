@@ -15,6 +15,7 @@ using JetDatabaseWriter.Schema.Models;
 /// <param name="OpenRows">Opens a distinct immutable reopened row ledger; the coordinator disposes the returned stream.</param>
 /// <param name="OpenLongValues">Opens a distinct immutable reopened LVAL ledger; the coordinator disposes the returned stream.</param>
 /// <param name="HydratedColumns">Optional independently verified calculated ResultType projections.</param>
+/// <param name="ActiveIndexOrdinal">Optional independently rechecked ordinary covering-index and native-map selection; unassigned rows remain pinned and reported.</param>
 /// <remarks>
 /// Factories may open disk-backed scratch and run only while this table is compared. Their streams must use backing
 /// storage distinct from the source, destination, global ledger and each other, including through wrappers.
@@ -27,4 +28,5 @@ internal sealed record CompactPinnedDatabaseTable(
     CompactPinnedTableAssemblyAllocation Allocation,
     Func<CancellationToken, ValueTask<Stream>> OpenRows,
     Func<CancellationToken, ValueTask<Stream>> OpenLongValues,
-    IReadOnlyList<ColumnInfo>? HydratedColumns = null);
+    IReadOnlyList<ColumnInfo>? HydratedColumns = null,
+    int? ActiveIndexOrdinal = null);

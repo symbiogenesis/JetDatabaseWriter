@@ -36,3 +36,12 @@ compact/reopen checks in `LongValueUsageMapTests`, `Jet3SystemUsageMapDaoTests`
 and the native free-space tests. The generated specimens remain writer byte
 contracts rather than Microsoft-authored fixtures; see
 [usage-map maintenance](../../../../docs/design/usage-map-maintenance.md).
+
+The Jet3 bootstrap's page-one global maps use the same native 133-byte row
+geometry. The approved correction changes exactly five bytes: absolute offsets
+2050–2051 encode the free-space word, 2058 encodes the first row's start moving
+from 1979 to 1915, and 2060–2061 encode the second start moving from 1910 to 1782.
+Every other bootstrap byte and all table specimens remain unchanged. The complete
+byte differences match independently derived native geometry and DAO3.6 controls
+in `Jet3NativeExternalMemoTests`, including external Memo mutation, native table
+allocation, constraints and compact/readback.

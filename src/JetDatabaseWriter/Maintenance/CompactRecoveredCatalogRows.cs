@@ -109,6 +109,64 @@ internal sealed class CompactRecoveredCatalogRows(IPageSource pages, JetFormat f
         }
     }
 
+    /// <summary>Merges accepted recoveries with a physical scan in original header-bookmark order.</summary>
+    /// <param name="physicalScan">Streams physical rows, excluding exact accepted recovered bookmarks.</param>
+    /// <param name="visitor">The awaited borrowed-row consumer.</param>
+    /// <param name="cancellationToken">Cancels admission, physical traversal and recovered reads.</param>
+    /// <returns>A task completed after both sources have been consumed.</returns>
+    internal async ValueTask ScanWithPhysicalAsync(
+        Func<Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask>, CancellationToken, ValueTask> physicalScan,
+        Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> visitor,
+        CancellationToken cancellationToken)
+    {
+        pages.ThrowIfDisposedOrCancelled(cancellationToken);
+        using IDisposable storage = accounting.ReserveWorkingBytes(128L * this.bookmarks.Count, 2);
+        var ordered = new Entry[this.bookmarks.Count];
+        this.bookmarks.Values.CopyTo(ordered, 0);
+        long sortSteps = 0;
+        for (int width = ordered.Length; width > 0; width >>= 1)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            sortSteps += ordered.Length;
+        }
+
+        accounting.Charge(CompactDiscoveryCharge.GraphSteps, sortSteps, 2);
+        Array.Sort(ordered, static (left, right) => left.Location.PageNumber != right.Location.PageNumber
+            ? left.Location.PageNumber.CompareTo(right.Location.PageNumber)
+            : left.Location.RowIndex.CompareTo(right.Location.RowIndex));
+        int next = 0;
+        await physicalScan(
+            async (location, bytes, token) =>
+            {
+                while (next < ordered.Length && (ordered[next].Location.PageNumber < location.PageNumber
+                    || (ordered[next].Location.PageNumber == location.PageNumber && ordered[next].Location.RowIndex < location.RowIndex)))
+                {
+                    await VisitNextAsync(token).ConfigureAwait(false);
+                }
+
+                if (next < ordered.Length && ordered[next].Location.PageNumber == location.PageNumber && ordered[next].Location.RowIndex == location.RowIndex)
+                {
+                    throw Corrupt(location.PageNumber, "A recovered catalog identity was also delivered by the physical scan.");
+                }
+
+                await visitor(location, bytes, token).ConfigureAwait(false);
+            },
+            cancellationToken).ConfigureAwait(false);
+        while (next < ordered.Length)
+        {
+            await VisitNextAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        async ValueTask VisitNextAsync(CancellationToken token)
+        {
+            pages.ThrowIfDisposedOrCancelled(token);
+            Entry entry = ordered[next++];
+            accounting.Charge(CompactDiscoveryCharge.GraphSteps, 1, entry.Location.PageNumber);
+            accounting.Charge(CompactDiscoveryCharge.Rows, 1, entry.Location.PageNumber);
+            await this.VisitAsync(entry, visitor, token).ConfigureAwait(false);
+        }
+    }
+
     /// <summary>Rechecks only an exact accepted bookmark before disclosing recovered index evidence.</summary>
     /// <param name="page">The original header page named by the index.</param>
     /// <param name="row">The original header slot named by the index.</param>

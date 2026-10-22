@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -19,7 +20,7 @@ using JetDatabaseWriter.Pages.Paging;
 /// failed requests. No phase resets it. Each invocation has a new one-shot allowance; failures return no completion
 /// evidence. Table sidecars open serially and may be disk-backed, avoiding coordinator-owned whole-table snapshots.
 /// The coordinator never writes source, destination or sidecars, and restores borrowed stream positions on every exit.
-/// This is private composition evidence; unknown incoming references, active destination catalog recovery, complete
+/// This is private composition evidence; unknown incoming references, complete
 /// damaged-source discovery, native acceptance, reclamation and publication remain separate requirements.
 /// </remarks>
 internal static class CompactPinnedDatabaseValidator
@@ -34,9 +35,11 @@ internal static class CompactPinnedDatabaseValidator
     /// <param name="allocation">Untrusted complete allocation-sidecar geometry.</param>
     /// <param name="budget">One-shot cumulative and per-component admission.</param>
     /// <param name="cancellationToken">Cancels inventory, provider opens, every traversal and every read request.</param>
+    /// <param name="observeUnassignedRow">Required for active-table selections; consumes borrowed pinned unassigned rows during independent corroboration and repeated scans.</param>
     /// <returns>Composed private comparisons without whole-database, ownership or publication acceptance.</returns>
     /// <exception cref="JetCorruptDataException">Membership, native storage, retained bytes or complete allocations disagree.</exception>
     /// <exception cref="JetLimitationException">A cumulative or active-component allowance is exhausted.</exception>
+    /// <exception cref="ArgumentException">An active-table selection has no required unassigned-row observer.</exception>
     internal static async ValueTask<CompactPinnedDatabaseValidatorResult> ValidateAsync(
         IPageSource source,
         JetFormat format,
@@ -46,7 +49,8 @@ internal static class CompactPinnedDatabaseValidator
         Stream reopenedAllocationLedger,
         CompactGlobalAllocationBuilderResult allocation,
         CompactPinnedDatabaseValidatorBudget budget,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<CompactActiveTableRowRecord, CancellationToken, ValueTask>? observeUnassignedRow = null)
     {
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(format, nameof(format));
@@ -59,6 +63,9 @@ internal static class CompactPinnedDatabaseValidator
         Guard.NotNull(budget.GlobalMap, nameof(budget));
         Guard.NotNull(budget.Prefix, nameof(budget));
         Guard.NotNull(budget.Allocation, nameof(budget));
+        Guard.NotNull(budget.Inventory, nameof(budget));
+        Guard.NotNull(budget.ActiveCatalog, nameof(budget));
+        Guard.NotNull(budget.ActiveTables, nameof(budget));
         Guard.InRange(budget.MaxPages, 0L, 0x1000000L, nameof(budget));
         Guard.InRange(budget.MaxTables, 0, int.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxReadBytes, 0L, long.MaxValue, nameof(budget));
@@ -84,6 +91,11 @@ internal static class CompactPinnedDatabaseValidator
             Guard.NotNull(table.Allocation.Table.LongValueMaps, nameof(tables));
             Guard.NotNull(table.OpenRows, nameof(tables));
             Guard.NotNull(table.OpenLongValues, nameof(tables));
+            if (table.ActiveIndexOrdinal.HasValue && observeUnassignedRow is null)
+            {
+                throw new ArgumentException("Independent active-table comparison requires a pinned unassigned-row observer.", nameof(observeUnassignedRow));
+            }
+
             if (table.Indexes.Count > Constants.TableDefinition.MaxIndexes || table.Allocation.Table.LongValueMaps.Count > Constants.TableDefinition.MaxColumns)
             {
                 throw Corrupt("Private database table evidence exceeds native descriptor capacities.");
@@ -109,40 +121,72 @@ internal static class CompactPinnedDatabaseValidator
 
         long destinationPosition = reopenedDestination.Position;
         long allocationPosition = reopenedAllocationLedger.Position;
+        int activeTables = 0;
+        long unassignedRows = 0;
         try
         {
             await CompactDatabasePlanValidator.ValidateAsync(admission.Source, format, plan, budget.Tables.Discovery, cancellationToken, session.Discovery.Accounting).ConfigureAwait(false);
             await using var destination = new AdmittedStream(reopenedDestination, admission);
             await using var ledger = new AdmittedStream(reopenedAllocationLedger, admission);
-            for (int index = 0; index < tables.Count; index++)
-            {
-                CompactPinnedDatabaseTable table = tables[index];
-                admission.Check(cancellationToken);
-                Stream rows = await table.OpenRows(cancellationToken).ConfigureAwait(false);
-                Guard.NotNull(rows, nameof(tables));
-                RejectBorrowedAlias(rows, reopenedDestination, reopenedAllocationLedger);
-                try
+            await session.Discovery.WithCatalogRecoveryAsync(
+                async tableToken =>
                 {
-                    admission.Check(cancellationToken);
-                    Stream values = await table.OpenLongValues(cancellationToken).ConfigureAwait(false);
-                    Guard.NotNull(values, nameof(tables));
-                    RejectBorrowedAlias(values, reopenedDestination, reopenedAllocationLedger);
-                    try
+                    for (int index = 0; index < tables.Count; index++)
                     {
-                        admission.Check(cancellationToken);
-                        ValidateStreams(rows, values, reopenedDestination, reopenedAllocationLedger);
-                        references[index] = await ValidateTableAsync(session, table, destination, rows, values, admission, cancellationToken).ConfigureAwait(false);
+                        CompactPinnedDatabaseTable table = tables[index];
+                        admission.Check(tableToken);
+                        Stream rows = await table.OpenRows(tableToken).ConfigureAwait(false);
+                        Guard.NotNull(rows, nameof(tables));
+                        RejectBorrowedAlias(rows, reopenedDestination, reopenedAllocationLedger);
+                        try
+                        {
+                            admission.Check(tableToken);
+                            Stream values = await table.OpenLongValues(tableToken).ConfigureAwait(false);
+                            Guard.NotNull(values, nameof(tables));
+                            RejectBorrowedAlias(values, reopenedDestination, reopenedAllocationLedger);
+                            try
+                            {
+                                admission.Check(tableToken);
+                                ValidateStreams(rows, values, reopenedDestination, reopenedAllocationLedger);
+                                if (table.ActiveIndexOrdinal is int ordinal)
+                                {
+                                    CompactActiveTableBudget activeBudget = budget.ActiveTables;
+                                    using CompactActiveTableRows active = await CompactActiveTableRows.ValidateAsync(
+                                        session.Discovery.SourcePages,
+                                        format,
+                                        table.Owner,
+                                        table.Definition,
+                                        ordinal,
+                                        new() { Work = activeBudget.Work, Accounting = session.Discovery.Accounting, MaxActiveRows = activeBudget.MaxActiveRows, MaxKeyBytes = activeBudget.MaxKeyBytes },
+                                        observeUnassignedRow!,
+                                        tableToken).ConfigureAwait(false);
+                                    references[index] = await session.Discovery.WithActiveTableRowsAsync(
+                                        active,
+                                        table.Definition,
+                                        scopedToken => ValidateTableAsync(session, table, destination, rows, values, admission, scopedToken),
+                                        tableToken).ConfigureAwait(false);
+                                    activeTables++;
+                                    unassignedRows = checked(unassignedRows + active.Result.UnassignedRows);
+                                }
+                                else
+                                {
+                                    references[index] = await ValidateTableAsync(session, table, destination, rows, values, admission, tableToken).ConfigureAwait(false);
+                                }
+                            }
+                            finally
+                            {
+                                await values.DisposeAsync().ConfigureAwait(false);
+                            }
+                        }
+                        finally
+                        {
+                            await rows.DisposeAsync().ConfigureAwait(false);
+                        }
                     }
-                    finally
-                    {
-                        await values.DisposeAsync().ConfigureAwait(false);
-                    }
-                }
-                finally
-                {
-                    await rows.DisposeAsync().ConfigureAwait(false);
-                }
-            }
+
+                    return true;
+                },
+                cancellationToken).ConfigureAwait(false);
 
             CompactGlobalMapBudget mapBudget = MapBudget(budget.GlobalMap, globalMap.Budget, working);
             CompactGlobalMapResult map = await CompactGlobalMapValidator.ValidateAsync(admission.Source, format, globalMap.AppendPointPages, destination, mapBudget, cancellationToken).ConfigureAwait(false);
@@ -150,14 +194,102 @@ internal static class CompactPinnedDatabaseValidator
                 admission.Source, format, references, destination, PrefixBudget(budget.Prefix, working), cancellationToken, new(globalMap.AppendPointPages, mapBudget)).ConfigureAwait(false);
             CompactGlobalAllocationValidatorResult allocations = await CompactGlobalAllocationValidator.ValidateAsync(
                 format, source.PageCount, AllocationsAsync(tables, map, cancellationToken), destination, ledger, allocation, AllocationBudget(budget.Allocation, working), cancellationToken).ConfigureAwait(false);
+            int objects = await CompareDestinationAsync(session.Discovery, format, tables, references, destination, reopenedDestination, reopenedAllocationLedger, budget, working, admission, cancellationToken).ConfigureAwait(false);
             admission.Check(cancellationToken);
-            return new(tables.Count, map, prefix, allocations, admission.ReadBytes);
+            return new(tables.Count, map, prefix, allocations, admission.ReadBytes, objects, activeTables, unassignedRows);
         }
         finally
         {
             reopenedDestination.Position = destinationPosition;
             reopenedAllocationLedger.Position = allocationPosition;
         }
+    }
+
+    private static async ValueTask<int> CompareDestinationAsync(
+        CompactDiscoverySession source,
+        JetFormat format,
+        IReadOnlyList<CompactPinnedDatabaseTable> tables,
+        CompactPinnedTDefReferences[] references,
+        Stream destination,
+        Stream borrowedDestination,
+        Stream borrowedLedger,
+        CompactPinnedDatabaseValidatorBudget budget,
+        long working,
+        Admission admission,
+        CancellationToken token)
+    {
+        for (int index = 0; index < tables.Count; index++)
+        {
+            CompactPinnedDatabaseTable table = tables[index];
+            if (table.Owner != 2)
+            {
+                continue;
+            }
+
+            var pages = new PrivatePageSource(destination, format.PageSize);
+            Stream rows = await table.OpenRows(token).ConfigureAwait(false);
+            Guard.NotNull(rows, nameof(tables));
+            RejectBorrowedAlias(rows, borrowedDestination, borrowedLedger);
+            try
+            {
+                admission.Check(token);
+                Stream values = await table.OpenLongValues(token).ConfigureAwait(false);
+                Guard.NotNull(values, nameof(tables));
+                RejectBorrowedAlias(values, borrowedDestination, borrowedLedger);
+                try
+                {
+                    ValidateStreams(rows, values, borrowedDestination, borrowedLedger);
+                    await using var admittedRows = new AdmittedStream(rows, admission);
+                    await using var admittedValues = new AdmittedStream(values, admission);
+                    CompactActiveCatalogBudget catalogBudget = budget.ActiveCatalog;
+                    using CompactActiveCatalogRows active = await CompactActiveCatalogRows.ValidateAsync(
+                        source,
+                        table.Definition,
+                        pages,
+                        admittedRows,
+                        admittedValues,
+                        table.Allocation.Table,
+                        references[index].Indexes,
+                        new()
+                        {
+                            MaxRows = catalogBudget.MaxRows,
+                            MaxReadBytes = catalogBudget.MaxReadBytes,
+                            MaxWorkingBytes = Math.Min(catalogBudget.MaxWorkingBytes, working),
+                            TableValidator = catalogBudget.TableValidator,
+                        },
+                        token).ConfigureAwait(false);
+                    CompactTraversalBudget inventory = budget.Inventory;
+                    return await CompactPinnedDestinationInventory.ValidateAsync(
+                        source,
+                        pages,
+                        active,
+                        tables,
+                        new()
+                        {
+                            MaxPages = Math.Min(inventory.MaxPages, budget.MaxPages),
+                            MaxObjects = inventory.MaxObjects,
+                            MaxReferences = inventory.MaxReferences,
+                            MaxDiagnostics = inventory.MaxDiagnostics,
+                            MaxSchemaBytes = inventory.MaxSchemaBytes,
+                            MaxPageReads = inventory.MaxPageReads,
+                            MaxMapSteps = inventory.MaxMapSteps,
+                            MaxRecords = inventory.MaxRecords,
+                            MaxWorkingBytes = Math.Min(inventory.MaxWorkingBytes, working),
+                        },
+                        token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    await values.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                await rows.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+
+        throw Corrupt("The complete private database plan has no catalog definition.");
     }
 
     private static async ValueTask<CompactPinnedTDefReferences> ValidateTableAsync(
@@ -286,6 +418,45 @@ internal static class CompactPinnedDatabaseValidator
     private static JetCorruptDataException Corrupt(string reason) => new(JetErrorCode.CorruptPage, reason);
 
     private static JetLimitationException Limit(string reason) => new(JetErrorCode.ValueTooLarge, reason);
+
+    private sealed class PrivatePageSource(Stream stream, int pageSize) : IPageSource
+    {
+        public int PageSize => pageSize;
+
+        public long PageCount => stream.Length / pageSize;
+
+        public bool IsDisposed => !stream.CanRead;
+
+        public async ValueTask<byte[]> ReadPageAsync(long pageNumber, CancellationToken cancellationToken = default)
+        {
+            this.ThrowIfDisposedOrCancelled(cancellationToken);
+            if (pageNumber < 0 || pageNumber >= this.PageCount)
+            {
+                throw Corrupt("A destination inventory page reference lies outside the independently reopened file.");
+            }
+
+            byte[] page = ArrayPool<byte>.Shared.Rent(pageSize);
+            try
+            {
+                stream.Position = checked(pageNumber * pageSize);
+                await stream.ReadExactlyAsync(page.AsMemory(0, pageSize), cancellationToken).ConfigureAwait(false);
+                return page;
+            }
+            catch
+            {
+                PageBuffers.Return(page);
+                throw;
+            }
+        }
+
+        public void ThrowIfDisposed() => Guard.ThrowIfDisposed(this.IsDisposed, this);
+
+        public void ThrowIfDisposedOrCancelled(CancellationToken cancellationToken)
+        {
+            this.ThrowIfDisposed();
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
 
     private sealed class Admission
     {

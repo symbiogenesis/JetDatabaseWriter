@@ -142,7 +142,11 @@ internal static class CompactDatabasePlanValidator
         return new(matched, sourcePages);
     }
 
-    private static bool OriginalImageMatches(TDefImage original, TDefImage proposed)
+    /// <summary>Compares original bytes and every parsed native layout projection.</summary>
+    /// <param name="original">The independently reopened image.</param>
+    /// <param name="proposed">The supplied image.</param>
+    /// <returns>Whether both immutable images describe exactly the same native storage.</returns>
+    internal static bool OriginalImageMatches(TDefImage original, TDefImage proposed)
     {
         if (!original.Bytes.SequenceEqual(proposed.Bytes)
             || original.Header != proposed.Header
