@@ -10,6 +10,8 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Maintenance;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using Xunit;
 
 /// <summary>Database discovery retains every discovered physical descriptor's root and map evidence.</summary>
@@ -97,10 +99,13 @@ public sealed class CompactIndexDescriptorOwnershipTests
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb)]
-    [InlineData(DatabaseFormat.Jet4Mdb)]
-    [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task DatabaseDiscovery_CrossTableMapAliasRetainsBothOwners(DatabaseFormat kind)
+    [InlineData(DatabaseFormat.Jet3Mdb, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false)]
+    [InlineData(DatabaseFormat.AceAccdb, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true)]
+    [InlineData(DatabaseFormat.AceAccdb, true)]
+    public async Task DatabaseDiscovery_CrossTableMapAliasRetainsBothOwners(DatabaseFormat kind, bool mapCoversBothOwners)
     {
         byte[] bytes = await CreateAsync(kind);
         List<CompactStorageRecord> inventory = await InventoryAsync(bytes);
@@ -108,20 +113,47 @@ public sealed class CompactIndexDescriptorOwnershipTests
         long other = Assert.Single(inventory, static record => record.Kind == "catalog-object" && record.Name == "Other").OwnerTDefPage!.Value;
         CompactStorageRecord source = Assert.Single(inventory, record => record.Role == "index-owned-map" && record.OwnerTDefPage == items);
         CompactStorageRecord target = Assert.Single(inventory, record => record.Role == "index-owned-map" && record.OwnerTDefPage == other);
-        int pageSize = JetFormat.ForNewDatabase(kind).PageSize;
+        var format = JetFormat.ForNewDatabase(kind);
+        int pageSize = format.PageSize;
         bytes.AsSpan(checked((int)(source.PageNumber * pageSize)) + source.ByteOffset, 4).CopyTo(bytes.AsSpan(checked((int)(target.PageNumber * pageSize)) + target.ByteOffset, 4));
+        if (mapCoversBothOwners)
+        {
+            // Sharing can remain pinned only when the native map includes each
+            // observed root; merely replacing the descriptor pointer omits Other.
+            long otherRoot = Assert.Single(inventory, record => record.Role == "index-root" && record.OwnerTDefPage == other).TargetPageNumber!.Value;
+            int mapOffset = checked((int)(source.TargetPageNumber!.Value * pageSize));
+            byte[] map = bytes.AsSpan(mapOffset, pageSize).ToArray();
+            Assert.True(UsageMap.TryGetRowBound(map, format.DataPage, pageSize, source.TargetRowIndex!.Value, out RowBound row));
+            Assert.Equal(Constants.UsageMap.InlineMapType, map[row.RowStart]);
+            Assert.True(UsageMap.TrySetInlinePageState(map, row.RowStart, row.RowSize, otherRoot, isMarked: true));
+            map.CopyTo(bytes, mapOffset);
+        }
+
         byte[] original = bytes.ToArray();
         await using DatabaseFile file = Open(bytes);
         var session = new CompactDiscoverySession(file.Pages, file.Format, new());
         List<CompactIndexOwnershipRecord> ownership = [];
-        await ScanAsync(session, [], ownership);
+        if (mapCoversBothOwners)
+        {
+            await ScanAsync(session, [], ownership);
+            CompactIndexOwnershipRecord terminal = Assert.Single(ownership, static record => record.Kind == "ownership-terminal");
+            Assert.True(terminal.ObservedIndexPagesMapped);
+            Assert.False(terminal.ExclusiveOwnershipProven);
+            Assert.Contains(ownership, static record => record.Kind == "unobserved-map-member");
+        }
+        else
+        {
+            JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(session, [], ownership));
+            Assert.Contains("absent from a declared independently inspected ownership map", error.Message, StringComparison.Ordinal);
+            Assert.Contains(ownership, static record => record.Kind == "unmapped-index-page");
+            Assert.DoesNotContain(ownership, static record => record.Kind == "ownership-terminal");
+        }
 
         CompactIndexOwnershipRecord alias = Assert.Single(ownership, record => record.Kind == "shared-map-row" && record.OwnerTDefPage == other);
         Assert.Equal(items, alias.RelatedOwnerTDefPage);
         Assert.Equal(source.TargetPageNumber, alias.PageNumber);
         Assert.Equal(source.TargetRowIndex, alias.MapRowIndex);
         Assert.True(alias.IsPinned);
-        Assert.False(Assert.Single(ownership, static record => record.Kind == "ownership-terminal").ExclusiveOwnershipProven);
         Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
         Assert.Equal(original, bytes);
     }

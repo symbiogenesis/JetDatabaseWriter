@@ -594,6 +594,16 @@ native SaveAsText controls retain byte-identical form/report exports through
 assembly and native compact. This evidence does not cover macros, VBA modules,
 replication, every security configuration or opaque incoming references.
 
+`CompactNativeRowBoundaryTests` uses frozen DAO3.6/DAO120 controls to verify
+native fixed-only rows, dropped fixed-slot gaps and actual Jet3 jump markers at
+256/512-byte boundaries. Complete private assembly preserves every stored row
+byte and visible field; native compact/reopen preserves controlled values.
+For Id LONG plus fixed binary fields split at 255 bytes, Jet3 accepts 2000 value
+bytes and refuses 2001 at schema append with DAO 3047; Jet4/ACE accept 4051 and
+refuse 4052. Accepted raw rows occupy 2003/4056 bytes including native overhead.
+These are limits for that schema shape, not universal limits or validation of
+writer-emitted rows through physical page capacity. Fixture hashes and producer
+details are retained beside `Databases/RowBoundaries/`.
 `CompactPinnedSecurityTests` compares the two frozen native Jet4 workgroup
 password variants and native-authored restricted copies using an isolated copy
 of their MDW. Complete assembly preserves the raw `MSysObjects`/`MSysACEs`
@@ -759,6 +769,15 @@ process termination and cross-platform checks. They do not, by themselves,
 provide physical device/controller power-interruption evidence. Keep that boundary
 explicit until a qualified rig and storage profile exist.
 
+The available Windows host and focused Linux/macOS CI now exercise actual
+recovery interruptions, repeated replay and modeled namespace survivors through
+`RecoveryReplayCrashTests` and `ReplacementNamespaceModelTests`. Concrete gaps
+remain when only random replacement candidates survive, when journal promotion
+is lost leaving only `.preparing`, and when a new writer dies after recovery has
+removed the old journal. The Windows writable-directory flush probe demonstrates
+a runtime-specific managed mechanism worth qualifying; it does not establish a
+portable barrier or replace the missing recovery-generation protocol. See the
+[recovery evidence and limits](transaction-crash-recovery.md#regression-evidence).
 Remove I17 only after all six packages meet their contracts, the validation
 matrix records the native and durability evidence with exact revisions, and
 the settled main revision passes the required hosted gates. Preserve residual

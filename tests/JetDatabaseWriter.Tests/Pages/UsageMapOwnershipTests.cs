@@ -461,7 +461,11 @@ public sealed class UsageMapOwnershipTests
     {
         await using var stream = new MemoryStream();
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.Jet3Mdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct);
-        _ = await writer.Services.PageAllocator.ReserveContiguousPagesAsync(600, Ct);
+        byte[] initial = await writer.Database.Pages.ReadPageCopyAsync(1, Ct);
+        Assert.True(UsageMap.TryGetFirstRowBound(initial, writer.Database.Format.DataPage, writer.Database.Format.PageSize, out RowBound initialRow));
+        Assert.Equal(Constants.UsageMap.InlineMapType, initial[initialRow.RowStart]);
+        int inlineCapacity = (initialRow.RowSize - Constants.UsageMap.InlineMapHeaderSize) * 8;
+        _ = await writer.Services.PageAllocator.ReserveContiguousPagesAsync(inlineCapacity + 1, Ct);
         byte[] global = await writer.Database.Pages.ReadPageCopyAsync(1, Ct);
         Assert.True(UsageMap.TryGetFirstRowBound(global, writer.Database.Format.DataPage, writer.Database.Format.PageSize, out RowBound row));
         Assert.Equal(Constants.UsageMap.ReferenceMapType, global[row.RowStart]);
@@ -532,10 +536,15 @@ public sealed class UsageMapOwnershipTests
         await using var stream = new MemoryStream();
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.Jet3Mdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct);
         await writer.CreateTableAsync("M", [new ColumnDefinition("Id", typeof(int))], Ct);
-        _ = await writer.Services.PageAllocator.ReserveContiguousPagesAsync(600, Ct);
         JetFormat format = writer.Database.Format;
+        byte[] initial = await writer.Database.Pages.ReadPageCopyAsync(1, Ct);
+        Assert.True(UsageMap.TryGetFirstRowBound(initial, format.DataPage, format.PageSize, out RowBound initialRow));
+        Assert.Equal(Constants.UsageMap.InlineMapType, initial[initialRow.RowStart]);
+        int inlineCapacity = (initialRow.RowSize - Constants.UsageMap.InlineMapHeaderSize) * 8;
+        _ = await writer.Services.PageAllocator.ReserveContiguousPagesAsync(inlineCapacity + 1, Ct);
         byte[] global = await writer.Database.Pages.ReadPageCopyAsync(1, Ct);
         Assert.True(UsageMap.TryGetFirstRowBound(global, format.DataPage, format.PageSize, out RowBound globalRow));
+        Assert.Equal(Constants.UsageMap.ReferenceMapType, global[globalRow.RowStart]);
         long bitmapPage = JetDatabaseWriter.Schema.JetTypeInfo.Ri32(global, globalRow.RowStart + 1);
         byte[] bitmap = await writer.Database.Pages.ReadPageCopyAsync(bitmapPage, Ct);
         bitmap.AsSpan(Constants.UsageMap.ReferenceMapBitmapOffset).Clear();

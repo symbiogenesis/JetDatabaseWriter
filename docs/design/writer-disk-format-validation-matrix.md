@@ -646,3 +646,28 @@ with exact managed readback. Workgroup security controls use this same bounded
 production codec boundary. These comparisons establish private codec equality
 for the named providers, without complete database, reclaimability or durable
 publication acceptance.
+
+## Native row boundaries and recovery fault evidence
+
+`CompactNativeRowBoundaryTests` retains native DAO3.6 Jet3 and DAO120 Jet4/ACE
+specimens with fixed-only rows, dropped fixed-slot gaps, actual Jet3 variable
+offset jumps across 256/512 and first-refused fixed-binary schema shapes.
+Exact raw rows and field slices survive the complete private assembly; DAO
+compact/reopen retains every controlled visible value. The fixture directory
+records hashes, producer versions and shape-specific accepted/refused sizes.
+Other row shapes, trailing Null fixed slots and remaining F8 LVAL/text variants
+still need independent evidence.
+
+`RecoveryReplayCrashTests` covers repeated actual process interruptions through
+raw restoration, tail re-extension, final decisions and lock/journal cleanup,
+including four native encrypted profiles. `ReplacementNamespaceModelTests`
+selects surviving names from actual replacement snapshots and drives real
+journal recovery with full, torn and conflicting content. These tests retain
+uncertain evidence and expose missing replacement-candidate discovery,
+preparation-only journal bootstrap and post-recovery new-lock ownership.
+Crash children require the exact parent shared-runtime product version,
+including preview/RC suffixes, with roll-forward disabled and a matching child
+readiness report. Focused Linux/macOS CI includes these checks on .NET 10/11.
+The [recovery contract](transaction-crash-recovery.md) records the concrete Windows
+managed directory-flush probe and its limits. None of this evidence establishes
+physical power-loss durability or authorizes compact publication.

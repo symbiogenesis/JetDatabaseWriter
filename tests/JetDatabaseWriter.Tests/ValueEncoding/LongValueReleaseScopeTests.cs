@@ -154,7 +154,12 @@ public sealed class LongValueReleaseScopeTests
 
         // Native files can have allocated pages beyond the inline global
         // window. Releasing one must promote that map before a column clear.
-        while (writer.Pager.PageCount <= 600)
+        JetFormat format = writer.Database.Format;
+        byte[] global = await writer.Database.Pages.ReadPageCopyAsync(1, Ct);
+        Assert.True(UsageMap.TryGetFirstRowBound(global, format.DataPage, format.PageSize, out RowBound row));
+        Assert.Equal(Constants.UsageMap.InlineMapType, global[row.RowStart]);
+        long inlineLimit = Ri32(global, row.RowStart + 1) + ((row.RowSize - Constants.UsageMap.InlineMapHeaderSize) * 8L);
+        while (writer.Pager.PageCount <= inlineLimit)
         {
             _ = await writer.Pager.ReserveZeroedPageAsync(Ct);
         }
@@ -168,6 +173,9 @@ public sealed class LongValueReleaseScopeTests
         });
         _ = await scope.GetMapsAsync(Ct);
         await writer.Services.PageAllocator.DeallocatePageAsync(farPage, Ct);
+        byte[] promoted = await writer.Database.Pages.ReadPageCopyAsync(1, Ct);
+        Assert.True(UsageMap.TryGetFirstRowBound(promoted, format.DataPage, format.PageSize, out RowBound promotedRow));
+        Assert.Equal(Constants.UsageMap.ReferenceMapType, promoted[promotedRow.RowStart]);
         _ = await scope.GetMapsAsync(Ct);
         Assert.Equal(2, preparations);
         scope.OnInvalidateAll();

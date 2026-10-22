@@ -10,6 +10,7 @@ using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Maintenance;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.TestSupport;
 using Xunit;
 
 /// <summary>
@@ -35,6 +36,44 @@ public sealed class General97EncoderFixtureTests
             fixturePath,
             General97TextIndexEncoder.Encode,
             ct: ct);
+    }
+
+    [Theory(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(Jet3RoundTripEnvironment.IsAvailable),
+        SkipType = typeof(Jet3RoundTripEnvironment))]
+    [InlineData(0)]
+    [InlineData(126)]
+    [Trait("Category", "RequiresMicrosoftAccess")]
+    public async Task NativeExpressionComparison_IgnoresNulDespiteStoredIndexWeight(int prefixLength)
+    {
+        await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.General97Nul", databaseExtension: ".mdb");
+        string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
+        string script = $$"""
+            $db=$engine.CreateDatabase({{source}},';LANGID=0x0409;CP=1252;COUNTRY=0',32)
+            try {
+                $query=$db.CreateQueryDef('', 'PARAMETERS p TEXT(255), q TEXT(255); SELECT [p]=[q] AS Eq, [p]<[q] AS Lt, Len([p]) AS PLength, Len([q]) AS QLength;')
+                try {
+                    $prefix='a'*{{prefixLength}}
+                    $query.Parameters.Item('p').Value=$prefix+[char]0+'b'
+                    $query.Parameters.Item('q').Value=$prefix+'b'
+                    $rows=$query.OpenRecordset()
+                    try {
+                        if ($rows.Fields.Item('Eq').Value -ne -1 -or $rows.Fields.Item('Lt').Value -ne 0 -or $rows.Fields.Item('PLength').Value -ne ({{prefixLength}}+2) -or $rows.Fields.Item('QLength').Value -ne ({{prefixLength}}+1)) { throw 'Native Jet3 NUL expression comparison differs.' }
+                    } finally { $rows.Close() }
+                } finally { $query.Close() }
+            } finally { $db.Close() }
+            Write-Output 'GENERAL97_NUL_EXPRESSION_OK'
+            """;
+        PowerShellRunResult result = Jet3RoundTripEnvironment.RunEngineScript(script, session.WorkDir, TimeSpan.FromMinutes(1));
+        Assert.False(result.TimedOut, result.StandardOutput + result.StandardError);
+        Assert.True(result.OutputComplete, result.StandardOutput + result.StandardError);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("GENERAL97_NUL_EXPRESSION_OK", result.StandardOutput, StringComparison.Ordinal);
+        string prefix = new('a', prefixLength);
+        var collation = new JetTextCollation(new TextSortOrder(0x0409, 0, false));
+        Assert.Equal(0, collation.Compare(prefix + "\0b", prefix + "b"));
+        Assert.NotEqual(General97TextIndexEncoder.Encode(prefix + "\0b", true), General97TextIndexEncoder.Encode(prefix + "b", true));
     }
 
     [Fact]

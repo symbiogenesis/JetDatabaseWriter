@@ -61,3 +61,38 @@ Path-based database creation initializes a unique adjacent private staging file,
 ## Regression evidence
 
 `FileRollbackTests` verifies that file spills allocate no duplicate page undo log and that live rollback restores original ciphertext, preserves untouched pages, removes torn appended bytes and recovers untouched truncated tails. `SelectiveRollbackJournalTests` checks missing, late and incomplete original images, checksum-valid original-image corruption, untouched-page conflicts, truncation coverage and partial-page restoration. `PersistentRollbackJournalTests` proves compact preparation and one original image per changed page, and exercises torn writes, partial final records, multiple page versions mixed with partial undo, interrupted recovery replay followed by repeated reopen, authorized truncation and zero-filled tail restoration, corrupt headers/manifests/records, checksum-valid wrong paths and offsets, invalid lengths, stale commit decisions, incomplete final manifests, abandoned staging and Windows path casing. `TransactionCrashRecoveryTests` kills a child process without disposal during statement spills and final commit writes, then compares recovered files byte for byte. It also kills after successful commit and compares against an independently committed image. `ShrinkCrashRecoveryTests` kills during secure tail erasure, after truncation and after successful shrink, comparing plain and encrypted databases with exact original or committed images. `ReplacementCrashRecoveryTests` kills a child process after backup preparation, replacement and the final file flush, then verifies complete destination and original backup images. `CreationCrashRecoveryTests` kills during partial initialization, after the staging file is flushed and after publication, checking absent or byte-exact complete destinations for plain and encrypted creation and preserving competing files. `RecoveryLockFileTests` retains a completed recovery journal while lockfile cleanup is refused, then verifies exact-byte recovery on retry; invalid evidence preserves the lockfile. Completed-journal disposal regressions verify that cleanup cannot delete a successor journal. These checks cover process termination, not power interruption or Access-native recovery.
+
+`RecoveryReplayCrashTests` interrupts actual child processes at raw replay,
+partial-page restoration, truncated-tail re-extension, database flush, terminal
+decision and cleanup boundaries across plain Jet3/Jet4/ACE and four native
+encrypted fixtures. Repeated interruptions and repeated opens must preserve
+exact original or committed raw bytes. Conflicting content and live lockfile
+holders retain their evidence. Recovery can remove the old lock before journal
+cleanup, but a writer opened afterwards acquires a new lock; killing that writer
+after journal deletion leaves no ownership receipt authorizing its cleanup.
+
+`ReplacementNamespaceModelTests` replays actual captured prepared, renamed and
+committed states with independently selected surviving names. Missing destination
+states preserve complete staging/original copies, including the documented
+[ReplaceFileW error 1176 with a null backup path](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew),
+but public open cannot discover those randomly named candidates. Actual journals
+exercise torn writes, bad manifests, conflicting bytes and interrupted cleanup.
+A model losing the final journal name while retaining its complete `.preparing`
+copy exposes an uncovered bootstrap state: ordinary open ignores preparation and
+can accept mixed database bytes without recovery. The test records that outcome;
+it does not certify it as safe. Candidate identity, safe discovery/refusal and a
+durable replacement decision remain required before automatic publication.
+
+A bounded managed probe on Windows 10.0.26300 ARM64, NTFS and .NET 10.0.13 found
+that `File.OpenHandle` accepts the unnamed `(FileOptions)0x02000000` backup option
+for writable directory handles. `RandomAccess.FlushToDisk` followed immediately
+by `Marshal.GetLastPInvokeError` reported zero on those handles, including after
+a child-name change. Read-only controls returned without an exception but reported
+error 5, matching the runtime's suppressed access-denied flush failure. The
+[exact runtime implementation](https://github.com/dotnet/runtime/blob/v10.0.13/src/libraries/System.Private.CoreLib/src/System/IO/Strategies/FileStreamHelpers.Windows.cs)
+and [interop declaration](https://github.com/dotnet/runtime/blob/v10.0.13/src/libraries/Common/src/Interop/Windows/Kernel32/Interop.FlushFileBuffers.cs)
+explain these results. This is an implementation-level Windows capability clue,
+not a named portable BCL contract, directory persistence proof or production
+barrier. No exception alone is insufficient evidence of a successful flush.
+Physical power interruption and filesystem qualification remain separate from
+these modeled faults, process kills and managed host probes.

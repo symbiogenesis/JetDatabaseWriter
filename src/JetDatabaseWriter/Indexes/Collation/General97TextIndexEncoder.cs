@@ -114,11 +114,11 @@ internal static class General97TextIndexEncoder
 
         foreach (char currentChar in chars)
         {
-            if (currentChar == '\0')
+            if (currentChar == '\0' && !comparison)
             {
                 // Native Jet3 stored text (including MSys Name/Type/Version
-                // keys) gives an embedded NUL its own inline weight. Keep the
-                // table's ignored zero handler for unmapped extended characters.
+                // keys) gives an embedded NUL its own inline weight. Native
+                // expression comparisons ignore it, using the table's zero handler.
                 bytes.Add(0x10);
                 continue;
             }

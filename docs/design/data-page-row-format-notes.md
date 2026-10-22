@@ -213,10 +213,16 @@ throw.) Before the check existed, the writer appended an empty data page
 and then threw `ArgumentOutOfRangeException` from the copy, or
 `InvalidDataException` after copying a row one byte too long over the
 row-offset table; `DataPageInserter.WriteRowToPageAsync` now checks the
-free space before it touches the page. Jackcess's `MAX_ROW_SIZE` (recalled
-as 2,012 and 4,060) and Access's documented 2,000 / 4,000 characters per
-record are lower; whether Access rejects rows between those and the page
-capacity is unchecked.
+free space before it touches the page. Physical capacity is not native record
+acceptance. Frozen DAO3.6/DAO120 controls with Id LONG and fixed binary fields
+split at 255 bytes accept 2000 value bytes on Jet3 and 4051 on Jet4/ACE, and
+refuse the next byte at schema append with DAO 3047. Their accepted raw rows
+occupy 2003/4056 bytes including count/assignment overhead. Other field shapes
+and writer-emitted rows between native shape limits and page capacity remain
+unverified. `CompactNativeRowBoundaryTests` preserves these complete raw rows,
+fixed-only rows, dropped fixed-slot bytes and real Jet3 jump markers across
+256/512 boundaries through private assembly, followed by native compact/readback.
+See the hashed fixtures and producer details in `Databases/RowBoundaries/`.
 
 An update rewrites a row by deleting it and inserting the new version, so
 `RelationshipEnforcer.PlanCascadeUpdatesAsync`, which writes nothing, calls

@@ -1165,3 +1165,9 @@ The W-table in §7 records both historical shipped phases and current behavior. 
 - [mdbtools HACKING.md §"Indices"](https://github.com/mdbtools/mdbtools/blob/master/HACKING.md) — index page format and sort-key encoding
 - mdbtools source: [`src/libmdb/index.c`](https://github.com/mdbtools/mdbtools/blob/master/src/libmdb/index.c) — read-only index walker
 - Jackcess source: [`com.healthmarketscience.jackcess.impl.IndexImpl`](https://github.com/jahlborn/jackcess/tree/master/src/main/java/com/healthmarketscience/jackcess/impl) and `IndexData` — only known open-source *write* implementation
+
+Native Jet3 stored Name/Type/Version keys retain an embedded NUL weight `0x10`,
+while DAO3.6 parameterized expression comparison treats embedded NUL as ignored.
+`General97EncoderFixtureTests` independently checks the frozen composite stored
+key and fresh native equality/ordering with zero- and 126-character prefixes.
+The comparison-key path omits the NUL weight; stored-index encoding retains it.

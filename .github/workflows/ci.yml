@@ -223,6 +223,7 @@ jobs:
           JetDatabaseWriter.Tests.Encryption.AtomicReplacementTests
           JetDatabaseWriter.Tests.Encryption.ReplacementCancellationTests
           JetDatabaseWriter.Tests.Encryption.ReplacementDurabilityTests
+          JetDatabaseWriter.Tests.Encryption.ReplacementNamespaceModelTests
           JetDatabaseWriter.Tests.Encryption.ReplacementCrashRecoveryTests
           JetDatabaseWriter.Tests.Pages.Paging.PersistentRollbackJournalTests
           JetDatabaseWriter.Tests.Writer.CreateDatabaseTests
@@ -230,6 +231,8 @@ jobs:
           JetDatabaseWriter.Tests.Writer.TransactionCrashRecoveryTests
           JetDatabaseWriter.Tests.Writer.CreationCrashRecoveryTests
           JetDatabaseWriter.Tests.Writer.RecoveryLockFileTests
+          JetDatabaseWriter.Tests.Writer.RecoveryReplayCrashTests
+          JetDatabaseWriter.Tests.Infrastructure.CrashRecoveryProcessTests
           JetDatabaseWriter.Tests.Architecture.ManagedImplementationTests
           JetDatabaseWriter.Tests.Relationships.LinkedSourceCapabilityTests
           JetDatabaseWriter.Tests.Relationships.LinkedSourceSecurityTests
