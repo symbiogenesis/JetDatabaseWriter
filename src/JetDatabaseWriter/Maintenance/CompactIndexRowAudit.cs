@@ -22,7 +22,8 @@ using JetDatabaseWriter.Schema.Models;
 /// The caller retains one immutable decrypted source and its verified definition throughout both scans.
 /// Physical discovery covers live same-owner row headers, including verified moved payloads; optional active
 /// membership covers its exact independently agreed rows while retaining unassigned physical originals.
-/// Every included row must appear exactly once; ignored all-null rows must not appear. Complex keys compare
+/// Every included row must appear exactly once; ignored all-null rows must not appear. Ordinary Boolean
+/// masks derive native non-null keys for both values; schema-absent Boolean slots derive false. Complex keys compare
 /// only the stored four-byte parent reference, without following items. Ordinary Memo keys follow complete
 /// bounded LVAL storage and decode only its exact declared payload. Calculated and unsupported
 /// keys refuse. Intermediate keys must also match their independent rows, and complete
@@ -362,7 +363,22 @@ internal static class CompactIndexRowAudit
                 }
 
                 byte[] encoded;
-                if (field.Column.Type == ColumnType.MemoType && field.Kind == CompactRawFieldKind.Stored)
+                if (field.Column.Type == ColumnType.BooleanType)
+                {
+                    if (field.Kind is not (CompactRawFieldKind.Boolean or CompactRawFieldKind.Absent))
+                    {
+                        throw Unsupported(location.PageNumber, "An indexed Boolean requires an ordinary mask value or schema-absent slot.");
+                    }
+
+                    // Native schema evolution reads absent Boolean slots as false, even with a True default.
+                    // Both ordinary values remain included under IgnoreNulls.
+                    bool booleanValue = field.Kind == CompactRawFieldKind.Boolean && field.BoolValue;
+                    encoded = column.Ascending
+                        ? [0x7F, booleanValue ? (byte)0 : byte.MaxValue]
+                        : [0x80, booleanValue ? byte.MaxValue : (byte)0];
+                    allNull = false;
+                }
+                else if (field.Column.Type == ColumnType.MemoType && field.Kind == CompactRawFieldKind.Stored)
                 {
                     encoded = await ReadMemoKeyAsync(format, field, column, memoValues ?? throw Unsupported(location.PageNumber, "An indexed Memo requires an admitted immutable source session."), memoBudget, token).ConfigureAwait(false);
                     allNull = false;
@@ -386,7 +402,7 @@ internal static class CompactIndexRowAudit
     }
 
     private static bool SupportedType(ColumnType type)
-        => type is ColumnType.ByteType or ColumnType.IntegerType or ColumnType.LongIntegerType
+        => type is ColumnType.BooleanType or ColumnType.ByteType or ColumnType.IntegerType or ColumnType.LongIntegerType
             or ColumnType.MoneyType or ColumnType.GuidType or ColumnType.NumericType or ColumnType.BigIntType
             or ColumnType.TextType or ColumnType.MemoType or ColumnType.BinaryType or ColumnType.DateTimeExtendedType
             or ColumnType.FloatType or ColumnType.DoubleType or ColumnType.DateTimeType or ColumnType.ComplexType;

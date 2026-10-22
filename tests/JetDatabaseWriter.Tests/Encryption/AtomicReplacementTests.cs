@@ -81,9 +81,9 @@ public sealed class AtomicReplacementTests
         Assert.False(Directory.Exists(directory));
     }
 
-    /// <summary>Windows refuses a held destination; Unix replaces its name while preserving the old handle.</summary>
+    /// <summary>An exclusive replacement source lease refuses a live shared reader on every supported host.</summary>
     [Fact]
-    public async Task Replace_WithOpenReader_ObeysHostRenameSemantics()
+    public async Task Replace_WithOpenReader_RefusesBeforePreparing()
     {
         string directory = CreateDirectory();
         string path = Path.Combine(directory, "database.accdb");
@@ -94,21 +94,10 @@ public sealed class AtomicReplacementTests
             await File.WriteAllBytesAsync(path, original, TestContext.Current.CancellationToken);
             await using (var reader = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, FileOptions.Asynchronous))
             {
-                if (OperatingSystem.IsWindows())
-                {
-                    IOException error = await Assert.ThrowsAsync<IOException>(async () =>
-                        await EncryptionManager.ReplaceFileAtomicAsync(path, replacement, TestContext.Current.CancellationToken));
-                    string staged = Assert.IsType<string>(error.Data[EncryptionManager.ReplacementFileDataKey]);
-                    Assert.Equal(replacement, await File.ReadAllBytesAsync(staged, TestContext.Current.CancellationToken));
-                    File.Delete(staged);
-                    Assert.Equal(original, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
-                }
-                else
-                {
-                    await EncryptionManager.ReplaceFileAtomicAsync(path, replacement, TestContext.Current.CancellationToken);
-                    Assert.Equal(replacement, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
-                }
-
+                await Assert.ThrowsAsync<IOException>(async () =>
+                    await EncryptionManager.ReplaceFileAtomicAsync(path, replacement, TestContext.Current.CancellationToken));
+                Assert.Equal(original, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
+                Assert.False(File.Exists(EncryptionReplacementIntent.IntentPath(path)));
                 await using var observed = new MemoryStream();
                 await reader.CopyToAsync(observed, TestContext.Current.CancellationToken);
                 Assert.Equal(original, observed.ToArray());

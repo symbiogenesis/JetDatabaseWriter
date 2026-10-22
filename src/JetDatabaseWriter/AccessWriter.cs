@@ -77,10 +77,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     {
         DiagnosticTrace.ThrowIfReentrant();
         cancellationToken.ThrowIfCancellationRequested();
-        Guard.RequireExistingDatabaseFile(path, nameof(path));
-
+        Guard.NotNullOrEmpty(path, nameof(path));
         options ??= new AccessWriterOptions();
         options.Validate();
+
+        _ = EncryptionReplacementIntent.Recover(path, cancellationToken: cancellationToken);
+        Guard.RequireExistingDatabaseFile(path, nameof(path));
 
         FileStream fs = CreateStream(path);
         return await OpenAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
@@ -116,6 +118,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
             if (stream is FileStream recoveryFile)
             {
+                EncryptionReplacementIntent.RejectPending(recoveryFile.Name);
+
                 // Retain the durable recovery decision until lock-file cleanup succeeds.
                 PersistentRollbackJournal.Recover(
                     recoveryFile,
@@ -176,6 +180,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         options ??= new AccessWriterOptions();
         options.Validate();
 
+        PersistentRollbackJournal.RejectHotJournal(path);
         if (File.Exists(path))
         {
             throw new JetIOException(JetErrorCode.DatabaseFileExists, $"Database file already exists: {path}");
@@ -214,6 +219,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         cancellationToken.ThrowIfCancellationRequested();
         options ??= new AccessWriterOptions();
         options.Validate();
+
+        if (stream is FileStream creatingFile)
+        {
+            PersistentRollbackJournal.RejectHotJournal(creatingFile);
+        }
 
         byte[] dbBytes = await AccessDatabaseEncryption.PrepareCreatedDatabaseAsync(TDefPageBuilder.BuildEmptyDatabase(format), format, options, cancellationToken).ConfigureAwait(false);
         await stream.WriteAsync(dbBytes.AsMemory(), cancellationToken).ConfigureAwait(false);

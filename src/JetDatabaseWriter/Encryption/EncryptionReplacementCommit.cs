@@ -2,96 +2,66 @@ namespace JetDatabaseWriter.Encryption;
 
 using System;
 using System.IO;
+using System.Threading;
 
-/// <summary>Orders replacement contents, recoverable copies and namespace commits.</summary>
+/// <summary>Orders replacement copies and a persistent process-recovery decision.</summary>
 internal static class EncryptionReplacementCommit
 {
-    /// <summary>Identifies the retained original if a namespace commit fails.</summary>
+    /// <summary>Identifies the immutable retained original when preparation has completed.</summary>
     internal const string OriginalFileDataKey = "JetDatabaseWriter.OriginalFile";
 
-    /// <summary>Identifies an incomplete owned backup whose cleanup was refused.</summary>
-    internal const string IncompleteOriginalFileDataKey = "JetDatabaseWriter.IncompleteOriginalFile";
-
-    /// <summary>Commits an already flushed adjacent staging file.</summary>
-    /// <param name="temporary">The owned staging file.</param>
+    /// <summary>Commits an already flushed staging file through a bounded replacement intent.</summary>
+    /// <param name="temporary">The caller-owned staging file.</param>
     /// <param name="path">The original destination.</param>
     /// <param name="boundary">An optional per-operation fault boundary observer.</param>
-    /// <exception cref="IOException">The rename or flush failed; retained paths are supplied in the exception data.</exception>
+    /// <exception cref="IOException">Preparation, publication or the decision failed.</exception>
     internal static void Commit(string temporary, string path, Action<string>? boundary = null)
     {
-        string original = temporary + ".original";
-        bool renamed = false;
-        bool originalReady = false;
+        EncryptionReplacementIntent? owner = null;
         try
         {
-            CopyOriginal(path, original);
-            originalReady = true;
-            boundary?.Invoke("prepared");
-            File.Replace(temporary, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
-            renamed = true;
-            boundary?.Invoke("renamed");
-            FlushFile(path);
-            boundary?.Invoke("committed");
+            owner = EncryptionReplacementIntent.Begin(path, boundary: boundary);
+            owner.CopyReplacement(temporary);
+            owner.Commit(CancellationToken.None);
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        catch (Exception error)
         {
-            if (!renamed && File.Exists(temporary))
+            if (owner is not null)
+            {
+                AddRetainedPaths(error, owner);
+            }
+
+            if (owner?.IsPrepared != true)
             {
                 error.Data[EncryptionManager.ReplacementFileDataKey] = temporary;
             }
 
-            if (originalReady && File.Exists(original))
-            {
-                error.Data[OriginalFileDataKey] = original;
-            }
-
-            // Keep genuine filesystem exceptions and their stack traces intact.
             throw;
         }
+        finally
+        {
+            owner?.Dispose();
+        }
 
-        // Cleanup is after the commit decision. A cleanup failure cannot undo it.
         try
         {
-            File.Delete(original);
+            File.Delete(temporary);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            // The replacement is committed; failed cleanup may leave an extra original backup.
+            // The decision is complete; this caller-owned input is no longer needed.
         }
     }
 
-    private static void CopyOriginal(string path, string original)
+    /// <summary>Reports only complete retained generation copies.</summary>
+    /// <param name="error">The original error.</param>
+    /// <param name="owner">The operation owning the copies.</param>
+    internal static void AddRetainedPaths(Exception error, EncryptionReplacementIntent owner)
     {
-        bool backupCreated = false;
-        try
+        if (owner.IsPrepared)
         {
-            using FileStream backup = EncryptionMaintenanceFile.Create(original);
-            backupCreated = true;
-            using var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            source.CopyTo(backup);
-            backup.Flush(flushToDisk: true);
+            error.Data[EncryptionManager.ReplacementFileDataKey] = owner.NewPath;
+            error.Data[OriginalFileDataKey] = owner.OldPath;
         }
-        catch (Exception error)
-        {
-            if (backupCreated)
-            {
-                try
-                {
-                    File.Delete(original);
-                }
-                catch (Exception cleanupError) when (cleanupError is IOException or UnauthorizedAccessException)
-                {
-                    error.Data[IncompleteOriginalFileDataKey] = original;
-                }
-            }
-
-            throw;
-        }
-    }
-
-    private static void FlushFile(string path)
-    {
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
-        stream.Flush(flushToDisk: true);
     }
 }

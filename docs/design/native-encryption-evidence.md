@@ -104,37 +104,15 @@ suppressed. The .NET Standard build uses host-default Unix creation permissions.
 Unix confidentiality therefore depends on the directory permissions and ACLs,
 not on `FileShare.None`, which is advisory there.
 
-Pre-canceled operations stop before creating the file; conversion/cancellation
-failures clean up only that operation's incomplete staging file. After conversion,
-the staging file and a separate copy of the original are flushed before
-`File.Replace`, and replacement contents are flushed afterward. The backup
-requires approximately one additional source-file-sized disk allocation.
-Successful replacement preserves Windows destination ACL semantics; Unix
-replacement uses the staged file's permissions.
+Pre-canceled operations stop before creating files. Conversion/cancellation before preparation cleans up only owned incomplete files. A fixed-size deterministic replacement intent binds immutable old/new copies, their exact lengths and hashes, and an append-only process commit decision. A separate publication copy leaves both selected generations available through interruption. Peak space includes up to three additional database-sized files.
 
-Both library targets use [`FileStream.Flush(true)`](https://learn.microsoft.com/en-us/dotnet/api/system.io.filestream.flush) and `File.Replace`, with no
-library P/Invoke, COM or native helper binary. .NET handles the underlying OS
-calls. The containing directory is not flushed; renamed directory entries and
-backup cleanup are not guaranteed to persist across power loss. Unsupported
-filesystem operations fail while retaining recovery copies when available.
-Windows handles without delete sharing refuse replacement; Unix readers can
-retain the previous inode.
+Path writer open recovers a valid intent before requiring the destination to exist. Prepared selects old content; a complete valid Committed record selects new content. Surviving immutable copies and canonical content must match recorded old/new generations; an interrupted publication copy may instead be a validated prefix of a complete authorized image. Invalid metadata, conflicting copies, foreign ownership or mixed transaction/replacement evidence refuses. Readers and detection refuse a pending intent. Legacy random candidates have no automatic selection authority. Incomplete intent or recovery-lease acquisition can require conservative refusal even while complete database copies survive.
 
-Commit refusal/failure retains complete staged output and the original backup
-when available. `IOException.Data["JetDatabaseWriter.ReplacementFile"]` identifies
-retained staging, and `["JetDatabaseWriter.OriginalFile"]` identifies the flushed
-original. An `["JetDatabaseWriter.IncompleteOriginalFile"]` entry identifies an
-owned partial backup whose cleanup failed, not a recoverable original.
-After rename, inspect the destination as well as these paths before
-retrying. Injected failures at prepared, renamed and committed boundaries verify
-retained bytes. They do not simulate process termination or power interruption.
-Other operations' temporary files are never cleaned up.
+Both library targets use managed `FileStream.Flush(true)` and `File.Replace`/non-overwriting move, with no library P/Invoke, COM or native helper binary. .NET handles OS calls. The containing directory is not flushed; rename, bootstrap and cleanup persistence remain unqualified across power loss. Existing Windows destinations use `File.Replace` metadata semantics. A missing destination is restored under private maintenance-file creation permissions; no separate ACL, alternate-stream or timestamp recovery policy is claimed.
 
-Native maintenance retains a delete-shared source handle through replacement.
-A pending rollback journal is refused before staging; recover it through the
-writer. New encrypted creation transforms the bounded bootstrap in memory before
-its first destination write. A JET password-only source stays password-only after
-a password change; ACE password changes use fresh AES-256-CBC/SHA-512.
+Commit errors identify complete retained copies through `IOException.Data["JetDatabaseWriter.ReplacementFile"]` and `["JetDatabaseWriter.OriginalFile"]`. Recover through `AccessWriter.OpenAsync(path)` while preserving all intent/generation files. Actual process termination and repeated recovery tests exercise publication, decisions and cleanup; they do not establish physical power-loss durability. Other operations' temporary files are retained.
+
+Native maintenance holds a coordinated source lease and a generation-bound strict lock receipt where configured. Pending transaction journals are refused before staging; recover through the writer first. New encrypted creation transforms the bounded bootstrap in memory before its first destination write. A JET password-only source stays password-only after a password change; ACE password changes use fresh AES-256-CBC/SHA-512.
 
 ## Evidence limits
 

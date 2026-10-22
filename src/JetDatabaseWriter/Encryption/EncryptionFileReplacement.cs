@@ -8,21 +8,18 @@ using System.Threading.Tasks;
 /// <summary>Stages one file-maintenance operation beside its destination.</summary>
 internal static class EncryptionFileReplacement
 {
-    /// <summary>Writes and durably flushes an exclusive staging file before replacing the original.</summary>
+    /// <summary>Flushes bounded immutable copies before publishing a persistent process-recovery decision.</summary>
     /// <param name="path">The destination file.</param>
-    /// <param name="write">The staging operation; retained source handles must permit delete sharing for replacement.</param>
-    /// <param name="cancellationToken">Cancellation is honored through the final flush.</param>
+    /// <param name="write">The staging operation.</param>
+    /// <param name="cancellationToken">Cancellation is honored before preparation is published.</param>
+    /// <param name="source">An optional exclusive source handle whose ownership transfers to this operation.</param>
     /// <returns>The asynchronous replacement operation.</returns>
-    internal static async ValueTask ReplaceAsync(string path, Func<Stream, CancellationToken, ValueTask> write, CancellationToken cancellationToken)
+    internal static async ValueTask ReplaceAsync(string path, Func<Stream, CancellationToken, ValueTask> write, CancellationToken cancellationToken, FileStream? source = null)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        path = Path.GetFullPath(path);
-        string temporary = path + ".reenc-" + Guid.NewGuid().ToString("N") + ".tmp";
-        bool stagingCreated = false;
+        using var owner = EncryptionReplacementIntent.Begin(path, source, cancellationToken: cancellationToken);
         try
         {
-            FileStream staging = EncryptionMaintenanceFile.Create(temporary);
-            stagingCreated = true;
+            FileStream staging = owner.CreateReplacement();
             try
             {
                 await write(staging, cancellationToken).ConfigureAwait(false);
@@ -37,30 +34,12 @@ internal static class EncryptionFileReplacement
                 await staging.DisposeAsync().ConfigureAwait(false);
             }
 
-            cancellationToken.ThrowIfCancellationRequested();
+            owner.Commit(cancellationToken);
         }
-        catch
+        catch (Exception error)
         {
-            if (stagingCreated)
-            {
-                TryDelete(temporary);
-            }
-
+            EncryptionReplacementCommit.AddRetainedPaths(error, owner);
             throw;
-        }
-
-        EncryptionManager.ReplaceFileWithTemp(temporary, path);
-    }
-
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            // Only this operation's staging file is eligible for cleanup.
         }
     }
 }

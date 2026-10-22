@@ -600,6 +600,8 @@ fixtures also pin embedded NUL `0x10` and two significant positions for simple
 expansions before later accents. Physical row coverage is scoped to readable
 same-owner headers; it does not establish active or complete source membership. A guarded DAO120 control on the pinned calcFieldTestV2010.accdb accepts an ordinary FirstName index and refuses indexes on LastFirstLen, LastFirst, MonthlySalary and WeeklySalary with native error 3251. This records four observed calculated-field refusals rather than inventing calculated-key semantics.
 
+`CompactBooleanIndexRowAuditTests` pins six DAO-authored Jet3/Jet4/ACE source and native-compacted specimens. All four ascending/descending and IgnoreNulls descriptors agree with independently read present mask values and exact native key/bookmark bytes. Both Boolean values are non-null: native Null and omitted inserts reopen as False, and IgnoreNulls retains them. Corruption, missing/duplicate entries, opposite-value bookmarks, active all-index consumption and admission have focused controls. Twelve additional native schema-evolution source/compact specimens establish absent old Boolean slots as False under both False and True later defaults, preserve raw Absent observations before compact, and verify new-row default behavior, exact native keys and public decode surfaces. Calculated Boolean keys and general writer/index-creation admission remain separate. Provenance, producing engines and hashes are beside `Databases/NativeBooleanIndexes/`.
+
 `CompactActiveTableRowsTests` independently corroborates native table-map rows,
 strict covering-index proofs, complete scalar key/bookmark agreement and declared
 counts across supported ordinary indexes in Jet3/Jet4/ACE fixtures. Source/image
@@ -664,9 +666,13 @@ still need independent evidence.
 raw restoration, tail re-extension, final decisions and lock/journal cleanup,
 including four native encrypted profiles. `ReplacementNamespaceModelTests`
 selects surviving names from actual replacement snapshots and drives real
-journal recovery with full, torn and conflicting content. These tests retain
-uncertain evidence and expose missing replacement-candidate discovery,
-preparation-only journal bootstrap and post-recovery new-lock ownership.
+journal recovery with full, torn and conflicting content. Replacement intents bind
+old/new generations and a process commit decision; exact selected bytes recover
+through path writer open even without a destination name. Exclusive recovery
+leases span publication and cleanup. Incomplete intent/ownership acquisition,
+legacy candidates without an intent and conflicting evidence require refusal.
+Preparation-only journal replay and generation-bound repeated writer recovery
+have exact-byte controls. Bootstrap namespace persistence remains unqualified.
 Crash children require the exact parent shared-runtime product version,
 including preview/RC suffixes, with roll-forward disabled and a matching child
 readiness report. Focused Linux/macOS CI includes these checks on .NET 10/11.

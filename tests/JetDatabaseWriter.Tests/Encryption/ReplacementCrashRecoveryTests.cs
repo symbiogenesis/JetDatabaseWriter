@@ -6,7 +6,9 @@ using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.Transactions;
 using Xunit;
 
 /// <summary>Checks replacement boundaries after process termination without unwinding cleanup.</summary>
@@ -24,13 +26,23 @@ public sealed class ReplacementCrashRecoveryTests
         {
             CrashRecoveryProcess.MarkReady(childPath);
             string target = Environment.GetEnvironmentVariable(ChildBoundary)!;
-            EncryptionReplacementCommit.Commit(childPath + ".reenc-owned.tmp", childPath, boundary =>
+            FileShare sharing = OperatingSystem.IsWindows() ? FileShare.Delete : FileShare.None;
+            await using var source = new FileStream(childPath, FileMode.Open, FileAccess.Read, sharing);
+            using var native = LockFileCoordinator.ForReencrypt(childPath, new AccessWriterOptions());
+            native.Acquire();
+            using var operation = EncryptionReplacementIntent.Begin(
+                childPath,
+                source,
+                boundary =>
             {
                 if (boundary == target)
                 {
                     CrashRecoveryProcess.Terminate(childPath, boundary);
                 }
-            });
+            },
+                TestContext.Current.CancellationToken);
+            operation.CopyReplacement(childPath + ".reenc-owned.tmp");
+            operation.Commit(TestContext.Current.CancellationToken);
             Assert.Fail("The requested replacement boundary was never interrupted.");
             return;
         }
@@ -46,7 +58,7 @@ public sealed class ReplacementCrashRecoveryTests
             byte[] oldBytes = await File.ReadAllBytesAsync(baseline, TestContext.Current.CancellationToken);
             byte[] newBytes = await File.ReadAllBytesAsync(replacement, TestContext.Current.CancellationToken);
             Assert.NotEqual(oldBytes, newBytes);
-            foreach (string boundary in new[] { "prepared", "renamed", "committed" })
+            foreach (string boundary in new[] { "prepared", "renamed", "decision-partial", "committed" })
             {
                 string path = Path.Combine(directory, boundary + ".accdb");
                 string temporary = path + ".reenc-owned.tmp";
@@ -60,19 +72,99 @@ public sealed class ReplacementCrashRecoveryTests
                 }
 
                 AssertCrashChild(path, boundary);
-                Assert.Equal(oldBytes, await File.ReadAllBytesAsync(temporary + ".original", TestContext.Current.CancellationToken));
-                bool prepared = boundary == "prepared";
-                Assert.Equal(prepared ? oldBytes : newBytes, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
-                Assert.Equal(prepared, File.Exists(temporary));
-                if (prepared)
+                string old = Assert.Single(Directory.GetFiles(directory, Path.GetFileName(path) + ".jdw-replace-*.old"));
+                string next = Assert.Single(Directory.GetFiles(directory, Path.GetFileName(path) + ".jdw-replace-*.new.tmp"));
+                Assert.Equal(oldBytes, await File.ReadAllBytesAsync(old, TestContext.Current.CancellationToken));
+                Assert.Equal(newBytes, await File.ReadAllBytesAsync(next, TestContext.Current.CancellationToken));
+                await Assert.ThrowsAsync<JetOperationException>(async () =>
                 {
-                    Assert.Equal(newBytes, await File.ReadAllBytesAsync(temporary, TestContext.Current.CancellationToken));
+                    await using AccessReader refused = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
+                });
+                File.Delete(path);
+                await using (AccessWriter recovered = await AccessWriter.OpenAsync(path, new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken))
+                {
+                    Assert.NotNull(recovered);
                 }
 
+                bool committed = boundary == "committed";
+                Assert.Equal(committed ? newBytes : oldBytes, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
                 await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
-                Assert.Equal(prepared ? "Original" : "Replacement", Assert.Single(await reader.ListTablesAsync(TestContext.Current.CancellationToken)));
-                await using AccessReader originalReader = await AccessReader.OpenAsync(temporary + ".original", new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
-                Assert.Equal("Original", Assert.Single(await originalReader.ListTablesAsync(TestContext.Current.CancellationToken)));
+                Assert.Equal(committed ? "Replacement" : "Original", Assert.Single(await reader.ListTablesAsync(TestContext.Current.CancellationToken)));
+                Assert.False(File.Exists(EncryptionReplacementIntent.IntentPath(path)));
+                Assert.False(File.Exists(RecoverableWriterLock.ReceiptPath(path)));
+                Assert.False(File.Exists(Path.ChangeExtension(path, ".laccdb")));
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>Repeated process deaths during recovery retain the selected generation until cleanup finishes.</summary>
+    [Fact]
+    public async Task Recovery_ProcessKilledTwice_CompletesRecordedDecision()
+    {
+        if (Environment.GetEnvironmentVariable(ChildPath) is { } childPath)
+        {
+            CrashRecoveryProcess.MarkReady(childPath);
+            string target = Environment.GetEnvironmentVariable(ChildBoundary)!;
+            EncryptionReplacementIntent.Recover(
+                childPath,
+                boundary =>
+            {
+                if (boundary == target)
+                {
+                    CrashRecoveryProcess.Terminate(childPath, boundary);
+                }
+            },
+                TestContext.Current.CancellationToken);
+            Assert.Fail("The requested recovery boundary was never interrupted.");
+            return;
+        }
+
+        string directory = Path.Combine(Path.GetTempPath(), $"ReplacementRecoveryCrashTests_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            foreach (string boundary in new[] { "publication-ready", "renamed", "cleanup.old", "cleanup.new.tmp", "before-intent-delete" })
+            {
+                string path = Path.Combine(directory, boundary + ".accdb");
+                await CreateImageAsync(path, "Original");
+                string temporary = path + ".input.tmp";
+                await CreateImageAsync(temporary, "Replacement");
+                byte[] original = await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken);
+                Assert.Throws<IOException>(() => EncryptionReplacementCommit.Commit(temporary, path, phase =>
+                {
+                    if (phase == "renamed")
+                    {
+                        throw new IOException("Prepare pending recovery.");
+                    }
+                }));
+                File.Delete(path);
+                for (int attempt = 0; attempt < 2; attempt++)
+                {
+                    if (boundary is "publication-ready" or "renamed")
+                    {
+                        File.Delete(path);
+                    }
+
+                    CrashRecoveryProcess.AssertChild(
+                        "JetDatabaseWriter.Tests.Encryption.ReplacementCrashRecoveryTests.Recovery_ProcessKilledTwice_CompletesRecordedDecision",
+                        path,
+                        boundary,
+                        "replacement recovery, boundary=" + boundary,
+                        new Dictionary<string, string> { [ChildPath] = path, [ChildBoundary] = boundary });
+                    Assert.True(File.Exists(EncryptionReplacementIntent.IntentPath(path)));
+                }
+
+                await using (AccessWriter recovered = await AccessWriter.OpenAsync(path, new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken))
+                {
+                    Assert.NotNull(recovered);
+                }
+
+                Assert.Equal(original, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
+                Assert.False(File.Exists(EncryptionReplacementIntent.IntentPath(path)));
             }
         }
         finally

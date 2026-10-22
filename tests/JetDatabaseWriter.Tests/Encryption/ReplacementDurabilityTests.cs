@@ -112,9 +112,7 @@ public sealed class ReplacementDurabilityTests
                 await File.WriteAllBytesAsync(backup, unrelated, TestContext.Current.CancellationToken);
             }
 
-            IOException error = existingBackup
-                ? Assert.Throws<IOException>(() => EncryptionReplacementCommit.Commit(temporary, path))
-                : Assert.Throws<FileNotFoundException>(() => EncryptionReplacementCommit.Commit(temporary, path));
+            IOException error = Assert.Throws<FileNotFoundException>(() => EncryptionReplacementCommit.Commit(temporary, path));
             Assert.Equal(temporary, error.Data[EncryptionManager.ReplacementFileDataKey]);
             Assert.Null(error.Data[EncryptionReplacementCommit.OriginalFileDataKey]);
             Assert.Equal(replacement, await File.ReadAllBytesAsync(temporary, TestContext.Current.CancellationToken));
@@ -179,14 +177,15 @@ public sealed class ReplacementDurabilityTests
             if (boundary == "prepared")
             {
                 Assert.Equal(oldBytes, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
-                Assert.Equal(temporary, error.Data[EncryptionManager.ReplacementFileDataKey]);
-                Assert.Equal(newBytes, await File.ReadAllBytesAsync(temporary, TestContext.Current.CancellationToken));
             }
             else
             {
-                Assert.False(File.Exists(temporary));
                 Assert.Equal(newBytes, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
             }
+
+            string retainedNext = Assert.IsType<string>(error.Data[EncryptionManager.ReplacementFileDataKey]);
+            Assert.Equal(newBytes, await File.ReadAllBytesAsync(retainedNext, TestContext.Current.CancellationToken));
+            Assert.Equal(newBytes, await File.ReadAllBytesAsync(temporary, TestContext.Current.CancellationToken));
         }
         finally
         {

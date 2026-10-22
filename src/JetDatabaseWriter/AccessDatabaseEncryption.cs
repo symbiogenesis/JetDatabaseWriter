@@ -139,15 +139,18 @@ public static class AccessDatabaseEncryption
         Guard.NotNullOrEmpty(path, nameof(path));
         cancellationToken.ThrowIfCancellationRequested();
         path = Path.GetFullPath(path);
-        Guard.RequireExistingDatabaseFile(path, nameof(path));
         options ??= new AccessWriterOptions();
         options.Validate();
+        _ = EncryptionReplacementIntent.Recover(path, cancellationToken: cancellationToken);
+        Guard.RequireExistingDatabaseFile(path, nameof(path));
         using var fileLock = LockFileCoordinator.ForReencrypt(path, options);
-        fileLock.Acquire();
-        FileStream source = FileStreamFactory.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        FileShare sharing = Path.DirectorySeparatorChar == '\\' ? FileShare.Delete : FileShare.None;
+        FileStream source = FileStreamFactory.Open(path, FileMode.Open, FileAccess.Read, sharing, FileOptions.Asynchronous | FileOptions.SequentialScan);
         try
         {
+            _ = RecoverableWriterLock.Recover(path);
             PersistentRollbackJournal.RejectHotJournal(source);
+            fileLock.Acquire();
             async ValueTask WriteAsync(Stream destination, CancellationToken token)
             {
                 byte[]? sourceHeader = null;
@@ -200,7 +203,7 @@ public static class AccessDatabaseEncryption
                 }
             }
 
-            await EncryptionFileReplacement.ReplaceAsync(path, WriteAsync, cancellationToken).ConfigureAwait(false);
+            await EncryptionFileReplacement.ReplaceAsync(path, WriteAsync, cancellationToken, source).ConfigureAwait(false);
         }
         finally
         {

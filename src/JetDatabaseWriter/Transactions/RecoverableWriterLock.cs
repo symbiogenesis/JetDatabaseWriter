@@ -41,7 +41,7 @@ internal sealed class RecoverableWriterLock : IDisposable
     {
         _ = Recover(databasePath);
         string lockPath = LockFileSlotWriter.GetLockFilePath(databasePath);
-        if (File.Exists(lockPath))
+        if (File.Exists(lockPath) || Directory.Exists(lockPath))
         {
             throw new JetLockException(JetErrorCode.DatabaseInUse, $"Database is already in use. A lockfile exists at: {lockPath}");
         }
@@ -88,14 +88,100 @@ internal sealed class RecoverableWriterLock : IDisposable
     /// <returns>Whether a receipt was present and successfully cleaned up.</returns>
     /// <exception cref="IOException">The receipt is invalid, the lock conflicts or a live holder prevents cleanup.</exception>
     /// <exception cref="JetLockException">The ownership receipt is invalid or does not match the existing lock.</exception>
-    internal static bool Recover(string databasePath)
+    internal static bool Recover(string databasePath) => RecoverCore(databasePath, cleanup: true);
+
+    /// <summary>Retains exclusive native ownership through replacement recovery and cleanup.</summary>
+    /// <param name="databasePath">The exclusively coordinated database path.</param>
+    /// <param name="boundary">An optional observer of fresh recovery ownership preparation.</param>
+    /// <returns>The exact-generation recovery lease.</returns>
+    /// <exception cref="JetLockException">Ownership is malformed, foreign or conflicting.</exception>
+    internal static RecoveryLease AcquireRecovery(string databasePath, Action<string>? boundary = null)
+    {
+        RejectDirectories(databasePath);
+        string lockPath = LockFileSlotWriter.GetLockFilePath(databasePath);
+        string ownerPath = ReceiptPath(databasePath);
+        FileStream? native = null;
+        FileStream? owner = null;
+        try
+        {
+            if (File.Exists(ownerPath))
+            {
+                owner = new FileStream(ownerPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                byte[] proof = ReadProof(databasePath, owner);
+                if (File.Exists(lockPath))
+                {
+                    native = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                    byte[] actual = new byte[LockLength];
+                    if (native.Length != actual.Length)
+                    {
+                        throw Conflict("The native lock length conflicts with its ownership receipt.");
+                    }
+
+                    Read(native, actual);
+                    if (!actual.AsSpan().SequenceEqual(proof.AsSpan(40, LockLength)))
+                    {
+                        throw Conflict("The native lock conflicts with its ownership receipt.");
+                    }
+                }
+                else
+                {
+                    native = new FileStream(lockPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+                    native.Write(proof, 40, LockLength);
+                    native.Flush(true);
+                }
+            }
+            else
+            {
+                if (File.Exists(lockPath))
+                {
+                    throw Conflict("The replacement destination has an unowned native lock.");
+                }
+
+                byte[] proof = new byte[ReceiptLength];
+                Magic.CopyTo(proof, 0);
+                Identity(databasePath).CopyTo(proof, 8);
+                WriteField(proof.AsSpan(40, 32), "JetDatabaseWriter");
+                WriteField(proof.AsSpan(72, 32), "Recovery");
+                WriteField(proof.AsSpan(104, 32), "JetDatabaseWriter");
+                WriteField(proof.AsSpan(136, 32), Guid.NewGuid().ToString("N").AsSpan(0, 31));
+                Hash(proof.AsSpan(0, ReceiptLength - 32)).CopyTo(proof, ReceiptLength - 32);
+                native = new FileStream(lockPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+                native.Write(proof, 40, LockLength);
+                native.Flush(true);
+                boundary?.Invoke("recovery-lock-created");
+                owner = new FileStream(ownerPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+                owner.Write(proof, 0, proof.Length);
+                owner.Flush(true);
+            }
+
+            return new RecoveryLease(native, owner);
+        }
+        catch
+        {
+            // An uncertain creation retains unexplained evidence; never infer
+            // ownership of a partial receipt after an interruption.
+            owner?.Dispose();
+            native?.Dispose();
+            throw;
+        }
+    }
+
+    private static bool RecoverCore(string databasePath, bool cleanup)
     {
         string ownerPath = ReceiptPath(databasePath);
+        if (Directory.Exists(ownerPath))
+        {
+            throw Conflict("The writer ownership receipt cannot be a directory.");
+        }
+
         if (!File.Exists(ownerPath))
         {
+            // Without a receipt, ordinary recovery has no authority over the
+            // native name. Strict acquisition validates it separately.
             return false;
         }
 
+        RejectDirectories(databasePath);
         using (var owner = new FileStream(ownerPath, FileMode.Open, FileAccess.Read, FileShare.None))
         {
             byte[] proof = new byte[ReceiptLength];
@@ -133,11 +219,18 @@ internal sealed class RecoverableWriterLock : IDisposable
                     }
                 }
 
-                File.Delete(lockPath);
+                if (cleanup)
+                {
+                    File.Delete(lockPath);
+                }
             }
         }
 
-        File.Delete(ownerPath);
+        if (cleanup)
+        {
+            File.Delete(ownerPath);
+        }
+
         return true;
     }
 
@@ -164,6 +257,33 @@ internal sealed class RecoverableWriterLock : IDisposable
             this.receipt.Dispose();
             this.lockFile.Dispose();
         }
+    }
+
+    private static void RejectDirectories(string databasePath)
+    {
+        if (Directory.Exists(ReceiptPath(databasePath)) || Directory.Exists(LockFileSlotWriter.GetLockFilePath(databasePath)))
+        {
+            throw Conflict("Writer ownership evidence cannot be a directory.");
+        }
+    }
+
+    private static byte[] ReadProof(string databasePath, FileStream owner)
+    {
+        byte[] proof = new byte[ReceiptLength];
+        if (owner.Length != proof.Length)
+        {
+            throw Conflict("The writer ownership receipt length is invalid.");
+        }
+
+        Read(owner, proof);
+        if (!proof.AsSpan(0, 8).SequenceEqual(Magic)
+            || !proof.AsSpan(8, 32).SequenceEqual(Identity(databasePath))
+            || !proof.AsSpan(ReceiptLength - 32).SequenceEqual(Hash(proof.AsSpan(0, ReceiptLength - 32))))
+        {
+            throw Conflict("The writer ownership receipt identity or checksum is invalid.");
+        }
+
+        return proof;
     }
 
     private static JetLockException Conflict(string message) => new(JetErrorCode.DatabaseInUse, message);
@@ -227,6 +347,30 @@ internal sealed class RecoverableWriterLock : IDisposable
         for (int index = 0; index < length; index++)
         {
             field[index] = value[index] <= 127 ? (byte)value[index] : (byte)'?';
+        }
+    }
+
+    /// <summary>Retains exact native and receipt handles until coordinated cleanup.</summary>
+    /// <param name="native">The exclusively held native lock.</param>
+    /// <param name="owner">Its exclusively held exact-generation receipt.</param>
+    internal sealed class RecoveryLease(FileStream native, FileStream owner) : IDisposable
+    {
+        /// <summary>Removes the validated generation while the caller retains database ownership.</summary>
+        internal void Cleanup()
+        {
+            string nativePath = native.Name;
+            string ownerPath = owner.Name;
+            native.Dispose();
+            File.Delete(nativePath);
+            owner.Dispose();
+            File.Delete(ownerPath);
+        }
+
+        /// <inheritdoc/>
+        public void Dispose()
+        {
+            owner.Dispose();
+            native.Dispose();
         }
     }
 }

@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Transactions;
 
@@ -126,8 +127,17 @@ internal sealed class PersistentRollbackJournal : IDisposable
     /// <param name="database">The opened database.</param>
     /// <exception cref="JetOperationException">Recovery or writer-ownership evidence exists.</exception>
     internal static void RejectHotJournal(FileStream database)
+        => RejectHotJournal(database.Name);
+
+    /// <summary>Refuses independent reads or creation while deterministic recovery evidence is occupied.</summary>
+    /// <param name="path">The database path.</param>
+    /// <exception cref="JetOperationException">Recovery or writer-ownership evidence exists.</exception>
+    internal static void RejectHotJournal(string path)
     {
-        if (File.Exists(JournalPath(database.Name)) || File.Exists(JournalPath(database.Name) + ".preparing") || File.Exists(RecoverableWriterLock.ReceiptPath(database.Name)))
+        EncryptionReplacementIntent.RejectPending(path);
+        string journal = JournalPath(path);
+        string receipt = RecoverableWriterLock.ReceiptPath(path);
+        if (File.Exists(journal) || Directory.Exists(journal) || File.Exists(journal + ".preparing") || Directory.Exists(journal + ".preparing") || File.Exists(receipt) || Directory.Exists(receipt))
         {
             throw new JetOperationException(JetErrorCode.HotJournalConflict, "The database has transaction recovery or writer-ownership evidence; open it with AccessWriter to recover first.");
         }
@@ -137,10 +147,16 @@ internal sealed class PersistentRollbackJournal : IDisposable
     /// <param name="database">The exclusively coordinated writable database.</param>
     /// <param name="beforeCleanup">An optional coordinated cleanup performed before recovery evidence is removed.</param>
     /// <exception cref="IOException">The journal or database does not validate.</exception>
+    /// <exception cref="JetCorruptDataException">A directory occupies a deterministic journal name.</exception>
     internal static void Recover(FileStream database, Action? beforeCleanup = null)
     {
         string path = JournalPath(database.Name);
         string preparation = path + ".preparing";
+        if (Directory.Exists(path) || Directory.Exists(preparation))
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "Transaction recovery evidence cannot be a directory.");
+        }
+
         if (!File.Exists(path))
         {
             if (!File.Exists(preparation))

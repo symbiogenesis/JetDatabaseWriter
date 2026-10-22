@@ -290,6 +290,8 @@ internal static class EncryptionManager
     {
         DiagnosticTrace.ThrowIfReentrant();
         cancellationToken.ThrowIfCancellationRequested();
+        Guard.NotNullOrEmpty(path, nameof(path));
+        EncryptionReplacementIntent.RejectPending(path);
         Guard.RequireExistingDatabaseFile(path, nameof(path));
 
         await using FileStream fs = FileStreamFactory.Open(
@@ -315,6 +317,10 @@ internal static class EncryptionManager
         DiagnosticTrace.ThrowIfReentrant();
         Guard.RequireReadableSeekableStream(stream, nameof(stream));
         cancellationToken.ThrowIfCancellationRequested();
+        if (stream is FileStream file)
+        {
+            EncryptionReplacementIntent.RejectPending(file.Name);
+        }
 
         long origin = stream.Position;
         try

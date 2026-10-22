@@ -111,7 +111,7 @@ in the corresponding TODO item.
 | Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; projected raw header/trailer bytes and source index sharing/directions during schema edits; retained continuation headers and original trailing padding during chain writes; complete known table/index/LVAL pointer patching within pinned raw definitions; all-chain-preflight installation on original page identities and independent reopened header/body comparison; exact complete pinned-prefix comparison permitting only independently reconstructed TDEF pointers and validated native global-map bytes | S9: complete application, security, replication and unknown-object inventory and semantic preservation requirements |
 | Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key graph, entry-edge fence and observed leaf-chain checks; separate complete observed-edge key-envelope, conservative key-routing and bookmark-inclusive order proofs; bounded same-owner bookmark-target validation; cross-root declared-owner and incoming-reference observations; stored-key staging with disk-backed fences and monotone disk-backed row-bookmark lookup; independent reopened private stored-key/bookmark, child-maximum and allocation coverage validation; bounded private native usage-map construction from ordered allocation runs and independent reopened exact membership/allocation validation; composed relocated stored-key tree/map assembly with references returned after reopened validation; disk-backed exact whole-destination allocation ledgers retaining the complete source prefix; composed per-table physical stored indexes, maps and pinned chain installation; independent canonical native global-map installation/comparison with self-covered bitmap storage; independent native descriptor-map membership and exact observed separator/child-maximum comparisons; bounded database-wide private assembly driver and exact independently discovered active destination inventory | I2: prove safe sharing and complete incoming-reference ownership beyond known declarations, complete stored-key/row correspondence beyond supported scalar, ordinary Memo and positive complex-reference keys against corroborated active rows, plus native sharing validation, and extend the bounded discovered-table driver and independent active destination inventory into a reclaiming compact copy; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
-| Replace the source safely | Private staging, flushed backups and process-interruption tests | E4/F6 and the file-recovery part of I15: coordination, recovery discovery, namespace persistence and actual power-interruption evidence |
+| Replace the source safely | Bounded generation-bound replacement intents and old/new copies; validated process commit decisions; exclusive recovery leases; repeated interruption, missing-destination and unchanged-evidence refusal tests | E4/F6 and the file-recovery part of I15: bootstrap/namespace persistence, missing-destination filesystem metadata policy and actual power-interruption qualification |
 
 The compact-copy engine must avoid the existing table rewrite snapshots; it can
 implement the required bounded raw copy without completing I6's separate
@@ -191,7 +191,7 @@ optional bookmark-order proof is unavailable. Exact separators do not establish
 that stored keys describe rows or that all source rows and leaves were found.
 
 `CompactIndexRowAudit` independently derives keys from physically readable
-same-owner raw rows and supported stored long values and compares every leaf and intermediate key and bookmark. Included
+same-owner raw rows and supported stored long values and compares every leaf and intermediate key and bookmark. Ordinary Boolean masks derive native non-null keys for both values, including under IgnoreNulls. Native schema-evolution controls establish False for physically absent Boolean slots independently of the later column default; their raw Absent observation remains intact. Included
 rows must appear exactly once; an IgnoreNulls descriptor omits only all-null
 keys. Date keys retain their stored IEEE double rather than converting through
 calendar rounding. Strict lossless text decoding and supported stored
@@ -594,8 +594,11 @@ and bytes through private assembly. `CompactPinnedApplicationObjectsTests`
 checks native query metadata and Forms/Reports container names through DAO
 compact without executing the saved query or application objects. Separate
 native SaveAsText controls retain byte-identical form/report exports through
-assembly and native compact. This evidence does not cover macros, VBA modules,
-replication, every security configuration or opaque incoming references.
+assembly and native compact. A separate native Access-authored inert StopMacro
+and constant-only VBA module control retains exact catalog/application bytes
+and identical same-engine SaveAsText exports through assembly and native compact,
+without invoking either object. Replication, additional code-object variants,
+every security configuration and opaque incoming references remain uncovered.
 
 `CompactNativeRowBoundaryTests` uses frozen DAO3.6/DAO120 controls to verify
 native fixed-only rows, dropped fixed-slot gaps and actual Jet3 jump markers at
@@ -774,7 +777,7 @@ explicit until a qualified rig and storage profile exist.
 
 The available Windows host and focused Linux/macOS CI now exercise actual
 recovery interruptions, repeated replay and modeled namespace survivors through
-`RecoveryReplayCrashTests` and `ReplacementNamespaceModelTests`. Preparation-only journals now undergo full validation before replay; invalid evidence refuses. Generation-bound lock receipts permit repeated reopen after recovery and later writer deaths while preserving foreign, live or malformed ownership evidence. Random replacement candidates still need persistent generation discovery and a durable decision; loss of every journal/receipt name remains unqualified. The Windows writable-directory flush probe demonstrates
+`RecoveryReplayCrashTests` and `ReplacementNamespaceModelTests`. Preparation-only journals now undergo full validation before replay; invalid evidence refuses. Generation-bound lock receipts permit repeated reopen after recovery and later writer deaths while preserving foreign, live or malformed ownership evidence. The deterministic replacement intent binds old/new copies and a process commit decision, permitting validated repeated recovery even when the destination name is absent. Legacy random candidates without an intent are retained rather than selected. Incomplete intent or fresh ownership acquisition can require refusal; loss of every recovery name and physical persistence of bootstrap, decisions and cleanup remain unqualified. The Windows writable-directory flush probe demonstrates
 a runtime-specific managed mechanism worth qualifying; it does not establish a
 portable barrier or replace filesystem-qualified generation discovery and commit ordering. See the
 [recovery evidence and limits](transaction-crash-recovery.md#regression-evidence).

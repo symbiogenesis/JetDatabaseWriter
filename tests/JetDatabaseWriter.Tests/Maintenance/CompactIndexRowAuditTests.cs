@@ -122,7 +122,6 @@ public sealed class CompactIndexRowAuditTests
     }
 
     [Theory]
-    [InlineData(ColumnType.BooleanType)]
     [InlineData(ColumnType.BigBinaryType)]
     [InlineData(ColumnType.OleType)]
     public async Task UnsupportedKeyTypes_RefuseBeforeReading(ColumnType type)

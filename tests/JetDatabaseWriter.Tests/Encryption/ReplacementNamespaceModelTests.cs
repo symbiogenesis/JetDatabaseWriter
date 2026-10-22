@@ -28,7 +28,7 @@ public sealed class ReplacementNamespaceModelTests(ITestOutputHelper output)
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task ActualReplacementBoundaries_AllNameSurvivorSubsets_PreserveCandidates(DatabaseFormat format)
+    public async Task LegacyRandomCandidates_AllNameSurvivorSubsets_PreserveCandidates(DatabaseFormat format)
     {
         using var directory = new ModelDirectory();
         (byte[] oldBytes, byte[] newBytes) = await ImagesAsync(format);
@@ -37,7 +37,7 @@ public sealed class ReplacementNamespaceModelTests(ITestOutputHelper output)
         foreach (string boundary in new[] { "prepared", "renamed", "committed" })
         {
             string captured = directory.Child("capture-" + boundary);
-            CapturedReplacement snapshot = await CaptureReplacementAsync(captured, oldBytes, newBytes, boundary);
+            CapturedReplacement snapshot = await CaptureLegacyReplacementAsync(captured, oldBytes, newBytes, boundary);
             int available = snapshot.StageExists ? 7 : 5;
             for (int survivors = 0; survivors <= 7; survivors++)
             {
@@ -79,7 +79,7 @@ public sealed class ReplacementNamespaceModelTests(ITestOutputHelper output)
     {
         using var directory = new ModelDirectory();
         (byte[] oldBytes, byte[] newBytes) = await ImagesAsync(format);
-        CapturedReplacement prepared = await CaptureReplacementAsync(directory.Child("prepared"), oldBytes, newBytes, "prepared");
+        CapturedReplacement prepared = await CaptureLegacyReplacementAsync(directory.Child("prepared"), oldBytes, newBytes, "prepared");
         string replay = directory.Child("1176");
         string path = ReplayReplacement(prepared, replay, 6);
         string stage = Path.Combine(replay, Path.GetFileName(prepared.Stage));
@@ -92,7 +92,7 @@ public sealed class ReplacementNamespaceModelTests(ITestOutputHelper output)
         // This models that documented outcome; no native 1176 injection occurs.
         Dictionary<string, string> before = await SnapshotAsync(replay);
         await Assert.ThrowsAsync<FileNotFoundException>(() => OpenWriterAsync(path));
-        IOException retry = Assert.Throws<IOException>(() => EncryptionReplacementCommit.Commit(stage, path));
+        IOException retry = Assert.Throws<FileNotFoundException>(() => EncryptionReplacementCommit.Commit(stage, path));
         Assert.Equal(stage, retry.Data[EncryptionManager.ReplacementFileDataKey]);
         Assert.Null(retry.Data[EncryptionReplacementCommit.OriginalFileDataKey]);
         AssertSnapshot(before, await SnapshotAsync(replay));
@@ -106,7 +106,7 @@ public sealed class ReplacementNamespaceModelTests(ITestOutputHelper output)
     {
         using var directory = new ModelDirectory();
         (byte[] oldBytes, byte[] newBytes) = await ImagesAsync(DatabaseFormat.AceAccdb);
-        CapturedReplacement prepared = await CaptureReplacementAsync(directory.Child("prepared"), oldBytes, newBytes, "prepared");
+        CapturedReplacement prepared = await CaptureLegacyReplacementAsync(directory.Child("prepared"), oldBytes, newBytes, "prepared");
         string replay = directory.Child("conflicting");
         string path = ReplayReplacement(prepared, replay, tornDestination ? 7 : 6);
         await File.WriteAllBytesAsync(path + ".reenc-second.tmp", oldBytes, Ct);
@@ -263,7 +263,7 @@ public sealed class ReplacementNamespaceModelTests(ITestOutputHelper output)
         return image.ToArray();
     }
 
-    private static async Task<CapturedReplacement> CaptureReplacementAsync(string directory, byte[] original, byte[] replacement, string boundary)
+    private static async Task<CapturedReplacement> CaptureLegacyReplacementAsync(string directory, byte[] original, byte[] replacement, string boundary)
     {
         string path = Path.Combine(directory, "database.accdb");
         string stage = path + ".reenc-" + Guid.NewGuid().ToString("N") + ".tmp";
@@ -276,20 +276,14 @@ public sealed class ReplacementNamespaceModelTests(ITestOutputHelper output)
 #pragma warning restore CA1849
         }
 
-        IOException error = Assert.Throws<IOException>(() => EncryptionReplacementCommit.Commit(
-            temporary: stage,
-            path: path,
-            boundary: observed =>
-            {
-                if (observed == boundary)
-                {
-                    throw new IOException("Captured actual replacement boundary: " + boundary);
-                }
-            }));
-        Assert.Equal(stage + ".original", error.Data[EncryptionReplacementCommit.OriginalFileDataKey]);
-        Assert.Equal(Digest(original), Digest(await File.ReadAllBytesAsync(stage + ".original", Ct)));
-        Assert.Equal(Digest(boundary == "prepared" ? original : replacement), Digest(await File.ReadAllBytesAsync(path, Ct)));
-        Assert.Equal(boundary == "prepared", File.Exists(stage));
+        // Freeze the former random-name protocol explicitly. These names have
+        // no checksummed intent and must never authorize automatic selection.
+        await File.WriteAllBytesAsync(stage + ".original", original, Ct);
+        if (boundary != "prepared")
+        {
+            File.Move(stage, path, overwrite: true);
+        }
+
         return new(path, stage, File.Exists(stage));
     }
 

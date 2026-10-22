@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Pages.Paging;
 
 /// <summary>Publishes a complete newly created database without overwriting another file.</summary>
 internal static class DatabaseCreationPublication
@@ -17,6 +18,8 @@ internal static class DatabaseCreationPublication
     /// <returns>The asynchronous publication operation.</returns>
     internal static async ValueTask PublishAsync(string path, Func<FileStream, CancellationToken, ValueTask> initialize, Action<string, string>? observer, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        PersistentRollbackJournal.RejectHotJournal(path);
         string temporary = path + ".create-" + Guid.NewGuid().ToString("N") + ".tmp";
         bool created = false;
         try
@@ -46,6 +49,7 @@ internal static class DatabaseCreationPublication
 
             observer?.Invoke("Publishing", temporary);
             cancellationToken.ThrowIfCancellationRequested();
+            PersistentRollbackJournal.RejectHotJournal(path);
             File.Move(temporary, path);
             created = false;
         }

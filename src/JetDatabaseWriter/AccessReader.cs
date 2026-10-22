@@ -146,6 +146,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
     {
         DiagnosticTrace.ThrowIfReentrant();
         cancellationToken.ThrowIfCancellationRequested();
+        Guard.NotNullOrEmpty(path, nameof(path));
+        EncryptionReplacementIntent.RejectPending(path);
         Guard.RequireExistingDatabaseFile(path, nameof(path));
 
         options ??= new AccessReaderOptions();
@@ -208,6 +210,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             string path = linkedSourceHint ?? (stream is FileStream fileStream ? fileStream.Name : string.Empty);
             if (linkedSourceHint is null && stream is FileStream recoveryFile)
             {
+                EncryptionReplacementIntent.RejectPending(recoveryFile.Name);
                 if (acquireLease)
                 {
                     snapshotLease = new FileStream(recoveryFile.Name, FileMode.Open, FileAccess.Read, FileShare.Read);

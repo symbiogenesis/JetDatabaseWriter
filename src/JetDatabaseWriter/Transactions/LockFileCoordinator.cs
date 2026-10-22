@@ -68,7 +68,7 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
             ? AccessOptions.CreateDefaultLockFileSettings(respectExisting: true)
             : options.CreateLockFileSettings(options.RespectExistingLockFile);
 
-        return new LockFileCoordinator(databasePath, nameof(AccessWriter), settings);
+        return new LockFileCoordinator(databasePath, nameof(AccessWriter), settings, recoverableWriter: true);
     }
 
     /// <summary>Gets a value indicating whether the coordinator will maintain a lock-file slot.</summary>
