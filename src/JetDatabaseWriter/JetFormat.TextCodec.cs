@@ -233,6 +233,13 @@ internal sealed partial class JetFormat
 
                 if (i + 1 >= end)
                 {
+                    // DAO's native calculated Text controls accept a terminal
+                    // uncompressed low byte with an implicit zero high byte.
+                    if (i < end && bytes[i] != 0)
+                    {
+                        count++;
+                    }
+
                     break;
                 }
 
@@ -279,6 +286,11 @@ internal sealed partial class JetFormat
 
                 if (i + 1 >= end)
                 {
+                    if (i < end && bytes[i] != 0)
+                    {
+                        output[pos++] = (char)bytes[i];
+                    }
+
                     break;
                 }
 

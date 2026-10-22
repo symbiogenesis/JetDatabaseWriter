@@ -37,6 +37,7 @@ internal sealed partial class CompactActiveTableRows : IDisposable
     private int disposed;
     private int storageReleased;
     private int activeScan;
+    private int activeIndexAudit;
     private bool failed;
 
     private CompactActiveTableRows(IPageSource source, JetFormat format, long owner, TDefImage definition, int descriptorIndex, CompactActiveTableBudget budget, Func<CompactActiveTableRowRecord, CancellationToken, ValueTask> observer)
@@ -163,6 +164,125 @@ internal sealed partial class CompactActiveTableRows : IDisposable
 
         try
         {
+            await this.ScanRowsCoreAsync(activeVisitor, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref this.activeScan, 0);
+            if (Volatile.Read(ref this.disposed) != 0)
+            {
+                this.ReleaseStorage();
+            }
+        }
+    }
+
+    /// <summary>Independently compares every physical stored index with the agreed active rows.</summary>
+    /// <param name="cancellationToken">Cancels repeated row scans, key derivation and strict tree/bookmark inspection.</param>
+    /// <returns>The number of completely compared physical descriptors.</returns>
+    /// <exception cref="JetNotSupportedException">Any descriptor lacks a faithful supported key encoding.</exception>
+    /// <exception cref="JetCorruptDataException">A stored key, bookmark, exact separator, routing or active-row coverage disagrees.</exception>
+    /// <exception cref="JetLimitationException">Lifetime work or simultaneous storage admission is exhausted.</exception>
+    /// <exception cref="JetOperationException">Another scan or index audit is active, or a prior operation expired this evidence.</exception>
+    internal async ValueTask<int> ValidateIndexesAsync(CancellationToken cancellationToken)
+    {
+        this.CheckSource(this.source, this.definition, cancellationToken);
+        if (Interlocked.CompareExchange(ref this.activeScan, 1, 0) != 0)
+        {
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "An active-table scan or index audit is already running.");
+        }
+
+        Volatile.Write(ref this.activeIndexAudit, 1);
+        try
+        {
+            for (int ordinal = 0; ordinal < this.definition.RealIndexes.Count; ordinal++)
+            {
+                this.accounting.Charge(CompactDiscoveryCharge.Objects, 1, this.OwnerTDefPage);
+                _ = await CompactIndexRowAudit.ValidateAsync(
+                    this.source,
+                    this.format,
+                    this.OwnerTDefPage,
+                    this.definition,
+                    ordinal,
+                    this.RowBudget(),
+                    this.IndexBudget(),
+                    new()
+                    {
+                        Accounting = this.accounting,
+                        MaxRows = this.budget.MaxActiveRows,
+                        MaxKeyBytes = this.budget.MaxKeyBytes,
+                        MaxWorkingBytes = this.budget.Work.MaxWorkingBytes,
+                    },
+                    cancellationToken,
+                    this).ConfigureAwait(false);
+            }
+
+            this.CheckSource(this.source, this.definition, cancellationToken);
+            return this.definition.RealIndexes.Count;
+        }
+        catch
+        {
+            this.failed = true;
+            throw;
+        }
+        finally
+        {
+            Volatile.Write(ref this.activeIndexAudit, 0);
+            Volatile.Write(ref this.activeScan, 0);
+            if (Volatile.Read(ref this.disposed) != 0)
+            {
+                this.ReleaseStorage();
+            }
+        }
+    }
+
+    /// <summary>Rechecks complete physical rows within the already serialized all-index comparison.</summary>
+    /// <param name="visitor">Consumes independently compared active payloads.</param>
+    /// <param name="cancellationToken">Cancels the scan.</param>
+    /// <returns>A task completing after all original physical observations are accounted for.</returns>
+    /// <exception cref="JetOperationException">No serialized index comparison owns this row consumption.</exception>
+    internal ValueTask ScanIndexRowsAsync(Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    {
+        Guard.NotNull(visitor, nameof(visitor));
+        this.CheckSource(this.source, this.definition, cancellationToken);
+        if (Volatile.Read(ref this.activeIndexAudit) == 0)
+        {
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "Active index rows require an enclosing serialized index audit.");
+        }
+
+        return this.ScanRowsCoreAsync(visitor, cancellationToken);
+    }
+
+    /// <summary>Gets the lifetime-admitted page source after checking exact active-membership identity.</summary>
+    /// <param name="source">The exact original source.</param>
+    /// <param name="definition">The exact original definition.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The private admitted page source for strict stored-index comparison.</returns>
+    internal IPageSource IndexAuditPages(IPageSource source, TDefImage definition, CancellationToken cancellationToken)
+    {
+        this.CheckSource(source, definition, cancellationToken);
+        return this.pages;
+    }
+
+    /// <summary>Expires this evidence and releases all retained admission, leaving the caller's source open.</summary>
+    public void Dispose()
+    {
+        _ = Interlocked.Exchange(ref this.disposed, 1);
+        if (Volatile.Read(ref this.activeScan) == 0)
+        {
+            this.ReleaseStorage();
+        }
+    }
+
+    private static JetCorruptDataException Corrupt(long page, string reason)
+        => new(JetErrorCode.CorruptIndex, reason, new JetErrorInfo { PageNumber = page, Reason = reason });
+
+    private static JetLimitationException Limit(long page, string reason)
+        => new(JetErrorCode.ValueTooLarge, reason, new JetErrorInfo { PageNumber = page, Reason = reason });
+
+    private async ValueTask ScanRowsCoreAsync(Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> activeVisitor, CancellationToken cancellationToken)
+    {
+        try
+        {
             this.accounting.Charge(CompactDiscoveryCharge.Objects, 1, this.OwnerTDefPage);
             using IDisposable scratch = this.accounting.ReserveWorkingBytes(65_536, this.OwnerTDefPage);
             long count = 0;
@@ -202,31 +322,7 @@ internal sealed partial class CompactActiveTableRows : IDisposable
             this.failed = true;
             throw;
         }
-        finally
-        {
-            Volatile.Write(ref this.activeScan, 0);
-            if (Volatile.Read(ref this.disposed) != 0)
-            {
-                this.ReleaseStorage();
-            }
-        }
     }
-
-    /// <summary>Expires this evidence and releases all retained admission, leaving the caller's source open.</summary>
-    public void Dispose()
-    {
-        _ = Interlocked.Exchange(ref this.disposed, 1);
-        if (Volatile.Read(ref this.activeScan) == 0)
-        {
-            this.ReleaseStorage();
-        }
-    }
-
-    private static JetCorruptDataException Corrupt(long page, string reason)
-        => new(JetErrorCode.CorruptIndex, reason, new JetErrorInfo { PageNumber = page, Reason = reason });
-
-    private static JetLimitationException Limit(long page, string reason)
-        => new(JetErrorCode.ValueTooLarge, reason, new JetErrorInfo { PageNumber = page, Reason = reason });
 
     private async ValueTask DeriveAsync(CancellationToken token)
     {

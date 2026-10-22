@@ -547,9 +547,9 @@ public sealed class PersistentRollbackJournalTests
         }
     }
 
-    /// <summary>Abandoned staging bytes never authorize writes and can be replaced under exclusive ownership.</summary>
+    /// <summary>Unvalidated preparation bytes cannot be discarded when journal promotion may have been lost.</summary>
     [Fact]
-    public void Create_AbandonedPreparation_IsIgnoredAndReplaced()
+    public void Create_AbandonedPreparation_IsRefusedAndPreserved()
     {
         string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
         string staging = path + ".jdw-journal.preparing";
@@ -560,16 +560,11 @@ public sealed class PersistentRollbackJournalTests
         try
         {
             using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            PersistentRollbackJournal.Recover(database);
-            PersistentRollbackJournal.RejectHotJournal(database);
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database));
+            Assert.Throws<JetOperationException>(() => PersistentRollbackJournal.RejectHotJournal(database));
             Assert.True(File.Exists(staging));
-            using (var journal = PersistentRollbackJournal.Create(database, 2048))
-            {
-                Assert.False(File.Exists(staging));
-                Assert.True(File.Exists(path + ".jdw-journal"));
-            }
-
-            PersistentRollbackJournal.Recover(database);
+            Assert.Throws<JetOperationException>(() => PersistentRollbackJournal.Create(database, 2048));
+            Assert.Equal(new byte[7], File.ReadAllBytes(staging));
             byte[] current = new byte[8192];
             database.Position = 0;
             Assert.Equal(current.Length, database.Read(current));
@@ -580,6 +575,187 @@ public sealed class PersistentRollbackJournalTests
             File.Delete(path);
             File.Delete(path + ".jdw-journal");
             File.Delete(staging);
+        }
+    }
+
+    /// <summary>A surviving manifest without later write intents must refuse changed bytes before replay.</summary>
+    [Fact]
+    public void Recover_PreparationManifestWithoutIntents_RefusesChangedDatabase()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
+        string journalPath = path + ".jdw-journal";
+        string preparing = journalPath + ".preparing";
+        File.WriteAllBytes(path, new byte[8192]);
+        try
+        {
+            using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using (var journal = PersistentRollbackJournal.Create(database, 2048))
+            {
+            }
+
+            File.Move(journalPath, preparing);
+            database.Position = 4096;
+            database.WriteByte(71);
+            database.Flush(true);
+            byte[] evidence = File.ReadAllBytes(preparing);
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database));
+            Assert.Equal(evidence, File.ReadAllBytes(preparing));
+            database.Position = 4096;
+            Assert.Equal(71, database.ReadByte());
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(journalPath);
+            File.Delete(preparing);
+        }
+    }
+
+    /// <summary>Independently prepared generations cannot authorize deletion of each other's evidence.</summary>
+    [Fact]
+    public void Recover_ConflictingPreparationGeneration_PreservesBothJournals()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
+        string journalPath = path + ".jdw-journal";
+        string preparing = journalPath + ".preparing";
+        File.WriteAllBytes(path, new byte[8192]);
+        try
+        {
+            using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            byte[] earlier;
+            using (var journal = PersistentRollbackJournal.Create(database, 2048))
+            {
+            }
+
+            earlier = File.ReadAllBytes(journalPath);
+            File.Delete(journalPath);
+            using (var journal = PersistentRollbackJournal.Create(database, 2048))
+            {
+            }
+
+            byte[] current = File.ReadAllBytes(journalPath);
+            File.WriteAllBytes(preparing, earlier);
+            Assert.NotEqual(earlier, current);
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database));
+            Assert.Equal(earlier, File.ReadAllBytes(preparing));
+            Assert.Equal(current, File.ReadAllBytes(journalPath));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(journalPath);
+            File.Delete(preparing);
+        }
+    }
+
+    /// <summary>Replacing an ignored partial record during replay must not invalidate the paired preparation on cleanup retry.</summary>
+    /// <param name="partialLength">The incomplete trailing record length.</param>
+    /// <param name="truncate">Whether replay first needs a recovery-start marker.</param>
+    [Theory]
+    [InlineData(1, false)]
+    [InlineData(47, false)]
+    [InlineData(2087, false)]
+    [InlineData(1, true)]
+    [InlineData(47, true)]
+    [InlineData(2087, true)]
+    public void Recover_PairedPreparationWithTornTail_CleanupRetryRemainsRecoverable(int partialLength, bool truncate)
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
+        string journalPath = path + ".jdw-journal";
+        string preparing = journalPath + ".preparing";
+        byte[] original = new byte[8192];
+        Array.Fill(original, (byte)23);
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using (var journal = PersistentRollbackJournal.Create(database, 2048))
+            {
+                if (truncate)
+                {
+                    journal.RecordBeforeTruncate(4096);
+                    database.SetLength(4096);
+                }
+                else
+                {
+                    byte[] intended = new byte[2048];
+                    Array.Fill(intended, (byte)29);
+                    journal.RecordBeforeWrite(2048, intended);
+                    database.Position = 2048;
+                    database.Write(intended, 0, intended.Length / 2);
+                }
+
+                database.Flush(true);
+            }
+
+            byte[] torn = new byte[partialLength];
+            Array.Fill(torn, (byte)123);
+            using (var journal = new FileStream(journalPath, FileMode.Append, FileAccess.Write, FileShare.None))
+            {
+                journal.Write(torn, 0, torn.Length);
+                journal.Flush(true);
+            }
+
+            File.Copy(journalPath, preparing);
+            byte[] preparation = File.ReadAllBytes(preparing);
+            Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database, static () => throw new IOException("Cleanup refused.")));
+            byte[] decision = File.ReadAllBytes(journalPath);
+            Assert.Equal(preparation, File.ReadAllBytes(preparing));
+            Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database, static () => throw new IOException("Cleanup refused again.")));
+            Assert.Equal(decision, File.ReadAllBytes(journalPath));
+            Assert.Equal(preparation, File.ReadAllBytes(preparing));
+            PersistentRollbackJournal.Recover(database);
+            database.Position = 0;
+            byte[] restored = new byte[original.Length];
+            Assert.Equal(restored.Length, database.Read(restored, 0, restored.Length));
+            Assert.Equal(original, restored);
+            Assert.False(File.Exists(journalPath));
+            Assert.False(File.Exists(preparing));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(journalPath);
+            File.Delete(preparing);
+        }
+    }
+
+    /// <summary>Ignoring incomplete tails must not accept a checksum-valid conflicting complete record in the same generation.</summary>
+    [Fact]
+    public void Recover_ConflictingCompletePreparationRecord_PreservesBothJournals()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
+        string journalPath = path + ".jdw-journal";
+        string preparing = journalPath + ".preparing";
+        byte[] original = new byte[8192];
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using (var journal = PersistentRollbackJournal.Create(database, 2048))
+            {
+                journal.RecordBeforeWrite(2048, new byte[2048]);
+            }
+
+            byte[] published = File.ReadAllBytes(journalPath);
+            byte[] conflicting = published.AsSpan().ToArray();
+            int recordStart = conflicting.Length - 2088;
+            conflicting[recordStart + 8] ^= 0x5A;
+            SHA256.HashData(conflicting.AsSpan(recordStart, 2056)).CopyTo(conflicting, recordStart + 2056);
+            File.WriteAllBytes(preparing, conflicting);
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database));
+            Assert.Equal(published, File.ReadAllBytes(journalPath));
+            Assert.Equal(conflicting, File.ReadAllBytes(preparing));
+            database.Position = 0;
+            byte[] current = new byte[original.Length];
+            Assert.Equal(current.Length, database.Read(current, 0, current.Length));
+            Assert.Equal(original, current);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(journalPath);
+            File.Delete(preparing);
         }
     }
 

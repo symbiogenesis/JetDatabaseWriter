@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading;
@@ -18,9 +19,13 @@ using JetDatabaseWriter.Schema.Models;
 /// <summary>Compares stored leaf keys with independently scanned raw rows for explicitly supported scalar encodings.</summary>
 /// <remarks>
 /// The caller retains one immutable decrypted source and its verified definition throughout both scans.
-/// Only physically discoverable live same-owner row headers are covered, including their verified moved payloads.
-/// Every included row must appear exactly once; ignored all-null rows must not appear. Calculated, LVAL,
-/// complex and unsupported keys refuse. Date keys use their exact stored double without calendar conversion. Native constraints,
+/// Physical discovery covers live same-owner row headers, including verified moved payloads; optional active
+/// membership covers its exact independently agreed rows while retaining unassigned physical originals.
+/// Every included row must appear exactly once; ignored all-null rows must not appear. Complex keys compare
+/// only the stored four-byte parent reference, without following items. Calculated, LVAL and unsupported
+/// keys refuse. Intermediate keys must also match their independent rows, and complete
+/// observed leaf chains, routing, exact separators and bookmark targets must agree. Date keys use their exact
+/// stored double without calendar conversion. Native constraints,
 /// complete source ownership, recovered catalog identities and reclamation remain separate requirements.
 /// </remarks>
 internal static class CompactIndexRowAudit
@@ -89,11 +94,12 @@ internal static class CompactIndexRowAudit
     /// <param name="indexBudget">The independent raw-index scan's limits.</param>
     /// <param name="budget">Retained derived-key and scalar-decoding admission limits.</param>
     /// <param name="cancellationToken">Cancels both source scans, scalar derivation and final coverage inspection.</param>
+    /// <param name="activeRows">Optional exact source-bound active membership; all unassigned physical originals remain pinned and replayed.</param>
     /// <returns>Scoped leaf correspondence evidence without a global ownership or database-validity claim.</returns>
     /// <exception cref="JetNotSupportedException">A key type, collation or stored scalar value has no supported faithful encoding.</exception>
     /// <exception cref="JetCorruptDataException">Definition identity, raw rows or stored leaf correspondence are malformed or incomplete.</exception>
     /// <exception cref="JetLimitationException">Row, index, key-length or simultaneous storage admission is exhausted.</exception>
-    internal static async ValueTask<CompactIndexRowAuditResult> ValidateAsync(IPageSource pages, JetFormat format, long ownerTDefPage, TDefImage definition, int descriptorIndex, CompactRawRowBudget rowBudget, CompactIndexBudget indexBudget, CompactIndexRowBudget budget, CancellationToken cancellationToken)
+    internal static async ValueTask<CompactIndexRowAuditResult> ValidateAsync(IPageSource pages, JetFormat format, long ownerTDefPage, TDefImage definition, int descriptorIndex, CompactRawRowBudget rowBudget, CompactIndexBudget indexBudget, CompactIndexRowBudget budget, CancellationToken cancellationToken, CompactActiveTableRows? activeRows = null)
     {
         Guard.NotNull(pages, nameof(pages));
         Guard.NotNull(format, nameof(format));
@@ -116,6 +122,7 @@ internal static class CompactIndexRowAudit
         }
 
         TDefIndexDescriptor index = definition.RealIndexes[descriptorIndex];
+        IPageSource indexPages = activeRows?.IndexAuditPages(pages, definition, cancellationToken) ?? pages;
         long scratch = (64L * format.PageSize) + 65_536;
         if (scratch > budget.MaxWorkingBytes)
         {
@@ -129,12 +136,41 @@ internal static class CompactIndexRowAudit
         long excluded = 0;
         long working = scratch;
         long sourcePages = pages.PageCount;
+        bool terminal = false;
         try
         {
-            await CompactRawRowReader.ScanAsync(pages, format, ownerTDefPage, rowBudget, InspectRowAsync, cancellationToken).ConfigureAwait(false);
+            if (activeRows is null)
+            {
+                await CompactRawRowReader.ScanAsync(pages, format, ownerTDefPage, rowBudget, InspectRowAsync, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await activeRows.ScanIndexRowsAsync(InspectRowAsync, cancellationToken).ConfigureAwait(false);
+            }
+
             CheckGeometry();
-            await CompactIndexAudit.ScanAsync(pages, format, ownerTDefPage, index.RootPage, indexBudget, InspectIndexAsync, cancellationToken).ConfigureAwait(false);
+            await CompactIndexBookmarkAudit.ScanAsync(
+                indexPages,
+                format,
+                ownerTDefPage,
+                index.RootPage,
+                indexBudget,
+                new()
+                {
+                    Accounting = budget.Accounting,
+                    MaxPageReads = rowBudget.MaxPageReads,
+                    MaxDirectorySlots = rowBudget.MaxDirectorySlots,
+                    MaxOverflowHops = rowBudget.MaxOverflowHops,
+                    MaxWorkingBytes = budget.MaxWorkingBytes,
+                },
+                InspectIndexAsync,
+                cancellationToken).ConfigureAwait(false);
             CheckGeometry();
+            if (!terminal)
+            {
+                throw Corrupt(index.RootPage, "The stored index did not supply complete composed tree, routing, separator and bookmark evidence.");
+            }
+
             foreach (KeyValuePair<(long Page, int Row), KeyEvidence> row in rows)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -158,6 +194,7 @@ internal static class CompactIndexRowAudit
         void CheckGeometry()
         {
             pages.ThrowIfDisposedOrCancelled(cancellationToken);
+            activeRows?.CheckSource(pages, definition, cancellationToken);
             if (pages.PageCount != sourcePages || pages.PageSize != format.PageSize)
             {
                 throw Corrupt(ownerTDefPage, "The scalar-key source geometry changed between independent row and index scans.");
@@ -188,7 +225,7 @@ internal static class CompactIndexRowAudit
             IDisposable? reservation = budget.Accounting?.ReserveWorkingBytes(storage, location.PageNumber);
             try
             {
-                if (!rows.TryAdd((location.PageNumber, location.RowIndex), new(key, reservation)))
+                if (!rows.TryAdd((location.PageNumber, location.RowIndex), new(location, key, reservation)))
                 {
                     throw Corrupt(location.PageNumber, "Independent row discovery repeated a header bookmark.");
                 }
@@ -205,7 +242,15 @@ internal static class CompactIndexRowAudit
         ValueTask InspectIndexAsync(CompactIndexRecord record, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
-            if (record.Kind != "leaf-entry")
+            if (record.Kind == "index-terminal")
+            {
+                terminal = record.NavigableGraphAcyclic && record.EntryEdgeFencesValidated
+                    && record.ObservedLeafChainOrdered && record.ObservedKeyRoutingValidated
+                    && record.ObservedChildMaximumSeparatorsValidated && record.BookmarkTargetsValidated;
+                return default;
+            }
+
+            if (record.Kind is not ("leaf-entry" or "intermediate-entry"))
             {
                 return default;
             }
@@ -213,21 +258,31 @@ internal static class CompactIndexRowAudit
             budget.Accounting?.Charge(CompactDiscoveryCharge.GraphSteps, 1, record.PageNumber);
             if (!rows.TryGetValue((record.TargetPageNumber!.Value, record.TargetRowIndex!.Value), out KeyEvidence? row))
             {
-                throw Corrupt(record.PageNumber, "A stored leaf entry names an independently undiscovered or excluded row.");
+                throw Corrupt(record.PageNumber, "A stored index entry names an independently undiscovered or excluded row.");
             }
 
-            if (row.Observed)
+            if (record.Kind == "leaf-entry" && row.Observed)
             {
                 throw Corrupt(record.PageNumber, "A stored leaf entry repeats a row bookmark.");
             }
 
             if (!record.CanonicalKey!.AsSpan().SequenceEqual(row.Key))
             {
-                throw Corrupt(record.PageNumber, $"A stored leaf key disagrees with independently decoded fields (owner {ownerTDefPage}, root {index.RootPage}, descriptor {descriptorIndex}, bookmark {record.TargetPageNumber}/{record.TargetRowIndex}, key lengths {record.CanonicalKey!.Length}/{row.Key.Length}).");
+                throw Corrupt(record.PageNumber, $"A stored index key disagrees with independently decoded fields (owner {ownerTDefPage}, root {index.RootPage}, descriptor {descriptorIndex}, bookmark {record.TargetPageNumber}/{record.TargetRowIndex}, key lengths {record.CanonicalKey!.Length}/{row.Key.Length}).");
             }
 
-            row.Observed = true;
-            indexedRows++;
+            if (!record.BookmarkTargetValidated || record.BookmarkDataPageNumber != row.Location.DataPageNumber
+                || record.BookmarkDataRowIndex != row.Location.DataRowIndex)
+            {
+                throw Corrupt(record.PageNumber, "A stored index bookmark resolves to a different payload than its independently scanned row.");
+            }
+
+            if (record.Kind == "leaf-entry")
+            {
+                row.Observed = true;
+                indexedRows++;
+            }
+
             return default;
         }
     }
@@ -297,7 +352,7 @@ internal static class CompactIndexRowAudit
         => type is ColumnType.ByteType or ColumnType.IntegerType or ColumnType.LongIntegerType
             or ColumnType.MoneyType or ColumnType.GuidType or ColumnType.NumericType or ColumnType.BigIntType
             or ColumnType.TextType or ColumnType.BinaryType or ColumnType.DateTimeExtendedType
-            or ColumnType.FloatType or ColumnType.DoubleType or ColumnType.DateTimeType;
+            or ColumnType.FloatType or ColumnType.DoubleType or ColumnType.DateTimeType or ColumnType.ComplexType;
 
     private static object? DecodeField(JetFormat format, CompactRawField field)
     {
@@ -309,6 +364,22 @@ internal static class CompactIndexRowAudit
         if (field.Column.Type == ColumnType.DateTimeType)
         {
             return JetTypeInfo.ReadDoubleLittleEndian(field.RawBytes.Span);
+        }
+
+        if (field.Column.Type == ColumnType.ComplexType)
+        {
+            if (field.RawBytes.Length != sizeof(int))
+            {
+                throw Corrupt(field.Location.PageNumber, "An indexed complex parent reference does not occupy exactly four stored bytes.");
+            }
+
+            int reference = BinaryPrimitives.ReadInt32LittleEndian(field.RawBytes.Span);
+            if (reference <= 0)
+            {
+                throw Corrupt(field.Location.PageNumber, "An indexed assigned complex parent reference is not positive.");
+            }
+
+            return reference;
         }
 
         if (field.Column.Type is ColumnType.BinaryType or ColumnType.DateTimeExtendedType)
@@ -351,7 +422,7 @@ internal static class CompactIndexRowAudit
             return text;
         }
 
-        bool compressed = !field.Column.IsFixed && bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE;
+        bool compressed = field.Column.IsCompressedUnicode && !field.Column.IsFixed && bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE;
         if (!compressed)
         {
             if (bytes.Length % 2 != 0)
@@ -388,8 +459,10 @@ internal static class CompactIndexRowAudit
     private static JetNotSupportedException Unsupported(long page, string reason)
         => new(JetErrorCode.FeatureNotSupported, reason, new JetErrorInfo { PageNumber = page, Reason = reason });
 
-    private sealed class KeyEvidence(byte[] key, IDisposable? reservation)
+    private sealed class KeyEvidence(RowLocation location, byte[] key, IDisposable? reservation)
     {
+        internal RowLocation Location { get; } = location;
+
         internal byte[] Key { get; } = key;
 
         internal IDisposable? Reservation { get; } = reservation;

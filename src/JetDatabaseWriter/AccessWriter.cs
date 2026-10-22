@@ -576,15 +576,47 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     private static void RemoveAbandonedLockFile(string databasePath)
     {
+        if (RecoverableWriterLock.Recover(databasePath))
+        {
+            return;
+        }
+
         string lockPath = LockFileSlotWriter.GetLockFilePath(databasePath);
         if (!File.Exists(lockPath))
         {
             return;
         }
 
-        // Successful recovery establishes journal ownership. Exclusive opening
-        // additionally proves the old lock file has no surviving holders.
-        using FileStream abandoned = new(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.DeleteOnClose);
+        // A journal identifies database bytes, not an unrelated lock generation.
+        // Without a receipt, only a completely vacant lock can be removed.
+        using FileStream abandoned = new(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete);
+        if (abandoned.Length > LockFileSlotWriter.MaxSlots * LockFileSlotWriter.SlotSize)
+        {
+            throw new JetLockException(JetErrorCode.DatabaseInUse, "The existing lock has no matching writer-ownership receipt.");
+        }
+
+        byte[] buffer = new byte[LockFileSlotWriter.SlotSize];
+        long remaining = abandoned.Length;
+        while (remaining > 0)
+        {
+            int count = abandoned.Read(buffer, 0, checked((int)Math.Min(buffer.Length, remaining)));
+            if (count == 0)
+            {
+                throw new IOException("The existing lock changed during ownership validation.");
+            }
+
+            foreach (byte value in buffer.AsSpan(0, count))
+            {
+                if (value != 0)
+                {
+                    throw new JetLockException(JetErrorCode.DatabaseInUse, "The existing lock has no matching writer-ownership receipt.");
+                }
+            }
+
+            remaining -= count;
+        }
+
+        File.Delete(lockPath);
     }
 
     private static FileStream CreateStream(string path) =>

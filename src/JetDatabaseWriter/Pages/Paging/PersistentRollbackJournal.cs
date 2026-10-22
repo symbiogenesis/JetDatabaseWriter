@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Transactions;
 
 /// <summary>Persists raw rollback bytes and validated intended writes with bounded working buffers.</summary>
 /// <remarks>Preparation hashes every original page; raw before-images are retained only for overwritten or removed pages. File flushes do not establish directory-entry power-loss durability.</remarks>
@@ -52,13 +53,12 @@ internal sealed class PersistentRollbackJournal : IDisposable
         ValidateLength(length);
         string finalPath = JournalPath(database.Name);
         string stagingPath = finalPath + ".preparing";
-        if (File.Exists(finalPath))
+        if (File.Exists(finalPath) || File.Exists(stagingPath))
         {
             throw new JetOperationException(JetErrorCode.HotJournalConflict, "An existing recovery journal must be recovered before starting another transaction.");
         }
 
-        // The caller holds exclusive database ownership. Staging bytes never authorize database writes.
-        File.Delete(stagingPath);
+        // Namespace loss can leave preparation as the only recovery evidence. Never replace it blindly.
         var journal = new FileStream(stagingPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
         bool promoted = false;
         try
@@ -68,6 +68,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(8), pageSize);
             BinaryPrimitives.WriteInt64LittleEndian(header.AsSpan(16), length);
             Identity(database.Name).CopyTo(header, 24);
+            RandomNumberGenerator.Fill(header.AsSpan(88, 8));
             journal.Write(header, 0, header.Length);
             using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
             {
@@ -121,14 +122,14 @@ internal sealed class PersistentRollbackJournal : IDisposable
         }
     }
 
-    /// <summary>Refuses independent readers while a sidecar exists.</summary>
+    /// <summary>Refuses independent readers while recovery or writer-ownership evidence exists.</summary>
     /// <param name="database">The opened database.</param>
-    /// <exception cref="JetOperationException">A recovery journal exists.</exception>
+    /// <exception cref="JetOperationException">Recovery or writer-ownership evidence exists.</exception>
     internal static void RejectHotJournal(FileStream database)
     {
-        if (File.Exists(JournalPath(database.Name)))
+        if (File.Exists(JournalPath(database.Name)) || File.Exists(JournalPath(database.Name) + ".preparing") || File.Exists(RecoverableWriterLock.ReceiptPath(database.Name)))
         {
-            throw new JetOperationException(JetErrorCode.HotJournalConflict, "The database has a transaction recovery journal; open it with AccessWriter to recover first.");
+            throw new JetOperationException(JetErrorCode.HotJournalConflict, "The database has transaction recovery or writer-ownership evidence; open it with AccessWriter to recover first.");
         }
     }
 
@@ -139,13 +140,26 @@ internal sealed class PersistentRollbackJournal : IDisposable
     internal static void Recover(FileStream database, Action? beforeCleanup = null)
     {
         string path = JournalPath(database.Name);
+        string preparation = path + ".preparing";
         if (!File.Exists(path))
         {
-            return;
+            if (!File.Exists(preparation))
+            {
+                return;
+            }
+
+            path = preparation;
         }
 
+        bool matchingPreparation = false;
         using (var journal = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
+            if (path != preparation && File.Exists(preparation))
+            {
+                ValidatePreparationCopy(database.Name, journal, preparation);
+                matchingPreparation = true;
+            }
+
             JournalState state = ValidateJournal(database, journal);
             if (!state.Committed)
             {
@@ -171,7 +185,43 @@ internal sealed class PersistentRollbackJournal : IDisposable
         }
 
         beforeCleanup?.Invoke();
+        if (matchingPreparation)
+        {
+            File.Delete(preparation);
+        }
+
         File.Delete(path);
+    }
+
+    private static void ValidatePreparationCopy(string databasePath, FileStream journal, string preparation)
+    {
+        using var staged = new FileStream(preparation, FileMode.Open, FileAccess.Read, FileShare.None);
+        (int pageSize, long originalLength) = ValidateManifest(databasePath, staged);
+        long start = RecordStart(pageSize, originalLength);
+        int recordSize = pageSize + 40;
+        long completeEnd = start + ((staged.Length - start) / recordSize * recordSize);
+        if (completeEnd > journal.Length)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The preparation journal conflicts with the published recovery generation.");
+        }
+
+        byte[] expected = new byte[8192];
+        byte[] actual = new byte[8192];
+
+        // An incomplete tail authorizes no database write. Replay can replace it
+        // with a marker or decision before cleanup fails; compare only complete evidence.
+        for (long offset = 0; offset < completeEnd;)
+        {
+            int count = checked((int)Math.Min(expected.Length, completeEnd - offset));
+            Read(staged, offset, expected, count);
+            Read(journal, offset, actual, count);
+            if (!expected.AsSpan(0, count).SequenceEqual(actual.AsSpan(0, count)))
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The preparation journal conflicts with the published recovery generation.");
+            }
+
+            offset += count;
+        }
     }
 
     private static (int PageSize, long OriginalLength) ValidateManifest(string databasePath, FileStream journal)

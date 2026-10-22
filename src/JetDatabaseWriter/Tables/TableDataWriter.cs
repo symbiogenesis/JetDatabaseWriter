@@ -728,14 +728,9 @@ internal sealed class TableDataWriter(
     /// <param name="tableDef">The table definition.</param>
     /// <param name="row">The finished row, after defaults, in table-column order.</param>
     /// <param name="fixedTextBytes">Unassigned fixed Text slots copied without re-encoding.</param>
-    /// <exception cref="JetLimitationException">A Text or Memo value holds a character the database's code page does not have.</exception>
+    /// <exception cref="JetLimitationException">A Text or Memo value has no faithful supported storage encoding.</exception>
     private void ThrowIfTextNotStorable(string tableName, TableDef tableDef, object[] row, IReadOnlyDictionary<int, byte[]>? fixedTextBytes = null)
     {
-        if (!format.IsJet3)
-        {
-            return;
-        }
-
         for (int i = 0; i < tableDef.Columns.Count && i < row.Length; i++)
         {
             ColumnInfo column = tableDef.Columns[i];
@@ -745,8 +740,22 @@ internal sealed class TableDataWriter(
                 continue;
             }
 
-            if (Convert.ToString(row[i], CultureInfo.InvariantCulture) is { } text
-                && format.DescribeUnstorableCharacter(text) is { } character)
+            if (!format.IsJet3 && (column.IsFixed || JetTypeInfo.ResolveValueType(column) != ColumnType.TextType || (!column.IsCalculated && !column.IsCompressedUnicode)))
+            {
+                continue;
+            }
+
+            if (Convert.ToString(row[i], CultureInfo.InvariantCulture) is not { } text)
+            {
+                continue;
+            }
+
+            if (!format.IsJet3 && text.Length > 0 && text[0] == '\uFEFF')
+            {
+                throw new JetLimitationException(JetErrorCode.FeatureNotSupported, $"Leading U+FEFF in calculated or compressed Text column '{column.Name}' of table '{tableName}' has no verified native-safe representation.", new JetErrorInfo { TableName = tableName, ColumnName = column.Name });
+            }
+
+            if (format.DescribeUnstorableCharacter(text) is { } character)
             {
                 throw new JetLimitationException(JetErrorCode.FeatureNotSupported, format.UnstorableTextMessage($"The value for column '{column.Name}' of table '{tableName}'", character), new JetErrorInfo { TableName = tableName, ColumnName = column.Name, Reason = "Unrepresentable character in database code page" });
             }

@@ -70,6 +70,26 @@ public sealed class CompactIndexRowAuditTests
     }
 
     [Theory]
+    [InlineData("separator-key")]
+    [InlineData("separator-bookmark")]
+    [InlineData("disconnected-leaves")]
+    public async Task MatchingLeafRows_RequireComposedRoutingSeparatorAndChainEvidence(string damage)
+    {
+        (MemoryPages pages, JetFormat format, TDefImage image) = Create(DatabaseFormat.Jet4Mdb);
+        IndexEntry separator = damage == "separator-key" ? Entry(40, 2) : Entry(30, 1);
+        pages.Images[3] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(separator, 6)], 0, 0, 0);
+        pages.Images[6] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [Entry(10, 0), Entry(20, 1), Entry(30, 2)], enablePrefixCompression: false);
+        if (damage == "disconnected-leaves")
+        {
+            pages.Images[3] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(Entry(20, 1), 6)], 0, 0, 7);
+            pages.Images[6] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [Entry(10, 0), Entry(20, 1)], enablePrefixCompression: false);
+            pages.Images[7] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [Entry(30, 2)], enablePrefixCompression: false);
+        }
+
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CompactIndexRowAudit.ValidateAsync(pages, format, 2, image, 0, new(), new(), new(), Ct));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task IgnoreNulls_ExcludesOnlyAllNullCompositeRows(bool ignoreNulls)
@@ -101,7 +121,7 @@ public sealed class CompactIndexRowAuditTests
     [Theory]
     [InlineData(ColumnType.BooleanType)]
     [InlineData(ColumnType.MemoType)]
-    [InlineData(ColumnType.ComplexType)]
+    [InlineData(ColumnType.OleType)]
     public async Task UnsupportedKeyTypes_RefuseBeforeReading(ColumnType type)
     {
         var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
@@ -109,6 +129,38 @@ public sealed class CompactIndexRowAuditTests
         var pages = new MemoryPages(format.PageSize, []);
         Assert.False(CompactIndexRowAudit.SupportsDescriptor(image, 0));
         await Assert.ThrowsAsync<JetNotSupportedException>(async () => await CompactIndexRowAudit.ValidateAsync(pages, format, 2, image, 0, new(), new(), new(), Ct));
+    }
+
+    [Fact]
+    public async Task ComplexReferenceKeys_PreserveRawParentIdentitiesWithoutFollowingItems()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
+        TDefImage image = Image([new() { Name = "Items", ColNum = 0, Type = ColumnType.ComplexType, Flags = 1, Size = 4 }], [new(0, true)], 0);
+        var pages = new MemoryPages(format.PageSize, new()
+        {
+            [3] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [Entry(10, 0), Entry(20, 1), Entry(30, 2)], enablePrefixCompression: false),
+            [4] = Data(format, image, [[10], [20], [30]]),
+        });
+        Assert.True(CompactIndexRowAudit.SupportsDescriptor(image, 0));
+        CompactIndexRowAuditResult result = await CompactIndexRowAudit.ValidateAsync(pages, format, 2, image, 0, new(), new(), new(), Ct);
+        Assert.Equal(3, result.IndexedRows);
+        Assert.True(result.StoredKeysMatchRows);
+        Assert.False(result.CompleteSourceOwnershipProven);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task ComplexReferenceKeys_RejectMatchingNonpositiveAssignedIdentities(int reference)
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
+        TDefImage image = Image([new() { Name = "Items", ColNum = 0, Type = ColumnType.ComplexType, Flags = 1, Size = 4 }], [new(0, true)], 0);
+        var pages = new MemoryPages(format.PageSize, new()
+        {
+            [3] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [Entry(reference, 0)], enablePrefixCompression: false),
+            [4] = Data(format, image, [[reference]]),
+        });
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CompactIndexRowAudit.ValidateAsync(pages, format, 2, image, 0, new(), new(), new(), Ct));
     }
 
     [Fact]
@@ -136,7 +188,7 @@ public sealed class CompactIndexRowAuditTests
     public async Task TextKeys_RefuseIncompleteCodeUnitsInsteadOfComparingLossyEmptyText(bool compressed)
     {
         var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
-        TDefImage image = Image([new() { Name = "Text", ColNum = 0, Type = ColumnType.TextType, Size = 16 }], [new(0, true)], 0);
+        TDefImage image = Image([new() { Name = "Text", ColNum = 0, Type = ColumnType.TextType, Size = 16, ExtraFlags = compressed ? Constants.CompressedUnicodeExtFlagMask : (byte)0 }], [new(0, true)], 0);
         TDefImage binary = Image([new() { Name = "Text", ColNum = 0, Type = ColumnType.BinaryType, Size = 16 }], [new(0, true)], 0);
         byte[] key = IndexKeyEncoder.EncodeTextEntry(image.Columns[0].TextSortOrder, string.Empty);
         byte[] storedText = compressed ? [0xFF, 0xFE, 0, 0x41] : "A"u8.ToArray();
@@ -146,6 +198,25 @@ public sealed class CompactIndexRowAuditTests
             [4] = Data(format, binary, [[storedText]]),
         });
         await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CompactIndexRowAudit.ValidateAsync(pages, format, 2, image, 0, new(), new(), new(), Ct));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task UncompressedText_LeadingByteOrderMarkRemainsAStoredCodeUnit(DatabaseFormat kind)
+    {
+        var format = JetFormat.ForNewDatabase(kind);
+        TDefImage image = Image([new() { Name = "Text", ColNum = 0, Type = ColumnType.TextType, Size = 16 }], [new(0, true)], 0);
+        TDefImage binary = Image([new() { Name = "Text", ColNum = 0, Type = ColumnType.BinaryType, Size = 16 }], [new(0, true)], 0);
+        byte[] key = IndexKeyEncoder.EncodeTextEntry(image.Columns[0].TextSortOrder, "\uFEFFA");
+        var pages = new MemoryPages(format.PageSize, new()
+        {
+            [3] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new(key, 4, 0)], enablePrefixCompression: false),
+            [4] = Data(format, binary, [[new byte[] { 0xFF, 0xFE, 0x41, 0 }]]),
+        });
+        CompactIndexRowAuditResult result = await CompactIndexRowAudit.ValidateAsync(pages, format, 2, image, 0, new(), new(), new(), Ct);
+        Assert.True(result.StoredKeysMatchRows);
+        Assert.True(result.ObservedTreeAndBookmarksValidated);
     }
 
     [Theory]

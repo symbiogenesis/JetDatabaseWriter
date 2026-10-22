@@ -12,8 +12,10 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Maintenance;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
@@ -175,6 +177,49 @@ public sealed class CompactPinnedDatabaseBuilderTests
                 Ct));
             Assert.Contains((CompactPinnedDatabaseFile.Destination, 0L), fixture.Opened);
         });
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public Task ActiveRows_RefuseSecondarySeparatorThatDoesNotDescribeItsRow(DatabaseFormat kind)
+        => WithFixtureAsync(
+            kind,
+            async fixture =>
+        {
+            long owner = Assert.IsType<CatalogEntry>(await fixture.Source.GetCatalogEntryAsync("Items", Ct)).TDefPage;
+            int slot = fixture.Tables.FindIndex(table => table.Owner == owner);
+            CompactPinnedDatabaseBuildTable table = fixture.Tables[slot];
+            int primary = table.Definition.LogicalIndexes.Single(static index => index.Name == "PrimaryKey").Entry.IndexNum2;
+            int secondary = table.Definition.LogicalIndexes.Single(static index => index.Name == "Secondary").Entry.IndexNum2;
+            fixture.Tables[slot] = table with { ActiveIndexOrdinal = primary };
+            TDefIndexDescriptor descriptor = table.Definition.RealIndexes[secondary];
+            List<IndexEntry> leaves = await IndexLeafChain.ReadEntriesAsync(fixture.Source.Database, owner, descriptor.RootPage, Ct);
+            Assert.Equal(3, leaves.Count);
+            JetFormat format = fixture.Source.Database.Format;
+            byte[] original = fixture.Original;
+            byte[] damaged = new byte[original.Length + format.PageSize];
+            original.CopyTo(damaged, 0);
+            long leafPage = original.Length / format.PageSize;
+            original.AsSpan(checked((int)descriptor.RootPage * format.PageSize), format.PageSize).CopyTo(damaged.AsSpan(original.Length));
+            IndexEntry maximum = leaves[^1];
+            IndexEntry wrong = new(maximum.Key, leaves[0].DataPage, leaves[0].DataRow);
+            byte[] root = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, checked((int)owner), [new(wrong, checked((int)leafPage))], 0, 0, 0);
+            root.CopyTo(damaged, checked((int)descriptor.RootPage * format.PageSize));
+            byte[] unchanged = damaged.ToArray();
+            await using var sourceBytes = new MemoryStream(damaged, writable: false);
+            await using AccessReader source = await TestDatabase.OpenReaderAsync(sourceBytes, cancellationToken: Ct);
+            await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CompactPinnedDatabaseBuilder.BuildAndValidateAsync(
+                source.Database.Pages,
+                format,
+                fixture.Tables,
+                new(fixture.CreateAsync, fixture.OpenAsync, static (_, _) => ValueTask.CompletedTask),
+                new(),
+                Ct));
+            Assert.DoesNotContain((CompactPinnedDatabaseFile.Rows, owner), fixture.Created);
+            Assert.Equal(unchanged, sourceBytes.ToArray());
+        },
+            secondaryIndex: true);
 
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
@@ -471,7 +516,7 @@ public sealed class CompactPinnedDatabaseBuilderTests
     private static ValueTask<CompactPinnedDatabaseBuilderResult> BuildAsync(Fixture fixture, CompactPinnedDatabaseBuilderBudget budget, CancellationToken? token = null)
         => CompactPinnedDatabaseBuilder.BuildAndValidateAsync(fixture.Source.Database.Pages, fixture.Source.Database.Format, fixture.Tables, new(fixture.CreateAsync, fixture.OpenAsync), budget, token ?? Ct);
 
-    private static async Task WithFixtureAsync(DatabaseFormat kind, Func<Fixture, Task> action, bool nativeJet3 = false)
+    private static async Task WithFixtureAsync(DatabaseFormat kind, Func<Fixture, Task> action, bool nativeJet3 = false, bool secondaryIndex = false)
     {
         string directory = Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.CompactBuilder." + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -487,8 +532,16 @@ public sealed class CompactPinnedDatabaseBuilderTests
                 ? await AccessWriter.OpenAsync(original, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct)
                 : await AccessWriter.CreateDatabaseAsync(original, kind, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))
             {
-                await writer.CreateTableAsync("Items", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Memo", typeof(string), 20_000)], Ct);
-                await writer.InsertRowsAsync("Items", Enumerable.Range(0, 3).Select(id => new object?[] { id, new string((char)('a' + id), 3000) }), Ct);
+                if (secondaryIndex)
+                {
+                    await writer.CreateTableAsync("Items", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Memo", typeof(string), 20_000), new("Other", typeof(int))], [new IndexDefinition("Secondary", "Other")], Ct);
+                    await writer.InsertRowsAsync("Items", Enumerable.Range(0, 3).Select(id => new object?[] { id, new string((char)('a' + id), 3000), id * 10 }), Ct);
+                }
+                else
+                {
+                    await writer.CreateTableAsync("Items", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Memo", typeof(string), 20_000)], Ct);
+                    await writer.InsertRowsAsync("Items", Enumerable.Range(0, 3).Select(id => new object?[] { id, new string((char)('a' + id), 3000) }), Ct);
+                }
             }
 
             byte[] originalBytes = original.ToArray();

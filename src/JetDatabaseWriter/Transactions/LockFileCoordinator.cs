@@ -24,9 +24,11 @@ using JetDatabaseWriter.Infrastructure;
 /// <param name="databasePath">Path to the database whose sibling lock-file should be maintained. Empty disables the coordinator.</param>
 /// <param name="ownerTypeName">Display name of the owning type (e.g. <c>nameof(AccessReader)</c>); used in diagnostics.</param>
 /// <param name="settings">Lock-file behaviour switches and identity strings. See <see cref="LockFileSettings"/>.</param>
-internal sealed class LockFileCoordinator(string databasePath, string ownerTypeName, LockFileSettings settings) : IDisposable
+/// <param name="recoverableWriter">Whether strict writer locks require a persistent generation receipt.</param>
+internal sealed class LockFileCoordinator(string databasePath, string ownerTypeName, LockFileSettings settings, bool recoverableWriter = false) : IDisposable
 {
     private LockFileSlotWriter? slot;
+    private RecoverableWriterLock? writerLock;
 
     /// <summary>Creates a coordinator wired up from <see cref="AccessReaderOptions"/>.</summary>
     /// <param name="databasePath">The database path.</param>
@@ -49,7 +51,8 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
         return new LockFileCoordinator(
             databasePath,
             nameof(AccessWriter),
-            options.CreateLockFileSettings(options.RespectExistingLockFile));
+            options.CreateLockFileSettings(options.RespectExistingLockFile),
+            recoverableWriter: true);
     }
 
     /// <summary>
@@ -78,8 +81,14 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
     /// </summary>
     public void Acquire()
     {
-        if (!this.IsEnabled || this.slot is not null)
+        if (!this.IsEnabled || this.slot is not null || this.writerLock is not null)
         {
+            return;
+        }
+
+        if (recoverableWriter && settings.RespectExisting)
+        {
+            this.writerLock = RecoverableWriterLock.Acquire(databasePath, settings.MachineName, settings.UserName);
             return;
         }
 
@@ -173,6 +182,8 @@ internal sealed class LockFileCoordinator(string databasePath, string ownerTypeN
     /// <inheritdoc/>
     public void Dispose()
     {
+        this.writerLock?.Dispose();
+        this.writerLock = null;
         this.slot?.Dispose();
         this.slot = null;
     }

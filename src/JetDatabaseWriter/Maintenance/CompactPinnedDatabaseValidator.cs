@@ -160,6 +160,7 @@ internal static class CompactPinnedDatabaseValidator
                                         new() { Work = activeBudget.Work, Accounting = session.Discovery.Accounting, MaxActiveRows = activeBudget.MaxActiveRows, MaxKeyBytes = activeBudget.MaxKeyBytes },
                                         observeUnassignedRow!,
                                         tableToken).ConfigureAwait(false);
+                                    _ = await active.ValidateIndexesAsync(tableToken).ConfigureAwait(false);
                                     references[index] = await session.Discovery.WithActiveTableRowsAsync(
                                         active,
                                         table.Definition,

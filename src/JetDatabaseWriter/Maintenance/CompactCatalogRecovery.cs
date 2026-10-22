@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading;
@@ -57,28 +58,24 @@ internal static class CompactCatalogRecovery
         pages.ThrowIfDisposedOrCancelled(cancellationToken);
         var result = new Result();
         ColumnInfo? idColumn = catalog.Definition.FindColumn("Id");
-        TDefIndexDescriptor? identityIndex = null;
+        bool idDeclared = false;
         if (idColumn?.Type == ColumnType.LongIntegerType)
         {
             foreach (TDefIndexDescriptor index in catalog.RealIndexes)
             {
                 if (index.RootPage != 0 && index.Columns.Count == 1 && index.Columns[0].ColNum == idColumn.ColNum)
                 {
-                    identityIndex = index;
-                    break;
+                    idDeclared = true;
+                    Result observed = await ScanAndMergeAsync(index, [idColumn]).ConfigureAwait(false);
+                    if (observed.IndexValidated && !observed.HasUnresolvedTargets)
+                    {
+                        return result;
+                    }
                 }
             }
         }
 
-        if (identityIndex is not null && idColumn is not null)
-        {
-            result = await ScanIndexAsync(pages, format, catalog, decoder, budget, physicalRows, identityIndex, [idColumn], maxReferences, maxDirectorySlots, maxWorkingBytes, null, cancellationToken).ConfigureAwait(false);
-            if (result.IndexValidated && !result.HasUnresolvedTargets)
-            {
-                return result;
-            }
-        }
-        else
+        if (!idDeclared)
         {
             result.Diagnostics.Add((2, "No readable catalog Id index is declared; recovery requires another independently audited catalog key. All storage remains pinned."));
         }
@@ -110,33 +107,46 @@ internal static class CompactCatalogRecovery
                 continue;
             }
 
+            Result observed = await ScanAndMergeAsync(index, [parentColumn, nameColumn]).ConfigureAwait(false);
+            if (observed.IndexValidated && !observed.HasUnresolvedTargets)
+            {
+                break;
+            }
+        }
+
+        return result;
+
+        async ValueTask<Result> ScanAndMergeAsync(TDefIndexDescriptor index, IReadOnlyList<ColumnInfo> columns)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            budget.Accounting?.Charge(CompactDiscoveryCharge.GraphSteps, 1, index.RootPage);
             var knownRows = new List<CatalogRow>(physicalRows);
             foreach (RecoveredRow evidence in result.Rows)
             {
                 knownRows.Add(evidence.Identity);
             }
 
-            Result fallback = await ScanIndexAsync(pages, format, catalog, decoder, budget, knownRows, index, [parentColumn, nameColumn], maxReferences - result.References, maxDirectorySlots - result.DirectorySlots - result.OverflowHops, maxWorkingBytes, result, cancellationToken).ConfigureAwait(false);
-            if (result.Diagnostics.Count > budget.MaxDiagnostics - fallback.Diagnostics.Count)
+            Result observed = await ScanIndexAsync(pages, format, catalog, decoder, budget, knownRows, index, columns, maxReferences - result.References, maxDirectorySlots - result.DirectorySlots - result.OverflowHops, maxWorkingBytes, result, cancellationToken).ConfigureAwait(false);
+            if (result.Diagnostics.Count > budget.MaxDiagnostics - observed.Diagnostics.Count)
             {
                 throw Limit(index.RootPage, "Catalog recovery uncertainty exceeds MaxDiagnostics.");
             }
 
-            _ = result.Rows.RemoveAll(row => fallback.ConflictingIds.Contains(row.Identity.Id)
-                || fallback.ConflictingBookmarks.Contains((row.Identity.PageNumber, row.Identity.RowIndex))
-                || fallback.ConflictingPayloads.Contains((row.Location.DataPageNumber, row.Location.RowStart)));
-            result.Rows.AddRange(fallback.Rows);
-            result.Diagnostics.AddRange(fallback.Diagnostics);
-            result.References += fallback.References;
-            result.DirectorySlots += fallback.DirectorySlots;
-            result.OverflowHops += fallback.OverflowHops;
-            break;
+            _ = result.Rows.RemoveAll(row => observed.ConflictingIds.Contains(row.Identity.Id)
+                || observed.ConflictingBookmarks.Contains((row.Identity.PageNumber, row.Identity.RowIndex))
+                || observed.ConflictingPayloads.Contains((row.Location.DataPageNumber, row.Location.RowStart)));
+            result.Rows.AddRange(observed.Rows);
+            result.Diagnostics.AddRange(observed.Diagnostics);
+            result.References += observed.References;
+            result.DirectorySlots += observed.DirectorySlots;
+            result.OverflowHops += observed.OverflowHops;
+            result.IndexValidated |= observed.IndexValidated;
+            result.HasUnresolvedTargets |= observed.HasUnresolvedTargets;
+            return observed;
         }
-
-        return result;
     }
 
-    private static async ValueTask<Result> ScanIndexAsync(IPageSource pages, JetFormat format, TDefImage catalog, CatalogRowReader decoder, CompactTraversalBudget budget, IReadOnlyList<CatalogRow> physicalRows, TDefIndexDescriptor identityIndex, IReadOnlyList<ColumnInfo> keyColumns, long maxReferences, long maxDirectorySlots, long maxWorkingBytes, Result? previous, CancellationToken cancellationToken)
+    private static async ValueTask<Result> ScanIndexAsync(IPageSource pages, JetFormat format, TDefImage catalog, CatalogRowReader decoder, CompactTraversalBudget budget, List<CatalogRow> physicalRows, TDefIndexDescriptor identityIndex, IReadOnlyList<ColumnInfo> keyColumns, long maxReferences, long maxDirectorySlots, long maxWorkingBytes, Result? previous, CancellationToken cancellationToken)
     {
         var result = new Result
         {
@@ -245,7 +255,7 @@ internal static class CompactCatalogRecovery
             bool low = unit is >= 0xDC00 and <= 0xDFFF;
             if (pendingSurrogate != low)
             {
-                throw Corrupt(page, "The secondary catalog identity Name contains an unpaired Unicode surrogate.");
+                throw Corrupt(page, "The stored catalog identity Name contains an unpaired Unicode surrogate.");
             }
 
             pendingSurrogate = unit is >= 0xD800 and <= 0xDBFF;
@@ -449,7 +459,7 @@ internal static class CompactCatalogRecovery
                         this.ValidatePayloadHeader(location);
                     }
 
-                    CatalogRow identity = decoder.DecodeRow(catalog.Definition, page, location, 64);
+                    CatalogRow identity = await this.ReadIdentityAsync(page, location, cancellationToken).ConfigureAwait(false);
                     if (result.ConflictingIds.Contains(identity.Id))
                     {
                         throw Corrupt(number, "A previously conflicting stored catalog Id cannot be accepted through another index.");
@@ -508,7 +518,6 @@ internal static class CompactCatalogRecovery
                 throw Corrupt(location.DataPageNumber, "A secondary catalog identity key requires an intact signed ParentId value.");
             }
 
-            this.ValidateIdentityName(identity, page, location);
             byte[] parentKey = IndexKeyEncoder.EncodeColumnEntry(format, keyColumns[0], parent, index!.Columns[0].Ascending);
             byte[] nameKey = IndexKeyEncoder.EncodeColumnEntry(format, keyColumns[1], identity.Name, index.Columns[1].Ascending);
             byte[] resultKey = new byte[parentKey.Length + nameKey.Length];
@@ -517,14 +526,104 @@ internal static class CompactCatalogRecovery
             return resultKey;
         }
 
-        private void ValidateIdentityName(CatalogRow identity, byte[] page, RowLocation location)
+        private async ValueTask<CatalogRow> ReadIdentityAsync(byte[] page, RowLocation location, CancellationToken cancellationToken)
+        {
+            CompactRawField id = default;
+            CompactRawField parent = default;
+            CompactRawField name = default;
+            CompactRawField type = default;
+            CompactRawField flags = default;
+            await CompactRawFieldReader.ScanAsync(
+                format,
+                catalog,
+                location,
+                page.AsMemory(location.RowStart, location.RowSize),
+                (field, token) =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    budget.Accounting?.Charge(CompactDiscoveryCharge.Fields, 1, location.DataPageNumber);
+                    if (field.Column.Name.Equals("Id", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AssignUnique(ref id, field);
+                    }
+                    else if (field.Column.Name.Equals("ParentId", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AssignUnique(ref parent, field);
+                    }
+                    else if (field.Column.Name.Equals("Name", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AssignUnique(ref name, field);
+                    }
+                    else if (field.Column.Name.Equals("Type", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AssignUnique(ref type, field);
+                    }
+                    else if (field.Column.Name.Equals("Flags", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AssignUnique(ref flags, field);
+                    }
+
+                    return default;
+                },
+                cancellationToken).ConfigureAwait(false);
+            RequireNativeScalar(id, ColumnType.LongIntegerType, sizeof(int));
+            RequireNativeScalar(parent, ColumnType.LongIntegerType, sizeof(int));
+            RequireNativeScalar(type, ColumnType.IntegerType, sizeof(short));
+            RequireNativeScalar(flags, ColumnType.LongIntegerType, sizeof(int));
+            if (name.Column?.IsCalculated != false || name.Column.Type != ColumnType.TextType || name.Kind != CompactRawFieldKind.Stored || name.RawBytes.IsEmpty)
+            {
+                throw Corrupt(location.DataPageNumber, "The catalog identity requires its complete assigned native Name text.");
+            }
+
+            if (Overlaps(id, parent) || Overlaps(id, name) || Overlaps(id, type) || Overlaps(id, flags)
+                || Overlaps(parent, name) || Overlaps(parent, type) || Overlaps(parent, flags)
+                || Overlaps(name, type) || Overlaps(name, flags) || Overlaps(type, flags))
+            {
+                throw Corrupt(location.DataPageNumber, "Distinct required catalog identity fields overlap the same stored bytes.");
+            }
+
+            CatalogRow identity = decoder.DecodeRow(catalog.Definition, page, location, 64);
+            if (BinaryPrimitives.ReadInt32LittleEndian(id.RawBytes.Span) != identity.Id
+                || BinaryPrimitives.ReadInt32LittleEndian(parent.RawBytes.Span) != identity.ParentId
+                || BinaryPrimitives.ReadInt16LittleEndian(type.RawBytes.Span) != identity.ObjectType
+                || BinaryPrimitives.ReadInt32LittleEndian(flags.RawBytes.Span) != identity.Flags)
+            {
+                throw Corrupt(location.DataPageNumber, "The decoded catalog identity disagrees with its complete native stored fields.");
+            }
+
+            this.ValidateIdentityName(identity, page, location, name.Column);
+            return identity;
+
+            static bool Overlaps(in CompactRawField left, in CompactRawField right)
+                => left.RowOffset < right.RowOffset + right.RawBytes.Length && right.RowOffset < left.RowOffset + left.RawBytes.Length;
+
+            void AssignUnique(ref CompactRawField target, CompactRawField field)
+            {
+                if (target.Column is not null)
+                {
+                    throw Corrupt(location.DataPageNumber, $"The catalog definition declares a duplicate required identity field name '{field.Column.Name}'.");
+                }
+
+                target = field;
+            }
+
+            void RequireNativeScalar(CompactRawField field, ColumnType expectedType, int width)
+            {
+                if (field.Column?.IsCalculated != false || field.Column.Type != expectedType
+                    || field.Kind != CompactRawFieldKind.Stored || field.RawBytes.Length != width)
+                {
+                    throw Corrupt(location.DataPageNumber, "The catalog identity requires complete assigned native Id, ParentId, Type and Flags fields.");
+                }
+            }
+        }
+
+        private void ValidateIdentityName(CatalogRow identity, byte[] page, RowLocation location, ColumnInfo name)
         {
             if (!RowDecodePlan.TryParseRowLayout(format.RowFields, page, location.RowStart, location.RowSize, hasVarColumns: true, out RowLayout layout))
             {
-                throw Corrupt(location.DataPageNumber, "The secondary catalog identity key has an invalid row layout.");
+                throw Corrupt(location.DataPageNumber, "The stored catalog identity has an invalid row layout.");
             }
 
-            ColumnInfo name = keyColumns![1];
             ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(format.RowFields, page, location.RowStart, location.RowSize, layout, name);
             ReadOnlySpan<byte> stored = page.AsSpan(location.RowStart + slice.DataStart, slice.DataLen);
             if (format.IsJet3)
@@ -533,22 +632,22 @@ internal static class CompactCatalogRecovery
                 {
                     if (!format.EncodeText(identity.Name).AsSpan().SequenceEqual(stored))
                     {
-                        throw Corrupt(location.DataPageNumber, "The secondary catalog identity Name does not round-trip through its declared code page.");
+                        throw Corrupt(location.DataPageNumber, "The stored catalog identity Name does not round-trip through its declared code page.");
                     }
                 }
                 catch (EncoderFallbackException)
                 {
-                    throw Corrupt(location.DataPageNumber, "The secondary catalog identity Name cannot be represented in its declared code page.");
+                    throw Corrupt(location.DataPageNumber, "The stored catalog identity Name cannot be represented in its declared code page.");
                 }
 
                 return;
             }
 
-            if (name.IsFixed || stored.Length < 2 || stored[0] != 0xFF || stored[1] != 0xFE)
+            if (name.IsFixed || !name.IsCompressedUnicode || stored.Length < 2 || stored[0] != 0xFF || stored[1] != 0xFE)
             {
                 if ((stored.Length & 1) != 0)
                 {
-                    throw Corrupt(location.DataPageNumber, "The secondary catalog identity Name contains an incomplete Unicode code unit.");
+                    throw Corrupt(location.DataPageNumber, "The stored catalog identity Name contains an incomplete Unicode code unit.");
                 }
 
                 bool pending = false;
@@ -559,7 +658,7 @@ internal static class CompactCatalogRecovery
 
                 if (pending)
                 {
-                    throw Corrupt(location.DataPageNumber, "The secondary catalog identity Name contains an unpaired Unicode surrogate.");
+                    throw Corrupt(location.DataPageNumber, "The stored catalog identity Name contains an unpaired Unicode surrogate.");
                 }
 
                 return;
@@ -589,7 +688,7 @@ internal static class CompactCatalogRecovery
 
                     if (offset > stored.Length - 2)
                     {
-                        throw Corrupt(location.DataPageNumber, "The secondary catalog identity Name contains an incomplete compressed Unicode code unit.");
+                        throw Corrupt(location.DataPageNumber, "The stored catalog identity Name contains an incomplete compressed Unicode code unit.");
                     }
 
                     ValidateUnicodeUnit(stored[offset] | (stored[offset + 1] << 8), ref pendingSurrogate, location.DataPageNumber);
@@ -599,7 +698,7 @@ internal static class CompactCatalogRecovery
 
             if (pendingSurrogate)
             {
-                throw Corrupt(location.DataPageNumber, "The secondary catalog identity Name contains an unpaired compressed Unicode surrogate.");
+                throw Corrupt(location.DataPageNumber, "The stored catalog identity Name contains an unpaired compressed Unicode surrogate.");
             }
         }
 

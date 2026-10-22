@@ -17,7 +17,7 @@ using Xunit;
 /// <remarks>
 /// Tests remove, resurrect or corrupt isolated names after actual replacement/recovery lifecycle boundaries.
 /// These are independently selected software fault states, not physical power interruptions or filesystem guarantees.
-/// Replacement candidates and preparation-only journals have no automatic discovery contract; those gaps remain explicit.
+/// Random replacement candidates have no automatic discovery contract. Preparation journals require complete validation.
 /// </remarks>
 /// <param name="output">Reports the bounded modeled states and observed discovery limitations.</param>
 public sealed class ReplacementNamespaceModelTests(ITestOutputHelper output)
@@ -156,6 +156,7 @@ public sealed class ReplacementNamespaceModelTests(ITestOutputHelper output)
         await OpenWriterAsync(path);
         Assert.False(File.Exists(journal));
         before.Remove(Path.GetFileName(journal));
+        before.Remove(Path.GetFileName(preparing));
         before[Path.GetFileName(path)] = Digest(oldBytes);
         AssertSnapshot(before, await SnapshotAsync(directory.Path));
         await AssertTableAsync(path, "Original");
@@ -168,7 +169,7 @@ public sealed class ReplacementNamespaceModelTests(ITestOutputHelper output)
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task LostJournalPromotion_PreservesUnassignedEvidenceAndReportsUncoveredOutcome(bool torn)
+    public async Task LostJournalPromotion_RecoversValidatedPreparationBeforeOpen(bool torn)
     {
         using var directory = new ModelDirectory();
         (byte[] oldBytes, byte[] newBytes) = await ImagesAsync(DatabaseFormat.AceAccdb);
@@ -178,23 +179,17 @@ public sealed class ReplacementNamespaceModelTests(ITestOutputHelper output)
         File.Move(journal, journal + ".preparing");
         await WriteUnknownCandidatesAsync(path);
         Dictionary<string, string> before = await SnapshotAsync(directory.Path);
-        string currentHash = before[Path.GetFileName(path)];
-        string outcome;
-        try
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
         {
-            await OpenWriterAsync(path);
-            outcome = "OPEN_ACCEPTED_WITHOUT_RECOVERY: uncovered namespace-discovery safety outcome";
-        }
-        catch (IOException error)
-        {
-            outcome = "OPEN_REFUSED: " + error.GetType().Name;
-        }
-
-        // The assertion is evidence retention, not acceptance of the possibly
-        // mixed database as correct. The observed open outcome remains diagnostic
-        // so a future safe discovery/refusal design need not preserve acceptance.
+            await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, Ct);
+        });
+        await OpenWriterAsync(path);
+        before.Remove(Path.GetFileName(journal + ".preparing"));
+        before[Path.GetFileName(path)] = Digest(oldBytes);
         AssertSnapshot(before, await SnapshotAsync(directory.Path));
-        output.WriteLine($"PREPARATION_ONLY_MODEL torn={torn}; {outcome}; old={Digest(oldBytes)}; intended={Digest(newBytes)}; current={currentHash}; journal={before[Path.GetFileName(journal + ".preparing")]}; directory={directory.Path}");
+        await AssertTableAsync(path, "Original");
+        await OpenWriterAsync(path);
+        AssertSnapshot(before, await SnapshotAsync(directory.Path));
     }
 
     [Theory]
@@ -240,6 +235,7 @@ public sealed class ReplacementNamespaceModelTests(ITestOutputHelper output)
         await OpenWriterAsync(path);
         Assert.False(File.Exists(journal));
         before.Remove(Path.GetFileName(journal));
+        before.Remove(Path.GetFileName(journal + ".preparing"));
         AssertSnapshot(before, await SnapshotAsync(directory.Path));
         await AssertTableAsync(path, "Original");
         await OpenWriterAsync(path);

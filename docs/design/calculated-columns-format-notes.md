@@ -570,3 +570,7 @@ of `a` versus `a `. Stored strings and concatenation retain those spaces.
 Persisted expressions may have one terminal NUL in their property encoding;
 runtime compilation removes that terminator while preserving the raw property
 bytes and any NUL inside a string literal.
+
+## Literal Unicode markers in Text
+
+Ordinary variable Text with Unicode compression disabled stores plain UTF-16, including literal FF FE at the beginning. Row, string, POCO and write-back decoding use that column storage rule. Calculated Text still permits compressed Unicode inside its envelope. Native controls preserve leading U+FEFF in a cached Latin-1 string using an escaped compressed payload; other controlled native cached values lose or reinterpret that marker. A source field's original text is not authority to invent a different cached result. Raw compact assembly preserves each observed envelope without recalculation. Writers refuse calculated and Unicode-compressed ordinary Text beginning with U+FEFF before allocation until a native-safe complete representation is established.

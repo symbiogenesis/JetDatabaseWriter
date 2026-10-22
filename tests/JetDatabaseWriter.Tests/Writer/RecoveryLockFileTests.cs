@@ -12,6 +12,42 @@ using Xunit;
 /// <summary>Checks retryable recovery when lock-file cleanup is refused.</summary>
 public sealed class RecoveryLockFileTests
 {
+    /// <summary>A valid database journal cannot establish ownership of an unrelated populated lock file.</summary>
+    [Fact]
+    public async Task Open_ValidJournalWithoutOwnershipReceipt_PreservesPopulatedLock()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"RecoveryLockFileTests_{Guid.NewGuid():N}.mdb");
+        string lockPath = LockFileSlotWriter.GetLockFilePath(path);
+        byte[] lockBytes = new byte[64];
+        lockBytes[0] = 71;
+        try
+        {
+            await using (AccessWriter created = await AccessWriter.CreateDatabaseAsync(path, DatabaseFormat.Jet4Mdb, cancellationToken: TestContext.Current.CancellationToken))
+            {
+            }
+
+            await using (var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                using var journal = PersistentRollbackJournal.Create(database, 4096);
+            }
+
+            await File.WriteAllBytesAsync(lockPath, lockBytes, TestContext.Current.CancellationToken);
+            JetLockException error = await Assert.ThrowsAsync<JetLockException>(async () =>
+            {
+                await using AccessWriter rejected = await AccessWriter.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+            });
+            Assert.Equal(JetErrorCode.DatabaseInUse, error.ErrorCode);
+            Assert.Equal(lockBytes, await File.ReadAllBytesAsync(lockPath, TestContext.Current.CancellationToken));
+            Assert.True(File.Exists(PersistentRollbackJournal.JournalPath(path)));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(PersistentRollbackJournal.JournalPath(path));
+            File.Delete(lockPath);
+        }
+    }
+
     /// <summary>A surviving lock-file holder must not consume recovery evidence.</summary>
     [Fact]
     public async Task Open_LiveLockFile_PreservesJournalUntilRetry()

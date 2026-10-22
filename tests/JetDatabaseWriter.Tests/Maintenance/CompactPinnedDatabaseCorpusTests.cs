@@ -35,6 +35,8 @@ public sealed class CompactPinnedDatabaseCorpusTests(ITestOutputHelper output)
     [InlineData("Jackcess/V2010/complexDataTestV2010.accdb")]
     [InlineData("Jackcess/V2010/calcFieldTestV2010.accdb")]
     [InlineData("NorthwindTraders.accdb")]
+    [InlineData("NativeTextMarkers/native-calculated.accdb")]
+    [InlineData("NativeTextMarkers/native-compacted.accdb")]
     public async Task NativeFixtures_CompareCompleteAssemblyAndOrdinaryFeatureReads(string fixture)
     {
         string directory = Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.CompactCorpus." + Guid.NewGuid().ToString("N"));

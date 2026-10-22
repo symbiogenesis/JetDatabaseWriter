@@ -10,6 +10,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Maintenance;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -136,6 +138,125 @@ public sealed class CompactActiveTableRowsTests
         Assert.False(authority.Result.DiscoveryComplete);
         Assert.False(authority.Result.OwnershipProven);
         Assert.Equal(bytes, await ReadAllAsync(file));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EveryStoredIndex_IsComparedWithAgreedActiveRows(bool damageSecondary)
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb, secondaryIndex: true);
+        await using DatabaseFile file = Open(bytes);
+        (long owner, TDefImage image) = await FindAsync(file);
+        Assert.Equal(2, image.RealIndexes.Count);
+        int primary = image.LogicalIndexes.Single(static index => index.Name == "PrimaryKey").Entry.IndexNum2;
+        int secondary = image.LogicalIndexes.Single(static index => index.Name == "ByName").Entry.IndexNum2;
+        var pages = new ChangedPages(file.Pages);
+        var locations = new List<RowLocation>();
+        await CompactRawRowReader.ScanAsync(
+            file.Pages,
+            file.Format,
+            owner,
+            new(),
+            (location, _, _) =>
+            {
+                locations.Add(location);
+                return default;
+            },
+            Ct);
+        long clonePage = pages.PageCount;
+        pages.ExtraPages = 1;
+        pages.Changes[clonePage] = await file.Pages.ReadPageCopyAsync(locations[0].PageNumber, Ct);
+        var parent = new CompactDiscoveryAccounting(new());
+        using (CompactActiveTableRows active = await CompactActiveTableRows.ValidateAsync(pages, file.Format, owner, image, primary, new() { Accounting = parent }, static (_, _) => default, Ct))
+        {
+            if (damageSecondary)
+            {
+                TDefIndexDescriptor index = image.RealIndexes[secondary];
+                ColumnInfo keyColumn = image.Columns.Single(column => column.ColNum == index.Columns[0].ColNum);
+                List<IndexEntry> entries = [];
+                for (int row = 0; row < locations.Count; row++)
+                {
+                    entries.Add(new(IndexKeyEncoder.EncodeColumnEntry(file.Format, keyColumn, row == 1 ? "wrong" : "row" + (row + 1)), locations[row].PageNumber, checked((byte)locations[row].RowIndex)));
+                }
+
+                entries.Sort(static (left, right) => left.Key.AsSpan().SequenceCompareTo(right.Key));
+                pages.Changes[index.RootPage] = IndexPageCodec.BuildLeafPage(file.Format.IndexPage, file.Format.PageSize, checked((int)owner), entries, enablePrefixCompression: false);
+                await Assert.ThrowsAsync<JetCorruptDataException>(async () => await active.ValidateIndexesAsync(Ct));
+                Assert.Throws<JetOperationException>(() => active.CheckSource(pages, image, Ct));
+            }
+            else
+            {
+                long before = parent.PageReads;
+                Assert.Equal(2, await active.ValidateIndexesAsync(Ct));
+                Assert.True(parent.PageReads > before);
+                Assert.Equal(3, active.Result.ActiveRows);
+                Assert.Equal(3, active.Result.UnassignedRows);
+                Assert.False(active.Result.OwnershipProven);
+            }
+        }
+
+        Assert.Equal(0, parent.ActiveWorkingBytes);
+    }
+
+    [Fact]
+    public async Task AllIndexAudit_SerializesConsumptionAndRetainsAdmissionUntilExpiry()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        await using DatabaseFile file = Open(bytes);
+        (long owner, TDefImage image) = await FindAsync(file);
+        var pages = new ChangedPages(file.Pages);
+        IReadOnlyList<long> mapped = await file.OwnedPages.GetOwnedDataPagesAsync(owner, Ct);
+        pages.Changes[pages.PageCount] = await file.Pages.ReadPageCopyAsync(mapped[0], Ct);
+        pages.ExtraPages = 1;
+        var parent = new CompactDiscoveryAccounting(new());
+        CompactActiveTableRows? active = null;
+        try
+        {
+            active = await CompactActiveTableRows.ValidateAsync(pages, file.Format, owner, image, 0, new() { Accounting = parent }, ObserveAsync, Ct);
+            await Assert.ThrowsAsync<ObjectDisposedException>(async () => await active.ValidateIndexesAsync(Ct));
+            Assert.Equal(0, parent.ActiveWorkingBytes);
+        }
+        finally
+        {
+            active?.Dispose();
+        }
+
+        async ValueTask ObserveAsync(CompactActiveTableRowRecord record, CancellationToken token)
+        {
+            if (record.Kind == "unassigned-row" && active is not null)
+            {
+                await Assert.ThrowsAsync<JetOperationException>(async () => await active.ScanRowsAsync(static (_, _, _) => default, token));
+                await Assert.ThrowsAsync<JetOperationException>(async () => await active.ValidateIndexesAsync(token));
+                active.Dispose();
+                Assert.True(parent.ActiveWorkingBytes > 0);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RepeatedAllIndexAudits_ConsumeLifetimeReadAllowance()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb, secondaryIndex: true);
+        await using DatabaseFile file = Open(bytes);
+        (long owner, TDefImage image) = await FindAsync(file);
+        int primary = image.LogicalIndexes.Single(static index => index.Name == "PrimaryKey").Entry.IndexNum2;
+        var measured = new CompactDiscoveryAccounting(new());
+        using (CompactActiveTableRows active = await CompactActiveTableRows.ValidateAsync(file.Pages, file.Format, owner, image, primary, new() { Accounting = measured }, static (_, _) => default, Ct))
+        {
+            Assert.Equal(2, await active.ValidateIndexesAsync(Ct));
+        }
+
+        var parent = new CompactDiscoveryAccounting(new());
+        using (CompactActiveTableRows active = await CompactActiveTableRows.ValidateAsync(file.Pages, file.Format, owner, image, primary, new() { Accounting = parent, Work = new() { MaxPageReads = measured.PageReads } }, static (_, _) => default, Ct))
+        {
+            Assert.Equal(2, await active.ValidateIndexesAsync(Ct));
+            await Assert.ThrowsAsync<JetLimitationException>(async () => await active.ValidateIndexesAsync(Ct));
+            Assert.Equal(measured.PageReads, parent.PageReads);
+            Assert.Throws<JetOperationException>(() => active.CheckSource(file.Pages, image, Ct));
+        }
+
+        Assert.Equal(0, parent.ActiveWorkingBytes);
     }
 
     [Fact]
@@ -421,6 +542,7 @@ public sealed class CompactActiveTableRowsTests
         byte[] bytes = await File.ReadAllBytesAsync(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", fixture), Ct);
         await using DatabaseFile file = Open(bytes);
         int covered = 0;
+        int allIndexes = 0;
         await CompactStorageInventory.ScanAsync(file.Pages, file.Format, file.TableDefs, new(), static (_, _) => default, Ct, async (owner, image, token) =>
         {
             if (owner <= 2)
@@ -438,19 +560,25 @@ public sealed class CompactActiveTableRowsTests
                 using CompactActiveTableRows authority = await CompactActiveTableRows.ValidateAsync(file.Pages, file.Format, owner, image, ordinal, new(), static (_, _) => default, token);
                 Assert.Equal(image.Header.Counters.RowCount, authority.Result.ActiveRows);
                 Assert.False(authority.Result.OwnershipProven);
+                if (ordinal == 0 && Enumerable.Range(0, image.RealIndexes.Count).All(index => CompactIndexRowAudit.SupportsDescriptor(image, index)))
+                {
+                    allIndexes += await authority.ValidateIndexesAsync(token);
+                }
+
                 covered++;
             }
         });
         Assert.True(covered > 0);
+        Assert.True(allIndexes > 0);
         Assert.Equal(bytes, await ReadAllAsync(file));
     }
 
-    private static async Task<byte[]> CreateAsync(DatabaseFormat kind)
+    private static async Task<byte[]> CreateAsync(DatabaseFormat kind, bool secondaryIndex = false)
     {
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, kind, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct))
         {
-            await writer.CreateTableAsync("Items", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Name", typeof(string), 40)], Ct);
+            await writer.CreateTableAsync("Items", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Name", typeof(string), 40)], secondaryIndex ? [new("ByName", "Name")] : [], Ct);
             for (int index = 1; index <= 3; index++)
             {
                 await writer.InsertRowAsync("Items", [index, "row" + index], Ct);

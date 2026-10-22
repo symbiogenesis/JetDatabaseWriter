@@ -168,32 +168,33 @@ public sealed class RecoveryReplayCrashTests(ITestOutputHelper output)
             }
         });
 
-    [Fact(DisableParallelization = true)]
-    public Task AfterRecovery_NewWriterLockWithoutJournal_IsPreservedAndRefused()
+    [Theory(DisableParallelization = true)]
+    [InlineData(DatabaseFormat.Jet3Mdb, "")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "")]
+    [InlineData(DatabaseFormat.AceAccdb, "")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "UpstreamJet3Rc4.mdb")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "NativeJet4Rc4.mdb")]
+    [InlineData(DatabaseFormat.AceAccdb, "NativeAceStandard.accdb")]
+    [InlineData(DatabaseFormat.AceAccdb, "NativeAceAgile.accdb")]
+    public Task AfterRecovery_NewWriterLockWithoutJournal_RecoversGenerationReceipt(DatabaseFormat format, string fixture)
         => this.WithDirectoryAsync(async directory =>
         {
-            string path = Path.Combine(directory, "after-recovery.accdb");
-            byte[] original = await CreateImageAsync(path, DatabaseFormat.AceAccdb, string.Empty, string.Empty);
-            PrepareInterruptedImage(path, 4096);
-            AssertChild(path, string.Empty, "writer-opened");
+            string password = Password(format, fixture);
+            string path = Path.Combine(directory, format == DatabaseFormat.AceAccdb ? "after-recovery.accdb" : "after-recovery.mdb");
+            byte[] original = await CreateImageAsync(path, format, fixture, password);
+            PrepareInterruptedImage(path, format == DatabaseFormat.Jet3Mdb ? 2048 : 4096);
+            AssertChild(path, password, "writer-opened");
             Assert.Equal(original, await File.ReadAllBytesAsync(path, Ct));
             Assert.False(File.Exists(PersistentRollbackJournal.JournalPath(path)));
+            await RejectReaderAsync(path, password);
             string lockPath = LockFileSlotWriter.GetLockFilePath(path);
-            byte[] lockBytes = await File.ReadAllBytesAsync(lockPath, Ct);
-            Assert.NotEmpty(lockBytes);
+            Assert.NotEmpty(await File.ReadAllBytesAsync(lockPath, Ct));
             for (int attempt = 0; attempt < 2; attempt++)
             {
-                JetLockException failure = await Assert.ThrowsAsync<JetLockException>(async () =>
-                {
-                    await using AccessWriter rejected = await AccessWriter.OpenAsync(path, Options(string.Empty), Ct);
-                });
-                Assert.Equal(JetErrorCode.DatabaseInUse, failure.ErrorCode);
-                Assert.Equal(lockBytes, await File.ReadAllBytesAsync(lockPath, Ct));
+                AssertChild(path, password, "writer-opened");
+                await AssertReopensAsync(path, password, original, expectedRows: 1);
                 Assert.Equal(original, await File.ReadAllBytesAsync(path, Ct));
             }
-
-            // This is intentionally unresolved: no durable journal ownership remains
-            // to distinguish this stale slot from an unrelated preexisting lock.
         });
 
     [Fact(DisableParallelization = true)]
@@ -332,6 +333,7 @@ public sealed class RecoveryReplayCrashTests(ITestOutputHelper output)
             Assert.Equal(expected, await File.ReadAllBytesAsync(path, Ct));
             Assert.False(File.Exists(PersistentRollbackJournal.JournalPath(path)));
             Assert.False(File.Exists(LockFileSlotWriter.GetLockFilePath(path)));
+            Assert.False(File.Exists(RecoverableWriterLock.ReceiptPath(path)));
             await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions(password) { UseLockFile = false }, Ct);
             using DataTable rows = await reader.ReadTableAsync("ReplayRows", cancellationToken: Ct);
             Assert.Equal(expectedRows, rows.Rows.Count);

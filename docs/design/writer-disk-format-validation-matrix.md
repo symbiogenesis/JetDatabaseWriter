@@ -593,9 +593,9 @@ correspondence nor complete incoming ownership.
 
 `CompactIndexRowAuditTests` independently derives supported scalar keys from
 raw rows, preserving stored Date doubles and strictly decoded text. Complete
-leaf key/bookmark correspondence, duplicate and missing rows, IgnoreNulls
-omission and bounded evidence have focused coverage. Unsupported calculated,
-LVAL, complex and collation cases refuse. Frozen DAO3.6 General97 key/bookmark
+leaf and intermediate key/bookmark correspondence, independently resolved payloads, complete ordered leaf chains, routing, exact separators, duplicate and missing rows, IgnoreNulls
+omission and bounded evidence have focused coverage. Positive four-byte complex parent references preserve their stored identity without following items. Unsupported calculated,
+LVAL and collation cases refuse. Frozen DAO3.6 General97 key/bookmark
 fixtures also pin embedded NUL `0x10` and two significant positions for simple
 expansions before later accents. Physical row coverage is scoped to readable
 same-owner headers; it does not establish active or complete source membership.
@@ -646,6 +646,8 @@ with exact managed readback. Workgroup security controls use this same bounded
 production codec boundary. These comparisons establish private codec equality
 for the named providers, without complete database, reclaimability or durable
 publication acceptance.
+
+`NativeTextMarkerTests` retains hashed DAO120-generated cached Text rows and their native compacted counterpart, with provenance beside `Databases/NativeTextMarkers/`. Disabled-compression Text preserves literal U+FEFF across every read surface and write-back. Calculated Text retains compressed-marker semantics, including native escaped FEFF and terminal uncompressed low bytes with implicit zero high bytes. Native cached results are compared independently rather than inferred from expression inputs. Writer insert/update refuses unverified leading-marker calculated or compressed Text before allocation. Complete private assembly independently compares both frozen inputs without recalculation. These controls do not settle every Text/Memo encoding variant.
 
 ## Native row boundaries and recovery fault evidence
 

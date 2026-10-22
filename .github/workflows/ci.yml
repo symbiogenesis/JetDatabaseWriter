@@ -230,6 +230,7 @@ jobs:
           JetDatabaseWriter.Tests.Writer.ShrinkCrashRecoveryTests
           JetDatabaseWriter.Tests.Writer.TransactionCrashRecoveryTests
           JetDatabaseWriter.Tests.Writer.CreationCrashRecoveryTests
+          JetDatabaseWriter.Tests.Transactions.RecoverableWriterLockTests
           JetDatabaseWriter.Tests.Writer.RecoveryLockFileTests
           JetDatabaseWriter.Tests.Writer.RecoveryReplayCrashTests
           JetDatabaseWriter.Tests.Infrastructure.CrashRecoveryProcessTests

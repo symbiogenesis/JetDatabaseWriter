@@ -667,6 +667,11 @@ internal sealed class RowEncoder(JetFormat format)
         ColumnType valueType = JetTypeInfo.ResolveValueType(column);
         if (valueType == TextType)
         {
+            if (Convert.ToString(value, CultureInfo.InvariantCulture) is { Length: > 0 } text && text[0] == '\uFEFF')
+            {
+                throw new JetLimitationException(JetErrorCode.FeatureNotSupported, "Leading U+FEFF in calculated Text has no verified native-safe representation.");
+            }
+
             return CalculatedColumnUtil.Wrap(
                 this.EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), GetCalculatedVariableSize(column, valueType), compress: false) ?? []);
         }
@@ -723,6 +728,11 @@ internal sealed class RowEncoder(JetFormat format)
         if (value == null)
         {
             return null;
+        }
+
+        if (!format.IsJet3 && compress && value.Length > 0 && value[0] == '\uFEFF')
+        {
+            throw new JetLimitationException(JetErrorCode.FeatureNotSupported, "Leading U+FEFF in compressed Text has no verified native-safe representation.");
         }
 
         int limit = maxSize > 0 ? maxSize : int.MaxValue;

@@ -440,7 +440,8 @@ internal static class DirectRowDecoderBuilder
             DateTimeType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDateTimeLE), StaticNonPublic), pageParam, offsetExpr),
             GuidType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadGuidAt), StaticNonPublic), pageParam, offsetExpr),
             NumericType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDecimalLE), StaticNonPublic), pageParam, offsetExpr, Expression.Constant((int)column.NumericScale)),
-            TextType => Expression.Call(formatParam, column.IsFixed ? DecodeFixedTextMethod : DecodeTextMethod, pageParam, offsetExpr, dataLenExpr),
+            TextType when column.IsFixed => Expression.Call(formatParam, DecodeFixedTextMethod, pageParam, offsetExpr, dataLenExpr),
+            TextType => Expression.Call(formatParam, DecodeTextMethod, pageParam, offsetExpr, dataLenExpr, Expression.Constant(column.IsCompressedUnicode)),
             BinaryType or BigBinaryType => Expression.Call(ReadBinarySliceMethod, pageParam, offsetExpr, dataLenExpr),
             DateTimeExtendedType => Expression.Call(ReadDateTimeExtendedMethod, pageParam, offsetExpr),
             OleType or

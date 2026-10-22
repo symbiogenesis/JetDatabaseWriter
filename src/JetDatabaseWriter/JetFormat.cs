@@ -408,16 +408,22 @@ internal sealed partial class JetFormat
     /// <param name="bytes">The bytes.</param>
     /// <param name="start">The start.</param>
     /// <param name="len">The length in bytes.</param>
+    /// <param name="compressedStorage">Whether the native column storage permits a compression marker.</param>
     /// <returns>The decoded text.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal string DecodeText(byte[] bytes, int start, int len)
+    internal string DecodeText(byte[] bytes, int start, int len, bool compressedStorage = true)
     {
         if (len <= 0)
         {
             return string.Empty;
         }
 
-        return this.IsJet3 ? this.AnsiEncoding.GetString(bytes, start, len) : DecodeJet4Text(bytes, start, len);
+        if (this.IsJet3)
+        {
+            return this.AnsiEncoding.GetString(bytes, start, len);
+        }
+
+        return compressedStorage ? DecodeJet4Text(bytes, start, len) : DecodeUtf16LE(bytes.AsSpan(start, len & ~1));
     }
 
     /// <summary>

@@ -70,7 +70,7 @@ internal static class ScalarColumnReader
                 {
                     return column.IsFixed
                         ? format.DecodeFixedText(page, rowStart + slice.DataStart, slice.DataLen)
-                        : format.DecodeText(page, rowStart + slice.DataStart, slice.DataLen);
+                        : format.DecodeText(page, rowStart + slice.DataStart, slice.DataLen, column.IsCompressedUnicode);
                 }
 
                 if (column.Type == BinaryType)

@@ -222,6 +222,7 @@ internal static class CompactPinnedDatabaseBuilder
             new() { Work = budget.Work, Accounting = assembly.Discovery.Accounting, MaxActiveRows = budget.MaxActiveRows, MaxKeyBytes = budget.MaxKeyBytes },
             workspace.ObserveUnassignedRow!,
             token).ConfigureAwait(false);
+        _ = await active.ValidateIndexesAsync(token).ConfigureAwait(false);
         CompactPinnedTableAssemblyAllocation built = await assembly.Discovery.WithActiveTableRowsAsync(
             active,
             table.Definition,

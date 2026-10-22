@@ -29,6 +29,7 @@ public sealed class CompactDatabaseFieldTests
         await using DatabaseFile file = Open(bytes);
         var session = new CompactDiscoverySession(file.Pages, file.Format, new());
         long owner = 0;
+        long identityFields = 0;
         int fields = 0;
         int nullMemos = 0;
         int storedMemos = 0;
@@ -41,6 +42,10 @@ public sealed class CompactDatabaseFieldTests
                 if (record.Kind == "catalog-object" && record.Name == "Items")
                 {
                     owner = record.OwnerTDefPage!.Value;
+                }
+                else if (record.Kind == "table-definition" && record.OwnerTDefPage == 2)
+                {
+                    identityFields = session.Accounting.ReadCount(CompactDiscoveryCharge.Fields);
                 }
 
                 return ValueTask.CompletedTask;
@@ -78,13 +83,14 @@ public sealed class CompactDatabaseFieldTests
         Assert.Equal(1, memoTerminals);
         Assert.Equal(1, blobTerminals);
         Assert.True(externalRows > 0);
-        Assert.Equal(fields, session.Accounting.ReadCount(CompactDiscoveryCharge.Fields));
+        Assert.True(identityFields > 0);
+        Assert.Equal(identityFields + fields, session.Accounting.ReadCount(CompactDiscoveryCharge.Fields));
         Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
         Assert.Equal(original, SHA256.HashData(bytes));
     }
 
     [Fact]
-    public async Task DatabaseFields_FailedScansRetainTheCumulativeFieldAllowance()
+    public async Task DatabaseFields_CatalogIdentityInspectionsShareAndRetainTheCumulativeFieldAllowance()
     {
         byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
         await using DatabaseFile file = Open(bytes);
@@ -105,7 +111,7 @@ public sealed class CompactDatabaseFieldTests
             Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
         }
 
-        Assert.Equal(1, fields);
+        Assert.Equal(0, fields);
         Assert.Equal(1, session.Accounting.ReadCount(CompactDiscoveryCharge.Fields));
     }
 
