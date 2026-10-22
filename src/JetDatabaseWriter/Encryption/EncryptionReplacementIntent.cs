@@ -123,7 +123,16 @@ internal sealed class EncryptionReplacementIntent : IDisposable
     internal static bool Recover(string path, Action<string>? boundary = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        path = Path.GetFullPath(path);
+        try
+        {
+            path = Path.GetFullPath(path);
+        }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            // Retain the ordinary File.Exists-based path guard for invalid spellings.
+            return false;
+        }
+
         if (Directory.Exists(IntentPath(path)))
         {
             throw Corrupt("The replacement intent is a directory.");

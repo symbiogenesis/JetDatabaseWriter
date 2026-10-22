@@ -67,14 +67,29 @@ public sealed class GuardTests
         Assert.Equal(typeof(AccessWriter).FullName, ex.ObjectName);
     }
 
-    [Fact]
-    public async Task OpenAsync_WhitespacePath_ThrowsFileNotFoundException()
+    [Theory]
+    [InlineData("   ")]
+    [InlineData("\t")]
+    [InlineData("\r\n")]
+    public async Task OpenAsync_WhitespacePath_ThrowsFileNotFoundException(string path)
     {
         // A whitespace-only path passes the null-or-empty guard on every target and is
         // then reported as a missing file, not as an invalid argument.
         await Assert.ThrowsAsync<FileNotFoundException>(async () =>
-            await AccessWriter.OpenAsync("   ", cancellationToken: TestContext.Current.CancellationToken));
+            await AccessWriter.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken));
         await Assert.ThrowsAsync<FileNotFoundException>(async () =>
-            await AccessReader.OpenAsync("   ", cancellationToken: TestContext.Current.CancellationToken));
+            await AccessReader.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task OpenAsync_InvalidPathWithoutRecoveryEvidence_RetainsMissingFileContract()
+    {
+        const string path = "invalid\0database.accdb";
+        FileNotFoundException writer = await Assert.ThrowsAsync<FileNotFoundException>(async () =>
+            await AccessWriter.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken));
+        FileNotFoundException reader = await Assert.ThrowsAsync<FileNotFoundException>(async () =>
+            await AccessReader.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Equal(path, writer.FileName);
+        Assert.Equal(path, reader.FileName);
     }
 }

@@ -48,6 +48,41 @@ public sealed class ReplacementIntentTests
         Assert.False(File.Exists(IntentPath(directory.Path)));
     }
 
+    /// <summary>Discovery preserves canonical identity when the supplied spelling contains relative components.</summary>
+    /// <param name="boundary">The interrupted decision boundary.</param>
+    /// <param name="kind">The lexical alias spelling.</param>
+    [Theory]
+    [InlineData("prepared", "prefix")]
+    [InlineData("committed", "prefix")]
+    [InlineData("prepared", "dot")]
+    [InlineData("committed", "dot")]
+    [InlineData("prepared", "parent")]
+    [InlineData("committed", "parent")]
+    public async Task MissingDestination_NormalizedAlias_RecoversRecordedDecision(string boundary, string kind)
+    {
+        using var directory = new IntentDirectory();
+        byte[] original = await ImageAsync("Original");
+        byte[] replacement = await ImageAsync("Replacement");
+        await CaptureAsync(directory.Path, original, replacement, boundary);
+        File.Delete(directory.Path);
+        string parent = System.IO.Path.GetDirectoryName(directory.Path)!;
+        Directory.CreateDirectory(System.IO.Path.Combine(parent, "alias"));
+        string alias = kind switch
+        {
+            "dot" => System.IO.Path.Combine(directory.Path, "."),
+            "parent" => System.IO.Path.Combine(directory.Path, "alias", ".."),
+            _ => System.IO.Path.Combine(parent, "alias", "..", System.IO.Path.GetFileName(directory.Path)),
+        };
+        Assert.Equal(System.IO.Path.GetFullPath(directory.Path), System.IO.Path.GetFullPath(alias));
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(alias, new AccessWriterOptions { UseLockFile = false }, Ct))
+        {
+            Assert.NotNull(writer);
+        }
+
+        Assert.Equal(boundary == "committed" ? replacement : original, await File.ReadAllBytesAsync(directory.Path, Ct));
+        Assert.False(File.Exists(IntentPath(directory.Path)));
+    }
+
     /// <summary>An already opened file must be refused rather than replaced behind its handle.</summary>
     [Fact]
     public async Task SuppliedFileStream_PendingIntent_RefusesWithoutChangingEvidence()

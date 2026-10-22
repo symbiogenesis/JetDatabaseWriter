@@ -220,6 +220,7 @@ jobs:
         run: >-
           dotnet test --project tests/JetDatabaseWriter.Tests -c Release --no-build -f net10.0
           --filter-class JetDatabaseWriter.Tests.Infrastructure.LibraryTargetTests
+          JetDatabaseWriter.Tests.Infrastructure.GuardTests
           JetDatabaseWriter.Tests.Encryption.AtomicReplacementTests
           JetDatabaseWriter.Tests.Encryption.ReplacementCancellationTests
           JetDatabaseWriter.Tests.Encryption.ReplacementDurabilityTests
