@@ -102,6 +102,23 @@ public sealed class CompactPinnedCatalogCompositionTests
         Assert.False(covered.DatabaseValidated);
         Assert.False(covered.OwnershipProven);
 
+        var completePlan = new List<CompactPinnedDatabaseTable>();
+        foreach (Table table in tables)
+        {
+            completePlan.Add(new(
+                table.Allocation.Owner,
+                table.Image,
+                await ObserveAsync(source, table.Allocation.Owner, table.Image),
+                table.Allocation,
+                _ => ValueTask.FromResult<Stream>(new MemoryStream(table.Rows, writable: false)),
+                _ => ValueTask.FromResult<Stream>(new MemoryStream(table.Values, writable: false))));
+        }
+
+        CompactPinnedDatabaseValidatorResult composed = await CompactPinnedDatabaseValidator.ValidateAsync(
+            source.Database.Pages, format, completePlan, reopened, new(appendPoint, new()), reopenedLedger, allocationLedger, new(), Ct);
+        Assert.Equal(tables.Count, composed.Tables);
+        Assert.False(composed.DatabaseValidated);
+
         await using AccessReader reader = await TestDatabase.OpenReaderAsync(reopened, cancellationToken: Ct);
         List<CatalogRow> installedCatalog = await ReadCatalogAsync(reader);
         Assert.Equal(catalog.Select(Identity).Order(), installedCatalog.Select(Identity).Order());
@@ -136,7 +153,7 @@ public sealed class CompactPinnedCatalogCompositionTests
         await AssertUserContentAsync(source, reader);
         await AssertCatalogTamperingRefusedAsync(source, reopened, objects, installedCatalog, expectedDefinitions, appendPoint);
 
-        // Recovery still sees both physically live catalog copies; component proofs cannot declare database validity.
+        // Ordinary damaged-source recovery retains strict duplicate refusal.
         var physicalInventory = new CompactDiscoverySession(reader.Database.Pages, format, new());
         JetCorruptDataException ambiguity = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await physicalInventory.ScanInventoryAsync(
             static (_, token) =>
@@ -148,6 +165,42 @@ public sealed class CompactPinnedCatalogCompositionTests
         Assert.Equal(JetErrorCode.CorruptCatalog, ambiguity.ErrorCode);
         Assert.Contains("stored Id", ambiguity.Message, StringComparison.Ordinal);
         Assert.Equal(0, physicalInventory.Accounting.ActiveWorkingBytes);
+
+        var catalogComparison = new CompactDiscoverySession(source.Database.Pages, format, new());
+        await using var catalogRows = new MemoryStream(objects.Rows, writable: false);
+        await using var catalogValues = new MemoryStream(objects.Values, writable: false);
+        using (CompactActiveCatalogRows membership = await CompactActiveCatalogRows.ValidateAsync(
+            catalogComparison,
+            objects.Image,
+            reader.Database.Pages,
+            catalogRows,
+            catalogValues,
+            objects.Allocation.Table,
+            expectedDefinitions.Single(static definition => definition.RootPage == 2).Indexes,
+            new(),
+            Ct))
+        {
+            var activeInventory = new CompactDiscoverySession(reader.Database.Pages, format, new());
+            var activeObjects = new List<CompactStorageRecord>();
+            await activeInventory.ScanInventoryAsync(
+                (record, token) =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (record.Kind == "catalog-object")
+                    {
+                        activeObjects.Add(record);
+                    }
+
+                    return default;
+                },
+                Ct,
+                membership);
+            Assert.Equal(catalog.Select(static row => (row.Id, row.Name)).Order(), activeObjects.Select(static row => (row.ObjectId!.Value, row.Name!)).Order());
+            Assert.All(activeObjects, row => Assert.InRange(row.PageNumber, objects.Allocation.Table.Data.FirstPageNumber, objects.Allocation.Table.Data.FirstPageNumber + objects.Allocation.Table.Data.PageCount - 1));
+            Assert.Equal(0, activeInventory.Accounting.ActiveWorkingBytes);
+        }
+
+        Assert.Equal(0, catalogComparison.Accounting.ActiveWorkingBytes);
         Assert.Equal(original, immutable.ToArray());
     }
 

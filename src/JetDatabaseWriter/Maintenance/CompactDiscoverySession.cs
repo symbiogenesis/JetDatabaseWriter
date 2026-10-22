@@ -27,7 +27,6 @@ using JetDatabaseWriter.ValueDecoding;
 internal sealed class CompactDiscoverySession
 {
     private readonly CompactDiscoveryBudget budget;
-    private readonly IPageSource source;
     private readonly DiscoveryPageSource pages;
     private int activeScan;
     private int activeValue;
@@ -51,7 +50,7 @@ internal sealed class CompactDiscoverySession
         this.Accounting = new CompactDiscoveryAccounting(budget);
         this.SourceFormat = format;
         this.budget = budget;
-        this.source = pages;
+        this.SourcePages = pages;
         pages.ThrowIfDisposed();
         int pageSize = pages.PageSize;
         long pageCount = pages.PageCount;
@@ -75,18 +74,22 @@ internal sealed class CompactDiscoverySession
     /// <summary>Gets the verified format retained by this session.</summary>
     internal JetFormat SourceFormat { get; }
 
+    /// <summary>Gets the exact immutable unwrapped source for independently bound preservation comparisons.</summary>
+    internal IPageSource SourcePages { get; }
+
     /// <summary>Inventories physical storage and discovered catalog identities using the session's persistent allowances.</summary>
     /// <param name="visitor">The awaited observation consumer, which may audit or copy a long value.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="activeCatalog">Optional independently compared exact active membership for this destination only.</param>
     /// <returns>A task completing after the bounded inventory succeeds.</returns>
     /// <remarks>Missing ownership can hide catalog identities. Successful inventory never proves complete discovery or permission to reclaim storage.</remarks>
-    internal async ValueTask ScanInventoryAsync(Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    internal async ValueTask ScanInventoryAsync(Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken, CompactActiveCatalogRows? activeCatalog = null)
     {
         Guard.NotNull(visitor, nameof(visitor));
         this.EnterScan(cancellationToken);
         try
         {
-            await this.ScanInventoryCoreAsync(visitor, cancellationToken).ConfigureAwait(false);
+            await this.ScanInventoryCoreAsync(visitor, cancellationToken, activeCatalog: activeCatalog).ConfigureAwait(false);
         }
         finally
         {
@@ -370,12 +373,12 @@ internal sealed class CompactDiscoverySession
         return default;
     }
 
-    private async ValueTask ScanInventoryCoreAsync(Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor = null, Func<CompactCatalogRecovery.RecoveredRow, CancellationToken, ValueTask>? recoveredCatalogVisitor = null)
+    private async ValueTask ScanInventoryCoreAsync(Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor = null, Func<CompactCatalogRecovery.RecoveredRow, CancellationToken, ValueTask>? recoveredCatalogVisitor = null, CompactActiveCatalogRows? activeCatalog = null)
     {
         int schemaBytes = checked((int)Math.Min(int.MaxValue, this.budget.MaxSchemaBytes));
-        using var definitions = new TableDefReader(this.source, this.SourceFormat, cacheResults: false, this.budget.MaxDefinitionBytes, schemaBytes);
+        using var definitions = new TableDefReader(this.SourcePages, this.SourceFormat, cacheResults: false, this.budget.MaxDefinitionBytes, schemaBytes);
         await CompactStorageInventory.ScanAsync(
-            this.source,
+            this.SourcePages,
             this.SourceFormat,
             definitions,
             new()
@@ -394,7 +397,8 @@ internal sealed class CompactDiscoverySession
             visitor,
             cancellationToken,
             definitionVisitor,
-            recoveredCatalogVisitor).ConfigureAwait(false);
+            recoveredCatalogVisitor,
+            activeCatalog).ConfigureAwait(false);
         this.pages.CheckGeometry(0, cancellationToken);
     }
 

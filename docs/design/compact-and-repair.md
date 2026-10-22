@@ -105,10 +105,10 @@ in the corresponding TODO item.
 
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
-| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map inspection; independent catalog Id and unique ParentIdName key evidence despite damaged headers/map hints, including intact original headers with damaged moved owners and complete independently audited key/chain/routing evidence; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/field/LVAL/index work and simultaneous storage through local-table orchestration | S1: complete remaining public-scan accounting and catalog recovery when physical ownership and both supported independent key paths are unavailable; qualify runtime/pool and caller-owned memory separately |
+| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map inspection; independent catalog Id and unique ParentIdName key evidence despite damaged headers/map hints, including intact original headers with damaged moved owners and complete independently audited key/chain/routing evidence; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/field/LVAL/index work and simultaneous storage through local-table orchestration; independent discovered-local-table plan coverage checks original bytes and parsed projections | S1: complete remaining public-scan accounting and catalog recovery when physical ownership and both supported independent key paths are unavailable; qualify runtime/pool and caller-owned memory separately |
 | Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory refusal; bounded raw row and field streaming with retained assignment states; bounded calculated ResultType hydration and complete defined LVAL-chain observations, including trailing storage; private dense raw-row packing with original-header bookmark mappings and independent reopened raw-allocation/ledger comparison; complete raw LVAL staging with retargeted descriptor/chain pointers installed in verified packed rows and per-column allocation observations; independent reopened data/LVAL byte and private allocation coverage validation; bounded per-table DATA/LVAL/map assembly with original-column allocation-ledger comparison, independent complete table/map and pointer-only image comparison | S3/F8 and the bounded raw-copy part of I6: interpret native error envelopes independently of Null and damaged values without losing their raw representation; install staged table images and assemble catalog, index and global allocation references into a complete compact copy |
 | Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; projected raw header/trailer bytes and source index sharing/directions during schema edits; retained continuation headers and original trailing padding during chain writes; complete known table/index/LVAL pointer patching within pinned raw definitions; all-chain-preflight installation on original page identities and independent reopened header/body comparison; exact complete pinned-prefix comparison permitting only independently reconstructed TDEF pointers and validated native global-map bytes | S9: complete application, security, replication and unknown-object inventory and semantic preservation requirements |
-| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key graph, entry-edge fence and observed leaf-chain checks; separate complete observed-edge key-envelope, conservative key-routing and bookmark-inclusive order proofs; bounded same-owner bookmark-target validation; cross-root declared-owner and incoming-reference observations; stored-key staging with disk-backed fences and monotone disk-backed row-bookmark lookup; independent reopened private stored-key/bookmark, child-maximum and allocation coverage validation; bounded private native usage-map construction from ordered allocation runs and independent reopened exact membership/allocation validation; composed relocated stored-key tree/map assembly with references returned after reopened validation; disk-backed exact whole-destination allocation ledgers retaining the complete source prefix; composed per-table physical stored indexes, maps and pinned chain installation; independent canonical native global-map installation/comparison with self-covered bitmap storage | I2: prove safe sharing and complete incoming-reference ownership beyond known declarations, complete native separator/alias and stored-key/row correspondence validation, and assemble complete catalog/multi-object references with database-wide admission and reopened validation; F9 only where keys must be regenerated |
+| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key graph, entry-edge fence and observed leaf-chain checks; separate complete observed-edge key-envelope, conservative key-routing and bookmark-inclusive order proofs; bounded same-owner bookmark-target validation; cross-root declared-owner and incoming-reference observations; stored-key staging with disk-backed fences and monotone disk-backed row-bookmark lookup; independent reopened private stored-key/bookmark, child-maximum and allocation coverage validation; bounded private native usage-map construction from ordered allocation runs and independent reopened exact membership/allocation validation; composed relocated stored-key tree/map assembly with references returned after reopened validation; disk-backed exact whole-destination allocation ledgers retaining the complete source prefix; composed per-table physical stored indexes, maps and pinned chain installation; independent canonical native global-map installation/comparison with self-covered bitmap storage | I2: prove safe sharing and complete incoming-reference ownership beyond known declarations, complete native separator/alias and stored-key/row correspondence validation, and build a complete compact-copy driver over the composed discovered-table, global-map, prefix and allocation validation; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
 | Replace the source safely | Private staging, flushed backups and process-interruption tests | E4/F6 and the file-recovery part of I15: coordination, recovery discovery, namespace persistence and actual power-interruption evidence |
 
@@ -472,11 +472,34 @@ Pinned-chain source reads share the discovery counters. Working reservations
 unwind on every exit, while work charges survive failures and repeated calls.
 Build and independent validation can use separate sessions with separate phase
 allowances. Standalone global-map, prefix and allocation-ledger components still
-have separate budgets; a complete database driver must compose their admission.
+have separate budgets; the database validation coordinator additionally composes
+their requested-read and simultaneous-storage admission.
 Caller-owned streams, retained result evidence and runtime/pool
 storage remain outside the admitted working-storage estimate. Physical root/map
 aliases refuse until sharing is independently supported. Logical sharing within
 one physical descriptor retains its original metadata.
+
+`CompactDatabasePlanValidator` independently inventories the immutable source
+and requires exactly one matching original definition for every discovered local
+table, including `MSysObjects`, hidden and system tables. Missing, duplicate and
+extra owners refuse, as do different raw bytes or parsed definition projections.
+Linked and other catalog-only objects remain pinned and are never followed.
+Membership storage and inventory traversal share cumulative discovery admission.
+This binds a proposed table plan to the discovered source; damaged ownership can
+still hide objects, so it does not establish complete discovery.
+
+`CompactPinnedDatabaseValidator` composes that plan check with every reopened
+table/index/definition comparison, canonical native global-map validation,
+complete pinned-prefix comparison and exact whole-destination allocation-ledger
+comparison. One requested-read allowance covers source, destination and sidecars,
+including partial-read retries and failed requests. Table sidecars open serially
+through caller factories and can stay on disk. The coordinator owns no
+whole-table snapshots, restores borrowed stream positions and returns no
+completion evidence on refusal, cancellation or I/O failure. Each invocation has
+its own phase allowance. Caller observations and provider work remain outside
+that allowance. Composed comparisons still do not establish source-index
+completeness, unknown incoming ownership, native acceptance, reclamation or
+permission to publish a compact database.
 
 `CompactGlobalMapInstaller` replaces only the original page-one global free-map
 row in the private destination. It marks every original and appended page used,
@@ -520,10 +543,15 @@ remain open.
 A physical recovery scan of an append-only destination can find both pinned
 original catalog rows and relocated active catalog rows with the same identities.
 Ordinary catalog reads use the installed maps, but physical recovery cannot
-discard either copy merely from those hints. Whole-destination validation needs
-independently verified active-row membership to distinguish retained inactive
-prefix copies. Damaged-source duplicate checks must remain strict; successful
-per-table comparisons do not resolve this database-wide inventory dependency.
+discard either copy merely from those hints. `CompactActiveCatalogRows` first
+independently compares the reopened raw catalog table, LVAL/maps and complete row
+relocation ledger, and compares retained original catalog DATA pages byte for
+byte. Its bounded membership evidence is tied to the exact immutable destination
+page source and geometry. Only a destination inventory explicitly supplied that
+live evidence can exclude the compared retained bookmarks; unverified copies
+refuse. Ordinary damaged-source inventory retains strict duplicate-Id refusal.
+This is a scoped active-catalog inventory proof, not complete damaged-source
+recovery, incoming ownership or a database-validity verdict.
 
 Focused native global-map controls force REFERENCE storage and compare the
 unchanged original/control content, actual allocation growth during Memo inserts,

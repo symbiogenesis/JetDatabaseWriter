@@ -29,12 +29,13 @@ internal static class CompactCatalogRecovery
     /// <param name="maxReferences">The remaining aggregate reference allowance.</param>
     /// <param name="maxDirectorySlots">The remaining directory and map-step allowance.</param>
     /// <param name="cancellationToken">Cancels reads and inspections.</param>
+    /// <param name="activeCatalog">Optional independently compared exact destination membership.</param>
     /// <returns>Physical identities and explicit deferred-owner diagnostics, without claiming coverage or ownership.</returns>
-    internal static async ValueTask<Result> ScanPhysicalAsync(IPageSource pages, JetFormat format, TDefImage catalog, CatalogRowReader decoder, CompactTraversalBudget budget, long maxReferences, long maxDirectorySlots, CancellationToken cancellationToken)
+    internal static async ValueTask<Result> ScanPhysicalAsync(IPageSource pages, JetFormat format, TDefImage catalog, CatalogRowReader decoder, CompactTraversalBudget budget, long maxReferences, long maxDirectorySlots, CancellationToken cancellationToken, CompactActiveCatalogRows? activeCatalog = null)
     {
         var result = new Result();
         var scanner = new Scanner(pages, format, catalog, decoder, budget, null, null, result, [], [], maxReferences, maxDirectorySlots, Math.Min(budget.MaxObjects, Math.Max(1, budget.MaxSchemaBytes / 64)));
-        await scanner.ScanPhysicalAsync(cancellationToken).ConfigureAwait(false);
+        await scanner.ScanPhysicalAsync(activeCatalog, cancellationToken).ConfigureAwait(false);
         return result;
     }
 
@@ -250,7 +251,7 @@ internal static class CompactCatalogRecovery
             pendingSurrogate = unit is >= 0xD800 and <= 0xDBFF;
         }
 
-        internal async ValueTask ScanPhysicalAsync(CancellationToken cancellationToken)
+        internal async ValueTask ScanPhysicalAsync(CompactActiveCatalogRows? activeCatalog, CancellationToken cancellationToken)
         {
             for (long number = 3; number < pages.PageCount; number++)
             {
@@ -281,7 +282,7 @@ internal static class CompactCatalogRecovery
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         int raw = Ru16(page, format.DataPage.RowsStart + (row * 2));
-                        if ((raw & Constants.DataPage.DeletedRowFlag) == 0)
+                        if ((raw & Constants.DataPage.DeletedRowFlag) == 0 && activeCatalog?.Include(number, row) != false)
                         {
                             await this.RecoverAsync(null, number, row, cancellationToken).ConfigureAwait(false);
                         }
