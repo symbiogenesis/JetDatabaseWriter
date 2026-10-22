@@ -464,7 +464,7 @@ internal sealed partial class CompactActiveTableRows : IDisposable
             }
             else if (record.Kind == "index-terminal")
             {
-                terminal = record.NavigableGraphAcyclic && record.EntryEdgeFencesValidated && record.AllObservedEdgeFencesValidated
+                terminal = record.NavigableGraphAcyclic && record.EntryEdgeFencesValidated
                     && record.ObservedLeafChainOrdered && record.ObservedKeyRoutingValidated
                     && record.ObservedChildMaximumSeparatorsValidated && record.BookmarkTargetsValidated;
                 if (!terminal)

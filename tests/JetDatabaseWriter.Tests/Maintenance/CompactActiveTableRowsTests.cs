@@ -95,6 +95,78 @@ public sealed class CompactActiveTableRowsTests
         }
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task RedundantTailAlias_AdmitsExactActiveCorrespondenceDespiteWidenedOptionalFence(DatabaseFormat kind)
+    {
+        byte[] bytes = await CreateAsync(kind);
+        await using DatabaseFile file = Open(bytes);
+        (long owner, TDefImage image) = await FindAsync(file);
+        var locations = new List<RowLocation>();
+        await CompactRawRowReader.ScanAsync(
+            file.Pages,
+            file.Format,
+            owner,
+            new(),
+            (location, _, _) =>
+            {
+                locations.Add(location);
+                return default;
+            },
+            Ct);
+        var entries = new IndexEntry[locations.Count];
+        for (int row = 0; row < entries.Length; row++)
+        {
+            entries[row] = new(IndexKeyEncoder.EncodeEntry(ColumnType.LongIntegerType, row + 1), locations[row].PageNumber, checked((byte)locations[row].RowIndex));
+        }
+
+        var pages = new ChangedPages(file.Pages) { ExtraPages = 4 };
+        long branch = file.Pages.PageCount;
+        long first = branch + 1;
+        long second = branch + 2;
+        long third = branch + 3;
+        JetFormat format = file.Format;
+        long root = image.RealIndexes[0].RootPage;
+        int nativeOwner = checked((int)owner);
+        pages.Changes[root] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, nativeOwner, [new(entries[0], first), new(entries[2], branch)], 0, 0, third);
+        pages.Changes[branch] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, nativeOwner, [new(entries[1], second), new(entries[2], third)], 0, 0, first);
+        pages.Changes[first] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, nativeOwner, [entries[0]], 0, second, 0, true);
+        pages.Changes[second] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, nativeOwner, [entries[1]], first, third, 0, true);
+        pages.Changes[third] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, nativeOwner, [entries[2]], second, 0, 0, true);
+        CompactIndexRecord? terminal = null;
+        await CompactIndexBookmarkAudit.ScanAsync(
+            pages,
+            format,
+            owner,
+            root,
+            new(),
+            new(),
+            (record, _) =>
+            {
+                if (record.Kind == "index-terminal")
+                {
+                    terminal = record;
+                }
+
+                return default;
+            },
+            Ct);
+        Assert.NotNull(terminal);
+        Assert.True(terminal.NavigableGraphAcyclic);
+        Assert.True(terminal.EntryEdgeFencesValidated);
+        Assert.False(terminal.AllObservedEdgeFencesValidated);
+        Assert.True(terminal.ObservedLeafChainOrdered);
+        Assert.True(terminal.ObservedKeyRoutingValidated);
+        Assert.True(terminal.ObservedChildMaximumSeparatorsValidated);
+        Assert.True(terminal.BookmarkTargetsValidated);
+        using CompactActiveTableRows active = await CompactActiveTableRows.ValidateAsync(pages, format, owner, image, 0, new(), static (_, _) => default, Ct);
+        Assert.Equal(3, active.Result.ActiveRows);
+        Assert.Equal(1, await active.ValidateIndexesAsync(Ct));
+        Assert.False(active.Result.OwnershipProven);
+    }
+
     [Fact]
     public async Task NativeUmsaetze_PreservesAll2049UnassignedPhysicalRows()
     {
