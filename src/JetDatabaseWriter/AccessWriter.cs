@@ -120,6 +120,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 PersistentRollbackJournal.Recover(
                     recoveryFile,
                     () => RemoveAbandonedLockFile(recoveryFile.Name));
+                _ = RecoverableWriterLock.Recover(recoveryFile.Name);
             }
 
             // One read of page 0 serves the header and the flat Agile probe.
@@ -589,31 +590,33 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         // A journal identifies database bytes, not an unrelated lock generation.
         // Without a receipt, only a completely vacant lock can be removed.
-        using FileStream abandoned = new(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete);
-        if (abandoned.Length > LockFileSlotWriter.MaxSlots * LockFileSlotWriter.SlotSize)
+        using (FileStream abandoned = new(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
-            throw new JetLockException(JetErrorCode.DatabaseInUse, "The existing lock has no matching writer-ownership receipt.");
-        }
-
-        byte[] buffer = new byte[LockFileSlotWriter.SlotSize];
-        long remaining = abandoned.Length;
-        while (remaining > 0)
-        {
-            int count = abandoned.Read(buffer, 0, checked((int)Math.Min(buffer.Length, remaining)));
-            if (count == 0)
+            if (abandoned.Length > LockFileSlotWriter.MaxSlots * LockFileSlotWriter.SlotSize)
             {
-                throw new IOException("The existing lock changed during ownership validation.");
+                throw new JetLockException(JetErrorCode.DatabaseInUse, "The existing lock has no matching writer-ownership receipt.");
             }
 
-            foreach (byte value in buffer.AsSpan(0, count))
+            byte[] buffer = new byte[LockFileSlotWriter.SlotSize];
+            long remaining = abandoned.Length;
+            while (remaining > 0)
             {
-                if (value != 0)
+                int count = abandoned.Read(buffer, 0, checked((int)Math.Min(buffer.Length, remaining)));
+                if (count == 0)
                 {
-                    throw new JetLockException(JetErrorCode.DatabaseInUse, "The existing lock has no matching writer-ownership receipt.");
+                    throw new IOException("The existing lock changed during ownership validation.");
                 }
-            }
 
-            remaining -= count;
+                foreach (byte value in buffer.AsSpan(0, count))
+                {
+                    if (value != 0)
+                    {
+                        throw new JetLockException(JetErrorCode.DatabaseInUse, "The existing lock has no matching writer-ownership receipt.");
+                    }
+                }
+
+                remaining -= count;
+            }
         }
 
         File.Delete(lockPath);

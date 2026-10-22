@@ -96,41 +96,45 @@ internal sealed class RecoverableWriterLock : IDisposable
             return false;
         }
 
-        using var owner = new FileStream(ownerPath, FileMode.Open, FileAccess.Read, FileShare.Delete);
-        byte[] proof = new byte[ReceiptLength];
-        if (owner.Length != proof.Length)
+        using (var owner = new FileStream(ownerPath, FileMode.Open, FileAccess.Read, FileShare.None))
         {
-            throw Conflict("The writer ownership receipt length is invalid.");
-        }
-
-        Read(owner, proof);
-        if (!proof.AsSpan(0, 8).SequenceEqual(Magic)
-            || !proof.AsSpan(8, 32).SequenceEqual(Identity(databasePath))
-            || !proof.AsSpan(ReceiptLength - 32).SequenceEqual(Hash(proof.AsSpan(0, ReceiptLength - 32))))
-        {
-            throw Conflict("The writer ownership receipt identity or checksum is invalid.");
-        }
-
-        string lockPath = LockFileSlotWriter.GetLockFilePath(databasePath);
-        if (File.Exists(lockPath))
-        {
-            // Exclude ordinary read/write holders through the platform's sharing lease.
-            // Other hosts require cooperating access, as does database ownership.
-            // Delete sharing permits removal only after validation with the lease held.
-            using var abandoned = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete);
-            byte[] actual = new byte[LockLength];
-            if (abandoned.Length != actual.Length)
+            byte[] proof = new byte[ReceiptLength];
+            if (owner.Length != proof.Length)
             {
-                throw Conflict("The existing lock does not belong to the recorded writer generation.");
+                throw Conflict("The writer ownership receipt length is invalid.");
             }
 
-            Read(abandoned, actual);
-            if (!actual.AsSpan().SequenceEqual(proof.AsSpan(40, LockLength)))
+            Read(owner, proof);
+            if (!proof.AsSpan(0, 8).SequenceEqual(Magic)
+                || !proof.AsSpan(8, 32).SequenceEqual(Identity(databasePath))
+                || !proof.AsSpan(ReceiptLength - 32).SequenceEqual(Hash(proof.AsSpan(0, ReceiptLength - 32))))
             {
-                throw Conflict("The existing lock does not belong to the recorded writer generation.");
+                throw Conflict("The writer ownership receipt identity or checksum is invalid.");
             }
 
-            File.Delete(lockPath);
+            string lockPath = LockFileSlotWriter.GetLockFilePath(databasePath);
+            if (File.Exists(lockPath))
+            {
+                // FileShare.None requests an exclusive lease on Windows and Unix.
+                // Keep the receipt and caller's database ownership while releasing
+                // this lease before deletion, which Windows otherwise refuses.
+                using (var abandoned = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                {
+                    byte[] actual = new byte[LockLength];
+                    if (abandoned.Length != actual.Length)
+                    {
+                        throw Conflict("The existing lock does not belong to the recorded writer generation.");
+                    }
+
+                    Read(abandoned, actual);
+                    if (!actual.AsSpan().SequenceEqual(proof.AsSpan(40, LockLength)))
+                    {
+                        throw Conflict("The existing lock does not belong to the recorded writer generation.");
+                    }
+                }
+
+                File.Delete(lockPath);
+            }
         }
 
         File.Delete(ownerPath);

@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.Transactions;
 using Xunit;
 
 /// <summary>Checks shrink recovery after process termination without disposal.</summary>
@@ -76,19 +77,18 @@ public sealed class ShrinkCrashRecoveryTests
                 AssertCrashChild(path, password, boundary);
                 bool successful = boundary == "committed";
                 Assert.Equal(!successful, File.Exists(path + ".jdw-journal"));
-                if (!successful)
+                Assert.True(File.Exists(RecoverableWriterLock.ReceiptPath(path)));
+                JetOperationException conflict = await Assert.ThrowsAsync<JetOperationException>(async () =>
                 {
-                    JetOperationException conflict = await Assert.ThrowsAsync<JetOperationException>(async () =>
-                    {
-                        await using AccessReader rejected = await AccessReader.OpenAsync(path, new AccessReaderOptions(password) { UseLockFile = false }, TestContext.Current.CancellationToken);
-                    });
-                    Assert.Equal(JetErrorCode.HotJournalConflict, conflict.ErrorCode);
-                }
+                    await using AccessReader rejected = await AccessReader.OpenAsync(path, new AccessReaderOptions(password) { UseLockFile = false }, TestContext.Current.CancellationToken);
+                });
+                Assert.Equal(JetErrorCode.HotJournalConflict, conflict.ErrorCode);
 
-                if (!successful)
+                await using (AccessWriter recovered = await AccessWriter.OpenAsync(path, new AccessWriterOptions(password) { UseLockFile = false }, TestContext.Current.CancellationToken))
                 {
-                    await using AccessWriter recovered = await AccessWriter.OpenAsync(path, Options(password), TestContext.Current.CancellationToken);
                     Assert.NotNull(recovered);
+                    Assert.False(File.Exists(RecoverableWriterLock.ReceiptPath(path)));
+                    Assert.False(File.Exists(LockFileSlotWriter.GetLockFilePath(path)));
                 }
 
                 Assert.Equal(successful ? committed : baseline, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
