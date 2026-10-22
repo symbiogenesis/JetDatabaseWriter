@@ -595,10 +595,10 @@ correspondence nor complete incoming ownership.
 raw rows, preserving stored Date doubles and strictly decoded text. Complete
 leaf and intermediate key/bookmark correspondence, independently resolved payloads, complete ordered leaf chains, routing, exact separators, duplicate and missing rows, IgnoreNulls
 omission and bounded evidence have focused coverage. Positive four-byte complex parent references preserve their stored identity without following items. Unsupported calculated,
-LVAL and collation cases refuse. Frozen DAO3.6 General97 key/bookmark
+non-Memo LVAL and collation cases refuse. Ordinary Memo correspondence reads the exact descriptor-declared payload while auditing the complete bounded LVAL chain, including trailing references. Inline/single-row descriptor modes permit compressed markers; chained payloads preserve plain UCS-2, including literal U+FEFF. Per-value payload/storage and cumulative field/read/LVAL work admission cover repeated and failed active-row consumption. Scalar-only descriptors do not create Memo sessions or inherit unrelated Memo limits. Frozen DAO3.6 General97 key/bookmark
 fixtures also pin embedded NUL `0x10` and two significant positions for simple
 expansions before later accents. Physical row coverage is scoped to readable
-same-owner headers; it does not establish active or complete source membership.
+same-owner headers; it does not establish active or complete source membership. A guarded DAO120 control on the pinned calcFieldTestV2010.accdb accepts an ordinary FirstName index and refuses indexes on LastFirstLen, LastFirst, MonthlySalary and WeeklySalary with native error 3251. This records four observed calculated-field refusals rather than inventing calculated-key semantics.
 
 `CompactActiveTableRowsTests` independently corroborates native table-map rows,
 strict covering-index proofs, complete scalar key/bookmark agreement and declared
@@ -612,7 +612,7 @@ output and forward separate independent validation limits. The legacy Umsätze
 driver control rebuilds 830 active rows while reporting and preserving 2,049
 unassigned rows in its independently compared pinned source prefix. None of
 those rows is declared reclaimable, and incomplete source/incoming ownership
-remains explicit.
+remains explicit. Controlled Jet3/Jet4/ACE tail-alias regressions independently require chain, routing, exact child maxima and bookmark proofs while the optional complete-edge envelope flag is false; active membership accepts those composed proofs. These synthetic controls do not add native sharing or reclamation authority.
 
 `CompactPinnedApplicationObjectsTests` uses the controlled native Access
 16.0.20430.20182 fixture whose provenance and SHA-256 are pinned beside it.
@@ -620,7 +620,7 @@ The saved query is never executed. Raw catalog/application rows and complete
 pinned-prefix comparisons preserve stored content and identities, while DAO
 checks query metadata and Forms/Reports names before and after native compact.
 Independent SaveAsText controls retain exact form/report exports through the
-private assembly and native compact. Macro/module, replication and broader
+private assembly and native compact. A separate hashed native specimen adds a named StopMacro-only macro and a constant-only standard module; neither is invoked. Complete raw catalog/application storage and pinned-prefix comparisons preserve both identities, DAO checks Scripts/Modules document names through compact, and same-engine SaveAsText exports of all four application definitions match source, assembly and native-compacted output. The specimen README records producing builds and exact export hashes. Arbitrary application behavior, damaged objects, replication and broader
 security variants remain separate evidence requirements.
 
 `CompactPinnedSecurityTests` preserves both native Jet4 workgroup fixtures and
