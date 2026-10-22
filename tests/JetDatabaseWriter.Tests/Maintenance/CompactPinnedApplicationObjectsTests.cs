@@ -24,6 +24,7 @@ using Xunit;
 public sealed class CompactPinnedApplicationObjectsTests(ITestOutputHelper output)
 {
     private const string FixtureHash = "C809AA9371DF43F0901F6AA27C5ADDEEAAA7BEDA07C37578F2863F3CCF77364F";
+    private const string CodeFixtureHash = "EA1899DD97A8492C30B2F720201DD3A13046BEC23915C21A7DD938A12041FEE4";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -94,10 +95,67 @@ public sealed class CompactPinnedApplicationObjectsTests(ITestOutputHelper outpu
         output.WriteLine(result.StdOut);
     }
 
-    private static async Task<byte[]> SeedAsync(AccessRoundTripSession session)
+    [Fact]
+    public async Task FrozenCodeObjects_CompleteAssemblyPreservesCatalogAndOpaqueStorage()
     {
-        byte[] original = await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "Databases", "ApplicationObjects", "NativeInertApplicationObjects.accdb"), Ct);
-        Assert.Equal(FixtureHash, Convert.ToHexString(SHA256.HashData(original)));
+        await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.CompactCodeObjects");
+        byte[] original = await SeedAsync(session, "NativeInertCodeObjects.accdb", CodeFixtureHash);
+        string staged = await this.BuildAsync(session);
+        await using AccessReader source = await TestDatabase.OpenReaderAsync(session.SourcePath, cancellationToken: Ct);
+        await using AccessReader destination = await TestDatabase.OpenReaderAsync(staged, cancellationToken: Ct);
+        using DataTable expectedCatalog = await source.ReadTableAsync("MSysObjects", cancellationToken: Ct);
+        using DataTable actualCatalog = await destination.ReadTableAsync("MSysObjects", cancellationToken: Ct);
+        AssertIdentity(expectedCatalog, "EvidenceMacro", -2147483634, -32766);
+        AssertIdentity(expectedCatalog, "EvidenceModule", -2147483635, -32761);
+        CompareRows(expectedCatalog, actualCatalog, "Id");
+        foreach (string name in new[] { "MSysAccessStorage", "MSysQueries", "f_C54F32B8B3CB4285928325593DE12252_Data" })
+        {
+            using DataTable expected = await source.ReadTableAsync(name, cancellationToken: Ct);
+            using DataTable actual = await destination.ReadTableAsync(name, cancellationToken: Ct);
+            CompareRows(expected, actual, expected.Columns[0].ColumnName);
+        }
+
+        Assert.Equal(original, await File.ReadAllBytesAsync(session.SourcePath, Ct));
+    }
+
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    [Trait("Category", "RequiresMicrosoftAccess")]
+    public async Task FrozenCodeObjects_Dao120PreservesInertMetadataThroughCompact()
+    {
+        await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.CompactCodeObjects.Native");
+        byte[] original = await SeedAsync(session, "NativeInertCodeObjects.accdb", CodeFixtureHash);
+        string staged = await this.BuildAsync(session);
+        string sourcePath = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
+        string stagedPath = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(staged);
+        string compactedPath = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.CompactedPath);
+        string script = $$"""
+            function Check-InertObjects([string]$path) {
+                $db=$engine.OpenDatabase($path,$false,$true)
+                try {
+                    if($db.Containers.Item('Scripts').Documents.Item('EvidenceMacro').Name -cne 'EvidenceMacro') { throw 'Macro identity lost' }
+                    if($db.Containers.Item('Modules').Documents.Item('EvidenceModule').Name -cne 'EvidenceModule') { throw 'Module identity lost' }
+                } finally { $db.Close() }
+            }
+            Check-InertObjects {{sourcePath}}
+            Check-InertObjects {{stagedPath}}
+            $engine.CompactDatabase({{stagedPath}},{{compactedPath}})
+            Check-InertObjects {{compactedPath}}
+            Write-Output 'INERT_MACRO_MODULE_METADATA_PRESERVED=OK'
+            """;
+        AccessRoundTripEnvironment.CompactResult result = session.RunDaoEngineScript(script, TimeSpan.FromMinutes(2));
+        Assert.True(result.ExitCode == 0, $"DAO inert macro/module comparison failed: {result.StdOut}\n{result.StdErr}");
+        Assert.Contains("INERT_MACRO_MODULE_METADATA_PRESERVED=OK", result.StdOut, StringComparison.Ordinal);
+        Assert.Equal(original, await File.ReadAllBytesAsync(session.SourcePath, Ct));
+        output.WriteLine(result.StdOut);
+    }
+
+    private static async Task<byte[]> SeedAsync(AccessRoundTripSession session, string name = "NativeInertApplicationObjects.accdb", string hash = FixtureHash)
+    {
+        byte[] original = await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "Databases", "ApplicationObjects", name), Ct);
+        Assert.Equal(hash, Convert.ToHexString(SHA256.HashData(original)));
         await File.WriteAllBytesAsync(session.SourcePath, original, Ct);
         return original;
     }

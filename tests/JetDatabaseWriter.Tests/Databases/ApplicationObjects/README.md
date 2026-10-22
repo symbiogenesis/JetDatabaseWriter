@@ -23,3 +23,29 @@ Native `SaveAsText` definition bytes were identical for the original, the comple
 | EvidenceReport | 58,822 | `3FC20861F4E721A4C694C30D6E86F0892B62281BAB1226C444944AEF1047AD4C` |
 
 The focused ordinary test checks the pinned specimen hash and identities, complete original-prefix/TDEF comparison, full active catalog values and application-storage row bytes. The guarded DAO120 test checks the fixed query's SQL metadata and application-object names/types before and after native compact, without executing the saved query. These healthy inert objects establish bounded preservation evidence; they do not establish macro/module execution, arbitrary application semantics, security/replication support, damaged-source discovery or permission to reclaim opaque storage.
+
+## Inert macro and module extension
+
+`NativeInertCodeObjects.accdb` extends a private copy of the original fixture with two named objects. The original fixture remains unchanged. The additions were authored on 2026-10-22 by x64 Microsoft Access 16.0.20527.20088 (`Access.Application` version 16.0), hosted by x64 PowerShell 7. SHA-256: `EA1899DD97A8492C30B2F720201DD3A13046BEC23915C21A7DD938A12041FEE4` (393,216 bytes).
+
+| Object | Native Id | Type | Definition |
+|---|---:|---:|---|
+| EvidenceMacro | -2147483634 | -32766 | One `StopMacro` action, never invoked |
+| EvidenceModule | -2147483635 | -32761 | `Option Compare Database`, `Option Explicit`, and `Public Const EvidenceMarker As String = "Pinned inert module 20261022"` |
+
+Access `LoadFromText` imported the macro and standard module into an owned temporary copy with automation security set to force-disable macros. The macro input was UTF-16LE and the module input ASCII; the module also supplied `Attribute VB_Name = "EvidenceModule"`. Native `SaveAsText` verified both definitions after import. The macro export includes Access's `PublishOption =1`. The module contains no procedures, functions or event hooks. No AutoExec, event handler or custom external reference was authored, and no embedded macro, VBA or saved query was invoked. The fixture was checked for the producing user name, machine name, user-profile path, producer directory and AutoExec; none occurred. The hidden producer checked that the newly activated application had no current database before opening its owned copy. It preserved inherited system/profile environment variables and restored both its temporary PowerShell location and process current directory in `finally`.
+
+The complete private assembly processed all 23 local tables and 42 catalog objects, preserved the 96-page original prefix and produced a 250-page destination. DAO120 then compacted the assembled file and reopened the result. Access `SaveAsText` exported these definitions from separate source and assembled copies and the compacted result. All three exports for each object were byte-identical:
+
+| Export | Bytes | SHA-256 |
+|---|---:|---|
+| EvidenceForm | 3,082 | `09AD36B341096AED3EDD6FEB5662BEF9332509C8D0968732D9DE6B744F7538DD` |
+| EvidenceReport | 58,826 | `FEA02C62F5B854B9115505B7D37B14991746440B6ED925404008699868231A1A` |
+| EvidenceMacro | 180 | `0DD716423EEF49B015B4AB64465A2B8E360A68EE9F61A9C6695F413E9278945E` |
+| EvidenceModule | 114 | `3CCC1F71A401CE4D72C46C18CBD6B9905745F31D79C1DFDCEEB0CD6A32C16E1C` |
+
+These exports used the same current Access build for all three files; the earlier fixture's export hashes above record its original producer build. Native serialization across different Access builds is not claimed to be identical.
+
+The ordinary frozen test requires no COM. It pins this fixture's hash and exact macro/module Id and Type, compares every active `MSysObjects` value, and compares every row value, including long-value bytes, in `MSysAccessStorage`, `MSysQueries` and the form's opaque data table. The complete assembly also independently compares its original prefix, reconstructed TDEF references and destination storage inventory. The DAO120-guarded test checks the `Scripts` and `Modules` document names before assembly, after assembly and after native compact; it never invokes them. The `SaveAsText` comparisons are recorded native producer evidence rather than an automated test guarded only by DAO availability: Access automation and DAO have distinct installation requirements.
+
+This extends healthy inert application-object preservation evidence to a named macro and a nonempty standard module. It does not establish code execution, arbitrary application behavior, replication or security completeness, damaged-object reconstruction, complete damaged-source discovery, incoming-reference ownership or permission to reclaim opaque pages.
