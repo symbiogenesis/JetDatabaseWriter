@@ -91,6 +91,11 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
     {
         byte[] bytes = await this.ReadLongValueBytesExactAsync(row, start, len, cancellationToken).ConfigureAwait(false);
         LongValueDescriptor.TryRead(row.AsSpan(start, len), out LongValueDescriptor descriptor);
+        if (!isOle && !format.IsJet3 && descriptor.UsesChainedPages && (bytes.Length & 1) != 0)
+        {
+            throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "The plain chained Memo payload contains an incomplete UTF-16 code unit.");
+        }
+
         return this.DecodeLongValue(bytes, 0, bytes.Length, isOle, compressedStorage: descriptor.IsInline || descriptor.IsSinglePage);
     }
 

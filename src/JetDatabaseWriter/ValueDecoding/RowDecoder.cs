@@ -8,7 +8,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
-using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.ValueDecoding.Models;
@@ -458,18 +457,16 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<object> ReadLongValueForWriteBackAsync(byte[] page, int start, int length, bool isOle, string columnName, CancellationToken cancellationToken)
     {
-        byte[] bytes;
         try
         {
-            bytes = await longValues.ReadLongValueBytesExactAsync(page, start, length, cancellationToken).ConfigureAwait(false);
+            return isOle
+                ? await longValues.ReadLongValueBytesExactAsync(page, start, length, cancellationToken).ConfigureAwait(false)
+                : await longValues.ReadLongValueAsync(page, start, length, isOle: false, cancellationToken).ConfigureAwait(false);
         }
         catch (JetCorruptDataException ex)
         {
             return new UnreadableLongValue(columnName, ex.Message);
         }
-
-        LongValueDescriptor.TryRead(page.AsSpan(start, length), out LongValueDescriptor descriptor);
-        return isOle ? bytes : format.DecodeMemoText(bytes, 0, bytes.Length, descriptor.IsInline || descriptor.IsSinglePage);
     }
 
     /// <summary>

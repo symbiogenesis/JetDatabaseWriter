@@ -102,7 +102,14 @@ report flush and close to succeed.
 ## Prerequisites
 
 Dependencies apply to the named requirements, not every unrelated requirement
-in the corresponding TODO item.
+in the corresponding TODO item. Public CLR materialization and public-scan
+accounting are separate from bounded raw compact paths that preserve and
+independently compare stored bytes, envelopes and complete LVAL chains.
+Semantic recovery or key regeneration still needs the relevant native value
+interpretation. Catalog recovery after authoritative identity evidence is lost
+is a damaged-source salvage limit; it must not require inventing identities or
+block healthy-source compaction. Exact source inventory and incoming-reference
+preservation remain mandatory for every page proposed for reclamation.
 
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
@@ -599,6 +606,10 @@ and constant-only VBA module control retains exact catalog/application bytes
 and identical same-engine SaveAsText exports through assembly and native compact,
 without invoking either object. Replication, additional code-object variants,
 every security configuration and opaque incoming references remain uncovered.
+
+Two native DAO3.6 Jet4 replication controls retain a Design Master and full replica. Complete private assembly compares all 18 local/system tables, 22 catalog identities and the full 94/95-page pinned source prefix; native read-only reopen and separate compacts of original controls and assembled subjects preserve ReplicaID, DesignMasterID, replicated column/index metadata and literal values. No synchronization or stored code is invoked. Native permissions limit inspection of four system definitions, and the available engine refuses Jet3 replication conversion with DAO 3703; genuine replicated Jet3 corpus remains external. These controls do not prove general replication editing, unknown incoming-reference meaning or reclamation.
+
+Ordinary plain chained-Memo public reads diagnose incomplete UTF-16 units instead of silently truncating them: strict reads report contextual corruption, lenient reads return missing with a diagnostic, and unrelated updates refuse without changing the database. Raw discovery and copy paths preserve the exact declared bytes and trailing chain storage. Native single-byte descriptor-damage controls demonstrate Null/substitution or shortened-value/row-loss outcomes; they do not authorize silent managed data loss. Calculated and compressed encodings retain their separate native rules.
 
 `CompactNativeRowBoundaryTests` uses frozen DAO3.6/DAO120 controls to verify
 native fixed-only rows, dropped fixed-slot gaps and actual Jet3 jump markers at
