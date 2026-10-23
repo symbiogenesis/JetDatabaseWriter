@@ -722,6 +722,79 @@ public sealed class ReplacementIntentTests
         Assert.Equal(original, await File.ReadAllBytesAsync(directory.Path, Ct));
     }
 
+    /// <summary>Multi-buffer prefixes retain their witness and repeated flushed-copy retries select the recorded image.</summary>
+    /// <param name="length">The surviving publication prefix length around a copy-buffer boundary.</param>
+    /// <param name="corrupt">Whether the final surviving byte conflicts with every complete witness.</param>
+    [Theory]
+    [InlineData(65535, false)]
+    [InlineData(65536, false)]
+    [InlineData(65537, false)]
+    [InlineData(131071, false)]
+    [InlineData(65537, true)]
+    public async Task PublicationPrefix_BufferBoundaries_RetriesOrRefusesWithoutLosingEvidence(int length, bool corrupt)
+    {
+        foreach (bool committed in new[] { false, true })
+        {
+            foreach (bool replacementPrefix in new[] { false, true })
+            {
+                using var directory = new IntentDirectory();
+                byte[] original = new byte[131089];
+                byte[] replacement = new byte[131103];
+                for (int index = 0; index < original.Length; index++)
+                {
+                    original[index] = (byte)((index + (index / 65536)) % 127);
+                }
+
+                for (int index = 0; index < replacement.Length; index++)
+                {
+                    replacement[index] = (byte)(128 + (((index * 13) + (index / 65536)) % 127));
+                }
+
+                await CaptureAsync(directory.Path, original, replacement, committed ? "committed" : "renamed");
+                (_, string next) = Candidates(directory.Path);
+                string publication = next.Replace(".new.tmp", ".publish.tmp", StringComparison.Ordinal);
+                byte[] prefix = (replacementPrefix ? replacement : original).AsSpan(0, length).ToArray();
+                if (corrupt)
+                {
+                    prefix[^1] = 255;
+                }
+
+                await File.WriteAllBytesAsync(publication, prefix, Ct);
+                File.Delete(directory.Path);
+                if (corrupt)
+                {
+                    Dictionary<string, string> before = Snapshot(directory.Path);
+                    Assert.Throws<JetCorruptDataException>(() => EncryptionReplacementIntent.Recover(directory.Path, cancellationToken: Ct));
+                    Assert.Equal(before, Snapshot(directory.Path));
+                    continue;
+                }
+
+                byte[] selected = committed ? replacement : original;
+                for (int attempt = 0; attempt < 2; attempt++)
+                {
+                    Assert.Throws<IOException>(() => EncryptionReplacementIntent.Recover(
+                        directory.Path,
+                        phase =>
+                        {
+                            if (phase == "publication-ready")
+                            {
+                                throw new IOException("Interrupted after bounded copy and flush.");
+                            }
+                        },
+                        Ct));
+                    Assert.False(File.Exists(directory.Path));
+                    Assert.Equal(selected, await File.ReadAllBytesAsync(publication, Ct));
+                    Assert.True(File.Exists(IntentPath(directory.Path)));
+                }
+
+                Assert.True(EncryptionReplacementIntent.Recover(directory.Path, cancellationToken: Ct));
+                Assert.Equal(selected, await File.ReadAllBytesAsync(directory.Path, Ct));
+                Assert.False(File.Exists(IntentPath(directory.Path)));
+                Assert.False(File.Exists(publication));
+            }
+        }
+    }
+
     /// <summary>An oversized sparse candidate is rejected before replay buffers or content scans.</summary>
     [Fact]
     public async Task CandidateLengthBound_RefusesSparseContent()

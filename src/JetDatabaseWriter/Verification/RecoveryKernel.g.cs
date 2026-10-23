@@ -10,6 +10,23 @@ namespace JetDatabaseWriter.Verification {
     public static bool IsDatabaseLength(ulong length) {
       return (length) <= (2147483648UL);
     }
+    public static ulong JournalRecordStart(uint pageSize, ulong originalLength)
+    {
+      if ((!(JetDatabaseWriter.Verification.RecoveryKernel.IsPageSize(pageSize))) || (!(JetDatabaseWriter.Verification.RecoveryKernel.IsDatabaseLength(originalLength)))) {
+        return 0UL;
+      } else {
+        return (128UL) + (((((originalLength) + ((ulong)(pageSize))) - (1UL)) / ((ulong)(pageSize))) * (32UL));
+      }
+    }
+    public static ulong CompleteJournalEnd(uint pageSize, ulong originalLength, ulong journalLength)
+    {
+      ulong _0_start = JetDatabaseWriter.Verification.RecoveryKernel.JournalRecordStart(pageSize, originalLength);
+      if ((((_0_start) == (0UL)) || ((journalLength) < (_0_start))) || ((journalLength) > (17179869184UL))) {
+        return 0UL;
+      } else {
+        return (journalLength) - (((journalLength) - (_0_start)) % (((ulong)(pageSize)) + (40UL)));
+      }
+    }
     public static bool IsPageOffset(ulong offset, uint pageSize)
     {
       return ((JetDatabaseWriter.Verification.RecoveryKernel.IsPageSize(pageSize)) && ((offset) <= ((2147483648UL) - ((ulong)(pageSize))))) && (((offset) % ((ulong)(pageSize))) == (0UL));

@@ -1228,4 +1228,317 @@ module UndoJournal {
     ensures EffectPersistence([3], BufferedWrite(0, [2]), [2])
     ensures [2] != [3]
   { }
+
+  // Page-record refinement. A page body is expanded into the existing logical
+  // byte captures; its tag, framing and checksum are still outside this model.
+  // The construction reads only uncaptured current bytes. Their original value
+  // follows from BufferedInvariant, rather than being supplied as a premise.
+  datatype PageCapture = PageCapture(pageOffset: nat, pageBytes: seq<Byte>)
+
+  predicate RecordsExtend(before: seq<JournalRecord>, after: seq<JournalRecord>) {
+    |before| <= |after| && after[..|before|] == before
+  }
+
+  opaque predicate ExactPagePayload(original: seq<Byte>, pageSize: nat, page: PageCapture) {
+    0 < pageSize && page.pageOffset % pageSize == 0 && page.pageOffset < |original| &&
+    |page.pageBytes| == pageSize &&
+    forall i | 0 <= i < pageSize :: page.pageBytes[i] ==
+      (if page.pageOffset + i < |original| then original[page.pageOffset + i] else 0)
+  }
+
+  // At public page-capture boundaries, every original page is either fully
+  // captured or wholly uncaptured. Intermediate byte appends need not satisfy
+  // this property; they cannot enable a protected page mutation until flushed.
+  opaque predicate WholePageCaptures(originalLength: nat, records: seq<JournalRecord>, pageSize: nat)
+    requires 0 < pageSize
+  {
+    forall start: nat | start < originalLength && start % pageSize == 0 ::
+      Covered(records, originalLength, start, start + pageSize) ||
+      (forall i: nat :: start <= i < start + pageSize && i < originalLength ==> i !in Saved(records))
+  }
+
+  lemma RecordExtensionPreservesCoverage(original: seq<Byte>, before: seq<JournalRecord>,
+      after: seq<JournalRecord>, lo: nat, hi: nat)
+    requires ExactRecords(original, after)
+    requires RecordsExtend(before, after)
+    requires Covered(before, |original|, lo, hi)
+    ensures Covered(after, |original|, lo, hi)
+  {
+    SavedPrefixGrows(original, after, |before|);
+  }
+
+  lemma RecordExtensionsAreTransitive(first: seq<JournalRecord>, second: seq<JournalRecord>, third: seq<JournalRecord>)
+    requires RecordsExtend(first, second) && RecordsExtend(second, third)
+    ensures RecordsExtend(first, third)
+  {
+    assert third[..|first|] == (third[..|second|])[..|first|];
+  }
+
+  lemma SameSavedPreservesWholePages(originalLength: nat, before: seq<JournalRecord>,
+      after: seq<JournalRecord>, pageSize: nat)
+    requires 0 < pageSize && WholePageCaptures(originalLength, before, pageSize)
+    requires Saved(before) == Saved(after)
+    ensures WholePageCaptures(originalLength, after, pageSize)
+  {
+    reveal WholePageCaptures();
+  }
+
+  lemma JoinBufferedPaths(original: seq<Byte>, left: seq<BufferedState>, first: seq<BufferedAction>,
+      right: seq<BufferedState>, second: seq<BufferedAction>)
+    requires BufferedPath(original, left, first)
+    requires BufferedPath(original, right, second)
+    requires left[|left|-1] == right[0]
+    ensures BufferedPath(original, left[..|left|-1] + right, first + second)
+  {
+    forall i | 0 <= i < |first + second|
+      ensures BufferedEnabled(original, (left[..|left|-1] + right)[i], (first + second)[i]) &&
+        (left[..|left|-1] + right)[i+1] ==
+          BufferedApply(original, (left[..|left|-1] + right)[i], (first + second)[i])
+    {
+      if i < |first| {
+        assert (left[..|left|-1] + right)[i] == left[i];
+        assert (left[..|left|-1] + right)[i+1] == left[i+1];
+      } else {
+        assert (left[..|left|-1] + right)[i] == right[i-|first|];
+        assert (left[..|left|-1] + right)[i+1] == right[i-|first|+1];
+      }
+    }
+  }
+
+  lemma AppendBufferedPath(original: seq<Byte>, states: seq<BufferedState>, actions: seq<BufferedAction>,
+      action: BufferedAction)
+    requires BufferedPath(original, states, actions)
+    requires BufferedEnabled(original, states[|states|-1], action)
+    ensures BufferedPath(original,
+      states + [BufferedApply(original, states[|states|-1], action)], actions + [action])
+  {
+    var next := BufferedApply(original, states[|states|-1], action);
+    assert BufferedPath(original, [states[|states|-1], next], [action]);
+    JoinBufferedPaths(original, states, actions, [states[|states|-1], next], [action]);
+    assert states[..|states|-1] + [states[|states|-1], next] == states + [next];
+  }
+
+  lemma CaptureCurrentByteRange(original: seq<Byte>, b: BufferedState, lo: nat, hi: nat)
+    returns (next: BufferedState, bytes: seq<Byte>, states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires BufferedInvariant(original, b) && b.protocol.mode == Active
+    requires lo <= hi <= |original|
+    requires forall i: nat :: lo <= i < hi ==> i !in Saved(b.protocol.records)
+    ensures BufferedPath(original, states, actions) && states[0] == b && states[|states|-1] == next
+    ensures BufferedInvariant(original, next) && next.protocol.mode == Active
+    ensures next.protocol.db == b.protocol.db && next.durableDb == b.durableDb && next.pending == b.pending
+    ensures RecordsExtend(b.protocol.records, next.protocol.records)
+    ensures bytes == original[lo..hi]
+    ensures |next.protocol.records| == |b.protocol.records| + hi - lo
+    ensures forall j | 0 <= j < hi - lo ::
+      next.protocol.records[|b.protocol.records| + j] == BeforeImage(lo + j, bytes[j])
+    ensures forall i: nat :: i in Saved(next.protocol.records) <==>
+      i in Saved(b.protocol.records) || lo <= i < hi
+    decreases hi - lo
+  {
+    if lo == hi {
+      next, bytes, states, actions := b, [], [b], [];
+    } else {
+      SavedPrefixGrows(original, b.protocol.records, b.protocol.durableCount);
+      assert lo !in Saved(DurableRecords(b.protocol));
+      assert lo < |b.protocol.db| && b.protocol.db[lo] == original[lo];
+      var a := Issue(AppendBefore(lo));
+      BufferedStepPreserves(original, b, a);
+      var step := BufferedApply(original, b, a);
+      AppendedRecordProperties(original, b.protocol.records, BeforeImage(lo, b.protocol.db[lo]));
+      assert Saved(step.protocol.records) == Saved(b.protocol.records)[lo := b.protocol.db[lo]];
+      var tail: seq<Byte>;
+      var tailStates: seq<BufferedState>;
+      var tailActions: seq<BufferedAction>;
+      next, tail, tailStates, tailActions := CaptureCurrentByteRange(original, step, lo + 1, hi);
+      bytes := [b.protocol.db[lo]] + tail;
+      assert original[lo..hi] == [original[lo]] + original[lo+1..hi];
+      states, actions := [b] + tailStates, [a] + tailActions;
+      assert BufferedPath(original, [b, step], [a]);
+      JoinBufferedPaths(original, [b, step], [a], tailStates, tailActions);
+      RecordExtensionsAreTransitive(b.protocol.records, step.protocol.records, next.protocol.records);
+      forall j | 0 <= j < hi - lo
+        ensures next.protocol.records[|b.protocol.records| + j] == BeforeImage(lo + j, bytes[j])
+      {
+        if j == 0 {
+          assert next.protocol.records[|b.protocol.records|] == step.protocol.records[|b.protocol.records|];
+        } else {
+          assert next.protocol.records[|b.protocol.records| + j] ==
+            next.protocol.records[|step.protocol.records| + j - 1];
+        }
+      }
+    }
+  }
+
+  lemma AlignedPageIntervalsAreDisjoint(first: nat, second: nat, pageSize: nat)
+    requires 0 < pageSize && first % pageSize == 0 && second % pageSize == 0 && first != second
+    ensures first + pageSize <= second || second + pageSize <= first
+  {
+    assert first == (first / pageSize) * pageSize;
+    assert second == (second / pageSize) * pageSize;
+    if first < second {
+      assert first / pageSize < second / pageSize;
+      assert (first / pageSize + 1) * pageSize <= (second / pageSize) * pageSize;
+    } else {
+      assert second / pageSize < first / pageSize;
+      assert (second / pageSize + 1) * pageSize <= (first / pageSize) * pageSize;
+    }
+  }
+
+  lemma CaptureAlignedPage(original: seq<Byte>, b: BufferedState, pageSize: nat, start: nat)
+    returns (next: BufferedState, pages: seq<PageCapture>, states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires BufferedInvariant(original, b) && b.protocol.mode == Active
+    requires 0 < pageSize && start % pageSize == 0 && start < |original|
+    requires WholePageCaptures(|original|, b.protocol.records, pageSize)
+    ensures BufferedPath(original, states, actions) && states[0] == b && states[|states|-1] == next
+    ensures BufferedInvariant(original, next) && next.protocol.mode == Active
+    ensures next.protocol.db == b.protocol.db && next.durableDb == b.durableDb && next.pending == b.pending
+    ensures RecordsExtend(b.protocol.records, next.protocol.records)
+    ensures WholePageCaptures(|original|, next.protocol.records, pageSize)
+    ensures Covered(next.protocol.records, |original|, start, start + pageSize)
+    ensures forall j | 0 <= j < |pages| :: ExactPagePayload(original, pageSize, pages[j])
+    ensures |pages| <= 1 && (|pages| == 1 ==> pages[0].pageOffset == start)
+    ensures |pages| == 1 ==> |pages[0].pageBytes| == pageSize
+    ensures |pages| == 0 ==> next.protocol.records == b.protocol.records
+    ensures |pages| == 1 ==>
+      |next.protocol.records| == |b.protocol.records| + Min(pageSize, |original| - start)
+    ensures |pages| == 1 ==> forall j | 0 <= j < Min(pageSize, |original| - start) ::
+      next.protocol.records[|b.protocol.records| + j] == BeforeImage(start + j, pages[0].pageBytes[j])
+  {
+    reveal WholePageCaptures();
+    reveal ExactPagePayload();
+    if Covered(b.protocol.records, |original|, start, start + pageSize) {
+      next, pages, states, actions := b, [], [b], [];
+    } else {
+      var end := Min(start + pageSize, |original|);
+      var bytes: seq<Byte>;
+      next, bytes, states, actions := CaptureCurrentByteRange(original, b, start, end);
+      var padded := bytes + seq(pageSize - |bytes|, i => 0 as Byte);
+      pages := [PageCapture(start, padded)];
+      assert ExactPagePayload(original, pageSize, pages[0]);
+      forall other: nat | other < |original| && other % pageSize == 0
+        ensures Covered(next.protocol.records, |original|, other, other + pageSize) ||
+          (forall i: nat :: other <= i < other + pageSize && i < |original| ==> i !in Saved(next.protocol.records))
+      {
+        if other == start {
+          assert Covered(next.protocol.records, |original|, other, other + pageSize);
+        } else if Covered(b.protocol.records, |original|, other, other + pageSize) {
+          RecordExtensionPreservesCoverage(original, b.protocol.records, next.protocol.records, other, other + pageSize);
+        } else {
+          AlignedPageIntervalsAreDisjoint(start, other, pageSize);
+        }
+      }
+    }
+  }
+
+  lemma InitialBufferedProtocolHasWholePages(original: seq<Byte>, pageSize: nat)
+    requires 0 < pageSize
+    ensures WholePageCaptures(|original|, InitialBufferedProtocol(original).protocol.records, pageSize)
+  { reveal WholePageCaptures(); }
+
+  // A successful preparation appends only a write/length intent, then flushes
+  // the journal. Capture, database mutation and parser/flush implementation are
+  // separate boundaries. The helper retains the constructed durable coverage.
+  lemma FlushCapturedPageIntent(original: seq<Byte>, b: BufferedState, pageSize: nat,
+      intent: ProtocolAction, lo: nat, hi: nat)
+    returns (next: BufferedState, states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires BufferedInvariant(original, b) && b.protocol.mode == Active
+    requires 0 < pageSize && WholePageCaptures(|original|, b.protocol.records, pageSize)
+    requires intent.AppendWrite? || intent.AppendLength?
+    requires Covered(b.protocol.records, |original|, lo, hi)
+    ensures BufferedPath(original, states, actions) && states[0] == b && states[|states|-1] == next
+    ensures BufferedInvariant(original, next) && next.protocol.mode == Active
+    ensures next.protocol.db == b.protocol.db && next.durableDb == b.durableDb && next.pending == b.pending
+    ensures RecordsExtend(b.protocol.records, next.protocol.records)
+    ensures WholePageCaptures(|original|, next.protocol.records, pageSize)
+    ensures Covered(DurableRecords(next.protocol), |original|, lo, hi)
+    ensures intent.AppendWrite? ==> WriteIntent(intent.start, intent.payload) in DurableRecords(next.protocol)
+    ensures intent.AppendLength? ==> LengthIntent(intent.length) in DurableRecords(next.protocol)
+  {
+    var append := Issue(intent);
+    BufferedStepPreserves(original, b, append);
+    var intended := BufferedApply(original, b, append);
+    match intent {
+      case AppendWrite(start, payload) =>
+        AppendedRecordProperties(original, b.protocol.records, WriteIntent(start, payload));
+      case AppendLength(length) =>
+        AppendedRecordProperties(original, b.protocol.records, LengthIntent(length));
+      case _ =>
+    }
+    SameSavedPreservesWholePages(|original|, b.protocol.records, intended.protocol.records, pageSize);
+    assert RecordsExtend(b.protocol.records, intended.protocol.records);
+    RecordExtensionPreservesCoverage(original, b.protocol.records, intended.protocol.records, lo, hi);
+    var flush := Issue(FlushJournal);
+    BufferedStepPreserves(original, intended, flush);
+    next := BufferedApply(original, intended, flush);
+    states, actions := [b, intended, next], [append, flush];
+    assert BufferedPath(original, [b, intended], [append]);
+    AppendBufferedPath(original, [b, intended], [append], flush);
+    assert DurableRecords(next.protocol) == intended.protocol.records;
+  }
+
+  // A write within one aligned original page uses a constructed page body,
+  // appends its intent and flushes the journal before any database mutation.
+  // The page body includes zero padding only beyond a partial original tail.
+  lemma PrepareSinglePageWrite(original: seq<Byte>, b: BufferedState, pageSize: nat,
+      pageOffset: nat, start: nat, payload: seq<Byte>)
+    returns (next: BufferedState, pages: seq<PageCapture>, states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires BufferedInvariant(original, b) && b.protocol.mode == Active
+    requires 0 < pageSize && pageOffset % pageSize == 0 && pageOffset < |original|
+    requires pageOffset <= start && start + |payload| <= pageOffset + pageSize
+    requires WholePageCaptures(|original|, b.protocol.records, pageSize)
+    ensures BufferedPath(original, states, actions) && states[0] == b && states[|states|-1] == next
+    ensures BufferedInvariant(original, next) && next.protocol.mode == Active
+    ensures next.protocol.db == b.protocol.db && next.durableDb == b.durableDb && next.pending == b.pending
+    ensures RecordsExtend(b.protocol.records, next.protocol.records)
+    ensures WholePageCaptures(|original|, next.protocol.records, pageSize)
+    ensures WriteIntent(start, payload) in DurableRecords(next.protocol)
+    ensures Covered(DurableRecords(next.protocol), |original|, start, start + |payload|)
+    ensures forall j | 0 <= j < |pages| :: ExactPagePayload(original, pageSize, pages[j])
+    ensures forall result: seq<Byte> :: TornWrite(next.protocol.db, start, payload, result) ==>
+      BufferedEnabled(original, next, Issue(MutateWrite(start, payload, result)))
+  {
+    var captured: BufferedState;
+    captured, pages, states, actions := CaptureAlignedPage(original, b, pageSize, pageOffset);
+    assert Covered(captured.protocol.records, |original|, start, start + |payload|);
+    var tailStates: seq<BufferedState>;
+    var tailActions: seq<BufferedAction>;
+    next, tailStates, tailActions :=
+      FlushCapturedPageIntent(original, captured, pageSize, AppendWrite(start, payload), start, start + |payload|);
+    JoinBufferedPaths(original, states, actions, tailStates, tailActions);
+    states, actions := states[..|states|-1] + tailStates, actions + tailActions;
+    RecordExtensionsAreTransitive(b.protocol.records, captured.protocol.records, next.protocol.records);
+  }
+
+  // This preparation covers a removed tail contained in one aligned page,
+  // including a partial final page. Arbitrary multi-page tail composition is
+  // a further refinement; no exact captured-byte premise is needed here.
+  lemma PrepareSinglePageTruncate(original: seq<Byte>, b: BufferedState, pageSize: nat, length: nat)
+    returns (next: BufferedState, pages: seq<PageCapture>, states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires BufferedInvariant(original, b) && b.protocol.mode == Active
+    requires 0 < pageSize && length % pageSize == 0 && length < |original| <= length + pageSize
+    requires length <= |b.protocol.db|
+    requires WholePageCaptures(|original|, b.protocol.records, pageSize)
+    ensures BufferedPath(original, states, actions) && states[0] == b && states[|states|-1] == next
+    ensures BufferedInvariant(original, next) && next.protocol.mode == Active
+    ensures next.protocol.db == b.protocol.db && next.durableDb == b.durableDb && next.pending == b.pending
+    ensures RecordsExtend(b.protocol.records, next.protocol.records)
+    ensures WholePageCaptures(|original|, next.protocol.records, pageSize)
+    ensures LengthIntent(length) in DurableRecords(next.protocol)
+    ensures Covered(DurableRecords(next.protocol), |original|, length, |original|)
+    ensures forall j | 0 <= j < |pages| :: ExactPagePayload(original, pageSize, pages[j])
+    ensures forall resultLength: nat ::
+      Min(|next.protocol.db|, length) <= resultLength <= (if |next.protocol.db| > length then |next.protocol.db| else length) ==>
+        BufferedEnabled(original, next, Issue(MutateLength(length, resultLength)))
+  {
+    var captured: BufferedState;
+    captured, pages, states, actions := CaptureAlignedPage(original, b, pageSize, length);
+    assert Covered(captured.protocol.records, |original|, length, |original|);
+    var tailStates: seq<BufferedState>;
+    var tailActions: seq<BufferedAction>;
+    next, tailStates, tailActions :=
+      FlushCapturedPageIntent(original, captured, pageSize, AppendLength(length), length, |original|);
+    JoinBufferedPaths(original, states, actions, tailStates, tailActions);
+    states, actions := states[..|states|-1] + tailStates, actions + tailActions;
+    RecordExtensionsAreTransitive(b.protocol.records, captured.protocol.records, next.protocol.records);
+  }
 }

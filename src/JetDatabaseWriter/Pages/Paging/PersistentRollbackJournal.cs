@@ -223,9 +223,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
     {
         using var staged = new FileStream(preparation, FileMode.Open, FileAccess.Read, FileShare.None);
         (int pageSize, long originalLength) = ValidateManifest(databasePath, staged);
-        long start = RecordStart(pageSize, originalLength);
-        int recordSize = pageSize + 40;
-        long completeEnd = start + ((staged.Length - start) / recordSize * recordSize);
+        long completeEnd = CompleteRecordEnd(pageSize, originalLength, staged.Length);
         if (completeEnd > journal.Length)
         {
             throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The preparation journal conflicts with the published recovery generation.");
@@ -264,7 +262,8 @@ internal sealed class PersistentRollbackJournal : IDisposable
         ValidatePageSize(pageSize);
         ValidateLength(originalLength);
         long manifestLength = RecordStart(pageSize, originalLength) - HeaderLength;
-        if (!header.AsSpan(0, 8).SequenceEqual(Magic) || !header.AsSpan(96, 32).SequenceEqual(Hash(header, 96)) || !header.AsSpan(24, 32).SequenceEqual(Identity(databasePath)) || journal.Length < HeaderLength + manifestLength)
+        _ = CompleteRecordEnd(pageSize, originalLength, journal.Length);
+        if (!header.AsSpan(0, 8).SequenceEqual(Magic) || !header.AsSpan(96, 32).SequenceEqual(Hash(header, 96)) || !header.AsSpan(24, 32).SequenceEqual(Identity(databasePath)))
         {
             throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery journal identity or header is invalid.");
         }
@@ -293,7 +292,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         ValidateLength(database.Length);
         long start = RecordStart(pageSize, originalLength);
         int recordSize = pageSize + 40;
-        long completeEnd = start + ((journal.Length - start) / recordSize * recordSize);
+        long completeEnd = CompleteRecordEnd(pageSize, originalLength, journal.Length);
         var beforeImages = new Dictionary<long, long>();
         byte[] record = new byte[recordSize];
         long maximumLength = originalLength;
@@ -453,7 +452,26 @@ internal sealed class PersistentRollbackJournal : IDisposable
     }
 
     private static long RecordStart(int pageSize, long originalLength)
-        => HeaderLength + ((originalLength + pageSize - 1) / pageSize * 32);
+    {
+        ulong start = RecoveryKernel.JournalRecordStart(unchecked((uint)pageSize), unchecked((ulong)originalLength));
+        if (start == 0)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery manifest framing is invalid.");
+        }
+
+        return checked((long)start);
+    }
+
+    private static long CompleteRecordEnd(int pageSize, long originalLength, long journalLength)
+    {
+        ulong end = RecoveryKernel.CompleteJournalEnd(unchecked((uint)pageSize), unchecked((ulong)originalLength), unchecked((ulong)journalLength));
+        if (end == 0)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery journal does not contain a complete bounded manifest.");
+        }
+
+        return checked((long)end);
+    }
 
     private static int OriginalPageLength(int pageSize, long originalLength, long offset)
         => checked((int)Math.Min(pageSize, originalLength - offset));
@@ -479,8 +497,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
         byte[] lengthBytes = new byte[8];
         Read(journal, 16, lengthBytes, lengthBytes.Length);
-        long start = RecordStart(pageSize, BinaryPrimitives.ReadInt64LittleEndian(lengthBytes));
-        long completeEnd = start + ((journal.Length - start) / record.Length * record.Length);
+        long completeEnd = CompleteRecordEnd(pageSize, BinaryPrimitives.ReadInt64LittleEndian(lengthBytes), journal.Length);
         journal.SetLength(completeEnd);
 
         BinaryPrimitives.WriteInt64LittleEndian(record, offset);

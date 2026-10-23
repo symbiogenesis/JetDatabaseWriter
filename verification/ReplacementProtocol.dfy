@@ -551,4 +551,382 @@ module ReplacementProtocol {
     AdmittedBytesEstablishCheckedFields(bytes, pathIdentity, digest);
     InterruptedRecoveryKeepsDecision(original, next, states, actions);
   }
+
+  // Copy/Publish refinement under a retained, validated immutable generation
+  // source and exclusive authority. Reads return its exact bounded slice;
+  // writes append either the full pending buffer or, on failure, a prefix.
+  // Visible and durable publication contents are separate. Background drains
+  // and uncertain flushes preserve a contiguous prefix; successful Flush(true)
+  // fences all copied bytes. This storage contract is explicit, not an OS or
+  // power-loss theorem: reordered holes and arbitrary corruption may refuse.
+  // Retry closes/retires the failed attempt before recreating its output; no
+  // old buffered effect may reappear in that newly empty publication file.
+  datatype CopyPhase = CopyReading | CopyWriting | CopyFlushing | CopyReady | CopyFailed
+  datatype CopySnapshot = CopySnapshot(protocol: Snapshot, useNew: bool,
+    cursor: nat, buffer: seq<int>, durable: seq<int>, phase: CopyPhase)
+  datatype CopyAction = ReadChunk(count: nat) | WriteChunk | FailChunk(written: nat)
+    | DrainCopy(count: nat) | BeginCopyFlush | CompleteCopyFlush
+    | UncertainCopyFlush(count: nat) | AbortCopy | CrashCopy | RetryCopy
+
+  function CopyOutput(c: CopySnapshot): seq<int> {
+    if c.protocol.publication.Present? then c.protocol.publication.bytes else []
+  }
+
+  predicate CopyFrame(before: CopySnapshot, after: CopySnapshot) {
+    after.useNew == before.useNew &&
+    after.protocol.decision == before.protocol.decision &&
+    after.protocol.destination == before.protocol.destination &&
+    after.protocol.oldCopy == before.protocol.oldCopy &&
+    after.protocol.newCopy == before.protocol.newCopy &&
+    after.protocol.intent == before.protocol.intent
+  }
+
+  predicate CopyValid(original: seq<int>, next: seq<int>, c: CopySnapshot) {
+    var source := Chosen(original, next, c.useNew);
+    var output := CopyOutput(c);
+    Valid(original, next, c.protocol) && c.protocol.intent &&
+    (if c.useNew then c.protocol.newCopy else c.protocol.oldCopy) &&
+    |source| <= 2147483648 && c.protocol.publication == Present(output) &&
+    IsPrefix(output, source) && IsPrefix(c.durable, output) &&
+    |output| <= c.cursor <= |source| && |c.buffer| <= 65536 &&
+    (match c.phase
+      case CopyReading => c.buffer == [] && |output| == c.cursor
+      case CopyWriting => 0 < |c.buffer| && c.cursor == |output| + |c.buffer| &&
+        c.buffer == source[|output|..c.cursor]
+      case CopyFlushing => c.buffer == [] && c.cursor == |source| && output == source
+      case CopyReady => c.buffer == [] && c.cursor == |source| && output == source && c.durable == source
+      case CopyFailed => true)
+  }
+
+  predicate CopyEnabled(original: seq<int>, next: seq<int>, c: CopySnapshot, a: CopyAction) {
+    var source := Chosen(original, next, c.useNew);
+    c.protocol.intent && (if c.useNew then c.protocol.newCopy else c.protocol.oldCopy) &&
+    |source| <= 2147483648 &&
+    (match a
+      case ReadChunk(count) => c.phase == CopyReading && 0 < count <= 65536 && c.cursor + count <= |source|
+      case WriteChunk => c.phase == CopyWriting
+      case FailChunk(written) => c.phase == CopyWriting && written <= |c.buffer|
+      case DrainCopy(count) => |c.durable| <= count <= |CopyOutput(c)|
+      case BeginCopyFlush => c.phase == CopyReading && c.cursor == |source|
+      case CompleteCopyFlush => c.phase == CopyFlushing
+      case UncertainCopyFlush(count) => c.phase == CopyFlushing && |c.durable| <= count <= |CopyOutput(c)|
+      case AbortCopy => c.phase != CopyReady && c.phase != CopyFailed
+      case CrashCopy => true
+      case RetryCopy => c.phase == CopyFailed)
+  }
+
+  function ApplyCopy(original: seq<int>, next: seq<int>, c: CopySnapshot, a: CopyAction): CopySnapshot
+    requires CopyEnabled(original, next, c, a)
+  {
+    var source := Chosen(original, next, c.useNew);
+    var output := CopyOutput(c);
+    match a
+      case ReadChunk(count) => c.(cursor := c.cursor + count,
+        buffer := source[c.cursor..c.cursor + count], phase := CopyWriting)
+      case WriteChunk => c.(protocol := c.protocol.(publication := Present(output + c.buffer)),
+        buffer := [], phase := CopyReading)
+      case FailChunk(written) => c.(protocol := c.protocol.(publication := Present(output + c.buffer[..written])),
+        buffer := [], phase := CopyFailed)
+      case DrainCopy(count) => c.(durable := output[..count])
+      case BeginCopyFlush => c.(phase := CopyFlushing)
+      case CompleteCopyFlush => c.(durable := output, phase := CopyReady)
+      case UncertainCopyFlush(count) => c.(durable := output[..count], phase := CopyFailed)
+      case AbortCopy => c.(phase := CopyFailed)
+      case CrashCopy => c.(protocol := c.protocol.(publication := Present(c.durable)),
+        cursor := |c.durable|, buffer := [], phase := CopyFailed)
+      case RetryCopy => c.(protocol := c.protocol.(publication := Present([])),
+        cursor := 0, buffer := [], durable := [], phase := CopyReading)
+  }
+
+  function CopyAbstractAction(c: CopySnapshot, a: CopyAction): Action {
+    match a
+      case WriteChunk => Stage(c.useNew, |CopyOutput(c)| + |c.buffer|)
+      case FailChunk(written) => Stage(c.useNew, |CopyOutput(c)| + written)
+      case CrashCopy => Stage(c.useNew, |c.durable|)
+      case RetryCopy => Stage(c.useNew, 0)
+      case _ => Interrupt
+  }
+
+  lemma PrefixOfPrefix(part: seq<int>, middle: seq<int>, whole: seq<int>)
+    requires IsPrefix(part, middle) && IsPrefix(middle, whole)
+    ensures IsPrefix(part, whole)
+  {}
+
+  lemma AppendedReadBytesAreExact(source: seq<int>, output: seq<int>, buffer: seq<int>, cursor: nat, written: nat)
+    requires IsPrefix(output, source)
+    requires cursor == |output| + |buffer| && cursor <= |source|
+    requires buffer == source[|output|..cursor]
+    requires written <= |buffer|
+    ensures output + buffer[..written] == source[..|output| + written]
+    ensures IsPrefix(output + buffer[..written], source)
+    ensures IsPrefix(output, output + buffer[..written])
+  {
+    assert source[..|output|] + source[|output|..|output| + written] == source[..|output| + written];
+  }
+
+  // Derives the existing Stage action from actual buffered slices and append
+  // effects. No read/write step receives an arbitrary exact-prefix premise.
+  lemma CopyStepRefinesStaging(original: seq<int>, next: seq<int>, c: CopySnapshot, a: CopyAction)
+    requires CopyValid(original, next, c)
+    requires CopyEnabled(original, next, c, a)
+    ensures CopyValid(original, next, ApplyCopy(original, next, c, a))
+    ensures CopyFrame(c, ApplyCopy(original, next, c, a))
+    ensures Enabled(original, next, c.protocol, CopyAbstractAction(c, a))
+    ensures ApplyCopy(original, next, c, a).protocol ==
+      Apply(original, next, c.protocol, CopyAbstractAction(c, a))
+  {
+    var source := Chosen(original, next, c.useNew);
+    var output := CopyOutput(c);
+    match a {
+      case WriteChunk =>
+        AppendedReadBytesAreExact(source, output, c.buffer, c.cursor, |c.buffer|);
+        PrefixOfPrefix(c.durable, output, output + c.buffer);
+      case FailChunk(written) =>
+        AppendedReadBytesAreExact(source, output, c.buffer, c.cursor, written);
+        PrefixOfPrefix(c.durable, output, output + c.buffer[..written]);
+      case CrashCopy =>
+        PrefixOfPrefix(c.durable, output, source);
+      case _ =>
+    }
+    assert Enabled(original, next, c.protocol, CopyAbstractAction(c, a));
+    StepPreserves(original, next, c.protocol, CopyAbstractAction(c, a));
+  }
+
+  function StartCopy(original: seq<int>, next: seq<int>, s: Snapshot, useNew: bool): CopySnapshot
+    requires Enabled(original, next, s, Stage(useNew, 0))
+  {
+    CopySnapshot(Apply(original, next, s, Stage(useNew, 0)), useNew, 0, [], [], CopyReading)
+  }
+
+  lemma StartCopyEstablishesInvariant(original: seq<int>, next: seq<int>, s: Snapshot, useNew: bool)
+    requires Valid(original, next, s) && Enabled(original, next, s, Stage(useNew, 0))
+    requires |Chosen(original, next, useNew)| <= 2147483648
+    ensures CopyValid(original, next, StartCopy(original, next, s, useNew))
+  {
+    StepPreserves(original, next, s, Stage(useNew, 0));
+  }
+
+  predicate CopyPath(original: seq<int>, next: seq<int>, copies: seq<CopySnapshot>, actions: seq<CopyAction>) {
+    |copies| == |actions| + 1 &&
+    forall i | 0 <= i < |actions| ::
+      CopyEnabled(original, next, copies[i], actions[i]) &&
+      copies[i+1] == ApplyCopy(original, next, copies[i], actions[i])
+  }
+
+  lemma CopyTracePreserves(original: seq<int>, next: seq<int>, copies: seq<CopySnapshot>, actions: seq<CopyAction>)
+    requires CopyPath(original, next, copies, actions)
+    requires CopyValid(original, next, copies[0])
+    ensures CopyValid(original, next, copies[|copies|-1])
+    ensures CopyFrame(copies[0], copies[|copies|-1])
+    decreases |actions|
+  {
+    if |actions| != 0 {
+      CopyStepRefinesStaging(original, next, copies[0], actions[0]);
+      CopyTracePreserves(original, next, copies[1..], actions[1..]);
+    }
+  }
+
+  lemma CopyTraceRefinesStaging(original: seq<int>, next: seq<int>, copies: seq<CopySnapshot>, copyActions: seq<CopyAction>)
+    returns (states: seq<Snapshot>, actions: seq<Action>)
+    requires CopyPath(original, next, copies, copyActions)
+    requires CopyValid(original, next, copies[0])
+    ensures |states| == |copies| && |actions| == |copyActions|
+    ensures forall i | 0 <= i < |states| :: states[i] == copies[i].protocol
+    ensures Path(original, next, states, actions)
+    decreases |copyActions|
+  {
+    if |copyActions| == 0 {
+      states, actions := [copies[0].protocol], [];
+    } else {
+      CopyStepRefinesStaging(original, next, copies[0], copyActions[0]);
+      var tailStates, tailActions := CopyTraceRefinesStaging(original, next, copies[1..], copyActions[1..]);
+      states, actions := [copies[0].protocol] + tailStates, [CopyAbstractAction(copies[0], copyActions[0])] + tailActions;
+      forall i | 0 <= i < |actions|
+        ensures Enabled(original, next, states[i], actions[i]) &&
+          states[i+1] == Apply(original, next, states[i], actions[i])
+      {
+        if i != 0 {
+          assert states[i] == tailStates[i-1];
+          assert actions[i] == tailActions[i-1];
+        }
+      }
+    }
+  }
+
+  function CopyRank(original: seq<int>, next: seq<int>, c: CopySnapshot): nat
+    requires CopyValid(original, next, c)
+  {
+    var length := |Chosen(original, next, c.useNew)|;
+    match c.phase
+      case CopyFailed => 2 * length + 3
+      case CopyReading => 2 * (length - c.cursor) + 2
+      case CopyWriting => 2 * (length - c.cursor) + 3
+      case CopyFlushing => 1
+      case CopyReady => 0
+  }
+
+  function SuccessfulCopyAction(original: seq<int>, next: seq<int>, c: CopySnapshot): CopyAction
+    requires CopyValid(original, next, c) && c.phase != CopyReady
+  {
+    var remaining := |Chosen(original, next, c.useNew)| - c.cursor;
+    if c.phase == CopyFailed then RetryCopy
+    else if c.phase == CopyWriting then WriteChunk
+    else if c.phase == CopyFlushing then CompleteCopyFlush
+    else if remaining == 0 then BeginCopyFlush
+    else ReadChunk(if remaining <= 65536 then remaining else 65536)
+  }
+
+  // Positive short reads also progress; completion does not depend on Read
+  // filling the requested 65536-byte buffer on every successful invocation.
+  lemma SuccessfulCopyStepDecreasesRank(original: seq<int>, next: seq<int>, c: CopySnapshot, a: CopyAction)
+    requires CopyValid(original, next, c) && CopyEnabled(original, next, c, a)
+    requires a.ReadChunk? || a.WriteChunk? || a.BeginCopyFlush? || a.CompleteCopyFlush? || a.RetryCopy?
+    ensures CopyValid(original, next, ApplyCopy(original, next, c, a))
+    ensures CopyRank(original, next, ApplyCopy(original, next, c, a)) < CopyRank(original, next, c)
+  {
+    CopyStepRefinesStaging(original, next, c, a);
+  }
+  lemma SuccessfulCopyProgress(original: seq<int>, next: seq<int>, c: CopySnapshot)
+    requires CopyValid(original, next, c) && c.phase != CopyReady
+    ensures CopyEnabled(original, next, c, SuccessfulCopyAction(original, next, c))
+    ensures CopyValid(original, next, ApplyCopy(original, next, c, SuccessfulCopyAction(original, next, c)))
+    ensures CopyRank(original, next, ApplyCopy(original, next, c, SuccessfulCopyAction(original, next, c))) <
+      CopyRank(original, next, c)
+  {
+    assert CopyEnabled(original, next, c, SuccessfulCopyAction(original, next, c));
+    SuccessfulCopyStepDecreasesRank(original, next, c, SuccessfulCopyAction(original, next, c));
+  }
+
+  // After any finite interruption trace, one eventually successful retry has
+  // a finite decreasing schedule. It restarts failed copies at byte zero, as
+  // Publish does; it does not claim progress through infinitely many failures.
+  lemma CompleteCopySchedule(original: seq<int>, next: seq<int>, c: CopySnapshot)
+    returns (copies: seq<CopySnapshot>, actions: seq<CopyAction>)
+    requires CopyValid(original, next, c)
+    ensures CopyPath(original, next, copies, actions) && copies[0] == c
+    ensures CopyValid(original, next, copies[|copies|-1]) && copies[|copies|-1].phase == CopyReady
+    ensures CopyFrame(c, copies[|copies|-1])
+    ensures |actions| <= CopyRank(original, next, c)
+    decreases CopyRank(original, next, c)
+  {
+    if c.phase == CopyReady {
+      copies, actions := [c], [];
+    } else {
+      SuccessfulCopyProgress(original, next, c);
+      var a := SuccessfulCopyAction(original, next, c);
+      var successor := ApplyCopy(original, next, c, a);
+      var tailCopies, tailActions := CompleteCopySchedule(original, next, successor);
+      copies, actions := [c] + tailCopies, [a] + tailActions;
+      forall i | 0 <= i < |actions|
+        ensures CopyEnabled(original, next, copies[i], actions[i]) &&
+          copies[i+1] == ApplyCopy(original, next, copies[i], actions[i])
+      {
+        if i != 0 {
+          assert copies[i] == tailCopies[i-1];
+          assert actions[i] == tailActions[i-1];
+        }
+      }
+    }
+  }
+
+  // Copy returns normally only after its successful fence. This gate refines
+  // the caller's ordering; the older abstract Publish action alone has no
+  // volatile/durable distinction and must not imply a completed copy flush.
+  predicate CopyPublicationEnabled(original: seq<int>, next: seq<int>, c: CopySnapshot) {
+    CopyValid(original, next, c) && c.phase == CopyReady &&
+    Enabled(original, next, c.protocol, Publish(c.useNew))
+  }
+
+  function PublishCopied(original: seq<int>, next: seq<int>, c: CopySnapshot): Snapshot
+    requires CopyPublicationEnabled(original, next, c)
+  {
+    Apply(original, next, c.protocol, Publish(c.useNew))
+  }
+
+  lemma FencedCopyPublicationRefines(original: seq<int>, next: seq<int>, c: CopySnapshot)
+    requires CopyPublicationEnabled(original, next, c)
+    ensures Valid(original, next, PublishCopied(original, next, c))
+    ensures c.durable == Chosen(original, next, c.useNew)
+    ensures PublishCopied(original, next, c).destination == Present(c.durable)
+    ensures PublishCopied(original, next, c).decision == c.protocol.decision
+  {
+    StepPreserves(original, next, c.protocol, Publish(c.useNew));
+  }
+
+  lemma UnfencedOrFailedCopyCannotPublish(original: seq<int>, next: seq<int>, c: CopySnapshot)
+    requires CopyValid(original, next, c)
+    requires c.durable != Chosen(original, next, c.useNew) || c.phase == CopyFailed
+    ensures !CopyPublicationEnabled(original, next, c)
+  {}
+
+  lemma CopyReadyTraceRequiresSuccessfulFlush(original: seq<int>, next: seq<int>,
+      copies: seq<CopySnapshot>, actions: seq<CopyAction>)
+    requires CopyPath(original, next, copies, actions)
+    requires copies[0].phase != CopyReady && copies[|copies|-1].phase == CopyReady
+    ensures exists i | 0 <= i < |actions| :: actions[i] == CompleteCopyFlush
+    decreases |actions|
+  {
+    if actions[0] != CompleteCopyFlush {
+      assert copies[1].phase != CopyReady;
+      CopyReadyTraceRequiresSuccessfulFlush(original, next, copies[1..], actions[1..]);
+      var i :| 0 <= i < |actions[1..]| && actions[1..][i] == CompleteCopyFlush;
+      assert actions[i+1] == CompleteCopyFlush;
+    }
+  }
+  // Composition includes the copy/flush schedule before abstract publication
+  // and cleanup. Rename/replace, destination flush, metadata, discovery and
+  // source/hash validation still require their separate production contracts.
+  lemma CompleteSelectedCopyRecovery(original: seq<int>, next: seq<int>, c: CopySnapshot)
+    returns (copies: seq<CopySnapshot>, copyActions: seq<CopyAction>, published: Snapshot,
+      cleanupStates: seq<Snapshot>, cleanupActions: seq<Action>)
+    requires CopyValid(original, next, c)
+    requires c.useNew == (c.protocol.decision == Committed)
+    ensures CopyPath(original, next, copies, copyActions) && copies[0] == c
+    ensures CopyValid(original, next, copies[|copies|-1]) && copies[|copies|-1].phase == CopyReady
+    ensures Enabled(original, next, copies[|copies|-1].protocol, Publish(c.useNew))
+    ensures CopyPublicationEnabled(original, next, copies[|copies|-1])
+    ensures published == PublishCopied(original, next, copies[|copies|-1])
+    ensures Path(original, next, cleanupStates, cleanupActions) && cleanupStates[0] == published
+    ensures !cleanupStates[|cleanupStates|-1].intent
+    ensures cleanupStates[|cleanupStates|-1].decision == c.protocol.decision
+    ensures cleanupStates[|cleanupStates|-1].destination == Present(Selected(original, next, c.protocol))
+  {
+    copies, copyActions := CompleteCopySchedule(original, next, c);
+    var ready := copies[|copies|-1];
+    assert Enabled(original, next, ready.protocol, Publish(c.useNew));
+    assert CopyPublicationEnabled(original, next, ready);
+    published := PublishCopied(original, next, ready);
+    FencedCopyPublicationRefines(original, next, ready);
+    cleanupStates, cleanupActions := CompleteRecovery(original, next, published);
+  }
+
+  lemma FiniteCopyFailuresAllowSelectedRecovery(original: seq<int>, next: seq<int>,
+      failedCopies: seq<CopySnapshot>, failedActions: seq<CopyAction>)
+    returns (copies: seq<CopySnapshot>, copyActions: seq<CopyAction>, published: Snapshot,
+      cleanupStates: seq<Snapshot>, cleanupActions: seq<Action>)
+    requires CopyPath(original, next, failedCopies, failedActions)
+    requires CopyValid(original, next, failedCopies[0])
+    requires failedCopies[0].useNew == (failedCopies[0].protocol.decision == Committed)
+    ensures CopyPath(original, next, copies, copyActions) && copies[0] == failedCopies[|failedCopies|-1]
+    ensures CopyPublicationEnabled(original, next, copies[|copies|-1])
+    ensures published == PublishCopied(original, next, copies[|copies|-1])
+    ensures Path(original, next, cleanupStates, cleanupActions) && cleanupStates[0] == published
+    ensures !cleanupStates[|cleanupStates|-1].intent
+    ensures cleanupStates[|cleanupStates|-1].decision == failedCopies[0].protocol.decision
+    ensures cleanupStates[|cleanupStates|-1].destination == Present(Selected(original, next, failedCopies[0].protocol))
+  {
+    CopyTracePreserves(original, next, failedCopies, failedActions);
+    copies, copyActions, published, cleanupStates, cleanupActions :=
+      CompleteSelectedCopyRecovery(original, next, failedCopies[|failedCopies|-1]);
+  }
+  // A file with holes/changed bytes is not silently granted this prefix-copy
+  // contract. ValidatePublication can refuse it while retaining all evidence.
+  lemma ConflictingPublicationCannotEnterCopyModel(original: seq<int>, next: seq<int>, s: Snapshot)
+    requires s.publication.Present?
+    requires s.publication != Present(original) && s.publication != Present(next)
+    requires !IsPrefix(s.publication.bytes, original) && !IsPrefix(s.publication.bytes, next)
+    requires !s.destination.Present? || !IsPrefix(s.publication.bytes, s.destination.bytes)
+    ensures !Valid(original, next, s)
+    ensures forall c: CopySnapshot | c.protocol == s :: !CopyValid(original, next, c)
+  {}
 }

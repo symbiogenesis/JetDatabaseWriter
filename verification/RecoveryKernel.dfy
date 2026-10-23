@@ -20,6 +20,77 @@ module RecoveryKernel {
     length <= 2147483648
   }
 
+  // Zero is an invalid-input sentinel; even an empty database has a complete
+  // 128-byte header. The manifest stores one 32-byte hash per rounded-up page.
+  function JournalRecordStart(pageSize: U32, originalLength: U64): U64 {
+    if !IsPageSize(pageSize) || !IsDatabaseLength(originalLength) then 0
+    else 128 + ((originalLength + (pageSize as U64) - 1) / (pageSize as U64)) * 32
+  }
+
+  // A trailing fragment supplies no complete record. No hashing or record-byte
+  // decoding is performed here; this is only the bounded framing arithmetic.
+  function CompleteJournalEnd(pageSize: U32, originalLength: U64, journalLength: U64): U64 {
+    var start := JournalRecordStart(pageSize, originalLength);
+    if start == 0 || journalLength < start || journalLength > 17179869184 then 0
+    else journalLength - ((journalLength - start) % ((pageSize as U64) + 40))
+  }
+
+  lemma JournalManifestIsExactBoundedPageRounding(pageSize: U32, originalLength: U64)
+    ensures JournalRecordStart(pageSize, originalLength) == 0 <==>
+      !IsPageSize(pageSize) || !IsDatabaseLength(originalLength)
+    ensures JournalRecordStart(pageSize, originalLength) != 0 ==>
+      128 <= JournalRecordStart(pageSize, originalLength) <= 33554560
+    ensures JournalRecordStart(pageSize, originalLength) != 0 ==>
+      (JournalRecordStart(pageSize, originalLength) as int - 128) % 32 == 0
+    ensures JournalRecordStart(pageSize, originalLength) != 0 ==>
+      ((JournalRecordStart(pageSize, originalLength) as int - 128) / 32) * pageSize as int >= originalLength as int
+    ensures JournalRecordStart(pageSize, originalLength) != 0 && originalLength > 0 ==>
+      (((JournalRecordStart(pageSize, originalLength) as int - 128) / 32) - 1) * pageSize as int < originalLength as int
+  {
+    if IsPageSize(pageSize) && IsDatabaseLength(originalLength) {
+      if pageSize == 2048 { } else { assert pageSize == 4096; }
+    }
+  }
+
+  lemma JournalFramingSelectsExactCompletePrefix(pageSize: U32, originalLength: U64, journalLength: U64)
+    ensures CompleteJournalEnd(pageSize, originalLength, journalLength) == 0 <==>
+      JournalRecordStart(pageSize, originalLength) == 0 ||
+      journalLength < JournalRecordStart(pageSize, originalLength) || journalLength > 17179869184
+    ensures CompleteJournalEnd(pageSize, originalLength, journalLength) != 0 ==>
+      128 <= JournalRecordStart(pageSize, originalLength) <=
+      CompleteJournalEnd(pageSize, originalLength, journalLength) <= journalLength <= 17179869184
+    ensures CompleteJournalEnd(pageSize, originalLength, journalLength) != 0 ==>
+      CompleteJournalEnd(pageSize, originalLength, journalLength) as int -
+        JournalRecordStart(pageSize, originalLength) as int ==
+      ((journalLength as int - JournalRecordStart(pageSize, originalLength) as int) /
+        (pageSize as int + 40)) * (pageSize as int + 40)
+    ensures CompleteJournalEnd(pageSize, originalLength, journalLength) != 0 ==>
+      0 <= journalLength as int - CompleteJournalEnd(pageSize, originalLength, journalLength) as int < pageSize as int + 40
+  {
+    JournalManifestIsExactBoundedPageRounding(pageSize, originalLength);
+    var start := JournalRecordStart(pageSize, originalLength) as int;
+    if start != 0 && start <= journalLength as int <= 17179869184 {
+      var size := pageSize as int + 40;
+      var length := journalLength as int - start;
+      assert length == (length / size) * size + length % size;
+    }
+  }
+
+  lemma JournalCompletePrefixIsMaximal(pageSize: U32, originalLength: U64,
+      journalLength: U64, candidate: int)
+    requires CompleteJournalEnd(pageSize, originalLength, journalLength) != 0
+    requires JournalRecordStart(pageSize, originalLength) as int <= candidate <= journalLength as int
+    requires (candidate - JournalRecordStart(pageSize, originalLength) as int) % (pageSize as int + 40) == 0
+    ensures candidate <= CompleteJournalEnd(pageSize, originalLength, journalLength) as int
+  {
+    JournalFramingSelectsExactCompletePrefix(pageSize, originalLength, journalLength);
+    var start := JournalRecordStart(pageSize, originalLength) as int;
+    var size := pageSize as int + 40;
+    var length := journalLength as int - start;
+    assert (candidate - start) / size <= length / size;
+    assert candidate - start == ((candidate - start) / size) * size;
+  }
+
   function IsPageOffset(offset: U64, pageSize: U32): bool {
     IsPageSize(pageSize) &&
     offset <= 2147483648 - (pageSize as U64) &&

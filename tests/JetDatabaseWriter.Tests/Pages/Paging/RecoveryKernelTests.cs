@@ -12,6 +12,105 @@ using Xunit;
 /// <summary>Checks the generated recovery boundary against independent bounded and edge-case oracles.</summary>
 public sealed class RecoveryKernelTests
 {
+    /// <summary>Framing rejects invalid bounds and selects exactly the maximal complete record prefix.</summary>
+    [Fact]
+    public void JournalFraming_BoundaryInputs_MatchesIndependentOracle()
+    {
+        uint[] pageSizes = [0, 1, 2048, 4096, uint.MaxValue];
+        ulong[] originalLengths = [0, 1, 2047, 2048, 2049, 4095, 4096, 4097, 2147483648, 2147483649, ulong.MaxValue];
+        foreach (uint pageSize in pageSizes)
+        {
+            foreach (ulong originalLength in originalLengths)
+            {
+                bool valid = pageSize is 2048 or 4096 && originalLength <= 2147483648;
+                ulong expectedStart = valid ? 128 + (32 * ((originalLength / pageSize) + (originalLength % pageSize == 0 ? 0UL : 1UL))) : 0;
+                Assert.Equal(expectedStart, RecoveryKernel.JournalRecordStart(pageSize, originalLength));
+                ulong recordSize = pageSize + 40UL;
+                ulong[] journalLengths =
+                [
+                    0, 1, 127, 128, 129, 17179869184, 17179869185, ulong.MaxValue,
+                    expectedStart, expectedStart + 1, expectedStart + recordSize - 1,
+                    expectedStart + recordSize, expectedStart + recordSize + 1,
+                    expectedStart + (2 * recordSize) - 1, expectedStart + (2 * recordSize),
+                ];
+                foreach (ulong journalLength in journalLengths)
+                {
+                    ulong expectedEnd = 0;
+                    if (valid && journalLength >= expectedStart && journalLength <= 17179869184)
+                    {
+                        ulong count = (journalLength - expectedStart) / recordSize;
+                        expectedEnd = expectedStart + (count * recordSize);
+                    }
+
+                    Assert.Equal(expectedEnd, RecoveryKernel.CompleteJournalEnd(pageSize, originalLength, journalLength));
+                    if (expectedEnd != 0)
+                    {
+                        Assert.InRange(journalLength - expectedEnd, 0UL, recordSize - 1);
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>Recovery replaces incomplete bytes with complete replay/decision records and preserves the complete prefix.</summary>
+    /// <param name="pageSize">The supported physical page size.</param>
+    /// <param name="incompleteLength">The nonempty trailing fragment length.</param>
+    /// <param name="preparationCopy">Whether discovery must also compare a preparation copy's complete prefix.</param>
+    [Theory]
+    [InlineData(2048, 1, false)]
+    [InlineData(2048, 2087, false)]
+    [InlineData(4096, 1, false)]
+    [InlineData(4096, 4135, false)]
+    [InlineData(2048, 2087, true)]
+    [InlineData(4096, 4135, true)]
+    public void Recover_IncompleteTail_ReplacesOnlyFragmentBeforeReplayAndDecision(int pageSize, int incompleteLength, bool preparationCopy)
+    {
+        using var fixture = new RecordFixture(pageSize);
+        using (var journal = PersistentRollbackJournal.Create(fixture.Database, pageSize))
+        {
+            journal.RecordBeforeTruncate(0);
+            fixture.Database.SetLength(0);
+            fixture.Database.Flush(flushToDisk: true);
+        }
+
+        byte[] completePrefix = File.ReadAllBytes(fixture.JournalPath);
+        fixture.AppendIncomplete(incompleteLength);
+        if (preparationCopy)
+        {
+            File.Copy(fixture.JournalPath, fixture.JournalPath + ".preparing");
+        }
+
+        Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(fixture.Database, () => throw new IOException("Retain completed evidence for inspection.")));
+        byte[] completed = File.ReadAllBytes(fixture.JournalPath);
+        Assert.Equal(completePrefix, completed.AsSpan(0, completePrefix.Length).ToArray());
+        Assert.Equal(completePrefix.Length + (2 * (pageSize + 40)), completed.Length);
+        Assert.Equal(-3, BinaryPrimitives.ReadInt64LittleEndian(completed.AsSpan(completePrefix.Length)));
+        Assert.Equal(-1, BinaryPrimitives.ReadInt64LittleEndian(completed.AsSpan(completePrefix.Length + pageSize + 40)));
+        Assert.Equal(fixture.Original, fixture.ReadDatabase());
+
+        PersistentRollbackJournal.Recover(fixture.Database);
+        Assert.False(File.Exists(fixture.JournalPath));
+        Assert.False(File.Exists(fixture.JournalPath + ".preparing"));
+        Assert.Equal(fixture.Original, fixture.ReadDatabase());
+    }
+
+    /// <summary>A partial page-hash manifest cannot be treated as a journal with an incomplete record.</summary>
+    [Fact]
+    public void Recover_IncompleteManifest_RetainsDatabaseAndEvidence()
+    {
+        using var fixture = new RecordFixture();
+        using (PersistentRollbackJournal.Create(fixture.Database, 2048))
+        {
+            // Retain the manifest without mutation records.
+        }
+
+        byte[] evidence = File.ReadAllBytes(fixture.JournalPath)[..^1];
+        File.WriteAllBytes(fixture.JournalPath, evidence);
+        Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(fixture.Database));
+        Assert.Equal(fixture.Original, fixture.ReadDatabase());
+        Assert.Equal(evidence, File.ReadAllBytes(fixture.JournalPath));
+    }
+
     /// <summary>Signed persisted tags and every control-state combination match an independent classifier.</summary>
     [Fact]
     public void ClassifyJournalRecord_EdgeTagsAndStates_MatchesIndependentOracle()
@@ -271,11 +370,13 @@ public sealed class RecoveryKernelTests
 
     private sealed class RecordFixture : IDisposable
     {
+        private readonly int pageSize;
         private readonly string path = Path.Combine(Path.GetTempPath(), "jdw-record-kernel-" + Guid.NewGuid().ToString("N") + ".mdb");
 
-        internal RecordFixture()
+        internal RecordFixture(int pageSize = 2048)
         {
-            this.Original = new byte[4096];
+            this.pageSize = pageSize;
+            this.Original = new byte[pageSize * 2];
             RandomNumberGenerator.Fill(this.Original);
             File.WriteAllBytes(this.path, this.Original);
             this.Database = new FileStream(this.path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
@@ -297,7 +398,7 @@ public sealed class RecoveryKernelTests
 
         internal void Append(long tag, bool trailingByte)
         {
-            byte[] record = new byte[2088];
+            byte[] record = new byte[this.pageSize + 40];
             BinaryPrimitives.WriteInt64LittleEndian(record, tag);
             if (tag == -1)
             {
@@ -315,11 +416,21 @@ public sealed class RecoveryKernelTests
             journal.Flush(flushToDisk: true);
         }
 
+        internal void AppendIncomplete(int length)
+        {
+            byte[] fragment = new byte[length];
+            Array.Fill(fragment, (byte)165);
+            using var journal = new FileStream(this.JournalPath, FileMode.Append, FileAccess.Write, FileShare.None);
+            journal.Write(fragment);
+            journal.Flush(flushToDisk: true);
+        }
+
         public void Dispose()
         {
             this.Database.Dispose();
             File.Delete(this.path);
             File.Delete(this.JournalPath);
+            File.Delete(this.JournalPath + ".preparing");
         }
     }
 }
