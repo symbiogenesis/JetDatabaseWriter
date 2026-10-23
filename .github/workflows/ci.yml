@@ -254,6 +254,7 @@ jobs:
           JetDatabaseWriter.Tests.Encryption.ReplacementDurabilityTests
           JetDatabaseWriter.Tests.Encryption.ReplacementNamespaceModelTests
           JetDatabaseWriter.Tests.Encryption.ReplacementIntentTests
+          JetDatabaseWriter.Tests.Encryption.ReplacementCleanupConformanceTests
           JetDatabaseWriter.Tests.Encryption.ReplacementCrashRecoveryTests
           JetDatabaseWriter.Tests.Pages.Paging.PersistentRollbackJournalTests
           JetDatabaseWriter.Tests.Pages.Paging.BufferedJournalConformanceTests
