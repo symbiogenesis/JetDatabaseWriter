@@ -1,0 +1,59 @@
+# Guard the mandatory proof/trust lane and its retained failure evidence.
+# This checks the repository's fixed YAML shape, not arbitrary YAML syntax.
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'Stop'
+$repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+$workflow = [IO.File]::ReadAllText((Join-Path $repoRoot '.github/workflows/ci.yml')).Replace("`r`n", "`n")
+
+function Assert-ProofJob([string] $Workflow) {
+    $match = [regex]::Match($Workflow, '(?ms)^  formal:\n(?<body>.*?)(?=^  [\w-]+:\n|\z)')
+    if (-not $match.Success) { throw 'The mandatory formal job is missing.' }
+    $job = $match.Groups['body'].Value
+    if ($job -notmatch '(?m)^    runs-on: ubuntu-22\.04$' -or
+        $job -notmatch '(?m)^    timeout-minutes: 15$' -or
+        $job -match '(?m)^    (?:if|needs|continue-on-error):' -or
+        $job -match 'continue-on-error:|--(?:no-verify|allow-warnings)|-Skip') {
+        throw 'The proof lane must run independently and fail closed within its time bound.'
+    }
+    $checkout = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
+    if (-not $job.Contains($checkout)) { throw 'The proof lane must pin checkout.' }
+    $install = [regex]::Match($job, '(?ms)^      - name: Install pinned verifier\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    $verify = [regex]::Match($job, '(?ms)^      - name: Verify proofs and trust policy\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    foreach ($step in @($install, $verify)) {
+        if (-not $step -or $step -match '(?m)^        if:' -or $step -notmatch '(?m)^        shell: pwsh$') {
+            throw 'Install and verification must be unconditional PowerShell steps.'
+        }
+    }
+    if (-not $install.Contains('./scripts/install-dafny.ps1 -Destination "${{ runner.temp }}/jdw-dafny-${{ github.run_id }}-${{ github.run_attempt }}"') -or
+        -not $verify.Contains('./scripts/verify-proofs.ps1') -or
+        -not $verify.Contains('-DafnyPath "${{ runner.temp }}/jdw-dafny-${{ github.run_id }}-${{ github.run_attempt }}/dafny/dafny"') -or
+        -not $verify.Contains('-OutputDirectory "${{ runner.temp }}/jdw-proof-results"')) {
+        throw 'The proof lane must use the integrity-pinned installer and verifier with external absolute output paths.'
+    }
+    $upload = [regex]::Match($job, '(?ms)^      - name: Upload proof diagnostics\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    if (-not $upload.Contains('if: ${{ !cancelled() }}') -or
+        -not $upload.Contains('uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a') -or
+        -not $upload.Contains('path: ${{ runner.temp }}/jdw-proof-results/')) {
+        throw 'Proof diagnostics must survive failed verification.'
+    }
+}
+
+function Assert-Case([string] $Name, [string] $Workflow, [bool] $ShouldFail) {
+    $failed = $false
+    try { Assert-ProofJob $Workflow } catch { $failed = $true }
+    if ($failed -ne $ShouldFail) { throw "Unexpected workflow verdict: $Name" }
+    "PASS: $Name"
+}
+
+Assert-Case 'required independent proof lane' $workflow $false
+Assert-Case 'missing proof lane' ($workflow.Replace('  formal:', '  removed:')) $true
+Assert-Case 'optional proof lane' ($workflow.Replace('    name: Verify recovery models (Dafny)', "    if: false`n    name: Verify recovery models (Dafny)")) $true
+Assert-Case 'ignored verification failure' ($workflow.Replace('    name: Verify recovery models (Dafny)', "    continue-on-error: true`n    name: Verify recovery models (Dafny)")) $true
+Assert-Case 'conditional verification' ($workflow.Replace('      - name: Verify proofs and trust policy', "      - name: Verify proofs and trust policy`n        if: false")) $true
+Assert-Case 'unbounded proof process' ($workflow.Replace('    timeout-minutes: 15', '    timeout-minutes: 360')) $true
+Assert-Case 'unpinned installation' ($workflow.Replace('./scripts/install-dafny.ps1', 'curl latest')) $true
+Assert-Case 'verification omitted' ($workflow.Replace('./scripts/verify-proofs.ps1', 'echo verified')) $true
+Assert-Case 'audit bypass option' ($workflow.Replace('./scripts/verify-proofs.ps1', './scripts/verify-proofs.ps1 -SkipAudit')) $true
+Assert-Case 'failure diagnostics lost' ($workflow.Replace('if: ${{ !cancelled() }}', 'if: success()')) $true

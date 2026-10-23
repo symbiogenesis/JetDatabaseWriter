@@ -57,7 +57,7 @@ git -c push.followTags=false push origin main:main
 gh run list --workflow ci.yml --branch main --commit <commit>
 ```
 
-Record the run URL, exact tested SHA and verdict. Inspect all ten jobs: five Windows Release analyzer/package jobs (the three test analyzer lanes also execute their full ordinary suites), the Windows generated trimmed/NativeAOT consumer job, and focused encryption replacement tests on Linux and macOS on .NET 10 and .NET 11. Do not treat a queued or running workflow as passed. A timing-sensitive failure may be retried once with `gh run rerun <id> --failed` before diagnosing it as reproducible.
+Record the run URL, exact tested SHA and verdict. Inspect every job: the Dafny recovery-model verification/trust-audit job, five Windows Release analyzer/package jobs (the three test analyzer lanes also execute their full ordinary suites), the Windows generated trimmed/NativeAOT consumer job, and focused encryption replacement tests on Linux and macOS on .NET 10 and .NET 11. Do not treat a queued or running workflow as passed. A timing-sensitive failure may be retried once with `gh run rerun <id> --failed` before diagnosing it as reproducible.
 
 InferSharp runs independently in `.github/workflows/infersharp.yml` through manual dispatch only (`gh workflow run infersharp.yml --ref main`). Its two Linux jobs analyze both library targets with v1.5; ordinary CI does not depend on them. Unreviewed findings fail that workflow; inspect the `infersharp-<framework>` text, SARIF and translation-coverage artifacts. The exact false-positive exceptions in `.github/infersharp-baseline.json` require source review; never regenerate them merely to accept output. Source hashes and stale exceptions are checked by the gate. For changes to InferSharp, record its separate run URL, tested SHA and verdict.
 
@@ -68,6 +68,10 @@ pwsh -NoProfile -File scripts/ci-gate.ps1 -RunId <id>
 ```
 
 The helper never publishes or deletes Git refs. After publishing `main`, `-Sha <commit>` finds or dispatches its CI run and verifies the published main tip; `-Benchmarks`, `-Baseline` and `-Job` select hosted benchmark measurements. It checks once by default; exit code 2 means pending. Use `-WaitSeconds` only when bounded waiting is needed. Alternatively, dispatch `gh workflow run ci.yml --ref main` and verify the resulting run's SHA. Keep work branches local and remove this session's eligible worktrees and branches after their changes are integrated and validated, retaining useful outputs.
+
+## Formal models
+
+`verification/` contains verification-only Dafny models; they do not enter the library or its dependency graph. Follow [the proof tooling and trust policy](verification/README.md), keep every `.dfy` in the exact manifest, and run `scripts/verify-proofs.ps1` with the integrity-pinned toolchain after changing proofs or proof tooling. Do not add assumptions, admitted lemmas, unchecked external contracts or disabled verification. Changes to mapped recovery code require review of [the model boundary](docs/design/formal-verification.md); the mapping is not a C# refinement proof. Keep [the formal verification todo plan](docs/formal-verification-todo.md) open-work-only. The required `ci.yml` formal job verifies the proofs, trust audit and negative controls independently of ordinary builds.
 
 ## Tests
 

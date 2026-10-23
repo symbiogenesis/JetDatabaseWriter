@@ -28,6 +28,34 @@ env:
 # parallel. The analyzers take most of a Release build, so five jobs share them, and the
 # test legs execute their own analyzed Release binaries immediately in the same job.
 jobs:
+  formal:
+    name: Verify recovery models (Dafny)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned verifier
+        shell: pwsh
+        run: ./scripts/install-dafny.ps1 -Destination "${{ runner.temp }}/jdw-dafny-${{ github.run_id }}-${{ github.run_attempt }}"
+
+      - name: Verify proofs and trust policy
+        shell: pwsh
+        run: >-
+          ./scripts/verify-proofs.ps1
+          -DafnyPath "${{ runner.temp }}/jdw-dafny-${{ github.run_id }}-${{ github.run_attempt }}/dafny/dafny"
+          -OutputDirectory "${{ runner.temp }}/jdw-proof-results"
+
+      - name: Upload proof diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: formal-verification
+          path: ${{ runner.temp }}/jdw-proof-results/
+          if-no-files-found: warn
+          retention-days: 7
+
   analyze:
     name: Analyze${{ matrix.runner && ' and test' || '' }} (${{ matrix.name }})
     runs-on: windows-latest

@@ -13,67 +13,28 @@ Keep only open work in this document. Remove completed requirements in the same 
 - Model checks are bounded evidence; inductive proofs quantify over unbounded model instances. Neither substitutes for implementation correspondence or native interoperability.
 - Local verification, Release builds and focused tests are allowed. Full test suites and every benchmark remain hosted-only. Changes to build/test behavior require the ordinary settled-main CI gate and any new proof gate.
 
-## V1 — Specify the storage contract and trusted boundary
+## V3 — Compose byte preservation with durable journal decisions
 
-Cause: recovery behavior is documented, but no single proof-oriented contract distinguishes abstract protocol safety, implementation behavior and OS persistence.
+Cause: exact durable captures, validated decisions and authorized mutations are premises of the byte model; the commit submodel is separate. Their composition with pending journal writes is not yet proved.
 
-- [ ] Define images, durable versus pending bytes, original length, generation, exclusive authority, validated evidence, successful commit acknowledgement and conservative refusal.
-- [ ] State before-or-committed recovery safety and the stronger acknowledged-commit property, including failed/uncertain commit outcomes.
-- [ ] Specify repeated recovery, truncation/re-extension, torn writes, partial versus invalid records, stale decisions and cleanup ownership.
-- [ ] Inventory trusted assumptions: file flush semantics, journal discovery/namespace durability, ordering, hashing/collision assumptions, trusted directories, path identity, locks, runtime/verifier/compiler/solver and C# correspondence.
-- [ ] Map each modeled transition to production methods and focused tests. Record uncovered parser, encoding, I/O and concurrency behavior explicitly.
-- [ ] Correct inconsistent operational guidance when it disagrees with the recovery implementation.
+- [ ] Model pending/durable journal appends, write intents, failed flush outcomes and record boundaries in one transaction state machine.
+- [ ] Derive pre-write enablement from journal state rather than supplying exact durable captures as a premise; include full-tail truncation and partial final pages.
+- [ ] Compose transaction mutation, commit decision and restartable replay into an end-to-end before-or-committed theorem over arbitrary finite mixed traces.
+- [ ] Admit reordered unflushed writes under an explicit storage model and preserve safety for every allowed crash outcome.
+- [ ] Prove a terminating undo replay schedule and its progress measure; exact reconstruction as a sequence expression alone does not prove the production replay loop.
 
-Acceptance: a reviewed design contract with named assumptions, explicit exclusions and source/test correspondence. No broader power-loss or implementation-verification claim.
+Acceptance: a checked composed protocol with explicit storage assumptions, without promoting abstract atomic decision classification to a verified byte parser.
 
-## V2 — Establish reproducible verification with no runtime dependencies
+## V5 — Refine replacement evidence and physical publication
 
-Cause: there is no pinned verifier, proof manifest, trust audit or required proof job.
+Cause: the replacement and ownership models start from validated logical evidence and exclusive generation authority. They do not establish these premises from persisted record bytes or actual copy/flush behavior.
 
-- [ ] Pin a stable Dafny release and its distributed solver with integrity-checked platform downloads; record tool provenance and the update procedure.
-- [ ] Add a fail-closed PowerShell verification entry point with bounded subprocess execution, explicit absolute temporary working/output paths and preserved system environment.
-- [ ] Verify every declared proof file, reject undeclared/omitted proof files and reject disabled verification, assumptions, axioms, unchecked external contracts or admitted lemmas.
-- [ ] Run Dafny's trust audit and fail on findings; successful process exit alone is insufficient. Keep logs and machine-readable coverage where supported.
-- [ ] Add focused script regressions for missing/mismatched tools, proof failures, audit findings and omitted files. Negative controls must show that a false theorem and an introduced assumption are rejected.
-- [ ] Add a required ordinary-main CI proof job and preserve proof diagnostics. Document local invocation without changing solution/package references.
+- [ ] Prove bounded byte-level header/decision classification, distinguishing incomplete records from invalid complete records and refusing insufficient bootstrap authority.
+- [ ] Refine immutable-copy availability and prefix staging into bounded copy, publication and flush outcomes, including exceptions and missing destinations.
+- [ ] Compose replacement selection with generation acquisition and cleanup, including failed receipt preparation and interrupted authority bootstrap.
+- [ ] Preserve the distinction between an abstract successful recovery path and the actual production algorithm; integrate its copy/retry progress argument.
 
-Acceptance: clean verification and trust audit from a pinned toolchain, demonstrated fail-closed negative controls and successful hosted proof gate for the settled main revision.
-
-## V3 — Prove the undo protocol's write preconditions
-
-Cause: targeted fault tests do not quantify over every model state, arbitrary image size or arbitrary repeated failures.
-
-- [ ] Build a small Dafny model of the current undo protocol using preconditions on writes, following PoWER/crash-refinement principles.
-- [ ] Prove an original before-image is durable before any original byte can be overwritten; untouched original bytes retain their original values.
-- [ ] Prove every truncation protects the complete removed original tail, including a partial last page; append-only bytes need no old image.
-- [ ] Admit torn and reordered unflushed data writes within the declared storage model, without silently assuming atomic pages.
-- [ ] Prove a flushed commit decision follows a fully flushed committed image, and that uncertain commit outcomes cannot select contradictory rollback.
-- [ ] State each abstraction deliberately; model checksums as validated evidence under an explicit integrity assumption, not mathematical collision freedom.
-
-Acceptance: mechanically checked inductive invariants over arbitrary finite images, with substantive transitions and explicit correspondence gaps. A tautological recovery selector is insufficient.
-
-## V4 — Prove restartable recovery and generation cleanup
-
-Cause: recovery itself can crash, and stale owners must never delete successor evidence.
-
-- [ ] Prove restoration preserves recoverability after every partial write, repeated crash and retry.
-- [ ] Model truncation followed by zero-filled re-extension and the recovery-start authorization needed to accept it.
-- [ ] Prove complete valid decisions choose exactly one image and invalid complete evidence refuses without mutation.
-- [ ] Prove cleanup requires matching generation and that repeated disposal cannot delete a successor generation's journal/receipt.
-- [ ] Separate safety from termination; prove progress only with finite work and eventually successful I/O, without assuming crashes stop as a safety precondition.
-
-Acceptance: verified recovery/ownership lemmas and a documented mapping to actual validation, replay and cleanup paths.
-
-## V5 — Prove replacement decision and publication rules
-
-Cause: encryption replacement has a separate old/new-image protocol and bootstrap boundary.
-
-- [ ] Model Prepared, publication, Committed, interrupted recovery and cleanup using immutable validated old/new copies and generation-bound authority.
-- [ ] Prove prepared-only evidence authorizes old, a complete valid commit authorizes new, and partial/invalid decisions follow the documented selection/refusal policy.
-- [ ] Prove publication and retries preserve an authorized complete copy; mismatched generation, conflicting bytes and insufficient bootstrap authority refuse safely.
-- [ ] Include missing destinations, partial publication prefixes and stale cleanup; document namespace durability and metadata preservation as separate obligations.
-
-Acceptance: checked selection/preservation/cleanup properties; no claim that file-content flushing makes rename durable.
+Acceptance: refined evidence/publication properties connected to implementation. Namespace durability and metadata preservation still require V7 qualification.
 
 ## V6 — Connect proofs to executable C#
 
@@ -139,8 +100,8 @@ Acceptance: scoped lifecycle guarantees; finite model checking is reported with 
 
 Cause: future code, verifier or storage changes can invalidate proof claims without changing theorem names.
 
-- [ ] Publish a compact evidence matrix: property, formal model/theorem, production boundary, conformance tests, platform evidence, trusted assumptions and remaining gap.
-- [ ] Update README claims individually only when their corresponding acceptance criteria hold. Keep Partial format/expression/native-compatibility statuses until E1/E2 and feature work establish them.
+- [ ] Extend the evidence matrix as implementation and platform coverage grow; link each additional theorem to production conformance and independently qualified storage assumptions.
+- [ ] Promote individual README guarantees only after their remaining implementation/platform criteria hold. Keep Partial format/expression/native-compatibility statuses until E1/E2 and feature work establish them.
 - [ ] Add proof/trust review to changes in mapped storage code and pin updates. Preserve counterexamples and failed proof diagnostics as useful CI evidence.
 - [ ] Reassess F* only for a concrete boundary where its extraction/trust tradeoff improves on Dafny under the unchanged-runtime constraint; verification-only F* remains possible without runtime dependencies.
 
@@ -148,9 +109,9 @@ Acceptance: readers can distinguish verified abstract algorithms, tested impleme
 
 ## Implementation order and independent lanes
 
-1. Establish V1/V2 and an initial V3/V4 pilot in parallel after this plan is committed. The integrator owns shared docs, the todo lists and final CI configuration.
-2. Verify and review the pilot, add V5 where independent, then land reproducible proof CI and the scope/assumption matrix.
-3. Close V6 for a small boundary before promoting a model proof to an implementation claim.
+1. Compose the pending/durable journal state machine in V3. The integrator owns shared docs, the todo lists and final CI configuration.
+2. Refine replacement evidence in V5 independently where its boundaries permit.
+3. Close V6 for a small production boundary before promoting a model proof to an implementation claim.
 4. Pursue V7 separately; missing OS/hardware evidence must not hold back useful model proofs, and model success must not erase E4/F6/I15.
 5. Expand into V8/V9/V10 according to concrete bug risk and existing workstream ownership. Avoid an engine rewrite or competing protocols merely to use a proof tool.
 6. Apply V11 whenever a claim changes. Leave incomplete items here with self-contained next steps.
