@@ -356,14 +356,17 @@ internal sealed class RecoverableWriterLock : IDisposable
     internal sealed class RecoveryLease(FileStream native, FileStream owner) : IDisposable
     {
         /// <summary>Removes the validated generation while the caller retains database ownership.</summary>
-        internal void Cleanup()
+        /// <param name="boundary">An optional observer after each ownership name is deleted.</param>
+        internal void Cleanup(Action<string>? boundary = null)
         {
             string nativePath = native.Name;
             string ownerPath = owner.Name;
             native.Dispose();
             File.Delete(nativePath);
+            boundary?.Invoke("cleanup-native");
             owner.Dispose();
             File.Delete(ownerPath);
+            boundary?.Invoke("cleanup-receipt");
         }
 
         /// <inheritdoc/>

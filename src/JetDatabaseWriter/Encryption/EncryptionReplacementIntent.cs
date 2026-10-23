@@ -373,7 +373,12 @@ internal sealed class EncryptionReplacementIntent : IDisposable
         }
 
         boundary?.Invoke("before-intent-delete");
-        ownership?.Cleanup();
+        if (ownership is not null)
+        {
+            ownership.Cleanup(boundary);
+            boundary?.Invoke("ownership-cleanup");
+        }
+
         intent.Dispose();
         File.Delete(IntentPath(path)); // Database ownership excludes a successor generation until deletion finishes.
     }

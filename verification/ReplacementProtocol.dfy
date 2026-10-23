@@ -1139,4 +1139,229 @@ module ReplacementProtocol {
       Ownership.TracePreserves(ownershipStates[..i+1], ownershipActions[..i]);
     }
   }
+
+  // The earlier Coordinated* schedule cleans the intent before ownership names.
+  // Production Cleanup uses another safe order: after selected-image validation,
+  // copy deletion and a destination flush, it retains the destination handle while
+  // deleting native, receipt and finally intent names. This refinement starts at
+  // that boundary. It does not infer a lease merely from matching database bytes.
+  datatype ProductionCleanupSnapshot = ProductionCleanupSnapshot(protocol: Snapshot,
+    ownership: Ownership.Snapshot, databaseHeld: bool)
+  datatype ProductionCleanupAction = CleanupOwnership(action: Ownership.Action)
+    | DeleteCleanupIntent | ReleaseCleanupDatabase | CrashCleanup
+    | RestartCleanup(id: nat, generation: nat)
+
+  predicate SelectedCleanupReady(original: seq<int>, next: seq<int>, s: Snapshot) {
+    Valid(original, next, s) && s.destination == Present(Selected(original, next, s)) &&
+      !s.oldCopy && !s.newCopy && s.publication == Missing
+  }
+
+  predicate ProductionCleanupValid(original: seq<int>, next: seq<int>, s: ProductionCleanupSnapshot) {
+    SelectedCleanupReady(original, next, s.protocol) && Ownership.Valid(s.ownership)
+  }
+
+  predicate CleanupNamesAbsent(s: ProductionCleanupSnapshot) {
+    s.ownership.nativeName == Ownership.Absent && s.ownership.receiptName == Ownership.Absent
+  }
+
+  function RestartOwnership(s: ProductionCleanupSnapshot, id: nat, generation: nat): Ownership.Action {
+    if s.ownership.receiptName == Ownership.Absent then Ownership.AcquireFresh(id, generation)
+    else Ownership.AcquireRecovery(id, generation)
+  }
+
+  predicate ProductionCleanupEnabled(original: seq<int>, next: seq<int>, s: ProductionCleanupSnapshot,
+      a: ProductionCleanupAction) {
+    match a
+      case CleanupOwnership(action) => s.databaseHeld && s.protocol.intent &&
+        Ownership.Enabled(s.ownership, action) &&
+        (action.StartDispose? || action.DeleteNative? || action.DeleteReceipt? ||
+          (action.Release? && CleanupNamesAbsent(s)))
+      case DeleteCleanupIntent => s.databaseHeld && s.protocol.intent && CleanupNamesAbsent(s) &&
+        s.ownership.holder == Ownership.Free
+      case ReleaseCleanupDatabase => s.databaseHeld && !s.protocol.intent && CleanupNamesAbsent(s) &&
+        s.ownership.holder == Ownership.Free
+      case CrashCleanup => true
+      case RestartCleanup(id, generation) => (!s.databaseHeld && s.protocol.intent &&
+        s.ownership.holder == Ownership.Free && Ownership.Enabled(s.ownership, RestartOwnership(s, id, generation)))
+  }
+
+  function ApplyProductionCleanup(original: seq<int>, next: seq<int>, s: ProductionCleanupSnapshot,
+      a: ProductionCleanupAction): ProductionCleanupSnapshot
+    requires ProductionCleanupEnabled(original, next, s, a)
+  {
+    match a
+      case CleanupOwnership(action) => s.(ownership := Ownership.Apply(s.ownership, action))
+      case DeleteCleanupIntent => s.(protocol := s.protocol.(intent := false))
+      case ReleaseCleanupDatabase => s.(databaseHeld := false)
+      case CrashCleanup => s.(ownership := Ownership.Apply(s.ownership, Ownership.Crash), databaseHeld := false)
+      case RestartCleanup(id, generation) =>
+        s.(ownership := Ownership.Apply(s.ownership, RestartOwnership(s, id, generation)), databaseHeld := true)
+  }
+
+  lemma ProductionCleanupStepPreserves(original: seq<int>, next: seq<int>, s: ProductionCleanupSnapshot,
+      a: ProductionCleanupAction)
+    requires ProductionCleanupValid(original, next, s) && ProductionCleanupEnabled(original, next, s, a)
+    ensures ProductionCleanupValid(original, next, ApplyProductionCleanup(original, next, s, a))
+    ensures ApplyProductionCleanup(original, next, s, a).protocol.decision == s.protocol.decision
+    ensures ApplyProductionCleanup(original, next, s, a).protocol.destination == s.protocol.destination
+  {
+    match a {
+      case CleanupOwnership(action) => Ownership.StepPreserves(s.ownership, action);
+      case DeleteCleanupIntent =>
+      case ReleaseCleanupDatabase =>
+      case CrashCleanup => Ownership.StepPreserves(s.ownership, Ownership.Crash);
+      case RestartCleanup(id, generation) => Ownership.StepPreserves(s.ownership, RestartOwnership(s, id, generation));
+    }
+  }
+
+  predicate ProductionCleanupPath(original: seq<int>, next: seq<int>, states: seq<ProductionCleanupSnapshot>,
+      actions: seq<ProductionCleanupAction>) {
+    |states| == |actions| + 1 && forall i | 0 <= i < |actions| ::
+      ProductionCleanupEnabled(original, next, states[i], actions[i]) &&
+      states[i+1] == ApplyProductionCleanup(original, next, states[i], actions[i])
+  }
+
+  lemma ProductionCleanupTracePreserves(original: seq<int>, next: seq<int>, states: seq<ProductionCleanupSnapshot>,
+      actions: seq<ProductionCleanupAction>)
+    requires ProductionCleanupPath(original, next, states, actions) && ProductionCleanupValid(original, next, states[0])
+    ensures ProductionCleanupValid(original, next, states[|states|-1])
+    ensures states[|states|-1].protocol.decision == states[0].protocol.decision
+    ensures states[|states|-1].protocol.destination == states[0].protocol.destination
+    decreases |actions|
+  {
+    if |actions| != 0 {
+      ProductionCleanupStepPreserves(original, next, states[0], actions[0]);
+      ProductionCleanupTracePreserves(original, next, states[1..], actions[1..]);
+    }
+  }
+
+  // The destination lease is independent of the names being removed. The
+  // cooperating-open admission contract requires both its release and no intent.
+  predicate CleanupSuccessorAdmission(s: ProductionCleanupSnapshot) {
+    !s.databaseHeld && !s.protocol.intent
+  }
+
+  lemma HeldCleanupDatabaseExcludesSuccessor(s: ProductionCleanupSnapshot)
+    requires s.databaseHeld
+    ensures !CleanupSuccessorAdmission(s)
+  {}
+
+  lemma ProductionDeletionRequiresSelectedLease(original: seq<int>, next: seq<int>, s: ProductionCleanupSnapshot,
+      a: ProductionCleanupAction)
+    requires ProductionCleanupValid(original, next, s) && ProductionCleanupEnabled(original, next, s, a)
+    requires (s.ownership.nativeName != Ownership.Absent &&
+      ApplyProductionCleanup(original, next, s, a).ownership.nativeName == Ownership.Absent) ||
+      (s.ownership.receiptName != Ownership.Absent &&
+      ApplyProductionCleanup(original, next, s, a).ownership.receiptName == Ownership.Absent) ||
+      (s.protocol.intent && !ApplyProductionCleanup(original, next, s, a).protocol.intent)
+    ensures s.databaseHeld && SelectedCleanupReady(original, next, s.protocol)
+    ensures a.DeleteCleanupIntent? ==> CleanupNamesAbsent(s)
+    ensures a.CleanupOwnership? ==> (s.protocol.intent &&
+      (a.action.DeleteNative? || a.action.DeleteReceipt?))
+    ensures a.CleanupOwnership? && a.action.DeleteNative? ==>
+      s.ownership.holder == Ownership.Owned(a.action.id) &&
+      s.ownership.nativeName == Ownership.Generation(s.ownership.owners[a.action.id])
+    ensures a.CleanupOwnership? && a.action.DeleteReceipt? ==>
+      s.ownership.holder == Ownership.Owned(a.action.id) && s.ownership.nativeName == Ownership.Absent &&
+      s.ownership.receiptName == Ownership.Generation(s.ownership.owners[a.action.id])
+  {
+    if a.CleanupOwnership? {
+      Ownership.DeletionRequiresGenerationAuthority(s.ownership, a.action);
+    }
+  }
+
+  lemma CleanupCrashLosesLeaseAndRetainsSelection(original: seq<int>, next: seq<int>, s: ProductionCleanupSnapshot)
+    requires ProductionCleanupValid(original, next, s)
+    ensures ProductionCleanupEnabled(original, next, s, CrashCleanup)
+    ensures !ApplyProductionCleanup(original, next, s, CrashCleanup).databaseHeld
+    ensures ApplyProductionCleanup(original, next, s, CrashCleanup).ownership.holder == Ownership.Free
+    ensures ApplyProductionCleanup(original, next, s, CrashCleanup).ownership.nativeName == s.ownership.nativeName
+    ensures ApplyProductionCleanup(original, next, s, CrashCleanup).ownership.receiptName == s.ownership.receiptName
+    ensures ApplyProductionCleanup(original, next, s, CrashCleanup).protocol == s.protocol
+    ensures s.protocol.intent ==> !CleanupSuccessorAdmission(ApplyProductionCleanup(original, next, s, CrashCleanup))
+  {}
+
+  // A crash after native deletion preserves the exact receipt. Its successful
+  // validated acquisition reconstructs that generation; bootstrap I/O is checked
+  // separately by GenerationOwnership's staged acquisition model.
+  lemma NativeCleanupCrashReconstructsRecordedGeneration(original: seq<int>, next: seq<int>,
+      s: ProductionCleanupSnapshot, id: nat, generation: nat)
+    requires ProductionCleanupValid(original, next, s) && s.protocol.intent
+    requires s.ownership.nativeName == Ownership.Absent && s.ownership.receiptName == Ownership.Generation(generation)
+    requires id !in s.ownership.owners
+    ensures ProductionCleanupEnabled(original, next, ApplyProductionCleanup(original, next, s, CrashCleanup),
+      RestartCleanup(id, generation))
+    ensures Ownership.HeldGenerationAuthority(ApplyProductionCleanup(original, next,
+      ApplyProductionCleanup(original, next, s, CrashCleanup), RestartCleanup(id, generation)).ownership, id, generation)
+    ensures ApplyProductionCleanup(original, next, ApplyProductionCleanup(original, next, s, CrashCleanup),
+      RestartCleanup(id, generation)).databaseHeld
+  {}
+
+  // Once both names were deleted, no old receipt remains to authorize that
+  // generation. A successful restart creates a fresh generation instead.
+  lemma ReceiptCleanupCrashRequiresFreshGeneration(original: seq<int>, next: seq<int>,
+      s: ProductionCleanupSnapshot, id: nat, generation: nat)
+    requires ProductionCleanupValid(original, next, s) && s.protocol.intent && CleanupNamesAbsent(s)
+    requires id !in s.ownership.owners && generation !in s.ownership.owners.Values
+    ensures ProductionCleanupEnabled(original, next, ApplyProductionCleanup(original, next, s, CrashCleanup),
+      RestartCleanup(id, generation))
+    ensures RestartOwnership(ApplyProductionCleanup(original, next, s, CrashCleanup), id, generation) ==
+      Ownership.AcquireFresh(id, generation)
+    ensures Ownership.HeldGenerationAuthority(ApplyProductionCleanup(original, next,
+      ApplyProductionCleanup(original, next, s, CrashCleanup), RestartCleanup(id, generation)).ownership, id, generation)
+  {}
+
+  function ProductionCleanupRank(s: ProductionCleanupSnapshot, id: nat): nat
+    requires Ownership.Valid(s.ownership) &&
+      (s.ownership.holder == Ownership.Owned(id) || s.ownership.holder == Ownership.Free)
+  {
+    Ownership.CleanupRank(s.ownership, id) + (if s.protocol.intent then 1 else 0) +
+      (if s.databaseHeld then 1 else 0)
+  }
+
+  // Construct the actual successful cleanup order, including releasing the
+  // retained destination only after intent deletion. No progress is claimed
+  // through infinitely many failed syscalls or failed bootstrap attempts.
+  lemma CompleteProductionCleanup(original: seq<int>, next: seq<int>, s: ProductionCleanupSnapshot, id: nat)
+    returns (states: seq<ProductionCleanupSnapshot>, actions: seq<ProductionCleanupAction>)
+    requires ProductionCleanupValid(original, next, s) && s.databaseHeld
+    requires s.ownership.holder == Ownership.Owned(id) || s.ownership.holder == Ownership.Free
+    requires s.ownership.holder == Ownership.Free ==> CleanupNamesAbsent(s)
+    requires s.ownership.holder == Ownership.Owned(id) ==>
+      s.protocol.intent && (s.ownership.cleaning == Ownership.Owned(id) ||
+        (s.ownership.cleaning == Ownership.Free && id !in s.ownership.attempted))
+    ensures ProductionCleanupPath(original, next, states, actions) && states[0] == s
+    ensures ProductionCleanupValid(original, next, states[|states|-1])
+    ensures !states[|states|-1].databaseHeld && !states[|states|-1].protocol.intent
+    ensures CleanupNamesAbsent(states[|states|-1]) && states[|states|-1].ownership.holder == Ownership.Free
+    ensures states[|states|-1].protocol.destination == s.protocol.destination
+    ensures states[|states|-1].protocol.decision == s.protocol.decision
+    ensures |actions| <= ProductionCleanupRank(s, id)
+    decreases ProductionCleanupRank(s, id)
+  {
+    var a := if s.ownership.holder == Ownership.Free then
+        (if s.protocol.intent then DeleteCleanupIntent else ReleaseCleanupDatabase)
+      else CleanupOwnership(if s.ownership.cleaning == Ownership.Free then Ownership.StartDispose(id)
+        else if s.ownership.nativeName != Ownership.Absent then Ownership.DeleteNative(id)
+        else if s.ownership.receiptName != Ownership.Absent then Ownership.DeleteReceipt(id) else Ownership.Release(id));
+    assert ProductionCleanupEnabled(original, next, s, a);
+    ProductionCleanupStepPreserves(original, next, s, a);
+    var successor := ApplyProductionCleanup(original, next, s, a);
+    if a.ReleaseCleanupDatabase? {
+      states, actions := [s, successor], [a];
+    } else {
+      assert ProductionCleanupRank(successor, id) < ProductionCleanupRank(s, id);
+      var tailStates, tailActions := CompleteProductionCleanup(original, next, successor, id);
+      states, actions := [s] + tailStates, [a] + tailActions;
+      forall i | 0 <= i < |actions|
+        ensures ProductionCleanupEnabled(original, next, states[i], actions[i]) &&
+          states[i+1] == ApplyProductionCleanup(original, next, states[i], actions[i])
+      {
+        if i != 0 {
+          assert states[i] == tailStates[i-1];
+          assert actions[i] == tailActions[i-1];
+        }
+      }
+    }
+  }
 }
