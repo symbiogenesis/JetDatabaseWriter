@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    "verification/UndoJournal.dfy",
+    "verification/ReplacementProtocol.dfy",
+    "verification/GenerationOwnership.dfy"
+  ]
+}
