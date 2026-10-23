@@ -2509,4 +2509,411 @@ module UndoJournal {
       RecordDecisionProperties(DurableRecords(next));
     }
   }
+
+  // Content refinement of buffered effects. Payload values and length floors
+  // come from durable complete records. Reordered persistence may expose a
+  // zero-filled gap absent from the issuing operation's readable image. The
+  // additional zero-exposure contract below is therefore explicit: it cannot
+  // be inferred from write-time admission or undo coverage alone.
+  predicate ContentEffect(original: seq<Byte>, records: seq<JournalRecord>, effect: DatabaseEffect) {
+    match effect
+      case BufferedWrite(start, payload) =>
+        forall j: nat :: j < |payload| ==>
+          FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+            RecoveryRecord in records, start + j, payload[j])
+      case BufferedLength(length) => RecordedMinimum(|original|, records) <= length
+  }
+
+  // Only newly exposed zeros are constrained, rather than assuming admission
+  // of the complete persistence result. Torn payload bytes remain arbitrary
+  // old/recorded mixtures under the existing EffectPersistence relation.
+  predicate ZeroExposureAllowed(original: seq<Byte>, records: seq<JournalRecord>,
+      beforeLength: nat, effect: DatabaseEffect, afterLength: nat) {
+    match effect
+      case BufferedWrite(start, payload) =>
+        forall i: nat :: beforeLength <= i < start && i < afterLength ==>
+          FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+            RecoveryRecord in records, i, 0)
+      case BufferedLength(length) =>
+        forall i: nat :: beforeLength <= i < afterLength ==>
+          FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+            RecoveryRecord in records, i, 0)
+  }
+
+  lemma RecordedPrefixRetainsValue(original: seq<Byte>, records: seq<JournalRecord>, count: nat,
+      offset: nat, value: Byte)
+    requires count <= |records|
+    requires FoldRecordedAdmission(original, records[..count], RecordedMinimum(|original|, records[..count]),
+      RecoveryRecord in records[..count], offset, value)
+    ensures FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+      RecoveryRecord in records, offset, value)
+  {
+    RecordedControlPrefix(|original|, records, count);
+    RecordFoldAdmitsExactlyRecordedValues(original, records[..count], RecordedMinimum(|original|, records[..count]),
+      RecoveryRecord in records[..count], offset, value);
+    RecordedValuesGrow(records, count, offset);
+    RecordFoldAdmitsExactlyRecordedValues(original, records, RecordedMinimum(|original|, records),
+      RecoveryRecord in records, offset, value);
+  }
+
+  lemma MoreRecordsAdmitEffect(original: seq<Byte>, records: seq<JournalRecord>, count: nat,
+      effect: DatabaseEffect)
+    requires count <= |records|
+    requires ContentEffect(original, records[..count], effect)
+    ensures ContentEffect(original, records, effect)
+  {
+    RecordedControlPrefix(|original|, records, count);
+    match effect {
+      case BufferedWrite(start, payload) =>
+        forall j: nat | j < |payload|
+          ensures FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+            RecoveryRecord in records, start + j, payload[j])
+        {
+          RecordedPrefixRetainsValue(original, records, count, start + j, payload[j]);
+        }
+      case BufferedLength(length) =>
+    }
+  }
+
+  lemma ContentEffectPersistencePreserves(original: seq<Byte>, records: seq<JournalRecord>,
+      before: seq<Byte>, effect: DatabaseEffect, after: seq<Byte>)
+    requires ContentAdmitted(original, before, records)
+    requires RecordedMinimum(|original|, records) <= |before|
+    requires ContentEffect(original, records, effect)
+    requires EffectPersistence(before, effect, after)
+    requires ZeroExposureAllowed(original, records, |before|, effect, |after|)
+    ensures ContentAdmitted(original, after, records)
+    ensures RecordedMinimum(|original|, records) <= |after|
+  {
+    forall i: nat | i < |after|
+      ensures FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+        RecoveryRecord in records, i, after[i])
+    {
+      match effect {
+        case BufferedWrite(start, payload) =>
+          if i < |before| && after[i] == before[i] {
+          } else if start <= i < start + |payload| && after[i] == payload[i-start] {
+            assert i-start < |payload|;
+          } else {
+            assert |before| <= i < start && after[i] == 0;
+          }
+        case BufferedLength(length) =>
+          if i >= |before| {
+            assert after[i] == 0;
+          }
+      }
+    }
+  }
+
+  predicate ContentBufferedInvariant(original: seq<Byte>, b: BufferedState) {
+    BufferedInvariant(original, b) && ContentProtocolInvariant(original, b.protocol) &&
+    RecordedMinimum(|original|, DurableRecords(b.protocol)) <= |b.durableDb| &&
+    ContentAdmitted(original, b.durableDb, DurableRecords(b.protocol)) &&
+    forall j | 0 <= j < |b.pending| :: ContentEffect(original, DurableRecords(b.protocol), b.pending[j])
+  }
+
+  predicate ContentBufferedEnabled(original: seq<Byte>, b: BufferedState, a: BufferedAction) {
+    b.protocol.durableCount <= |b.protocol.records| && BufferedEnabled(original, b, a) &&
+    (match a
+      case Issue(action) => ContentProtocolEnabled(original, b.protocol, action)
+      case Persist(index, result) =>
+        ZeroExposureAllowed(original, DurableRecords(b.protocol), |b.durableDb|, b.pending[index], |result|))
+  }
+
+  lemma InitialContentBufferedProtocolIsValid(original: seq<Byte>)
+    ensures ContentBufferedInvariant(original, InitialBufferedProtocol(original))
+  {
+    InitialBufferedProtocolIsValid(original);
+    InitialContentProtocolIsValid(original);
+  }
+
+  lemma ContentBufferedStepPreserves(original: seq<Byte>, b: BufferedState, a: BufferedAction)
+    requires ContentBufferedInvariant(original, b)
+    requires ContentBufferedEnabled(original, b, a)
+    ensures ContentBufferedInvariant(original, BufferedApply(original, b, a))
+  {
+    BufferedStepPreserves(original, b, a);
+    var s := b.protocol;
+    var records := DurableRecords(s);
+    var next := BufferedApply(original, b, a);
+    var nextRecords := DurableRecords(next.protocol);
+    match a {
+      case Persist(index, result) =>
+        ContentEffectPersistencePreserves(original, records, b.durableDb, b.pending[index], result);
+      case Issue(action) =>
+        ContentProtocolStepPreserves(original, s, action);
+        var logical := ProtocolApply(original, s, action);
+        assert nextRecords == DurableRecords(logical);
+        if action.FlushJournal? || action.FailJournalFlush? || action.Crash? {
+          assert s.durableCount <= logical.durableCount <= |s.records|;
+          assert nextRecords == s.records[..logical.durableCount];
+          assert nextRecords[..s.durableCount] == records;
+          RecordedPrefixRetainsContent(original, b.durableDb, nextRecords, s.durableCount);
+          RecordedControlPrefix(|original|, nextRecords, s.durableCount);
+          if !action.Crash? {
+            forall j | 0 <= j < |b.pending|
+              ensures ContentEffect(original, nextRecords, b.pending[j])
+            {
+              MoreRecordsAdmitEffect(original, nextRecords, s.durableCount, b.pending[j]);
+            }
+          }
+        } else {
+          assert nextRecords == records;
+        }
+        if action.Crash? {
+          assert next.protocol.db == b.durableDb;
+          assert ContentProtocolInvariant(original, next.protocol);
+        } else if action.FlushDatabase? {
+          assert next.durableDb == logical.db;
+        } else {
+          var extra := QueuedEffects(s, action);
+          match action {
+            case MutateWrite(start, payload, result) =>
+              forall j: nat | j < |payload|
+                ensures FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+                  RecoveryRecord in records, start + j, payload[j])
+              {
+                RecordedWriteAdmitsPayload(original, records, start, payload, start + j);
+              }
+            case MutateLength(length, resultLength) =>
+              RecordedLengthBoundsMinimum(|original|, records, length);
+            case ReplayResize(length) =>
+              assert RecordedMinimum(|original|, records) <= length;
+            case ReplayNext(written) =>
+              if written && s.replayCursor in Saved(records) {
+                SavedRecordsAreExact(original, records);
+                assert Saved(records)[s.replayCursor] == original[s.replayCursor];
+                RecordFoldAdmitsExactlyRecordedValues(original, records, RecordedMinimum(|original|, records),
+                  RecoveryRecord in records, s.replayCursor, original[s.replayCursor]);
+              }
+            case _ =>
+          }
+          assert forall j | 0 <= j < |extra| :: ContentEffect(original, nextRecords, extra[j]);
+          forall j | 0 <= j < |next.pending|
+            ensures ContentEffect(original, nextRecords, next.pending[j])
+          {
+            if j < |b.pending| {
+              assert next.pending[j] == b.pending[j];
+            } else {
+              assert next.pending[j] == extra[j-|b.pending|];
+            }
+          }
+        }
+    }
+  }
+
+  predicate ContentBufferedPath(original: seq<Byte>, states: seq<BufferedState>, actions: seq<BufferedAction>) {
+    |states| == |actions| + 1 &&
+    forall i | 0 <= i < |actions| :: ContentBufferedEnabled(original, states[i], actions[i]) &&
+      states[i+1] == BufferedApply(original, states[i], actions[i])
+  }
+
+  lemma ContentBufferedTracePreserves(original: seq<Byte>, states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires ContentBufferedPath(original, states, actions)
+    requires ContentBufferedInvariant(original, states[0])
+    ensures BufferedPath(original, states, actions)
+    ensures ContentBufferedInvariant(original, states[|states|-1])
+    ensures ContentAdmitted(original, states[|states|-1].protocol.db, DurableRecords(states[|states|-1].protocol))
+    ensures ContentAdmitted(original, states[|states|-1].durableDb, DurableRecords(states[|states|-1].protocol))
+    decreases |actions|
+  {
+    if |actions| > 0 {
+      ContentBufferedStepPreserves(original, states[0], actions[0]);
+      ContentBufferedTracePreserves(original, states[1..], actions[1..]);
+    }
+  }
+
+  // Once a complete replay marker is durable, every zero exposure above the
+  // record-derived minimum is admitted. Pending effects remain unrestricted
+  // in index, order, repetition and torn payload choice within that contract.
+  lemma DurableReplayMarkerAdmitsReorderedPersistence(original: seq<Byte>, b: BufferedState,
+      index: nat, result: seq<Byte>)
+    requires ContentBufferedInvariant(original, b)
+    requires RecoveryRecord in DurableRecords(b.protocol)
+    requires BufferedEnabled(original, b, Persist(index, result))
+    ensures ContentBufferedEnabled(original, b, Persist(index, result))
+  {
+    var records := DurableRecords(b.protocol);
+    forall i: nat | |b.durableDb| <= i
+      ensures FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records), true, i, 0)
+    {
+      RecordFoldAdmitsExactlyRecordedValues(original, records, RecordedMinimum(|original|, records), true, i, 0);
+    }
+  }
+
+  // Crash quiescence drops every old pending effect. A restarted recovery
+  // reads the admitted durable image; no older write can reappear afterwards.
+  lemma ContentCrashQuiescesPendingEffects(original: seq<Byte>, b: BufferedState, through: nat, partial: bool)
+    requires ContentBufferedInvariant(original, b)
+    requires ContentBufferedEnabled(original, b, Issue(Crash(through, partial)))
+    ensures ContentBufferedInvariant(original, BufferedApply(original, b, Issue(Crash(through, partial))))
+    ensures BufferedApply(original, b, Issue(Crash(through, partial))).protocol.db == b.durableDb
+    ensures |BufferedApply(original, b, Issue(Crash(through, partial))).pending| == 0
+    ensures forall index: nat, result: seq<Byte> ::
+      !BufferedEnabled(original, BufferedApply(original, b, Issue(Crash(through, partial))), Persist(index, result))
+  {
+    ContentBufferedStepPreserves(original, b, Issue(Crash(through, partial)));
+  }
+
+  lemma CompleteContentBufferedRecovery(original: seq<Byte>, b: BufferedState)
+    returns (states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires ContentBufferedInvariant(original, b)
+    requires b.protocol.mode == Inspecting || b.protocol.mode == Marking ||
+      b.protocol.mode == Replaying || b.protocol.mode == Finished
+    ensures ContentBufferedPath(original, states, actions) && states[0] == b
+    ensures ContentBufferedInvariant(original, states[|states|-1])
+    ensures states[|states|-1].protocol.mode == Finished
+    ensures RecordDecision(DurableRecords(states[|states|-1].protocol)) == RecordDecision(DurableRecords(b.protocol))
+    ensures if HasCommit(DurableRecords(b.protocol)) then
+      RecordDecision(DurableRecords(b.protocol)) == Committed(states[|states|-1].durableDb)
+      else states[|states|-1].durableDb == original
+    decreases ProtocolRecoveryRank(original, b.protocol)
+  {
+    if b.protocol.mode == Finished {
+      states, actions := [b], [];
+    } else {
+      ProtocolRecoveryProgress(original, b.protocol);
+      var action := ProtocolRecoveryAction(original, b.protocol);
+      assert ContentProtocolEnabled(original, b.protocol, action);
+      var a := Issue(action);
+      assert ContentBufferedEnabled(original, b, a);
+      ContentBufferedStepPreserves(original, b, a);
+      var next := BufferedApply(original, b, a);
+      assert next.protocol == ProtocolApply(original, b.protocol, action);
+      var tailStates, tailActions := CompleteContentBufferedRecovery(original, next);
+      states, actions := [b] + tailStates, [a] + tailActions;
+      forall i | 0 <= i < |actions|
+        ensures ContentBufferedEnabled(original, states[i], actions[i]) &&
+          states[i+1] == BufferedApply(original, states[i], actions[i])
+      {
+        if i != 0 {
+          assert states[i] == tailStates[i-1];
+          assert actions[i] == tailActions[i-1];
+        }
+      }
+      RecordDecisionProperties(DurableRecords(b.protocol));
+      RecordDecisionProperties(DurableRecords(next.protocol));
+    }
+  }
+
+  // Undo coverage alone permits a pre-marker zero-filled gap that content
+  // validation correctly refuses. Retrying an old write after truncation is
+  // not a new logical write with an automatically recorded sparse-gap intent.
+  lemma UnadmittedByteRefusesContent(original: seq<Byte>, current: seq<Byte>, records: seq<JournalRecord>, offset: nat)
+    requires offset < |current|
+    requires !FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+      RecoveryRecord in records, offset, current[offset])
+    ensures !ContentAdmitted(original, current, records)
+  {
+    if ContentAdmitted(original, current, records) {
+      assert FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+        RecoveryRecord in records, offset, current[offset]);
+    }
+  }
+
+  lemma ReorderedWriteCanExposeUnrecordedZeros()
+    ensures EffectPersistence([1], BufferedWrite(2, [4]), [1, 0, 4])
+    ensures ContentAdmitted([1, 2, 3], [1], [WriteIntent(2, [4]), LengthIntent(1)])
+    ensures !ContentAdmitted([1, 2, 3], [1, 0, 4], [WriteIntent(2, [4]), LengthIntent(1)])
+    ensures !ZeroExposureAllowed([1, 2, 3], [WriteIntent(2, [4]), LengthIntent(1)],
+      1, BufferedWrite(2, [4]), 3)
+  {
+    var records := [WriteIntent(2, [4]), LengthIntent(1)];
+    var current: seq<Byte> := [1, 0, 4];
+    assert RecordedMinimum(3, records) == 1;
+    assert !FoldRecordedAdmission([1, 2, 3], records, 1, false, 1, 0);
+    UnadmittedByteRefusesContent([1, 2, 3], current, records, 1);
+  }
+
+  lemma PreparedReorderingCounterexample()
+    returns (b: BufferedState)
+    ensures ContentBufferedInvariant([1, 2, 3], b)
+    ensures b.protocol.records == [BeforeImage(1, 2), BeforeImage(2, 3), WriteIntent(2, [4]), LengthIntent(1)]
+    ensures b.protocol.durableCount == 4 && b.protocol.db == [1] && b.durableDb == [1]
+    ensures b.protocol.mode == Active
+    ensures b.pending == [BufferedWrite(2, [4]), BufferedLength(1)]
+  {
+    var original: seq<Byte> := [1, 2, 3];
+    var first: seq<JournalRecord> := [BeforeImage(1, 2)];
+    var second := first + [BeforeImage(2, 3)];
+    var third := second + [WriteIntent(2, [4])];
+    var records := third + [LengthIntent(1)];
+    AppendedRecordProperties(original, [], BeforeImage(1, 2));
+    AppendedRecordProperties(original, first, BeforeImage(2, 3));
+    AppendedRecordProperties(original, second, WriteIntent(2, [4]));
+    AppendedRecordProperties(original, third, LengthIntent(1));
+    assert Saved(records) == map[1 := 2, 2 := 3];
+    assert Covered(third, 3, 1, 3);
+    assert OrderedTailRecords(3, first);
+    assert OrderedTailRecords(3, second);
+    assert OrderedTailRecords(3, third);
+    assert OrderedTailRecords(3, records);
+    assert RecordedMinimum(3, first) == 3;
+    assert RecordedMinimum(3, second) == 3;
+    assert RecordedMinimum(3, third) == 3;
+    assert RecordedMinimum(3, records) == 1;
+    var protocol := ProtocolState([1], records, 4, false, Active, false, false, false, 0);
+    b := BufferedState(protocol, [1], [BufferedWrite(2, [4]), BufferedLength(1)]);
+    assert DurableRecords(protocol) == records;
+    SavedRecordsAreExact(original, records);
+    RecordedWriteAdmitsPayload(original, records, 2, [4], 2);
+    RecordFoldAdmitsExactlyRecordedValues(original, records, 1, false, 0, 1);
+    assert ContentAdmitted(original, [1], records);
+    assert ContentEffect(original, records, BufferedWrite(2, [4]));
+    assert ContentBufferedInvariant(original, b);
+  }
+
+  lemma ReorderingCounterexampleRefuses(records: seq<JournalRecord>)
+    requires records == [BeforeImage(1, 2), BeforeImage(2, 3), WriteIntent(2, [4]), LengthIntent(1)]
+    ensures RecordedMinimum(3, records) == 1 && RecoveryRecord !in records
+    ensures !FoldRecordedAdmission([1, 2, 3], records, 1, false, 1, 0)
+    ensures !ContentAdmitted([1, 2, 3], [1, 0, 4], records)
+  {
+    assert (records[..3])[2] == WriteIntent(2, [4]);
+    assert (records[..3])[..2] == records[..2];
+    assert RecordedMinimum(3, records[..1]) == 3;
+    assert RecordedMinimum(3, records[..2]) == 3;
+    assert RecordedMinimum(3, records[..3]) == RecordedMinimum(3, (records[..3])[..2]);
+    assert RecordedMinimum(3, records[..3]) == 3;
+    assert RecordedMinimum(3, records) == 1;
+    assert RecordedValues(records[..1], 1) == {};
+    assert RecordedValues(records[..2], 1) == {};
+    assert RecordedValues(records[..3], 1) == RecordedValues((records[..3])[..2], 1);
+    assert RecordedValues(records[..3], 1) == {};
+    assert RecordedValues(records, 1) == {};
+    RecordFoldAdmitsExactlyRecordedValues([1, 2, 3], records, 1, false, 1, 0);
+    UnadmittedByteRefusesContent([1, 2, 3], [1, 0, 4], records, 1);
+  }
+
+  lemma ReorderedWriteCanLeaveRefusingCrashSurvivor()
+    returns (states: seq<BufferedState>, actions: seq<BufferedAction>)
+    ensures BufferedPath([1, 2, 3], states, actions) && |states| == 3
+    ensures ContentBufferedInvariant([1, 2, 3], states[0])
+    ensures BufferedInvariant([1, 2, 3], states[2])
+    ensures states[2].protocol.mode == Inspecting && states[2].protocol.db == [1, 0, 4]
+    ensures |states[2].pending| == 0
+    ensures !ContentAdmitted([1, 2, 3], states[2].protocol.db, DurableRecords(states[2].protocol))
+    ensures !ContentBufferedEnabled([1, 2, 3], states[0], actions[0])
+  {
+    var original: seq<Byte> := [1, 2, 3];
+    var b := PreparedReorderingCounterexample();
+    var records := b.protocol.records;
+    assert DurableRecords(b.protocol) == records;
+    ReorderingCounterexampleRefuses(records);
+    var persist := Persist(0, [1, 0, 4]);
+    if ZeroExposureAllowed(original, records, 1, BufferedWrite(2, [4]), 3) {
+      assert FoldRecordedAdmission(original, records, 1, false, 1, 0);
+      assert false;
+    }
+    assert !ZeroExposureAllowed(original, DurableRecords(b.protocol), |b.durableDb|, b.pending[0], 3);
+    assert !ContentBufferedEnabled(original, b, persist);
+    assert BufferedEnabled(original, b, persist);
+    BufferedStepPreserves(original, b, persist);
+    var persisted := BufferedApply(original, b, persist);
+    var crash := Issue(Crash(4, false));
+    BufferedStepPreserves(original, persisted, crash);
+    var survivor := BufferedApply(original, persisted, crash);
+    assert DurableRecords(survivor.protocol) == records;
+    states, actions := [b, persisted, survivor], [persist, crash];
+  }
 }

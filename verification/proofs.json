@@ -8,6 +8,6 @@
   ],
   "dependencies": {
     "verification/ReplacementProtocol.dfy": ["verification/GenerationOwnership.dfy"],
-    "verification/RecoveryKernel.dfy": ["verification/UndoJournal.dfy"]
+    "verification/RecoveryKernel.dfy": ["verification/UndoJournal.dfy", "verification/GenerationOwnership.dfy", "verification/ReplacementProtocol.dfy"]
   }
 }

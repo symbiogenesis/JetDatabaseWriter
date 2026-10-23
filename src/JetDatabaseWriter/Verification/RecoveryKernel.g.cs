@@ -4,6 +4,29 @@
 namespace JetDatabaseWriter.Verification {
 
   internal static class RecoveryKernel {
+    public static ulong DecodeReplacementLength(byte b0, byte b1, byte b2, byte b3, byte b4, byte b5, byte b6, byte b7)
+    {
+      return ((((((((ulong)(b0)) + ((256UL) * ((ulong)(b1)))) + ((65536UL) * ((ulong)(b2)))) + ((16777216UL) * ((ulong)(b3)))) + ((4294967296UL) * ((ulong)(b4)))) + ((1099511627776UL) * ((ulong)(b5)))) + ((281474976710656UL) * ((ulong)(b6)))) + ((72057594037927936UL) * ((ulong)(b7)));
+    }
+    public static bool IsReplacementIntentLength(ulong length) {
+      return ((256UL) <= (length)) && ((length) <= (352UL));
+    }
+    public static bool IsReplacementHeader(bool headerFieldsValid, ulong oldLength, ulong newLength)
+    {
+      return ((headerFieldsValid) && (JetDatabaseWriter.Verification.RecoveryKernel.IsDatabaseLength(oldLength))) && (JetDatabaseWriter.Verification.RecoveryKernel.IsDatabaseLength(newLength));
+    }
+    public static byte ReplacementAdmission(ulong length, bool headerFieldsValid, ulong oldLength, ulong newLength, bool decisionValid)
+    {
+      if ((!(JetDatabaseWriter.Verification.RecoveryKernel.IsReplacementIntentLength(length))) || (!(JetDatabaseWriter.Verification.RecoveryKernel.IsReplacementHeader(headerFieldsValid, oldLength, newLength)))) {
+        return (byte)(0);
+      } else if ((length) < (352UL)) {
+        return (byte)(1);
+      } else if (decisionValid) {
+        return (byte)(2);
+      } else {
+        return (byte)(0);
+      }
+    }
     public static bool IsPageSize(uint pageSize) {
       return ((pageSize) == (2048U)) || ((pageSize) == (4096U));
     }

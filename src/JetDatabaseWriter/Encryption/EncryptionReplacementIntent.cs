@@ -9,6 +9,7 @@ using System.Threading;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Transactions;
+using JetDatabaseWriter.Verification;
 
 /// <summary>Binds bounded replacement copies and a process-recovery decision to one exclusive path generation.</summary>
 /// <remarks>Contents are flushed; directory-entry persistence and physical power-loss ordering are not established.</remarks>
@@ -385,7 +386,8 @@ internal sealed class EncryptionReplacementIntent : IDisposable
 
     private static State ReadState(string path, FileStream intent)
     {
-        if (intent.Length is < HeaderLength or > HeaderLength + DecisionLength)
+        ulong length = checked((ulong)intent.Length);
+        if (!RecoveryKernel.IsReplacementIntentLength(length))
         {
             throw Corrupt("The replacement intent length is invalid.");
         }
@@ -393,33 +395,39 @@ internal sealed class EncryptionReplacementIntent : IDisposable
         byte[] bytes = new byte[HeaderLength];
         Read(intent, bytes);
         Guid generation = new(bytes.AsSpan(16, 16));
-        if (!bytes.AsSpan(0, 8).SequenceEqual(Magic) || BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(8)) != 1
-            || BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(12)) != HeaderLength || generation == Guid.Empty
-            || !bytes.AsSpan(32, 32).SequenceEqual(Identity(path)) || !bytes.AsSpan(224, 32).SequenceEqual(Digest(bytes.AsSpan(0, 224))))
+        bool headerFieldsValid = bytes.AsSpan(0, 8).SequenceEqual(Magic) && BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(8)) == 1
+            && BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(12)) == HeaderLength && generation != Guid.Empty
+            && bytes.AsSpan(32, 32).SequenceEqual(Identity(path)) && bytes.AsSpan(224, 32).SequenceEqual(Digest(bytes.AsSpan(0, 224)));
+        ulong oldLength = DecodeLength(bytes.AsSpan(64, 8));
+        ulong newLength = DecodeLength(bytes.AsSpan(72, 8));
+        if (!RecoveryKernel.IsReplacementHeader(headerFieldsValid, oldLength, newLength))
         {
-            throw Corrupt("The replacement intent version, identity or checksum is invalid.");
+            throw Corrupt(!headerFieldsValid
+                ? "The replacement intent version, identity or checksum is invalid."
+                : "Replacement content exceeds the bounded 2 GiB file limit.");
         }
 
-        long oldLength = BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(64));
-        long newLength = BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(72));
-        ValidateLength(oldLength);
-        ValidateLength(newLength);
-        var state = new State(generation, new(oldLength, bytes.AsSpan(80, 32).ToArray()), new(newLength, bytes.AsSpan(112, 32).ToArray()), Committed: false);
-        if (intent.Length == HeaderLength + DecisionLength)
+        bool decisionValid = false;
+        if (length == HeaderLength + DecisionLength)
         {
             byte[] decision = new byte[DecisionLength];
             Read(intent, decision);
-            if (!decision.AsSpan(0, 8).SequenceEqual(CommitMagic) || !decision.AsSpan(8, 16).SequenceEqual(generation.ToByteArray())
-                || !decision.AsSpan(24, 32).SequenceEqual(state.New.Hash) || !decision.AsSpan(64, 32).SequenceEqual(Digest(decision.AsSpan(0, 64))))
-            {
-                throw Corrupt("The replacement commit decision is invalid.");
-            }
-
-            state = state with { Committed = true };
+            decisionValid = decision.AsSpan(0, 8).SequenceEqual(CommitMagic) && decision.AsSpan(8, 16).SequenceEqual(generation.ToByteArray())
+                && decision.AsSpan(24, 32).SequenceEqual(bytes.AsSpan(112, 32)) && decision.AsSpan(64, 32).SequenceEqual(Digest(decision.AsSpan(0, 64)));
         }
 
-        return state;
+        byte admission = RecoveryKernel.ReplacementAdmission(length, headerFieldsValid, oldLength, newLength, decisionValid);
+        if (admission == 0)
+        {
+            throw Corrupt("The replacement commit decision is invalid.");
+        }
+
+        // Admission proves both raw signed-field encodings fit the nonnegative
+        // 2 GiB domain before either value is narrowed to the managed length.
+        return new(generation, new(checked((long)oldLength), bytes.AsSpan(80, 32).ToArray()), new(checked((long)newLength), bytes.AsSpan(112, 32).ToArray()), Committed: admission == 2);
     }
+
+    private static ulong DecodeLength(ReadOnlySpan<byte> bytes) => RecoveryKernel.DecodeReplacementLength(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]);
 
     private static byte[] Header(string path, State state)
     {

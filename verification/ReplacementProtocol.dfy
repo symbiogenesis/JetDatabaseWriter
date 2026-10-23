@@ -369,13 +369,18 @@ module ReplacementProtocol {
   {
     assert LittleEndian64(bytes) >= 72057594037927936 * (bytes[7] as int);
   }
-  predicate ValidHeaderBytes(header: seq<RecordByte>, pathIdentity: seq<RecordByte>,
+  predicate ValidHeaderFields(header: seq<RecordByte>, pathIdentity: seq<RecordByte>,
       digest: seq<RecordByte> -> seq<RecordByte>) {
     |header| == 256 && |pathIdentity| == 32 &&
     header[..8] == HeaderMagic() && header[8..12] == [1, 0, 0, 0] &&
     header[12..16] == [0, 1, 0, 0] &&
     (exists i | 16 <= i < 32 :: header[i] != 0) &&
-    header[32..64] == pathIdentity && header[224..256] == digest(header[..224]) &&
+    header[32..64] == pathIdentity && header[224..256] == digest(header[..224])
+  }
+
+  predicate ValidHeaderBytes(header: seq<RecordByte>, pathIdentity: seq<RecordByte>,
+      digest: seq<RecordByte> -> seq<RecordByte>) {
+    ValidHeaderFields(header, pathIdentity, digest) &&
     LittleEndian64(header[64..72]) <= 2147483648 &&
     LittleEndian64(header[72..80]) <= 2147483648
   }

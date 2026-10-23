@@ -1,6 +1,6 @@
 // Executable recovery decisions. Generated C# calls these total native-width
 // functions; ghost lemmas connect byte authorization to UndoJournal.Allowed.
-// Record-byte decoding, hashes, evidence identity, I/O and full loop correspondence remain
+// Remaining record-byte decoding, hashes, evidence identity, I/O and full loop correspondence remain
 // outside this kernel. No external C# contract is trusted by these proofs.
 module NativeRecoveryTypes {
   newtype {:nativeType "ulong"} U64 = x: int | 0 <= x < 18446744073709551616
@@ -11,6 +11,69 @@ module NativeRecoveryTypes {
 module RecoveryKernel {
   import opened NativeRecoveryTypes
   import Undo = UndoJournal
+  import Replacement = ReplacementProtocol
+
+  // Decode the on-disk signed-length field as raw unsigned bits. Admission
+  // below rejects every negative encoding before production narrows to long.
+  function DecodeReplacementLength(b0: Byte, b1: Byte, b2: Byte, b3: Byte,
+      b4: Byte, b5: Byte, b6: Byte, b7: Byte): U64 {
+    (b0 as U64) + 256 * (b1 as U64) + 65536 * (b2 as U64) + 16777216 * (b3 as U64) +
+      4294967296 * (b4 as U64) + 1099511627776 * (b5 as U64) +
+      281474976710656 * (b6 as U64) + 72057594037927936 * (b7 as U64)
+  }
+
+  function IsReplacementIntentLength(length: U64): bool {
+    256 <= length <= 352
+  }
+
+  function IsReplacementHeader(headerFieldsValid: bool, oldLength: U64, newLength: U64): bool {
+    headerFieldsValid && IsDatabaseLength(oldLength) && IsDatabaseLength(newLength)
+  }
+
+  // Native byte results: 0 refuses, 1 selects Prepared, 2 selects Committed.
+  // Field/digest checks describe the exact acquired record, not ownership.
+  // Even a purportedly valid decision cannot commit an incomplete append.
+  function ReplacementAdmission(length: U64, headerFieldsValid: bool,
+      oldLength: U64, newLength: U64, decisionValid: bool): Byte {
+    if !IsReplacementIntentLength(length) || !IsReplacementHeader(headerFieldsValid, oldLength, newLength) then 0
+    else if length < 352 then 1
+    else if decisionValid then 2
+    else 0
+  }
+
+  lemma ReplacementLengthDecodingMatchesSignedField(bytes: seq<Replacement.RecordByte>)
+    requires |bytes| == 8
+    ensures DecodeReplacementLength(bytes[0] as Byte, bytes[1] as Byte, bytes[2] as Byte,
+      bytes[3] as Byte, bytes[4] as Byte, bytes[5] as Byte, bytes[6] as Byte, bytes[7] as Byte) as int ==
+      Replacement.LittleEndian64(bytes)
+    ensures IsDatabaseLength(DecodeReplacementLength(bytes[0] as Byte, bytes[1] as Byte,
+      bytes[2] as Byte, bytes[3] as Byte, bytes[4] as Byte, bytes[5] as Byte, bytes[6] as Byte, bytes[7] as Byte)) <==>
+      0 <= Replacement.SignedLittleEndian64(bytes) <= 2147483648
+  {
+    Replacement.LengthEncodingMatchesSignedBounds(bytes);
+  }
+
+  // All byte/field correspondence is explicit. Exact .NET acquisition,
+  // GUID/path/digest semantics and generation authority are not inferred.
+  lemma ReplacementAdmissionRefinesRecordBytes(bytes: seq<Replacement.RecordByte>,
+      pathIdentity: seq<Replacement.RecordByte>,
+      digest: seq<Replacement.RecordByte> -> seq<Replacement.RecordByte>,
+      headerFieldsValid: bool, oldLength: U64, newLength: U64, decisionValid: bool)
+    requires |bytes| < 18446744073709551616
+    requires headerFieldsValid == (|bytes| >= 256 &&
+      Replacement.ValidHeaderFields(bytes[..256], pathIdentity, digest))
+    requires |bytes| >= 256 ==>
+      oldLength as int == Replacement.LittleEndian64(bytes[64..72]) &&
+      newLength as int == Replacement.LittleEndian64(bytes[72..80])
+    requires decisionValid == (|bytes| == 352 &&
+      Replacement.ValidDecisionBytes(bytes[..256], bytes[256..], digest))
+    ensures ReplacementAdmission(|bytes| as U64, headerFieldsValid, oldLength, newLength, decisionValid) == 0 <==>
+      Replacement.ReadRecordBytes(bytes, pathIdentity, digest) == Replacement.Refuse
+    ensures ReplacementAdmission(|bytes| as U64, headerFieldsValid, oldLength, newLength, decisionValid) == 1 <==>
+      Replacement.ReadRecordBytes(bytes, pathIdentity, digest) == Replacement.Admit(Replacement.Prepared)
+    ensures ReplacementAdmission(|bytes| as U64, headerFieldsValid, oldLength, newLength, decisionValid) == 2 <==>
+      Replacement.ReadRecordBytes(bytes, pathIdentity, digest) == Replacement.Admit(Replacement.Committed)
+  { }
 
   function IsPageSize(pageSize: U32): bool {
     pageSize == 2048 || pageSize == 4096

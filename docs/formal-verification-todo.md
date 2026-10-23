@@ -17,19 +17,19 @@ Keep only open work in this document. Remove completed requirements in the same 
 
 ## V3 — Refine journal persistence and page correspondence
 
-Cause: the buffered journal protocol constructs aligned multi-page captures and write/truncate preparation with complete original-tail coverage and zero padding beyond the file end. Record-derived minimum/replay controls and content admission compose logical mutations, uncertain journal flush prefixes and restartable replay. Buffered-effect composition, serialized acquisition and production-loop correspondence still require refinement.
+Cause: the buffered journal protocol constructs aligned multi-page captures and write/truncate preparation with complete original-tail coverage and zero padding beyond the file end. Record-derived minimum/replay controls and content admission compose logical mutations and buffered effects under an explicit zero-exposure contract. Unrestricted pre-marker reordering can retain exact undo evidence while exposing an unrecorded zero gap that the parser must refuse. Serialized acquisition, the zero-exposure storage/protocol boundary and production-loop correspondence still require refinement.
 
 - [ ] Bind the constructed page payloads and capture/preparation schedules to serialized record tags, manifest/page hashes, framing and production record iteration.
-- [ ] Lift the logical content protocol's record-derived minimum/replay controls and original/after-image/zero-tail admission through the buffered readable/durable effect queue, including reordered persistence and crash quiescence.
+- [ ] Establish production/storage correspondence for the buffered content refinement's zero-exposure contract, or extend the protocol to safely admit pre-marker survivors where an old write or length effect reextends a truncated image. Repro: truncation persists before an older write and the resulting zero gap has no durable gap intent or replay marker; exact undo coverage alone cannot authorize parser admission (V3/V7).
 - [ ] Connect the decreasing abstract replay schedule to the production loop and its conditional marker, record iteration, resize, flush and exception boundaries through V6 conformance.
 
 Acceptance: refine the checked buffered protocol under explicit page and parser contracts. Preserve its trace/progress theorems without promoting logical record classification to a verified byte parser or abstract progress to C# loop refinement.
 
 ## V5 — Refine replacement evidence and physical publication
 
-Cause: the replacement model classifies bounded header/decision bytes, refines bounded copy schedules and composes selected publication with staged generation acquisition and ordered cleanup. Production decoding, immutable-copy validation, generation authority and actual I/O still require correspondence.
+Cause: the replacement model classifies bounded header/decision bytes, refines bounded copy schedules and composes selected publication with staged generation acquisition and ordered cleanup. Generated framing, length decoding and field-based admission now refine the byte classifier in the production parser. Actual field-check/byte correspondence, immutable-copy validation, generation authority and I/O still require refinement.
 
-- [ ] Connect the bounded header/decision classifier to production exact reads, signed decoding, GUID/path/digest operations and generation bootstrap; valid record bytes alone cannot establish exclusive recovery authority.
+- [ ] Bind the generated replacement classifier's field-check inputs to production exact reads and magic/GUID/path/digest operations, and connect admitted evidence to generation bootstrap. The generated length decoder and framing/admission decisions do not verify these actual operations; valid record bytes alone cannot establish exclusive recovery authority (V5/V6).
 - [ ] Connect Prepared publication's concrete file creation, reads, writes and flush exceptions to retained-evidence and selected-publication ordering. Direct shared-copier fault survivors and real recovery retries do not establish the complete `Publish`/`Recover` exception trace or syscall persistence.
 - [ ] Extend production correspondence beyond the selected bootstrap and production-order cleanup traces, including receipt identity, interrupted acquisition/publication and failed bootstrap I/O. Connect the cleanup refinement's validated selected-image and successful destination-flush entry contract to the complete production trace.
 - [ ] Preserve the distinction between an abstract successful recovery path and the actual production algorithm; integrate its copy/retry progress argument.
@@ -38,7 +38,7 @@ Acceptance: refined evidence/publication properties connected to implementation.
 
 ## V6 — Extend correspondence across recovery control flow
 
-Cause: generated journal-value, framing, record-tag/control-state, bounded payload/hash slices, checked record cursors, original-page source identity and byte-authorization decisions cover selected pure boundaries. The generated truncate-tail schedule selects complete logical coverage at preparation and parser admission. Recovery loops, actual record reads, cryptographic payload identity, map construction and effect ordering remain handwritten and can drift from the model.
+Cause: generated journal-value, framing, record-tag/control-state, bounded payload/hash slices, checked record cursors, original-page source identity and byte-authorization decisions cover selected pure boundaries. The generated truncate-tail schedule selects complete logical coverage at preparation and parser admission, and the replacement parser uses generated framing/length/admission decisions. Recovery loops, actual record reads, cryptographic payload identity, map construction and effect ordering remain handwritten and can drift from the model.
 
 - [ ] Derive and replay conformance traces for remaining production transitions, including failed flush/commit, conditional replay markers and generation bootstrap/cleanup.
 - [ ] Exercise every relevant transition and rejection class, including repeated crashes and negative mutation controls. Keep local selections focused.
