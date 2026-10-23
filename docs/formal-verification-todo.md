@@ -53,7 +53,7 @@ Cause: E4/F6/I15 remain limited by namespace persistence, bootstrap and device o
 
 - [ ] Define supported OS/filesystem/device combinations and the required persistence/coordination contract for each.
 - [ ] Investigate a durably provisioned persistent journal/decision area to reduce per-transaction namespace changes, including initial provisioning, torn slots, reuse, generation rollover, extension metadata and stale decisions.
-- [ ] Compare managed directory-barrier capabilities against documented runtime/OS contracts. If unchanged runtime constraints prevent a portable barrier, retain a scoped guarantee and document the unresolved requirement.
+- [ ] Extend the [managed flush/source audit](design/recovery-storage-contract.md#managed-api-and-operating-system-evidence) to each deployed runtime and establish a supported directory-barrier or provisioning protocol under unchanged runtime constraints. The current implementation has no explicit parent-directory fence; retain the scoped guarantee until qualification evidence closes that gap.
 - [ ] Extend hosted VM/block-level or physical interruption testing to journal creation, decisions, truncation, replay, replacement and cleanup; process termination alone is insufficient.
 - [ ] Qualify the buffered model's exact bytes-and-length flush fence and crash quiescence against actual OS caches and outstanding I/O; a restarted recovery must not be overwritten by an older queued operation.
 - [ ] Qualify lock/receipt lifecycle and missing-name bootstrap, including macOS cooperation. Do not change Access compatibility by requiring native Access to replay a library log.

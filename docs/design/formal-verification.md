@@ -76,7 +76,7 @@ The copy refinement retains a validated immutable source, a read cursor and buff
 | Proof tools | Pinned Dafny, its bundled solver, verifier translation and the host executing them are trusted. A successful check is conditional on their soundness. No admitted proof or external contract is accepted by the pilot's trust policy. |
 | Implementation | The source-to-model mapping below is a review aid. It is not a machine-checked refinement proof of C# or an `extern` contract assumed to be true. |
 
-These boundaries retain E4/F6/I15. A persistently provisioned journal is a possible future way to reduce namespace changes; it would still need a proven provisioning/reuse/decision protocol and OS evidence. It is not the current implementation.
+These boundaries retain E4/F6/I15. The [storage qualification contract](recovery-storage-contract.md) records the managed flush/source audit, separate namespace and restart obligations, qualification receipt requirements and caller-stream boundary. No OS/filesystem/device combination has a power-loss qualification receipt. A persistently provisioned journal is a possible future way to reduce namespace changes; it would still need a proven provisioning/reuse/decision protocol and OS evidence. It is not the current implementation.
 
 ## Production correspondence
 
