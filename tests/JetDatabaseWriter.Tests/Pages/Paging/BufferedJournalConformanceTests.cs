@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Pages.Paging;
 
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using JetDatabaseWriter.Pages.Paging;
 using Xunit;
@@ -106,9 +107,110 @@ public sealed class BufferedJournalConformanceTests
         }
     }
 
+    /// <summary>Uncertain database flushes cannot decide a commit, and interrupted replay publishes only the required tail marker.</summary>
+    /// <param name="pageSize">The physical page size.</param>
+    /// <param name="truncate">Whether the mutation removes an original tail.</param>
+    /// <param name="persistBeforeFailure">Whether the injected flush persists bytes before reporting failure.</param>
+    [Theory]
+    [InlineData(2048, false, false)]
+    [InlineData(2048, false, true)]
+    [InlineData(2048, true, false)]
+    [InlineData(2048, true, true)]
+    [InlineData(4096, false, false)]
+    [InlineData(4096, false, true)]
+    [InlineData(4096, true, false)]
+    [InlineData(4096, true, true)]
+    public void Recover_FailedCommitAndReplayFlushes_RetainsUndecidedEvidence(int pageSize, bool truncate, bool persistBeforeFailure)
+    {
+        string path = Path.Combine(Path.GetTempPath(), "jdw-flush-trace-" + Guid.NewGuid().ToString("N") + ".mdb");
+        string sidecar = PersistentRollbackJournal.JournalPath(path);
+        byte[] original = new byte[(pageSize * 3) + 17];
+        Array.Fill(original, (byte)71);
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using (var database = new FlushCutStream(path, persistBeforeFailure))
+            {
+                using var journal = PersistentRollbackJournal.Create(database, pageSize);
+                byte[] after = new byte[pageSize];
+                Array.Fill(after, (byte)93);
+                journal.RecordBeforeWrite(0, after);
+                database.Position = 0;
+                database.Write(after, 0, after.Length);
+                if (truncate)
+                {
+                    journal.RecordBeforeTruncate(pageSize);
+                    database.SetLength(pageSize);
+                }
+
+                database.RefuseFlush = true;
+                Assert.Throws<IOException>(journal.Complete);
+                Assert.True(File.Exists(sidecar));
+            }
+
+            Assert.Equal(0, CountRecords(sidecar, pageSize, original.Length, -1));
+            using (var database = new FlushCutStream(path, persistBeforeFailure) { RefuseFlush = true })
+            {
+                Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database));
+                byte[] evidence = File.ReadAllBytes(sidecar);
+                Assert.Equal(truncate ? 1 : 0, CountRecords(sidecar, pageSize, original.Length, -3));
+                Assert.Equal(0, CountRecords(sidecar, pageSize, original.Length, -1));
+                Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database));
+                Assert.Equal(evidence, File.ReadAllBytes(sidecar));
+                database.RefuseFlush = false;
+                PersistentRollbackJournal.Recover(database);
+            }
+
+            Assert.Equal(original, File.ReadAllBytes(path));
+            Assert.False(File.Exists(sidecar));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(sidecar);
+            File.Delete(sidecar + ".preparing");
+        }
+    }
+
+    private static int CountRecords(string sidecar, int pageSize, int originalLength, long tag)
+    {
+        byte[] evidence = File.ReadAllBytes(sidecar);
+        int start = 128 + ((originalLength + pageSize - 1) / pageSize * 32);
+        int count = 0;
+        for (int offset = start; offset + pageSize + 40 <= evidence.Length; offset += pageSize + 40)
+        {
+            if (BinaryPrimitives.ReadInt64LittleEndian(evidence.AsSpan(offset, 8)) == tag)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
     /// <summary>Interrupts recovery after its decision is durable.</summary>
     /// <exception cref="IOException">Always interrupts the cleanup boundary.</exception>
     private static void RefuseCleanup() => throw new IOException("Injected interruption before evidence cleanup.");
+
+    private sealed class FlushCutStream(string path, bool persistBeforeFailure) : FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+    {
+        internal bool RefuseFlush { get; set; }
+
+        public override void Flush(bool flushToDisk)
+        {
+            if (this.RefuseFlush)
+            {
+                if (persistBeforeFailure)
+                {
+                    base.Flush(flushToDisk);
+                }
+
+                throw new IOException("Injected uncertain database flush.");
+            }
+
+            base.Flush(flushToDisk);
+        }
+    }
 
     private sealed class ReplayCutStream(string path, int cut) : FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
     {
