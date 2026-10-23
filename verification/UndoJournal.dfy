@@ -7,7 +7,7 @@
 module UndoJournal {
   type Byte = n: int | 0 <= n < 256 witness 0
 
-  function Max(a: nat, b: nat): nat { if a < b then b else a }
+  function Min(a: nat, b: nat): nat { if a < b then a else b }
 
   predicate ValidUndo(original: seq<Byte>, saved: map<nat, Byte>) {
     forall i: nat :: i in saved ==> i < |original| && saved[i] == original[i]
@@ -80,9 +80,11 @@ module UndoJournal {
 
   // Zero filling during replay can extend a truncated file. Every original
   // byte in that gap must already have a before-image. Existing unsaved
-  // bytes are preserved. A torn restore may leave any subset unrestored.
+  // original bytes are preserved. A torn restore may leave any subset
+  // unrestored. Final SetLength may remove transaction-appended bytes, so
+  // replay preserves only the shorter of current and original lengths.
   predicate ReplayMutation(original: seq<Byte>, before: seq<Byte>, after: seq<Byte>, saved: map<nat, Byte>) {
-    |after| >= |before| &&
+    |after| >= Min(|before|, |original|) &&
     forall i: nat :: i < |before| && i < |original| && i !in saved ==> after[i] == before[i]
   }
 
@@ -99,11 +101,19 @@ module UndoJournal {
     seq(length, i => if 0 <= i < |current| then current[i] else 0)
   }
 
+  lemma RestoreLengthIsReplayMutation(
+      original: seq<Byte>, current: seq<Byte>, saved: map<nat, Byte>)
+    ensures ReplayMutation(original, current, Resize(current, |original|), saved)
+  { }
+
   lemma RestoreLengthPreservesRecoverability(
       original: seq<Byte>, current: seq<Byte>, saved: map<nat, Byte>)
     requires Recoverable(original, current, saved)
     ensures Recoverable(original, Resize(current, |original|), saved)
-  { }
+  {
+    RestoreLengthIsReplayMutation(original, current, saved);
+    InterruptedReplayPreservesRecoverability(original, current, Resize(current, |original|), saved);
+  }
 
   function Restore(original: seq<Byte>, current: seq<Byte>, saved: map<nat, Byte>): seq<Byte>
     requires Recoverable(original, current, saved)
@@ -136,6 +146,20 @@ module UndoJournal {
       RepeatedReplayPreservesRecoverability(original, images[1..], saved);
     }
     CompleteReplayRestoresExactOriginal(original, images[|images| - 1], saved);
+  }
+
+  // An explicit two-state trace covers interruption after the real final
+  // SetLength removes appended transaction bytes, as well as byte replay.
+  lemma FinalAppendRemovalIsCoveredByReplayTrace(
+      original: seq<Byte>, current: seq<Byte>, saved: map<nat, Byte>)
+    requires Recoverable(original, current, saved)
+    requires |original| < |current|
+    ensures |Resize(current, |original|)| < |current|
+    ensures Recoverable(original, Resize(current, |original|), saved)
+    ensures Restore(original, Resize(current, |original|), saved) == original
+  {
+    RestoreLengthIsReplayMutation(original, current, saved);
+    RepeatedReplayPreservesRecoverability(original, [current, Resize(current, |original|)], saved);
   }
 
   // Models ValidateCurrentContent at byte granularity. An intent authorizes
@@ -184,7 +208,7 @@ module UndoJournal {
     requires Recoverable(original, before, saved)
     requires Authorized(original, before, intents, minimumLength, recovering)
     requires forall i: nat :: minimumLength <= i < |original| ==> i in saved
-    requires |before| <= |after|
+    requires Min(|before|, |original|) <= |after|
     requires forall i: nat :: i < |after| ==>
       (i < |before| && after[i] == before[i]) ||
       (i < |original| && after[i] == original[i]) ||
