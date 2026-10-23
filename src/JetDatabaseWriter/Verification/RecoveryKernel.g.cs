@@ -31,6 +31,35 @@ namespace JetDatabaseWriter.Verification {
     {
       return ((JetDatabaseWriter.Verification.RecoveryKernel.IsPageSize(pageSize)) && ((offset) <= ((2147483648UL) - ((ulong)(pageSize))))) && (((offset) % ((ulong)(pageSize))) == (0UL));
     }
+    public static uint OriginalPageLength(uint pageSize, ulong originalLength, ulong offset)
+    {
+      if (((!(JetDatabaseWriter.Verification.RecoveryKernel.IsPageOffset(offset, pageSize))) || (!(JetDatabaseWriter.Verification.RecoveryKernel.IsDatabaseLength(originalLength)))) || ((offset) >= (originalLength))) {
+        return 0U;
+      } else if (((originalLength) - (offset)) >= ((ulong)(pageSize))) {
+        return pageSize;
+      } else {
+        return (uint)((originalLength) - (offset));
+      }
+    }
+    public static ulong OriginalPageHashOffset(uint pageSize, ulong originalLength, ulong offset)
+    {
+      if ((JetDatabaseWriter.Verification.RecoveryKernel.OriginalPageLength(pageSize, originalLength, offset)) == (0U)) {
+        return 0UL;
+      } else {
+        return (128UL) + (((offset) / ((ulong)(pageSize))) * (32UL));
+      }
+    }
+    public static ulong JournalRecordPayloadOffset(uint pageSize, ulong originalLength, ulong journalLength, ulong position)
+    {
+      ulong _0_start = JetDatabaseWriter.Verification.RecoveryKernel.JournalRecordStart(pageSize, originalLength);
+      ulong _1_end = JetDatabaseWriter.Verification.RecoveryKernel.CompleteJournalEnd(pageSize, originalLength, journalLength);
+      ulong _2_size = ((ulong)(pageSize)) + (40UL);
+      if ((((((_1_end) == (0UL)) || ((position) < (_0_start))) || ((position) > (_1_end))) || (((_1_end) - (position)) < (_2_size))) || ((((position) - (_0_start)) % (_2_size)) != (0UL))) {
+        return 0UL;
+      } else {
+        return (position) + (8UL);
+      }
+    }
     public static bool IsTruncateLength(ulong length, uint pageSize, ulong maximumLength)
     {
       return ((JetDatabaseWriter.Verification.RecoveryKernel.IsPageSize(pageSize)) && ((length) <= (maximumLength))) && (((length) % ((ulong)(pageSize))) == (0UL));

@@ -2,11 +2,12 @@
   "schemaVersion": 1,
   "files": [
     "verification/UndoJournal.dfy",
-    "verification/ReplacementProtocol.dfy",
     "verification/GenerationOwnership.dfy",
+    "verification/ReplacementProtocol.dfy",
     "verification/RecoveryKernel.dfy"
   ],
   "dependencies": {
+    "verification/ReplacementProtocol.dfy": ["verification/GenerationOwnership.dfy"],
     "verification/RecoveryKernel.dfy": ["verification/UndoJournal.dfy"]
   }
 }

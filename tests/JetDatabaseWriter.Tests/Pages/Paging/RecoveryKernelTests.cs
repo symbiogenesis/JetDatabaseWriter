@@ -55,7 +55,7 @@ public sealed class RecoveryKernelTests
                 for (ulong cut = 0; cut <= 2 * size; cut++)
                 {
                     ulong journalLength = start + cut;
-                    ulong completeEnd = start + ((cut / size) * size);
+                    ulong completeEnd = start + (cut / size * size);
                     foreach (ulong position in positions)
                     {
                         bool valid = position >= start && position < completeEnd && (position - start) % size == 0;
@@ -68,7 +68,7 @@ public sealed class RecoveryKernelTests
                     }
                 }
 
-                ulong maximumCompleteEnd = start + (((17179869184 - start) / size) * size);
+                ulong maximumCompleteEnd = start + ((17179869184 - start) / size * size);
                 ulong lastPosition = maximumCompleteEnd - size;
                 Assert.Equal(lastPosition + 8, RecoveryKernel.JournalRecordPayloadOffset(pageSize, originalLength, 17179869184, lastPosition));
                 Assert.Equal(0UL, RecoveryKernel.JournalRecordPayloadOffset(pageSize, originalLength, 17179869184, maximumCompleteEnd));

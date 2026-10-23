@@ -17,9 +17,8 @@ Keep only open work in this document. Remove completed requirements in the same 
 
 ## V3 — Refine journal persistence and page correspondence
 
-Cause: the buffered journal protocol derives byte-level durable coverage, and constructive single-page captures derive exact original payloads with zero padding beyond the file end. Arbitrary multi-page preparation, serialization, content classification and production-loop correspondence still require refinement.
+Cause: the buffered journal protocol constructs aligned multi-page captures and write/truncate preparation with complete original-tail coverage and zero padding beyond the file end. Serialization, content classification and production-loop correspondence still require refinement.
 
-- [ ] Prove arbitrary multi-page capture scheduling and complete removed-tail composition; factor path/coverage obligations so the recursive preparation proof remains within the pinned verifier's normal budget.
 - [ ] Bind the constructed page payloads and capture/preparation schedules to serialized record tags, manifest/page hashes, framing and production record iteration.
 - [ ] Compose the persisted-record/content classifier with mutation and restartable replay, including original/after-image authorization and recovery-marker zero tails.
 - [ ] Connect the decreasing abstract replay schedule to the production loop and its conditional marker, record iteration, resize, flush and exception boundaries through V6 conformance.
@@ -28,23 +27,23 @@ Acceptance: refine the checked buffered protocol under explicit page and parser 
 
 ## V5 — Refine replacement evidence and physical publication
 
-Cause: the replacement model classifies bounded header/decision bytes and refines staged prefixes into bounded copy/read/write/flush/retry schedules. Production decoding, immutable-copy validation, generation authority and actual I/O still require correspondence.
+Cause: the replacement model classifies bounded header/decision bytes, refines bounded copy schedules and composes selected publication with staged generation acquisition and ordered cleanup. Production decoding, immutable-copy validation, generation authority and actual I/O still require correspondence.
 
 - [ ] Connect the bounded header/decision classifier to production exact reads, signed decoding, GUID/path/digest operations and generation bootstrap; valid record bytes alone cannot establish exclusive recovery authority.
 - [ ] Connect bounded-copy traces and their publication gate to actual immutable-copy validation, exact/short reads, partial writes, flush exceptions and missing-destination publication; qualify non-prefix staging refusal and retained evidence.
-- [ ] Compose replacement selection with generation acquisition and cleanup, including failed receipt preparation and interrupted authority bootstrap.
+- [ ] Extend production correspondence for the composed replacement/generation protocol beyond selected bootstrap traces, including receipt identity, interrupted acquisition/publication and cleanup ordering.
 - [ ] Preserve the distinction between an abstract successful recovery path and the actual production algorithm; integrate its copy/retry progress argument.
 
 Acceptance: refined evidence/publication properties connected to implementation. Namespace durability and metadata preservation still require V7 qualification.
 
 ## V6 — Extend correspondence across recovery control flow
 
-Cause: generated journal-value, manifest/complete-prefix arithmetic, record-tag/control-state and byte-authorization decisions cover selected pure boundaries. Recovery loops, actual record reads, payload/coverage extraction and effect ordering remain handwritten and can drift from the model.
+Cause: generated journal-value, framing, record-tag/control-state, bounded payload/hash slice and byte-authorization decisions cover selected pure boundaries. Recovery loops, actual record reads, payload identity, coverage extraction and effect ordering remain handwritten and can drift from the model.
 
 - [ ] Derive and replay conformance traces for remaining production transitions, including failed flush/commit, conditional replay markers and generation bootstrap/cleanup.
 - [ ] Exercise every relevant transition and rejection class, including repeated crashes and negative mutation controls. Keep local selections focused.
 - [ ] Complete the manual refinement argument for the remaining operations in the boundary inventory; review changed production mappings and proof assumptions.
-- [ ] Extend the executable boundary from framing arithmetic and record-tag classification into checked record acquisition, payload/coverage extraction or a replay transition once its byte and trace contracts are explicit; remove corresponding handwritten decisions and verify the production invocation.
+- [ ] Extend the executable boundary from bounded payload/hash slices into checked record acquisition, payload identity/coverage extraction or a replay transition once its byte and trace contracts are explicit; remove corresponding handwritten decisions and verify the production invocation.
 
 Acceptance: tested correspondence for each precisely named boundary, with the same verification, source freshness, license, target and trimming/NativeAOT obligations as the current kernel. No unchecked external contracts, new shipping dependencies or stronger claims for the remaining handwritten recovery algorithm.
 
