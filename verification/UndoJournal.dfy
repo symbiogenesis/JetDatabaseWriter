@@ -1808,4 +1808,225 @@ module UndoJournal {
     states, actions := states[..|states|-1] + tailStates, actions + tailActions;
     RecordExtensionsAreTransitive(b.protocol.records, captured.protocol.records, next.protocol.records);
   }
+  // Logical content admission is derived from the persisted record sequence,
+  // rather than an externally supplied map of after-image values. Record
+  // acquisition, checksum validation and payload identity remain assumptions
+  // of the caller that supplies these already classified logical records.
+  function RecordedValues(records: seq<JournalRecord>, offset: nat): set<Byte>
+    decreases |records|
+  {
+    if |records| == 0 then {}
+    else (RecordedValues(records[..|records|-1], offset) +
+      (if records[|records|-1].WriteIntent? &&
+          records[|records|-1].start <= offset < records[|records|-1].start + |records[|records|-1].payload|
+        then {records[|records|-1].payload[offset-records[|records|-1].start]} else {}))
+  }
+
+  function MaximumWriteEnd(records: seq<JournalRecord>): nat
+    decreases |records|
+  {
+    if |records| == 0 then 0
+    else if records[|records|-1].WriteIntent? &&
+        MaximumWriteEnd(records[..|records|-1]) < records[|records|-1].start + |records[|records|-1].payload|
+      then records[|records|-1].start + |records[|records|-1].payload|
+    else MaximumWriteEnd(records[..|records|-1])
+  }
+
+  function RecordedIntents(records: seq<JournalRecord>): map<nat, set<Byte>> {
+    map i: nat | i < MaximumWriteEnd(records) && RecordedValues(records, i) != {} :: RecordedValues(records, i)
+  }
+
+  // Mirrors the handwritten content loop: start with original/replay-zero
+  // admission, then OR in the byte of each matching complete write record.
+  function FoldRecordedAdmission(original: seq<Byte>, records: seq<JournalRecord>,
+      minimumLength: nat, recovering: bool, offset: nat, value: Byte): bool
+    decreases |records|
+  {
+    if |records| == 0 then Allowed(original, map[], minimumLength, recovering, offset, value)
+    else (FoldRecordedAdmission(original, records[..|records|-1], minimumLength, recovering, offset, value) ||
+      (records[|records|-1].WriteIntent? &&
+        records[|records|-1].start <= offset < records[|records|-1].start + |records[|records|-1].payload| &&
+        value == records[|records|-1].payload[offset-records[|records|-1].start]))
+  }
+
+  lemma RecordedValuesAreBounded(records: seq<JournalRecord>, offset: nat)
+    ensures RecordedValues(records, offset) != {} ==> offset < MaximumWriteEnd(records)
+    decreases |records|
+  {
+    if |records| > 0 {
+      RecordedValuesAreBounded(records[..|records|-1], offset);
+    }
+  }
+
+  lemma RecordedIntentLookup(records: seq<JournalRecord>, offset: nat, value: Byte)
+    ensures (offset in RecordedIntents(records) && value in RecordedIntents(records)[offset]) ==
+      (value in RecordedValues(records, offset))
+  {
+    RecordedValuesAreBounded(records, offset);
+  }
+
+  lemma RecordFoldAdmitsExactlyRecordedValues(original: seq<Byte>, records: seq<JournalRecord>,
+      minimumLength: nat, recovering: bool, offset: nat, value: Byte)
+    ensures FoldRecordedAdmission(original, records, minimumLength, recovering, offset, value) ==
+      (Allowed(original, map[], minimumLength, recovering, offset, value) || value in RecordedValues(records, offset))
+    ensures FoldRecordedAdmission(original, records, minimumLength, recovering, offset, value) ==
+      Allowed(original, RecordedIntents(records), minimumLength, recovering, offset, value)
+    decreases |records|
+  {
+    if |records| > 0 {
+      RecordFoldAdmitsExactlyRecordedValues(original, records[..|records|-1], minimumLength, recovering, offset, value);
+    }
+    RecordedIntentLookup(records, offset, value);
+  }
+
+  predicate AdmittedByRecords(original: seq<Byte>, current: seq<Byte>, records: seq<JournalRecord>,
+      minimumLength: nat, recovering: bool) {
+    forall i: nat :: i < |current| ==>
+      FoldRecordedAdmission(original, records, minimumLength, recovering, i, current[i])
+  }
+
+  lemma RecordedAdmissionIsAuthorization(original: seq<Byte>, current: seq<Byte>, records: seq<JournalRecord>,
+      minimumLength: nat, recovering: bool)
+    ensures AdmittedByRecords(original, current, records, minimumLength, recovering) ==
+      Authorized(original, current, RecordedIntents(records), minimumLength, recovering)
+  {
+    forall i: nat | i < |current|
+      ensures FoldRecordedAdmission(original, records, minimumLength, recovering, i, current[i]) ==
+        Allowed(original, RecordedIntents(records), minimumLength, recovering, i, current[i])
+    {
+      RecordFoldAdmitsExactlyRecordedValues(original, records, minimumLength, recovering, i, current[i]);
+    }
+  }
+
+  lemma AppendedRecordRetainsAdmission(original: seq<Byte>, records: seq<JournalRecord>, record: JournalRecord,
+      minimumLength: nat, recovering: bool, offset: nat, value: Byte)
+    requires FoldRecordedAdmission(original, records, minimumLength, recovering, offset, value)
+    ensures FoldRecordedAdmission(original, records + [record], minimumLength, recovering, offset, value)
+  {
+    assert (records + [record])[..|records|] == records;
+  }
+
+  // A torn sparse write may expose zeros in a previously removed original
+  // tail. Those zeros need explicit record admission before mutation; merely
+  // having complete undo coverage does not establish content authorization.
+  lemma RecordedTornWritePreservesAdmission(original: seq<Byte>, before: seq<Byte>, after: seq<Byte>,
+      records: seq<JournalRecord>, minimumLength: nat, recovering: bool, start: nat, payload: seq<Byte>)
+    requires AdmittedByRecords(original, before, records, minimumLength, recovering)
+    requires TornWrite(before, start, payload, after)
+    requires forall i: nat :: |before| <= i < start && i < |after| ==>
+      FoldRecordedAdmission(original, records, minimumLength, recovering, i, 0)
+    ensures AdmittedByRecords(original, after, records + [WriteIntent(start, payload)], minimumLength, recovering)
+  {
+    var next := records + [WriteIntent(start, payload)];
+    assert next[..|records|] == records;
+    forall i: nat | i < |after|
+      ensures FoldRecordedAdmission(original, next, minimumLength, recovering, i, after[i])
+    {
+      if i < |before| && after[i] == before[i] {
+        AppendedRecordRetainsAdmission(original, records, WriteIntent(start, payload), minimumLength, recovering, i, after[i]);
+      } else if start <= i < start + |payload| && after[i] == payload[i-start] {
+        assert next[|records|] == WriteIntent(start, payload);
+      } else {
+        assert |before| <= i < start && after[i] == 0;
+        AppendedRecordRetainsAdmission(original, records, WriteIntent(start, payload), minimumLength, recovering, i, 0);
+      }
+    }
+  }
+
+  // This concrete counterexample distinguishes recoverable bytes from an
+  // image that the content classifier can admit. A sound preparation step
+  // must record the sparse zero gap rather than invent a replay marker.
+  lemma SparseGapNeedsRecordedAuthorization()
+    ensures Recoverable([1, 2, 3], [1, 0, 4], map[1 := 2, 2 := 3])
+    ensures !AdmittedByRecords([1, 2, 3], [1, 0, 4], [WriteIntent(2, [4])], 1, false)
+  {
+    var original: seq<Byte> := [1, 2, 3];
+    var current: seq<Byte> := [1, 0, 4];
+    var records: seq<JournalRecord> := [WriteIntent(2, [4])];
+    RecordFoldAdmitsExactlyRecordedValues(original, records, 1, false, 1, 0);
+    assert !FoldRecordedAdmission(original, records, 1, false, 1, 0);
+    if AdmittedByRecords(original, current, records, 1, false) {
+      assert 1 < |current| && current[1] == 0;
+      assert FoldRecordedAdmission(original, records, 1, false, 1, current[1]);
+    }
+  }
+  function ZeroBytes(length: nat): seq<Byte> { seq(length, i => 0 as Byte) }
+
+  // Explicit zero-valued after-images close the sparse-write gap without
+  // granting recovery-marker privileges before replay actually begins.
+  // A physical implementation may split this logical span into page records.
+  lemma RecordedGapAndWritePreserveAdmission(original: seq<Byte>, before: seq<Byte>, after: seq<Byte>,
+      records: seq<JournalRecord>, minimumLength: nat, start: nat, payload: seq<Byte>)
+    requires AdmittedByRecords(original, before, records, minimumLength, false)
+    requires |before| <= start
+    requires TornWrite(before, start, payload, after)
+    ensures AdmittedByRecords(original, after,
+      records + [WriteIntent(|before|, ZeroBytes(start-|before|)), WriteIntent(start, payload)],
+      minimumLength, false)
+  {
+    var gap := WriteIntent(|before|, ZeroBytes(start-|before|));
+    var prepared := records + [gap];
+    assert prepared[..|records|] == records;
+    forall i: nat | i < |before|
+      ensures FoldRecordedAdmission(original, prepared, minimumLength, false, i, before[i])
+    {
+      AppendedRecordRetainsAdmission(original, records, gap, minimumLength, false, i, before[i]);
+    }
+    forall i: nat | |before| <= i < start && i < |after|
+      ensures FoldRecordedAdmission(original, prepared, minimumLength, false, i, 0)
+    { }
+    RecordedTornWritePreservesAdmission(original, before, after, prepared, minimumLength, false, start, payload);
+    assert prepared + [WriteIntent(start, payload)] == records + [gap, WriteIntent(start, payload)];
+  }
+
+  lemma RecordedInterruptedReplayPreservesBoth(original: seq<Byte>, before: seq<Byte>, after: seq<Byte>,
+      saved: map<nat, Byte>, records: seq<JournalRecord>, minimumLength: nat, recovering: bool)
+    requires Recoverable(original, before, saved)
+    requires AdmittedByRecords(original, before, records, minimumLength, recovering)
+    requires forall i: nat :: minimumLength <= i < |original| ==> i in saved
+    requires Min(|before|, |original|) <= |after|
+    requires forall i: nat :: i < |after| ==>
+      (i < |before| && after[i] == before[i]) ||
+      (i < |original| && after[i] == original[i]) ||
+      (recovering && i >= minimumLength && after[i] == 0)
+    ensures Recoverable(original, after, saved)
+    ensures AdmittedByRecords(original, after, records, minimumLength, recovering)
+  {
+    RecordedAdmissionIsAuthorization(original, before, records, minimumLength, recovering);
+    InterruptedReplayPreservesBothInvariants(original, before, after, saved,
+      RecordedIntents(records), minimumLength, recovering);
+    RecordedAdmissionIsAuthorization(original, after, records, minimumLength, recovering);
+  }
+
+  predicate AdmittedReplayMutation(original: seq<Byte>, before: seq<Byte>, after: seq<Byte>,
+      minimumLength: nat, recovering: bool) {
+    Min(|before|, |original|) <= |after| &&
+    forall i: nat :: i < |after| ==>
+      (i < |before| && after[i] == before[i]) ||
+      (i < |original| && after[i] == original[i]) ||
+      (recovering && i >= minimumLength && after[i] == 0)
+  }
+
+  // Arbitrarily many finite interruptions retain both record-derived content
+  // admission and exact original recovery. Progress still needs an eventually
+  // uninterrupted replay and successful I/O; this is not a production-loop proof.
+  lemma RecordedReplayTracePreservesBoth(original: seq<Byte>, images: seq<seq<Byte>>,
+      saved: map<nat, Byte>, records: seq<JournalRecord>, minimumLength: nat, recovering: bool)
+    requires 0 < |images|
+    requires Recoverable(original, images[0], saved)
+    requires AdmittedByRecords(original, images[0], records, minimumLength, recovering)
+    requires forall i: nat :: minimumLength <= i < |original| ==> i in saved
+    requires forall j: nat :: j + 1 < |images| ==>
+      AdmittedReplayMutation(original, images[j], images[j+1], minimumLength, recovering)
+    ensures Recoverable(original, images[|images|-1], saved)
+    ensures AdmittedByRecords(original, images[|images|-1], records, minimumLength, recovering)
+    ensures Restore(original, images[|images|-1], saved) == original
+    decreases |images|
+  {
+    if |images| > 1 {
+      RecordedInterruptedReplayPreservesBoth(original, images[0], images[1], saved, records, minimumLength, recovering);
+      RecordedReplayTracePreservesBoth(original, images[1..], saved, records, minimumLength, recovering);
+    }
+    CompleteReplayRestoresExactOriginal(original, images[|images|-1], saved);
+  }
 }

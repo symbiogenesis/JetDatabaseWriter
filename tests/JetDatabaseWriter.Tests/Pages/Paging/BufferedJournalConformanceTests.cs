@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Pages.Paging;
 using System;
 using System.Buffers.Binary;
 using System.IO;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Paging;
 using Xunit;
 
@@ -163,6 +164,226 @@ public sealed class BufferedJournalConformanceTests
 
             Assert.Equal(original, File.ReadAllBytes(path));
             Assert.False(File.Exists(sidecar));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(sidecar);
+            File.Delete(sidecar + ".preparing");
+        }
+    }
+
+    /// <summary>Removing a replay marker or zeroing a retained captured prefix rejects the same interrupted image without writes.</summary>
+    /// <param name="pageSize">The physical page size.</param>
+    /// <param name="removeMarker">Whether to remove the complete marker from interrupted evidence.</param>
+    /// <param name="corruptPrefix">Whether to zero an unauthorized byte before the removed tail.</param>
+    [Theory]
+    [InlineData(2048, false, false)]
+    [InlineData(2048, false, true)]
+    [InlineData(2048, true, false)]
+    [InlineData(2048, true, true)]
+    [InlineData(4096, false, false)]
+    [InlineData(4096, false, true)]
+    [InlineData(4096, true, false)]
+    [InlineData(4096, true, true)]
+    public void Recover_InterruptedZeroTailMutationControls_RequireMarkerAndRetainedPrefix(int pageSize, bool removeMarker, bool corruptPrefix)
+    {
+        string path = Path.Combine(Path.GetTempPath(), "jdw-marker-control-" + Guid.NewGuid().ToString("N") + ".mdb");
+        string sidecar = PersistentRollbackJournal.JournalPath(path);
+        byte[] original = new byte[(pageSize * 3) + 17];
+        Array.Fill(original, (byte)71);
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using (var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                using var journal = PersistentRollbackJournal.Create(database, pageSize);
+                byte[] after = new byte[pageSize];
+                Array.Fill(after, (byte)93);
+                foreach (long offset in new[] { 0L, pageSize * 3L })
+                {
+                    journal.RecordBeforeWrite(offset, after);
+                    database.Position = offset;
+                    database.Write(after, 0, after.Length);
+                }
+
+                journal.RecordBeforeTruncate(pageSize);
+                database.SetLength(pageSize);
+                database.Flush(flushToDisk: true);
+            }
+
+            // Captures are replayed in insertion order. The second write restores
+            // the final partial page first, exposing a zero-filled removed gap.
+            using (var interrupted = new ReplayCutStream(path, 2))
+            {
+                Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(interrupted));
+            }
+
+            Assert.Equal(1, CountRecords(sidecar, pageSize, original.Length, -3));
+            using (var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                // A final length restoration is also a permitted replay mutation.
+                // Equal original length makes marker deletion fail content admission,
+                // rather than merely the intermediate-length guard.
+                database.SetLength(original.Length);
+                if (corruptPrefix)
+                {
+                    database.Position = 17;
+                    database.WriteByte(0);
+                }
+
+                database.Flush(flushToDisk: true);
+            }
+
+            byte[] evidence = File.ReadAllBytes(sidecar);
+            if (removeMarker)
+            {
+                int marker = evidence.Length - pageSize - 40;
+                Assert.Equal(-3, BinaryPrimitives.ReadInt64LittleEndian(evidence.AsSpan(marker, 8)));
+                evidence = evidence.AsSpan(0, marker).ToArray();
+                File.WriteAllBytes(sidecar, evidence);
+            }
+
+            if (removeMarker || corruptPrefix)
+            {
+                byte[] current = File.ReadAllBytes(path);
+                using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                for (int attempt = 0; attempt < 2; attempt++)
+                {
+                    Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database));
+                    Assert.Equal(evidence, File.ReadAllBytes(sidecar));
+                    byte[] unchanged = new byte[current.Length];
+                    database.Position = 0;
+                    database.ReadExactly(unchanged);
+                    Assert.Equal(current, unchanged);
+                }
+            }
+            else
+            {
+                using (var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                {
+                    PersistentRollbackJournal.Recover(database);
+                }
+
+                Assert.Equal(original, File.ReadAllBytes(path));
+                Assert.False(File.Exists(sidecar));
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(sidecar);
+            File.Delete(sidecar + ".preparing");
+        }
+    }
+
+    /// <summary>A write beyond the shortened file retains recovery for the zero-filled removed gap.</summary>
+    /// <param name="pageSize">The physical page size.</param>
+    /// <param name="targetPage">The reextended page, including contiguous and sparse writes below the original length.</param>
+    /// <param name="partial">Whether an earlier partial write leaves a retained unaligned prefix.</param>
+    [Theory]
+    [InlineData(2048, 1, false)]
+    [InlineData(2048, 3, false)]
+    [InlineData(2048, 4, false)]
+    [InlineData(2048, 4, true)]
+    [InlineData(4096, 1, false)]
+    [InlineData(4096, 3, false)]
+    [InlineData(4096, 4, false)]
+    [InlineData(4096, 4, true)]
+    public void Recover_TruncateThenSparseReextension_RestoresOriginal(int pageSize, int targetPage, bool partial)
+    {
+        string path = Path.Combine(Path.GetTempPath(), "jdw-sparse-reextend-" + Guid.NewGuid().ToString("N") + ".mdb");
+        string sidecar = PersistentRollbackJournal.JournalPath(path);
+        byte[] original = new byte[(pageSize * 4) + 17];
+        Array.Fill(original, (byte)71);
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using (var journal = PersistentRollbackJournal.Create(database, pageSize))
+            {
+                journal.RecordBeforeTruncate(pageSize);
+                database.SetLength(pageSize);
+                byte[] after = new byte[pageSize];
+                Array.Fill(after, (byte)93);
+                if (partial)
+                {
+                    journal.RecordBeforeWrite(pageSize, after);
+                    database.Position = pageSize;
+                    database.Write(after, 0, 17);
+                }
+
+                journal.RecordBeforeWrite(pageSize * (long)targetPage, after);
+                database.Position = pageSize * (long)targetPage;
+                database.Write(after, 0, after.Length);
+                database.Flush(flushToDisk: true);
+            }
+
+            PersistentRollbackJournal.Recover(database);
+            byte[] restored = new byte[original.Length];
+            database.Position = 0;
+            database.ReadExactly(restored);
+            Assert.Equal(original.Length, database.Length);
+            Assert.Equal(original, restored);
+            Assert.False(File.Exists(sidecar));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(sidecar);
+            File.Delete(sidecar + ".preparing");
+        }
+    }
+
+    /// <summary>Explicit sparse zero intents admit neither unrelated gap bytes nor zeros in an existing partial prefix.</summary>
+    /// <param name="pageSize">The physical page size.</param>
+    /// <param name="partial">Whether to corrupt the retained partial prefix instead of the new zero gap.</param>
+    [Theory]
+    [InlineData(2048, false)]
+    [InlineData(2048, true)]
+    [InlineData(4096, false)]
+    [InlineData(4096, true)]
+    public void Recover_SparseReextensionMutationControls_RefuseWithoutWrites(int pageSize, bool partial)
+    {
+        string path = Path.Combine(Path.GetTempPath(), "jdw-sparse-control-" + Guid.NewGuid().ToString("N") + ".mdb");
+        string sidecar = PersistentRollbackJournal.JournalPath(path);
+        byte[] original = new byte[(pageSize * 3) + 17];
+        Array.Fill(original, (byte)71);
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using (var journal = PersistentRollbackJournal.Create(database, pageSize))
+            {
+                journal.RecordBeforeTruncate(pageSize);
+                database.SetLength(pageSize);
+                byte[] after = new byte[pageSize];
+                Array.Fill(after, (byte)93);
+                if (partial)
+                {
+                    journal.RecordBeforeWrite(pageSize, after);
+                    database.Position = pageSize;
+                    database.Write(after, 0, 17);
+                }
+
+                journal.RecordBeforeWrite(pageSize * 3L, after);
+                database.Position = pageSize * 3L;
+                database.Write(after, 0, after.Length);
+                database.Position = partial ? pageSize + 7L : (pageSize * 2L) + 17;
+                database.WriteByte(partial ? (byte)0 : (byte)94);
+                database.Flush(flushToDisk: true);
+            }
+
+            byte[] evidence = File.ReadAllBytes(sidecar);
+            byte[] current = new byte[checked((int)database.Length)];
+            database.Position = 0;
+            database.ReadExactly(current);
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database));
+            Assert.Equal(evidence, File.ReadAllBytes(sidecar));
+            byte[] unchanged = new byte[current.Length];
+            database.Position = 0;
+            database.ReadExactly(unchanged);
+            Assert.Equal(current, unchanged);
         }
         finally
         {

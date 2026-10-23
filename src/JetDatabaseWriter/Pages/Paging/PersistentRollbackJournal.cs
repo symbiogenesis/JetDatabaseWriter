@@ -667,8 +667,51 @@ internal sealed class PersistentRollbackJournal : IDisposable
             throw new JetOperationException(JetErrorCode.InvalidOperationState, "The rollback journal cannot record this physical page write.");
         }
 
-        this.RequireRecordCapacity(offset < this.originalLength && !this.beforeImages.ContainsKey(offset) ? 2 : 1);
+        long currentLength = this.database.Length;
+        long gapEnd = Math.Min(offset, this.originalLength);
+        long gapStart = currentLength - (currentLength % this.pageSize);
+        int records = offset < this.originalLength && !this.beforeImages.ContainsKey(offset) ? 2 : 1;
+        if (currentLength < gapEnd)
+        {
+            for (long gapOffset = gapStart; gapOffset < gapEnd; gapOffset += this.pageSize)
+            {
+                records += this.beforeImages.ContainsKey(gapOffset) ? 1 : 2;
+            }
+        }
+
+        this.RequireRecordCapacity(records);
+        if (currentLength < gapEnd)
+        {
+            for (long gapOffset = gapStart; gapOffset < gapEnd; gapOffset += this.pageSize)
+            {
+                this.CaptureOriginalPage(gapOffset);
+            }
+        }
+
         this.CaptureOriginalPage(offset);
+        if (currentLength < gapEnd)
+        {
+            // A sparse write reextends removed original bytes as zeros. Persist
+            // their exact after-images before mutation, without a replay marker.
+            // Preserve an existing partial page prefix after a torn earlier write.
+            byte[] gap = new byte[this.pageSize];
+            int prefixLength = checked((int)(currentLength - gapStart));
+            if (prefixLength > 0)
+            {
+                Read(this.database, gapStart, gap, prefixLength);
+            }
+
+            for (long gapOffset = gapStart; gapOffset < gapEnd; gapOffset += this.pageSize)
+            {
+                _ = this.AppendRecord(gapOffset, gap, durable: false);
+                if (prefixLength > 0)
+                {
+                    Array.Clear(gap, 0, prefixLength);
+                    prefixLength = 0;
+                }
+            }
+        }
+
         _ = this.AppendRecord(offset, after);
     }
 
