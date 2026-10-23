@@ -510,6 +510,36 @@ public sealed class RecoveryKernelTests
         }
     }
 
+    /// <summary>A persisted after-image may end inside its aligned bounded page, but cannot authorize zero growth or bytes outside it.</summary>
+    [Fact]
+    public void IsAfterImageLength_EdgeRanges_RequiresNonemptyBoundedPagePrefix()
+    {
+        uint[] pageSizes = [0, 1, 2048, 4096, uint.MaxValue];
+        ulong[] offsets = [0, 1, 2048, 4096, 2147479552, 2147481600, 2147483647, 2147483648, ulong.MaxValue];
+        ulong[] lengths = [0, 1, 2047, 2048, 2049, 4095, 4096, 4097, 2147479551, 2147479552, 2147481599, 2147481600, 2147483647, 2147483648, 2147483649, ulong.MaxValue];
+        foreach (uint pageSize in pageSizes)
+        {
+            foreach (ulong offset in offsets)
+            {
+                foreach (ulong length in lengths)
+                {
+                    bool expected = pageSize is 2048 or 4096 && offset < 2147483648 && offset % pageSize == 0
+                        && 2147483648 - offset >= pageSize && length > offset && length - offset <= pageSize;
+                    Assert.Equal(expected, RecoveryKernel.IsAfterImageLength(length, offset, pageSize));
+                }
+
+                if (pageSize is 2048 or 4096 && offset < 2147483648 && offset % pageSize == 0)
+                {
+                    Assert.False(RecoveryKernel.IsAfterImageLength(offset, offset, pageSize));
+                    Assert.True(RecoveryKernel.IsAfterImageLength(offset + 1, offset, pageSize));
+                    Assert.True(RecoveryKernel.IsAfterImageLength(offset + pageSize - 1, offset, pageSize));
+                    Assert.True(RecoveryKernel.IsAfterImageLength(offset + pageSize, offset, pageSize));
+                    Assert.False(RecoveryKernel.IsAfterImageLength(offset + pageSize + 1, offset, pageSize));
+                }
+            }
+        }
+    }
+
     /// <summary>Database lengths include the exact Access size limit and reject unsigned negative representations.</summary>
     [Fact]
     public void IsDatabaseLength_Boundaries_RequireAccessSizeBound()

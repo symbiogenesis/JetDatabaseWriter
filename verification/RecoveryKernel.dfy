@@ -97,6 +97,14 @@ module RecoveryKernel {
     offset % (pageSize as U64) == 0
   }
 
+  // A torn after-image can persist any nonempty prefix of its bounded page.
+  // This grants only a possible length; original-tail coverage and admitted
+  // content are separate mandatory checks in the production parser.
+  function IsAfterImageLength(length: U64, offset: U64, pageSize: U32): bool {
+    IsPageOffset(offset, pageSize) && offset < length &&
+    length <= offset + (pageSize as U64)
+  }
+
   // Zero refuses an invalid original page. A valid partial final page copies
   // only its original prefix, never the serialized record's zero padding.
   function OriginalPageLength(pageSize: U32, originalLength: U64, offset: U64): U32 {
@@ -377,6 +385,19 @@ module RecoveryKernel {
     ensures offset as int + pageSize as int <= 2147483648
     ensures (offset as int) % (pageSize as int) == 0
   { }
+
+  lemma AfterImageLengthAuthorizesExactBoundedInterval(length: U64, offset: U64, pageSize: U32)
+    ensures IsAfterImageLength(length, offset, pageSize) <==>
+      IsPageOffset(offset, pageSize) && offset as int < length as int <= offset as int + pageSize as int
+    ensures IsAfterImageLength(length, offset, pageSize) ==>
+      IsDatabaseLength(length) && 0 < length as int - offset as int <= pageSize as int
+    ensures IsAfterImageLength(length, offset, pageSize) ==>
+      offset as int + pageSize as int <= 2147483648
+  {
+    if IsPageOffset(offset, pageSize) {
+      PageOffsetAuthorizesOnlyCompleteBoundedPages(offset, pageSize);
+    }
+  }
 
   lemma TruncationAuthorizesOnlyAlignedPrefixes(length: U64, pageSize: U32, maximumLength: U64)
     requires IsTruncateLength(length, pageSize, maximumLength)

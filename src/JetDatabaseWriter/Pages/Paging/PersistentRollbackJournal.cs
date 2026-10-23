@@ -371,7 +371,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             }
 
             maximumLength = Math.Max(maximumLength, offset + pageSize);
-            authorizedLength |= database.Length == offset + pageSize;
+            authorizedLength |= RecoveryKernel.IsAfterImageLength((ulong)database.Length, (ulong)offset, (uint)pageSize);
         }
 
         if (!committed && (database.Length < minimumLength || database.Length > maximumLength || (!authorizedLength && !recovering)))
