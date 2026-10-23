@@ -17,20 +17,19 @@ Keep only open work in this document. Remove completed requirements in the same 
 
 ## V3 — Refine journal persistence and page correspondence
 
-Cause: the composed logical-record protocol derives exact durable coverage, orders commit decisions and proves finite-trace safety and an abstract recovery schedule. Its surviving database image does not distinguish independently buffered writes, and logical records do not establish the production page encoding or content parser.
+Cause: the buffered journal protocol derives durable coverage and preserves finite-trace safety through delayed, reordered and torn database effects under an explicit flush fence and crash-quiescence contract. Logical byte records still do not establish the production page encoding or content parser.
 
-- [ ] Separate volatile and durable database buffers, admit delayed/reordered unflushed writes under an explicit storage model and preserve safety for every allowed crash outcome.
 - [ ] Refine logical byte captures into page-aligned records, including full-tail truncation and partial final-page encoding, without supplying exact saved bytes as an implementation premise.
 - [ ] Compose the persisted-record/content classifier with mutation and restartable replay, including original/after-image authorization and recovery-marker zero tails.
 - [ ] Connect the decreasing abstract replay schedule to the production loop and its conditional marker, record iteration, resize, flush and exception boundaries through V6 conformance.
 
-Acceptance: refine the checked composed protocol under explicit buffering, page and parser contracts. Preserve its trace/progress theorems without promoting logical record classification to a verified byte parser or abstract progress to C# loop refinement.
+Acceptance: refine the checked buffered protocol under explicit page and parser contracts. Preserve its trace/progress theorems without promoting logical record classification to a verified byte parser or abstract progress to C# loop refinement.
 
 ## V5 — Refine replacement evidence and physical publication
 
-Cause: the replacement and ownership models start from validated logical evidence and exclusive generation authority. They do not establish these premises from persisted record bytes or actual copy/flush behavior.
+Cause: the replacement model classifies bounded header/decision bytes, including every incomplete decision cut, under explicit digest and canonical-path inputs. Production decoding, generation authority and actual copy/flush behavior still require correspondence.
 
-- [ ] Prove bounded byte-level header/decision classification, distinguishing incomplete records from invalid complete records and refusing insufficient bootstrap authority.
+- [ ] Connect the bounded header/decision classifier to production exact reads, signed decoding, GUID/path/digest operations and generation bootstrap; valid record bytes alone cannot establish exclusive recovery authority.
 - [ ] Refine immutable-copy availability and prefix staging into bounded copy, publication and flush outcomes, including exceptions and missing destinations.
 - [ ] Compose replacement selection with generation acquisition and cleanup, including failed receipt preparation and interrupted authority bootstrap.
 - [ ] Preserve the distinction between an abstract successful recovery path and the actual production algorithm; integrate its copy/retry progress argument.
@@ -39,12 +38,12 @@ Acceptance: refined evidence/publication properties connected to implementation.
 
 ## V6 — Extend correspondence across recovery control flow
 
-Cause: beyond the generated journal-value and byte-authorization decisions, the recovery loops, evidence extraction and effect ordering remain handwritten and can drift from the model.
+Cause: generated journal-value, record-tag/control-state and byte-authorization decisions cover selected pure boundaries. Recovery loops, payload/coverage extraction and effect ordering remain handwritten and can drift from the model.
 
-- [ ] Derive focused conformance traces from the model for write/flush/truncate/commit/recovery/generation boundaries and replay against production helpers.
+- [ ] Derive and replay conformance traces for remaining production transitions, including failed flush/commit, conditional replay markers and generation bootstrap/cleanup.
 - [ ] Exercise every relevant transition and rejection class, including repeated crashes and negative mutation controls. Keep local selections focused.
-- [ ] Inventory the manual refinement argument and unproved operations; require review when mapped methods or proof assumptions change.
-- [ ] Extend the executable boundary to a selected bounded record classifier or recovery transition once its persisted-byte and trace contracts are explicit; remove corresponding handwritten decisions and verify the production invocation.
+- [ ] Complete the manual refinement argument for the remaining operations in the boundary inventory; review changed production mappings and proof assumptions.
+- [ ] Extend the executable boundary from record-tag classification into bounded record framing, payload/coverage extraction or a replay transition once its byte and trace contracts are explicit; remove corresponding handwritten decisions and verify the production invocation.
 
 Acceptance: tested correspondence for each precisely named boundary, with the same verification, source freshness, license, target and trimming/NativeAOT obligations as the current kernel. No unchecked external contracts, new shipping dependencies or stronger claims for the remaining handwritten recovery algorithm.
 
@@ -56,6 +55,7 @@ Cause: E4/F6/I15 remain limited by namespace persistence, bootstrap and device o
 - [ ] Investigate a durably provisioned persistent journal/decision area to reduce per-transaction namespace changes, including initial provisioning, torn slots, reuse, generation rollover, extension metadata and stale decisions.
 - [ ] Compare managed directory-barrier capabilities against documented runtime/OS contracts. If unchanged runtime constraints prevent a portable barrier, retain a scoped guarantee and document the unresolved requirement.
 - [ ] Extend hosted VM/block-level or physical interruption testing to journal creation, decisions, truncation, replay, replacement and cleanup; process termination alone is insufficient.
+- [ ] Qualify the buffered model's exact bytes-and-length flush fence and crash quiescence against actual OS caches and outstanding I/O; a restarted recovery must not be overwritten by an older queued operation.
 - [ ] Qualify lock/receipt lifecycle and missing-name bootstrap, including macOS cooperation. Do not change Access compatibility by requiring native Access to replay a library log.
 - [ ] Define a separate caller-stream journal/reopen/exclusive-access contract before promising persistent recovery for arbitrary streams.
 
@@ -108,9 +108,9 @@ Acceptance: readers can distinguish verified abstract algorithms, tested impleme
 
 ## Implementation order and independent lanes
 
-1. Refine the composed journal state machine's remaining buffering/page/parser boundaries in V3. The integrator owns shared docs, the todo lists and final CI configuration.
+1. Refine the buffered journal state machine's remaining page/parser boundaries in V3. The integrator owns shared docs, the todo lists and final CI configuration.
 2. Refine replacement evidence in V5 independently where its boundaries permit.
-3. Extend V6 beyond the generated value/byte kernel before promoting additional model proofs to implementation claims.
+3. Extend V6 beyond the generated value/tag/byte kernel before promoting additional model proofs to implementation claims.
 4. Pursue V7 separately; missing OS/hardware evidence must not hold back useful model proofs, and model success must not erase E4/F6/I15.
 5. Expand into V8/V9/V10 according to concrete bug risk and existing workstream ownership. Avoid an engine rewrite or competing protocols merely to use a proof tool.
 6. Apply V11 whenever a claim changes. Leave incomplete items here with self-contained next steps.

@@ -18,6 +18,38 @@ namespace JetDatabaseWriter.Verification {
     {
       return ((JetDatabaseWriter.Verification.RecoveryKernel.IsPageSize(pageSize)) && ((length) <= (maximumLength))) && (((length) % ((ulong)(pageSize))) == (0UL));
     }
+    public static bool IsBeforeImageRecord(ulong tag, uint pageSize, ulong originalLength)
+    {
+      return (((((JetDatabaseWriter.Verification.RecoveryKernel.IsPageSize(pageSize)) && (JetDatabaseWriter.Verification.RecoveryKernel.IsDatabaseLength(originalLength))) && ((tag) >= (9223372036854775808UL))) && ((tag) <= (9223372039002259456UL))) && (((tag) - (9223372036854775808UL)) < (originalLength))) && ((((tag) - (9223372036854775808UL)) % ((ulong)(pageSize))) == (0UL));
+    }
+    public static byte ClassifyJournalRecord(ulong tag, uint pageSize, ulong originalLength, bool recovering, bool removedTail, bool finalRecord)
+    {
+      if ((!(JetDatabaseWriter.Verification.RecoveryKernel.IsPageSize(pageSize))) || (!(JetDatabaseWriter.Verification.RecoveryKernel.IsDatabaseLength(originalLength)))) {
+        return (byte)(0);
+      } else if ((tag) == (18446744073709551615UL)) {
+        if (finalRecord) {
+          return (byte)(1);
+        } else {
+          return (byte)(0);
+        }
+      } else if ((tag) == (18446744073709551613UL)) {
+        if (removedTail) {
+          return (byte)(2);
+        } else {
+          return (byte)(0);
+        }
+      } else if (recovering) {
+        return (byte)(0);
+      } else if ((tag) == (18446744073709551614UL)) {
+        return (byte)(3);
+      } else if (JetDatabaseWriter.Verification.RecoveryKernel.IsBeforeImageRecord(tag, pageSize, originalLength)) {
+        return (byte)(4);
+      } else if (JetDatabaseWriter.Verification.RecoveryKernel.IsPageOffset(tag, pageSize)) {
+        return (byte)(5);
+      } else {
+        return (byte)(0);
+      }
+    }
     public static bool OriginalOrZeroByte(bool recovering, ulong offset, ulong minimumLength, byte current, byte original)
     {
       return ((current) == (original)) || (((recovering) && ((offset) >= (minimumLength))) && ((current) == ((byte)(0))));

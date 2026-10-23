@@ -18,7 +18,6 @@ using JetDatabaseWriter.Verification;
 internal sealed class PersistentRollbackJournal : IDisposable
 {
     private const int HeaderLength = 128;
-    private const long MaximumDatabaseLength = 2L * 1024 * 1024 * 1024;
     private const long MaximumJournalLength = 16L * 1024 * 1024 * 1024;
     private static readonly byte[] Magic = Encoding.ASCII.GetBytes("JDWUNDO2");
     private readonly FileStream database;
@@ -28,6 +27,16 @@ internal sealed class PersistentRollbackJournal : IDisposable
     private readonly Dictionary<long, long> beforeImages = [];
     private bool completed;
     private bool cleanupAttempted;
+
+    private enum JournalRecordKind : byte
+    {
+        Invalid = 0,
+        Commit = 1,
+        Replay = 2,
+        Truncate = 3,
+        BeforeImage = 4,
+        AfterImage = 5,
+    }
 
     private PersistentRollbackJournal(FileStream database, FileStream journal, int pageSize, long originalLength)
     {
@@ -295,9 +304,21 @@ internal sealed class PersistentRollbackJournal : IDisposable
         for (long position = start; position < completeEnd; position += recordSize)
         {
             long offset = ReadRecord(journal, position, record);
-            if (offset == -1)
+            var kind = (JournalRecordKind)RecoveryKernel.ClassifyJournalRecord(
+                unchecked((ulong)offset),
+                (uint)pageSize,
+                (ulong)originalLength,
+                recovering,
+                minimumLength < originalLength,
+                position + recordSize == journal.Length);
+            if (kind == JournalRecordKind.Invalid)
             {
-                if (position + recordSize != journal.Length || !record.AsSpan(8, 32).SequenceEqual(DatabaseHash(database)))
+                throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery record tag, bounds or control-state transition is invalid.");
+            }
+
+            if (kind == JournalRecordKind.Commit)
+            {
+                if (!record.AsSpan(8, 32).SequenceEqual(DatabaseHash(database)))
                 {
                     throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery commit decision conflicts with database content.");
                 }
@@ -306,23 +327,13 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 break;
             }
 
-            if (offset == -3)
+            if (kind == JournalRecordKind.Replay)
             {
-                if (minimumLength == originalLength)
-                {
-                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery replay marker has no removed original tail.");
-                }
-
                 recovering = true;
                 continue;
             }
 
-            if (recovering)
-            {
-                throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "A recovering journal cannot authorize further database mutations.");
-            }
-
-            if (offset == -2)
+            if (kind == JournalRecordKind.Truncate)
             {
                 long length = BinaryPrimitives.ReadInt64LittleEndian(record.AsSpan(8));
                 if (length < 0 || !RecoveryKernel.IsTruncateLength((ulong)length, (uint)pageSize, (ulong)maximumLength))
@@ -343,10 +354,10 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 continue;
             }
 
-            if (offset <= long.MinValue + MaximumDatabaseLength)
+            if (kind == JournalRecordKind.BeforeImage)
             {
                 long originalOffset = offset - long.MinValue;
-                if (originalOffset >= originalLength || originalOffset % pageSize != 0 || !beforeImages.TryAdd(originalOffset, position))
+                if (!beforeImages.TryAdd(originalOffset, position))
                 {
                     throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery before-image offset is invalid or repeated.");
                 }
@@ -355,8 +366,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 continue;
             }
 
-            if (offset < 0 || !RecoveryKernel.IsPageOffset((ulong)offset, (uint)pageSize)
-                || (offset < originalLength && !beforeImages.ContainsKey(offset)))
+            if (kind != JournalRecordKind.AfterImage || (offset < originalLength && !beforeImages.ContainsKey(offset)))
             {
                 throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery page offset is invalid or has no original before-image.");
             }

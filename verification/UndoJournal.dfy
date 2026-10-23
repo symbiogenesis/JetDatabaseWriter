@@ -329,8 +329,9 @@ module UndoJournal {
   // surviving at each cut; writes may tear at any byte and length changes may
   // stop at any requested intermediate length. The journal has complete records,
   // a durable complete-record prefix, and at most one incomplete trailing record.
-  // Record encoding/classification and delayed/reordered database-buffer writes
-  // are separate obligations: this is not a physical filesystem or C# proof.
+  // Record encoding/classification is separate. The buffered refinement below
+  // composes this protocol with delayed/reordered database effects; neither
+  // layer is a physical filesystem or C# proof.
   datatype JournalRecord = BeforeImage(offset: nat, value: Byte)
     | WriteIntent(start: nat, payload: seq<Byte>) | LengthIntent(length: nat)
     | CommitRecord(image: seq<Byte>) | RecoveryRecord
@@ -886,4 +887,345 @@ module UndoJournal {
   {
     assert DurableRecords(s) == s.records;
   }
+
+  // Buffered refinement of the composed protocol. The logical protocol's db
+  // is the current readable/volatile image; durableDb is independently stored.
+  // An issued effect may persist later, out of order, repeatedly, or only in
+  // torn pieces. A crash drops unpersisted effects and reloads durableDb.
+  // Successful FlushDatabase synchronizes the exact current bytes AND length,
+  // and fences all older effects so none can reappear afterwards. This storage
+  // contract, logical journal framing and exclusive I/O are explicit premises;
+  // this model does not establish that a filesystem/device satisfies them.
+  datatype DatabaseEffect = BufferedWrite(start: nat, payload: seq<Byte>)
+    | BufferedLength(length: nat)
+  datatype BufferedState = BufferedState(protocol: ProtocolState,
+    durableDb: seq<Byte>, pending: seq<DatabaseEffect>)
+  datatype BufferedAction = Issue(action: ProtocolAction)
+    | Persist(index: nat, result: seq<Byte>)
+
+  predicate ProtectedEffect(originalLength: nat, records: seq<JournalRecord>, effect: DatabaseEffect) {
+    match effect
+      case BufferedWrite(start, payload) => Covered(records, originalLength, start, start + |payload|)
+      case BufferedLength(length) => Covered(records, originalLength, length, originalLength)
+  }
+
+  predicate EffectPersistence(before: seq<Byte>, effect: DatabaseEffect, after: seq<Byte>) {
+    match effect
+      case BufferedWrite(start, payload) => TornWrite(before, start, payload, after)
+      case BufferedLength(length) =>
+        Min(|before|, length) <= |after| <= (if |before| > length then |before| else length) &&
+        after == Resize(before, |after|)
+  }
+
+  lemma ProtectedEffectPreserves(original: seq<Byte>, records: seq<JournalRecord>,
+      before: seq<Byte>, effect: DatabaseEffect, after: seq<Byte>)
+    requires Recoverable(original, before, Saved(records))
+    requires ProtectedEffect(|original|, records, effect)
+    requires EffectPersistence(before, effect, after)
+    ensures Recoverable(original, after, Saved(records))
+  {
+    forall i: nat | i < |original| && i !in Saved(records)
+      ensures i < |after| && after[i] == original[i]
+    {
+      match effect {
+        case BufferedWrite(start, payload) =>
+          assert !(start <= i < start + |payload|);
+        case BufferedLength(length) =>
+          assert i < length;
+          assert i < |after|;
+      }
+    }
+  }
+
+  function InitialBufferedProtocol(original: seq<Byte>): BufferedState {
+    BufferedState(InitialProtocol(original), original, [])
+  }
+
+  predicate BufferedInvariant(original: seq<Byte>, b: BufferedState) {
+    ProtocolInvariant(original, b.protocol) &&
+    Recoverable(original, b.durableDb, Saved(DurableRecords(b.protocol))) &&
+    (forall j | 0 <= j < |b.pending| ::
+      ProtectedEffect(|original|, DurableRecords(b.protocol), b.pending[j])) &&
+    (b.protocol.dataFlushed || HasCommit(b.protocol.records) || b.protocol.mode == Finished ==>
+      b.durableDb == b.protocol.db && |b.pending| == 0)
+  }
+
+  predicate BufferedEnabled(original: seq<Byte>, b: BufferedState, a: BufferedAction) {
+    match a
+      case Issue(action) => ProtocolEnabled(original, b.protocol, action)
+      case Persist(index, result) => (index < |b.pending| &&
+        EffectPersistence(b.durableDb, b.pending[index], result))
+  }
+
+  function QueuedEffects(s: ProtocolState, a: ProtocolAction): seq<DatabaseEffect>
+    requires s.durableCount <= |s.records|
+  {
+    match a
+      case MutateWrite(start, payload, result) => [BufferedWrite(start, payload)]
+      case MutateLength(length, resultLength) => [BufferedLength(length)]
+      case ReplayResize(length) => [BufferedLength(length)]
+      case ReplayNext(written) =>
+        if written && s.replayCursor in Saved(DurableRecords(s)) then
+          [BufferedWrite(s.replayCursor, [Saved(DurableRecords(s))[s.replayCursor]])] else []
+      case _ => []
+  }
+
+  function BufferedApply(original: seq<Byte>, b: BufferedState, a: BufferedAction): BufferedState
+    requires BufferedEnabled(original, b, a)
+  {
+    match a
+      case Persist(index, result) => b.(durableDb := result)
+      case Issue(action) =>
+        var next := ProtocolApply(original, b.protocol, action);
+        if action.Crash? then
+          BufferedState(next.(db := b.durableDb), b.durableDb, [])
+        else if action.FlushDatabase? then
+          BufferedState(next, b.protocol.db, [])
+        else BufferedState(next, b.durableDb, b.pending + QueuedEffects(b.protocol, action))
+  }
+
+  lemma InitialBufferedProtocolIsValid(original: seq<Byte>)
+    ensures BufferedInvariant(original, InitialBufferedProtocol(original))
+  {
+    InitialProtocolIsValid(original);
+  }
+
+  lemma MoreRecordsProtectEffects(original: seq<Byte>, records: seq<JournalRecord>,
+      oldCount: nat, newCount: nat, effect: DatabaseEffect)
+    requires ExactRecords(original, records)
+    requires oldCount <= newCount <= |records|
+    requires ProtectedEffect(|original|, records[..oldCount], effect)
+    ensures ProtectedEffect(|original|, records[..newCount], effect)
+  {
+    SavedPrefixGrows(original, records[..newCount], oldCount);
+    assert (records[..newCount])[..oldCount] == records[..oldCount];
+  }
+
+  lemma BufferedStepPreserves(original: seq<Byte>, b: BufferedState, a: BufferedAction)
+    requires BufferedInvariant(original, b)
+    requires BufferedEnabled(original, b, a)
+    ensures BufferedInvariant(original, BufferedApply(original, b, a))
+    ensures b.protocol.acknowledged ==> BufferedApply(original, b, a).protocol.acknowledged
+    ensures HasCommit(DurableRecords(b.protocol)) ==>
+      RecordDecision(DurableRecords(BufferedApply(original, b, a).protocol)) ==
+        RecordDecision(DurableRecords(b.protocol))
+  {
+    var s := b.protocol;
+    var next := BufferedApply(original, b, a);
+    match a {
+      case Persist(index, result) =>
+        ProtectedEffectPreserves(original, DurableRecords(s), b.durableDb, b.pending[index], result);
+        assert |b.pending| > 0;
+        assert !s.dataFlushed && !HasCommit(s.records) && s.mode != Finished;
+      case Issue(action) =>
+        ProtocolStepPreserves(original, s, action);
+        var logical := ProtocolApply(original, s, action);
+        assert DurableRecords(next.protocol) == DurableRecords(logical);
+        if action.FlushJournal? || action.FailJournalFlush? || action.Crash? {
+          var count := logical.durableCount;
+          MoreDurableRecordsPreserveRecoverability(original, b.durableDb, s.records, s.durableCount, count);
+          assert DurableRecords(logical) == s.records[..count];
+          if !action.Crash? {
+            forall j | 0 <= j < |b.pending|
+              ensures ProtectedEffect(|original|, DurableRecords(logical), b.pending[j])
+            {
+              MoreRecordsProtectEffects(original, s.records, s.durableCount, count, b.pending[j]);
+            }
+          }
+        } else {
+          assert DurableRecords(logical) == DurableRecords(s);
+        }
+        if action.Crash? {
+          assert next.protocol.mode == Inspecting;
+          assert !next.protocol.replaySized && next.protocol.replayCursor == 0;
+          assert HasCommit(s.records) ==> b.durableDb == s.db;
+          assert ProtocolInvariant(original, next.protocol);
+        } else if action.FlushDatabase? {
+          assert Recoverable(original, next.durableDb, Saved(DurableRecords(next.protocol)));
+        } else {
+          var extra := QueuedEffects(s, action);
+          match action {
+            case MutateWrite(start, payload, result) =>
+            case MutateLength(length, resultLength) =>
+            case ReplayResize(length) =>
+              forall i: nat | length <= i < |original|
+                ensures i in Saved(DurableRecords(s))
+              {
+                if i !in Saved(DurableRecords(s)) {
+                  assert i < |s.db|;
+                  assert |s.db| <= length;
+                }
+              }
+            case ReplayNext(written) =>
+              if written && s.replayCursor in Saved(DurableRecords(s)) {
+                assert Covered(DurableRecords(s), |original|, s.replayCursor, s.replayCursor + 1);
+              }
+            case _ =>
+          }
+          assert forall j | 0 <= j < |extra| ::
+            ProtectedEffect(|original|, DurableRecords(next.protocol), extra[j]);
+          forall j | 0 <= j < |next.pending|
+            ensures ProtectedEffect(|original|, DurableRecords(next.protocol), next.pending[j])
+          {
+            if j < |b.pending| {
+              assert next.pending[j] == b.pending[j];
+            } else {
+              assert next.pending[j] == extra[j - |b.pending|];
+            }
+          }
+        }
+    }
+  }
+
+  predicate BufferedPath(original: seq<Byte>, states: seq<BufferedState>, actions: seq<BufferedAction>) {
+    |states| == |actions| + 1 &&
+    forall i | 0 <= i < |actions| :: BufferedEnabled(original, states[i], actions[i]) &&
+      states[i+1] == BufferedApply(original, states[i], actions[i])
+  }
+
+  lemma BufferedTracePreserves(original: seq<Byte>, states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires BufferedPath(original, states, actions)
+    requires BufferedInvariant(original, states[0])
+    ensures BufferedInvariant(original, states[|states|-1])
+    ensures states[0].protocol.acknowledged ==> states[|states|-1].protocol.acknowledged
+    ensures HasCommit(DurableRecords(states[0].protocol)) ==>
+      RecordDecision(DurableRecords(states[|states|-1].protocol)) ==
+        RecordDecision(DurableRecords(states[0].protocol))
+    decreases |actions|
+  {
+    if |actions| > 0 {
+      BufferedStepPreserves(original, states[0], actions[0]);
+      RecordDecisionProperties(DurableRecords(states[0].protocol));
+      RecordDecisionProperties(DurableRecords(states[1].protocol));
+      BufferedTracePreserves(original, states[1..], actions[1..]);
+    }
+  }
+
+  lemma CompletedBufferedProtocolSelectsBeforeOrCommitted(original: seq<Byte>,
+      states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires BufferedPath(original, states, actions)
+    requires states[0] == InitialBufferedProtocol(original)
+    requires states[|states|-1].protocol.mode == Finished
+    ensures states[|states|-1].protocol.durableCount <= |states[|states|-1].protocol.records|
+    ensures states[|states|-1].durableDb == original ||
+      RecordDecision(DurableRecords(states[|states|-1].protocol)) == Committed(states[|states|-1].durableDb)
+    ensures states[|states|-1].protocol.acknowledged ==>
+      RecordDecision(DurableRecords(states[|states|-1].protocol)) == Committed(states[|states|-1].durableDb)
+  {
+    InitialBufferedProtocolIsValid(original);
+    BufferedTracePreserves(original, states, actions);
+  }
+
+  lemma AcknowledgedBufferedImageSurvivesMixedTrace(original: seq<Byte>,
+      states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires BufferedPath(original, states, actions)
+    requires BufferedInvariant(original, states[0]) && states[0].protocol.acknowledged
+    requires states[|states|-1].protocol.mode == Finished
+    ensures states[|states|-1].protocol.acknowledged
+    ensures states[|states|-1].durableDb == states[0].durableDb
+  {
+    BufferedTracePreserves(original, states, actions);
+    RecordDecisionProperties(DurableRecords(states[0].protocol));
+    RecordDecisionProperties(DurableRecords(states[|states|-1].protocol));
+  }
+
+  lemma CompleteBufferedRecovery(original: seq<Byte>, b: BufferedState)
+    returns (states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires BufferedInvariant(original, b)
+    requires b.protocol.mode == Inspecting || b.protocol.mode == Marking ||
+      b.protocol.mode == Replaying || b.protocol.mode == Finished
+    ensures BufferedPath(original, states, actions) && states[0] == b
+    ensures BufferedInvariant(original, states[|states|-1])
+    ensures states[|states|-1].protocol.mode == Finished
+    ensures RecordDecision(DurableRecords(states[|states|-1].protocol)) == RecordDecision(DurableRecords(b.protocol))
+    ensures if HasCommit(DurableRecords(b.protocol)) then
+      RecordDecision(DurableRecords(b.protocol)) == Committed(states[|states|-1].durableDb)
+      else states[|states|-1].durableDb == original
+    decreases ProtocolRecoveryRank(original, b.protocol)
+  {
+    if b.protocol.mode == Finished {
+      states, actions := [b], [];
+    } else {
+      ProtocolRecoveryProgress(original, b.protocol);
+      var a := Issue(ProtocolRecoveryAction(original, b.protocol));
+      assert BufferedEnabled(original, b, a);
+      BufferedStepPreserves(original, b, a);
+      var next := BufferedApply(original, b, a);
+      assert next.protocol == ProtocolApply(original, b.protocol, a.action);
+      var tailStates, tailActions := CompleteBufferedRecovery(original, next);
+      states, actions := [b] + tailStates, [a] + tailActions;
+      forall i | 0 <= i < |actions|
+        ensures BufferedEnabled(original, states[i], actions[i]) &&
+          states[i+1] == BufferedApply(original, states[i], actions[i])
+      {
+        if i != 0 {
+          assert states[i] == tailStates[i-1];
+          assert actions[i] == tailActions[i-1];
+        }
+      }
+      RecordDecisionProperties(DurableRecords(b.protocol));
+      RecordDecisionProperties(DurableRecords(next.protocol));
+    }
+  }
+
+  lemma SuccessfulFlushFencesPendingEffects(original: seq<Byte>, b: BufferedState)
+    requires BufferedInvariant(original, b)
+    requires BufferedEnabled(original, b, Issue(FlushDatabase))
+    ensures BufferedApply(original, b, Issue(FlushDatabase)).durableDb == b.protocol.db
+    ensures BufferedApply(original, b, Issue(FlushDatabase)).protocol.db == b.protocol.db
+    ensures |BufferedApply(original, b, Issue(FlushDatabase)).pending| == 0
+    ensures forall index: nat, result: seq<Byte> ::
+      !BufferedEnabled(original, BufferedApply(original, b, Issue(FlushDatabase)), Persist(index, result))
+  { }
+
+  // From an invariant prepared state with two pending writes, persist the
+  // later write first, then the earlier write. Crash reads the stale durable
+  // image, not the latest volatile bytes. This is a transition witness; the
+  // initial-state theorem above establishes safety for all reachable traces.
+  lemma ReorderedPendingWritesAreAdmitted()
+    returns (states: seq<BufferedState>, actions: seq<BufferedAction>)
+    ensures BufferedPath([1], states, actions)
+    ensures |states| == 4
+    ensures BufferedInvariant([1], states[0])
+    ensures states[2].protocol.db == [3] && states[2].durableDb == [2]
+    ensures states[3].protocol.db == [2] && states[3].durableDb == [2]
+    ensures states[3].protocol.mode == Inspecting && |states[3].pending| == 0
+    ensures BufferedInvariant([1], states[3])
+  {
+    var r0: seq<JournalRecord> := [];
+    var r1 := r0 + [BeforeImage(0, 1)];
+    var r2 := r1 + [WriteIntent(0, [2])];
+    var records := r2 + [WriteIntent(0, [3])];
+    AppendedRecordProperties([1], [], BeforeImage(0, 1));
+    AppendedRecordProperties([1], r1, WriteIntent(0, [2]));
+    AppendedRecordProperties([1], r2, WriteIntent(0, [3]));
+    assert Saved(records) == map[0 := 1];
+    var s := ProtocolState([3], records, 3, false, Active, false, false, false, 0);
+    assert |records| == 3 && DurableRecords(s) == records;
+    SavedRecordsAreExact([1], records);
+    assert Recoverable([1], [3], Saved(records));
+    assert Recoverable([1], [1], Saved(records));
+    assert Covered(records, 1, 0, 1);
+    assert ProtocolInvariant([1], s);
+    var b0 := BufferedState(s, [1], [BufferedWrite(0, [2]), BufferedWrite(0, [3])]);
+    assert BufferedInvariant([1], b0);
+    var a0 := Persist(1, [3]);
+    BufferedStepPreserves([1], b0, a0);
+    var b1 := BufferedApply([1], b0, a0);
+    var a1 := Persist(0, [2]);
+    BufferedStepPreserves([1], b1, a1);
+    var b2 := BufferedApply([1], b1, a1);
+    var a2 := Issue(Crash(3, false));
+    BufferedStepPreserves([1], b2, a2);
+    var b3 := BufferedApply([1], b2, a2);
+    states := [b0, b1, b2, b3];
+    actions := [a0, a1, a2];
+  }
+
+  // The successful-flush fence is essential, rather than a theorem about
+  // arbitrary devices: replaying an older queued write could replace C.
+  lemma UnfencedStaleWriteCanDestroyCommittedImage()
+    ensures EffectPersistence([3], BufferedWrite(0, [2]), [2])
+    ensures [2] != [3]
+  { }
 }

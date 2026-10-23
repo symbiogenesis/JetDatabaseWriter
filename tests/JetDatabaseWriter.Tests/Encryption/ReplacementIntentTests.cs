@@ -19,6 +19,9 @@ using Xunit;
 /// <summary>Replacement decisions bind exact retained generations without assuming directory power-loss durability.</summary>
 public sealed class ReplacementIntentTests
 {
+    /// <summary>Gets every incomplete byte cut of the fixed-size decision append.</summary>
+    public static TheoryData<int> DecisionPrefixes => [.. Enumerable.Range(0, 96)];
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>A pending intent determines recovery even when the destination name is absent.</summary>
@@ -161,8 +164,15 @@ public sealed class ReplacementIntentTests
     [InlineData("oversized-intent")]
     [InlineData("identity")]
     [InlineData("version")]
+    [InlineData("header-size")]
+    [InlineData("zero-generation")]
     [InlineData("oversized-length")]
+    [InlineData("negative-old-length")]
+    [InlineData("negative-new-length")]
     [InlineData("decision")]
+    [InlineData("decision-magic")]
+    [InlineData("decision-generation")]
+    [InlineData("decision-image")]
     [InlineData("old")]
     [InlineData("new")]
     [InlineData("destination")]
@@ -174,18 +184,49 @@ public sealed class ReplacementIntentTests
         (string old, string next) = Candidates(directory.Path);
         string intent = IntentPath(directory.Path);
         byte[] bytes = await File.ReadAllBytesAsync(intent, Ct);
-        if (damage is "header" or "identity" or "version" or "oversized-length" or "decision")
+        if (damage is "header" or "identity" or "version" or "header-size" or "zero-generation"
+            or "oversized-length" or "negative-old-length" or "negative-new-length"
+            or "decision" or "decision-magic" or "decision-generation" or "decision-image")
         {
-            int offset = damage switch { "header" => 0, "identity" => 32, "version" => 8, "oversized-length" => 64, _ => bytes.Length - 1 };
+            int offset = damage switch
+            {
+                "header" => 0,
+                "identity" => 32,
+                "version" => 8,
+                "header-size" => 12,
+                "zero-generation" => 16,
+                "oversized-length" or "negative-old-length" => 64,
+                "negative-new-length" => 72,
+                "decision-magic" => 256,
+                "decision-generation" => 264,
+                "decision-image" => 280,
+                _ => bytes.Length - 1,
+            };
             bytes[offset] ^= 0xFF;
             if (damage == "oversized-length")
             {
                 BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(64), (2L * 1024 * 1024 * 1024) + 1);
             }
 
-            if (damage is "identity" or "version" or "oversized-length")
+            if (damage is "negative-old-length" or "negative-new-length")
+            {
+                BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(offset), -1);
+            }
+
+            if (damage == "zero-generation")
+            {
+                bytes.AsSpan(16, 16).Clear();
+            }
+
+            if (damage is "identity" or "version" or "header-size" or "zero-generation"
+                or "oversized-length" or "negative-old-length" or "negative-new-length")
             {
                 SHA256.HashData(bytes.AsSpan(0, 224)).CopyTo(bytes, 224);
+            }
+
+            if (damage is "decision-magic" or "decision-generation" or "decision-image")
+            {
+                SHA256.HashData(bytes.AsSpan(256, 64)).CopyTo(bytes, 320);
             }
 
             await File.WriteAllBytesAsync(intent, bytes, Ct);
@@ -226,9 +267,7 @@ public sealed class ReplacementIntentTests
     /// <summary>Every incomplete decision prefix selects only the old complete generation.</summary>
     /// <param name="length">The number of appended decision bytes that survived.</param>
     [Theory]
-    [InlineData(1)]
-    [InlineData(48)]
-    [InlineData(95)]
+    [MemberData(nameof(DecisionPrefixes))]
     public async Task DecisionPrefixWithoutCompleteCommit_RestoresOriginal(int length)
     {
         using var directory = new IntentDirectory();

@@ -1,10 +1,11 @@
 // Verification-only abstraction of EncryptionReplacementIntent. No code is extracted.
 // Images are arbitrary integer sequences; equality represents validated complete
 // bytes, not a proof that SHA-256 collisions or malicious edits are impossible.
-// Entry starts after a complete valid Prepared header and exclusive generation
-// ownership. Stable names, immutable copies and cooperating exclusive access are
-// storage-model premises. Bootstrap tears, lost discovery names, OS durability,
-// parser correctness, hash implementation and C# refinement remain unproved.
+// The transition model starts after a valid Prepared header and exclusive
+// generation ownership. The separate byte classifier checks bounded framing and
+// fields against a supplied digest and path identity; it does not establish leases.
+// Stable names, immutable copies and exclusive access remain storage premises.
+// Lost discovery names, OS durability, hashing and C# refinement remain unproved.
 module ReplacementProtocol {
   datatype Image = Missing | Present(bytes: seq<int>)
   datatype Decision = Prepared | PartialCommit | Committed
@@ -331,4 +332,223 @@ module ReplacementProtocol {
     ensures header == ValidHeader && decision == IncompleteDecision ==>
       ReadEvidence(header, decision) == Admit(Prepared)
   {}
+
+  // Byte-level counterpart of ReadState, parameterized by the digest and
+  // already canonicalized path identity. The digest is arbitrary: neither
+  // SHA-256 implementation correctness nor collision freedom is presumed.
+  // Successful reads supply the complete observed byte sequence. I/O errors,
+  // GUID serialization, path canonicalization and exclusive leases stay outside.
+  type RecordByte = value: int | 0 <= value < 256 witness 0
+
+  function HeaderMagic(): seq<RecordByte> { [74, 68, 87, 82, 69, 80, 76, 49] }
+  function DecisionMagic(): seq<RecordByte> { [74, 68, 87, 67, 77, 84, 48, 49] }
+
+  function LittleEndian64(bytes: seq<RecordByte>): nat
+    requires |bytes| == 8
+    ensures LittleEndian64(bytes) < 18446744073709551616
+  {
+    (bytes[0] as int) + 256 * (bytes[1] as int) + 65536 * (bytes[2] as int) + 16777216 * (bytes[3] as int) +
+      4294967296 * (bytes[4] as int) + 1099511627776 * (bytes[5] as int) +
+      281474976710656 * (bytes[6] as int) + 72057594037927936 * (bytes[7] as int)
+  }
+
+  function SignedLittleEndian64(bytes: seq<RecordByte>): int
+    requires |bytes| == 8
+  {
+    if bytes[7] < 128 then LittleEndian64(bytes)
+    else LittleEndian64(bytes) - 18446744073709551616
+  }
+
+  // The nonnegative 2 GiB bound makes unsigned weighted decoding equivalent
+  // to the signed little-endian length check performed by ReadState.
+  lemma LengthEncodingMatchesSignedBounds(bytes: seq<RecordByte>)
+    requires |bytes| == 8
+    ensures (LittleEndian64(bytes) <= 2147483648) <==>
+      (0 <= SignedLittleEndian64(bytes) <= 2147483648)
+  {
+    assert LittleEndian64(bytes) >= 72057594037927936 * (bytes[7] as int);
+  }
+  predicate ValidHeaderBytes(header: seq<RecordByte>, pathIdentity: seq<RecordByte>,
+      digest: seq<RecordByte> -> seq<RecordByte>) {
+    |header| == 256 && |pathIdentity| == 32 &&
+    header[..8] == HeaderMagic() && header[8..12] == [1, 0, 0, 0] &&
+    header[12..16] == [0, 1, 0, 0] &&
+    (exists i | 16 <= i < 32 :: header[i] != 0) &&
+    header[32..64] == pathIdentity && header[224..256] == digest(header[..224]) &&
+    LittleEndian64(header[64..72]) <= 2147483648 &&
+    LittleEndian64(header[72..80]) <= 2147483648
+  }
+
+  predicate ValidDecisionBytes(header: seq<RecordByte>, decision: seq<RecordByte>,
+      digest: seq<RecordByte> -> seq<RecordByte>)
+    requires |header| == 256
+  {
+    |decision| == 96 && decision[..8] == DecisionMagic() &&
+    decision[8..24] == header[16..32] && decision[24..56] == header[112..144] &&
+    decision[64..96] == digest(decision[..64])
+  }
+
+  // The zero/reserved fields are deliberately not checked beyond ReadState's
+  // actual checks. In particular arbitrary partial decision contents, even an
+  // invalid prefix, remain Prepared; a complete invalid decision must refuse.
+  function ReadRecordBytes(bytes: seq<RecordByte>, pathIdentity: seq<RecordByte>,
+      digest: seq<RecordByte> -> seq<RecordByte>): Admission {
+    if |bytes| < 256 || |bytes| > 352 then Refuse
+    else if !ValidHeaderBytes(bytes[..256], pathIdentity, digest) then Refuse
+    else if |bytes| < 352 then Admit(Prepared)
+    else if ValidDecisionBytes(bytes[..256], bytes[256..], digest) then Admit(Committed)
+    else Refuse
+  }
+
+  function HeaderClassification(bytes: seq<RecordByte>, pathIdentity: seq<RecordByte>,
+      digest: seq<RecordByte> -> seq<RecordByte>): HeaderEvidence {
+    if |bytes| < 256 then IncompleteHeader
+    else if ValidHeaderBytes(bytes[..256], pathIdentity, digest) then ValidHeader
+    else InvalidHeader
+  }
+
+  function DecisionClassification(bytes: seq<RecordByte>, digest: seq<RecordByte> -> seq<RecordByte>): DecisionEvidence {
+    if |bytes| <= 256 then NoDecision
+    else if |bytes| < 352 then IncompleteDecision
+    else if |bytes| == 352 && ValidDecisionBytes(bytes[..256], bytes[256..], digest) then ValidDecision
+    else InvalidCompleteDecision
+  }
+
+  lemma BytesRefineEvidenceAdmission(bytes: seq<RecordByte>, pathIdentity: seq<RecordByte>,
+      digest: seq<RecordByte> -> seq<RecordByte>)
+    ensures ReadRecordBytes(bytes, pathIdentity, digest) ==
+      ReadEvidence(HeaderClassification(bytes, pathIdentity, digest), DecisionClassification(bytes, digest))
+  {}
+
+  lemma AdmittedBytesEstablishCheckedFields(bytes: seq<RecordByte>, pathIdentity: seq<RecordByte>,
+      digest: seq<RecordByte> -> seq<RecordByte>)
+    requires ReadRecordBytes(bytes, pathIdentity, digest) != Refuse
+    ensures 256 <= |bytes| <= 352
+    ensures ValidHeaderBytes(bytes[..256], pathIdentity, digest)
+    ensures exists i | 16 <= i < 32 :: bytes[i] != 0
+    ensures LittleEndian64(bytes[64..72]) <= 2147483648
+    ensures LittleEndian64(bytes[72..80]) <= 2147483648
+    ensures ReadRecordBytes(bytes, pathIdentity, digest).decision == Committed <==>
+      |bytes| == 352 && ValidDecisionBytes(bytes[..256], bytes[256..], digest)
+    ensures ReadRecordBytes(bytes, pathIdentity, digest).decision != PartialCommit
+  {}
+
+  lemma PartialDecisionCannotCommit(header: seq<RecordByte>, partial: seq<RecordByte>,
+      pathIdentity: seq<RecordByte>, digest: seq<RecordByte> -> seq<RecordByte>)
+    requires ValidHeaderBytes(header, pathIdentity, digest)
+    requires |partial| < 96
+    ensures ReadRecordBytes(header + partial, pathIdentity, digest) == Admit(Prepared)
+  {
+    assert (header + partial)[..256] == header;
+  }
+
+  lemma CompleteDecisionRequiresEveryCheckedField(header: seq<RecordByte>, decision: seq<RecordByte>,
+      pathIdentity: seq<RecordByte>, digest: seq<RecordByte> -> seq<RecordByte>)
+    requires ValidHeaderBytes(header, pathIdentity, digest)
+    requires |decision| == 96
+    ensures ReadRecordBytes(header + decision, pathIdentity, digest) == Admit(Committed) <==>
+      ValidDecisionBytes(header, decision, digest)
+    ensures !ValidDecisionBytes(header, decision, digest) ==>
+      ReadRecordBytes(header + decision, pathIdentity, digest) == Refuse
+  {
+    assert (header + decision)[..256] == header;
+    assert (header + decision)[256..] == decision;
+  }
+
+  lemma InvalidHeaderCannotBorrowDecisionAuthority(header: seq<RecordByte>, suffix: seq<RecordByte>,
+      pathIdentity: seq<RecordByte>, digest: seq<RecordByte> -> seq<RecordByte>)
+    requires |header| == 256
+    requires !ValidHeaderBytes(header, pathIdentity, digest)
+    ensures ReadRecordBytes(header + suffix, pathIdentity, digest) == Refuse
+  {
+    assert (header + suffix)[..256] == header;
+  }
+
+  lemma NegativeSignedLengthIsRejected(bytes: seq<RecordByte>, pathIdentity: seq<RecordByte>,
+      digest: seq<RecordByte> -> seq<RecordByte>)
+    requires |bytes| >= 256
+    requires bytes[71] >= 128 || bytes[79] >= 128
+    ensures ReadRecordBytes(bytes, pathIdentity, digest) == Refuse
+  {
+    if |bytes| <= 352 {
+      var header := bytes[..256];
+      assert header[64..72][7] == bytes[71];
+      assert header[72..80][7] == bytes[79];
+      assert LittleEndian64(header[64..72]) >= 72057594037927936 * (bytes[71] as int);
+      assert LittleEndian64(header[72..80]) >= 72057594037927936 * (bytes[79] as int);
+    }
+  }
+
+  // Decision bytes determine the same image as the recovery protocol. This
+  // composes classification with the existing invariant; admission alone does
+  // not establish validated complete copies, destination bytes or generation
+  // ownership. Recovery actions never append a new transaction decision.
+  lemma AdmittedBytesSelectRecovery(bytes: seq<RecordByte>, pathIdentity: seq<RecordByte>,
+      digest: seq<RecordByte> -> seq<RecordByte>, original: seq<int>, next: seq<int>, s: Snapshot)
+    returns (states: seq<Snapshot>, actions: seq<Action>)
+    requires ReadRecordBytes(bytes, pathIdentity, digest).Admit?
+    requires s.decision == ReadRecordBytes(bytes, pathIdentity, digest).decision
+    requires Valid(original, next, s)
+    ensures Path(original, next, states, actions) && states[0] == s
+    ensures !states[|states|-1].intent
+    ensures states[|states|-1].decision == s.decision
+    ensures states[|states|-1].destination ==
+      Present(if |bytes| == 352 then next else original)
+  {
+    AdmittedBytesEstablishCheckedFields(bytes, pathIdentity, digest);
+    states, actions := CompleteRecovery(original, next, s);
+  }
+
+  lemma HeaderBootstrapRequiresCompleteBoundEvidence(bytes: seq<RecordByte>, pathIdentity: seq<RecordByte>,
+      digest: seq<RecordByte> -> seq<RecordByte>)
+    requires |bytes| < 256 || |bytes| > 352 || |pathIdentity| != 32 ||
+      (|bytes| >= 256 && forall i | 16 <= i < 32 :: bytes[i] == 0)
+    ensures ReadRecordBytes(bytes, pathIdentity, digest) == Refuse
+  {}
+
+  lemma ForeignCompleteDecisionIsRejected(header: seq<RecordByte>, decision: seq<RecordByte>,
+      pathIdentity: seq<RecordByte>, digest: seq<RecordByte> -> seq<RecordByte>)
+    requires ValidHeaderBytes(header, pathIdentity, digest)
+    requires |decision| == 96
+    requires decision[..8] != DecisionMagic() || decision[8..24] != header[16..32] ||
+      decision[24..56] != header[112..144] || decision[64..96] != digest(decision[..64])
+    ensures ReadRecordBytes(header + decision, pathIdentity, digest) == Refuse
+  {
+    CompleteDecisionRequiresEveryCheckedField(header, decision, pathIdentity, digest);
+  }
+
+  // Quantifies over every possible byte cut of a complete valid append. No
+  // prefix, including a full-looking magic/generation/hash prefix, commits early.
+  lemma DecisionAppendCutsHaveExactSelection(header: seq<RecordByte>, decision: seq<RecordByte>,
+      pathIdentity: seq<RecordByte>, digest: seq<RecordByte> -> seq<RecordByte>, count: nat)
+    requires ValidHeaderBytes(header, pathIdentity, digest)
+    requires ValidDecisionBytes(header, decision, digest)
+    requires count <= 96
+    ensures ReadRecordBytes(header + decision[..count], pathIdentity, digest) ==
+      Admit(if count == 96 then Committed else Prepared)
+  {
+    if count < 96 {
+      PartialDecisionCannotCommit(header, decision[..count], pathIdentity, digest);
+    } else {
+      assert decision[..count] == decision;
+      CompleteDecisionRequiresEveryCheckedField(header, decision, pathIdentity, digest);
+    }
+  }
+
+  lemma AdmittedBytesSurviveInterruptedRecovery(bytes: seq<RecordByte>, pathIdentity: seq<RecordByte>,
+      digest: seq<RecordByte> -> seq<RecordByte>, original: seq<int>, next: seq<int>,
+      states: seq<Snapshot>, actions: seq<Action>)
+    requires ReadRecordBytes(bytes, pathIdentity, digest).Admit?
+    requires Path(original, next, states, actions)
+    requires RecoveryOnly(original, next, states, actions)
+    requires states[0].decision == ReadRecordBytes(bytes, pathIdentity, digest).decision
+    requires Valid(original, next, states[0])
+    ensures Valid(original, next, states[|states|-1])
+    ensures states[|states|-1].decision == ReadRecordBytes(bytes, pathIdentity, digest).decision
+    ensures !states[|states|-1].intent ==>
+      states[|states|-1].destination == Present(if |bytes| == 352 then next else original)
+  {
+    AdmittedBytesEstablishCheckedFields(bytes, pathIdentity, digest);
+    InterruptedRecoveryKeepsDecision(original, next, states, actions);
+  }
 }
