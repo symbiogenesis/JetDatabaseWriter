@@ -2,7 +2,7 @@
 // Correspondence: StreamPageStore.WriteAsync/SetLengthAsync call
 // PersistentRollbackJournal.RecordBeforeWrite/RecordBeforeTruncate first;
 // those methods save original pages and flush their records before mutation.
-// Page alignment is abstracted to byte intervals. Journal parsing, checksums,
+// Aligned page payloads expand into logical byte records. Journal parsing, checksums,
 // path identity, locks, namespace persistence and C# refinement are not proved.
 module UndoJournal {
   type Byte = n: int | 0 <= n < 256 witness 0
@@ -1397,6 +1397,7 @@ module UndoJournal {
     ensures Covered(next.protocol.records, |original|, start, start + pageSize)
     ensures forall j | 0 <= j < |pages| :: ExactPagePayload(original, pageSize, pages[j])
     ensures |pages| <= 1 && (|pages| == 1 ==> pages[0].pageOffset == start)
+    ensures |pages| == 1 ==> start !in Saved(b.protocol.records)
     ensures |pages| == 1 ==> |pages[0].pageBytes| == pageSize
     ensures |pages| == 0 ==> next.protocol.records == b.protocol.records
     ensures |pages| == 1 ==>
@@ -1430,6 +1431,206 @@ module UndoJournal {
     }
   }
 
+  // Keep the recursive schedule's path/coverage composition independent of
+  // the buffered invariant's quantified persistence obligations. These opaque
+  // summaries are unfolded and proved by the adapters, never trusted inputs.
+  opaque predicate CaptureBoundary(original: seq<Byte>, b: BufferedState, pageSize: nat)
+    requires 0 < pageSize
+  {
+    BufferedInvariant(original, b) && b.protocol.mode == Active &&
+    WholePageCaptures(|original|, b.protocol.records, pageSize)
+  }
+
+  opaque predicate CapturePath(original: seq<Byte>, before: BufferedState, after: BufferedState,
+      states: seq<BufferedState>, actions: seq<BufferedAction>)
+  {
+    BufferedPath(original, states, actions) && states[0] == before && states[|states|-1] == after &&
+    after.protocol.db == before.protocol.db && after.durableDb == before.durableDb && after.pending == before.pending &&
+    RecordsExtend(before.protocol.records, after.protocol.records)
+  }
+
+  lemma CaptureBoundaryPage(original: seq<Byte>, b: BufferedState, pageSize: nat, start: nat)
+    returns (next: BufferedState, pages: seq<PageCapture>, states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires 0 < pageSize && CaptureBoundary(original, b, pageSize)
+    requires start % pageSize == 0 && start < |original|
+    ensures CaptureBoundary(original, next, pageSize) && CapturePath(original, b, next, states, actions)
+    ensures 0 < |states|
+    ensures Covered(next.protocol.records, |original|, start, start + pageSize)
+    ensures forall j | 0 <= j < |pages| :: ExactPagePayload(original, pageSize, pages[j])
+    ensures |pages| <= 1 && (|pages| == 1 ==> pages[0].pageOffset == start)
+    ensures |pages| == 1 ==> start !in Saved(b.protocol.records)
+  {
+    reveal CaptureBoundary();
+    reveal CapturePath();
+    next, pages, states, actions := CaptureAlignedPage(original, b, pageSize, start);
+  }
+
+  lemma ComposeCapturePaths(original: seq<Byte>, before: BufferedState, middle: BufferedState, after: BufferedState,
+      left: seq<BufferedState>, first: seq<BufferedAction>, right: seq<BufferedState>, second: seq<BufferedAction>)
+    requires CapturePath(original, before, middle, left, first) && 0 < |left|
+    requires CapturePath(original, middle, after, right, second)
+    ensures CapturePath(original, before, after, left[..|left|-1] + right, first + second)
+  {
+    reveal CapturePath();
+    JoinBufferedPaths(original, left, first, right, second);
+    RecordExtensionsAreTransitive(before.protocol.records, middle.protocol.records, after.protocol.records);
+  }
+
+  lemma CapturePathRecordsGrow(original: seq<Byte>, before: BufferedState, after: BufferedState, pageSize: nat,
+      states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires 0 < pageSize && CaptureBoundary(original, after, pageSize)
+    requires CapturePath(original, before, after, states, actions)
+    ensures ExactRecords(original, after.protocol.records)
+    ensures RecordsExtend(before.protocol.records, after.protocol.records)
+    ensures forall i: nat :: i in Saved(before.protocol.records) ==> i in Saved(after.protocol.records)
+  {
+    reveal CaptureBoundary();
+    reveal CapturePath();
+    SavedPrefixGrows(original, after.protocol.records, |before.protocol.records|);
+  }
+
+  lemma JoinCaptureCoverage(records: seq<JournalRecord>, originalLength: nat, start: nat, middle: nat, limit: nat)
+    requires Covered(records, originalLength, start, middle)
+    requires Covered(records, originalLength, middle, limit)
+    ensures Covered(records, originalLength, start, limit)
+  { }
+
+  lemma JoinCapturedPageLists(original: seq<Byte>, pageSize: nat, start: nat, limit: nat,
+      head: seq<PageCapture>, tail: seq<PageCapture>, before: map<nat, Byte>, middle: map<nat, Byte>)
+    requires 0 < pageSize && start < limit && start < |original|
+    requires |head| <= 1 && (|head| == 1 ==> head[0].pageOffset == start && start !in before)
+    requires forall j | 0 <= j < |head| :: ExactPagePayload(original, pageSize, head[j])
+    requires forall j | 0 <= j < |tail| :: ExactPagePayload(original, pageSize, tail[j])
+    requires forall j | 0 <= j < |tail| :: start + pageSize <= tail[j].pageOffset < limit
+    requires forall j | 0 <= j < |tail| :: tail[j].pageOffset < |original| && tail[j].pageOffset !in middle
+    requires forall i, j | 0 <= i < j < |tail| :: tail[i].pageOffset < tail[j].pageOffset
+    requires forall i: nat :: i in before ==> i in middle
+    ensures forall j | 0 <= j < |head + tail| :: ExactPagePayload(original, pageSize, (head + tail)[j])
+    ensures forall j | 0 <= j < |head + tail| :: start <= (head + tail)[j].pageOffset < limit
+    ensures forall j | 0 <= j < |head + tail| ::
+      (head + tail)[j].pageOffset < |original| && (head + tail)[j].pageOffset !in before
+    ensures forall i, j | 0 <= i < j < |head + tail| :: (head + tail)[i].pageOffset < (head + tail)[j].pageOffset
+  {
+    forall j | 0 <= j < |head + tail|
+      ensures ExactPagePayload(original, pageSize, (head + tail)[j])
+      ensures start <= (head + tail)[j].pageOffset < limit
+      ensures (head + tail)[j].pageOffset < |original| && (head + tail)[j].pageOffset !in before
+    {
+      if j < |head| {
+        assert j == 0 && (head + tail)[j].pageOffset == start;
+      } else {
+        assert (head + tail)[j] == tail[j-|head|];
+      }
+    }
+    forall i, j | 0 <= i < j < |head + tail|
+      ensures (head + tail)[i].pageOffset < (head + tail)[j].pageOffset
+    {
+      if i < |head| {
+        assert i == 0 && (head + tail)[i].pageOffset == start;
+        assert j >= |head|;
+      } else {
+        assert (head + tail)[i] == tail[i-|head|];
+        assert (head + tail)[j] == tail[j-|head|];
+      }
+    }
+  }
+  lemma AlignedProductIsMonotone(smaller: nat, larger: nat, factor: nat)
+    requires smaller <= larger
+    ensures smaller * factor <= larger * factor
+  {
+    var difference: nat := larger - smaller;
+    assert larger == smaller + difference;
+    assert larger * factor == smaller * factor + difference * factor;
+    assert 0 <= difference * factor;
+  }
+  lemma NextPageIsAligned(start: nat, pageSize: nat)
+    requires 0 < pageSize && start % pageSize == 0
+    ensures (start + pageSize) % pageSize == 0
+  {
+    var quotient := start / pageSize;
+    var nextQuotient := (start + pageSize) / pageSize;
+    var remainder := (start + pageSize) % pageSize;
+    assert start == quotient * pageSize;
+    assert start + pageSize == nextQuotient * pageSize + remainder;
+    assert 0 <= remainder < pageSize;
+    if nextQuotient <= quotient {
+      AlignedProductIsMonotone(nextQuotient, quotient, pageSize);
+      assert nextQuotient * pageSize + remainder < quotient * pageSize + pageSize;
+      assert false;
+    } else if quotient + 1 < nextQuotient {
+      AlignedProductIsMonotone(quotient + 2, nextQuotient, pageSize);
+      assert false;
+    }
+    assert nextQuotient == quotient + 1;
+  }
+  lemma {:induction false} CaptureAlignedPageRangeSchedule(original: seq<Byte>, b: BufferedState, pageSize: nat,
+      start: nat, limit: nat)
+    returns (next: BufferedState, pages: seq<PageCapture>, states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires 0 < pageSize && start % pageSize == 0 && CaptureBoundary(original, b, pageSize)
+    ensures CaptureBoundary(original, next, pageSize) && CapturePath(original, b, next, states, actions)
+    ensures 0 < |states|
+    ensures Covered(next.protocol.records, |original|, start, limit)
+    ensures forall j | 0 <= j < |pages| :: ExactPagePayload(original, pageSize, pages[j])
+    ensures forall j | 0 <= j < |pages| :: start <= pages[j].pageOffset < limit
+    ensures forall j | 0 <= j < |pages| ::
+      pages[j].pageOffset < |original| && pages[j].pageOffset !in Saved(b.protocol.records)
+    ensures Covered(b.protocol.records, |original|, start, limit) ==> |pages| == 0
+    ensures forall i, j | 0 <= i < j < |pages| :: pages[i].pageOffset < pages[j].pageOffset
+    decreases if start < Min(limit, |original|) then Min(limit, |original|) - start else 0
+  {
+    if start >= limit || start >= |original| {
+      next, pages, states, actions := b, [], [b], [];
+      reveal CapturePath();
+    } else {
+      var captured: BufferedState;
+      var headPages: seq<PageCapture>;
+      var headStates: seq<BufferedState>;
+      var headActions: seq<BufferedAction>;
+      captured, headPages, headStates, headActions := CaptureBoundaryPage(original, b, pageSize, start);
+      var tailPages: seq<PageCapture>;
+      var tailStates: seq<BufferedState>;
+      var tailActions: seq<BufferedAction>;
+      NextPageIsAligned(start, pageSize);
+      next, tailPages, tailStates, tailActions :=
+        CaptureAlignedPageRangeSchedule(original, captured, pageSize, start + pageSize, limit);
+      ComposeCapturePaths(original, b, captured, next, headStates, headActions, tailStates, tailActions);
+      states, actions := headStates[..|headStates|-1] + tailStates, headActions + tailActions;
+      pages := headPages + tailPages;
+      CapturePathRecordsGrow(original, b, captured, pageSize, headStates, headActions);
+      CapturePathRecordsGrow(original, captured, next, pageSize, tailStates, tailActions);
+      RecordExtensionPreservesCoverage(original, captured.protocol.records, next.protocol.records, start, start + pageSize);
+      JoinCaptureCoverage(next.protocol.records, |original|, start, start + pageSize, limit);
+      JoinCapturedPageLists(original, pageSize, start, limit, headPages, tailPages,
+        Saved(b.protocol.records), Saved(captured.protocol.records));
+    }
+  }
+  // Capture every original aligned page intersecting [start, limit), skipping
+  // pages already captured. The rank counts remaining original bytes, so the
+  // schedule is finite even when the requested interval extends past EOF.
+  lemma CaptureAlignedPageRange(original: seq<Byte>, b: BufferedState, pageSize: nat,
+      start: nat, limit: nat)
+    returns (next: BufferedState, pages: seq<PageCapture>, states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires BufferedInvariant(original, b) && b.protocol.mode == Active
+    requires 0 < pageSize && start % pageSize == 0
+    requires WholePageCaptures(|original|, b.protocol.records, pageSize)
+    ensures BufferedPath(original, states, actions) && states[0] == b && states[|states|-1] == next
+    ensures BufferedInvariant(original, next) && next.protocol.mode == Active
+    ensures next.protocol.db == b.protocol.db && next.durableDb == b.durableDb && next.pending == b.pending
+    ensures RecordsExtend(b.protocol.records, next.protocol.records)
+    ensures WholePageCaptures(|original|, next.protocol.records, pageSize)
+    ensures Covered(next.protocol.records, |original|, start, limit)
+    ensures forall j | 0 <= j < |pages| :: ExactPagePayload(original, pageSize, pages[j])
+    ensures forall j | 0 <= j < |pages| :: start <= pages[j].pageOffset < limit
+    ensures forall j | 0 <= j < |pages| ::
+      pages[j].pageOffset < |original| && pages[j].pageOffset !in Saved(b.protocol.records)
+    ensures Covered(b.protocol.records, |original|, start, limit) ==> |pages| == 0
+    ensures forall i, j | 0 <= i < j < |pages| :: pages[i].pageOffset < pages[j].pageOffset
+    decreases if start < Min(limit, |original|) then Min(limit, |original|) - start else 0
+  {
+    reveal CaptureBoundary();
+    reveal CapturePath();
+    next, pages, states, actions := CaptureAlignedPageRangeSchedule(original, b, pageSize, start, limit);
+  }
   lemma InitialBufferedProtocolHasWholePages(original: seq<Byte>, pageSize: nat)
     requires 0 < pageSize
     ensures WholePageCaptures(|original|, InitialBufferedProtocol(original).protocol.records, pageSize)
@@ -1476,6 +1677,73 @@ module UndoJournal {
     assert DurableRecords(next.protocol) == intended.protocol.records;
   }
 
+  // General preparation constructs all intersecting original page captures,
+  // then appends and durably flushes the write intent before database mutation.
+  // Empty writes and writes entirely beyond the original EOF need no capture.
+  lemma PreparePageWrite(original: seq<Byte>, b: BufferedState, pageSize: nat,
+      start: nat, payload: seq<Byte>)
+    returns (next: BufferedState, pages: seq<PageCapture>, states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires BufferedInvariant(original, b) && b.protocol.mode == Active
+    requires 0 < pageSize && start % pageSize == 0
+    requires WholePageCaptures(|original|, b.protocol.records, pageSize)
+    ensures BufferedPath(original, states, actions) && states[0] == b && states[|states|-1] == next
+    ensures BufferedInvariant(original, next) && next.protocol.mode == Active
+    ensures next.protocol.db == b.protocol.db && next.durableDb == b.durableDb && next.pending == b.pending
+    ensures RecordsExtend(b.protocol.records, next.protocol.records)
+    ensures WholePageCaptures(|original|, next.protocol.records, pageSize)
+    ensures WriteIntent(start, payload) in DurableRecords(next.protocol)
+    ensures Covered(DurableRecords(next.protocol), |original|, start, start + |payload|)
+    ensures forall j | 0 <= j < |pages| :: ExactPagePayload(original, pageSize, pages[j])
+    ensures forall i, j | 0 <= i < j < |pages| :: pages[i].pageOffset < pages[j].pageOffset
+    ensures forall result: seq<Byte> :: TornWrite(next.protocol.db, start, payload, result) ==>
+      BufferedEnabled(original, next, Issue(MutateWrite(start, payload, result)))
+  {
+    var captured: BufferedState;
+    captured, pages, states, actions := CaptureAlignedPageRange(original, b, pageSize, start, start + |payload|);
+    assert Covered(captured.protocol.records, |original|, start, start + |payload|);
+    var tailStates: seq<BufferedState>;
+    var tailActions: seq<BufferedAction>;
+    next, tailStates, tailActions :=
+      FlushCapturedPageIntent(original, captured, pageSize, AppendWrite(start, payload), start, start + |payload|);
+    JoinBufferedPaths(original, states, actions, tailStates, tailActions);
+    states, actions := states[..|states|-1] + tailStates, actions + tailActions;
+    RecordExtensionsAreTransitive(b.protocol.records, captured.protocol.records, next.protocol.records);
+  }
+
+  // Production admits aligned truncations no longer than the readable file.
+  // Capturing [length, original EOF) protects every removed original byte,
+  // including arbitrarily many pages and a zero-padded partial final page.
+  // Already protected pages and a tail wholly beyond original EOF are skipped.
+  lemma PreparePageTruncate(original: seq<Byte>, b: BufferedState, pageSize: nat, length: nat)
+    returns (next: BufferedState, pages: seq<PageCapture>, states: seq<BufferedState>, actions: seq<BufferedAction>)
+    requires BufferedInvariant(original, b) && b.protocol.mode == Active
+    requires 0 < pageSize && length % pageSize == 0 && length <= |b.protocol.db|
+    requires WholePageCaptures(|original|, b.protocol.records, pageSize)
+    ensures BufferedPath(original, states, actions) && states[0] == b && states[|states|-1] == next
+    ensures BufferedInvariant(original, next) && next.protocol.mode == Active
+    ensures next.protocol.db == b.protocol.db && next.durableDb == b.durableDb && next.pending == b.pending
+    ensures RecordsExtend(b.protocol.records, next.protocol.records)
+    ensures WholePageCaptures(|original|, next.protocol.records, pageSize)
+    ensures LengthIntent(length) in DurableRecords(next.protocol)
+    ensures Covered(DurableRecords(next.protocol), |original|, length, |original|)
+    ensures forall j | 0 <= j < |pages| :: ExactPagePayload(original, pageSize, pages[j])
+    ensures forall j | 0 <= j < |pages| :: length <= pages[j].pageOffset < |original|
+    ensures forall i, j | 0 <= i < j < |pages| :: pages[i].pageOffset < pages[j].pageOffset
+    ensures forall resultLength: nat ::
+      length <= resultLength <= |next.protocol.db| ==>
+        BufferedEnabled(original, next, Issue(MutateLength(length, resultLength)))
+  {
+    var captured: BufferedState;
+    captured, pages, states, actions := CaptureAlignedPageRange(original, b, pageSize, length, |original|);
+    var tailStates: seq<BufferedState>;
+    var tailActions: seq<BufferedAction>;
+    next, tailStates, tailActions :=
+      FlushCapturedPageIntent(original, captured, pageSize, AppendLength(length), length, |original|);
+    JoinBufferedPaths(original, states, actions, tailStates, tailActions);
+    states, actions := states[..|states|-1] + tailStates, actions + tailActions;
+    RecordExtensionsAreTransitive(b.protocol.records, captured.protocol.records, next.protocol.records);
+  }
+
   // A write within one aligned original page uses a constructed page body,
   // appends its intent and flushes the journal before any database mutation.
   // The page body includes zero padding only beyond a partial original tail.
@@ -1509,9 +1777,8 @@ module UndoJournal {
     RecordExtensionsAreTransitive(b.protocol.records, captured.protocol.records, next.protocol.records);
   }
 
-  // This preparation covers a removed tail contained in one aligned page,
-  // including a partial final page. Arbitrary multi-page tail composition is
-  // a further refinement; no exact captured-byte premise is needed here.
+  // The single-page specialization retains its narrower caller contract.
+  // PreparePageTruncate above constructs complete arbitrary removed tails.
   lemma PrepareSinglePageTruncate(original: seq<Byte>, b: BufferedState, pageSize: nat, length: nat)
     returns (next: BufferedState, pages: seq<PageCapture>, states: seq<BufferedState>, actions: seq<BufferedAction>)
     requires BufferedInvariant(original, b) && b.protocol.mode == Active
