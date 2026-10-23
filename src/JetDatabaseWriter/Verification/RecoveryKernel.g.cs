@@ -31,6 +31,10 @@ namespace JetDatabaseWriter.Verification {
     {
       return ((JetDatabaseWriter.Verification.RecoveryKernel.IsPageSize(pageSize)) && ((offset) <= ((2147483648UL) - ((ulong)(pageSize))))) && (((offset) % ((ulong)(pageSize))) == (0UL));
     }
+    public static bool IsAfterImageLength(ulong length, ulong offset, uint pageSize)
+    {
+      return ((JetDatabaseWriter.Verification.RecoveryKernel.IsPageOffset(offset, pageSize)) && ((offset) < (length))) && ((length) <= ((offset) + ((ulong)(pageSize))));
+    }
     public static uint OriginalPageLength(uint pageSize, ulong originalLength, ulong offset)
     {
       if (((!(JetDatabaseWriter.Verification.RecoveryKernel.IsPageOffset(offset, pageSize))) || (!(JetDatabaseWriter.Verification.RecoveryKernel.IsDatabaseLength(originalLength)))) || ((offset) >= (originalLength))) {
@@ -58,6 +62,27 @@ namespace JetDatabaseWriter.Verification {
         return 0UL;
       } else {
         return (position) + (8UL);
+      }
+    }
+    public static ulong NextJournalRecord(uint pageSize, ulong originalLength, ulong journalLength, ulong position)
+    {
+      if ((JetDatabaseWriter.Verification.RecoveryKernel.JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position)) == (0UL)) {
+        return 0UL;
+      } else {
+        return ((position) + ((ulong)(pageSize))) + (40UL);
+      }
+    }
+    public static bool IsFinalJournalRecord(uint pageSize, ulong originalLength, ulong journalLength, ulong position)
+    {
+      ulong _0_next = JetDatabaseWriter.Verification.RecoveryKernel.NextJournalRecord(pageSize, originalLength, journalLength, position);
+      return ((_0_next) != (0UL)) && ((_0_next) == (journalLength));
+    }
+    public static ulong OriginalPageRecordPayloadOffset(uint pageSize, ulong originalLength, ulong journalLength, ulong position, ulong tag, ulong offset)
+    {
+      if ((((JetDatabaseWriter.Verification.RecoveryKernel.OriginalPageLength(pageSize, originalLength, offset)) == (0U)) || (!(JetDatabaseWriter.Verification.RecoveryKernel.IsBeforeImageRecord(tag, pageSize, originalLength)))) || (((tag) - (9223372036854775808UL)) != (offset))) {
+        return 0UL;
+      } else {
+        return JetDatabaseWriter.Verification.RecoveryKernel.JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position);
       }
     }
     public static bool IsTruncateLength(ulong length, uint pageSize, ulong maximumLength)
