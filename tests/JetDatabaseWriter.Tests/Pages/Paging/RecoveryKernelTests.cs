@@ -12,6 +12,123 @@ using Xunit;
 /// <summary>Checks the generated recovery boundary against independent bounded and edge-case oracles.</summary>
 public sealed class RecoveryKernelTests
 {
+    /// <summary>Original payload and manifest slices select only the exact bytes of an aligned original page.</summary>
+    [Fact]
+    public void OriginalPageSlices_BoundaryInputs_MatchIndependentOracle()
+    {
+        uint[] pageSizes = [0, 1, 2048, 4096, uint.MaxValue];
+        ulong[] originalLengths = [0, 1, 2047, 2048, 2049, 4095, 4096, 4097, 2147483647, 2147483648, 2147483649, ulong.MaxValue];
+        ulong[] offsets = [0, 1, 2048, 4096, 2147479552, 2147481600, 2147483648, ulong.MaxValue];
+        foreach (uint pageSize in pageSizes)
+        {
+            foreach (ulong originalLength in originalLengths)
+            {
+                foreach (ulong offset in offsets)
+                {
+                    bool valid = pageSize is 2048 or 4096 && originalLength <= 2147483648
+                        && offset < originalLength && offset % pageSize == 0;
+                    uint expectedLength = valid ? checked((uint)Math.Min(pageSize, originalLength - offset)) : 0;
+                    ulong expectedHashOffset = valid ? 128 + (32 * (offset / pageSize)) : 0;
+                    Assert.Equal(expectedLength, RecoveryKernel.OriginalPageLength(pageSize, originalLength, offset));
+                    Assert.Equal(expectedHashOffset, RecoveryKernel.OriginalPageHashOffset(pageSize, originalLength, offset));
+                    if (valid)
+                    {
+                        Assert.InRange(offset + expectedLength, offset + 1, originalLength);
+                        Assert.InRange(expectedHashOffset + 32, 160UL, RecoveryKernel.JournalRecordStart(pageSize, originalLength));
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>A payload source must belong to an entire aligned record inside the complete prefix.</summary>
+    [Fact]
+    public void JournalRecordPayloadOffset_PrefixCutsAndPositions_MatchesIndependentOracle()
+    {
+        foreach (uint pageSize in new uint[] { 2048, 4096 })
+        {
+            foreach (ulong originalLength in new ulong[] { 0, 1, 2049, 4097, 2147483648 })
+            {
+                ulong start = 128 + (32 * ((originalLength / pageSize) + (originalLength % pageSize == 0 ? 0UL : 1UL)));
+                ulong size = pageSize + 40UL;
+                ulong[] positions = [0, start - 1, start, start + 1, start + size - 1, start + size, start + (2 * size), 17179869184, ulong.MaxValue];
+                for (ulong cut = 0; cut <= 2 * size; cut++)
+                {
+                    ulong journalLength = start + cut;
+                    ulong completeEnd = start + ((cut / size) * size);
+                    foreach (ulong position in positions)
+                    {
+                        bool valid = position >= start && position < completeEnd && (position - start) % size == 0;
+                        ulong expected = valid ? position + 8 : 0;
+                        Assert.Equal(expected, RecoveryKernel.JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position));
+                        if (valid)
+                        {
+                            Assert.True(expected + pageSize + 32 <= completeEnd);
+                        }
+                    }
+                }
+
+                ulong maximumCompleteEnd = start + (((17179869184 - start) / size) * size);
+                ulong lastPosition = maximumCompleteEnd - size;
+                Assert.Equal(lastPosition + 8, RecoveryKernel.JournalRecordPayloadOffset(pageSize, originalLength, 17179869184, lastPosition));
+                Assert.Equal(0UL, RecoveryKernel.JournalRecordPayloadOffset(pageSize, originalLength, 17179869184, maximumCompleteEnd));
+            }
+        }
+
+        Assert.Equal(0UL, RecoveryKernel.JournalRecordPayloadOffset(0, 0, 128, 128));
+        Assert.Equal(0UL, RecoveryKernel.JournalRecordPayloadOffset(2048, 2147483649, 17179869184, 128));
+        Assert.Equal(0UL, RecoveryKernel.JournalRecordPayloadOffset(2048, 0, 17179869185, 128));
+        Assert.Equal(0UL, RecoveryKernel.JournalRecordPayloadOffset(2048, 0, ulong.MaxValue, 128));
+    }
+
+    /// <summary>Recovery copies exactly a captured partial page's original prefix before restoring the file length.</summary>
+    /// <param name="pageSize">The supported physical page size.</param>
+    /// <param name="tailLength">The nonempty original final-page prefix.</param>
+    [Theory]
+    [InlineData(2048, 1)]
+    [InlineData(2048, 17)]
+    [InlineData(2048, 2047)]
+    [InlineData(4096, 1)]
+    [InlineData(4096, 17)]
+    [InlineData(4096, 4095)]
+    public void Recover_PartialOriginalPayload_WritesOnlyOriginalPrefix(int pageSize, int tailLength)
+    {
+        string path = Path.Combine(Path.GetTempPath(), "jdw-payload-kernel-" + Guid.NewGuid().ToString("N") + ".mdb");
+        byte[] original = new byte[pageSize + tailLength];
+        RandomNumberGenerator.Fill(original);
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using var database = new ReplayWriteStream(path);
+            using (var journal = PersistentRollbackJournal.Create(database, pageSize))
+            {
+                byte[] after = new byte[pageSize];
+                Array.Fill(after, (byte)165);
+                journal.RecordBeforeWrite(pageSize, after);
+                database.Position = pageSize;
+                database.Write(after, 0, after.Length);
+                database.Flush(flushToDisk: true);
+            }
+
+            database.ObserveReplay = true;
+            PersistentRollbackJournal.Recover(database);
+            Assert.Equal(1, database.ReplayWriteCalls);
+            Assert.Equal(pageSize, database.ReplayOffset);
+            Assert.Equal(tailLength, database.ReplayCount);
+            Assert.Equal(original.Length, database.Length);
+            byte[] restored = new byte[original.Length];
+            database.Position = 0;
+            database.ReadExactly(restored);
+            Assert.Equal(original, restored);
+            Assert.False(File.Exists(PersistentRollbackJournal.JournalPath(path)));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(PersistentRollbackJournal.JournalPath(path));
+        }
+    }
+
     /// <summary>Framing rejects invalid bounds and selects exactly the maximal complete record prefix.</summary>
     [Fact]
     public void JournalFraming_BoundaryInputs_MatchesIndependentOracle()
@@ -366,6 +483,29 @@ public sealed class RecoveryKernelTests
         }
 
         return tag >= 0 && tag < 2147483648 && tag % pageSize == 0 && 2147483648 - tag >= pageSize ? (byte)5 : (byte)0;
+    }
+
+    private sealed class ReplayWriteStream(string path) : FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+    {
+        internal bool ObserveReplay { get; set; }
+
+        internal int ReplayWriteCalls { get; private set; }
+
+        internal long ReplayOffset { get; private set; }
+
+        internal int ReplayCount { get; private set; }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (this.ObserveReplay)
+            {
+                this.ReplayWriteCalls++;
+                this.ReplayOffset = this.Position;
+                this.ReplayCount = count;
+            }
+
+            base.Write(buffer, offset, count);
+        }
     }
 
     private sealed class RecordFixture : IDisposable

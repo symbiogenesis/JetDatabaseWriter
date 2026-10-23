@@ -198,8 +198,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 byte[] page = new byte[state.PageSize];
                 foreach (KeyValuePair<long, long> entry in state.BeforeImages)
                 {
-                    int count = OriginalPageLength(state.PageSize, state.OriginalLength, entry.Key);
-                    Read(journal, entry.Value + 8, page, count);
+                    int count = ReadOriginalPage(journal, state, entry.Key, entry.Value, page);
                     database.Position = entry.Key;
                     database.Write(page, 0, count);
                 }
@@ -414,7 +413,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             Array.Clear(original, 0, original.Length);
             if (state.BeforeImages.TryGetValue(offset, out long beforePosition))
             {
-                Read(journal, beforePosition + 8, original, OriginalPageLength(state.PageSize, state.OriginalLength, offset));
+                _ = ReadOriginalPage(journal, state, offset, beforePosition, original);
             }
 
             bool matchesOriginal = true;
@@ -474,12 +473,40 @@ internal sealed class PersistentRollbackJournal : IDisposable
     }
 
     private static int OriginalPageLength(int pageSize, long originalLength, long offset)
-        => checked((int)Math.Min(pageSize, originalLength - offset));
+    {
+        uint count = RecoveryKernel.OriginalPageLength(unchecked((uint)pageSize), unchecked((ulong)originalLength), unchecked((ulong)offset));
+        if (count == 0)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery original-page payload bounds are invalid.");
+        }
+
+        return checked((int)count);
+    }
+
+    private static int ReadOriginalPage(FileStream journal, JournalState state, long offset, long position, byte[] page)
+    {
+        int count = OriginalPageLength(state.PageSize, state.OriginalLength, offset);
+        ulong payload = RecoveryKernel.JournalRecordPayloadOffset(
+            (uint)state.PageSize, (ulong)state.OriginalLength, (ulong)state.CompleteEnd, unchecked((ulong)position));
+        if (payload == 0)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery original-page source is not a complete journal record.");
+        }
+
+        Read(journal, checked((long)payload), page, count);
+        return count;
+    }
 
     private static void VerifyOriginalPage(FileStream journal, int pageSize, long originalLength, long offset, ReadOnlySpan<byte> page)
     {
+        ulong hashOffset = RecoveryKernel.OriginalPageHashOffset(unchecked((uint)pageSize), unchecked((ulong)originalLength), unchecked((ulong)offset));
+        if (hashOffset == 0)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery original-page manifest bounds are invalid.");
+        }
+
         byte[] expected = new byte[32];
-        Read(journal, HeaderLength + (offset / pageSize * 32), expected, expected.Length);
+        Read(journal, checked((long)hashOffset), expected, expected.Length);
         if (!expected.AsSpan().SequenceEqual(Hash(page[..OriginalPageLength(pageSize, originalLength, offset)])))
         {
             throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "An original page does not match its prepared recovery manifest.");
@@ -690,8 +717,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         byte[] page = new byte[this.pageSize];
         foreach (KeyValuePair<long, long> entry in state.BeforeImages)
         {
-            int count = OriginalPageLength(this.pageSize, this.originalLength, entry.Key);
-            Read(this.journal, entry.Value + 8, page, count);
+            int count = ReadOriginalPage(this.journal, state, entry.Key, entry.Value, page);
             await store.WriteAsync(entry.Key, page.AsMemory(0, count), CancellationToken.None).ConfigureAwait(false);
         }
 

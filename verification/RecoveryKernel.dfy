@@ -1,6 +1,6 @@
 // Executable recovery decisions. Generated C# calls these total native-width
 // functions; ghost lemmas connect byte authorization to UndoJournal.Allowed.
-// Record-byte decoding, hashes, before-image coverage, I/O and loop correspondence remain
+// Record-byte decoding, hashes, evidence identity, I/O and loop correspondence remain
 // outside this kernel. No external C# contract is trusted by these proofs.
 module NativeRecoveryTypes {
   newtype {:nativeType "ulong"} U64 = x: int | 0 <= x < 18446744073709551616
@@ -95,6 +95,101 @@ module RecoveryKernel {
     IsPageSize(pageSize) &&
     offset <= 2147483648 - (pageSize as U64) &&
     offset % (pageSize as U64) == 0
+  }
+
+  // Zero refuses an invalid original page. A valid partial final page copies
+  // only its original prefix, never the serialized record's zero padding.
+  function OriginalPageLength(pageSize: U32, originalLength: U64, offset: U64): U32 {
+    if !IsPageOffset(offset, pageSize) || !IsDatabaseLength(originalLength) || offset >= originalLength then 0
+    else if originalLength - offset >= pageSize as U64 then pageSize
+    else (originalLength - offset) as U32
+  }
+
+  // The selected hash is wholly inside the prepared manifest. Zero is outside
+  // that manifest and is reserved for invalid-input refusal.
+  function OriginalPageHashOffset(pageSize: U32, originalLength: U64, offset: U64): U64 {
+    if OriginalPageLength(pageSize, originalLength, offset) == 0 then 0
+    else 128 + (offset / (pageSize as U64)) * 32
+  }
+
+  // Select only the payload of a complete aligned record. A trailing fragment
+  // cannot supply payload bytes, even when it contains a complete tag.
+  function JournalRecordPayloadOffset(pageSize: U32, originalLength: U64,
+      journalLength: U64, position: U64): U64 {
+    var start := JournalRecordStart(pageSize, originalLength);
+    var end := CompleteJournalEnd(pageSize, originalLength, journalLength);
+    var size := (pageSize as U64) + 40;
+    if end == 0 || position < start || position > end || end - position < size ||
+        (position - start) % size != 0 then 0
+    else position + 8
+  }
+
+  lemma OriginalPageSliceIsExact(pageSize: U32, originalLength: U64, offset: U64)
+    ensures OriginalPageLength(pageSize, originalLength, offset) == 0 <==>
+      !IsPageOffset(offset, pageSize) || !IsDatabaseLength(originalLength) || offset >= originalLength
+    ensures OriginalPageLength(pageSize, originalLength, offset) != 0 ==>
+      0 < OriginalPageLength(pageSize, originalLength, offset) <= pageSize
+    ensures OriginalPageLength(pageSize, originalLength, offset) != 0 ==>
+      offset as int + OriginalPageLength(pageSize, originalLength, offset) as int ==
+        (if offset as int + pageSize as int <= originalLength as int
+          then offset as int + pageSize as int else originalLength as int)
+  { }
+
+  lemma OriginalPageHashSliceIsBounded(pageSize: U32, originalLength: U64, offset: U64)
+    ensures OriginalPageHashOffset(pageSize, originalLength, offset) == 0 <==>
+      OriginalPageLength(pageSize, originalLength, offset) == 0
+    ensures OriginalPageHashOffset(pageSize, originalLength, offset) != 0 ==>
+      128 <= OriginalPageHashOffset(pageSize, originalLength, offset) as int &&
+      OriginalPageHashOffset(pageSize, originalLength, offset) as int + 32 <=
+        JournalRecordStart(pageSize, originalLength) as int
+    ensures OriginalPageHashOffset(pageSize, originalLength, offset) != 0 ==>
+      (OriginalPageHashOffset(pageSize, originalLength, offset) as int - 128) / 32 ==
+        offset as int / pageSize as int
+  {
+    OriginalPageSliceIsExact(pageSize, originalLength, offset);
+    JournalManifestIsExactBoundedPageRounding(pageSize, originalLength);
+    if OriginalPageLength(pageSize, originalLength, offset) != 0 {
+      if pageSize == 2048 { } else { assert pageSize == 4096; }
+    }
+  }
+
+  lemma JournalPayloadSliceIsExactAndBounded(pageSize: U32, originalLength: U64,
+      journalLength: U64, position: U64)
+    ensures JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position) != 0 <==>
+      CompleteJournalEnd(pageSize, originalLength, journalLength) != 0 &&
+      JournalRecordStart(pageSize, originalLength) as int <= position as int &&
+      position as int + pageSize as int + 40 <= CompleteJournalEnd(pageSize, originalLength, journalLength) as int &&
+      (position as int - JournalRecordStart(pageSize, originalLength) as int) % (pageSize as int + 40) == 0
+    ensures JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position) != 0 ==>
+      JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position) as int == position as int + 8
+    ensures JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position) != 0 ==>
+      136 <= JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position) as int &&
+      JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position) as int + pageSize as int + 32 <=
+        CompleteJournalEnd(pageSize, originalLength, journalLength) as int <= journalLength as int <= 17179869184
+  {
+    JournalFramingSelectsExactCompletePrefix(pageSize, originalLength, journalLength);
+  }
+
+  // The parser's validated before-image map supplies the association between
+  // this page and its complete record. Under the existing exact-payload model,
+  // the generated count extracts exactly original bytes and excludes padding.
+  lemma OriginalPayloadExtractionRefinesCapturedPage(original: seq<Undo.Byte>,
+      pageSize: U32, offset: U64, page: Undo.PageCapture)
+    requires IsPageSize(pageSize) && |original| <= 2147483648
+    requires page.pageOffset == offset as int
+    requires Undo.ExactPagePayload(original, pageSize as int, page)
+    ensures 0 < OriginalPageLength(pageSize, |original| as U64, offset) <= pageSize
+    ensures OriginalPageLength(pageSize, |original| as U64, offset) as int <= |page.pageBytes|
+    ensures offset as int + OriginalPageLength(pageSize, |original| as U64, offset) as int <= |original|
+    ensures page.pageBytes[..OriginalPageLength(pageSize, |original| as U64, offset) as int] ==
+      original[offset as int..offset as int + OriginalPageLength(pageSize, |original| as U64, offset) as int]
+  {
+    reveal Undo.ExactPagePayload();
+    if pageSize == 2048 { } else { assert pageSize == 4096; }
+    assert IsPageOffset(offset, pageSize);
+    OriginalPageSliceIsExact(pageSize, |original| as U64, offset);
+    var count := OriginalPageLength(pageSize, |original| as U64, offset) as int;
+    assert forall i: int | 0 <= i < count :: page.pageBytes[i] == original[offset as int + i];
   }
 
   function IsTruncateLength(length: U64, pageSize: U32, maximumLength: U64): bool {
