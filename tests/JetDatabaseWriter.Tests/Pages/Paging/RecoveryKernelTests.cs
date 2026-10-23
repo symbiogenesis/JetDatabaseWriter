@@ -2,7 +2,9 @@ namespace JetDatabaseWriter.Tests.Pages.Paging;
 
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Security.Cryptography;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Paging;
@@ -79,6 +81,149 @@ public sealed class RecoveryKernelTests
         Assert.Equal(0UL, RecoveryKernel.JournalRecordPayloadOffset(2048, 2147483649, 17179869184, 128));
         Assert.Equal(0UL, RecoveryKernel.JournalRecordPayloadOffset(2048, 0, 17179869185, 128));
         Assert.Equal(0UL, RecoveryKernel.JournalRecordPayloadOffset(2048, 0, ulong.MaxValue, 128));
+    }
+
+    /// <summary>Bounded record acquisition advances strictly through the complete prefix and identifies only a terminal record.</summary>
+    [Fact]
+    public void JournalRecordCursor_PrefixCuts_AdvancesExactlyThroughCompleteRecords()
+    {
+        foreach (uint pageSize in new uint[] { 2048, 4096 })
+        {
+            foreach (ulong originalLength in new ulong[] { 0, 1, 4097, 2147483648 })
+            {
+                ulong start = 128 + (32 * ((originalLength / pageSize) + (originalLength % pageSize == 0 ? 0UL : 1UL)));
+                ulong size = pageSize + 40UL;
+                for (ulong cut = 0; cut <= 3 * size; cut++)
+                {
+                    ulong journalLength = start + cut;
+                    ulong completeEnd = start + (cut / size * size);
+                    ulong position = start;
+                    int records = 0;
+                    while (position < completeEnd)
+                    {
+                        ulong next = RecoveryKernel.NextJournalRecord(pageSize, originalLength, journalLength, position);
+                        Assert.Equal(position + size, next);
+                        Assert.InRange(next, position + 1, completeEnd);
+                        Assert.Equal(next == journalLength, RecoveryKernel.IsFinalJournalRecord(pageSize, originalLength, journalLength, position));
+                        position = next;
+                        records++;
+                    }
+
+                    Assert.Equal(checked((int)(cut / size)), records);
+                    Assert.Equal(0UL, RecoveryKernel.NextJournalRecord(pageSize, originalLength, journalLength, position));
+                    Assert.False(RecoveryKernel.IsFinalJournalRecord(pageSize, originalLength, journalLength, position));
+                    Assert.Equal(0UL, RecoveryKernel.NextJournalRecord(pageSize, originalLength, journalLength, start + 1));
+                }
+            }
+        }
+
+        Assert.Equal(0UL, RecoveryKernel.NextJournalRecord(0, 0, 128, 128));
+        Assert.Equal(0UL, RecoveryKernel.NextJournalRecord(2048, 2147483649, 17179869184, 128));
+        Assert.Equal(0UL, RecoveryKernel.NextJournalRecord(2048, 0, 17179869185, 128));
+        Assert.Equal(0UL, RecoveryKernel.NextJournalRecord(2048, 0, ulong.MaxValue, ulong.MaxValue));
+    }
+
+    /// <summary>Original payload acquisition binds a requested page to its exact original before-image tag.</summary>
+    [Fact]
+    public void OriginalPageRecordPayloadOffset_EdgeTags_RequiresExactPageIdentity()
+    {
+        ulong[] tags = [0, 2048, 4096, 9223372036854775808, 9223372036854775809, 9223372036854777856, 9223372036854779904, 18446744073709551613, 18446744073709551614, ulong.MaxValue];
+        foreach (uint pageSize in new uint[] { 0, 2048, 4096, uint.MaxValue })
+        {
+            foreach (ulong originalLength in new ulong[] { 0, 1, 4097, 2147483648, 2147483649, ulong.MaxValue })
+            {
+                foreach (ulong offset in new ulong[] { 0, 1, 2048, 4096, 2147483648, ulong.MaxValue })
+                {
+                    foreach (ulong tag in tags)
+                    {
+                        bool valid = pageSize is 2048 or 4096 && originalLength <= 2147483648 && offset < originalLength
+                            && offset % pageSize == 0 && tag >= 9223372036854775808 && tag - 9223372036854775808 == offset;
+                        ulong start = pageSize is 2048 or 4096 && originalLength <= 2147483648
+                            ? 128 + (32 * ((originalLength / pageSize) + (originalLength % pageSize == 0 ? 0UL : 1UL)))
+                            : 128;
+                        ulong end = start + pageSize + 40UL;
+                        Assert.Equal(valid ? start + 8 : 0, RecoveryKernel.OriginalPageRecordPayloadOffset(pageSize, originalLength, end, start, tag, offset));
+                        Assert.Equal(0UL, RecoveryKernel.OriginalPageRecordPayloadOffset(pageSize, originalLength, end - 1, start, tag, offset));
+                        Assert.Equal(0UL, RecoveryKernel.OriginalPageRecordPayloadOffset(pageSize, originalLength, end, start + 1, tag, offset));
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>Reacquiring an original page refuses stale associations, altered payloads and invalid checksums before copying bytes.</summary>
+    /// <param name="tag">The acquired record's persisted signed tag.</param>
+    /// <param name="corruptPayload">Whether to alter a previously validated original payload.</param>
+    /// <param name="repairChecksum">Whether the altered record receives a valid record checksum.</param>
+    [Theory]
+    [InlineData(long.MinValue + 2048, false, true)]
+    [InlineData(0L, false, true)]
+    [InlineData(-1L, false, true)]
+    [InlineData(long.MinValue, true, false)]
+    [InlineData(long.MinValue, true, true)]
+    public void ReadOriginalPage_AlteredAcquiredRecord_RefusesBeforeCopy(long tag, bool corruptPayload, bool repairChecksum)
+    {
+        using var fixture = new RecordFixture();
+        using (var journal = PersistentRollbackJournal.Create(fixture.Database, 2048))
+        {
+            journal.RecordBeforeWrite(0, new byte[2048]);
+        }
+
+        byte[] evidence = File.ReadAllBytes(fixture.JournalPath);
+        const int start = 192;
+        const int recordSize = 2088;
+        Span<byte> record = evidence.AsSpan(start, recordSize);
+        BinaryPrimitives.WriteInt64LittleEndian(record, tag);
+        if (corruptPayload)
+        {
+            record[8] ^= 1;
+        }
+
+        if (repairChecksum)
+        {
+            SHA256.HashData(record[..^32]).CopyTo(record[^32..]);
+        }
+
+        File.WriteAllBytes(fixture.JournalPath, evidence);
+        using var source = new FileStream(fixture.JournalPath, FileMode.Open, FileAccess.Read, FileShare.None);
+        Type stateType = typeof(PersistentRollbackJournal).GetNestedType("JournalState", BindingFlags.NonPublic)!;
+        ConstructorInfo stateConstructor = Assert.Single(stateType.GetConstructors());
+        object state = stateConstructor.Invoke([2048, 4096L, (long)start, (long)evidence.Length, 4096L, false, false, new Dictionary<long, long> { [0] = start }]);
+        MethodInfo readOriginal = typeof(PersistentRollbackJournal).GetMethod("ReadOriginalPage", BindingFlags.NonPublic | BindingFlags.Static)!;
+        byte[] destination = new byte[2048];
+        Array.Fill(destination, (byte)165);
+        byte[] untouched = (byte[])destination.Clone();
+        TargetInvocationException failure = Assert.Throws<TargetInvocationException>(() => readOriginal.Invoke(null, [source, state, 0L, (long)start, destination, new byte[recordSize]]));
+        Assert.IsType<JetCorruptDataException>(failure.InnerException);
+        Assert.Equal(untouched, destination);
+        Assert.Equal(fixture.Original, fixture.ReadDatabase());
+        byte[] retained = new byte[evidence.Length];
+        source.Position = 0;
+        source.ReadExactly(retained);
+        Assert.Equal(evidence, retained);
+    }
+
+    /// <summary>A complete captured write may regrow a truncated database to its exact page end below the original length.</summary>
+    [Fact]
+    public void Recover_CompletedWriteRegrowsTruncatedPrefix_AuthorizesExactWriteEnd()
+    {
+        using var fixture = new RecordFixture();
+        using (var journal = PersistentRollbackJournal.Create(fixture.Database, 2048))
+        {
+            journal.RecordBeforeTruncate(0);
+            fixture.Database.SetLength(0);
+            byte[] after = new byte[2048];
+            Array.Fill(after, (byte)165);
+            journal.RecordBeforeWrite(0, after);
+            fixture.Database.Position = 0;
+            fixture.Database.Write(after);
+            fixture.Database.Flush(flushToDisk: true);
+        }
+
+        Assert.Equal(2048, fixture.Database.Length);
+        PersistentRollbackJournal.Recover(fixture.Database);
+        Assert.Equal(fixture.Original, fixture.ReadDatabase());
+        Assert.False(File.Exists(fixture.JournalPath));
     }
 
     /// <summary>Recovery copies exactly a captured partial page's original prefix before restoring the file length.</summary>

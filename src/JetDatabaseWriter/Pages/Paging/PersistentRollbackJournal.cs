@@ -196,9 +196,10 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 }
 
                 byte[] page = new byte[state.PageSize];
+                byte[] record = new byte[state.PageSize + 40];
                 foreach (KeyValuePair<long, long> entry in state.BeforeImages)
                 {
-                    int count = ReadOriginalPage(journal, state, entry.Key, entry.Value, page);
+                    int count = ReadOriginalPage(journal, state, entry.Key, entry.Value, page, record);
                     database.Position = entry.Key;
                     database.Write(page, 0, count);
                 }
@@ -299,16 +300,16 @@ internal sealed class PersistentRollbackJournal : IDisposable
         bool recovering = false;
         bool authorizedLength = database.Length >= originalLength;
         bool committed = false;
-        for (long position = start; position < completeEnd; position += recordSize)
+        for (long position = start; position < completeEnd; position = NextRecord(pageSize, originalLength, completeEnd, position))
         {
-            long offset = ReadRecord(journal, position, record);
+            long offset = ReadRecord(journal, pageSize, originalLength, completeEnd, position, record);
             var kind = (JournalRecordKind)RecoveryKernel.ClassifyJournalRecord(
                 unchecked((ulong)offset),
                 (uint)pageSize,
                 (ulong)originalLength,
                 recovering,
                 minimumLength < originalLength,
-                position + recordSize == journal.Length);
+                RecoveryKernel.IsFinalJournalRecord((uint)pageSize, (ulong)originalLength, (ulong)journal.Length, (ulong)position));
             if (kind == JournalRecordKind.Invalid)
             {
                 throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery record tag, bounds or control-state transition is invalid.");
@@ -370,6 +371,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             }
 
             maximumLength = Math.Max(maximumLength, offset + pageSize);
+            authorizedLength |= database.Length == offset + pageSize;
         }
 
         if (!committed && (database.Length < minimumLength || database.Length > maximumLength || (!authorizedLength && !recovering)))
@@ -413,7 +415,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             Array.Clear(original, 0, original.Length);
             if (state.BeforeImages.TryGetValue(offset, out long beforePosition))
             {
-                _ = ReadOriginalPage(journal, state, offset, beforePosition, original);
+                _ = ReadOriginalPage(journal, state, offset, beforePosition, original, record);
             }
 
             bool matchesOriginal = true;
@@ -429,9 +431,9 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 continue;
             }
 
-            for (long position = state.Start; position < state.CompleteEnd; position += record.Length)
+            for (long position = state.Start; position < state.CompleteEnd; position = NextRecord(state.PageSize, state.OriginalLength, state.CompleteEnd, position))
             {
-                if (ReadRecord(journal, position, record) == offset)
+                if (ReadRecord(journal, state.PageSize, state.OriginalLength, state.CompleteEnd, position, record) == offset)
                 {
                     for (int index = 0; index < count; index++)
                     {
@@ -483,17 +485,32 @@ internal sealed class PersistentRollbackJournal : IDisposable
         return checked((int)count);
     }
 
-    private static int ReadOriginalPage(FileStream journal, JournalState state, long offset, long position, byte[] page)
+    private static long NextRecord(int pageSize, long originalLength, long completeEnd, long position)
     {
-        int count = OriginalPageLength(state.PageSize, state.OriginalLength, offset);
-        ulong payload = RecoveryKernel.JournalRecordPayloadOffset(
-            (uint)state.PageSize, (ulong)state.OriginalLength, (ulong)state.CompleteEnd, unchecked((ulong)position));
-        if (payload == 0)
+        ulong next = RecoveryKernel.NextJournalRecord(
+            unchecked((uint)pageSize), unchecked((ulong)originalLength), unchecked((ulong)completeEnd), unchecked((ulong)position));
+        if (next == 0)
         {
-            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery original-page source is not a complete journal record.");
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery record source is not a complete bounded journal record.");
         }
 
-        Read(journal, checked((long)payload), page, count);
+        return checked((long)next);
+    }
+
+    private static int ReadOriginalPage(FileStream journal, JournalState state, long offset, long position, byte[] page, byte[] record)
+    {
+        int count = OriginalPageLength(state.PageSize, state.OriginalLength, offset);
+        long tag = ReadRecord(journal, state.PageSize, state.OriginalLength, state.CompleteEnd, position, record);
+        ulong payload = RecoveryKernel.OriginalPageRecordPayloadOffset(
+            (uint)state.PageSize, (ulong)state.OriginalLength, (ulong)state.CompleteEnd, unchecked((ulong)position), unchecked((ulong)tag), unchecked((ulong)offset));
+        if (payload == 0)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery original-page source does not identify the requested original page.");
+        }
+
+        ReadOnlySpan<byte> original = record.AsSpan(checked((int)(payload - (ulong)position)), state.PageSize);
+        VerifyOriginalPage(journal, state.PageSize, state.OriginalLength, offset, original);
+        original[..count].CopyTo(page);
         return count;
     }
 
@@ -541,8 +558,14 @@ internal sealed class PersistentRollbackJournal : IDisposable
         return position;
     }
 
-    private static long ReadRecord(FileStream journal, long position, byte[] record)
+    private static long ReadRecord(FileStream journal, int pageSize, long originalLength, long completeEnd, long position, byte[] record)
     {
+        long next = NextRecord(pageSize, originalLength, completeEnd, position);
+        if (record.Length != next - position)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery record buffer does not match its complete bounded source.");
+        }
+
         Read(journal, position, record, record.Length);
         if (!record.AsSpan(record.Length - 32).SequenceEqual(Hash(record, record.Length - 32)))
         {
@@ -715,9 +738,10 @@ internal sealed class PersistentRollbackJournal : IDisposable
         }
 
         byte[] page = new byte[this.pageSize];
+        byte[] record = new byte[this.pageSize + 40];
         foreach (KeyValuePair<long, long> entry in state.BeforeImages)
         {
-            int count = ReadOriginalPage(this.journal, state, entry.Key, entry.Value, page);
+            int count = ReadOriginalPage(this.journal, state, entry.Key, entry.Value, page, record);
             await store.WriteAsync(entry.Key, page.AsMemory(0, count), CancellationToken.None).ConfigureAwait(false);
         }
 

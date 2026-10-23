@@ -1,6 +1,6 @@
 // Executable recovery decisions. Generated C# calls these total native-width
 // functions; ghost lemmas connect byte authorization to UndoJournal.Allowed.
-// Record-byte decoding, hashes, evidence identity, I/O and loop correspondence remain
+// Record-byte decoding, hashes, evidence identity, I/O and full loop correspondence remain
 // outside this kernel. No external C# contract is trusted by these proofs.
 module NativeRecoveryTypes {
   newtype {:nativeType "ulong"} U64 = x: int | 0 <= x < 18446744073709551616
@@ -124,6 +124,33 @@ module RecoveryKernel {
     else position + 8
   }
 
+  // Zero refuses acquisition outside the complete aligned prefix. Every valid
+  // cursor moves by exactly one record and decreases the remaining-record rank.
+  function NextJournalRecord(pageSize: U32, originalLength: U64,
+      journalLength: U64, position: U64): U64 {
+    if JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position) == 0 then 0
+    else position + (pageSize as U64) + 40
+  }
+
+  // Unlike the complete prefix, finality includes every persisted trailing byte.
+  // A commit followed by an incomplete fragment cannot be admitted as terminal.
+  function IsFinalJournalRecord(pageSize: U32, originalLength: U64,
+      journalLength: U64, position: U64): bool {
+    var next := NextJournalRecord(pageSize, originalLength, journalLength, position);
+    next != 0 && next == journalLength
+  }
+
+  // The tag must be acquired from this complete checksum-validated record.
+  // Bind its exact original page before extracting any replay/content bytes;
+  // a previously populated dictionary alone does not grant payload identity.
+  function OriginalPageRecordPayloadOffset(pageSize: U32, originalLength: U64,
+      journalLength: U64, position: U64, tag: U64, offset: U64): U64 {
+    if OriginalPageLength(pageSize, originalLength, offset) == 0 ||
+        !IsBeforeImageRecord(tag, pageSize, originalLength) ||
+        tag - 9223372036854775808 != offset then 0
+    else JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position)
+  }
+
   lemma OriginalPageSliceIsExact(pageSize: U32, originalLength: U64, offset: U64)
     ensures OriginalPageLength(pageSize, originalLength, offset) == 0 <==>
       !IsPageOffset(offset, pageSize) || !IsDatabaseLength(originalLength) || offset >= originalLength
@@ -170,9 +197,67 @@ module RecoveryKernel {
     JournalFramingSelectsExactCompletePrefix(pageSize, originalLength, journalLength);
   }
 
-  // The parser's validated before-image map supplies the association between
-  // this page and its complete record. Under the existing exact-payload model,
-  // the generated count extracts exactly original bytes and excludes padding.
+  lemma JournalRecordCursorMakesBoundedProgress(pageSize: U32, originalLength: U64,
+      journalLength: U64, position: U64)
+    ensures NextJournalRecord(pageSize, originalLength, journalLength, position) != 0 <==>
+      JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position) != 0
+    ensures NextJournalRecord(pageSize, originalLength, journalLength, position) != 0 ==>
+      position as int < NextJournalRecord(pageSize, originalLength, journalLength, position) as int <=
+        CompleteJournalEnd(pageSize, originalLength, journalLength) as int <= journalLength as int
+    ensures NextJournalRecord(pageSize, originalLength, journalLength, position) != 0 ==>
+      NextJournalRecord(pageSize, originalLength, journalLength, position) as int ==
+        position as int + pageSize as int + 40
+    ensures NextJournalRecord(pageSize, originalLength, journalLength, position) != 0 ==>
+      (CompleteJournalEnd(pageSize, originalLength, journalLength) as int - position as int) /
+        (pageSize as int + 40) ==
+      1 + (CompleteJournalEnd(pageSize, originalLength, journalLength) as int -
+        NextJournalRecord(pageSize, originalLength, journalLength, position) as int) / (pageSize as int + 40)
+    ensures (NextJournalRecord(pageSize, originalLength, journalLength, position) != 0 &&
+      NextJournalRecord(pageSize, originalLength, journalLength, position) < CompleteJournalEnd(pageSize, originalLength, journalLength)) ==>
+      JournalRecordPayloadOffset(pageSize, originalLength, journalLength,
+        NextJournalRecord(pageSize, originalLength, journalLength, position)) != 0
+    ensures IsFinalJournalRecord(pageSize, originalLength, journalLength, position) <==>
+      JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position) != 0 &&
+      position as int + pageSize as int + 40 == journalLength as int
+  {
+    JournalPayloadSliceIsExactAndBounded(pageSize, originalLength, journalLength, position);
+    JournalFramingSelectsExactCompletePrefix(pageSize, originalLength, journalLength);
+    if NextJournalRecord(pageSize, originalLength, journalLength, position) != 0 {
+      var start := JournalRecordStart(pageSize, originalLength) as int;
+      var end := CompleteJournalEnd(pageSize, originalLength, journalLength) as int;
+      var size := pageSize as int + 40;
+      var next := NextJournalRecord(pageSize, originalLength, journalLength, position);
+      assert (next as int - start) % size == 0;
+      assert (end - next as int) % size == 0;
+      if next < CompleteJournalEnd(pageSize, originalLength, journalLength) {
+        assert next as int + size <= end;
+        JournalPayloadSliceIsExactAndBounded(pageSize, originalLength, journalLength, next);
+      }
+    }
+  }
+
+  lemma OriginalRecordPayloadBindsExactPage(pageSize: U32, originalLength: U64,
+      journalLength: U64, position: U64, tag: U64, offset: U64)
+    ensures OriginalPageRecordPayloadOffset(pageSize, originalLength, journalLength, position, tag, offset) != 0 <==>
+      JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position) != 0 &&
+      OriginalPageLength(pageSize, originalLength, offset) != 0 &&
+      IsBeforeImageRecord(tag, pageSize, originalLength) && tag as int - 9223372036854775808 == offset as int
+    ensures OriginalPageRecordPayloadOffset(pageSize, originalLength, journalLength, position, tag, offset) != 0 ==>
+      OriginalPageRecordPayloadOffset(pageSize, originalLength, journalLength, position, tag, offset) ==
+        JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position)
+    ensures OriginalPageRecordPayloadOffset(pageSize, originalLength, journalLength, position, tag, offset) != 0 ==>
+      tag as int - 9223372036854775808 == offset as int &&
+      offset as int < originalLength as int && (offset as int) % (pageSize as int) == 0
+  {
+    OriginalPageSliceIsExact(pageSize, originalLength, offset);
+    if IsBeforeImageRecord(tag, pageSize, originalLength) {
+      BeforeImageRecordsAuthorizeOnlyOriginalAlignedPages(tag, pageSize, originalLength);
+    }
+  }
+
+  // Under explicit exact-payload correspondence, the generated count extracts
+  // exactly original bytes and excludes padding. The acquired-record lemma
+  // below additionally binds the record tag to this original page offset.
   lemma OriginalPayloadExtractionRefinesCapturedPage(original: seq<Undo.Byte>,
       pageSize: U32, offset: U64, page: Undo.PageCapture)
     requires IsPageSize(pageSize) && |original| <= 2147483648
@@ -190,6 +275,27 @@ module RecoveryKernel {
     OriginalPageSliceIsExact(pageSize, |original| as U64, offset);
     var count := OriginalPageLength(pageSize, |original| as U64, offset) as int;
     assert forall i: int | 0 <= i < count :: page.pageBytes[i] == original[offset as int + i];
+  }
+
+  // The acquired record supplies its own tag-to-payload association. Exact
+  // logical payload identity remains an explicit integrity/model premise;
+  // tag equality alone does not prove the stored bytes equal the old image.
+  lemma AcquiredOriginalPayloadRefinesCapturedPage(original: seq<Undo.Byte>,
+      pageSize: U32, journalLength: U64, position: U64, tag: U64, offset: U64,
+      page: Undo.PageCapture)
+    requires |original| <= 2147483648
+    requires OriginalPageRecordPayloadOffset(pageSize, |original| as U64, journalLength, position, tag, offset) != 0
+    requires page.pageOffset == tag as int - 9223372036854775808
+    requires Undo.ExactPagePayload(original, pageSize as int, page)
+    ensures page.pageOffset == offset as int
+    ensures 0 < OriginalPageLength(pageSize, |original| as U64, offset) <= pageSize
+    ensures OriginalPageLength(pageSize, |original| as U64, offset) as int <= |page.pageBytes|
+    ensures offset as int + OriginalPageLength(pageSize, |original| as U64, offset) as int <= |original|
+    ensures page.pageBytes[..OriginalPageLength(pageSize, |original| as U64, offset) as int] ==
+      original[offset as int..offset as int + OriginalPageLength(pageSize, |original| as U64, offset) as int]
+  {
+    OriginalRecordPayloadBindsExactPage(pageSize, |original| as U64, journalLength, position, tag, offset);
+    OriginalPayloadExtractionRefinesCapturedPage(original, pageSize, offset, page);
   }
 
   function IsTruncateLength(length: U64, pageSize: U32, maximumLength: U64): bool {
