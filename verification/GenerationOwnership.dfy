@@ -216,4 +216,227 @@ module GenerationOwnership {
   lemma EmptyEstablishesInvariant()
     ensures Valid(Snapshot(Absent, Absent, Free, Free, map[], {}))
   {}
+
+  predicate HeldGenerationAuthority(s: Snapshot, id: nat, generation: nat) {
+    Valid(s) && s.holder == Owned(id) && s.cleaning == Free &&
+    id in s.owners && id !in s.attempted && s.owners[id] == generation &&
+    s.nativeName == Generation(generation) && s.receiptName == Generation(generation)
+  }
+
+  // The two handles alone are insufficient: receipt preparation and native
+  // reconstruction can fail before an exact pair has been validated and fenced.
+  // Evidence tokens stand for parsed bytes, not merely a pathname. A partial
+  // token is deliberately never upgraded by a crash or by a retry's admission.
+  datatype AcquisitionEvidence = NoEvidence | PartialEvidence(generation: nat)
+    | ExactEvidence(generation: nat)
+  datatype AcquisitionPhase = Dormant | NativeWriting | NativeReady | ReceiptWriting | AuthorityReady
+  datatype AcquisitionSnapshot = AcquisitionSnapshot(native: AcquisitionEvidence,
+    receipt: AcquisitionEvidence, holder: Holder, phase: AcquisitionPhase, generation: nat)
+  datatype AcquisitionAction = BeginFresh(id: nat, generation: nat) | BeginRecorded(id: nat)
+    | CompleteNative | BeginReceipt | CompleteReceipt | AcquisitionFailure | AcquisitionInterrupt
+
+  predicate AcquisitionValid(s: AcquisitionSnapshot) {
+    (s.phase == Dormant <==> s.holder == Free) &&
+    (s.phase == NativeWriting ==> (s.native == PartialEvidence(s.generation) &&
+      (s.receipt == NoEvidence || s.receipt == ExactEvidence(s.generation)))) &&
+    (s.phase == NativeReady ==> s.native == ExactEvidence(s.generation) && s.receipt == NoEvidence) &&
+    (s.phase == ReceiptWriting ==> (s.native == ExactEvidence(s.generation) &&
+      s.receipt == PartialEvidence(s.generation))) &&
+    (s.phase == AuthorityReady ==> (s.native == ExactEvidence(s.generation) &&
+      s.receipt == ExactEvidence(s.generation)))
+  }
+
+  predicate AcquisitionEnabled(s: AcquisitionSnapshot, a: AcquisitionAction) {
+    match a
+      case BeginFresh(id, generation) => s.phase == Dormant &&
+        s.native == NoEvidence && s.receipt == NoEvidence
+      case BeginRecorded(id) => s.phase == Dormant && s.receipt.ExactEvidence? &&
+        (s.native == NoEvidence || s.native == ExactEvidence(s.receipt.generation))
+      case CompleteNative => s.phase == NativeWriting
+      case BeginReceipt => s.phase == NativeReady
+      case CompleteReceipt => s.phase == ReceiptWriting
+      case AcquisitionFailure => true
+      case AcquisitionInterrupt => true
+  }
+
+  function ApplyAcquisition(s: AcquisitionSnapshot, a: AcquisitionAction): AcquisitionSnapshot
+    requires AcquisitionEnabled(s, a)
+  {
+    match a
+      case BeginFresh(id, generation) => AcquisitionSnapshot(PartialEvidence(generation),
+        NoEvidence, Owned(id), NativeWriting, generation)
+      case BeginRecorded(id) =>
+        if s.native == NoEvidence then AcquisitionSnapshot(PartialEvidence(s.receipt.generation),
+          s.receipt, Owned(id), NativeWriting, s.receipt.generation)
+        else AcquisitionSnapshot(s.native, s.receipt, Owned(id), AuthorityReady, s.receipt.generation)
+      case CompleteNative => s.(native := ExactEvidence(s.generation),
+        phase := if s.receipt == NoEvidence then NativeReady else AuthorityReady)
+      case BeginReceipt => s.(receipt := PartialEvidence(s.generation), phase := ReceiptWriting)
+      case CompleteReceipt => s.(receipt := ExactEvidence(s.generation), phase := AuthorityReady)
+      case AcquisitionFailure => s.(holder := Free, phase := Dormant)
+      case AcquisitionInterrupt => s
+  }
+
+  predicate AcquisitionPath(states: seq<AcquisitionSnapshot>, actions: seq<AcquisitionAction>) {
+    |states| == |actions| + 1 &&
+    forall i | 0 <= i < |actions| :: AcquisitionEnabled(states[i], actions[i]) &&
+      states[i+1] == ApplyAcquisition(states[i], actions[i])
+  }
+
+  lemma AcquisitionStepPreserves(s: AcquisitionSnapshot, a: AcquisitionAction)
+    requires AcquisitionValid(s) && AcquisitionEnabled(s, a)
+    ensures AcquisitionValid(ApplyAcquisition(s, a))
+  {
+    match a {
+      case BeginFresh(id, generation) =>
+      case BeginRecorded(id) =>
+      case CompleteNative =>
+      case BeginReceipt =>
+      case CompleteReceipt =>
+      case AcquisitionFailure =>
+      case AcquisitionInterrupt =>
+    }
+  }
+
+  lemma AcquisitionTracePreserves(states: seq<AcquisitionSnapshot>, actions: seq<AcquisitionAction>)
+    requires AcquisitionPath(states, actions) && AcquisitionValid(states[0])
+    ensures AcquisitionValid(states[|states|-1])
+    decreases |actions|
+  {
+    if |actions| != 0 {
+      AcquisitionStepPreserves(states[0], actions[0]);
+      AcquisitionTracePreserves(states[1..], actions[1..]);
+    }
+  }
+
+  predicate AcquisitionAuthority(s: AcquisitionSnapshot, id: nat) {
+    AcquisitionValid(s) && s.phase == AuthorityReady && s.holder == Owned(id)
+  }
+
+  function AcquiredOwnership(s: AcquisitionSnapshot, id: nat): Snapshot
+    requires AcquisitionAuthority(s, id)
+  {
+    Snapshot(Generation(s.generation), Generation(s.generation), Owned(id), Free,
+      map[id := s.generation], {})
+  }
+
+  lemma CompletedBootstrapEstablishesAuthority(s: AcquisitionSnapshot, id: nat)
+    requires AcquisitionAuthority(s, id)
+    ensures HeldGenerationAuthority(AcquiredOwnership(s, id), id, s.generation)
+  {}
+
+  lemma IncompleteBootstrapRefusesAuthority(s: AcquisitionSnapshot, id: nat, generation: nat)
+    requires AcquisitionValid(s)
+    requires s.native.PartialEvidence? || s.receipt.PartialEvidence? ||
+      (s.native != NoEvidence && s.receipt == NoEvidence)
+    ensures !AcquisitionAuthority(s, id)
+    ensures !AcquisitionEnabled(s, BeginFresh(id, generation))
+    ensures s.phase == Dormant ==> !AcquisitionEnabled(s, BeginRecorded(id))
+  {}
+
+  lemma FailedBootstrapRetainsEvidence(s: AcquisitionSnapshot, id: nat, generation: nat)
+    requires AcquisitionValid(s)
+    ensures ApplyAcquisition(s, AcquisitionFailure).native == s.native
+    ensures ApplyAcquisition(s, AcquisitionFailure).receipt == s.receipt
+    ensures !AcquisitionAuthority(ApplyAcquisition(s, AcquisitionFailure), id)
+    ensures s.native != NoEvidence || s.receipt != NoEvidence ==>
+      !AcquisitionEnabled(ApplyAcquisition(s, AcquisitionFailure), BeginFresh(id, generation))
+  {}
+
+  // A valid recorded receipt can reconstruct a missing native name. A partial
+  // existing native file is a conflict, not permission to overwrite that file.
+  lemma RecordedBootstrapCompletes(s: AcquisitionSnapshot, id: nat)
+    returns (states: seq<AcquisitionSnapshot>, actions: seq<AcquisitionAction>)
+    requires AcquisitionValid(s) && AcquisitionEnabled(s, BeginRecorded(id))
+    ensures AcquisitionPath(states, actions) && states[0] == s
+    ensures AcquisitionAuthority(states[|states|-1], id)
+    ensures states[|states|-1].generation == s.receipt.generation
+    ensures states[|states|-1].receipt == s.receipt
+    ensures |actions| <= 2
+  {
+    var begun := ApplyAcquisition(s, BeginRecorded(id));
+    AcquisitionStepPreserves(s, BeginRecorded(id));
+    if begun.phase == NativeWriting {
+      AcquisitionStepPreserves(begun, CompleteNative);
+      states, actions := [s, begun, ApplyAcquisition(begun, CompleteNative)],
+        [BeginRecorded(id), CompleteNative];
+    } else {
+      states, actions := [s, begun], [BeginRecorded(id)];
+    }
+  }
+
+  lemma FreshBootstrapCompletes(s: AcquisitionSnapshot, id: nat, generation: nat)
+    returns (states: seq<AcquisitionSnapshot>, actions: seq<AcquisitionAction>)
+    requires AcquisitionValid(s) && AcquisitionEnabled(s, BeginFresh(id, generation))
+    ensures AcquisitionPath(states, actions) && states[0] == s
+    ensures AcquisitionAuthority(states[|states|-1], id)
+    ensures states[|states|-1].generation == generation && |actions| == 4
+  {
+    var nativeWriting := ApplyAcquisition(s, BeginFresh(id, generation));
+    AcquisitionStepPreserves(s, BeginFresh(id, generation));
+    var nativeReady := ApplyAcquisition(nativeWriting, CompleteNative);
+    AcquisitionStepPreserves(nativeWriting, CompleteNative);
+    var receiptWriting := ApplyAcquisition(nativeReady, BeginReceipt);
+    AcquisitionStepPreserves(nativeReady, BeginReceipt);
+    var ready := ApplyAcquisition(receiptWriting, CompleteReceipt);
+    AcquisitionStepPreserves(receiptWriting, CompleteReceipt);
+    states, actions := [s, nativeWriting, nativeReady, receiptWriting, ready],
+      [BeginFresh(id, generation), CompleteNative, BeginReceipt, CompleteReceipt];
+  }
+
+  lemma AuthorityTraceRequiresCompleteReceipt(states: seq<AcquisitionSnapshot>,
+    actions: seq<AcquisitionAction>)
+    requires AcquisitionPath(states, actions) && AcquisitionValid(states[0])
+    requires !states[0].receipt.ExactEvidence? && states[|states|-1].phase == AuthorityReady
+    ensures exists i | 0 <= i < |actions| :: actions[i] == CompleteReceipt
+    decreases |actions|
+  {
+    AcquisitionTracePreserves(states, actions);
+    if actions[0] != CompleteReceipt {
+      AcquisitionStepPreserves(states[0], actions[0]);
+      assert !states[1].receipt.ExactEvidence?;
+      AuthorityTraceRequiresCompleteReceipt(states[1..], actions[1..]);
+      var i :| 0 <= i < |actions[1..]| && actions[1..][i] == CompleteReceipt;
+      assert actions[i+1] == CompleteReceipt;
+    }
+  }
+  function CleanupRank(s: Snapshot, id: nat): nat
+    requires Valid(s) && (s.holder == Owned(id) || s.holder == Free)
+  {
+    (if s.holder == Free then 0 else 1) +
+      (if s.holder == Owned(id) && s.cleaning == Free then 1 else 0) +
+      (if s.nativeName == Absent then 0 else 1) + (if s.receiptName == Absent then 0 else 1)
+  }
+
+  lemma CompleteGenerationCleanup(s: Snapshot, id: nat)
+    returns (states: seq<Snapshot>, actions: seq<Action>)
+    requires Valid(s) && s.holder == Owned(id)
+    requires s.cleaning == Owned(id) || (s.cleaning == Free && id !in s.attempted)
+    ensures Path(states, actions) && states[0] == s
+    ensures Valid(states[|states|-1]) && states[|states|-1].holder == Free
+    ensures states[|states|-1].nativeName == Absent && states[|states|-1].receiptName == Absent
+    decreases CleanupRank(s, id)
+  {
+    var a := if s.cleaning == Free then StartDispose(id)
+      else if s.nativeName != Absent then DeleteNative(id)
+      else if s.receiptName != Absent then DeleteReceipt(id) else Release(id);
+    assert Enabled(s, a);
+    StepPreserves(s, a);
+    var successor := Apply(s, a);
+    if a.Release? {
+      states, actions := [s, successor], [a];
+    } else {
+      assert CleanupRank(successor, id) < CleanupRank(s, id);
+      var tailStates, tailActions := CompleteGenerationCleanup(successor, id);
+      states, actions := [s] + tailStates, [a] + tailActions;
+      forall i | 0 <= i < |actions|
+        ensures Enabled(states[i], actions[i]) && states[i+1] == Apply(states[i], actions[i])
+      {
+        if i != 0 {
+          assert states[i] == tailStates[i-1];
+          assert actions[i] == tailActions[i-1];
+        }
+      }
+    }
+  }
 }

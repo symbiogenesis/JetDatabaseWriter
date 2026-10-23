@@ -129,6 +129,90 @@ public sealed class RecoverableWriterLockTests
         Assert.True(File.Exists(RecoverableWriterLock.ReceiptPath(directory.Path)));
     }
 
+    /// <summary>Every incomplete receipt prefix retains both names through repeated recovery refusal.</summary>
+    [Fact]
+    public void AcquireRecovery_IncompleteReceiptCuts_PreserveEvidenceAcrossRetries()
+    {
+        using var directory = new LockDirectory();
+        (byte[] lockBytes, byte[] receiptBytes) = Capture(directory.Path);
+        for (int length = 0; length < receiptBytes.Length; length++)
+        {
+            byte[] partialReceipt = receiptBytes.AsSpan(0, length).ToArray();
+            Restore(directory.Path, lockBytes, partialReceipt);
+            for (int retry = 0; retry < 2; retry++)
+            {
+                Assert.Throws<JetLockException>(() => RecoverableWriterLock.AcquireRecovery(directory.Path));
+                Assert.Equal(lockBytes, File.ReadAllBytes(LockFileSlotWriter.GetLockFilePath(directory.Path)));
+                Assert.Equal(partialReceipt, File.ReadAllBytes(RecoverableWriterLock.ReceiptPath(directory.Path)));
+            }
+        }
+    }
+
+    /// <summary>A valid receipt cannot authorize replacing any incomplete native lock prefix.</summary>
+    [Fact]
+    public void AcquireRecovery_IncompleteNativeCuts_PreserveEvidenceAcrossRetries()
+    {
+        using var directory = new LockDirectory();
+        (byte[] lockBytes, byte[] receiptBytes) = Capture(directory.Path);
+        for (int length = 0; length < lockBytes.Length; length++)
+        {
+            byte[] partialLock = lockBytes.AsSpan(0, length).ToArray();
+            Restore(directory.Path, partialLock, receiptBytes);
+            for (int retry = 0; retry < 2; retry++)
+            {
+                Assert.Throws<JetLockException>(() => RecoverableWriterLock.AcquireRecovery(directory.Path));
+                Assert.Equal(partialLock, File.ReadAllBytes(LockFileSlotWriter.GetLockFilePath(directory.Path)));
+                Assert.Equal(receiptBytes, File.ReadAllBytes(RecoverableWriterLock.ReceiptPath(directory.Path)));
+            }
+        }
+    }
+
+    /// <summary>Failed fresh authority bootstrap retains the unexplained native file and refuses retry.</summary>
+    [Fact]
+    public void AcquireRecovery_InterruptedFreshBootstrap_PreservesNativeOnlyEvidence()
+    {
+        using var directory = new LockDirectory();
+        IOException error = Assert.Throws<IOException>(() => RecoverableWriterLock.AcquireRecovery(
+            directory.Path,
+            boundary =>
+            {
+                Assert.Equal("recovery-lock-created", boundary);
+                throw new IOException("Authority bootstrap interrupted.");
+            }));
+        Assert.Equal("Authority bootstrap interrupted.", error.Message);
+        string nativePath = LockFileSlotWriter.GetLockFilePath(directory.Path);
+        byte[] nativeBytes = File.ReadAllBytes(nativePath);
+        Assert.NotEmpty(nativeBytes);
+        Assert.False(File.Exists(RecoverableWriterLock.ReceiptPath(directory.Path)));
+        for (int retry = 0; retry < 2; retry++)
+        {
+            Assert.Throws<JetLockException>(() => RecoverableWriterLock.AcquireRecovery(directory.Path));
+            Assert.Equal(nativeBytes, File.ReadAllBytes(nativePath));
+            Assert.False(File.Exists(RecoverableWriterLock.ReceiptPath(directory.Path)));
+        }
+    }
+
+    /// <summary>An exact surviving receipt reconstructs the missing native generation before cleanup.</summary>
+    [Fact]
+    public void AcquireRecovery_ReceiptWithoutNative_ReconstructsExactGeneration()
+    {
+        using var directory = new LockDirectory();
+        (byte[] lockBytes, byte[] receiptBytes) = Capture(directory.Path);
+        File.WriteAllBytes(RecoverableWriterLock.ReceiptPath(directory.Path), receiptBytes);
+        using (RecoverableWriterLock.RecoveryLease lease = RecoverableWriterLock.AcquireRecovery(directory.Path))
+        {
+            // Recovery keeps exclusive handles until cleanup, so inspect after
+            // disposal rather than relaxing the lease's sharing contract.
+        }
+
+        Assert.Equal(lockBytes, File.ReadAllBytes(LockFileSlotWriter.GetLockFilePath(directory.Path)));
+        Assert.Equal(receiptBytes, File.ReadAllBytes(RecoverableWriterLock.ReceiptPath(directory.Path)));
+        using RecoverableWriterLock.RecoveryLease retry = RecoverableWriterLock.AcquireRecovery(directory.Path);
+        retry.Cleanup();
+        Assert.False(File.Exists(LockFileSlotWriter.GetLockFilePath(directory.Path)));
+        Assert.False(File.Exists(RecoverableWriterLock.ReceiptPath(directory.Path)));
+    }
+
     private static (byte[] Lock, byte[] Receipt) Capture(string path)
     {
         using var owner = RecoverableWriterLock.Acquire(path, "host", "user");
