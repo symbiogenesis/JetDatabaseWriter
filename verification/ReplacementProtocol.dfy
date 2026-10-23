@@ -31,10 +31,25 @@ module ReplacementProtocol {
     image == Missing || image == Present(original) || image == Present(next)
   }
 
+  // Full publication images are validated against the recorded complete hash.
+  // A partial image needs an actually surviving complete byte witness, matching
+  // ValidatePublication: an immutable generation copy or the canonical image.
+  predicate PublicationIndependentOfDestination(original: seq<int>, next: seq<int>, s: Snapshot) {
+    s.publication == Missing || s.publication == Present(original) ||
+    s.publication == Present(next) ||
+    (s.oldCopy && IsPrefix(s.publication.bytes, original)) ||
+    (s.newCopy && IsPrefix(s.publication.bytes, next))
+  }
+
+  predicate PublicationAuthorized(original: seq<int>, next: seq<int>, s: Snapshot) {
+    PublicationIndependentOfDestination(original, next, s) ||
+    (s.publication.Present? && s.destination.Present? &&
+      IsPrefix(s.publication.bytes, s.destination.bytes))
+  }
+
   predicate Valid(original: seq<int>, next: seq<int>, s: Snapshot) {
     Authorized(original, next, s.destination) &&
-    (s.publication == Missing || IsPrefix(s.publication.bytes, original) ||
-      IsPrefix(s.publication.bytes, next)) &&
+    PublicationAuthorized(original, next, s) &&
     (if s.intent then
       s.destination == Present(Selected(original, next, s)) ||
       (if s.decision == Committed then s.newCopy else s.oldCopy)
@@ -49,19 +64,23 @@ module ReplacementProtocol {
         (if useNew then s.newCopy else s.oldCopy) &&
         count <= |Chosen(original, next, useNew)|
       case Publish(useNew) => s.intent &&
+        (if useNew then s.newCopy else s.oldCopy) &&
         s.publication == Present(Chosen(original, next, useNew)) &&
         // Publishing a live new image before its decision must retain original undo.
         (Chosen(original, next, useNew) == Selected(original, next, s) ||
           (if s.decision == Committed then s.newCopy else s.oldCopy))
       case RemovePublication => s.intent && s.destination == Present(Selected(original, next, s))
-      case RemoveOld => s.intent && s.destination == Present(Selected(original, next, s))
-      case RemoveNew => s.intent && s.destination == Present(Selected(original, next, s))
+      case RemoveOld => s.intent && s.destination == Present(Selected(original, next, s)) &&
+        s.publication == Missing
+      case RemoveNew => s.intent && s.destination == Present(Selected(original, next, s)) &&
+        s.publication == Missing
       case RemoveIntent => s.intent && s.destination == Present(Selected(original, next, s)) &&
         !s.oldCopy && !s.newCopy && s.publication == Missing
       case StartDecision => s.intent && s.decision == Prepared && s.destination == Present(next)
       case FinishDecision => s.intent && s.decision != Committed && s.destination == Present(next)
       case MissingDestination => s.intent &&
-        (if s.decision == Committed then s.newCopy else s.oldCopy)
+        (if s.decision == Committed then s.newCopy else s.oldCopy) &&
+        PublicationIndependentOfDestination(original, next, s)
       case Interrupt => true
   }
 
@@ -263,6 +282,36 @@ module ReplacementProtocol {
       Snapshot(Prepared, Present(original), false, true, Present(next), true), Publish(true))
     ensures !Enabled(original, next,
       Snapshot(Prepared, Present(original), true, true, Missing, true), FinishDecision)
+  {}
+
+  lemma OrphanPublicationPrefixIsRejected()
+    ensures !Valid([1, 2], [3, 4],
+      Snapshot(Prepared, Present([1, 2]), false, false, Present([3]), true))
+    ensures Valid([1, 2], [3, 4],
+      Snapshot(Prepared, Present([1, 2]), false, true, Present([3]), true))
+    ensures Valid([1, 2], [3, 4],
+      Snapshot(Prepared, Present([1, 2]), false, false, Present([1]), true))
+    ensures Valid([1, 2], [3, 4],
+      Snapshot(Prepared, Present([1, 2]), false, false, Present([3, 4]), true))
+  {
+    assert [1, 2][..1] == [1];
+    assert [3] != [1];
+    assert !IsPrefix([3], [1, 2]);
+    assert !PublicationIndependentOfDestination([1, 2], [3, 4],
+      Snapshot(Prepared, Present([1, 2]), false, false, Present([3]), true));
+  }
+
+  lemma PartialPublicationWitnessCannotBeRemoved(original: seq<int>, next: seq<int>, s: Snapshot)
+    requires s.publication != Missing
+    ensures !Enabled(original, next, s, RemoveOld)
+    ensures !Enabled(original, next, s, RemoveNew)
+  {}
+
+  lemma PublicationNeedsSurvivingSource(original: seq<int>, next: seq<int>, s: Snapshot,
+    useNew: bool, count: nat)
+    requires !(if useNew then s.newCopy else s.oldCopy)
+    ensures !Enabled(original, next, s, Stage(useNew, count))
+    ensures !Enabled(original, next, s, Publish(useNew))
   {}
   // Admission is deliberately distinct from recovery. Complete invalid evidence
   // refuses; a partial header never silently becomes a valid Prepared state.
