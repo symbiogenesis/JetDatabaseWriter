@@ -393,6 +393,120 @@ public sealed class BufferedJournalConformanceTests
         }
     }
 
+    /// <summary>Recorded page intervals admit partial requested writes and sparse-gap length cuts before restartable replay.</summary>
+    /// <param name="pageSize">The physical page size.</param>
+    /// <param name="cut">A contiguous partial write, sparse partial write or length persisted within its zero gap.</param>
+    [Theory]
+    [InlineData(2048, 0)]
+    [InlineData(2048, 1)]
+    [InlineData(2048, 2)]
+    [InlineData(4096, 0)]
+    [InlineData(4096, 1)]
+    [InlineData(4096, 2)]
+    public void Recover_TornRegrowthLengthCuts_RestoresAcrossRepeatedReplay(int pageSize, int cut)
+    {
+        string path = Path.Combine(Path.GetTempPath(), "jdw-torn-regrowth-" + Guid.NewGuid().ToString("N") + ".mdb");
+        string sidecar = PersistentRollbackJournal.JournalPath(path);
+        byte[] original = new byte[(pageSize * 4) + 17];
+        Array.Fill(original, (byte)71);
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using (var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                using var journal = PersistentRollbackJournal.Create(database, pageSize);
+                journal.RecordBeforeTruncate(pageSize);
+                database.SetLength(pageSize);
+                byte[] after = new byte[pageSize];
+                Array.Fill(after, (byte)93);
+                long offset = pageSize * (cut == 0 ? 1L : 2L);
+                journal.RecordBeforeWrite(offset, after);
+                if (cut == 2)
+                {
+                    // TornWrite permits a surviving length within the sparse gap.
+                    // Its zeros have their own complete, flushed page intent.
+                    database.SetLength(pageSize + 17L);
+                }
+                else
+                {
+                    database.Position = offset;
+                    database.Write(after, 0, 17);
+                }
+
+                database.Flush(flushToDisk: true);
+            }
+
+            foreach (int replayCut in new[] { 1, 2, 0 })
+            {
+                using var interrupted = new ReplayCutStream(path, replayCut);
+                Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(interrupted));
+                Assert.True(File.Exists(sidecar));
+            }
+
+            using (var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                PersistentRollbackJournal.Recover(database);
+            }
+
+            Assert.Equal(original, File.ReadAllBytes(path));
+            Assert.False(File.Exists(sidecar));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(sidecar);
+            File.Delete(sidecar + ".preparing");
+        }
+    }
+
+    /// <summary>A truncate minimum and recorded write extents still bound admitted reextension lengths.</summary>
+    /// <param name="pageSize">The physical page size.</param>
+    /// <param name="belowMinimum">Whether the length is below the minimum instead of above every recorded write extent.</param>
+    [Theory]
+    [InlineData(2048, false)]
+    [InlineData(2048, true)]
+    [InlineData(4096, false)]
+    [InlineData(4096, true)]
+    public void Recover_RegrowthLengthOutsideRecordedIntervals_RefusesWithoutWrites(int pageSize, bool belowMinimum)
+    {
+        string path = Path.Combine(Path.GetTempPath(), "jdw-regrowth-bound-" + Guid.NewGuid().ToString("N") + ".mdb");
+        string sidecar = PersistentRollbackJournal.JournalPath(path);
+        byte[] original = new byte[(pageSize * 4) + 17];
+        Array.Fill(original, (byte)71);
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using (var journal = PersistentRollbackJournal.Create(database, pageSize))
+            {
+                journal.RecordBeforeTruncate(pageSize);
+                database.SetLength(pageSize);
+                byte[] after = new byte[pageSize];
+                Array.Fill(after, (byte)93);
+                journal.RecordBeforeWrite(pageSize * 2L, after);
+                database.SetLength(belowMinimum ? pageSize - 1L : (pageSize * 3L) + 1);
+                database.Flush(flushToDisk: true);
+            }
+
+            byte[] evidence = File.ReadAllBytes(sidecar);
+            byte[] current = new byte[checked((int)database.Length)];
+            database.Position = 0;
+            database.ReadExactly(current);
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(database));
+            Assert.Equal(evidence, File.ReadAllBytes(sidecar));
+            byte[] unchanged = new byte[current.Length];
+            database.Position = 0;
+            database.ReadExactly(unchanged);
+            Assert.Equal(current, unchanged);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(sidecar);
+            File.Delete(sidecar + ".preparing");
+        }
+    }
+
     private static int CountRecords(string sidecar, int pageSize, int originalLength, long tag)
     {
         byte[] evidence = File.ReadAllBytes(sidecar);
