@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Transactions;
+using JetDatabaseWriter.Verification;
 
 /// <summary>Persists raw rollback bytes and validated intended writes with bounded working buffers.</summary>
 /// <remarks>Preparation hashes every original page; raw before-images are retained only for overwritten or removed pages. File flushes do not establish directory-entry power-loss durability.</remarks>
@@ -324,7 +325,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             if (offset == -2)
             {
                 long length = BinaryPrimitives.ReadInt64LittleEndian(record.AsSpan(8));
-                if (length < 0 || length % pageSize != 0 || length > maximumLength)
+                if (length < 0 || !RecoveryKernel.IsTruncateLength((ulong)length, (uint)pageSize, (ulong)maximumLength))
                 {
                     throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery truncate intent is invalid.");
                 }
@@ -354,7 +355,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 continue;
             }
 
-            if (offset < 0 || offset % pageSize != 0 || offset > MaximumDatabaseLength - pageSize
+            if (offset < 0 || !RecoveryKernel.IsPageOffset((ulong)offset, (uint)pageSize)
                 || (offset < originalLength && !beforeImages.ContainsKey(offset)))
             {
                 throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery page offset is invalid or has no original before-image.");
@@ -410,8 +411,8 @@ internal sealed class PersistentRollbackJournal : IDisposable
             bool matchesOriginal = true;
             for (int index = 0; index < count; index++)
             {
-                valid[index] = current[index] == original[index]
-                    || (state.Recovering && offset + index >= state.MinimumLength && current[index] == 0);
+                valid[index] = RecoveryKernel.OriginalOrZeroByte(
+                    state.Recovering, (ulong)(offset + index), (ulong)state.MinimumLength, current[index], original[index]);
                 matchesOriginal &= valid[index];
             }
 
@@ -426,7 +427,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 {
                     for (int index = 0; index < count; index++)
                     {
-                        valid[index] |= current[index] == record[8 + index];
+                        valid[index] = RecoveryKernel.IncludeAfterImageByte(valid[index], current[index], record[8 + index]);
                     }
                 }
             }
@@ -564,7 +565,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
     private static void ValidatePageSize(int pageSize)
     {
-        if (pageSize is not (2048 or 4096))
+        if (pageSize < 0 || !RecoveryKernel.IsPageSize((uint)pageSize))
         {
             throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery page size is invalid.");
         }
@@ -572,7 +573,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
     private static void ValidateLength(long length)
     {
-        if (length is < 0 or > MaximumDatabaseLength)
+        if (length < 0 || !RecoveryKernel.IsDatabaseLength((ulong)length))
         {
             throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The recovery database length exceeds the Access size bound.");
         }
@@ -584,7 +585,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
     /// <exception cref="JetOperationException">The physical write is outside the supported bounds.</exception>
     internal void RecordBeforeWrite(long offset, ReadOnlySpan<byte> after)
     {
-        if (this.completed || offset < 0 || offset % this.pageSize != 0 || offset > MaximumDatabaseLength - this.pageSize || after.Length != this.pageSize)
+        if (this.completed || offset < 0 || !RecoveryKernel.IsPageOffset((ulong)offset, (uint)this.pageSize) || after.Length != this.pageSize)
         {
             throw new JetOperationException(JetErrorCode.InvalidOperationState, "The rollback journal cannot record this physical page write.");
         }
@@ -611,7 +612,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
     /// <exception cref="JetOperationException">The intent is outside the supported bounds.</exception>
     internal void RecordBeforeTruncate(long length)
     {
-        if (this.completed || length < 0 || length % this.pageSize != 0 || length > this.database.Length)
+        if (this.completed || length < 0 || !RecoveryKernel.IsTruncateLength((ulong)length, (uint)this.pageSize, (ulong)this.database.Length))
         {
             throw new JetOperationException(JetErrorCode.InvalidOperationState, "The rollback journal cannot record this truncation.");
         }

@@ -3,6 +3,10 @@
   "files": [
     "verification/UndoJournal.dfy",
     "verification/ReplacementProtocol.dfy",
-    "verification/GenerationOwnership.dfy"
-  ]
+    "verification/GenerationOwnership.dfy",
+    "verification/RecoveryKernel.dfy"
+  ],
+  "dependencies": {
+    "verification/RecoveryKernel.dfy": ["verification/UndoJournal.dfy"]
+  }
 }

@@ -2,6 +2,8 @@
 
 This plan strengthens the guarantees of the existing managed JET/ACE implementation. It adds development and CI tools first; the shipped targets, public runtime requirements and package dependency graph stay unchanged. A proof of an abstract protocol does not verify the existing C# implementation or a filesystem. Keep those evidence levels separate in documentation.
 
+Expand the production Dafny boundary incrementally under the [boundary expansion policy](design/formal-verification.md#boundary-expansion-policy). Prioritize safety-critical behavior with useful contracts and actual production invocation; source volume is not the goal. Keep storage effects and unsupported native semantics explicit while progressively removing handwritten decision logic.
+
 Keep only open work in this document. Remove completed requirements in the same commit that delivers them; retain contracts, assumptions, proof coverage and implementation correspondence in `docs/design/formal-verification.md` and proof documentation. This plan complements, rather than replaces, E1/E2/E4, F6, S1, I2/I5/I15/I17 in [the main todo list](todo.md).
 
 ## Acceptance policy
@@ -13,17 +15,16 @@ Keep only open work in this document. Remove completed requirements in the same 
 - Model checks are bounded evidence; inductive proofs quantify over unbounded model instances. Neither substitutes for implementation correspondence or native interoperability.
 - Local verification, Release builds and focused tests are allowed. Full test suites and every benchmark remain hosted-only. Changes to build/test behavior require the ordinary settled-main CI gate and any new proof gate.
 
-## V3 — Compose byte preservation with durable journal decisions
+## V3 — Refine journal persistence and page correspondence
 
-Cause: exact durable captures, validated decisions and authorized mutations are premises of the byte model; the commit submodel is separate. Their composition with pending journal writes is not yet proved.
+Cause: the composed logical-record protocol derives exact durable coverage, orders commit decisions and proves finite-trace safety and an abstract recovery schedule. Its surviving database image does not distinguish independently buffered writes, and logical records do not establish the production page encoding or content parser.
 
-- [ ] Model pending/durable journal appends, write intents, failed flush outcomes and record boundaries in one transaction state machine.
-- [ ] Derive pre-write enablement from journal state rather than supplying exact durable captures as a premise; include full-tail truncation and partial final pages.
-- [ ] Compose transaction mutation, commit decision and restartable replay into an end-to-end before-or-committed theorem over arbitrary finite mixed traces.
-- [ ] Admit reordered unflushed writes under an explicit storage model and preserve safety for every allowed crash outcome.
-- [ ] Prove a terminating undo replay schedule and its progress measure; exact reconstruction as a sequence expression alone does not prove the production replay loop.
+- [ ] Separate volatile and durable database buffers, admit delayed/reordered unflushed writes under an explicit storage model and preserve safety for every allowed crash outcome.
+- [ ] Refine logical byte captures into page-aligned records, including full-tail truncation and partial final-page encoding, without supplying exact saved bytes as an implementation premise.
+- [ ] Compose the persisted-record/content classifier with mutation and restartable replay, including original/after-image authorization and recovery-marker zero tails.
+- [ ] Connect the decreasing abstract replay schedule to the production loop and its conditional marker, record iteration, resize, flush and exception boundaries through V6 conformance.
 
-Acceptance: a checked composed protocol with explicit storage assumptions, without promoting abstract atomic decision classification to a verified byte parser.
+Acceptance: refine the checked composed protocol under explicit buffering, page and parser contracts. Preserve its trace/progress theorems without promoting logical record classification to a verified byte parser or abstract progress to C# loop refinement.
 
 ## V5 — Refine replacement evidence and physical publication
 
@@ -36,18 +37,16 @@ Cause: the replacement and ownership models start from validated logical evidenc
 
 Acceptance: refined evidence/publication properties connected to implementation. Namespace durability and metadata preservation still require V7 qualification.
 
-## V6 — Connect proofs to executable C#
+## V6 — Extend correspondence across recovery control flow
 
-Cause: a model and its handwritten implementation can drift independently.
+Cause: beyond the generated journal-value and byte-authorization decisions, the recovery loops, evidence extraction and effect ordering remain handwritten and can drift from the model.
 
 - [ ] Derive focused conformance traces from the model for write/flush/truncate/commit/recovery/generation boundaries and replay against production helpers.
 - [ ] Exercise every relevant transition and rejection class, including repeated crashes and negative mutation controls. Keep local selections focused.
 - [ ] Inventory the manual refinement argument and unproved operations; require review when mapped methods or proof assumptions change.
-- [ ] Choose a small pure executable kernel, such as decision classification or checked range arithmetic, only after the model and trace boundary are useful.
-- [ ] Compare handwritten and Dafny-generated C# options. If generation is adopted, bundle only reviewed source/runtime support, check freshness, licenses, target compatibility, trimming and NativeAOT, and prove the generated kernel is actually invoked.
-- [ ] Do not treat Dafny `extern` contracts as verification of existing C#. Retain a model-only claim until executable correspondence is established.
+- [ ] Extend the executable boundary to a selected bounded record classifier or recovery transition once its persisted-byte and trace contracts are explicit; remove corresponding handwritten decisions and verify the production invocation.
 
-Acceptance: tested correspondence for a precisely named boundary; generated code is optional and must not change shipping dependencies or supported runtime requirements.
+Acceptance: tested correspondence for each precisely named boundary, with the same verification, source freshness, license, target and trimming/NativeAOT obligations as the current kernel. No unchecked external contracts, new shipping dependencies or stronger claims for the remaining handwritten recovery algorithm.
 
 ## V7 — Qualify actual storage and coordination guarantees
 
@@ -109,9 +108,9 @@ Acceptance: readers can distinguish verified abstract algorithms, tested impleme
 
 ## Implementation order and independent lanes
 
-1. Compose the pending/durable journal state machine in V3. The integrator owns shared docs, the todo lists and final CI configuration.
+1. Refine the composed journal state machine's remaining buffering/page/parser boundaries in V3. The integrator owns shared docs, the todo lists and final CI configuration.
 2. Refine replacement evidence in V5 independently where its boundaries permit.
-3. Close V6 for a small production boundary before promoting a model proof to an implementation claim.
+3. Extend V6 beyond the generated value/byte kernel before promoting additional model proofs to implementation claims.
 4. Pursue V7 separately; missing OS/hardware evidence must not hold back useful model proofs, and model success must not erase E4/F6/I15.
 5. Expand into V8/V9/V10 according to concrete bug risk and existing workstream ownership. Avoid an engine rewrite or competing protocols merely to use a proof tool.
 6. Apply V11 whenever a claim changes. Leave incomplete items here with self-contained next steps.

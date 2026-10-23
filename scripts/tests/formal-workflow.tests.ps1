@@ -14,7 +14,7 @@ function Assert-ProofJob([string] $Workflow) {
     if ($job -notmatch '(?m)^    runs-on: ubuntu-22\.04$' -or
         $job -notmatch '(?m)^    timeout-minutes: 15$' -or
         $job -match '(?m)^    (?:if|needs|continue-on-error):' -or
-        $job -match 'continue-on-error:|--(?:no-verify|allow-warnings)|-Skip') {
+        $job -match 'continue-on-error:|--(?:no-verify|allow-warnings)|-Skip|-UpdateGeneratedSource') {
         throw 'The proof lane must run independently and fail closed within its time bound.'
     }
     $checkout = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
@@ -56,4 +56,5 @@ Assert-Case 'unbounded proof process' ($workflow.Replace('    timeout-minutes: 1
 Assert-Case 'unpinned installation' ($workflow.Replace('./scripts/install-dafny.ps1', 'curl latest')) $true
 Assert-Case 'verification omitted' ($workflow.Replace('./scripts/verify-proofs.ps1', 'echo verified')) $true
 Assert-Case 'audit bypass option' ($workflow.Replace('./scripts/verify-proofs.ps1', './scripts/verify-proofs.ps1 -SkipAudit')) $true
+Assert-Case 'generated freshness cannot repair itself in CI' ($workflow.Replace('./scripts/verify-proofs.ps1', './scripts/verify-proofs.ps1 -UpdateGeneratedSource')) $true
 Assert-Case 'failure diagnostics lost' ($workflow.Replace('if: ${{ !cancelled() }}', 'if: success()')) $true

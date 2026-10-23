@@ -1,8 +1,16 @@
 # Formal verification boundary
 
-The initial verification work models selected recovery algorithms in Dafny. Proof files are development artifacts: they are not compiled into the library, and neither Dafny nor its solver is a runtime dependency. The library targets, package references and managed execution requirements remain unchanged.
+The verification work covers selected recovery algorithms and small executable recovery kernels in Dafny. Dafny and its solver are development tools, not runtime dependencies. The library targets, package references and managed execution requirements remain unchanged.
 
 A verified model establishes only the properties stated by its definitions, preconditions and theorems. The handwritten C# implementation, record parser, hashing, file APIs and operating system do not become verified because their intended behavior is represented in a model. Implementation conformance and physical persistence qualification are separate obligations in the [open plan](../formal-verification-todo.md).
+
+## Boundary expansion policy
+
+Expand the executable verified boundary where it removes safety-critical handwritten decisions and supports useful contracts. Prioritize recovery authorization and bounds, then hostile-file parsing, page ownership and structural edits according to concrete risk. Measure progress by the production behaviors covered, their contracts and the assumptions removed. Source volume alone is not an acceptance criterion.
+
+Keep effectful I/O, cryptographic implementations, native interoperability and platform persistence behind explicit contracts until their own evidence supports stronger claims. Moving an operation behind a trusted external declaration does not verify it. A larger abstract model also does not close the implementation gap by itself.
+
+Each executable increment must have total entry points or checked caller preconditions, production callers, focused conformance and rejection tests, pinned verification and audit, reproducible generated source and a reviewed compilation boundary. Preserve supported targets, package dependencies, trimming and NativeAOT. Retain ordinary tests and native-format evidence as the boundary grows.
 
 ## Recovery contract
 
@@ -21,7 +29,13 @@ Recoverable(O, D, U) := Exact(U, O) and
         i < length(D) and D[i] = O[i]
 ```
 
-Thus every original byte destroyed or removed from `D` has an exact saved value in `U`. The protected-write and protected-truncation lemmas preserve this invariant, and completed restoration selects `U[i]` where saved and `D[i]` otherwise. The theorem returns exactly `O`. The model supplies durable exact captures as a premise; proving that record appends and failed flushes establish that premise is still part of the composed protocol work.
+Thus every original byte destroyed or removed from `D` has an exact saved value in `U`. The protected-write and protected-truncation lemmas preserve this invariant, and completed restoration selects `U[i]` where saved and `D[i]` otherwise. The theorem returns exactly `O`.
+
+The composed logical-record protocol derives this byte invariant from journal state. A before-image append reads an as-yet-unsaved original position from the current database; the invariant establishes that its value is still original. Only the durable complete-record prefix supplies saved coverage and write/length intents that enable database mutation. Failed journal flushes and crashes may persist any extending complete prefix plus a trailing incomplete record. Failed flushes fault the writer; recovery classifies the surviving prefix before selecting undo or a committed image.
+
+`ProtocolStepPreserves` and `ProtocolTracePreserves` retain those obligations through arbitrary finite mixed traces. `CompletedProtocolSelectsBeforeOrCommitted` establishes the authorized completed result; `AcknowledgedImageSurvivesMixedTrace` preserves the acknowledged image across later crashes and recovery. `CompleteProtocolRecovery` uses a decreasing rank for tail discard, marker publication, resize, per-byte replay, flush and completion under eventually successful exclusive I/O.
+
+This protocol models the database image surviving at each cut, rather than separate volatile and durable database buffers. Delayed/reordered database writes remain open. Record framing and decisions are logical classifications, not byte-parser proofs. Page-aligned capture, partial final-page encoding and content-validation correspondence also remain open. The abstract schedule always establishes a replay marker, whereas production records it only for a removed original tail; its progress theorem does not refine the production loop or count its syscalls.
 
 ## Storage and integrity assumptions
 
@@ -46,21 +60,22 @@ Paths are relative to the repository root. Method names identify the intended re
 
 | Modeled obligation | Production boundary | Existing focused evidence | Remaining correspondence gap |
 |---|---|---|---|
-| Prepare evidence before mutation | `Pages/Paging/PhysicalRollback.cs` `BeginWrite`; `PersistentRollbackJournal.cs` `Create`; all under `src/JetDatabaseWriter/` | `PersistentRollbackJournalTests`, `SelectiveRollbackJournalTests` | Preparation parsing, namespace promotion/discovery and actual flush ordering are handwritten. |
+| Prepare evidence before mutation | `Pages/Paging/PhysicalRollback.cs` `BeginWrite`; `PersistentRollbackJournal.cs` `Create`; all under `src/JetDatabaseWriter/` | `PersistentRollbackJournalTests`, `SelectiveRollbackJournalTests` | Logical captures now derive durable coverage, but preparation parsing, namespace promotion/discovery and actual flush ordering are handwritten. |
 | Protect overwritten original bytes | `Pages/Paging/StreamPageStore.cs` `WriteAsync`; `PersistentRollbackJournal.cs` `RecordBeforeWrite`, `CaptureOriginalPage`, `AppendRecord` | `SelectiveRollbackJournalTests`, `FileRollbackTests` | Model bytes stand for aligned page records; checksums, offsets, repeated after-images and C# control flow require conformance. |
 | Protect removed original tail | `Pages/Paging/StreamPageStore.cs` `SetLengthAsync`; `PersistentRollbackJournal.cs` `RecordBeforeTruncate` | `ShrinkCrashRecoveryTests`, `RecoveryReplayCrashTests` | Page rounding, partial last-page encoding, secure erase and actual file-length semantics are not extracted from the model. |
-| Data before durable decision; uncertain outcome | `Pages/Paging/PhysicalRollback.cs` `CommitAsync`, `RestoreAsync`; `PersistentRollbackJournal.cs` `Complete` | `TransactionCrashRecoveryTests`, `PersistentRollbackJournalTests` | Exceptions and potentially persistent failed writes/flushes need trace correspondence. |
-| Validate before replay; restart replay | `Pages/Paging/PersistentRollbackJournal.cs` `ValidateJournal`, `ValidateCurrentContent`, `RecordRecoveryStart`, `Recover`, `RestoreAsync` | `RecoveryReplayCrashTests`, `SelectiveRollbackJournalTests` | Manifest/record validation, zero-tail authorization and every actual replay cut require mapping. |
+| Data before durable decision; uncertain outcome | `Pages/Paging/PhysicalRollback.cs` `CommitAsync`, `RestoreAsync`; `PersistentRollbackJournal.cs` `Complete` | `TransactionCrashRecoveryTests`, `PersistentRollbackJournalTests` | The composed protocol includes failed flush prefixes and faulted ownership; actual exceptions, buffer persistence and I/O traces still need correspondence. |
+| Validate before replay; restart replay | `Pages/Paging/PersistentRollbackJournal.cs` `ValidateJournal`, `ValidateCurrentContent`, `RecordRecoveryStart`, `Recover`, `RestoreAsync` | `RecoveryReplayCrashTests`, `SelectiveRollbackJournalTests` | Pure value/byte decisions use the generated kernel. Manifest/record extraction, the conditional marker, actual replay cuts and production-loop progress still need correspondence to the composed protocol. |
+| Bounded journal values and byte authorization | `Verification/RecoveryKernel.g.cs`, generated from `verification/RecoveryKernel.dfy`, called by `PersistentRollbackJournal` | `RecoveryKernelTests`, existing malformed-journal and replay tests; mandatory generated-source freshness | Total pure decisions are generated from verified source. Signed guards, evidence extraction, iteration and I/O remain handwritten; the compiler and packaging transformation are trusted. |
 | Valid old/new decision and publication | `Encryption/EncryptionReplacementIntent.cs` `ReadState`, `ValidateState`, `ValidatePublication`, `Publish`, `Recover`, `Commit`, `Cleanup` | `ReplacementIntentTests`, `ReplacementCrashRecoveryTests`, `ReplacementNamespaceModelTests` | Byte-level decision parser, hash equality, partial prefix comparisons, missing-destination metadata and OS publication semantics remain handwritten. |
 | Generation-bound cleanup | `Transactions/RecoverableWriterLock.cs` `RecoveryLease`; `Pages/Paging/PersistentRollbackJournal.cs` `CleanupCompleted` | `RecoveryLockFileTests`, `RecoveryReplayCrashTests`, completed-journal disposal regressions | GUID freshness and receipts/locks/path leases are abstractions; absence of live-owner races depends on the real coordination contract. |
 
-The current test classes provide independent implementation evidence; they are not yet model-derived conformance traces. Process-kill tests exercise actual failure paths but do not establish power-loss behavior. Golden byte/native DAO checks remain necessary for Access compatibility.
+The recovery-kernel tests exercise the generated boundary and its production callers. The other test classes provide independent implementation evidence; the full recovery algorithm does not yet have model-derived conformance traces. Process-kill tests exercise actual failure paths but do not establish power-loss behavior. Golden byte/native DAO checks remain necessary for Access compatibility.
 
 ## Evidence levels and public claims
 
 Use the narrowest supported description:
 
-1. **Mechanically verified abstract model:** the listed Dafny lemmas hold for their model and assumptions. This is the scope of the initial pilot.
+1. **Mechanically verified abstract model:** the listed Dafny lemmas hold for their model and assumptions, including composed finite-trace safety and abstract recovery progress.
 2. **Implementation correspondence:** named production operations have a justified connection to the model, with conformance traces or a verified executable kernel. A manual table alone does not establish this level.
 3. **Qualified storage guarantee:** the required runtime/OS/filesystem/device persistence and coordination assumptions have independent evidence for the advertised platform.
 4. **Native format compatibility:** Microsoft-authored specimens and native operations establish the supported JET/ACE behavior. Recovery proofs do not fill unimplemented format or expression semantics.
@@ -71,4 +86,4 @@ Do not advertise whole-library formal verification, unconditional crash safety, 
 
 The undo model follows the principle of placing recoverability conditions before writes: protect every original byte that a write or truncation could destroy, preserve the invariant through torn writes and interrupted replay, and permit a commit decision only after the complete selected image is durable. This is inspired by [PoWER](https://www.usenix.org/conference/osdi25/presentation/leblanc) and [crash refinement](https://www.usenix.org/conference/osdi16/technical-sessions/presentation/sigurbjarnarson); it is a project-specific model, not a reuse of either project's verified implementation.
 
-Dafny is initially a verification-only tool. If generated C# is adopted later, its runtime support, compiler correctness, target compatibility, trimming/AOT and actual invocation become additional review obligations. Dafny external declarations would merely trust the C# boundary, so they cannot close that gap. F* remains an option for a concrete future boundary, but no second verifier or extraction toolchain is introduced by this pilot.
+Dafny supplies both verification-only models and the small executable recovery kernel. The [generation policy](../../verification/README.md#executable-kernel-generation) records the exact source projection and trusted compiler boundary; generated primitive operations require no runtime support. Target compatibility, trimming/AOT and production invocation remain acceptance obligations. Dafny external declarations would merely trust existing C#, so they cannot close its proof gap. F* remains an option for a concrete future boundary, but no second verifier or extraction toolchain is introduced.
