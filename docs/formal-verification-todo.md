@@ -30,7 +30,7 @@ Acceptance: refine the checked buffered protocol under explicit page and parser 
 Cause: the replacement model classifies bounded header/decision bytes, refines bounded copy schedules and composes selected publication with staged generation acquisition and ordered cleanup. Production decoding, immutable-copy validation, generation authority and actual I/O still require correspondence.
 
 - [ ] Connect the bounded header/decision classifier to production exact reads, signed decoding, GUID/path/digest operations and generation bootstrap; valid record bytes alone cannot establish exclusive recovery authority.
-- [ ] Connect bounded-copy traces and their publication gate to actual immutable-copy validation, exact/short reads, partial writes, flush exceptions and missing-destination publication; qualify non-prefix staging refusal and retained evidence.
+- [ ] Extend the shared copy loop's unprepared short/failed-read conformance into Prepared publication: immutable-copy validation, exact/short reads, partial writes, flush exceptions and missing-destination publication. Qualify non-prefix staging refusal and retained evidence; unprepared read tests do not close publication write/flush obligations.
 - [ ] Extend production correspondence beyond the selected bootstrap and production-order cleanup traces, including receipt identity, interrupted acquisition/publication and failed bootstrap I/O. Connect the cleanup refinement's validated selected-image and successful destination-flush entry contract to the complete production trace.
 - [ ] Preserve the distinction between an abstract successful recovery path and the actual production algorithm; integrate its copy/retry progress argument.
 
