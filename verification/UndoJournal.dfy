@@ -2029,4 +2029,484 @@ module UndoJournal {
     }
     CompleteReplayRestoresExactOriginal(original, images[|images|-1], saved);
   }
+
+  // The logical parser derives both content-control inputs from complete
+  // durable records. Length intents follow all captures for the removed tail;
+  // an incomplete trailing record supplies no minimum or replay authority.
+  function RecordedMinimum(originalLength: nat, records: seq<JournalRecord>): nat
+    ensures RecordedMinimum(originalLength, records) <= originalLength
+    decreases |records|
+  {
+    if |records| == 0 then originalLength
+    else if records[|records|-1].LengthIntent? then
+      Min(RecordedMinimum(originalLength, records[..|records|-1]), records[|records|-1].length)
+    else RecordedMinimum(originalLength, records[..|records|-1])
+  }
+
+  predicate OrderedTailRecords(originalLength: nat, records: seq<JournalRecord>)
+    decreases |records|
+  {
+    |records| == 0 ||
+      (OrderedTailRecords(originalLength, records[..|records|-1]) &&
+        (records[|records|-1].LengthIntent? ==>
+          Covered(records[..|records|-1], originalLength, records[|records|-1].length, originalLength)))
+  }
+
+  predicate ContentAdmitted(original: seq<Byte>, current: seq<Byte>, records: seq<JournalRecord>) {
+    AdmittedByRecords(original, current, records,
+      RecordedMinimum(|original|, records), RecoveryRecord in records)
+  }
+
+  lemma RecordedControlPrefix(originalLength: nat, records: seq<JournalRecord>, count: nat)
+    requires count <= |records|
+    ensures RecordedMinimum(originalLength, records) <= RecordedMinimum(originalLength, records[..count]) <= originalLength
+    ensures OrderedTailRecords(originalLength, records) ==> OrderedTailRecords(originalLength, records[..count])
+    decreases |records| - count
+  {
+    if count < |records| {
+      RecordedControlPrefix(originalLength, records[..|records|-1], count);
+      assert (records[..|records|-1])[..count] == records[..count];
+      assert RecordedMinimum(originalLength, records) <= RecordedMinimum(originalLength, records[..|records|-1]);
+      assert OrderedTailRecords(originalLength, records) ==> OrderedTailRecords(originalLength, records[..|records|-1]);
+    } else {
+      assert records[..count] == records;
+    }
+  }
+
+  lemma OrderedTailRecordsCoverMinimum(original: seq<Byte>, records: seq<JournalRecord>)
+    requires ExactRecords(original, records)
+    requires OrderedTailRecords(|original|, records)
+    ensures Covered(records, |original|, RecordedMinimum(|original|, records), |original|)
+    decreases |records|
+  {
+    if |records| > 0 {
+      var prefix := records[..|records|-1];
+      OrderedTailRecordsCoverMinimum(original, prefix);
+      SavedPrefixGrows(original, records, |records|-1);
+      forall i: nat | RecordedMinimum(|original|, records) <= i < |original|
+        ensures i in Saved(records)
+      {
+        if i < RecordedMinimum(|original|, prefix) {
+          assert records[|records|-1].LengthIntent?;
+          assert records[|records|-1].length <= i;
+          assert i in Saved(prefix);
+        }
+      }
+    }
+  }
+
+  lemma RecordedValuesGrow(records: seq<JournalRecord>, count: nat, offset: nat)
+    requires count <= |records|
+    ensures RecordedValues(records[..count], offset) <= RecordedValues(records, offset)
+    decreases |records| - count
+  {
+    if count < |records| {
+      RecordedValuesGrow(records[..|records|-1], count, offset);
+      assert (records[..|records|-1])[..count] == records[..count];
+      assert RecordedValues(records[..|records|-1], offset) <= RecordedValues(records, offset);
+    } else {
+      assert records[..count] == records;
+    }
+  }
+
+  lemma RecordedPrefixRetainsContent(original: seq<Byte>, current: seq<Byte>, records: seq<JournalRecord>, count: nat)
+    requires count <= |records|
+    requires ContentAdmitted(original, current, records[..count])
+    ensures ContentAdmitted(original, current, records)
+  {
+    var prefix := records[..count];
+    RecordedControlPrefix(|original|, records, count);
+    forall i: nat | i < |current|
+      ensures FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+        RecoveryRecord in records, i, current[i])
+    {
+      RecordFoldAdmitsExactlyRecordedValues(original, prefix, RecordedMinimum(|original|, prefix),
+        RecoveryRecord in prefix, i, current[i]);
+      RecordedValuesGrow(records, count, i);
+      RecordFoldAdmitsExactlyRecordedValues(original, records, RecordedMinimum(|original|, records),
+        RecoveryRecord in records, i, current[i]);
+    }
+  }
+
+  lemma RecordedWriteAdmitsPayload(original: seq<Byte>, records: seq<JournalRecord>,
+      start: nat, payload: seq<Byte>, offset: nat)
+    requires WriteIntent(start, payload) in records
+    requires start <= offset < start + |payload|
+    ensures FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+      RecoveryRecord in records, offset, payload[offset-start])
+    decreases |records|
+  {
+    RecordedValuesContainWrite(records, start, payload, offset);
+    RecordFoldAdmitsExactlyRecordedValues(original, records, RecordedMinimum(|original|, records),
+      RecoveryRecord in records, offset, payload[offset-start]);
+  }
+  lemma RecordedValuesContainWrite(records: seq<JournalRecord>, start: nat, payload: seq<Byte>, offset: nat)
+    requires WriteIntent(start, payload) in records
+    requires start <= offset < start + |payload|
+    ensures payload[offset-start] in RecordedValues(records, offset)
+    decreases |records|
+  {
+    if records[|records|-1] != WriteIntent(start, payload) {
+      RecordedValuesContainWrite(records[..|records|-1], start, payload, offset);
+    }
+  }
+
+  // This refinement restricts the existing logical protocol to production's
+  // truncation-only SetLength calls and explicitly authorized sparse gaps.
+  // It does not assume that an arbitrary mutation result passes validation.
+  predicate ContentProtocolInvariant(original: seq<Byte>, s: ProtocolState) {
+    ProtocolInvariant(original, s) &&
+    OrderedTailRecords(|original|, s.records) &&
+    RecordedMinimum(|original|, DurableRecords(s)) <= |s.db| &&
+    ContentAdmitted(original, s.db, DurableRecords(s))
+  }
+
+  predicate ContentProtocolEnabled(original: seq<Byte>, s: ProtocolState, a: ProtocolAction) {
+    ProtocolEnabled(original, s, a) &&
+    (match a
+      case AppendLength(length) => Covered(s.records, |original|, length, |original|)
+      case MutateWrite(start, payload, result) =>
+        forall i: nat :: |s.db| <= i < start && i < |result| ==>
+          FoldRecordedAdmission(original, DurableRecords(s), RecordedMinimum(|original|, DurableRecords(s)),
+            RecoveryRecord in DurableRecords(s), i, 0)
+      case MutateLength(length, resultLength) => length <= |s.db|
+      case _ => true)
+  }
+
+  lemma InitialContentProtocolIsValid(original: seq<Byte>)
+    ensures ContentProtocolInvariant(original, InitialProtocol(original))
+  {
+    InitialProtocolIsValid(original);
+  }
+
+  lemma ContentProtocolStepPreserves(original: seq<Byte>, s: ProtocolState, a: ProtocolAction)
+    requires ContentProtocolInvariant(original, s)
+    requires ContentProtocolEnabled(original, s, a)
+    ensures ContentProtocolInvariant(original, ProtocolApply(original, s, a))
+  {
+    ProtocolStepPreserves(original, s, a);
+    var next := ProtocolApply(original, s, a);
+    var records := DurableRecords(s);
+    var nextRecords := DurableRecords(next);
+    RecordedControlPrefix(|original|, records, |records|);
+    if !a.FlushJournal? && !a.FailJournalFlush? && !a.Crash? {
+      assert nextRecords == records;
+    } else {
+      assert next.db == s.db;
+      assert s.durableCount <= next.durableCount <= |s.records|;
+      assert nextRecords == s.records[..next.durableCount];
+      assert nextRecords[..s.durableCount] == records;
+      RecordedPrefixRetainsContent(original, s.db, nextRecords, s.durableCount);
+      RecordedControlPrefix(|original|, nextRecords, s.durableCount);
+    }
+    if !a.MutateWrite? && !a.MutateLength? && !a.ReplayResize? && !a.ReplayNext? {
+      assert next.db == s.db;
+      assert ContentAdmitted(original, next.db, nextRecords);
+      assert RecordedMinimum(|original|, nextRecords) <= |next.db|;
+    }
+    match a {
+      case FlushJournal =>
+        RecordedPrefixRetainsContent(original, s.db, s.records, s.durableCount);
+        RecordedControlPrefix(|original|, s.records, s.durableCount);
+      case FailJournalFlush(through, partial) =>
+        assert s.records[..through][..s.durableCount] == records;
+        RecordedPrefixRetainsContent(original, s.db, s.records[..through], s.durableCount);
+        RecordedControlPrefix(|original|, s.records[..through], s.durableCount);
+      case Crash(through, partial) =>
+        assert s.records[..through][..s.durableCount] == records;
+        RecordedPrefixRetainsContent(original, s.db, s.records[..through], s.durableCount);
+        RecordedControlPrefix(|original|, s.records, through);
+        RecordedControlPrefix(|original|, s.records[..through], s.durableCount);
+      case AppendBefore(offset) =>
+        assert next.records[..|s.records|] == s.records;
+      case AppendWrite(start, payload) =>
+        assert next.records[..|s.records|] == s.records;
+      case AppendLength(length) =>
+        assert next.records[..|s.records|] == s.records;
+      case AppendCommit =>
+        assert next.records[..|s.records|] == s.records;
+      case BeginUndo =>
+        assert next.records[..|s.records|] == s.records;
+      case MutateWrite(start, payload, result) =>
+        forall i: nat | i < |result|
+          ensures FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+            RecoveryRecord in records, i, result[i])
+        {
+          if i < |s.db| && result[i] == s.db[i] {
+          } else if start <= i < start + |payload| && result[i] == payload[i-start] {
+            RecordedWriteAdmitsPayload(original, records, start, payload, i);
+          } else {
+            assert |s.db| <= i < start && result[i] == 0;
+          }
+        }
+        assert ContentAdmitted(original, next.db, nextRecords);
+        assert RecordedMinimum(|original|, nextRecords) <= |next.db|;
+      case MutateLength(length, resultLength) =>
+        assert next.db == s.db[..resultLength];
+        RecordedLengthBoundsMinimum(|original|, records, length);
+        assert ContentAdmitted(original, next.db, nextRecords);
+        assert RecordedMinimum(|original|, nextRecords) <= |next.db|;
+      case ReplayResize(length) =>
+        assert RecoveryRecord in records;
+        forall i: nat | i < |next.db|
+          ensures FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+            true, i, next.db[i])
+        {
+          if i >= |s.db| {
+            assert next.db[i] == 0;
+            RecordFoldAdmitsExactlyRecordedValues(original, records, RecordedMinimum(|original|, records), true, i, 0);
+          }
+        }
+        assert ContentAdmitted(original, next.db, nextRecords);
+        assert RecordedMinimum(|original|, nextRecords) <= |next.db|;
+      case ReplayNext(written) =>
+        forall i: nat | i < |next.db|
+          ensures FoldRecordedAdmission(original, records, RecordedMinimum(|original|, records),
+            RecoveryRecord in records, i, next.db[i])
+        {
+          if next.db[i] != s.db[i] {
+            assert i == s.replayCursor;
+            assert next.db[i] == original[i];
+            RecordFoldAdmitsExactlyRecordedValues(original, records, RecordedMinimum(|original|, records),
+              RecoveryRecord in records, i, next.db[i]);
+          }
+        }
+        assert ContentAdmitted(original, next.db, nextRecords);
+        assert RecordedMinimum(|original|, nextRecords) <= |next.db|;
+      case _ =>
+    }
+    assert OrderedTailRecords(|original|, next.records);
+    assert RecordedMinimum(|original|, nextRecords) <= |next.db|;
+    assert ContentAdmitted(original, next.db, nextRecords);
+  }
+
+  lemma RecordedLengthBoundsMinimum(originalLength: nat, records: seq<JournalRecord>, length: nat)
+    requires LengthIntent(length) in records
+    ensures RecordedMinimum(originalLength, records) <= length
+    decreases |records|
+  {
+    if records[|records|-1] != LengthIntent(length) {
+      RecordedLengthBoundsMinimum(originalLength, records[..|records|-1], length);
+    }
+  }
+
+  predicate ContentProtocolPath(original: seq<Byte>, states: seq<ProtocolState>, actions: seq<ProtocolAction>) {
+    |states| == |actions| + 1 &&
+    forall i | 0 <= i < |actions| :: ContentProtocolEnabled(original, states[i], actions[i]) &&
+      states[i+1] == ProtocolApply(original, states[i], actions[i])
+  }
+
+  lemma ContentProtocolTracePreserves(original: seq<Byte>, states: seq<ProtocolState>, actions: seq<ProtocolAction>)
+    requires ContentProtocolPath(original, states, actions)
+    requires ContentProtocolInvariant(original, states[0])
+    ensures ProtocolPath(original, states, actions)
+    ensures ContentProtocolInvariant(original, states[|states|-1])
+    ensures Recoverable(original, states[|states|-1].db, Saved(DurableRecords(states[|states|-1])))
+    ensures ContentAdmitted(original, states[|states|-1].db, DurableRecords(states[|states|-1]))
+    decreases |actions|
+  {
+    if |actions| > 0 {
+      ContentProtocolStepPreserves(original, states[0], actions[0]);
+      ContentProtocolTracePreserves(original, states[1..], actions[1..]);
+    }
+  }
+
+  lemma AppendContentProtocolPath(original: seq<Byte>, states: seq<ProtocolState>, actions: seq<ProtocolAction>,
+      action: ProtocolAction)
+    requires ContentProtocolPath(original, states, actions)
+    requires ContentProtocolEnabled(original, states[|states|-1], action)
+    ensures ContentProtocolPath(original,
+      states + [ProtocolApply(original, states[|states|-1], action)], actions + [action])
+  {
+    forall i | 0 <= i < |actions + [action]|
+      ensures ContentProtocolEnabled(original, (states + [ProtocolApply(original, states[|states|-1], action)])[i],
+        (actions + [action])[i]) &&
+        (states + [ProtocolApply(original, states[|states|-1], action)])[i+1] ==
+          ProtocolApply(original, (states + [ProtocolApply(original, states[|states|-1], action)])[i],
+            (actions + [action])[i])
+    { }
+  }
+
+  // Construct captures from readable uncaptured bytes, rather than supplying
+  // exact before-images as an external premise. Arbitrarily many original
+  // bytes are admitted; page serialization remains a separate refinement.
+  lemma CaptureContentRange(original: seq<Byte>, s: ProtocolState, lo: nat, hi: nat)
+    returns (next: ProtocolState, states: seq<ProtocolState>, actions: seq<ProtocolAction>)
+    requires ContentProtocolInvariant(original, s) && s.mode == Active
+    requires lo <= hi <= |original|
+    ensures ContentProtocolPath(original, states, actions) && states[0] == s && states[|states|-1] == next
+    ensures ContentProtocolInvariant(original, next) && next.mode == Active
+    ensures next.db == s.db && DurableRecords(next) == DurableRecords(s)
+    ensures |s.records| <= |next.records| && next.records[..|s.records|] == s.records
+    ensures Covered(next.records, |original|, lo, hi)
+    decreases hi - lo
+  {
+    if lo == hi {
+      next, states, actions := s, [s], [];
+    } else {
+      var captured := s;
+      if lo !in Saved(s.records) {
+        SavedPrefixGrows(original, s.records, s.durableCount);
+        assert lo !in Saved(DurableRecords(s));
+        assert lo < |s.db|;
+        var action := AppendBefore(lo);
+        assert ContentProtocolEnabled(original, s, action);
+        ContentProtocolStepPreserves(original, s, action);
+        captured := ProtocolApply(original, s, action);
+        AppendedRecordProperties(original, s.records, BeforeImage(lo, s.db[lo]));
+      }
+      var tailStates: seq<ProtocolState>;
+      var tailActions: seq<ProtocolAction>;
+      next, tailStates, tailActions := CaptureContentRange(original, captured, lo + 1, hi);
+      if captured == s {
+        states, actions := tailStates, tailActions;
+      } else {
+        states, actions := [s] + tailStates, [AppendBefore(lo)] + tailActions;
+        forall i | 0 <= i < |actions|
+          ensures ContentProtocolEnabled(original, states[i], actions[i]) &&
+            states[i+1] == ProtocolApply(original, states[i], actions[i])
+        {
+          if i > 0 {
+            assert states[i] == tailStates[i-1];
+            assert actions[i] == tailActions[i-1];
+          }
+        }
+      }
+      SavedPrefixGrows(original, next.records, |captured.records|);
+      assert lo in Saved(captured.records);
+      assert lo in Saved(next.records);
+      assert next.records[..|s.records|] == s.records;
+    }
+  }
+
+  // Construct a useful admitted mutation for every finite payload and start.
+  // Sparse regrowth first records its zero gap, as RecordBeforeWrite does.
+  // The returned state admits every modeled torn write, without testing its
+  // eventual result or borrowing recovery-marker authority while Active.
+  lemma PrepareContentWrite(original: seq<Byte>, s: ProtocolState, start: nat, payload: seq<Byte>)
+    returns (next: ProtocolState, states: seq<ProtocolState>, actions: seq<ProtocolAction>)
+    requires ContentProtocolInvariant(original, s) && s.mode == Active
+    ensures ContentProtocolPath(original, states, actions) && states[0] == s && states[|states|-1] == next
+    ensures ContentProtocolInvariant(original, next) && next.mode == Active && next.db == s.db
+    ensures forall result: seq<Byte> :: TornWrite(next.db, start, payload, result) ==>
+      ContentProtocolEnabled(original, next, MutateWrite(start, payload, result))
+  {
+    next, states, actions := CaptureContentRange(original, s,
+      Min(start, |original|), Min(start + |payload|, |original|));
+    var capturedRecords := next.records;
+    if |s.db| < start {
+      var gap := AppendWrite(|s.db|, ZeroBytes(start - |s.db|));
+      AppendedRecordProperties(original, next.records, WriteIntent(gap.start, gap.payload));
+      AppendContentProtocolPath(original, states, actions, gap);
+      ContentProtocolStepPreserves(original, next, gap);
+      var beforeGap := next;
+      next := ProtocolApply(original, next, gap);
+      assert Saved(next.records) == Saved(beforeGap.records) == Saved(capturedRecords);
+      states, actions := states + [next], actions + [gap];
+    }
+    var write := AppendWrite(start, payload);
+    AppendedRecordProperties(original, next.records, WriteIntent(start, payload));
+    AppendContentProtocolPath(original, states, actions, write);
+    ContentProtocolStepPreserves(original, next, write);
+    var beforeWrite := next;
+    next := ProtocolApply(original, next, write);
+    assert Saved(next.records) == Saved(beforeWrite.records) == Saved(capturedRecords);
+    states, actions := states + [next], actions + [write];
+    AppendedRecordProperties(original, states[|states|-2].records, WriteIntent(start, payload));
+    AppendContentProtocolPath(original, states, actions, FlushJournal);
+    ContentProtocolStepPreserves(original, next, FlushJournal);
+    var preparedRecords := next.records;
+    next := ProtocolApply(original, next, FlushJournal);
+    assert DurableRecords(next) == preparedRecords;
+    assert Saved(preparedRecords) == Saved(capturedRecords);
+    states, actions := states + [next], actions + [FlushJournal];
+    assert WriteIntent(start, payload) in DurableRecords(next);
+    assert Saved(DurableRecords(next)) == Saved(capturedRecords);
+    assert Covered(DurableRecords(next), |original|, start, start + |payload|);
+    forall result: seq<Byte> | TornWrite(next.db, start, payload, result)
+      ensures ContentProtocolEnabled(original, next, MutateWrite(start, payload, result))
+    {
+      forall i: nat | |next.db| <= i < start && i < |result|
+        ensures FoldRecordedAdmission(original, DurableRecords(next), RecordedMinimum(|original|, DurableRecords(next)),
+          RecoveryRecord in DurableRecords(next), i, 0)
+      {
+        assert |s.db| < start;
+        assert WriteIntent(|s.db|, ZeroBytes(start - |s.db|)) in DurableRecords(next);
+        RecordedWriteAdmitsPayload(original, DurableRecords(next), |s.db|, ZeroBytes(start - |s.db|), i);
+      }
+    }
+  }
+
+  lemma PrepareContentTruncation(original: seq<Byte>, s: ProtocolState, length: nat)
+    returns (next: ProtocolState, states: seq<ProtocolState>, actions: seq<ProtocolAction>)
+    requires ContentProtocolInvariant(original, s) && s.mode == Active && length <= |s.db|
+    ensures ContentProtocolPath(original, states, actions) && states[0] == s && states[|states|-1] == next
+    ensures ContentProtocolInvariant(original, next) && next.mode == Active && next.db == s.db
+    ensures forall resultLength: nat :: length <= resultLength <= |next.db| ==>
+      ContentProtocolEnabled(original, next, MutateLength(length, resultLength))
+  {
+    next, states, actions := CaptureContentRange(original, s, Min(length, |original|), |original|);
+    var capturedRecords := next.records;
+    var truncate := AppendLength(length);
+    AppendedRecordProperties(original, next.records, LengthIntent(length));
+    assert ContentProtocolEnabled(original, next, truncate);
+    AppendContentProtocolPath(original, states, actions, truncate);
+    ContentProtocolStepPreserves(original, next, truncate);
+    var beforeTruncate := next;
+    next := ProtocolApply(original, next, truncate);
+    assert Saved(next.records) == Saved(beforeTruncate.records) == Saved(capturedRecords);
+    states, actions := states + [next], actions + [truncate];
+    AppendedRecordProperties(original, states[|states|-2].records, LengthIntent(length));
+    AppendContentProtocolPath(original, states, actions, FlushJournal);
+    ContentProtocolStepPreserves(original, next, FlushJournal);
+    var preparedRecords := next.records;
+    next := ProtocolApply(original, next, FlushJournal);
+    assert DurableRecords(next) == preparedRecords;
+    assert Saved(preparedRecords) == Saved(capturedRecords);
+    states, actions := states + [next], actions + [FlushJournal];
+    assert LengthIntent(length) in DurableRecords(next);
+    assert Saved(DurableRecords(next)) == Saved(capturedRecords);
+    assert Covered(DurableRecords(next), |original|, length, |original|);
+  }
+
+  // Lift the existing decreasing replay schedule through the content
+  // refinement. Its zero-filled reextension is admitted only after the
+  // complete durable marker, whose minimum comes from protected tail intents.
+  // The abstract schedule still always publishes a marker; production's
+  // conditional marker and actual replay loop remain correspondence work.
+  lemma CompleteContentRecovery(original: seq<Byte>, s: ProtocolState)
+    returns (states: seq<ProtocolState>, actions: seq<ProtocolAction>)
+    requires ContentProtocolInvariant(original, s)
+    requires s.mode == Inspecting || s.mode == Marking || s.mode == Replaying || s.mode == Finished
+    ensures ContentProtocolPath(original, states, actions) && states[0] == s
+    ensures ContentProtocolInvariant(original, states[|states|-1]) && states[|states|-1].mode == Finished
+    ensures RecordDecision(DurableRecords(states[|states|-1])) == RecordDecision(DurableRecords(s))
+    ensures if HasCommit(DurableRecords(s)) then
+      RecordDecision(DurableRecords(s)) == Committed(states[|states|-1].db)
+      else states[|states|-1].db == original
+    decreases ProtocolRecoveryRank(original, s)
+  {
+    if s.mode == Finished {
+      states, actions := [s], [];
+    } else {
+      ProtocolRecoveryProgress(original, s);
+      var action := ProtocolRecoveryAction(original, s);
+      assert ContentProtocolEnabled(original, s, action);
+      ContentProtocolStepPreserves(original, s, action);
+      var next := ProtocolApply(original, s, action);
+      var tailStates, tailActions := CompleteContentRecovery(original, next);
+      states, actions := [s] + tailStates, [action] + tailActions;
+      forall i | 0 <= i < |actions|
+        ensures ContentProtocolEnabled(original, states[i], actions[i]) &&
+          states[i+1] == ProtocolApply(original, states[i], actions[i])
+      {
+        if i != 0 {
+          assert states[i] == tailStates[i-1];
+          assert actions[i] == tailActions[i-1];
+        }
+      }
+      RecordDecisionProperties(DurableRecords(s));
+      RecordDecisionProperties(DurableRecords(next));
+    }
+  }
 }

@@ -340,8 +340,10 @@ internal sealed class PersistentRollbackJournal : IDisposable
                     throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery truncate intent is invalid.");
                 }
 
-                for (long removed = length; removed < originalLength; removed += pageSize)
+                uint requiredPages = RecoveryKernel.TruncateOriginalPageCount((uint)pageSize, (ulong)originalLength, (ulong)length);
+                for (uint index = 0; index < requiredPages; index++)
                 {
+                    long removed = TruncatePageOffset(pageSize, originalLength, length, index);
                     if (!beforeImages.ContainsKey(removed))
                     {
                         throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "A recovery truncation is missing an original before-image.");
@@ -483,6 +485,18 @@ internal sealed class PersistentRollbackJournal : IDisposable
         }
 
         return checked((int)count);
+    }
+
+    private static long TruncatePageOffset(int pageSize, long originalLength, long length, uint index)
+    {
+        ulong offset = RecoveryKernel.TruncateOriginalPageOffset(
+            unchecked((uint)pageSize), unchecked((ulong)originalLength), unchecked((ulong)length), index);
+        if (offset == 2147483648)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery truncation coverage page is invalid.");
+        }
+
+        return checked((long)offset);
     }
 
     private static long NextRecord(int pageSize, long originalLength, long completeEnd, long position)
@@ -737,9 +751,11 @@ internal sealed class PersistentRollbackJournal : IDisposable
             throw new JetOperationException(JetErrorCode.InvalidOperationState, "The rollback journal cannot record this truncation.");
         }
 
+        uint requiredPages = RecoveryKernel.TruncateOriginalPageCount((uint)this.pageSize, (ulong)this.originalLength, (ulong)length);
         int missing = 0;
-        for (long offset = length; offset < this.originalLength; offset += this.pageSize)
+        for (uint index = 0; index < requiredPages; index++)
         {
+            long offset = TruncatePageOffset(this.pageSize, this.originalLength, length, index);
             if (!this.beforeImages.ContainsKey(offset))
             {
                 missing++;
@@ -747,9 +763,9 @@ internal sealed class PersistentRollbackJournal : IDisposable
         }
 
         this.RequireRecordCapacity(missing + 1);
-        for (long offset = length; offset < this.originalLength; offset += this.pageSize)
+        for (uint index = 0; index < requiredPages; index++)
         {
-            this.CaptureOriginalPage(offset);
+            this.CaptureOriginalPage(TruncatePageOffset(this.pageSize, this.originalLength, length, index));
         }
 
         byte[] payload = new byte[8];

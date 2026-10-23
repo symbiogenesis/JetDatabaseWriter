@@ -89,6 +89,22 @@ namespace JetDatabaseWriter.Verification {
     {
       return ((JetDatabaseWriter.Verification.RecoveryKernel.IsPageSize(pageSize)) && ((length) <= (maximumLength))) && (((length) % ((ulong)(pageSize))) == (0UL));
     }
+    public static uint TruncateOriginalPageCount(uint pageSize, ulong originalLength, ulong length)
+    {
+      if (((((!(JetDatabaseWriter.Verification.RecoveryKernel.IsPageSize(pageSize))) || (!(JetDatabaseWriter.Verification.RecoveryKernel.IsDatabaseLength(originalLength)))) || (!(JetDatabaseWriter.Verification.RecoveryKernel.IsDatabaseLength(length)))) || (((length) % ((ulong)(pageSize))) != (0UL))) || ((length) >= (originalLength))) {
+        return 0U;
+      } else {
+        return (uint)(((((originalLength) - (length)) - (1UL)) / ((ulong)(pageSize))) + (1UL));
+      }
+    }
+    public static ulong TruncateOriginalPageOffset(uint pageSize, ulong originalLength, ulong length, uint index)
+    {
+      if ((index) >= (JetDatabaseWriter.Verification.RecoveryKernel.TruncateOriginalPageCount(pageSize, originalLength, length))) {
+        return 2147483648UL;
+      } else {
+        return (length) + (((ulong)(index)) * ((ulong)(pageSize)));
+      }
+    }
     public static bool IsBeforeImageRecord(ulong tag, uint pageSize, ulong originalLength)
     {
       return (((((JetDatabaseWriter.Verification.RecoveryKernel.IsPageSize(pageSize)) && (JetDatabaseWriter.Verification.RecoveryKernel.IsDatabaseLength(originalLength))) && ((tag) >= (9223372036854775808UL))) && ((tag) <= (9223372039002259456UL))) && (((tag) - (9223372036854775808UL)) < (originalLength))) && ((((tag) - (9223372036854775808UL)) % ((ulong)(pageSize))) == (0UL));

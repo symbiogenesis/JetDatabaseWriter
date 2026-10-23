@@ -17,10 +17,10 @@ Keep only open work in this document. Remove completed requirements in the same 
 
 ## V3 — Refine journal persistence and page correspondence
 
-Cause: the buffered journal protocol constructs aligned multi-page captures and write/truncate preparation with complete original-tail coverage and zero padding beyond the file end. Logical record folds now derive content authorization, but serialized acquisition, complete mutation/restart composition and production-loop correspondence still require refinement.
+Cause: the buffered journal protocol constructs aligned multi-page captures and write/truncate preparation with complete original-tail coverage and zero padding beyond the file end. Record-derived minimum/replay controls and content admission compose logical mutations, uncertain journal flush prefixes and restartable replay. Buffered-effect composition, serialized acquisition and production-loop correspondence still require refinement.
 
 - [ ] Bind the constructed page payloads and capture/preparation schedules to serialized record tags, manifest/page hashes, framing and production record iteration.
-- [ ] Compose the persisted-record/content classifier with mutation and restartable replay, including original/after-image authorization and recovery-marker zero tails.
+- [ ] Lift the logical content protocol's record-derived minimum/replay controls and original/after-image/zero-tail admission through the buffered readable/durable effect queue, including reordered persistence and crash quiescence.
 - [ ] Connect the decreasing abstract replay schedule to the production loop and its conditional marker, record iteration, resize, flush and exception boundaries through V6 conformance.
 
 Acceptance: refine the checked buffered protocol under explicit page and parser contracts. Preserve its trace/progress theorems without promoting logical record classification to a verified byte parser or abstract progress to C# loop refinement.
@@ -30,7 +30,7 @@ Acceptance: refine the checked buffered protocol under explicit page and parser 
 Cause: the replacement model classifies bounded header/decision bytes, refines bounded copy schedules and composes selected publication with staged generation acquisition and ordered cleanup. Production decoding, immutable-copy validation, generation authority and actual I/O still require correspondence.
 
 - [ ] Connect the bounded header/decision classifier to production exact reads, signed decoding, GUID/path/digest operations and generation bootstrap; valid record bytes alone cannot establish exclusive recovery authority.
-- [ ] Extend the shared copy loop's unprepared short/failed-read conformance into Prepared publication: immutable-copy validation, exact/short reads, partial writes, flush exceptions and missing-destination publication. Qualify non-prefix staging refusal and retained evidence; unprepared read tests do not close publication write/flush obligations.
+- [ ] Connect Prepared publication's concrete file creation, reads, writes and flush exceptions to retained-evidence and selected-publication ordering. Direct shared-copier fault survivors and real recovery retries do not establish the complete `Publish`/`Recover` exception trace or syscall persistence.
 - [ ] Extend production correspondence beyond the selected bootstrap and production-order cleanup traces, including receipt identity, interrupted acquisition/publication and failed bootstrap I/O. Connect the cleanup refinement's validated selected-image and successful destination-flush entry contract to the complete production trace.
 - [ ] Preserve the distinction between an abstract successful recovery path and the actual production algorithm; integrate its copy/retry progress argument.
 
@@ -38,12 +38,12 @@ Acceptance: refined evidence/publication properties connected to implementation.
 
 ## V6 — Extend correspondence across recovery control flow
 
-Cause: generated journal-value, framing, record-tag/control-state, bounded payload/hash slices, checked record cursors, original-page source identity and byte-authorization decisions cover selected pure boundaries. Recovery loops, actual record reads, cryptographic payload identity, coverage extraction and effect ordering remain handwritten and can drift from the model.
+Cause: generated journal-value, framing, record-tag/control-state, bounded payload/hash slices, checked record cursors, original-page source identity and byte-authorization decisions cover selected pure boundaries. The generated truncate-tail schedule selects complete logical coverage at preparation and parser admission. Recovery loops, actual record reads, cryptographic payload identity, map construction and effect ordering remain handwritten and can drift from the model.
 
 - [ ] Derive and replay conformance traces for remaining production transitions, including failed flush/commit, conditional replay markers and generation bootstrap/cleanup.
 - [ ] Exercise every relevant transition and rejection class, including repeated crashes and negative mutation controls. Keep local selections focused.
 - [ ] Complete the manual refinement argument for the remaining operations in the boundary inventory; review changed production mappings and proof assumptions.
-- [ ] Extend the executable boundary beyond checked record acquisition/cursor bounds and original-page source association into coverage extraction or a replay transition once its byte and trace contracts are explicit; remove corresponding handwritten decisions and verify the production invocation. Actual reads and digest implementations remain separate obligations.
+- [ ] Extend the executable boundary beyond checked record acquisition, original-page source association and truncate-tail selection into serialized coverage identity or a replay transition once its byte and trace contracts are explicit; remove corresponding handwritten decisions and verify the production invocation. Actual reads, map construction and digest implementations remain separate obligations.
 
 Acceptance: tested correspondence for each precisely named boundary, with the same verification, source freshness, license, target and trimming/NativeAOT obligations as the current kernel. No unchecked external contracts, new shipping dependencies or stronger claims for the remaining handwritten recovery algorithm.
 

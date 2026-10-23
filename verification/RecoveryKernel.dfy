@@ -311,6 +311,120 @@ module RecoveryKernel {
     length % (pageSize as U64) == 0
   }
 
+  // A truncate intent must account for every original page intersecting its
+  // removed tail, including a partial final page. Invalid values select none;
+  // the caller separately requires valid truncate bounds before this schedule.
+  function TruncateOriginalPageCount(pageSize: U32, originalLength: U64, length: U64): U32 {
+    if !IsPageSize(pageSize) || !IsDatabaseLength(originalLength) ||
+        !IsDatabaseLength(length) || length % (pageSize as U64) != 0 || length >= originalLength then 0
+    else (((originalLength - length - 1) / (pageSize as U64)) + 1) as U32
+  }
+
+  // The Access size limit cannot identify an original page and is the refusal
+  // sentinel. This selector admits only an index within the exact tail count.
+  function TruncateOriginalPageOffset(pageSize: U32, originalLength: U64,
+      length: U64, index: U32): U64 {
+    if index >= TruncateOriginalPageCount(pageSize, originalLength, length) then 2147483648
+    else length + (index as U64) * (pageSize as U64)
+  }
+
+  lemma TruncateCoverageCountIsExact(pageSize: U32, originalLength: U64, length: U64)
+    ensures TruncateOriginalPageCount(pageSize, originalLength, length) <= 1048576
+    ensures TruncateOriginalPageCount(pageSize, originalLength, length) == 0 <==>
+      !IsPageSize(pageSize) || !IsDatabaseLength(originalLength) || !IsDatabaseLength(length) ||
+      (IsPageSize(pageSize) && length as int % pageSize as int != 0) || length >= originalLength
+    ensures TruncateOriginalPageCount(pageSize, originalLength, length) != 0 ==>
+      (TruncateOriginalPageCount(pageSize, originalLength, length) as int - 1) * pageSize as int <
+        originalLength as int - length as int <=
+      TruncateOriginalPageCount(pageSize, originalLength, length) as int * pageSize as int
+  {
+    if IsPageSize(pageSize) {
+      if pageSize == 2048 { } else { assert pageSize == 4096; }
+    }
+  }
+
+  lemma TruncateCoveragePageIsExact(pageSize: U32, originalLength: U64,
+      length: U64, index: U32)
+    ensures TruncateOriginalPageOffset(pageSize, originalLength, length, index) != 2147483648 <==>
+      index < TruncateOriginalPageCount(pageSize, originalLength, length)
+    ensures index < TruncateOriginalPageCount(pageSize, originalLength, length) ==>
+      TruncateOriginalPageOffset(pageSize, originalLength, length, index) as int ==
+        length as int + index as int * pageSize as int
+    ensures index < TruncateOriginalPageCount(pageSize, originalLength, length) ==>
+      IsPageOffset(TruncateOriginalPageOffset(pageSize, originalLength, length, index), pageSize) &&
+      length <= TruncateOriginalPageOffset(pageSize, originalLength, length, index) < originalLength &&
+      OriginalPageLength(pageSize, originalLength,
+        TruncateOriginalPageOffset(pageSize, originalLength, length, index)) > 0
+  {
+    TruncateCoverageCountIsExact(pageSize, originalLength, length);
+    if index < TruncateOriginalPageCount(pageSize, originalLength, length) {
+      if pageSize == 2048 { } else { assert pageSize == 4096; }
+      var offset := TruncateOriginalPageOffset(pageSize, originalLength, length, index);
+      assert offset as int % pageSize as int == 0;
+      OriginalPageSliceIsExact(pageSize, originalLength, offset);
+    }
+  }
+
+  lemma TruncateCoveragePagesAreDistinctAndRanked(pageSize: U32, originalLength: U64,
+      length: U64, left: U32, right: U32)
+    requires left < right < TruncateOriginalPageCount(pageSize, originalLength, length)
+    ensures TruncateOriginalPageOffset(pageSize, originalLength, length, left) <
+      TruncateOriginalPageOffset(pageSize, originalLength, length, right)
+    ensures 0 < TruncateOriginalPageCount(pageSize, originalLength, length) as int - right as int <
+      TruncateOriginalPageCount(pageSize, originalLength, length) as int - left as int
+  {
+    TruncateCoveragePageIsExact(pageSize, originalLength, length, left);
+    TruncateCoveragePageIsExact(pageSize, originalLength, length, right);
+  }
+  lemma TruncateCoverageSelectsEveryRemovedByte(pageSize: U32, originalLength: U64,
+      length: U64, offset: U64)
+    requires IsPageSize(pageSize) && IsDatabaseLength(originalLength) && IsDatabaseLength(length)
+    requires length as int % pageSize as int == 0
+    requires length <= offset < originalLength
+    ensures (offset as int - length as int) / pageSize as int <
+      TruncateOriginalPageCount(pageSize, originalLength, length) as int
+    ensures var index := ((offset - length) / (pageSize as U64)) as U32;
+      var page := TruncateOriginalPageOffset(pageSize, originalLength, length, index);
+      page <= offset && offset as int < page as int + OriginalPageLength(pageSize, originalLength, page) as int
+  {
+    TruncateCoverageCountIsExact(pageSize, originalLength, length);
+    if pageSize == 2048 { } else { assert pageSize == 4096; }
+    var index := ((offset - length) / (pageSize as U64)) as U32;
+    TruncateCoveragePageIsExact(pageSize, originalLength, length, index);
+    var page := TruncateOriginalPageOffset(pageSize, originalLength, length, index);
+    assert offset as int - length as int ==
+      index as int * pageSize as int + (offset as int - length as int) % pageSize as int;
+    OriginalPageSliceIsExact(pageSize, originalLength, page);
+  }
+
+  // A production map entry must stand for a checksum/hash-validated exact page
+  // expanded into its original-byte records. Under that explicit map-to-Saved
+  // contract, checking all generated selections establishes complete coverage;
+  // a dictionary key or the arithmetic schedule alone grants no byte identity.
+  lemma TruncateCoverageAdmissionRefinesSaved(original: seq<Undo.Byte>, records: seq<Undo.JournalRecord>,
+      pageSize: U32, length: U64, capturedPages: set<nat>)
+    requires |original| <= 2147483648 && IsPageSize(pageSize) && IsDatabaseLength(length)
+    requires length as int % pageSize as int == 0
+    requires Undo.ExactRecords(original, records)
+    requires forall page: nat | page in capturedPages ::
+      Undo.Covered(records, |original|, page, page + pageSize as int)
+    requires forall index: U32 {:trigger TruncateOriginalPageOffset(pageSize, |original| as U64, length, index)} | index < TruncateOriginalPageCount(pageSize, |original| as U64, length) ::
+      TruncateOriginalPageOffset(pageSize, |original| as U64, length, index) as int in capturedPages
+    ensures Undo.ValidUndo(original, Undo.Saved(records))
+    ensures Undo.Covered(records, |original|, length as int, |original|)
+  {
+    Undo.SavedRecordsAreExact(original, records);
+    forall offset: nat | length as int <= offset < |original|
+      ensures offset in Undo.Saved(records)
+    {
+      TruncateCoverageSelectsEveryRemovedByte(pageSize, |original| as U64, length, offset as U64);
+      var index := ((offset - length as int) / pageSize as int) as U32;
+      var page := TruncateOriginalPageOffset(pageSize, |original| as U64, length, index);
+      assert page as int in capturedPages;
+      assert Undo.Covered(records, |original|, page as int, page as int + pageSize as int);
+    }
+  }
+
   function IsBeforeImageRecord(tag: U64, pageSize: U32, originalLength: U64): bool {
     IsPageSize(pageSize) && IsDatabaseLength(originalLength) &&
     tag >= 9223372036854775808 && tag <= 9223372039002259456 &&

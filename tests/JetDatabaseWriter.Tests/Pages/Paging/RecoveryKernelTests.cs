@@ -14,6 +14,118 @@ using Xunit;
 /// <summary>Checks the generated recovery boundary against independent bounded and edge-case oracles.</summary>
 public sealed class RecoveryKernelTests
 {
+    /// <summary>Every required removed-tail page is selected once, including a partial original final page.</summary>
+    [Fact]
+    public void TruncateCoverageSchedule_BoundaryInputs_MatchesIndependentOracle()
+    {
+        uint[] pageSizes = [0, 1, 2048, 4096, uint.MaxValue];
+        ulong[] originalLengths = [0, 1, 2047, 2048, 2049, 4095, 4096, 4097, 2147483647, 2147483648, 2147483649, ulong.MaxValue];
+        ulong[] retainedLengths = [0, 1, 2048, 4096, 2147479552, 2147481600, 2147483648, 2147483649, ulong.MaxValue];
+        foreach (uint pageSize in pageSizes)
+        {
+            foreach (ulong originalLength in originalLengths)
+            {
+                foreach (ulong retainedLength in retainedLengths)
+                {
+                    bool valid = pageSize is 2048 or 4096 && originalLength <= 2147483648
+                        && retainedLength <= 2147483648 && retainedLength % pageSize == 0;
+                    uint expectedCount = valid && retainedLength < originalLength
+                        ? checked((uint)(((originalLength + pageSize - 1) / pageSize) - (retainedLength / pageSize)))
+                        : 0;
+                    Assert.Equal(expectedCount, RecoveryKernel.TruncateOriginalPageCount(pageSize, originalLength, retainedLength));
+                    foreach (uint index in new uint[] { 0, 1, expectedCount, expectedCount + 1, uint.MaxValue })
+                    {
+                        ulong expectedOffset = index < expectedCount ? retainedLength + ((ulong)index * pageSize) : 2147483648;
+                        Assert.Equal(expectedOffset, RecoveryKernel.TruncateOriginalPageOffset(pageSize, originalLength, retainedLength, index));
+                    }
+
+                    if (expectedCount > 0)
+                    {
+                        ulong last = retainedLength + ((expectedCount - 1UL) * pageSize);
+                        Assert.Equal(last, RecoveryKernel.TruncateOriginalPageOffset(pageSize, originalLength, retainedLength, expectedCount - 1));
+                        Assert.True(last < originalLength && originalLength - last <= pageSize);
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>Missing any selected removed-tail capture refuses before replay and retains the same evidence across retries.</summary>
+    /// <param name="pageSize">The supported physical page size.</param>
+    /// <param name="missingPage">The omitted required page, relative to the removed tail.</param>
+    [Theory]
+    [InlineData(2048, 0)]
+    [InlineData(2048, 1)]
+    [InlineData(2048, 2)]
+    [InlineData(4096, 0)]
+    [InlineData(4096, 1)]
+    [InlineData(4096, 2)]
+    public void Recover_MissingTruncateTailCapture_RefusesEverySelectedPage(int pageSize, int missingPage)
+    {
+        using var fixture = new RecordFixture(pageSize, (3 * pageSize) + 17);
+        using (var journal = PersistentRollbackJournal.Create(fixture.Database, pageSize))
+        {
+            journal.RecordBeforeTruncate(pageSize);
+        }
+
+        byte[] complete = File.ReadAllBytes(fixture.JournalPath);
+        int recordSize = pageSize + 40;
+        int missingPosition = 256 + (missingPage * recordSize);
+        byte[] evidence = new byte[complete.Length - recordSize];
+        complete.AsSpan(0, missingPosition).CopyTo(evidence);
+        complete.AsSpan(missingPosition + recordSize).CopyTo(evidence.AsSpan(missingPosition));
+        File.WriteAllBytes(fixture.JournalPath, evidence);
+        fixture.Database.SetLength(pageSize);
+        fixture.Database.Flush(flushToDisk: true);
+        byte[] truncated = fixture.ReadDatabase();
+
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            Assert.Throws<JetCorruptDataException>(() => PersistentRollbackJournal.Recover(fixture.Database));
+            Assert.Equal(truncated, fixture.ReadDatabase());
+            Assert.Equal(evidence, File.ReadAllBytes(fixture.JournalPath));
+        }
+    }
+
+    /// <summary>A complete selected tail restores all original pages and only the original final-page prefix.</summary>
+    /// <param name="pageSize">The supported physical page size.</param>
+    /// <param name="priorCapture">Whether a prior write intent already captured a middle tail page.</param>
+    [Theory]
+    [InlineData(2048, false)]
+    [InlineData(2048, true)]
+    [InlineData(4096, false)]
+    [InlineData(4096, true)]
+    public void Recover_CompleteTruncateTailWithPartialFinalPage_RestoresExactOriginal(int pageSize, bool priorCapture)
+    {
+        using var fixture = new RecordFixture(pageSize, (3 * pageSize) + 17);
+        using (var journal = PersistentRollbackJournal.Create(fixture.Database, pageSize))
+        {
+            if (priorCapture)
+            {
+                journal.RecordBeforeWrite(2L * pageSize, new byte[pageSize]);
+            }
+
+            journal.RecordBeforeTruncate(pageSize);
+            fixture.Database.SetLength(pageSize);
+            fixture.Database.Flush(flushToDisk: true);
+        }
+
+        byte[] evidence = File.ReadAllBytes(fixture.JournalPath);
+        int recordSize = pageSize + 40;
+        long[] expectedTags = priorCapture
+            ? [long.MinValue + (2L * pageSize), 2L * pageSize, long.MinValue + pageSize, long.MinValue + (3L * pageSize), -2]
+            : [long.MinValue + pageSize, long.MinValue + (2L * pageSize), long.MinValue + (3L * pageSize), -2];
+        Assert.Equal(256 + (expectedTags.Length * recordSize), evidence.Length);
+        for (int index = 0; index < expectedTags.Length; index++)
+        {
+            Assert.Equal(expectedTags[index], BinaryPrimitives.ReadInt64LittleEndian(evidence.AsSpan(256 + (index * recordSize))));
+        }
+
+        PersistentRollbackJournal.Recover(fixture.Database);
+        Assert.Equal(fixture.Original, fixture.ReadDatabase());
+        Assert.False(File.Exists(fixture.JournalPath));
+    }
+
     /// <summary>Original payload and manifest slices select only the exact bytes of an aligned original page.</summary>
     [Fact]
     public void OriginalPageSlices_BoundaryInputs_MatchIndependentOracle()
@@ -688,10 +800,10 @@ public sealed class RecoveryKernelTests
         private readonly int pageSize;
         private readonly string path = Path.Combine(Path.GetTempPath(), "jdw-record-kernel-" + Guid.NewGuid().ToString("N") + ".mdb");
 
-        internal RecordFixture(int pageSize = 2048)
+        internal RecordFixture(int pageSize = 2048, int? originalLength = null)
         {
             this.pageSize = pageSize;
-            this.Original = new byte[pageSize * 2];
+            this.Original = new byte[originalLength ?? (pageSize * 2)];
             RandomNumberGenerator.Fill(this.Original);
             File.WriteAllBytes(this.path, this.Original);
             this.Database = new FileStream(this.path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
