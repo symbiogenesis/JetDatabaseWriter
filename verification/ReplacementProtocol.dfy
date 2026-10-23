@@ -7,6 +7,7 @@
 // Stable names, immutable copies and exclusive access remain storage premises.
 // Lost discovery names, OS durability, hashing and C# refinement remain unproved.
 module ReplacementProtocol {
+  import Ownership = GenerationOwnership
   datatype Image = Missing | Present(bytes: seq<int>)
   datatype Decision = Prepared | PartialCommit | Committed
   datatype Snapshot = Snapshot(
@@ -929,4 +930,213 @@ module ReplacementProtocol {
     ensures !Valid(original, next, s)
     ensures forall c: CopySnapshot | c.protocol == s :: !CopyValid(original, next, c)
   {}
+
+  // The replacement generation and the ownership generation are independent
+  // identifiers. Binding one lease throughout this composition does not equate
+  // them, or infer a lease merely from valid replacement decision bytes.
+  datatype CoordinatedSnapshot = CoordinatedSnapshot(protocol: Snapshot,
+    ownership: Ownership.Snapshot, ownershipGeneration: nat)
+  datatype CoordinatedAction = ReplacementAction(action: Action)
+    | OwnershipAction(authorityAction: Ownership.Action)
+
+  predicate CoordinatedValid(original: seq<int>, next: seq<int>, s: CoordinatedSnapshot) {
+    Valid(original, next, s.protocol) && Ownership.Valid(s.ownership) &&
+    (s.protocol.intent ==> (s.ownership.nativeName == Ownership.Generation(s.ownershipGeneration) &&
+      s.ownership.receiptName == Ownership.Generation(s.ownershipGeneration)))
+  }
+
+  predicate HasCoordinatedAuthority(s: CoordinatedSnapshot) {
+    s.ownership.holder.Owned? && Ownership.HeldGenerationAuthority(s.ownership,
+      s.ownership.holder.id, s.ownershipGeneration)
+  }
+
+  predicate CoordinatedEnabled(original: seq<int>, next: seq<int>, s: CoordinatedSnapshot,
+    a: CoordinatedAction) {
+    match a
+      case ReplacementAction(action) => HasCoordinatedAuthority(s) &&
+        Enabled(original, next, s.protocol, action)
+      case OwnershipAction(action) => (Ownership.Enabled(s.ownership, action) &&
+        ((action.StartDispose? || action.DeleteNative? || action.DeleteReceipt?) ==> !s.protocol.intent))
+  }
+
+  function ApplyCoordinated(original: seq<int>, next: seq<int>, s: CoordinatedSnapshot,
+    a: CoordinatedAction): CoordinatedSnapshot
+    requires CoordinatedEnabled(original, next, s, a)
+  {
+    match a
+      case ReplacementAction(action) => s.(protocol := Apply(original, next, s.protocol, action))
+      case OwnershipAction(action) => s.(ownership := Ownership.Apply(s.ownership, action))
+  }
+
+  lemma CoordinatedStepPreserves(original: seq<int>, next: seq<int>, s: CoordinatedSnapshot,
+    a: CoordinatedAction)
+    requires CoordinatedValid(original, next, s) && CoordinatedEnabled(original, next, s, a)
+    ensures CoordinatedValid(original, next, ApplyCoordinated(original, next, s, a))
+    ensures s.protocol.decision == Committed ==>
+      ApplyCoordinated(original, next, s, a).protocol.decision == Committed
+  {
+    match a {
+      case ReplacementAction(action) => StepPreserves(original, next, s.protocol, action);
+      case OwnershipAction(action) => Ownership.StepPreserves(s.ownership, action);
+    }
+  }
+
+  predicate CoordinatedPath(original: seq<int>, next: seq<int>,
+    states: seq<CoordinatedSnapshot>, actions: seq<CoordinatedAction>) {
+    |states| == |actions| + 1 &&
+    forall i | 0 <= i < |actions| :: CoordinatedEnabled(original, next, states[i], actions[i]) &&
+      states[i+1] == ApplyCoordinated(original, next, states[i], actions[i])
+  }
+
+  lemma CoordinatedTracePreserves(original: seq<int>, next: seq<int>,
+    states: seq<CoordinatedSnapshot>, actions: seq<CoordinatedAction>)
+    requires CoordinatedPath(original, next, states, actions) && CoordinatedValid(original, next, states[0])
+    ensures CoordinatedValid(original, next, states[|states|-1])
+    ensures states[0].protocol.decision == Committed ==>
+      states[|states|-1].protocol.decision == Committed
+    decreases |actions|
+  {
+    if |actions| != 0 {
+      CoordinatedStepPreserves(original, next, states[0], actions[0]);
+      CoordinatedTracePreserves(original, next, states[1..], actions[1..]);
+    }
+  }
+
+  lemma MissingAuthorityBlocksReplacement(original: seq<int>, next: seq<int>, s: CoordinatedSnapshot,
+    action: Action)
+    requires !HasCoordinatedAuthority(s)
+    ensures !CoordinatedEnabled(original, next, s, ReplacementAction(action))
+  {}
+
+  lemma OwnershipDeletionFollowsSelectedCleanup(original: seq<int>, next: seq<int>,
+    s: CoordinatedSnapshot, a: CoordinatedAction)
+    requires CoordinatedValid(original, next, s) && CoordinatedEnabled(original, next, s, a)
+    requires (s.ownership.nativeName != Ownership.Absent &&
+      ApplyCoordinated(original, next, s, a).ownership.nativeName == Ownership.Absent) ||
+      (s.ownership.receiptName != Ownership.Absent &&
+      ApplyCoordinated(original, next, s, a).ownership.receiptName == Ownership.Absent)
+    ensures !s.protocol.intent
+    ensures s.protocol.destination == Present(Selected(original, next, s.protocol))
+    ensures a.OwnershipAction?
+  {
+    if a.OwnershipAction? {
+      Ownership.DeletionRequiresGenerationAuthority(s.ownership, a.authorityAction);
+    }
+  }
+
+  predicate CoordinatedRecoveryOnly(original: seq<int>, next: seq<int>,
+    states: seq<CoordinatedSnapshot>, actions: seq<CoordinatedAction>) {
+    |states| == |actions| + 1 && forall i | 0 <= i < |actions| ::
+      actions[i].OwnershipAction? || actions[i].action == Interrupt ||
+      (Valid(original, next, states[i].protocol) && states[i].protocol.intent &&
+        actions[i].action == RecoveryAction(original, next, states[i].protocol))
+  }
+
+  lemma InterruptedCoordinatedRecoveryKeepsSelection(original: seq<int>, next: seq<int>,
+    states: seq<CoordinatedSnapshot>, actions: seq<CoordinatedAction>)
+    requires CoordinatedPath(original, next, states, actions)
+    requires CoordinatedRecoveryOnly(original, next, states, actions)
+    requires CoordinatedValid(original, next, states[0])
+    ensures CoordinatedValid(original, next, states[|states|-1])
+    ensures states[|states|-1].protocol.decision == states[0].protocol.decision
+    ensures !states[|states|-1].protocol.intent ==>
+      states[|states|-1].protocol.destination == Present(Selected(original, next, states[0].protocol))
+    decreases |actions|
+  {
+    if |actions| != 0 {
+      if actions[0].ReplacementAction? && actions[0].action != Interrupt {
+        RecoveryProgress(original, next, states[0].protocol);
+      }
+      CoordinatedStepPreserves(original, next, states[0], actions[0]);
+      InterruptedCoordinatedRecoveryKeepsSelection(original, next, states[1..], actions[1..]);
+    }
+  }
+
+  lemma CrashRetainsAuthorityEvidence(original: seq<int>, next: seq<int>, s: CoordinatedSnapshot)
+    requires CoordinatedValid(original, next, s)
+    ensures CoordinatedEnabled(original, next, s, OwnershipAction(Ownership.Crash))
+    ensures ApplyCoordinated(original, next, s, OwnershipAction(Ownership.Crash)).protocol == s.protocol
+    ensures ApplyCoordinated(original, next, s, OwnershipAction(Ownership.Crash)).ownership.nativeName ==
+      s.ownership.nativeName
+    ensures ApplyCoordinated(original, next, s, OwnershipAction(Ownership.Crash)).ownership.receiptName ==
+      s.ownership.receiptName
+    ensures !HasCoordinatedAuthority(ApplyCoordinated(original, next, s, OwnershipAction(Ownership.Crash)))
+  {}
+
+  lemma ReacquireInterruptedReplacement(original: seq<int>, next: seq<int>, s: CoordinatedSnapshot, id: nat)
+    requires CoordinatedValid(original, next, s) && s.protocol.intent
+    requires s.ownership.holder == Ownership.Free && id !in s.ownership.owners
+    ensures CoordinatedEnabled(original, next, s,
+      OwnershipAction(Ownership.AcquireRecovery(id, s.ownershipGeneration)))
+    ensures HasCoordinatedAuthority(ApplyCoordinated(original, next, s,
+      OwnershipAction(Ownership.AcquireRecovery(id, s.ownershipGeneration))))
+    ensures ApplyCoordinated(original, next, s,
+      OwnershipAction(Ownership.AcquireRecovery(id, s.ownershipGeneration))).protocol == s.protocol
+  {}
+
+  // This is a gate on the refined copy publication, rather than the older
+  // abstract Publish action. Both the successful copy fence and exact held
+  // generation are required before the publication/cleanup schedule begins.
+  predicate AuthorizedCopyPublication(original: seq<int>, next: seq<int>, c: CopySnapshot,
+    authority: Ownership.Snapshot, id: nat, generation: nat) {
+    CopyPublicationEnabled(original, next, c) &&
+      Ownership.HeldGenerationAuthority(authority, id, generation)
+  }
+
+  lemma BootstrapAuthorityAllowsSelectedRecovery(original: seq<int>, next: seq<int>, c: CopySnapshot,
+    bootstrap: Ownership.AcquisitionSnapshot, id: nat)
+    returns (copies: seq<CopySnapshot>, copyActions: seq<CopyAction>, published: Snapshot,
+      cleanupStates: seq<Snapshot>, cleanupActions: seq<Action>,
+      ownershipStates: seq<Ownership.Snapshot>, ownershipActions: seq<Ownership.Action>)
+    requires CopyValid(original, next, c)
+    requires c.useNew == (c.protocol.decision == Committed)
+    requires Ownership.AcquisitionAuthority(bootstrap, id)
+    ensures CopyPath(original, next, copies, copyActions) && copies[0] == c
+    ensures AuthorizedCopyPublication(original, next, copies[|copies|-1],
+      Ownership.AcquiredOwnership(bootstrap, id), id, bootstrap.generation)
+    ensures published == PublishCopied(original, next, copies[|copies|-1])
+    ensures Path(original, next, cleanupStates, cleanupActions) && cleanupStates[0] == published
+    ensures !cleanupStates[|cleanupStates|-1].intent
+    ensures cleanupStates[|cleanupStates|-1].destination == Present(Selected(original, next, c.protocol))
+    ensures Ownership.Path(ownershipStates, ownershipActions)
+    ensures ownershipStates[0] == Ownership.AcquiredOwnership(bootstrap, id)
+    ensures ownershipStates[|ownershipStates|-1].nativeName == Ownership.Absent
+    ensures ownershipStates[|ownershipStates|-1].receiptName == Ownership.Absent
+    ensures ownershipStates[|ownershipStates|-1].holder == Ownership.Free
+    ensures forall i | 0 <= i < |cleanupStates| ::
+      CoordinatedValid(original, next, CoordinatedSnapshot(cleanupStates[i], ownershipStates[0], bootstrap.generation))
+    ensures forall i | 0 <= i < |cleanupActions| :: (CoordinatedEnabled(original, next,
+      CoordinatedSnapshot(cleanupStates[i], ownershipStates[0], bootstrap.generation),
+      ReplacementAction(cleanupActions[i])) && ApplyCoordinated(original, next,
+      CoordinatedSnapshot(cleanupStates[i], ownershipStates[0], bootstrap.generation),
+      ReplacementAction(cleanupActions[i])) ==
+        CoordinatedSnapshot(cleanupStates[i+1], ownershipStates[0], bootstrap.generation))
+    ensures forall i | 0 <= i < |ownershipActions| :: (CoordinatedEnabled(original, next,
+      CoordinatedSnapshot(cleanupStates[|cleanupStates|-1], ownershipStates[i], bootstrap.generation),
+      OwnershipAction(ownershipActions[i])) && ApplyCoordinated(original, next,
+      CoordinatedSnapshot(cleanupStates[|cleanupStates|-1], ownershipStates[i], bootstrap.generation),
+      OwnershipAction(ownershipActions[i])) ==
+        CoordinatedSnapshot(cleanupStates[|cleanupStates|-1], ownershipStates[i+1], bootstrap.generation))
+    ensures forall i | 0 <= i < |ownershipStates| :: CoordinatedValid(original, next,
+      CoordinatedSnapshot(cleanupStates[|cleanupStates|-1], ownershipStates[i], bootstrap.generation))
+  {
+    Ownership.CompletedBootstrapEstablishesAuthority(bootstrap, id);
+    var authority := Ownership.AcquiredOwnership(bootstrap, id);
+    copies, copyActions, published, cleanupStates, cleanupActions :=
+      CompleteSelectedCopyRecovery(original, next, c);
+    ownershipStates, ownershipActions := Ownership.CompleteGenerationCleanup(authority, id);
+    forall i | 0 <= i < |cleanupStates|
+      ensures CoordinatedValid(original, next,
+        CoordinatedSnapshot(cleanupStates[i], ownershipStates[0], bootstrap.generation))
+    {
+      TracePreserves(original, next, cleanupStates[..i+1], cleanupActions[..i]);
+    }
+    forall i | 0 <= i < |ownershipStates|
+      ensures CoordinatedValid(original, next,
+        CoordinatedSnapshot(cleanupStates[|cleanupStates|-1], ownershipStates[i], bootstrap.generation))
+    {
+      TracePreserves(original, next, cleanupStates, cleanupActions);
+      Ownership.TracePreserves(ownershipStates[..i+1], ownershipActions[..i]);
+    }
+  }
 }
