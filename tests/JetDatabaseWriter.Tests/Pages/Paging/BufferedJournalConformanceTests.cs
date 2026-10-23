@@ -702,6 +702,105 @@ public sealed class BufferedJournalConformanceTests
         }
     }
 
+    /// <summary>The shared replay control orders real page effects before resize, flush and a terminal decision.</summary>
+    /// <param name="pageSize">The supported physical page size.</param>
+    /// <param name="truncate">Whether preparation removes an original tail.</param>
+    /// <param name="live">Whether to use the live asynchronous restoration path.</param>
+    [Theory]
+    [InlineData(2048, false, false)]
+    [InlineData(2048, true, false)]
+    [InlineData(2048, false, true)]
+    [InlineData(2048, true, true)]
+    [InlineData(4096, false, false)]
+    [InlineData(4096, true, false)]
+    [InlineData(4096, false, true)]
+    [InlineData(4096, true, true)]
+    public async Task Replay_SuccessfulEffects_FollowGeneratedControlOrder(int pageSize, bool truncate, bool live)
+    {
+        string path = Path.Combine(Path.GetTempPath(), "jdw-replay-order-" + Guid.NewGuid().ToString("N") + ".mdb");
+        string sidecar = PersistentRollbackJournal.JournalPath(path);
+        byte[] original = new byte[(pageSize * 3) + 17];
+        Array.Fill(original, (byte)71);
+        await File.WriteAllBytesAsync(path, original, TestContext.Current.CancellationToken);
+        try
+        {
+            await using var database = new ReplayOrderStream(path);
+            var journal = PersistentRollbackJournal.Create(database, pageSize);
+            try
+            {
+                PrepareReplayOrder(journal, database, pageSize, truncate);
+                database.Observe = true;
+                if (live)
+                {
+                    await using var store = new ReplayOrderStore(database);
+                    await journal.RestoreAsync(store);
+                }
+                else
+                {
+                    journal.Dispose();
+                    PersistentRollbackJournal.Recover(database);
+                }
+
+                var expected = new List<(string Kind, long Offset, int Count)>
+                {
+                    ("page", pageSize * 3L, 17),
+                    ("page", 0, pageSize),
+                };
+                if (truncate)
+                {
+                    expected.Add(("page", pageSize, pageSize));
+                    expected.Add(("page", pageSize * 2L, pageSize));
+                }
+
+                expected.Add(("resize", original.Length, 0));
+                expected.Add(("flush", 0, 0));
+                if (live)
+                {
+                    // Complete also flushes the underlying database before its decision.
+                    expected.Add(("flush", 0, 0));
+                }
+
+                database.Observe = false;
+                Assert.Equal(expected, database.Effects);
+                Assert.False(File.Exists(sidecar));
+                byte[] restored = new byte[original.Length];
+                database.Position = 0;
+                database.ReadExactly(restored);
+                Assert.Equal(original, restored);
+            }
+            finally
+            {
+                journal.Dispose();
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(sidecar);
+            File.Delete(sidecar + ".preparing");
+        }
+    }
+
+    private static void PrepareReplayOrder(PersistentRollbackJournal journal, ReplayOrderStream database, int pageSize, bool truncate)
+    {
+        byte[] after = new byte[pageSize];
+        Array.Fill(after, (byte)93);
+        foreach (long offset in new[] { pageSize * 3L, 0 })
+        {
+            journal.RecordBeforeWrite(offset, after);
+            database.Position = offset;
+            database.Write(after, 0, after.Length);
+        }
+
+        if (truncate)
+        {
+            journal.RecordBeforeTruncate(pageSize);
+            database.SetLength(pageSize);
+        }
+
+        database.Flush(flushToDisk: true);
+    }
+
     private static int CountRecords(string sidecar, int pageSize, int originalLength, long tag)
     {
         byte[] evidence = File.ReadAllBytes(sidecar);
@@ -721,6 +820,85 @@ public sealed class BufferedJournalConformanceTests
     /// <summary>Interrupts recovery after its decision is durable.</summary>
     /// <exception cref="IOException">Always interrupts the cleanup boundary.</exception>
     private static void RefuseCleanup() => throw new IOException("Injected interruption before evidence cleanup.");
+
+    private sealed class ReplayOrderStream(string path)
+        : FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+    {
+        internal bool Observe { get; set; }
+
+        internal List<(string Kind, long Offset, int Count)> Effects { get; } = [];
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            this.RecordEffect("page", this.Position, count);
+            base.Write(buffer, offset, count);
+        }
+
+        public override void SetLength(long value)
+        {
+            this.RecordEffect("resize", value, 0);
+            base.SetLength(value);
+        }
+
+        public override void Flush(bool flushToDisk)
+        {
+            if (this.Observe)
+            {
+                Assert.True(flushToDisk);
+            }
+
+            this.RecordEffect("flush", 0, 0);
+            base.Flush(flushToDisk);
+        }
+
+        private void RecordEffect(string kind, long offset, int count)
+        {
+            if (this.Observe)
+            {
+                this.Effects.Add((kind, offset, count));
+            }
+        }
+    }
+
+    private sealed class ReplayOrderStore(ReplayOrderStream database) : IPageStore
+    {
+        public StoreCapabilities Capabilities => new(true, false, true, false, false, true);
+
+        public long Length => database.Length;
+
+        public ValueTask ReadAsync(long offset, Memory<byte> buffer, bool inline, CancellationToken cancellationToken)
+        {
+            database.Position = offset;
+            database.ReadExactly(buffer.Span);
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask WriteAsync(long offset, ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
+        {
+            database.Position = offset;
+            byte[] bytes = buffer.ToArray();
+            database.Write(bytes, 0, bytes.Length);
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask SetLengthAsync(long length, CancellationToken cancellationToken)
+        {
+            database.SetLength(length);
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask FlushAsync(bool toDisk, CancellationToken cancellationToken)
+        {
+            database.Flush(toDisk);
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        public void DisposeManagedResources()
+        {
+        }
+    }
 
     private sealed class FlushCutStream(string path, bool persistBeforeFailure) : FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
     {

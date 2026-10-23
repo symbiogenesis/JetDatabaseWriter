@@ -75,36 +75,58 @@ namespace JetDatabaseWriter.Verification {
 
 '@
 Assert-Scenario 'native projection preserves generated method body' {
-    $projected = ConvertFrom-RecoveryKernelTranslation $translation
+    $projected = ConvertFrom-NativeKernelTranslation 'RecoveryKernel' $translation
     if (-not $projected.Contains('return (value) == ((byte)(0));') -or
         -not $projected.Contains('internal static class RecoveryKernel') -or
         $projected.Contains('Unused compiler scaffolding') -or $projected -match '(?<!\r)\n') { throw 'Unexpected projection.' }
 }
-Assert-Scenario 'changed compiler structure rejected' { ConvertFrom-RecoveryKernelTranslation ($translation.Replace('public partial class __default', 'public class Other')) } 'Unsupported recovery kernel translation'
+Assert-Scenario 'changed compiler structure rejected' { ConvertFrom-NativeKernelTranslation 'RecoveryKernel' ($translation.Replace('public partial class __default', 'public class Other')) } 'Unsupported native kernel translation'
 Assert-Scenario 'generated qualified self reference follows type packaging' {
-    $projected = ConvertFrom-RecoveryKernelTranslation ($translation.Replace('return (value) == ((byte)(0));', 'return JetDatabaseWriter.Verification.RecoveryKernel.__default.Accept(value);'))
+    $projected = ConvertFrom-NativeKernelTranslation 'RecoveryKernel' ($translation.Replace('return (value) == ((byte)(0));', 'return JetDatabaseWriter.Verification.RecoveryKernel.__default.Accept(value);'))
     if (-not $projected.Contains('return JetDatabaseWriter.Verification.RecoveryKernel.Accept(value);')) { throw 'Qualified self reference was changed incorrectly.' }
 }
-Assert-Scenario 'runtime-dependent kernel rejected' { ConvertFrom-RecoveryKernelTranslation ($translation.Replace('return (value) == ((byte)(0));', 'return Dafny.Helpers.Value(value);')) } 'runtime support'
-Assert-Scenario 'unexpected compiled module rejected' { ConvertFrom-RecoveryKernelTranslation ($translation + 'namespace Other {}') } 'Unsupported recovery kernel translation'
+Assert-Scenario 'runtime-dependent kernel rejected' { ConvertFrom-NativeKernelTranslation 'RecoveryKernel' ($translation.Replace('return (value) == ((byte)(0));', 'return Dafny.Helpers.Value(value);')) } 'runtime support'
+Assert-Scenario 'unexpected compiled module rejected' { ConvertFrom-NativeKernelTranslation 'RecoveryKernel' ($translation + 'namespace Other {}') } 'Unsupported native kernel translation'
+$longValueTranslation = $translation.Replace('RecoveryKernel', 'LongValueKernel')
+Assert-Scenario 'second native kernel preserves method bodies and self references' {
+    $projected = ConvertFrom-NativeKernelTranslation 'LongValueKernel' ($longValueTranslation.Replace('return (value) == ((byte)(0));', 'return JetDatabaseWriter.Verification.LongValueKernel.__default.Accept(value);'))
+    if (-not $projected.Contains('internal static class LongValueKernel') -or
+        -not $projected.Contains('verification/LongValueKernel.dfy') -or
+        -not $projected.Contains('return JetDatabaseWriter.Verification.LongValueKernel.Accept(value);')) { throw 'Second kernel packaging changed incorrectly.' }
+}
+Assert-Scenario 'only reviewed native kernel names admitted' { ConvertFrom-NativeKernelTranslation 'Other' $translation } 'Unsupported native kernel'
+Assert-Scenario 'wrong kernel namespace rejected' { ConvertFrom-NativeKernelTranslation 'LongValueKernel' $translation } 'Unsupported native kernel translation'
+Assert-Scenario 'second kernel refuses runtime-dependent translation' { ConvertFrom-NativeKernelTranslation 'LongValueKernel' ($longValueTranslation.Replace('return (value) == ((byte)(0));', 'return LongValueNativeTypes.Value(value);')) } 'runtime support'
 $originalProofProcess = ${function:Invoke-ProofProcess}
 function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [string] $WorkingDirectory, [string] $Name, [int] $TimeoutSeconds) {
     if ($Arguments -contains '--no-verify' -or $Arguments -contains '--include-runtime' -or
         $Arguments -contains '--library' -or $Arguments -notcontains $source) { throw 'Generation must verify with its declared source dependencies and omit the runtime.' }
     $outputIndex = [Array]::IndexOf($Arguments, '--output') + 1
-    [IO.File]::WriteAllText($Arguments[$outputIndex], $translation)
+    [IO.File]::WriteAllText($Arguments[$outputIndex], $(if ($Name -eq 'LongValueKernel.translate') { $longValueTranslation } else { $translation }))
     return [pscustomobject]@{ ExitCode = 0; Stdout = 'Dafny program verifier finished with 2 verified, 0 errors'; Stderr = '' }
 }
 try {
     $generatedPath = Join-Path $fixture 'src/JetDatabaseWriter/Verification/RecoveryKernel.g.cs'
-    Assert-Scenario 'missing generated source rejected' { Sync-RecoveryKernel $fixture 'mock' $fixture @($source) @() 10 $false } 'stale'
+    Assert-Scenario 'missing generated source rejected' { Sync-NativeKernel 'RecoveryKernel' $fixture 'mock' $fixture @($source) @() 10 $false } 'stale'
     Assert-Scenario 'explicit generation then exact freshness check' {
-        Sync-RecoveryKernel $fixture 'mock' $fixture @($source) @() 10 $true
-        Sync-RecoveryKernel $fixture 'mock' $fixture @($source) @() 10 $false
+        Sync-NativeKernel 'RecoveryKernel' $fixture 'mock' $fixture @($source) @() 10 $true
+        Sync-NativeKernel 'RecoveryKernel' $fixture 'mock' $fixture @($source) @() 10 $false
     }
     Assert-Scenario 'edited generated method rejected' {
         [IO.File]::WriteAllText($generatedPath, ([IO.File]::ReadAllText($generatedPath).Replace('return (value) == ((byte)(0));', 'return true;')))
-        Sync-RecoveryKernel $fixture 'mock' $fixture @($source) @() 10 $false
+        Sync-NativeKernel 'RecoveryKernel' $fixture 'mock' $fixture @($source) @() 10 $false
+    } 'stale'
+    Assert-Scenario 'second native kernel has independent generation and freshness' {
+        Sync-NativeKernel 'LongValueKernel' $fixture 'mock' $fixture @($source) @() 10 $true
+        Sync-NativeKernel 'LongValueKernel' $fixture 'mock' $fixture @($source) @() 10 $false
+        $longValueGeneratedPath = Join-Path $fixture 'src/JetDatabaseWriter/Verification/LongValueKernel.g.cs'
+        if (-not [IO.File]::ReadAllText($longValueGeneratedPath).Contains('internal static class LongValueKernel') -or
+            -not [IO.File]::ReadAllText($generatedPath).Contains('return true;')) { throw 'Native kernel outputs were not independent.' }
+    }
+    Assert-Scenario 'edited second kernel rejected independently' {
+        $longValueGeneratedPath = Join-Path $fixture 'src/JetDatabaseWriter/Verification/LongValueKernel.g.cs'
+        [IO.File]::WriteAllText($longValueGeneratedPath, ([IO.File]::ReadAllText($longValueGeneratedPath).Replace('return (value) == ((byte)(0));', 'return true;')))
+        Sync-NativeKernel 'LongValueKernel' $fixture 'mock' $fixture @($source) @() 10 $false
     } 'stale'
 } finally { ${function:Invoke-ProofProcess} = $originalProofProcess }
 Assert-Scenario 'comments and strings do not become policy tokens' { Assert-ProofSource '// assume include {:axiom}' "lemma Good() { var x := `"assume`"; /* nested /* assume */ include */ }" }

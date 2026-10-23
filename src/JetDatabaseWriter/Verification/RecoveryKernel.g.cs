@@ -160,6 +160,26 @@ namespace JetDatabaseWriter.Verification {
         return (byte)(0);
       }
     }
+    public static byte JournalReplayAction(uint pageSize, ulong originalLength, ulong minimumLength, bool recovering, uint remainingPages, byte phase)
+    {
+      ulong _0_start = JetDatabaseWriter.Verification.RecoveryKernel.JournalRecordStart(pageSize, originalLength);
+      bool _1_marker = ((minimumLength) < (originalLength)) && (!(recovering));
+      if ((((((_0_start) == (0UL)) || ((minimumLength) > (originalLength))) || ((phase) > ((byte)(2)))) || (((ulong)(remainingPages)) > (((_0_start) - (128UL)) / (32UL)))) || (((phase) > ((byte)(0))) && (((remainingPages) > (0U)) || (_1_marker)))) {
+        return (byte)(0);
+      } else if ((phase) == ((byte)(0))) {
+        if (_1_marker) {
+          return (byte)(1);
+        } else if ((remainingPages) > (0U)) {
+          return (byte)(2);
+        } else {
+          return (byte)(3);
+        }
+      } else if ((phase) == ((byte)(1))) {
+        return (byte)(4);
+      } else {
+        return (byte)(5);
+      }
+    }
     public static bool OriginalOrZeroByte(bool recovering, ulong offset, ulong minimumLength, byte current, byte original)
     {
       return ((current) == (original)) || (((recovering) && ((offset) >= (minimumLength))) && ((current) == ((byte)(0))));

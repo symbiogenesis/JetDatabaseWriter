@@ -299,7 +299,7 @@ public sealed class ReplacementCopyConformanceTests
         MethodInfo copy = typeof(EncryptionReplacementIntent).GetMethod("Copy", BindingFlags.NonPublic | BindingFlags.Static)!;
         try
         {
-            _ = copy.Invoke(null, [source, output, Ct]);
+            _ = copy.Invoke(null, [source, output, Ct, null]);
         }
         catch (TargetInvocationException error) when (error.InnerException is not null)
         {

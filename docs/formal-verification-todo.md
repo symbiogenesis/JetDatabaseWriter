@@ -21,7 +21,7 @@ Cause: the buffered journal protocol constructs aligned multi-page captures and 
 
 - [ ] Bind the constructed page payloads and capture/preparation schedules to serialized record tags, manifest/page hashes, framing and production record iteration.
 - [ ] Establish production/storage correspondence for the buffered content refinement's zero-exposure contract, or extend the protocol to safely admit pre-marker survivors where an old write or length effect reextends a truncated image. Repro: truncation persists before an older write and the resulting zero gap has no durable gap intent or replay marker; exact undo coverage alone cannot authorize parser admission (V3/V7).
-- [ ] Connect the decreasing abstract replay schedule to the production loop and its conditional marker, record iteration, resize, flush and exception boundaries through V6 conformance.
+- [ ] Bind the generated production-order replay control and decreasing rank to exact dictionary membership, serialized record iteration and payload/effect contracts. Repro: the selector consumes a validated capture count but does not prove that every enumerated entry is the exact admitted record or that returned I/O success implements the modeled effect (V3/V6).
 
 Acceptance: refine the checked buffered protocol under explicit page and parser contracts. Preserve its trace/progress theorems without promoting logical record classification to a verified byte parser or abstract progress to C# loop refinement.
 
@@ -30,20 +30,20 @@ Acceptance: refine the checked buffered protocol under explicit page and parser 
 Cause: the replacement model classifies bounded header/decision bytes, refines bounded copy schedules and composes selected publication with staged generation acquisition and ordered cleanup. Generated framing, length decoding and field-based admission now refine the byte classifier in the production parser. Actual field-check/byte correspondence, immutable-copy validation, generation authority and I/O still require refinement.
 
 - [ ] Bind the generated replacement classifier's field-check inputs to production exact reads and magic/GUID/path/digest operations, and connect admitted evidence to generation bootstrap. The generated length decoder and framing/admission decisions do not verify these actual operations; valid record bytes alone cannot establish exclusive recovery authority (V5/V6).
-- [ ] Connect Prepared publication's concrete file creation, reads, writes and flush exceptions to retained-evidence and selected-publication ordering. Direct shared-copier fault survivors and real recovery retries do not establish the complete `Publish`/`Recover` exception trace or syscall persistence.
+- [ ] Extend complete `Publish`/`Recover` callback interruption traces to partial failed native syscall survivors and their persistence contracts. Repro: exceptions before/after real publication reads, writes and both flush fences retain selection, but do not determine which bytes or namespace effects a failed syscall persists (V5/V7).
 - [ ] Extend production correspondence beyond the selected bootstrap and production-order cleanup traces, including receipt identity, interrupted acquisition/publication and failed bootstrap I/O. Connect the cleanup refinement's validated selected-image and successful destination-flush entry contract to the complete production trace.
-- [ ] Preserve the distinction between an abstract successful recovery path and the actual production algorithm; integrate its copy/retry progress argument.
+- [ ] Complete the production copy/retry correspondence beyond the composed successful copy, destination fence and leased-cleanup schedule. Repro: validated exclusive acquisition and exact flush success remain model contracts; digest/path/GUID operations, failed syscalls and complete commit-decision control flow are not refined (V5/V6).
 
 Acceptance: refined evidence/publication properties connected to implementation. Namespace durability and metadata preservation still require V7 qualification.
 
 ## V6 — Extend correspondence across recovery control flow
 
-Cause: generated journal-value, framing, record-tag/control-state, bounded payload/hash slices, checked record cursors, original-page source identity and byte-authorization decisions cover selected pure boundaries. The generated truncate-tail schedule selects complete logical coverage at preparation and parser admission, and the replacement parser uses generated framing/length/admission decisions. Recovery loops, actual record reads, cryptographic payload identity, map construction and effect ordering remain handwritten and can drift from the model.
+Cause: generated journal-value, framing, record-tag/control-state, bounded payload/hash slices, checked record cursors, original-page source identity and byte-authorization decisions cover selected pure boundaries. The generated truncate-tail schedule selects complete logical coverage at preparation and parser admission, and the replacement parser uses generated framing/length/admission decisions. Generated replay action selection and its decreasing control rank are used by both production replay paths. Actual record reads, cryptographic payload identity, map construction and returned I/O effects remain handwritten and can drift from the model.
 
 - [ ] Derive and replay conformance traces for remaining production transitions, including failed flush/commit, conditional replay markers and generation bootstrap/cleanup.
 - [ ] Exercise every relevant transition and rejection class, including repeated crashes and negative mutation controls. Keep local selections focused.
 - [ ] Complete the manual refinement argument for the remaining operations in the boundary inventory; review changed production mappings and proof assumptions.
-- [ ] Extend the executable boundary beyond checked record acquisition, original-page source association and truncate-tail selection into serialized coverage identity or a replay transition once its byte and trace contracts are explicit; remove corresponding handwritten decisions and verify the production invocation. Actual reads, map construction and digest implementations remain separate obligations.
+- [ ] Extend the executable boundary from generated acquisition, truncate-tail selection and replay control into serialized coverage identity. Bind complete record/checksum/tag/manifest validation to exact map membership and saved values; actual reads and digest implementations remain separate obligations (V3/V6).
 
 Acceptance: tested correspondence for each precisely named boundary, with the same verification, source freshness, license, target and trimming/NativeAOT obligations as the current kernel. No unchecked external contracts, new shipping dependencies or stronger claims for the remaining handwritten recovery algorithm.
 
@@ -63,11 +63,11 @@ Acceptance: E4/F6/I15 evidence for each advertised platform. Never infer hardwar
 
 ## V8 — Verify bounded parsing and arithmetic kernels
 
-Cause: S1's remaining resource and traversal audit spans many handwritten readers.
+Cause: S1's remaining resource and traversal audit spans many handwritten readers. The generated long-value descriptor first-word codec proves supported packing/inverse decisions, but span acquisition, remaining fields, external-row traversal and aggregate resource bounds remain handwritten.
 
 - [ ] Identify shared range/offset/length primitives and prove overflow-safe slicing, exact reads and monotone consumption for both target frameworks.
 - [ ] Prove parser progress, finite traversal with visited identities, decreasing budgets and aggregate allocation bounds for a selected hostile-file surface.
-- [ ] Add codec round-trip/inverse proofs for defined representations, with rejection of malformed encodings and explicit native-format assumptions.
+- [ ] Extend codec round-trip/inverse coverage beyond the long-value descriptor first word to selected bounded representations, with malformed-encoding refusal and explicit native-format assumptions. Bind pointer/token acquisition and span bounds before claiming a complete descriptor parser (V8).
 - [ ] Connect kernels to production paths before claiming a public parser is verified. Retain fuzzing and independent malformed-file tests.
 
 Acceptance: named surface coverage with implementation correspondence; no whole-library hostile-file claim from isolated lemmas.

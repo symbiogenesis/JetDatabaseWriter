@@ -14,6 +14,131 @@ using Xunit;
 /// <summary>Checks the generated recovery boundary against independent bounded and edge-case oracles.</summary>
 public sealed class RecoveryKernelTests
 {
+    /// <summary>Replay chooses exactly the required marker, remaining pages, resize, flush and completion order.</summary>
+    [Fact]
+    public void JournalReplayAction_BoundaryControls_MatchesIndependentOracle()
+    {
+        uint[] pageSizes = [0, 1, 2048, 4096, uint.MaxValue];
+        ulong[] originalLengths = [0, 1, 2048, 4097, 2147483648, 2147483649, ulong.MaxValue];
+        ulong[] minimumLengths = [0, 1, 2048, 4096, 2147483648, ulong.MaxValue];
+        uint[] remainingPages = [0, 1, 2, 1048576, 1048577, uint.MaxValue];
+        foreach (uint pageSize in pageSizes)
+        {
+            foreach (ulong originalLength in originalLengths)
+            {
+                foreach (ulong minimumLength in minimumLengths)
+                {
+                    foreach (uint remaining in remainingPages)
+                    {
+                        foreach (bool recovering in new[] { false, true })
+                        {
+                            foreach (byte phase in new byte[] { 0, 1, 2, 3, byte.MaxValue })
+                            {
+                                byte expected = 0;
+                                bool bounded = pageSize is 2048 or 4096 && originalLength <= 2147483648 && minimumLength <= originalLength;
+                                if (bounded && remaining <= ((originalLength / pageSize) + (originalLength % pageSize == 0 ? 0UL : 1UL)))
+                                {
+                                    bool markerRequired = minimumLength < originalLength && !recovering;
+                                    if (phase == 0)
+                                    {
+                                        if (markerRequired)
+                                        {
+                                            expected = 1;
+                                        }
+                                        else if (remaining > 0)
+                                        {
+                                            expected = 2;
+                                        }
+                                        else
+                                        {
+                                            expected = 3;
+                                        }
+                                    }
+                                    else if (remaining == 0 && !markerRequired)
+                                    {
+                                        expected = phase switch
+                                        {
+                                            1 => 4,
+                                            2 => 5,
+                                            _ => 0,
+                                        };
+                                    }
+                                }
+
+                                Assert.Equal(expected, RecoveryKernel.JournalReplayAction(pageSize, originalLength, minimumLength, recovering, remaining, phase));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>Successful replay consumes each captured page before its resize, durable flush and decision.</summary>
+    [Fact]
+    public void JournalReplayAction_SuccessfulSchedules_ConsumeEveryCaptureBeforeCompletion()
+    {
+        foreach (uint pageSize in new uint[] { 2048, 4096 })
+        {
+            foreach (uint captures in new uint[] { 0, 1, 3, 1048576 })
+            {
+                if (captures > 2147483648UL / pageSize)
+                {
+                    continue;
+                }
+
+                foreach (bool removedTail in new[] { false, true })
+                {
+                    foreach (bool markerExists in new[] { false, true })
+                    {
+                        const ulong originalLength = 2147483648;
+                        ulong minimumLength = removedTail ? 0 : originalLength;
+                        uint remaining = captures;
+                        byte phase = 0;
+                        bool recovering = markerExists;
+                        int markers = 0;
+                        int pages = 0;
+                        int steps = 0;
+                        byte action;
+                        while ((action = RecoveryKernel.JournalReplayAction(pageSize, originalLength, minimumLength, recovering, remaining, phase)) != 5)
+                        {
+                            switch (action)
+                            {
+                                case 1:
+                                    Assert.Equal(0, steps);
+                                    recovering = true;
+                                    markers++;
+                                    break;
+                                case 2:
+                                    remaining--;
+                                    pages++;
+                                    break;
+                                case 3:
+                                    Assert.Equal(captures, checked((uint)pages));
+                                    phase = 1;
+                                    break;
+                                case 4:
+                                    Assert.Equal(1, phase);
+                                    phase = 2;
+                                    break;
+                                default:
+                                    Assert.Fail("An admitted successful replay schedule refused progress.");
+                                    break;
+                            }
+
+                            steps++;
+                            Assert.True(checked((uint)steps) <= captures + 3UL);
+                        }
+
+                        Assert.Equal(removedTail && !markerExists ? 1 : 0, markers);
+                        Assert.Equal(captures, checked((uint)pages));
+                        Assert.Equal(captures + 2UL + checked((uint)markers), checked((uint)steps));
+                    }
+                }
+            }
+        }
+    }
+
     /// <summary>Every required removed-tail page is selected once, including a partial original final page.</summary>
     [Fact]
     public void TruncateCoverageSchedule_BoundaryInputs_MatchesIndependentOracle()

@@ -307,7 +307,12 @@ public sealed class CompactLongValueAuditTests
     public async Task Audit_ObservesOriginalMalformedColumnBeforeRefusing(bool truncated)
     {
         var source = new SyntheticPages(DatabaseFormat.Jet4Mdb);
-        byte[] column = truncated ? [0xFF, 0xFE] : Column(new LongValueDescriptor(1, Constants.LongValue.StorageModeMask, 768, 7), [0x80]);
+        byte[] column = truncated ? [0xFF, 0xFE] : Column(LongValueDescriptor.Chained(1, 768, 7), [0x80]);
+        if (!truncated)
+        {
+            column[3] |= Constants.LongValue.StorageModeMask;
+        }
+
         var records = new List<CompactLongValueRecord>();
 
         await Assert.ThrowsAsync<JetCorruptDataException>(async () => await AuditAsync(source, column, records: records));

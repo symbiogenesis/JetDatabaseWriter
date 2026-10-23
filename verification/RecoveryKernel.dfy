@@ -547,6 +547,54 @@ module RecoveryKernel {
       ClassifyJournalRecord(tag, pageSize, originalLength, true, removedTail, finalRecord) != 2
   { }
 
+  // Production-order replay control after complete evidence/content admission.
+  // phase 0 restores pages; phase 1 follows resize; phase 2 follows flush
+  // as advanced by the caller only AFTER the preceding effect succeeds:
+  // phase 1 therefore selects flush, and phase 2 selects the decision.
+  // Results: 0 refuse; 1 durable marker; 2 next captured page; 3 resize;
+  // 4 durable database flush; 5 completion decision. No I/O is trusted here.
+  function JournalReplayAction(pageSize: U32, originalLength: U64, minimumLength: U64,
+      recovering: bool, remainingPages: U32, phase: Byte): Byte {
+    var start := JournalRecordStart(pageSize, originalLength);
+    var marker := minimumLength < originalLength && !recovering;
+    if start == 0 || minimumLength > originalLength || phase > 2 ||
+        remainingPages as U64 > (start - 128) / 32 ||
+        (phase > 0 && (remainingPages > 0 || marker)) then 0
+    else if phase == 0 then (if marker then 1 else if remainingPages > 0 then 2 else 3)
+    else if phase == 1 then 4 else 5
+  }
+
+  lemma JournalReplayActionRefinesProductionOrder(pageSize: U32, originalLength: U64,
+      minimumLength: U64, recovering: bool, remainingPages: U32, phase: Byte)
+    requires IsPageSize(pageSize) && IsDatabaseLength(originalLength)
+    requires remainingPages as int <= (JournalRecordStart(pageSize, originalLength) as int - 128) / 32
+    ensures JournalReplayAction(pageSize, originalLength, minimumLength, recovering, remainingPages, phase) as int ==
+      Undo.PageReplayAction(originalLength as int,
+        Undo.PageReplayControl(minimumLength as int, recovering, remainingPages as int, phase as int))
+  {
+    JournalManifestIsExactBoundedPageRounding(pageSize, originalLength);
+  }
+
+  lemma JournalReplayActionRequiresSafeOrder(pageSize: U32, originalLength: U64,
+      minimumLength: U64, recovering: bool, remainingPages: U32, phase: Byte)
+    ensures JournalReplayAction(pageSize, originalLength, minimumLength, recovering, remainingPages, phase) <= 5
+    ensures JournalReplayAction(pageSize, originalLength, minimumLength, recovering, remainingPages, phase) != 0 ==>
+      IsPageSize(pageSize) && minimumLength <= originalLength <= 2147483648 && remainingPages <= 1048576
+    ensures JournalReplayAction(pageSize, originalLength, minimumLength, recovering, remainingPages, phase) == 1 ==>
+      minimumLength < originalLength && !recovering && phase == 0
+    ensures JournalReplayAction(pageSize, originalLength, minimumLength, recovering, remainingPages, phase) >= 2 ==>
+      minimumLength == originalLength || recovering
+    ensures JournalReplayAction(pageSize, originalLength, minimumLength, recovering, remainingPages, phase) == 2 ==>
+      phase == 0 && remainingPages > 0
+    ensures JournalReplayAction(pageSize, originalLength, minimumLength, recovering, remainingPages, phase) >= 3 ==>
+      remainingPages == 0
+    ensures JournalReplayAction(pageSize, originalLength, minimumLength, recovering, remainingPages, phase) == 3 ==> phase == 0
+    ensures JournalReplayAction(pageSize, originalLength, minimumLength, recovering, remainingPages, phase) == 4 ==> phase == 1
+    ensures JournalReplayAction(pageSize, originalLength, minimumLength, recovering, remainingPages, phase) == 5 ==> phase == 2
+  {
+    JournalManifestIsExactBoundedPageRounding(pageSize, originalLength);
+  }
+
   function OriginalOrZeroByte(recovering: bool, offset: U64,
       minimumLength: U64, current: Byte, original: Byte): bool {
     current == original || (recovering && offset >= minimumLength && current == 0)

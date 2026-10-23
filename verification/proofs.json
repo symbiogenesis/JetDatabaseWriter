@@ -4,7 +4,8 @@
     "verification/UndoJournal.dfy",
     "verification/GenerationOwnership.dfy",
     "verification/ReplacementProtocol.dfy",
-    "verification/RecoveryKernel.dfy"
+    "verification/RecoveryKernel.dfy",
+    "verification/LongValueKernel.dfy"
   ],
   "dependencies": {
     "verification/ReplacementProtocol.dfy": ["verification/GenerationOwnership.dfy"],

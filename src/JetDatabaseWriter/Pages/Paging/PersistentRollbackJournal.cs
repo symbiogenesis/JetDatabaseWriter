@@ -38,6 +38,16 @@ internal sealed class PersistentRollbackJournal : IDisposable
         AfterImage = 5,
     }
 
+    private enum JournalReplayAction : byte
+    {
+        Invalid = 0,
+        Marker = 1,
+        Page = 2,
+        Resize = 3,
+        Flush = 4,
+        Complete = 5,
+    }
+
     private PersistentRollbackJournal(FileStream database, FileStream journal, int pageSize, long originalLength)
     {
         this.database = database;
@@ -190,23 +200,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             if (!state.Committed)
             {
                 ValidateCurrentContent(database, journal, state);
-                if (state.MinimumLength < state.OriginalLength && !state.Recovering)
-                {
-                    _ = AppendRecord(journal, state.PageSize, -3, []);
-                }
-
-                byte[] page = new byte[state.PageSize];
-                byte[] record = new byte[state.PageSize + 40];
-                foreach (KeyValuePair<long, long> entry in state.BeforeImages)
-                {
-                    int count = ReadOriginalPage(journal, state, entry.Key, entry.Value, page, record);
-                    database.Position = entry.Key;
-                    database.Write(page, 0, count);
-                }
-
-                database.SetLength(state.OriginalLength);
-                database.Flush(true);
-                _ = AppendRecord(journal, state.PageSize, -1, DatabaseHash(database));
+                RestoreBeforeImages(database, journal, state);
             }
         }
 
@@ -217,6 +211,62 @@ internal sealed class PersistentRollbackJournal : IDisposable
         }
 
         File.Delete(path);
+    }
+
+    private static void RestoreBeforeImages(FileStream database, FileStream journal, JournalState state)
+    {
+        byte[] page = new byte[state.PageSize];
+        byte[] record = new byte[state.PageSize + 40];
+        using IEnumerator<KeyValuePair<long, long>> pages = state.BeforeImages.GetEnumerator();
+        uint remaining = checked((uint)state.BeforeImages.Count);
+        bool recovering = state.Recovering;
+        byte phase = 0;
+        while (true)
+        {
+            switch (NextReplayAction(state, recovering, remaining, phase))
+            {
+                case JournalReplayAction.Marker:
+                    _ = AppendRecord(journal, state.PageSize, -3, []);
+                    recovering = true;
+                    break;
+                case JournalReplayAction.Page:
+                    KeyValuePair<long, long> entry = NextReplayPage(pages);
+                    int count = ReadOriginalPage(journal, state, entry.Key, entry.Value, page, record);
+                    database.Position = entry.Key;
+                    database.Write(page, 0, count);
+                    remaining--;
+                    break;
+                case JournalReplayAction.Resize:
+                    database.SetLength(state.OriginalLength);
+                    phase = 1;
+                    break;
+                case JournalReplayAction.Flush:
+                    database.Flush(true);
+                    phase = 2;
+                    break;
+                case JournalReplayAction.Complete:
+                    _ = AppendRecord(journal, state.PageSize, -1, DatabaseHash(database));
+                    return;
+                case JournalReplayAction.Invalid:
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery replay control state is invalid.");
+                default:
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery kernel returned an unknown replay action.");
+            }
+        }
+    }
+
+    private static JournalReplayAction NextReplayAction(JournalState state, bool recovering, uint remaining, byte phase)
+        => (JournalReplayAction)RecoveryKernel.JournalReplayAction(
+            (uint)state.PageSize, (ulong)state.OriginalLength, (ulong)state.MinimumLength, recovering, remaining, phase);
+
+    private static KeyValuePair<long, long> NextReplayPage(IEnumerator<KeyValuePair<long, long>> pages)
+    {
+        if (!pages.MoveNext())
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery replay schedule is missing an admitted original page.");
+        }
+
+        return pages.Current;
     }
 
     private static void ValidatePreparationCopy(string databasePath, FileStream journal, string preparation)
@@ -791,22 +841,43 @@ internal sealed class PersistentRollbackJournal : IDisposable
             throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery manifest differs from the prepared database image.");
         }
 
-        if (state.MinimumLength < state.OriginalLength && !state.Recovering)
-        {
-            this.RecordRecoveryStart();
-        }
-
         byte[] page = new byte[this.pageSize];
         byte[] record = new byte[this.pageSize + 40];
-        foreach (KeyValuePair<long, long> entry in state.BeforeImages)
+        using IEnumerator<KeyValuePair<long, long>> pages = state.BeforeImages.GetEnumerator();
+        uint remaining = checked((uint)state.BeforeImages.Count);
+        bool recovering = state.Recovering;
+        byte phase = 0;
+        while (true)
         {
-            int count = ReadOriginalPage(this.journal, state, entry.Key, entry.Value, page, record);
-            await store.WriteAsync(entry.Key, page.AsMemory(0, count), CancellationToken.None).ConfigureAwait(false);
+            switch (NextReplayAction(state, recovering, remaining, phase))
+            {
+                case JournalReplayAction.Marker:
+                    this.RecordRecoveryStart();
+                    recovering = true;
+                    break;
+                case JournalReplayAction.Page:
+                    KeyValuePair<long, long> entry = NextReplayPage(pages);
+                    int count = ReadOriginalPage(this.journal, state, entry.Key, entry.Value, page, record);
+                    await store.WriteAsync(entry.Key, page.AsMemory(0, count), CancellationToken.None).ConfigureAwait(false);
+                    remaining--;
+                    break;
+                case JournalReplayAction.Resize:
+                    await store.SetLengthAsync(this.originalLength, CancellationToken.None).ConfigureAwait(false);
+                    phase = 1;
+                    break;
+                case JournalReplayAction.Flush:
+                    await store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
+                    phase = 2;
+                    break;
+                case JournalReplayAction.Complete:
+                    this.Complete();
+                    return;
+                case JournalReplayAction.Invalid:
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery replay control state is invalid.");
+                default:
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery kernel returned an unknown replay action.");
+            }
         }
-
-        await store.SetLengthAsync(this.originalLength, CancellationToken.None).ConfigureAwait(false);
-        await store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
-        this.Complete();
     }
 
     private void CaptureOriginalPage(long offset)

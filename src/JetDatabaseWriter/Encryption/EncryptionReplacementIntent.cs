@@ -332,7 +332,8 @@ internal sealed class EncryptionReplacementIntent : IDisposable
         using (var input = new FileStream(selectedPath, FileMode.Open, FileAccess.Read, FileShare.None))
         using (FileStream output = EncryptionMaintenanceFile.Create(publication))
         {
-            RequireImage(Copy(input, output, CancellationToken.None), selected);
+            boundary?.Invoke("publication-created");
+            RequireImage(Copy(input, output, CancellationToken.None, boundary), selected);
         }
 
         RequireImage(ReadImage(publication), selected);
@@ -351,7 +352,9 @@ internal sealed class EncryptionReplacementIntent : IDisposable
         try
         {
             RequireImage(Hash(database), selected);
+            boundary?.Invoke("destination-before-flush");
             database.Flush(true);
+            boundary?.Invoke("destination-flush");
             return database;
         }
         catch
@@ -366,7 +369,9 @@ internal sealed class EncryptionReplacementIntent : IDisposable
         Image observed = Hash(database);
         RequireImage(observed, state.Committed ? state.New : state.Old);
         ValidateState(path, state, database, observed);
+        boundary?.Invoke("cleanup-before-flush");
         database.Flush(true);
+        boundary?.Invoke("cleanup-flush");
         foreach (string suffix in new[] { ".publish.tmp", ".old", ".new.tmp" })
         {
             File.Delete(Candidate(path, state.Generation, suffix));
@@ -455,7 +460,7 @@ internal sealed class EncryptionReplacementIntent : IDisposable
         return bytes;
     }
 
-    private static Image Copy(FileStream input, FileStream output, CancellationToken cancellationToken)
+    private static Image Copy(FileStream input, FileStream output, CancellationToken cancellationToken, Action<string>? boundary = null)
     {
         ValidateLength(input.Length);
         long prior = input.Position;
@@ -469,6 +474,7 @@ internal sealed class EncryptionReplacementIntent : IDisposable
             while (remaining > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                boundary?.Invoke("publication-read");
                 int count = input.Read(bytes, 0, checked((int)Math.Min(bytes.Length, remaining)));
                 if (count == 0)
                 {
@@ -476,11 +482,14 @@ internal sealed class EncryptionReplacementIntent : IDisposable
                 }
 
                 output.Write(bytes, 0, count);
+                boundary?.Invoke("publication-written");
                 hash.AppendData(bytes, 0, count);
                 remaining -= count;
             }
 
+            boundary?.Invoke("publication-before-flush");
             output.Flush(true);
+            boundary?.Invoke("publication-flush");
             return new(length, hash.GetHashAndReset());
         }
         finally

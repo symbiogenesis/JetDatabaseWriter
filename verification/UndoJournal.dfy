@@ -2916,4 +2916,140 @@ module UndoJournal {
     assert DurableRecords(survivor.protocol) == records;
     states, actions := [b, persisted, survivor], [persist, crash];
   }
-}
+
+  // Production-order replay control. Page payload acquisition, exact saved-map
+  // coverage and successful I/O are separate contracts. Unlike the earlier
+  // byte-wise protocol schedule, this control writes captured pages first,
+  // then restores length, flushes and publishes the completion decision. Its
+  // marker is conditional on an original tail having been removed.
+  datatype PageReplayControl = PageReplayControl(minimumLength: nat,
+    recovering: bool, remainingPages: nat, phase: nat)
+
+  predicate PageReplayNeedsMarker(originalLength: nat, c: PageReplayControl) {
+    c.minimumLength < originalLength && !c.recovering
+  }
+
+  predicate ValidPageReplayControl(originalLength: nat, c: PageReplayControl) {
+    c.minimumLength <= originalLength && c.phase <= 3 &&
+    (c.phase > 0 ==> c.remainingPages == 0 && !PageReplayNeedsMarker(originalLength, c))
+  }
+
+  // 0 refuses/finishes; 1 marker; 2 page; 3 resize; 4 flush; 5 decision.
+  function PageReplayAction(originalLength: nat, c: PageReplayControl): nat {
+    if !ValidPageReplayControl(originalLength, c) || c.phase == 3 then 0
+    else if c.phase == 0 then
+      (if PageReplayNeedsMarker(originalLength, c) then 1
+       else if c.remainingPages > 0 then 2 else 3)
+    else if c.phase == 1 then 4 else 5
+  }
+
+  function SuccessfulPageReplayControl(originalLength: nat, c: PageReplayControl): PageReplayControl
+    requires PageReplayAction(originalLength, c) != 0
+  {
+    var action := PageReplayAction(originalLength, c);
+    if action == 1 then c.(recovering := true)
+    else if action == 2 then c.(remainingPages := c.remainingPages - 1)
+    else c.(phase := c.phase + 1)
+  }
+
+  function PageReplayRank(originalLength: nat, c: PageReplayControl): nat
+    requires ValidPageReplayControl(originalLength, c)
+  {
+    if c.phase == 0 then c.remainingPages + 3 + (if PageReplayNeedsMarker(originalLength, c) then 1 else 0)
+    else 3 - c.phase
+  }
+
+  lemma SuccessfulPageReplayControlMakesProgress(originalLength: nat, c: PageReplayControl)
+    requires ValidPageReplayControl(originalLength, c) && c.phase < 3
+    ensures 1 <= PageReplayAction(originalLength, c) <= 5
+    ensures ValidPageReplayControl(originalLength, SuccessfulPageReplayControl(originalLength, c))
+    ensures PageReplayRank(originalLength, SuccessfulPageReplayControl(originalLength, c)) ==
+      PageReplayRank(originalLength, c) - 1
+    ensures PageReplayAction(originalLength, c) == 1 <==> PageReplayNeedsMarker(originalLength, c)
+    ensures PageReplayAction(originalLength, c) >= 2 ==> !PageReplayNeedsMarker(originalLength, c)
+    ensures PageReplayAction(originalLength, c) >= 3 ==> c.remainingPages == 0
+    ensures PageReplayAction(originalLength, c) == 5 ==> c.phase == 2
+  { }
+
+  predicate PageReplayControlPath(originalLength: nat,
+      states: seq<PageReplayControl>, actions: seq<nat>) {
+    |states| == |actions| + 1 &&
+    (forall i | 0 <= i < |states| :: ValidPageReplayControl(originalLength, states[i])) &&
+    forall i | 0 <= i < |actions| ::
+      actions[i] != 0 && actions[i] == PageReplayAction(originalLength, states[i]) &&
+      states[i+1] == SuccessfulPageReplayControl(originalLength, states[i])
+  }
+
+  // Constructive termination assumes every selected effect succeeds; it does
+  // not promise termination during infinitely many I/O failures. A page action
+  // consumes one exact map entry only after its write returns successfully.
+  lemma CompletePageReplayControl(originalLength: nat, c: PageReplayControl)
+    returns (states: seq<PageReplayControl>, actions: seq<nat>)
+    requires ValidPageReplayControl(originalLength, c)
+    ensures PageReplayControlPath(originalLength, states, actions)
+    ensures states[0] == c && states[|states|-1].phase == 3
+    ensures |actions| == PageReplayRank(originalLength, c)
+    decreases PageReplayRank(originalLength, c)
+  {
+    if c.phase == 3 {
+      states, actions := [c], [];
+    } else {
+      SuccessfulPageReplayControlMakesProgress(originalLength, c);
+      var next := SuccessfulPageReplayControl(originalLength, c);
+      var tailStates, tailActions := CompletePageReplayControl(originalLength, next);
+      states, actions := [c] + tailStates, [PageReplayAction(originalLength, c)] + tailActions;
+      forall i | 0 <= i < |actions|
+        ensures actions[i] != 0 && actions[i] == PageReplayAction(originalLength, states[i]) &&
+          states[i+1] == SuccessfulPageReplayControl(originalLength, states[i])
+      {
+        if i > 0 {
+          assert states[i] == tailStates[i-1];
+          assert actions[i] == tailActions[i-1];
+        }
+      }
+    }
+  }
+
+  // Failure consumes no in-memory control step; reacquisition restarts all
+  // captures. A marker whose append reported failure may nevertheless survive.
+  // Existing exact evidence and parser admission remain entry contracts.
+  predicate InterruptedPageReplayControl(originalLength: nat, captures: nat,
+      before: PageReplayControl, after: PageReplayControl) {
+    after == before ||
+    after == PageReplayControl(before.minimumLength, before.recovering, captures, 0) ||
+    (before.minimumLength < originalLength &&
+      after == PageReplayControl(before.minimumLength, true, captures, 0))
+  }
+
+  lemma InterruptedPageReplayControlRemainsAdmitted(originalLength: nat, captures: nat,
+      before: PageReplayControl, after: PageReplayControl)
+    requires ValidPageReplayControl(originalLength, before)
+    requires InterruptedPageReplayControl(originalLength, captures, before, after)
+    ensures ValidPageReplayControl(originalLength, after)
+  { }
+
+  // The control cannot establish payload identity or physical write semantics.
+  // Given the existing replay-effect contract, even a torn selected page keeps
+  // all exact undo evidence usable, and a selected resize preserves it too.
+  lemma SelectedPageReplayEffectPreservesRecoverability(original: seq<Byte>,
+      before: seq<Byte>, after: seq<Byte>, saved: map<nat, Byte>, c: PageReplayControl)
+    requires ValidPageReplayControl(|original|, c)
+    requires PageReplayAction(|original|, c) == 2
+    requires Recoverable(original, before, saved)
+    requires ReplayMutation(original, before, after, saved)
+    ensures Recoverable(original, after, saved)
+    ensures !PageReplayNeedsMarker(|original|, c)
+  {
+    InterruptedReplayPreservesRecoverability(original, before, after, saved);
+  }
+
+  lemma SelectedPageReplayResizePreservesRecoverability(original: seq<Byte>,
+      current: seq<Byte>, saved: map<nat, Byte>, c: PageReplayControl)
+    requires ValidPageReplayControl(|original|, c)
+    requires PageReplayAction(|original|, c) == 3
+    requires Recoverable(original, current, saved)
+    ensures Recoverable(original, Resize(current, |original|), saved)
+    ensures c.remainingPages == 0 && !PageReplayNeedsMarker(|original|, c)
+  {
+    RestoreLengthPreservesRecoverability(original, current, saved);
+  }}

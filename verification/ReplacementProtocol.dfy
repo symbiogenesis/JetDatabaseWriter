@@ -1369,4 +1369,207 @@ module ReplacementProtocol {
       }
     }
   }
+
+  // A complete flushed staging copy is not permission to delete recovery
+  // evidence. Production reopens and validates the selected destination, then
+  // successfully flushes that held stream before removing copies. This wrapper
+  // exposes that second fence and its exception/retry order. OpenValidated is a
+  // successful validated exclusive acquisition contract, not a verified syscall;
+  // namespace persistence and the equality/hash boundary are still external.
+  datatype PublicationFenceSnapshot = PublicationFenceSnapshot(protocol: Snapshot,
+    databaseHeld: bool, destinationFlushed: bool)
+  datatype PublicationFenceAction = OpenValidatedDestination | FlushSelectedDestination
+    | FailSelectedDestinationFlush | RemoveFencedPublication | RemoveFencedOld
+    | RemoveFencedNew | InterruptPublicationFence
+
+  predicate PublicationFenceValid(original: seq<int>, next: seq<int>, s: PublicationFenceSnapshot) {
+    Valid(original, next, s.protocol) && s.protocol.intent &&
+    s.protocol.destination == Present(Selected(original, next, s.protocol)) &&
+    (s.destinationFlushed ==> s.databaseHeld)
+  }
+
+  predicate PublicationFenceEnabled(original: seq<int>, next: seq<int>, s: PublicationFenceSnapshot,
+      a: PublicationFenceAction) {
+    match a
+      case OpenValidatedDestination => !s.databaseHeld
+      case FlushSelectedDestination => s.databaseHeld && !s.destinationFlushed
+      case FailSelectedDestinationFlush => s.databaseHeld && !s.destinationFlushed
+      case RemoveFencedPublication => s.databaseHeld && s.destinationFlushed && s.protocol.publication.Present?
+      case RemoveFencedOld => s.databaseHeld && s.destinationFlushed && s.protocol.publication == Missing && s.protocol.oldCopy
+      case RemoveFencedNew => s.databaseHeld && s.destinationFlushed && s.protocol.publication == Missing && !s.protocol.oldCopy && s.protocol.newCopy
+      case InterruptPublicationFence => true
+  }
+
+  function ApplyPublicationFence(original: seq<int>, next: seq<int>, s: PublicationFenceSnapshot,
+      a: PublicationFenceAction): PublicationFenceSnapshot
+    requires PublicationFenceEnabled(original, next, s, a)
+  {
+    match a
+      case OpenValidatedDestination => s.(databaseHeld := true, destinationFlushed := false)
+      case FlushSelectedDestination => s.(destinationFlushed := true)
+      case FailSelectedDestinationFlush => s.(databaseHeld := false, destinationFlushed := false)
+      case RemoveFencedPublication => s.(protocol := s.protocol.(publication := Missing))
+      case RemoveFencedOld => s.(protocol := s.protocol.(oldCopy := false))
+      case RemoveFencedNew => s.(protocol := s.protocol.(newCopy := false))
+      case InterruptPublicationFence => s.(databaseHeld := false, destinationFlushed := false)
+  }
+
+  lemma PublicationFenceStepPreserves(original: seq<int>, next: seq<int>, s: PublicationFenceSnapshot,
+      a: PublicationFenceAction)
+    requires PublicationFenceValid(original, next, s) && PublicationFenceEnabled(original, next, s, a)
+    ensures PublicationFenceValid(original, next, ApplyPublicationFence(original, next, s, a))
+    ensures ApplyPublicationFence(original, next, s, a).protocol.decision == s.protocol.decision
+    ensures ApplyPublicationFence(original, next, s, a).protocol.destination == s.protocol.destination
+  {
+    match a {
+      case RemoveFencedPublication => StepPreserves(original, next, s.protocol, RemovePublication);
+      case RemoveFencedOld => StepPreserves(original, next, s.protocol, RemoveOld);
+      case RemoveFencedNew => StepPreserves(original, next, s.protocol, RemoveNew);
+      case _ =>
+    }
+  }
+
+  predicate PublicationFencePath(original: seq<int>, next: seq<int>, states: seq<PublicationFenceSnapshot>,
+      actions: seq<PublicationFenceAction>) {
+    |states| == |actions| + 1 && forall i | 0 <= i < |actions| ::
+      PublicationFenceEnabled(original, next, states[i], actions[i]) &&
+      states[i+1] == ApplyPublicationFence(original, next, states[i], actions[i])
+  }
+
+  lemma PublicationFenceTracePreserves(original: seq<int>, next: seq<int>, states: seq<PublicationFenceSnapshot>,
+      actions: seq<PublicationFenceAction>)
+    requires PublicationFencePath(original, next, states, actions) && PublicationFenceValid(original, next, states[0])
+    ensures PublicationFenceValid(original, next, states[|states|-1])
+    ensures states[|states|-1].protocol.decision == states[0].protocol.decision
+    ensures states[|states|-1].protocol.destination == states[0].protocol.destination
+    decreases |actions|
+  {
+    if |actions| != 0 {
+      PublicationFenceStepPreserves(original, next, states[0], actions[0]);
+      PublicationFenceTracePreserves(original, next, states[1..], actions[1..]);
+    }
+  }
+
+  lemma UnfencedDestinationCannotDiscardCopies(original: seq<int>, next: seq<int>, s: PublicationFenceSnapshot)
+    requires !s.databaseHeld || !s.destinationFlushed
+    ensures !PublicationFenceEnabled(original, next, s, RemoveFencedPublication)
+    ensures !PublicationFenceEnabled(original, next, s, RemoveFencedOld)
+    ensures !PublicationFenceEnabled(original, next, s, RemoveFencedNew)
+  {}
+
+  lemma FailedDestinationFlushRetainsEvidence(original: seq<int>, next: seq<int>, s: PublicationFenceSnapshot)
+    requires PublicationFenceValid(original, next, s)
+    requires PublicationFenceEnabled(original, next, s, FailSelectedDestinationFlush)
+    ensures ApplyPublicationFence(original, next, s, FailSelectedDestinationFlush).protocol == s.protocol
+    ensures !ApplyPublicationFence(original, next, s, FailSelectedDestinationFlush).databaseHeld
+    ensures !ApplyPublicationFence(original, next, s, FailSelectedDestinationFlush).destinationFlushed
+  {}
+
+  function PublicationFenceRank(s: PublicationFenceSnapshot): nat {
+    (if s.databaseHeld then 0 else 1) + (if s.destinationFlushed then 0 else 1) +
+    (if s.protocol.publication.Present? then 1 else 0) +
+    (if s.protocol.oldCopy then 1 else 0) + (if s.protocol.newCopy then 1 else 0)
+  }
+
+  // This is an eventually successful schedule, not progress under infinitely
+  // many failed flushes. Interruptions may be arbitrarily frequent but finite.
+  lemma CompletePublicationFence(original: seq<int>, next: seq<int>, s: PublicationFenceSnapshot)
+    returns (states: seq<PublicationFenceSnapshot>, actions: seq<PublicationFenceAction>)
+    requires PublicationFenceValid(original, next, s)
+    ensures PublicationFencePath(original, next, states, actions) && states[0] == s
+    ensures PublicationFenceValid(original, next, states[|states|-1])
+    ensures states[|states|-1].databaseHeld && states[|states|-1].destinationFlushed
+    ensures SelectedCleanupReady(original, next, states[|states|-1].protocol)
+    ensures states[|states|-1].protocol.decision == s.protocol.decision
+    ensures states[|states|-1].protocol.destination == s.protocol.destination
+    ensures |actions| <= PublicationFenceRank(s)
+    decreases PublicationFenceRank(s)
+  {
+    if PublicationFenceRank(s) == 0 {
+      states, actions := [s], [];
+    } else {
+      var a := if !s.databaseHeld then OpenValidatedDestination
+        else if !s.destinationFlushed then FlushSelectedDestination
+        else if s.protocol.publication.Present? then RemoveFencedPublication
+        else if s.protocol.oldCopy then RemoveFencedOld else RemoveFencedNew;
+      assert PublicationFenceEnabled(original, next, s, a);
+      PublicationFenceStepPreserves(original, next, s, a);
+      var successor := ApplyPublicationFence(original, next, s, a);
+      assert PublicationFenceRank(successor) < PublicationFenceRank(s);
+      var tailStates, tailActions := CompletePublicationFence(original, next, successor);
+      states, actions := [s] + tailStates, [a] + tailActions;
+      forall i | 0 <= i < |actions|
+        ensures PublicationFenceEnabled(original, next, states[i], actions[i]) &&
+          states[i+1] == ApplyPublicationFence(original, next, states[i], actions[i])
+      {
+        if i != 0 {
+          assert states[i] == tailStates[i-1];
+          assert actions[i] == tailActions[i-1];
+        }
+      }
+    }
+  }
+
+  // Compose both distinct fences with the production-order cleanup. Held
+  // ownership is supplied independently: valid copy/decision bytes do not
+  // establish a generation lease. Publication generation and ownership tokens
+  // are not equated. The final release is after native, receipt and intent
+  // removal, under the same abstract lease/namespace contracts as that cleanup.
+  lemma CompleteFencedSelectedProductionRecovery(original: seq<int>, next: seq<int>, c: CopySnapshot,
+      ownership: Ownership.Snapshot, id: nat, generation: nat)
+    returns (copies: seq<CopySnapshot>, copyActions: seq<CopyAction>,
+      fenceStates: seq<PublicationFenceSnapshot>, fenceActions: seq<PublicationFenceAction>,
+      cleanupStates: seq<ProductionCleanupSnapshot>, cleanupActions: seq<ProductionCleanupAction>)
+    requires CopyValid(original, next, c) && c.useNew == (c.protocol.decision == Committed)
+    requires Ownership.Valid(ownership) && Ownership.HeldGenerationAuthority(ownership, id, generation)
+    requires ownership.cleaning == Ownership.Free && id !in ownership.attempted
+    ensures CopyPath(original, next, copies, copyActions) && copies[0] == c
+    ensures CopyPublicationEnabled(original, next, copies[|copies|-1])
+    ensures PublicationFencePath(original, next, fenceStates, fenceActions)
+    ensures fenceStates[0] == PublicationFenceSnapshot(PublishCopied(original, next, copies[|copies|-1]), false, false)
+    ensures fenceStates[|fenceStates|-1].databaseHeld && fenceStates[|fenceStates|-1].destinationFlushed
+    ensures ProductionCleanupPath(original, next, cleanupStates, cleanupActions)
+    ensures cleanupStates[0] == ProductionCleanupSnapshot(fenceStates[|fenceStates|-1].protocol, ownership, true)
+    ensures !cleanupStates[|cleanupStates|-1].databaseHeld && !cleanupStates[|cleanupStates|-1].protocol.intent
+    ensures CleanupNamesAbsent(cleanupStates[|cleanupStates|-1])
+    ensures cleanupStates[|cleanupStates|-1].protocol.decision == c.protocol.decision
+    ensures cleanupStates[|cleanupStates|-1].protocol.destination == Present(Selected(original, next, c.protocol))
+  {
+    copies, copyActions := CompleteCopySchedule(original, next, c);
+    var ready := copies[|copies|-1];
+    assert CopyPublicationEnabled(original, next, ready);
+    FencedCopyPublicationRefines(original, next, ready);
+    var published := PublishCopied(original, next, ready);
+    var beginFence := PublicationFenceSnapshot(published, false, false);
+    assert PublicationFenceValid(original, next, beginFence);
+    fenceStates, fenceActions := CompletePublicationFence(original, next, beginFence);
+    var beginCleanup := ProductionCleanupSnapshot(fenceStates[|fenceStates|-1].protocol, ownership, true);
+    assert ProductionCleanupValid(original, next, beginCleanup);
+    cleanupStates, cleanupActions := CompleteProductionCleanup(original, next, beginCleanup, id);
+  }
+
+  lemma InterruptedPublicationFenceAllowsProductionCleanup(original: seq<int>, next: seq<int>,
+      interruptedStates: seq<PublicationFenceSnapshot>, interruptedActions: seq<PublicationFenceAction>,
+      ownership: Ownership.Snapshot, id: nat, generation: nat)
+    returns (fenceStates: seq<PublicationFenceSnapshot>, fenceActions: seq<PublicationFenceAction>,
+      cleanupStates: seq<ProductionCleanupSnapshot>, cleanupActions: seq<ProductionCleanupAction>)
+    requires PublicationFencePath(original, next, interruptedStates, interruptedActions)
+    requires PublicationFenceValid(original, next, interruptedStates[0])
+    requires Ownership.Valid(ownership) && Ownership.HeldGenerationAuthority(ownership, id, generation)
+    requires ownership.cleaning == Ownership.Free && id !in ownership.attempted
+    ensures PublicationFencePath(original, next, fenceStates, fenceActions)
+    ensures fenceStates[0] == interruptedStates[|interruptedStates|-1]
+    ensures ProductionCleanupPath(original, next, cleanupStates, cleanupActions)
+    ensures cleanupStates[0] == ProductionCleanupSnapshot(fenceStates[|fenceStates|-1].protocol, ownership, true)
+    ensures !cleanupStates[|cleanupStates|-1].databaseHeld && !cleanupStates[|cleanupStates|-1].protocol.intent
+    ensures CleanupNamesAbsent(cleanupStates[|cleanupStates|-1])
+    ensures cleanupStates[|cleanupStates|-1].protocol.decision == interruptedStates[0].protocol.decision
+    ensures cleanupStates[|cleanupStates|-1].protocol.destination == interruptedStates[0].protocol.destination
+  {
+    PublicationFenceTracePreserves(original, next, interruptedStates, interruptedActions);
+    fenceStates, fenceActions := CompletePublicationFence(original, next, interruptedStates[|interruptedStates|-1]);
+    var beginCleanup := ProductionCleanupSnapshot(fenceStates[|fenceStates|-1].protocol, ownership, true);
+    assert ProductionCleanupValid(original, next, beginCleanup);
+    cleanupStates, cleanupActions := CompleteProductionCleanup(original, next, beginCleanup, id);
+  }
 }

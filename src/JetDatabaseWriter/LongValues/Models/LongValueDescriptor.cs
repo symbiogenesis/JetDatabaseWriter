@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.LongValues.Models;
 using System;
 using System.Buffers.Binary;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Verification;
 
 /// <summary>
 /// Parsed 12-byte JET long-value descriptor stored in MEMO/OLE row bodies.
@@ -40,8 +41,9 @@ internal readonly record struct LongValueDescriptor(int Length, byte StorageMode
             return false;
         }
 
-        int length = BinaryPrimitives.ReadInt32LittleEndian(source) & MaxLength;
-        byte storageMode = (byte)(source[3] & Constants.LongValue.StorageModeMask);
+        uint word = LongValueKernel.DecodeWord(source[0], source[1], source[2], source[3]);
+        int length = checked((int)LongValueKernel.DecodeLength(word));
+        byte storageMode = LongValueKernel.DecodeStorageMode(word);
         uint firstDp = BinaryPrimitives.ReadUInt32LittleEndian(source.Slice(4, 4));
         uint token = BinaryPrimitives.ReadUInt32LittleEndian(source.Slice(8, 4));
         descriptor = new LongValueDescriptor(length, storageMode, firstDp, token);
@@ -62,12 +64,23 @@ internal readonly record struct LongValueDescriptor(int Length, byte StorageMode
             throw new ArgumentException("The destination span is too small for a long-value descriptor.", nameof(destination));
         }
 
-        if (this.Length is < 0 or > MaxLength)
+        if (this.Length < 0)
         {
             throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The native long-value length must fit its 30-bit field.");
         }
 
-        uint lengthWithFlags = checked((uint)this.Length) | ((uint)this.StorageMode << 24);
+        ulong packed = LongValueKernel.EncodeLengthAndMode(checked((uint)this.Length), this.StorageMode);
+        if (packed == 4294967296)
+        {
+            if (LongValueKernel.IsSupportedStorageMode(this.StorageMode))
+            {
+                throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The native long-value length must fit its 30-bit field.");
+            }
+
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "The long-value descriptor storage mode is unsupported.");
+        }
+
+        uint lengthWithFlags = checked((uint)packed);
         BinaryPrimitives.WriteUInt32LittleEndian(destination, lengthWithFlags);
         BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(4, 4), this.FirstDp);
         BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(8, 4), this.Token);
