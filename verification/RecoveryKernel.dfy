@@ -595,6 +595,84 @@ module RecoveryKernel {
     JournalManifestIsExactBoundedPageRounding(pageSize, originalLength);
   }
 
+  // A replay page is selected from the serialized complete-record cursor,
+  // never from dictionary enumeration. A map lookup supplies this record's
+  // exact admitted source position. The Access bound is a refusal sentinel.
+  function JournalReplayPageOffset(pageSize: U32, originalLength: U64,
+      journalLength: U64, position: U64, tag: U64, mappedPosition: U64,
+      remainingPages: U32): U64 {
+    if !IsBeforeImageRecord(tag, pageSize, originalLength) then 2147483648
+    else
+      var offset := tag - 9223372036854775808;
+      if remainingPages == 0 || mappedPosition != position ||
+          remainingPages as U64 > (JournalRecordStart(pageSize, originalLength) - 128) / 32 ||
+          OriginalPageRecordPayloadOffset(pageSize, originalLength, journalLength, position, tag, offset) == 0
+      then 2147483648 else offset
+  }
+
+  lemma ReplaySelectionBindsExactSerializedInventoryEntry(pageSize: U32, originalLength: U64,
+      journalLength: U64, position: U64, tag: U64, mappedPosition: U64,
+      remainingPages: U32)
+    ensures JournalReplayPageOffset(pageSize, originalLength, journalLength, position, tag, mappedPosition, remainingPages) != 2147483648 <==>
+      IsBeforeImageRecord(tag, pageSize, originalLength) && remainingPages > 0 &&
+      mappedPosition == position &&
+      remainingPages as int <= (JournalRecordStart(pageSize, originalLength) as int - 128) / 32 &&
+      JournalRecordPayloadOffset(pageSize, originalLength, journalLength, position) != 0
+    ensures JournalReplayPageOffset(pageSize, originalLength, journalLength, position, tag, mappedPosition, remainingPages) != 2147483648 ==>
+      var offset := JournalReplayPageOffset(pageSize, originalLength, journalLength, position, tag, mappedPosition, remainingPages);
+      offset < originalLength && offset as int % pageSize as int == 0 &&
+      mappedPosition == position && tag as int == 9223372036854775808 + offset as int &&
+      OriginalPageRecordPayloadOffset(pageSize, originalLength, journalLength, position, tag, offset) == position + 8
+  {
+    if IsBeforeImageRecord(tag, pageSize, originalLength) {
+      BeforeImageRecordsAuthorizeOnlyOriginalAlignedPages(tag, pageSize, originalLength);
+      JournalManifestIsExactBoundedPageRounding(pageSize, originalLength);
+      var offset := tag - 9223372036854775808;
+      OriginalRecordPayloadBindsExactPage(pageSize, originalLength, journalLength, position, tag, offset);
+      JournalPayloadSliceIsExactAndBounded(pageSize, originalLength, journalLength, position);
+    }
+  }
+
+  lemma ReplaySelectionRefinesExactInventoryPayload(original: seq<Undo.Byte>, pageSize: U32,
+      pages: seq<Undo.SerializedPage>, journalLength: U64, index: nat,
+      tag: U64, remainingPages: U32)
+    requires |original| <= 2147483648 && IsPageSize(pageSize)
+    requires Undo.ExactSerializedPages(original, pageSize as int, pages)
+    requires index < |pages|
+    requires |pages| <= (JournalRecordStart(pageSize, |original| as U64) as int - 128) / 32
+    requires remainingPages as int == |pages| - index
+    requires pages[index].recordPosition < 18446744073709551616
+    requires tag as int == 9223372036854775808 + pages[index].page.pageOffset
+    requires JournalRecordPayloadOffset(pageSize, |original| as U64, journalLength,
+      pages[index].recordPosition as U64) != 0
+    ensures pages[index].page.pageOffset < |original|
+    ensures pages[index].page.pageOffset in Undo.SerializedPageInventory(pages)
+    ensures Undo.SerializedPageInventory(pages)[pages[index].page.pageOffset] == pages[index].recordPosition
+    ensures 0 < OriginalPageLength(pageSize, |original| as U64, pages[index].page.pageOffset as U64) as int <= |pages[index].page.pageBytes|
+    ensures pages[index].page.pageOffset + OriginalPageLength(pageSize, |original| as U64,
+      pages[index].page.pageOffset as U64) as int <= |original|
+    ensures var position := pages[index].recordPosition as U64;
+      var offset := pages[index].page.pageOffset as U64;
+      JournalReplayPageOffset(pageSize, |original| as U64, journalLength, position, tag,
+        Undo.SerializedPageInventory(pages)[offset as int] as U64, remainingPages) == offset
+    ensures pages[index].page.pageBytes[..OriginalPageLength(pageSize, |original| as U64,
+      pages[index].page.pageOffset as U64) as int] ==
+      original[pages[index].page.pageOffset..pages[index].page.pageOffset +
+        OriginalPageLength(pageSize, |original| as U64, pages[index].page.pageOffset as U64) as int]
+  {
+    Undo.ExactSerializedInventoryHasExactSources(original, pageSize as int, pages);
+    reveal Undo.ExactReplayPagePayload();
+    var position := pages[index].recordPosition as U64;
+    var offset := pages[index].page.pageOffset as U64;
+    assert IsBeforeImageRecord(tag, pageSize, |original| as U64);
+    OriginalRecordPayloadBindsExactPage(pageSize, |original| as U64, journalLength, position, tag, offset);
+    ReplaySelectionBindsExactSerializedInventoryEntry(pageSize, |original| as U64, journalLength,
+      position, tag, position, remainingPages);
+    OriginalPageSliceIsExact(pageSize, |original| as U64, offset);
+    var count := OriginalPageLength(pageSize, |original| as U64, offset) as int;
+    assert forall i | 0 <= i < count :: pages[index].page.pageBytes[i] == original[offset as int + i];
+  }
+
   function OriginalOrZeroByte(recovering: bool, offset: U64,
       minimumLength: U64, current: Byte, original: Byte): bool {
     current == original || (recovering && offset >= minimumLength && current == 0)
@@ -680,4 +758,333 @@ module RecoveryKernel {
     ensures OriginalOrZeroByte(true, offset, minimumLength, current, original) ==
       OriginalOrZeroByte(false, offset, minimumLength, current, original)
   { }
+
+  // Replacement evidence is acquired in exactly bounded records. Successful
+  // reads strictly decrease remaining bytes; zero/oversized results refuse.
+  function ReplacementReadAdvance(length: U32, offset: U32, count: U32): U32 {
+    if (length != 256 && length != 96) || offset >= length || count == 0 || count > length - offset
+    then 353 else offset + count
+  }
+
+  lemma ReplacementReadMakesExactProgress(length: U32, offset: U32, count: U32)
+    ensures ReplacementReadAdvance(length, offset, count) != 353 <==>
+      (length == 256 || length == 96) && offset < length && 0 < count <= length - offset
+    ensures ReplacementReadAdvance(length, offset, count) != 353 ==>
+      offset < ReplacementReadAdvance(length, offset, count) <= length &&
+      ReplacementReadAdvance(length, offset, count) == offset + count &&
+      length - ReplacementReadAdvance(length, offset, count) < length - offset
+  {}
+
+  function ReplacementHeaderFixedByte(index: U32): Byte {
+    if index == 0 then 74 else if index == 1 then 68 else if index == 2 then 87
+    else if index == 3 then 82 else if index == 4 then 69 else if index == 5 then 80
+    else if index == 6 then 76 else if index == 7 then 49
+    else if index == 8 || index == 13 then 1 else 0
+  }
+
+  function ReplacementDecisionFixedByte(index: U32): Byte {
+    if index == 0 then 74 else if index == 1 then 68 else if index == 2 then 87
+    else if index == 3 then 67 else if index == 4 then 77 else if index == 5 then 84
+    else if index == 6 then 48 else if index == 7 then 49 else 0
+  }
+
+  // The caller supplies actual path/digest bytes, not a validation boolean.
+  // Checksum-only reserved bytes and length fields retain their existing role.
+  function ReplacementHeaderByteValid(index: U32, value: Byte, pathByte: Byte, digestByte: Byte): bool {
+    index < 256 &&
+      (if index < 16 then value == ReplacementHeaderFixedByte(index)
+       else if 32 <= index < 64 then value == pathByte
+       else if 224 <= index then value == digestByte else true)
+  }
+
+  function ReplacementGenerationByte(nonempty: bool, index: U32, value: Byte): bool {
+    nonempty || (16 <= index < 32 && value != 0)
+  }
+
+  function ReplacementDecisionByteValid(index: U32, value: Byte,
+      generationByte: Byte, imageByte: Byte, digestByte: Byte): bool {
+    index < 96 &&
+      (if index < 8 then value == ReplacementDecisionFixedByte(index)
+       else if index < 24 then value == generationByte
+       else if index < 56 then value == imageByte
+       else if 64 <= index then value == digestByte else true)
+  }
+
+  ghost function ReplacementRecordBytes(bytes: seq<Byte>): seq<Replacement.RecordByte> {
+    seq(|bytes|, i requires 0 <= i < |bytes| => bytes[i] as int)
+  }
+
+  // These loops, their bounds and their exact fold correspondence compile to
+  // native byte[] code. Only the actual reads and SHA/path primitives remain
+  // in the managed adapter; no handwritten validation fold is trusted.
+  method CheckReplacementHeader(header: array<Byte>, pathIdentity: array<Byte>, checksum: array<Byte>)
+      returns (valid: bool)
+    requires header.Length <= 2147483647 && pathIdentity.Length <= 2147483647 && checksum.Length <= 2147483647
+    ensures header.Length != 256 || pathIdentity.Length != 32 || checksum.Length != 32 ==> !valid
+    ensures header.Length == 256 && pathIdentity.Length == 32 && checksum.Length == 32 ==>
+      valid == (FoldReplacementHeader(ReplacementRecordBytes(header[..]),
+        ReplacementRecordBytes(pathIdentity[..]), ReplacementRecordBytes(checksum[..]), 256) &&
+        FoldReplacementGeneration(ReplacementRecordBytes(header[..]), 256))
+  {
+    if header.Length as U32 != 256 || pathIdentity.Length as U32 != 32 || checksum.Length as U32 != 32 {
+      valid := false;
+      return;
+    }
+    var index: U32 := 0;
+    var fieldsValid := true;
+    var generationPresent := false;
+    while index < 256
+      invariant index <= 256
+      invariant fieldsValid == FoldReplacementHeader(ReplacementRecordBytes(header[..]),
+        ReplacementRecordBytes(pathIdentity[..]), ReplacementRecordBytes(checksum[..]), index as int)
+      invariant generationPresent == FoldReplacementGeneration(ReplacementRecordBytes(header[..]), index as int)
+      decreases 256 - index
+    {
+      fieldsValid := fieldsValid && ReplacementHeaderByteValid(index, header[index],
+        pathIdentity[if 32 <= index < 64 then index - 32 else 0], checksum[if 224 <= index < 256 then index - 224 else 0]);
+      generationPresent := ReplacementGenerationByte(generationPresent, index, header[index]);
+      index := index + 1;
+    }
+    valid := fieldsValid && generationPresent;
+  }
+
+  method CheckReplacementDecision(header: array<Byte>, decision: array<Byte>, checksum: array<Byte>)
+      returns (valid: bool)
+    requires header.Length <= 2147483647 && decision.Length <= 2147483647 && checksum.Length <= 2147483647
+    ensures header.Length != 256 || decision.Length != 96 || checksum.Length != 32 ==> !valid
+    ensures header.Length == 256 && decision.Length == 96 && checksum.Length == 32 ==>
+      valid == FoldReplacementDecision(ReplacementRecordBytes(header[..]),
+        ReplacementRecordBytes(decision[..]), ReplacementRecordBytes(checksum[..]), 96)
+  {
+    if header.Length as U32 != 256 || decision.Length as U32 != 96 || checksum.Length as U32 != 32 {
+      valid := false;
+      return;
+    }
+    var index: U32 := 0;
+    valid := true;
+    while index < 96
+      invariant index <= 96
+      invariant valid == FoldReplacementDecision(ReplacementRecordBytes(header[..]),
+        ReplacementRecordBytes(decision[..]), ReplacementRecordBytes(checksum[..]), index as int)
+      decreases 96 - index
+    {
+      valid := valid && ReplacementDecisionByteValid(index, decision[index],
+        header[if 8 <= index < 24 then index + 8 else 16], header[if 24 <= index < 56 then index + 88 else 112], checksum[if 64 <= index < 96 then index - 64 else 0]);
+      index := index + 1;
+    }
+  }
+
+  ghost function FoldReplacementHeader(header: seq<Replacement.RecordByte>,
+      pathIdentity: seq<Replacement.RecordByte>, checksum: seq<Replacement.RecordByte>, count: nat): bool
+    requires |header| == 256 && |pathIdentity| == 32 && |checksum| == 32 && count <= 256
+    decreases count
+  {
+    if count == 0 then true else
+      FoldReplacementHeader(header, pathIdentity, checksum, count - 1) &&
+      ReplacementHeaderByteValid((count - 1) as U32, header[count - 1] as Byte,
+        pathIdentity[if 32 <= count - 1 < 64 then count - 33 else 0] as Byte, checksum[if 224 <= count - 1 < 256 then count - 225 else 0] as Byte)
+  }
+
+  ghost function FoldReplacementGeneration(header: seq<Replacement.RecordByte>, count: nat): bool
+    requires |header| == 256 && count <= 256
+    decreases count
+  {
+    if count == 0 then false else
+      ReplacementGenerationByte(FoldReplacementGeneration(header, count - 1),
+        (count - 1) as U32, header[count - 1] as Byte)
+  }
+
+  lemma ReplacementHeaderPrefixIsExact(header: seq<Replacement.RecordByte>,
+      pathIdentity: seq<Replacement.RecordByte>, checksum: seq<Replacement.RecordByte>, count: nat)
+    requires |header| == 256 && |pathIdentity| == 32 && |checksum| == 32 && count <= 256
+    ensures FoldReplacementHeader(header, pathIdentity, checksum, count) <==>
+      (forall i | 0 <= i < count :: ReplacementHeaderByteValid(i as U32,
+        header[i] as Byte, pathIdentity[if 32 <= i < 64 then i - 32 else 0] as Byte, checksum[if 224 <= i < 256 then i - 224 else 0] as Byte))
+    ensures FoldReplacementGeneration(header, count) <==>
+      (exists i | 16 <= i < 32 && i < count :: header[i] != 0)
+    decreases count
+  {
+    if count != 0 {
+      ReplacementHeaderPrefixIsExact(header, pathIdentity, checksum, count - 1);
+      if FoldReplacementHeader(header, pathIdentity, checksum, count) {
+        forall i | 0 <= i < count
+          ensures ReplacementHeaderByteValid(i as U32, header[i] as Byte,
+            pathIdentity[if 32 <= i < 64 then i - 32 else 0] as Byte, checksum[if 224 <= i < 256 then i - 224 else 0] as Byte)
+        {
+          if i != count - 1 { assert i < count - 1; }
+        }
+      }
+    }
+  }
+
+  // The exact expected SHA bytes are a parameter; no cryptographic property is
+  // assumed. Every actual field comparison, including the nonempty GUID byte
+  // representation, is covered by this fold instead of an unproved boolean.
+  lemma ReplacementHeaderChecksRefineBytes(header: seq<Replacement.RecordByte>,
+      pathIdentity: seq<Replacement.RecordByte>, digest: seq<Replacement.RecordByte> -> seq<Replacement.RecordByte>)
+    requires |header| == 256 && |pathIdentity| == 32 && |digest(header[..224])| == 32
+    ensures (FoldReplacementHeader(header, pathIdentity, digest(header[..224]), 256) &&
+      FoldReplacementGeneration(header, 256)) <==> Replacement.ValidHeaderFields(header, pathIdentity, digest)
+  {
+    var checksum := digest(header[..224]);
+    ReplacementHeaderPrefixIsExact(header, pathIdentity, checksum, 256);
+    var constants := Replacement.HeaderMagic() + [1, 0, 0, 0, 0, 1, 0, 0];
+    assert forall i | 0 <= i < 16 :: ReplacementHeaderFixedByte(i as U32) as int == constants[i];
+    assert constants[..8] == Replacement.HeaderMagic();
+    assert constants[8..12] == [1, 0, 0, 0];
+    assert constants[12..16] == [0, 1, 0, 0];
+    if FoldReplacementHeader(header, pathIdentity, checksum, 256) {
+      assert forall i | 0 <= i < 16 :: header[i] == constants[i];
+      assert header[..16] == constants;
+      forall i | 0 <= i < 32
+        ensures header[32 + i] == pathIdentity[i] && header[224 + i] == checksum[i]
+      {
+        assert ReplacementHeaderByteValid((32 + i) as U32, header[32 + i] as Byte,
+          pathIdentity[i] as Byte, checksum[0] as Byte);
+        assert ReplacementHeaderByteValid((224 + i) as U32, header[224 + i] as Byte,
+          pathIdentity[0] as Byte, checksum[i] as Byte);
+      }
+      assert header[32..64] == pathIdentity;
+      assert header[224..256] == checksum;
+    }
+    if Replacement.ValidHeaderFields(header, pathIdentity, digest) {
+      forall i | 0 <= i < 256
+        ensures ReplacementHeaderByteValid(i as U32, header[i] as Byte,
+          pathIdentity[if 32 <= i < 64 then i - 32 else 0] as Byte, checksum[if 224 <= i < 256 then i - 224 else 0] as Byte)
+      {
+        if i < 16 {
+          if i < 8 { assert header[i] == Replacement.HeaderMagic()[i]; }
+          else if i < 12 { assert header[i] == [1, 0, 0, 0][i - 8]; }
+          else { assert header[i] == [0, 1, 0, 0][i - 12]; }
+          assert header[i] == constants[i];
+        }
+        else if 32 <= i < 64 { assert header[i] == pathIdentity[i - 32]; }
+        else if 224 <= i { assert header[i] == checksum[i - 224]; }
+      }
+    }
+  }
+
+  ghost function FoldReplacementDecision(header: seq<Replacement.RecordByte>,
+      decision: seq<Replacement.RecordByte>, checksum: seq<Replacement.RecordByte>, count: nat): bool
+    requires |header| == 256 && |decision| == 96 && |checksum| == 32 && count <= 96
+    decreases count
+  {
+    if count == 0 then true else
+      FoldReplacementDecision(header, decision, checksum, count - 1) &&
+      ReplacementDecisionByteValid((count - 1) as U32, decision[count - 1] as Byte,
+        header[if 8 <= count - 1 < 24 then count + 7 else 16] as Byte,
+        header[if 24 <= count - 1 < 56 then count + 87 else 112] as Byte, checksum[if 64 <= count - 1 < 96 then count - 65 else 0] as Byte)
+  }
+
+  lemma ReplacementDecisionPrefixIsExact(header: seq<Replacement.RecordByte>,
+      decision: seq<Replacement.RecordByte>, checksum: seq<Replacement.RecordByte>, count: nat)
+    requires |header| == 256 && |decision| == 96 && |checksum| == 32 && count <= 96
+    ensures FoldReplacementDecision(header, decision, checksum, count) <==>
+      (forall i | 0 <= i < count :: ReplacementDecisionByteValid(i as U32, decision[i] as Byte,
+        header[if 8 <= i < 24 then i + 8 else 16] as Byte, header[if 24 <= i < 56 then i + 88 else 112] as Byte, checksum[if 64 <= i < 96 then i - 64 else 0] as Byte))
+    decreases count
+  {
+    if count != 0 {
+      ReplacementDecisionPrefixIsExact(header, decision, checksum, count - 1);
+      if FoldReplacementDecision(header, decision, checksum, count) {
+        forall i | 0 <= i < count
+          ensures ReplacementDecisionByteValid(i as U32, decision[i] as Byte,
+            header[if 8 <= i < 24 then i + 8 else 16] as Byte, header[if 24 <= i < 56 then i + 88 else 112] as Byte, checksum[if 64 <= i < 96 then i - 64 else 0] as Byte)
+        {
+          if i != count - 1 { assert i < count - 1; }
+        }
+      }
+    }
+  }
+
+  lemma ReplacementDecisionChecksRefineBytes(header: seq<Replacement.RecordByte>,
+      decision: seq<Replacement.RecordByte>, digest: seq<Replacement.RecordByte> -> seq<Replacement.RecordByte>)
+    requires |header| == 256 && |decision| == 96 && |digest(decision[..64])| == 32
+    ensures FoldReplacementDecision(header, decision, digest(decision[..64]), 96) <==>
+      Replacement.ValidDecisionBytes(header, decision, digest)
+  {
+    var checksum := digest(decision[..64]);
+    ReplacementDecisionPrefixIsExact(header, decision, checksum, 96);
+    assert forall i | 0 <= i < 8 :: ReplacementDecisionFixedByte(i as U32) as int == Replacement.DecisionMagic()[i];
+    if FoldReplacementDecision(header, decision, checksum, 96) {
+      assert forall i | 0 <= i < 8 :: decision[i] == Replacement.DecisionMagic()[i];
+      assert decision[..8] == Replacement.DecisionMagic();
+      forall i {:trigger decision[8 + i]} | 0 <= i < 16
+        ensures decision[8 + i] == header[16 + i]
+      {
+        assert ReplacementDecisionByteValid((8 + i) as U32, decision[8 + i] as Byte,
+          header[16 + i] as Byte,
+          header[112] as Byte, checksum[0] as Byte);
+      }
+      forall i | 0 <= i < 32
+        ensures decision[24 + i] == header[112 + i] && decision[64 + i] == checksum[i]
+      {
+        assert ReplacementDecisionByteValid((24 + i) as U32, decision[24 + i] as Byte,
+          header[16] as Byte,
+          header[112 + i] as Byte, checksum[0] as Byte);
+        assert ReplacementDecisionByteValid((64 + i) as U32, decision[64 + i] as Byte,
+          header[16] as Byte,
+          header[112] as Byte, checksum[i] as Byte);
+      }
+      assert decision[8..24] == header[16..32];
+      assert decision[24..56] == header[112..144];
+      assert decision[64..96] == checksum;
+    }
+    if Replacement.ValidDecisionBytes(header, decision, digest) {
+      forall i | 0 <= i < 96
+        ensures ReplacementDecisionByteValid(i as U32, decision[i] as Byte,
+          header[if 8 <= i < 24 then i + 8 else 16] as Byte, header[if 24 <= i < 56 then i + 88 else 112] as Byte, checksum[if 64 <= i < 96 then i - 64 else 0] as Byte)
+      {
+        if i < 8 { assert decision[i] == Replacement.DecisionMagic()[i]; }
+        else if i < 24 { assert decision[i] == header[16 + i - 8]; }
+        else if i < 56 { assert decision[i] == header[112 + i - 24]; }
+        else if 64 <= i { assert decision[i] == checksum[i - 64]; }
+      }
+    }
+  }
+
+  ghost function ScannedReplacementAdmission(bytes: seq<Replacement.RecordByte>,
+      pathIdentity: seq<Replacement.RecordByte>, digest: seq<Replacement.RecordByte> -> seq<Replacement.RecordByte>): Byte
+    requires 256 <= |bytes| <= 352 && |pathIdentity| == 32
+    requires |digest(bytes[..224])| == 32
+    requires |bytes| == 352 ==> |digest(bytes[256..320])| == 32
+  {
+    var header := bytes[..256];
+    var headerValid := FoldReplacementHeader(header, pathIdentity, digest(bytes[..224]), 256) &&
+      FoldReplacementGeneration(header, 256);
+    var decisionValid := |bytes| == 352 && FoldReplacementDecision(header, bytes[256..], digest(bytes[256..320]), 96);
+    ReplacementAdmission(|bytes| as U64, headerValid, Replacement.LittleEndian64(header[64..72]) as U64,
+      Replacement.LittleEndian64(header[72..80]) as U64, decisionValid)
+  }
+
+  // Composes the generated array-loop contracts with bounded record selection.
+  // The old assumption that a handwritten validity boolean matched all record
+  // fields is discharged by these scans; SHA/path/read primitives remain the
+  // explicit acquisition boundary, with no assumed cryptographic theorem.
+  lemma ReplacementScansRefineRecordAdmission(bytes: seq<Replacement.RecordByte>,
+      pathIdentity: seq<Replacement.RecordByte>, digest: seq<Replacement.RecordByte> -> seq<Replacement.RecordByte>)
+    requires 256 <= |bytes| <= 352 && |pathIdentity| == 32
+    requires |digest(bytes[..224])| == 32
+    requires |bytes| == 352 ==> |digest(bytes[256..320])| == 32
+    ensures ScannedReplacementAdmission(bytes, pathIdentity, digest) == 0 <==>
+      Replacement.ReadRecordBytes(bytes, pathIdentity, digest) == Replacement.Refuse
+    ensures ScannedReplacementAdmission(bytes, pathIdentity, digest) == 1 <==>
+      Replacement.ReadRecordBytes(bytes, pathIdentity, digest) == Replacement.Admit(Replacement.Prepared)
+    ensures ScannedReplacementAdmission(bytes, pathIdentity, digest) == 2 <==>
+      Replacement.ReadRecordBytes(bytes, pathIdentity, digest) == Replacement.Admit(Replacement.Committed)
+  {
+    var header := bytes[..256];
+    assert header[..224] == bytes[..224];
+    ReplacementHeaderChecksRefineBytes(header, pathIdentity, digest);
+    if |bytes| == 352 {
+      assert bytes[256..][..64] == bytes[256..320];
+      ReplacementDecisionChecksRefineBytes(header, bytes[256..], digest);
+    }
+    var headerValid := FoldReplacementHeader(header, pathIdentity, digest(bytes[..224]), 256) &&
+      FoldReplacementGeneration(header, 256);
+    var decisionValid := |bytes| == 352 && FoldReplacementDecision(header, bytes[256..], digest(bytes[256..320]), 96);
+    ReplacementAdmissionRefinesRecordBytes(bytes, pathIdentity, digest, headerValid,
+      Replacement.LittleEndian64(header[64..72]) as U64,
+      Replacement.LittleEndian64(header[72..80]) as U64, decisionValid);
+  }
 }

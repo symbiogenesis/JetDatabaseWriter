@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.LongValues.Models;
 
 using System;
-using System.Buffers.Binary;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Verification;
 
@@ -33,20 +32,34 @@ internal readonly record struct LongValueDescriptor(int Length, byte StorageMode
     public static LongValueDescriptor Chained(int length, uint firstDp, uint token)
         => new(length, Constants.LongValue.ChainedStorageMode, firstDp, token);
 
-    public static bool TryRead(ReadOnlySpan<byte> source, out LongValueDescriptor descriptor)
+    public static bool TryRead(byte[] source, int start, int count, out LongValueDescriptor descriptor)
     {
         descriptor = default;
-        if (source.Length < Constants.LongValue.HeaderSize)
+        if (start < 0 || count < 0)
         {
             return false;
         }
 
-        uint word = LongValueKernel.DecodeWord(source[0], source[1], source[2], source[3]);
-        int length = checked((int)LongValueKernel.DecodeLength(word));
-        byte storageMode = LongValueKernel.DecodeStorageMode(word);
-        uint firstDp = BinaryPrimitives.ReadUInt32LittleEndian(source.Slice(4, 4));
-        uint token = BinaryPrimitives.ReadUInt32LittleEndian(source.Slice(8, 4));
-        descriptor = new LongValueDescriptor(length, storageMode, firstDp, token);
+        LongValueKernel.ReadDescriptor(source, checked((uint)start), checked((uint)count), out bool valid, out uint length, out byte mode, out uint firstDp, out uint token);
+        if (valid)
+        {
+            descriptor = new LongValueDescriptor(checked((int)length), mode, firstDp, token);
+        }
+
+        return valid;
+    }
+
+    public static bool TryRead(ReadOnlySpan<byte> source, out LongValueDescriptor descriptor)
+    {
+        descriptor = default;
+        uint count = checked((uint)source.Length);
+        if (!LongValueKernel.HasDescriptorRange(count, 0, count))
+        {
+            return false;
+        }
+
+        LongValueKernel.DecodeFields(source[0], source[1], source[2], source[3], source[4], source[5], source[6], source[7], source[8], source[9], source[10], source[11], out uint length, out byte mode, out uint firstDp, out uint token);
+        descriptor = new LongValueDescriptor(checked((int)length), mode, firstDp, token);
         return true;
     }
 
@@ -57,13 +70,39 @@ internal readonly record struct LongValueDescriptor(int Length, byte StorageMode
         return header;
     }
 
-    public void WriteTo(Span<byte> destination)
+    public void WriteTo(byte[] destination)
     {
         if (destination.Length < Constants.LongValue.HeaderSize)
         {
             throw new ArgumentException("The destination span is too small for a long-value descriptor.", nameof(destination));
         }
 
+        _ = this.EncodeLengthAndMode();
+        if (!LongValueKernel.WriteDescriptor(destination, 0, checked((uint)destination.Length), checked((uint)this.Length), this.StorageMode, this.FirstDp, this.Token))
+        {
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "The long-value descriptor could not be serialized.");
+        }
+    }
+
+    public void WriteTo(Span<byte> destination)
+    {
+        uint count = checked((uint)destination.Length);
+        if (!LongValueKernel.HasDescriptorRange(count, 0, count))
+        {
+            throw new ArgumentException("The destination span is too small for a long-value descriptor.", nameof(destination));
+        }
+
+        uint lengthWithFlags = this.EncodeLengthAndMode();
+        for (byte position = 0; position < sizeof(uint); position++)
+        {
+            destination[position] = LongValueKernel.WordByte(lengthWithFlags, position);
+            destination[4 + position] = LongValueKernel.WordByte(this.FirstDp, position);
+            destination[8 + position] = LongValueKernel.WordByte(this.Token, position);
+        }
+    }
+
+    private uint EncodeLengthAndMode()
+    {
         if (this.Length < 0)
         {
             throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The native long-value length must fit its 30-bit field.");
@@ -80,9 +119,6 @@ internal readonly record struct LongValueDescriptor(int Length, byte StorageMode
             throw new JetOperationException(JetErrorCode.InvalidOperationState, "The long-value descriptor storage mode is unsupported.");
         }
 
-        uint lengthWithFlags = checked((uint)packed);
-        BinaryPrimitives.WriteUInt32LittleEndian(destination, lengthWithFlags);
-        BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(4, 4), this.FirstDp);
-        BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(8, 4), this.Token);
+        return checked((uint)packed);
     }
 }

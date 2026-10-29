@@ -217,7 +217,8 @@ internal sealed class PersistentRollbackJournal : IDisposable
     {
         byte[] page = new byte[state.PageSize];
         byte[] record = new byte[state.PageSize + 40];
-        using IEnumerator<KeyValuePair<long, long>> pages = state.BeforeImages.GetEnumerator();
+        ValidateReplayInventory(journal, state, record);
+        long replayPosition = state.Start;
         uint remaining = checked((uint)state.BeforeImages.Count);
         bool recovering = state.Recovering;
         byte phase = 0;
@@ -230,7 +231,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
                     recovering = true;
                     break;
                 case JournalReplayAction.Page:
-                    KeyValuePair<long, long> entry = NextReplayPage(pages);
+                    KeyValuePair<long, long> entry = NextReplayPage(journal, state, ref replayPosition, remaining, record);
                     int count = ReadOriginalPage(journal, state, entry.Key, entry.Value, page, record);
                     database.Position = entry.Key;
                     database.Write(page, 0, count);
@@ -259,14 +260,59 @@ internal sealed class PersistentRollbackJournal : IDisposable
         => (JournalReplayAction)RecoveryKernel.JournalReplayAction(
             (uint)state.PageSize, (ulong)state.OriginalLength, (ulong)state.MinimumLength, recovering, remaining, phase);
 
-    private static KeyValuePair<long, long> NextReplayPage(IEnumerator<KeyValuePair<long, long>> pages)
+    private static void ValidateReplayInventory(FileStream journal, JournalState state, byte[] record)
     {
-        if (!pages.MoveNext())
+        uint remaining = checked((uint)state.BeforeImages.Count);
+        for (long position = state.Start; position < state.CompleteEnd; position = NextRecord(state.PageSize, state.OriginalLength, state.CompleteEnd, position))
         {
-            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery replay schedule is missing an admitted original page.");
+            long tag = ReadRecord(journal, state.PageSize, state.OriginalLength, state.CompleteEnd, position, record);
+            if (RecoveryKernel.IsBeforeImageRecord(unchecked((ulong)tag), (uint)state.PageSize, (ulong)state.OriginalLength))
+            {
+                _ = ReplayPageOffset(state, position, tag, remaining);
+                remaining--;
+            }
         }
 
-        return pages.Current;
+        if (remaining != 0)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery replay inventory contains an original page absent from its admitted records.");
+        }
+    }
+
+    private static KeyValuePair<long, long> NextReplayPage(FileStream journal, JournalState state, ref long position, uint remaining, byte[] record)
+    {
+        while (position < state.CompleteEnd)
+        {
+            long source = position;
+            long tag = ReadRecord(journal, state.PageSize, state.OriginalLength, state.CompleteEnd, source, record);
+            position = NextRecord(state.PageSize, state.OriginalLength, state.CompleteEnd, source);
+            if (RecoveryKernel.IsBeforeImageRecord(unchecked((ulong)tag), (uint)state.PageSize, (ulong)state.OriginalLength))
+            {
+                return new KeyValuePair<long, long>(ReplayPageOffset(state, source, tag, remaining), source);
+            }
+        }
+
+        throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery replay schedule is missing an admitted original page.");
+    }
+
+    private static long ReplayPageOffset(JournalState state, long position, long tag, uint remaining)
+    {
+        long originalOffset = tag - long.MinValue;
+        bool found = state.BeforeImages.TryGetValue(originalOffset, out long mappedPosition);
+        ulong offset = RecoveryKernel.JournalReplayPageOffset(
+            (uint)state.PageSize,
+            (ulong)state.OriginalLength,
+            (ulong)state.CompleteEnd,
+            unchecked((ulong)position),
+            unchecked((ulong)tag),
+            found ? unchecked((ulong)mappedPosition) : 0,
+            remaining);
+        if (offset == 2147483648)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery replay inventory does not identify the exact admitted original-page record.");
+        }
+
+        return checked((long)offset);
     }
 
     private static void ValidatePreparationCopy(string databasePath, FileStream journal, string preparation)
@@ -843,7 +889,8 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
         byte[] page = new byte[this.pageSize];
         byte[] record = new byte[this.pageSize + 40];
-        using IEnumerator<KeyValuePair<long, long>> pages = state.BeforeImages.GetEnumerator();
+        ValidateReplayInventory(this.journal, state, record);
+        long replayPosition = state.Start;
         uint remaining = checked((uint)state.BeforeImages.Count);
         bool recovering = state.Recovering;
         byte phase = 0;
@@ -856,7 +903,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
                     recovering = true;
                     break;
                 case JournalReplayAction.Page:
-                    KeyValuePair<long, long> entry = NextReplayPage(pages);
+                    KeyValuePair<long, long> entry = NextReplayPage(this.journal, state, ref replayPosition, remaining, record);
                     int count = ReadOriginalPage(this.journal, state, entry.Key, entry.Value, page, record);
                     await store.WriteAsync(entry.Key, page.AsMemory(0, count), CancellationToken.None).ConfigureAwait(false);
                     remaining--;

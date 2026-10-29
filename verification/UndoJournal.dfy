@@ -3052,4 +3052,224 @@ module UndoJournal {
     ensures c.remainingPages == 0 && !PageReplayNeedsMarker(|original|, c)
   {
     RestoreLengthPreservesRecoverability(original, current, saved);
-  }}
+  }
+
+  // Recovery hashes and copies only the original-page prefix. Bytes beyond
+  // original EOF remain checksum-covered record padding, but need not be zero
+  // to admit replay and must never enter the restored image.
+  opaque predicate ExactReplayPagePayload(original: seq<Byte>, pageSize: nat, page: PageCapture) {
+    0 < pageSize && page.pageOffset % pageSize == 0 && page.pageOffset < |original| &&
+    |page.pageBytes| == pageSize &&
+    forall i | 0 <= i < pageSize && page.pageOffset + i < |original| ::
+      page.pageBytes[i] == original[page.pageOffset + i]
+  }
+
+  lemma ConstructedPagePayloadAdmitsSerializedReplay(original: seq<Byte>, pageSize: nat,
+      page: PageCapture)
+    requires ExactPagePayload(original, pageSize, page)
+    ensures ExactReplayPagePayload(original, pageSize, page)
+  {
+    reveal ExactPagePayload();
+    reveal ExactReplayPagePayload();
+  }
+
+  // Serialized capture inventory refinement. Each item denotes a complete,
+  // checksum-admitted original-page record selected by the bounded cursor;
+  // its position is the actual record source, not an enumeration ordinal.
+  // ExactReplayPagePayload is the manifest/hash-to-original identity contract.
+  datatype SerializedPage = SerializedPage(recordPosition: nat, page: PageCapture)
+
+  predicate ExactSerializedPages(original: seq<Byte>, pageSize: nat,
+      pages: seq<SerializedPage>) {
+    0 < pageSize &&
+    (forall i | 0 <= i < |pages| :: ExactReplayPagePayload(original, pageSize, pages[i].page)) &&
+    (forall i, j | 0 <= i < j < |pages| ::
+      pages[i].recordPosition < pages[j].recordPosition &&
+      pages[i].page.pageOffset != pages[j].page.pageOffset)
+  }
+
+  function SerializedPageInventory(pages: seq<SerializedPage>): map<nat, nat> {
+    if |pages| == 0 then map[]
+    else SerializedPageInventory(pages[1..])[pages[0].page.pageOffset := pages[0].recordPosition]
+  }
+
+  lemma SerializedInventoryContainsExactlyPages(pages: seq<SerializedPage>)
+    ensures forall offset: nat :: offset in SerializedPageInventory(pages) <==>
+      exists i | 0 <= i < |pages| :: pages[i].page.pageOffset == offset
+    decreases |pages|
+  {
+    if |pages| > 0 {
+      SerializedInventoryContainsExactlyPages(pages[1..]);
+      forall offset: nat
+        ensures offset in SerializedPageInventory(pages) <==>
+          exists i | 0 <= i < |pages| :: pages[i].page.pageOffset == offset
+      {
+        if offset in SerializedPageInventory(pages[1..]) {
+          var i :| 0 <= i < |pages[1..]| && pages[1..][i].page.pageOffset == offset;
+          assert pages[i+1].page.pageOffset == offset;
+        }
+        if exists i | 0 <= i < |pages| :: pages[i].page.pageOffset == offset {
+          var i :| 0 <= i < |pages| && pages[i].page.pageOffset == offset;
+          if i > 0 {
+            assert pages[1..][i-1].page.pageOffset == offset;
+          }
+        }
+      }
+    }
+  }
+
+  lemma ExactSerializedInventoryHasExactSources(original: seq<Byte>, pageSize: nat,
+      pages: seq<SerializedPage>)
+    requires ExactSerializedPages(original, pageSize, pages)
+    ensures |SerializedPageInventory(pages)| == |pages|
+    ensures forall i | 0 <= i < |pages| ::
+      pages[i].page.pageOffset in SerializedPageInventory(pages) &&
+      SerializedPageInventory(pages)[pages[i].page.pageOffset] == pages[i].recordPosition
+    decreases |pages|
+  {
+    SerializedInventoryContainsExactlyPages(pages);
+    if |pages| > 0 {
+      assert ExactSerializedPages(original, pageSize, pages[1..]);
+      ExactSerializedInventoryHasExactSources(original, pageSize, pages[1..]);
+      SerializedInventoryContainsExactlyPages(pages[1..]);
+      assert pages[0].page.pageOffset !in SerializedPageInventory(pages[1..]);
+      forall i | 0 <= i < |pages|
+        ensures pages[i].page.pageOffset in SerializedPageInventory(pages) &&
+          SerializedPageInventory(pages)[pages[i].page.pageOffset] == pages[i].recordPosition
+      {
+        if i > 0 {
+          assert pages[1..][i-1] == pages[i];
+        }
+      }
+    }
+  }
+
+  // The production preflight checks each serialized source against the
+  // supplied dictionary, then requires exact exhaustion of its Count. The
+  // complete source-position identity rejects duplicate original-page keys.
+  lemma SerializedInventoryPreflightEstablishesEquality(original: seq<Byte>, pageSize: nat,
+      pages: seq<SerializedPage>, inventory: map<nat, nat>)
+    requires ExactSerializedPages(original, pageSize, pages)
+    requires |inventory| == |pages|
+    requires forall i | 0 <= i < |pages| ::
+      pages[i].page.pageOffset in inventory &&
+      inventory[pages[i].page.pageOffset] == pages[i].recordPosition
+    ensures inventory == SerializedPageInventory(pages)
+  {
+    ExactSerializedInventoryHasExactSources(original, pageSize, pages);
+    SerializedInventoryContainsExactlyPages(pages);
+    assert SerializedPageInventory(pages).Keys <= inventory.Keys;
+    assert |SerializedPageInventory(pages).Keys| == |SerializedPageInventory(pages)|;
+    assert |inventory.Keys| == |inventory|;
+    assert inventory.Keys == SerializedPageInventory(pages).Keys + (inventory.Keys - SerializedPageInventory(pages).Keys);
+    assert SerializedPageInventory(pages).Keys * (inventory.Keys - SerializedPageInventory(pages).Keys) == {};
+    assert |inventory.Keys - SerializedPageInventory(pages).Keys| == 0;
+    assert SerializedPageInventory(pages).Keys == inventory.Keys;
+    assert forall offset | offset in inventory ::
+      SerializedPageInventory(pages)[offset] == inventory[offset];
+  }
+
+  function SerializedSaved(original: seq<Byte>, pageSize: nat,
+      pages: seq<SerializedPage>): map<nat, Byte> {
+    map offset: nat | offset < |original| &&
+      (exists i | 0 <= i < |pages| ::
+        pages[i].page.pageOffset <= offset < pages[i].page.pageOffset + pageSize) :: original[offset]
+  }
+
+  lemma SerializedSavedIsExact(original: seq<Byte>, pageSize: nat,
+      pages: seq<SerializedPage>)
+    ensures ValidUndo(original, SerializedSaved(original, pageSize, pages))
+  { }
+
+  // A successful page write has this exact bytes-and-length effect. Real I/O
+  // and cryptographic identity implement explicit contracts; neither is made
+  // a trusted external declaration. Failed/torn effects retain the full saved
+  // evidence and satisfy the existing ReplayMutation contract separately.
+  function ApplySerializedPage(original: seq<Byte>, current: seq<Byte>, pageSize: nat,
+      page: PageCapture): seq<Byte>
+    requires ExactReplayPagePayload(original, pageSize, page)
+  {
+    reveal ExactReplayPagePayload();
+    var end := Min(|original|, page.pageOffset + pageSize);
+    seq((if |current| < end then end else |current|), i =>
+      if page.pageOffset <= i < end then page.pageBytes[i-page.pageOffset]
+      else if 0 <= i < |current| then current[i] else 0)
+  }
+
+  lemma SerializedPageSuccessConsumesExactSavedRange(original: seq<Byte>, current: seq<Byte>,
+      pageSize: nat, pages: seq<SerializedPage>)
+    requires ExactSerializedPages(original, pageSize, pages) && |pages| > 0
+    requires Recoverable(original, current, SerializedSaved(original, pageSize, pages))
+    ensures Recoverable(original, ApplySerializedPage(original, current, pageSize, pages[0].page),
+      SerializedSaved(original, pageSize, pages[1..]))
+  {
+    reveal ExactReplayPagePayload();
+    SerializedSavedIsExact(original, pageSize, pages[1..]);
+    var next := ApplySerializedPage(original, current, pageSize, pages[0].page);
+    var page := pages[0].page;
+    forall offset: nat | offset < |original| && offset !in SerializedSaved(original, pageSize, pages[1..])
+      ensures offset < |next| && next[offset] == original[offset]
+    {
+      if page.pageOffset <= offset < page.pageOffset + pageSize {
+        assert offset < Min(|original|, page.pageOffset + pageSize);
+        assert page.pageBytes[offset-page.pageOffset] == original[offset];
+      } else {
+        assert !(exists i | 0 <= i < |pages| ::
+          pages[i].page.pageOffset <= offset < pages[i].page.pageOffset + pageSize) by {
+          if exists i | 0 <= i < |pages| ::
+              pages[i].page.pageOffset <= offset < pages[i].page.pageOffset + pageSize {
+            var i :| 0 <= i < |pages| &&
+              pages[i].page.pageOffset <= offset < pages[i].page.pageOffset + pageSize;
+            if i > 0 {
+              assert pages[1..][i-1] == pages[i];
+            }
+          }
+        }
+        assert offset !in SerializedSaved(original, pageSize, pages);
+      }
+    }
+  }
+
+  // A serialized cursor consumes each capture exactly once. Its suffix map is
+  // the remaining control inventory, so every successful page action lowers
+  // the existing production-order rank by one and cannot consume a different
+  // dictionary entry or the zero padding after a partial final original page.
+  lemma SerializedPageSelectionConsumesInventory(original: seq<Byte>, pageSize: nat,
+      pages: seq<SerializedPage>, c: PageReplayControl)
+    requires ExactSerializedPages(original, pageSize, pages) && |pages| > 0
+    requires ValidPageReplayControl(|original|, c)
+    requires c.remainingPages == |SerializedPageInventory(pages)|
+    requires PageReplayAction(|original|, c) == 2
+    ensures SerializedPageInventory(pages) - {pages[0].page.pageOffset} ==
+      SerializedPageInventory(pages[1..])
+    ensures SuccessfulPageReplayControl(|original|, c).remainingPages ==
+      |SerializedPageInventory(pages[1..])|
+    ensures PageReplayRank(|original|, SuccessfulPageReplayControl(|original|, c)) ==
+      PageReplayRank(|original|, c) - 1
+  {
+    ExactSerializedInventoryHasExactSources(original, pageSize, pages);
+    assert ExactSerializedPages(original, pageSize, pages[1..]);
+    ExactSerializedInventoryHasExactSources(original, pageSize, pages[1..]);
+    SerializedInventoryContainsExactlyPages(pages[1..]);
+    assert pages[0].page.pageOffset !in SerializedPageInventory(pages[1..]);
+    SuccessfulPageReplayControlMakesProgress(|original|, c);
+  }
+
+  lemma CompleteSerializedPageReplay(original: seq<Byte>, current: seq<Byte>,
+      pageSize: nat, pages: seq<SerializedPage>) returns (restored: seq<Byte>)
+    requires ExactSerializedPages(original, pageSize, pages)
+    requires Recoverable(original, current, SerializedSaved(original, pageSize, pages))
+    ensures restored == original
+    decreases |pages|
+  {
+    if |pages| == 0 {
+      restored := Resize(current, |original|);
+      assert SerializedSaved(original, pageSize, pages) == map[];
+    } else {
+      SerializedPageSuccessConsumesExactSavedRange(original, current, pageSize, pages);
+      assert ExactSerializedPages(original, pageSize, pages[1..]);
+      restored := CompleteSerializedPageReplay(original,
+        ApplySerializedPage(original, current, pageSize, pages[0].page), pageSize, pages[1..]);
+    }
+  }
+}

@@ -22,7 +22,7 @@ All items belong to a workstream; independent items may run immediately without 
 
 ## V — Formal verification and stronger guarantees
 
-- **V — Expand the verified executable boundary and complete recovery correspondence.** Follow the [formal verification todo plan](formal-verification-todo.md) for remaining journal page/parser composition, replacement copy/authority correspondence, production conformance beyond the generated journal and replacement kernels, physical durability qualification and later parser/B-tree/lifecycle proofs. Prioritize safety-critical behavior and useful contracts. Runtime requirements and shipping dependencies stay unchanged; abstract-model verification does not establish handwritten C# or filesystem correctness. Existing E4/F6/I15 durability and native compatibility requirements remain independent acceptance criteria.
+- **V — Expand the verified executable boundary and complete recovery correspondence.** Follow the [formal verification todo plan](formal-verification-todo.md) for remaining serialized journal acquisition/preparation composition, failed replacement syscall/copy/authority correspondence, broader production conformance, physical durability qualification and later parser/B-tree/lifecycle proofs. Prioritize safety-critical behavior and useful contracts. Runtime requirements and shipping dependencies stay unchanged; abstract-model verification does not establish handwritten C# or filesystem correctness. Existing E4/F6/I15 durability and native compatibility requirements remain independent acceptance criteria.
 
 ## R — Relationships and constraints
 

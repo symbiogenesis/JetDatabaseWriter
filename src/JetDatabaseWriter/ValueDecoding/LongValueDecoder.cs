@@ -90,7 +90,7 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
     internal async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
     {
         byte[] bytes = await this.ReadLongValueBytesExactAsync(row, start, len, cancellationToken).ConfigureAwait(false);
-        LongValueDescriptor.TryRead(row.AsSpan(start, len), out LongValueDescriptor descriptor);
+        LongValueDescriptor.TryRead(row, start, len, out LongValueDescriptor descriptor);
         if (!isOle && !format.IsJet3 && descriptor.UsesChainedPages && (bytes.Length & 1) != 0)
         {
             throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "The plain chained Memo payload contains an incomplete UTF-16 code unit.");
@@ -181,7 +181,7 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
             throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "the long-value column slice is outside the row buffer");
         }
 
-        if (!LongValueDescriptor.TryRead(row.AsSpan(start, len), out LongValueDescriptor descriptor))
+        if (!LongValueDescriptor.TryRead(row, start, len, out LongValueDescriptor descriptor))
         {
             throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, $"the long-value descriptor is {len} byte(s), shorter than the {Constants.LongValue.HeaderSize}-byte header");
         }

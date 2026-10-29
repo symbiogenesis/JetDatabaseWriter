@@ -25,5 +25,127 @@ namespace JetDatabaseWriter.Verification {
         return ((ulong)(length)) + (((ulong)(mode)) * (16777216UL));
       }
     }
+    public static bool HasDescriptorRange(uint bufferLength, uint start, uint length)
+    {
+      return (((start) <= (bufferLength)) && ((length) <= ((bufferLength) - (start)))) && ((length) >= (12U));
+    }
+    public static byte WordByte(uint word, byte position)
+    {
+      if ((position) == ((byte)(0))) {
+        return (byte)((word) % (256U));
+      } else if ((position) == ((byte)(1))) {
+        return (byte)(((word) / (256U)) % (256U));
+      } else if ((position) == ((byte)(2))) {
+        return (byte)(((word) / (65536U)) % (256U));
+      } else if ((position) == ((byte)(3))) {
+        return (byte)((word) / (16777216U));
+      } else {
+        return (byte)(0);
+      }
+    }
+    public static uint PointerPage(uint pointer) {
+      return (pointer) / (256U);
+    }
+    public static byte PointerRow(uint pointer) {
+      return (byte)((pointer) % (256U));
+    }
+    public static ulong EncodeRowPointer(ulong page, uint row)
+    {
+      if (((page) > (16777215UL)) || ((row) > (255U))) {
+        return 4294967296UL;
+      } else {
+        return ((page) * (256UL)) + ((ulong)(row));
+      }
+    }
+    public static byte DescriptorAdmission(uint length, byte mode, uint inlineLength, uint maxValueBytes, uint maxChainRows)
+    {
+      if (((length) > (1073741823U)) || (!(JetDatabaseWriter.Verification.LongValueKernel.IsSupportedStorageMode(mode)))) {
+        return (byte)(1);
+      } else if ((length) > (maxValueBytes)) {
+        return (byte)(2);
+      } else if (((mode) == ((byte)(128))) && ((length) > (inlineLength))) {
+        return (byte)(3);
+      } else if ((((mode) != ((byte)(128))) && ((length) > (0U))) && ((maxChainRows) == (0U))) {
+        return (byte)(4);
+      } else {
+        return (byte)(0);
+      }
+    }
+    public static void DecodeFields(byte b0, byte b1, byte b2, byte b3, byte b4, byte b5, byte b6, byte b7, byte b8, byte b9, byte b10, byte b11, out uint length, out byte mode, out uint firstDp, out uint token)
+    {
+      length = 0;
+      mode = 0;
+      firstDp = 0;
+      token = 0;
+      uint _0_word;
+      _0_word = JetDatabaseWriter.Verification.LongValueKernel.DecodeWord(b0, b1, b2, b3);
+      length = JetDatabaseWriter.Verification.LongValueKernel.DecodeLength(_0_word);
+      mode = JetDatabaseWriter.Verification.LongValueKernel.DecodeStorageMode(_0_word);
+      firstDp = JetDatabaseWriter.Verification.LongValueKernel.DecodeWord(b4, b5, b6, b7);
+      token = JetDatabaseWriter.Verification.LongValueKernel.DecodeWord(b8, b9, b10, b11);
+    }
+    public static void ReadDescriptor(byte[] source, uint start, uint count, out bool valid, out uint length, out byte mode, out uint firstDp, out uint token)
+    {
+      valid = false;
+      length = 0;
+      mode = 0;
+      firstDp = 0;
+      token = 0;
+      valid = JetDatabaseWriter.Verification.LongValueKernel.HasDescriptorRange((uint)(source).LongLength, start, count);
+      uint _rhs0 = 0U;
+      byte _rhs1 = (byte)(0);
+      uint _rhs2 = 0U;
+      uint _rhs3 = 0U;
+      length = _rhs0;
+      mode = _rhs1;
+      firstDp = _rhs2;
+      token = _rhs3;
+      if (valid) {
+        uint _out0;
+        byte _out1;
+        uint _out2;
+        uint _out3;
+        JetDatabaseWriter.Verification.LongValueKernel.DecodeFields((source)[(int)(start)], (source)[(int)((start) + (1U))], (source)[(int)((start) + (2U))], (source)[(int)((start) + (3U))], (source)[(int)((start) + (4U))], (source)[(int)((start) + (5U))], (source)[(int)((start) + (6U))], (source)[(int)((start) + (7U))], (source)[(int)((start) + (8U))], (source)[(int)((start) + (9U))], (source)[(int)((start) + (10U))], (source)[(int)((start) + (11U))], out _out0, out _out1, out _out2, out _out3);
+        length = _out0;
+        mode = _out1;
+        firstDp = _out2;
+        token = _out3;
+      }
+    }
+    public static bool WriteDescriptor(byte[] destination, uint start, uint count, uint length, byte mode, uint firstDp, uint token)
+    {
+      bool valid = false;
+      ulong _0_packed;
+      _0_packed = JetDatabaseWriter.Verification.LongValueKernel.EncodeLengthAndMode(length, mode);
+      valid = (JetDatabaseWriter.Verification.LongValueKernel.HasDescriptorRange((uint)(destination).LongLength, start, count)) && ((_0_packed) < (4294967296UL));
+      if (valid) {
+        uint _1_word;
+        _1_word = (uint)(_0_packed);
+        (destination)[(int)((start))] = JetDatabaseWriter.Verification.LongValueKernel.WordByte(_1_word, (byte)(0));
+        uint _index0 = (start) + (1U);
+        (destination)[(int)(_index0)] = JetDatabaseWriter.Verification.LongValueKernel.WordByte(_1_word, (byte)(1));
+        uint _index1 = (start) + (2U);
+        (destination)[(int)(_index1)] = JetDatabaseWriter.Verification.LongValueKernel.WordByte(_1_word, (byte)(2));
+        uint _index2 = (start) + (3U);
+        (destination)[(int)(_index2)] = JetDatabaseWriter.Verification.LongValueKernel.WordByte(_1_word, (byte)(3));
+        uint _index3 = (start) + (4U);
+        (destination)[(int)(_index3)] = JetDatabaseWriter.Verification.LongValueKernel.WordByte(firstDp, (byte)(0));
+        uint _index4 = (start) + (5U);
+        (destination)[(int)(_index4)] = JetDatabaseWriter.Verification.LongValueKernel.WordByte(firstDp, (byte)(1));
+        uint _index5 = (start) + (6U);
+        (destination)[(int)(_index5)] = JetDatabaseWriter.Verification.LongValueKernel.WordByte(firstDp, (byte)(2));
+        uint _index6 = (start) + (7U);
+        (destination)[(int)(_index6)] = JetDatabaseWriter.Verification.LongValueKernel.WordByte(firstDp, (byte)(3));
+        uint _index7 = (start) + (8U);
+        (destination)[(int)(_index7)] = JetDatabaseWriter.Verification.LongValueKernel.WordByte(token, (byte)(0));
+        uint _index8 = (start) + (9U);
+        (destination)[(int)(_index8)] = JetDatabaseWriter.Verification.LongValueKernel.WordByte(token, (byte)(1));
+        uint _index9 = (start) + (10U);
+        (destination)[(int)(_index9)] = JetDatabaseWriter.Verification.LongValueKernel.WordByte(token, (byte)(2));
+        uint _index10 = (start) + (11U);
+        (destination)[(int)(_index10)] = JetDatabaseWriter.Verification.LongValueKernel.WordByte(token, (byte)(3));
+      }
+      return valid;
+    }
   }
 }

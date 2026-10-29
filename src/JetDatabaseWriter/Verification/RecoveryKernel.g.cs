@@ -180,6 +180,19 @@ namespace JetDatabaseWriter.Verification {
         return (byte)(5);
       }
     }
+    public static ulong JournalReplayPageOffset(uint pageSize, ulong originalLength, ulong journalLength, ulong position, ulong tag, ulong mappedPosition, uint remainingPages)
+    {
+      if (!(JetDatabaseWriter.Verification.RecoveryKernel.IsBeforeImageRecord(tag, pageSize, originalLength))) {
+        return 2147483648UL;
+      } else {
+        ulong _0_offset = (tag) - (9223372036854775808UL);
+        if (((((remainingPages) == (0U)) || ((mappedPosition) != (position))) || (((ulong)(remainingPages)) > (((JetDatabaseWriter.Verification.RecoveryKernel.JournalRecordStart(pageSize, originalLength)) - (128UL)) / (32UL)))) || ((JetDatabaseWriter.Verification.RecoveryKernel.OriginalPageRecordPayloadOffset(pageSize, originalLength, journalLength, position, tag, _0_offset)) == (0UL))) {
+          return 2147483648UL;
+        } else {
+          return _0_offset;
+        }
+      }
+    }
     public static bool OriginalOrZeroByte(bool recovering, ulong offset, ulong minimumLength, byte current, byte original)
     {
       return ((current) == (original)) || (((recovering) && ((offset) >= (minimumLength))) && ((current) == ((byte)(0))));
@@ -187,6 +200,107 @@ namespace JetDatabaseWriter.Verification {
     public static bool IncludeAfterImageByte(bool allowed, byte current, byte after)
     {
       return (allowed) || ((current) == (after));
+    }
+    public static uint ReplacementReadAdvance(uint length, uint offset, uint count)
+    {
+      if ((((((length) != (256U)) && ((length) != (96U))) || ((offset) >= (length))) || ((count) == (0U))) || ((count) > ((length) - (offset)))) {
+        return 353U;
+      } else {
+        return (offset) + (count);
+      }
+    }
+    public static byte ReplacementHeaderFixedByte(uint index) {
+      if ((index) == (0U)) {
+        return (byte)(74);
+      } else if ((index) == (1U)) {
+        return (byte)(68);
+      } else if ((index) == (2U)) {
+        return (byte)(87);
+      } else if ((index) == (3U)) {
+        return (byte)(82);
+      } else if ((index) == (4U)) {
+        return (byte)(69);
+      } else if ((index) == (5U)) {
+        return (byte)(80);
+      } else if ((index) == (6U)) {
+        return (byte)(76);
+      } else if ((index) == (7U)) {
+        return (byte)(49);
+      } else if (((index) == (8U)) || ((index) == (13U))) {
+        return (byte)(1);
+      } else {
+        return (byte)(0);
+      }
+    }
+    public static byte ReplacementDecisionFixedByte(uint index) {
+      if ((index) == (0U)) {
+        return (byte)(74);
+      } else if ((index) == (1U)) {
+        return (byte)(68);
+      } else if ((index) == (2U)) {
+        return (byte)(87);
+      } else if ((index) == (3U)) {
+        return (byte)(67);
+      } else if ((index) == (4U)) {
+        return (byte)(77);
+      } else if ((index) == (5U)) {
+        return (byte)(84);
+      } else if ((index) == (6U)) {
+        return (byte)(48);
+      } else if ((index) == (7U)) {
+        return (byte)(49);
+      } else {
+        return (byte)(0);
+      }
+    }
+    public static bool ReplacementHeaderByteValid(uint index, byte @value, byte pathByte, byte digestByte)
+    {
+      return ((index) < (256U)) && ((((index) < (16U)) ? ((@value) == (JetDatabaseWriter.Verification.RecoveryKernel.ReplacementHeaderFixedByte(index))) : (((((32U) <= (index)) && ((index) < (64U))) ? ((@value) == (pathByte)) : ((((224U) <= (index)) ? ((@value) == (digestByte)) : (true)))))));
+    }
+    public static bool ReplacementGenerationByte(bool nonempty, uint index, byte @value)
+    {
+      return (nonempty) || ((((16U) <= (index)) && ((index) < (32U))) && ((@value) != ((byte)(0))));
+    }
+    public static bool ReplacementDecisionByteValid(uint index, byte @value, byte generationByte, byte imageByte, byte digestByte)
+    {
+      return ((index) < (96U)) && ((((index) < (8U)) ? ((@value) == (JetDatabaseWriter.Verification.RecoveryKernel.ReplacementDecisionFixedByte(index))) : ((((index) < (24U)) ? ((@value) == (generationByte)) : ((((index) < (56U)) ? ((@value) == (imageByte)) : ((((64U) <= (index)) ? ((@value) == (digestByte)) : (true)))))))));
+    }
+    public static bool CheckReplacementHeader(byte[] header, byte[] pathIdentity, byte[] checksum)
+    {
+      bool valid = false;
+      if (((((uint)(header).LongLength) != (256U)) || (((uint)(pathIdentity).LongLength) != (32U))) || (((uint)(checksum).LongLength) != (32U))) {
+        valid = false;
+        return valid;
+      }
+      uint _0_index;
+      _0_index = 0U;
+      bool _1_fieldsValid;
+      _1_fieldsValid = true;
+      bool _2_generationPresent;
+      _2_generationPresent = false;
+      while ((_0_index) < (256U)) {
+        _1_fieldsValid = (_1_fieldsValid) && (JetDatabaseWriter.Verification.RecoveryKernel.ReplacementHeaderByteValid(_0_index, (header)[(int)(_0_index)], (pathIdentity)[(int)(((((32U) <= (_0_index)) && ((_0_index) < (64U))) ? ((_0_index) - (32U)) : (0U)))], (checksum)[(int)(((((224U) <= (_0_index)) && ((_0_index) < (256U))) ? ((_0_index) - (224U)) : (0U)))]));
+        _2_generationPresent = JetDatabaseWriter.Verification.RecoveryKernel.ReplacementGenerationByte(_2_generationPresent, _0_index, (header)[(int)(_0_index)]);
+        _0_index = (_0_index) + (1U);
+      }
+      valid = (_1_fieldsValid) && (_2_generationPresent);
+      return valid;
+    }
+    public static bool CheckReplacementDecision(byte[] header, byte[] decision, byte[] checksum)
+    {
+      bool valid = false;
+      if (((((uint)(header).LongLength) != (256U)) || (((uint)(decision).LongLength) != (96U))) || (((uint)(checksum).LongLength) != (32U))) {
+        valid = false;
+        return valid;
+      }
+      uint _0_index;
+      _0_index = 0U;
+      valid = true;
+      while ((_0_index) < (96U)) {
+        valid = (valid) && (JetDatabaseWriter.Verification.RecoveryKernel.ReplacementDecisionByteValid(_0_index, (decision)[(int)(_0_index)], (header)[(int)(((((8U) <= (_0_index)) && ((_0_index) < (24U))) ? ((_0_index) + (8U)) : (16U)))], (header)[(int)(((((24U) <= (_0_index)) && ((_0_index) < (56U))) ? ((_0_index) + (88U)) : (112U)))], (checksum)[(int)(((((64U) <= (_0_index)) && ((_0_index) < (96U))) ? ((_0_index) - (64U)) : (0U)))]));
+        _0_index = (_0_index) + (1U);
+      }
+      return valid;
     }
   }
 }

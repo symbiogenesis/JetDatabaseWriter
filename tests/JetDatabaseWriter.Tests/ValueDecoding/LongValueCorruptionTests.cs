@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.ValueDecoding;
 
 using System;
+using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
@@ -48,10 +49,22 @@ public sealed class LongValueCorruptionTests
     {
         byte[] descriptor = LongValueDescriptor.Chained(length, 256, 0).ToHeaderBytes();
         descriptor[3] = Constants.LongValue.StorageModeMask;
+        Assert.True(LongValueDescriptor.TryRead(descriptor, 0, descriptor.Length, out LongValueDescriptor raw));
+        Assert.Equal(Constants.LongValue.StorageModeMask, raw.StorageMode);
+        Assert.True(LongValueDescriptor.TryRead(descriptor.AsSpan(), out LongValueDescriptor spanRaw));
+        Assert.Equal(raw, spanRaw);
         var decoder = new LongValueDecoder(JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb), null!);
 
         await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await decoder.ReadLongValueBytesExactAsync(descriptor, 0, descriptor.Length, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+            await decoder.ReadLongValueRawBytesAsync(descriptor, 0, descriptor.Length, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+            await decoder.ReadLongValueAsync(descriptor, 0, descriptor.Length, isOle: false, TestContext.Current.CancellationToken));
+        await using var output = new MemoryStream();
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+            await decoder.CopyLongValueRawBytesAsync(descriptor, 0, descriptor.Length, output, 1, TestContext.Current.CancellationToken));
+        Assert.Equal(0, output.Length);
     }
 
     [Fact]

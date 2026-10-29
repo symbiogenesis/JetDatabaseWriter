@@ -398,11 +398,8 @@ internal sealed class EncryptionReplacementIntent : IDisposable
         }
 
         byte[] bytes = new byte[HeaderLength];
-        Read(intent, bytes);
-        Guid generation = new(bytes.AsSpan(16, 16));
-        bool headerFieldsValid = bytes.AsSpan(0, 8).SequenceEqual(Magic) && BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(8)) == 1
-            && BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(12)) == HeaderLength && generation != Guid.Empty
-            && bytes.AsSpan(32, 32).SequenceEqual(Identity(path)) && bytes.AsSpan(224, 32).SequenceEqual(Digest(bytes.AsSpan(0, 224)));
+        ReadEvidence(intent, bytes);
+        bool headerFieldsValid = HeaderFieldsValid(path, bytes);
         ulong oldLength = DecodeLength(bytes.AsSpan(64, 8));
         ulong newLength = DecodeLength(bytes.AsSpan(72, 8));
         if (!RecoveryKernel.IsReplacementHeader(headerFieldsValid, oldLength, newLength))
@@ -416,9 +413,8 @@ internal sealed class EncryptionReplacementIntent : IDisposable
         if (length == HeaderLength + DecisionLength)
         {
             byte[] decision = new byte[DecisionLength];
-            Read(intent, decision);
-            decisionValid = decision.AsSpan(0, 8).SequenceEqual(CommitMagic) && decision.AsSpan(8, 16).SequenceEqual(generation.ToByteArray())
-                && decision.AsSpan(24, 32).SequenceEqual(bytes.AsSpan(112, 32)) && decision.AsSpan(64, 32).SequenceEqual(Digest(decision.AsSpan(0, 64)));
+            ReadEvidence(intent, decision);
+            decisionValid = DecisionFieldsValid(bytes, decision);
         }
 
         byte admission = RecoveryKernel.ReplacementAdmission(length, headerFieldsValid, oldLength, newLength, decisionValid);
@@ -429,7 +425,30 @@ internal sealed class EncryptionReplacementIntent : IDisposable
 
         // Admission proves both raw signed-field encodings fit the nonnegative
         // 2 GiB domain before either value is narrowed to the managed length.
-        return new(generation, new(checked((long)oldLength), bytes.AsSpan(80, 32).ToArray()), new(checked((long)newLength), bytes.AsSpan(112, 32).ToArray()), Committed: admission == 2);
+        return new(new Guid(bytes.AsSpan(16, 16)), new(checked((long)oldLength), bytes.AsSpan(80, 32).ToArray()), new(checked((long)newLength), bytes.AsSpan(112, 32).ToArray()), Committed: admission == 2);
+    }
+
+    private static bool HeaderFieldsValid(string path, byte[] bytes)
+        => RecoveryKernel.CheckReplacementHeader(bytes, Identity(path), Digest(bytes.AsSpan(0, 224)));
+
+    private static bool DecisionFieldsValid(byte[] header, byte[] decision)
+        => RecoveryKernel.CheckReplacementDecision(header, decision, Digest(decision.AsSpan(0, 64)));
+
+    private static void ReadEvidence(FileStream stream, byte[] bytes)
+    {
+        uint length = checked((uint)bytes.Length);
+        uint offset = 0;
+        while (offset < length)
+        {
+            int count = stream.Read(bytes, checked((int)offset), checked((int)(length - offset)));
+            uint next = RecoveryKernel.ReplacementReadAdvance(length, offset, checked((uint)count));
+            if (next == 353)
+            {
+                throw Corrupt("The replacement evidence is incomplete.");
+            }
+
+            offset = next;
+        }
     }
 
     private static ulong DecodeLength(ReadOnlySpan<byte> bytes) => RecoveryKernel.DecodeReplacementLength(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]);

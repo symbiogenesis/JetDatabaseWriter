@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.ValueEncoding;
 using System;
 using System.Buffers.Binary;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Verification;
 using Xunit;
@@ -139,6 +140,168 @@ public sealed class LongValueDescriptorKernelTests
             Assert.Throws<ArgumentException>(() => LongValueDescriptor.Inline(1).WriteTo(bytes));
             Assert.Equal(expected, bytes);
         }
+    }
+
+    /// <summary>Out-of-range row identities cannot wrap onto another native LVAL row.</summary>
+    /// <param name="page">The page outside the native pointer field.</param>
+    /// <param name="row">The row outside the native pointer field.</param>
+    [Theory]
+    [InlineData(-1L, 0)]
+    [InlineData(0x1000000L, 0)]
+    [InlineData(long.MaxValue, 0)]
+    [InlineData(1L, -1)]
+    [InlineData(1L, 256)]
+    [InlineData(1L, int.MaxValue)]
+    public void MakeRowPointer_InvalidIdentity_RefusesWithoutAliasing(long page, int row)
+    {
+        JetLimitationException error = Assert.Throws<JetLimitationException>(() => LongValueStore.MakeRowPointer(page, row));
+        Assert.Equal(JetErrorCode.ValueTooLarge, error.ErrorCode);
+    }
+
+    /// <summary>All twelve acquired byte positions retain their complete unsigned fields.</summary>
+    [Fact]
+    public void ReadDescriptor_EveryFieldBytePositionAndSubslice_MatchesWireOracle()
+    {
+        byte[] source = new byte[20];
+        for (int position = 0; position < 12; position++)
+        {
+            for (int value = 0; value <= byte.MaxValue; value++)
+            {
+                Array.Clear(source);
+                source[position + 4] = checked((byte)value);
+                Assert.True(LongValueDescriptor.TryRead(source, 4, 12, out LongValueDescriptor acquired));
+                Assert.True(LongValueDescriptor.TryRead(source.AsSpan(4, 12), out LongValueDescriptor spanAcquired));
+                Assert.Equal(spanAcquired, acquired);
+                uint word = BinaryPrimitives.ReadUInt32LittleEndian(source.AsSpan(4, 4));
+                Assert.Equal(checked((int)(word & 0x3FFFFFFF)), acquired.Length);
+                Assert.Equal(checked((byte)(source[7] & 0xC0)), acquired.StorageMode);
+                Assert.Equal(BinaryPrimitives.ReadUInt32LittleEndian(source.AsSpan(8, 4)), acquired.FirstDp);
+                Assert.Equal(BinaryPrimitives.ReadUInt32LittleEndian(source.AsSpan(12, 4)), acquired.Token);
+            }
+        }
+    }
+
+    /// <summary>Invalid signed, overflowing and truncated slices refuse before acquisition.</summary>
+    /// <param name="start">The candidate slice start.</param>
+    /// <param name="count">The candidate slice count.</param>
+    [Theory]
+    [InlineData(-1, 12)]
+    [InlineData(0, -1)]
+    [InlineData(0, 11)]
+    [InlineData(1, 12)]
+    [InlineData(int.MaxValue, 12)]
+    [InlineData(0, int.MaxValue)]
+    [InlineData(int.MaxValue, int.MaxValue)]
+    public void ReadDescriptor_InvalidSlice_RefusesWithoutAcquisition(int start, int count)
+    {
+        Assert.False(LongValueDescriptor.TryRead(new byte[12], start, count, out LongValueDescriptor descriptor));
+        Assert.Equal(default, descriptor);
+    }
+
+    /// <summary>Array writes preserve every byte outside the complete header and round-trip exact fields.</summary>
+    [Fact]
+    public void ArrayKernel_CompleteDescriptor_RoundTripsAndPreservesOutsideBytes()
+    {
+        foreach (uint pointer in new uint[] { 0, 1, 0xFF, 0x100, 0xFFFFFF, 0x80000000, uint.MaxValue })
+        {
+            foreach (byte mode in new byte[] { 0, 64, 128 })
+            {
+                byte[] bytes = new byte[20];
+                bytes.AsSpan().Fill(0xA5);
+                byte[] expected = (byte[])bytes.Clone();
+                const uint length = 0x12345678;
+                uint token = ~pointer;
+                BinaryPrimitives.WriteUInt32LittleEndian(expected.AsSpan(4), length | ((uint)mode << 24));
+                BinaryPrimitives.WriteUInt32LittleEndian(expected.AsSpan(8), pointer);
+                BinaryPrimitives.WriteUInt32LittleEndian(expected.AsSpan(12), token);
+                Assert.True(LongValueKernel.WriteDescriptor(bytes, 4, 12, length, mode, pointer, token));
+                Assert.Equal(expected, bytes);
+                Assert.True(LongValueDescriptor.TryRead(bytes, 4, 12, out LongValueDescriptor descriptor));
+                Assert.Equal(new LongValueDescriptor(checked((int)length), mode, pointer, token), descriptor);
+            }
+        }
+    }
+
+    /// <summary>Every refusal class leaves even the first destination byte untouched.</summary>
+    /// <param name="start">The output slice offset.</param>
+    /// <param name="count">The output slice length.</param>
+    /// <param name="length">The declared value length.</param>
+    /// <param name="mode">The storage class.</param>
+    [Theory]
+    [InlineData(0u, 11u, 1u, (byte)128)]
+    [InlineData(1u, 12u, 1u, (byte)128)]
+    [InlineData(uint.MaxValue, uint.MaxValue, 1u, (byte)128)]
+    [InlineData(0u, 12u, 0x40000000u, (byte)128)]
+    [InlineData(0u, 12u, 1u, (byte)192)]
+    [InlineData(0u, 12u, 1u, (byte)1)]
+    public void ArrayKernel_InvalidEncodingOrRange_RefusesBeforeMutation(uint start, uint count, uint length, byte mode)
+    {
+        byte[] bytes = new byte[12];
+        bytes.AsSpan().Fill(0xA5);
+        byte[] original = (byte[])bytes.Clone();
+        Assert.False(LongValueKernel.WriteDescriptor(bytes, start, count, length, mode, uint.MaxValue, uint.MaxValue));
+        Assert.Equal(original, bytes);
+    }
+
+    /// <summary>All row bits and page boundaries invert without signed narrowing or aliasing.</summary>
+    [Fact]
+    public void RowPointer_AllRowsAndPageBoundaries_MatchesIndependentOracle()
+    {
+        foreach (long page in new long[] { 0, 1, 0x7FFF, 0x8000, 0x7FFFFF, 0x800000, 0xFFFFFF })
+        {
+            for (int row = 0; row <= byte.MaxValue; row++)
+            {
+                uint pointer = LongValueStore.MakeRowPointer(page, row);
+                Assert.Equal(checked((uint)((page * 256) + row)), pointer);
+                Assert.Equal(page, LongValueStore.PageNumber(pointer));
+                Assert.Equal(row, LongValueStore.RowIndex(pointer));
+            }
+        }
+    }
+
+    /// <summary>Production admission retains malformed-data and budget refusal priority.</summary>
+    [Fact]
+    public void ValidatePayload_EncodingAndBudgetFailures_KeepExactRefusalPriority()
+    {
+        JetCorruptDataException reserved = Assert.Throws<JetCorruptDataException>(() =>
+            LongValueStore.ValidatePayload(new LongValueDescriptor(1, 192, 0, 0), 0, 4096, 0, 0));
+        Assert.Equal(JetErrorCode.UnreadableLongValue, reserved.ErrorCode);
+        JetLimitationException budget = Assert.Throws<JetLimitationException>(() =>
+            LongValueStore.ValidatePayload(LongValueDescriptor.Inline(1), 0, 4096, 0, 0));
+        Assert.Equal(JetErrorCode.ValueTooLarge, budget.ErrorCode);
+        JetCorruptDataException truncated = Assert.Throws<JetCorruptDataException>(() =>
+            LongValueStore.ValidatePayload(LongValueDescriptor.Inline(1), 0, 4096, 1, 0));
+        Assert.Equal(JetErrorCode.UnreadableLongValue, truncated.ErrorCode);
+        JetLimitationException rows = Assert.Throws<JetLimitationException>(() =>
+            LongValueStore.ValidatePayload(LongValueDescriptor.Chained(1, 256, 0), 0, 4096, 1, 0));
+        Assert.Equal(JetErrorCode.ValueTooLarge, rows.ErrorCode);
+        LongValueStore.ValidatePayload(LongValueDescriptor.Chained(0, 256, 0), 0, 4096, 0, 0);
+    }
+
+    /// <summary>The total range selector agrees with mathematical addition even at unsigned limits.</summary>
+    [Fact]
+    public void DescriptorRange_FullWidthBounds_MatchesMathematicalOracle()
+    {
+        uint[] boundaries = [0, 1, 11, 12, 13, 16, int.MaxValue, 0x80000000, uint.MaxValue - 12, uint.MaxValue];
+        foreach (uint bufferLength in boundaries)
+        {
+            foreach (uint start in boundaries)
+            {
+                foreach (uint count in boundaries)
+                {
+                    bool expected = count >= 12 && ((ulong)start + count) <= bufferLength;
+                    Assert.Equal(expected, LongValueKernel.HasDescriptorRange(bufferLength, start, count));
+                }
+            }
+        }
+
+        byte[] bytes = new byte[12];
+        LongValueKernel.ReadDescriptor(bytes, uint.MaxValue, uint.MaxValue, out bool valid, out uint length, out byte mode, out uint pointer, out uint token);
+        Assert.False(valid);
+        Assert.Equal(0u, length);
+        Assert.Equal(0, mode);
+        Assert.Equal(0u, pointer);
+        Assert.Equal(0u, token);
     }
 
     private static void AssertDecodedWord(byte[] bytes)

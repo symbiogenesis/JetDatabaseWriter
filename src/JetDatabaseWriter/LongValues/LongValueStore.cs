@@ -11,6 +11,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Verification;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -49,11 +50,24 @@ internal static class LongValueStore
     }
 
     internal static uint MakeRowPointer(long pageNumber, int rowIndex)
-        => unchecked((uint)((pageNumber << 8) | (uint)rowIndex));
+    {
+        if (pageNumber < 0 || rowIndex < 0)
+        {
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The native long-value row pointer requires a 24-bit page and an 8-bit row.");
+        }
 
-    internal static int PageNumber(uint lvalDp) => (int)(lvalDp >> 8);
+        ulong pointer = LongValueKernel.EncodeRowPointer(checked((ulong)pageNumber), checked((uint)rowIndex));
+        if (pointer == 4294967296)
+        {
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The native long-value row pointer requires a 24-bit page and an 8-bit row.");
+        }
 
-    internal static int RowIndex(uint lvalDp) => (int)(lvalDp & 0xFF);
+        return checked((uint)pointer);
+    }
+
+    internal static int PageNumber(uint lvalDp) => checked((int)LongValueKernel.PointerPage(lvalDp));
+
+    internal static int RowIndex(uint lvalDp) => LongValueKernel.PointerRow(lvalDp);
 
     internal static byte[] BuildSinglePageBuffer(ReadOnlySpan<byte> payload, uint token, int pageSize, LvalPageLayout layout)
     {
@@ -253,27 +267,33 @@ internal static class LongValueStore
         Guard.InRange(maxValueBytes, 0, int.MaxValue, nameof(maxValueBytes));
         Guard.InRange(maxChainRows, 0, int.MaxValue, nameof(maxChainRows));
 
-        if (descriptor.Length is < 0 or > LongValueDescriptor.MaxLength
-            || descriptor.StorageMode is not Constants.LongValue.InlineStorageMode
-                and not Constants.LongValue.SinglePageStorageMode
-                and not Constants.LongValue.ChainedStorageMode)
+        byte admission = descriptor.Length < 0
+            ? (byte)1
+            : LongValueKernel.DescriptorAdmission(
+                checked((uint)descriptor.Length),
+                descriptor.StorageMode,
+                checked((uint)Math.Max(inlineLength, 0)),
+                checked((uint)maxValueBytes),
+                checked((uint)maxChainRows));
+        if (admission == 0 && descriptor.IsInline && inlineLength < 0)
         {
-            throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "the long-value descriptor has an invalid length or reserved storage mode");
+            admission = 3;
         }
 
-        if (descriptor.Length > maxValueBytes)
+        switch (admission)
         {
-            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"The long value declares {descriptor.Length} stored byte(s), exceeding the configured limit {maxValueBytes}.");
-        }
-
-        if (descriptor.IsInline && descriptor.Length > inlineLength)
-        {
-            throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, $"the inline value claims {descriptor.Length} byte(s) but the column slice contains fewer bytes");
-        }
-
-        if (!descriptor.IsInline && descriptor.Length > 0 && maxChainRows == 0)
-        {
-            throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The long value requires an external row but the configured row limit is zero.");
+            case 0:
+                return;
+            case 1:
+                throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "the long-value descriptor has an invalid length or reserved storage mode");
+            case 2:
+                throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"The long value declares {descriptor.Length} stored byte(s), exceeding the configured limit {maxValueBytes}.");
+            case 3:
+                throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, $"the inline value claims {descriptor.Length} byte(s) but the column slice contains fewer bytes");
+            case 4:
+                throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The long value requires an external row but the configured row limit is zero.");
+            default:
+                throw new JetOperationException(JetErrorCode.InvalidOperationState, "The long-value descriptor admission result is unsupported.");
         }
     }
 
