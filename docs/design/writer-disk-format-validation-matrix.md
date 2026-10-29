@@ -1,6 +1,6 @@
 # Writer Disk-Format Validation Matrix
 
-**Status:** Incomplete interoperability evidence. Test presence and library round trips do not establish Microsoft compatibility. The open requirements are in [the TODO](../todo.md).
+**Status:** Incomplete interoperability evidence. Test presence and library round trips do not establish Microsoft compatibility. The open requirements are in [the project plan](../../PLAN.md).
 
 This document is the compact map of writer-emitted Access disk-format surfaces, their base fixture or oracle, their strongest automated validation signal, and the residual trigger that would justify more coverage. General validation rules live in [dao-validation-strategy.md](dao-validation-strategy.md). Detailed compatibility history lives in [round-trip-openrecordset-hypothesis.md](round-trip-openrecordset-hypothesis.md) and [catalog-index-maintenance-notes.md](catalog-index-maintenance-notes.md).
 

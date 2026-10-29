@@ -349,7 +349,7 @@ public sealed class UnmaintainableIndexWriteTests
 
     /// <summary>
     /// A delete that cascades into the damaged table deletes that table's
-    /// dependent rows before its index rebuild refuses (docs/todo.md). The rows
+    /// dependent rows before its index rebuild refuses (PLAN.md). The rows
     /// the delete has not deleted by then, its own row and the rows of a
     /// cascade applied after the damaged table's, must keep their attachments:
     /// each set of rows loses its attachment rows just before it is deleted.

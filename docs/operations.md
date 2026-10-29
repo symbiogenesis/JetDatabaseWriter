@@ -310,7 +310,7 @@ If a row still cannot fit after those values move, the writer throws `JetLimitat
 - Access-file linked tables support read-through. ODBC links expose cached catalog metadata but do not execute queries; see [linked tables](writing.md#linked-tables).
 - Supported encryption formats and maintenance restrictions are listed in [Encryption Support](../README.md#encryption-support).
 
-See the [validation matrix](design/writer-disk-format-validation-matrix.md) for evidence and the [open requirements](todo.md) for remaining work.
+See the [validation matrix](design/writer-disk-format-validation-matrix.md) for evidence and the [open requirements](../PLAN.md) for remaining work.
 
 ### Compact & Repair
 
@@ -318,7 +318,7 @@ See the [validation matrix](design/writer-disk-format-validation-matrix.md) for 
 
 ### Forms, reports, macros, queries, VBA
 
-The library does not execute forms, reports, macros, modules, saved queries or VBA. Unrelated storage edits aim to retain these objects, but complete preservation of application objects and their dependencies is not established. See the [schema-preservation requirements](todo.md#s--hostile-file-parsing-and-schema-preservation).
+The library does not execute forms, reports, macros, modules, saved queries or VBA. Unrelated storage edits aim to retain these objects, but complete preservation of application objects and their dependencies is not established. See the [schema-preservation requirements](../PLAN.md#s--hostile-file-parsing-and-schema-preservation).
 
 ### SQL and ODBC
 

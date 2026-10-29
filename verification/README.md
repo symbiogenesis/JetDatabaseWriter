@@ -2,7 +2,7 @@
 
 These Dafny files contain recovery models and the sources of small executable recovery, shared parsing and long-value descriptor kernels, together with a verification-only writer lifecycle specification. Only their reviewed generated C# ships in JetDatabaseWriter; it adds no runtime support or package reference. The required `formal` job in [ordinary CI](../.github/workflows/ci.yml) verifies the complete manifest, checks the trust policy and generated freshness, and retains `formal-verification` diagnostics.
 
-Read the [contract and trusted boundary](../docs/design/formal-verification.md) before interpreting a theorem. The [open plan](../docs/formal-verification-todo.md) tracks implementation refinement, actual storage qualification and later proof work.
+Read the [contract and trusted boundary](../docs/design/formal-verification.md) before interpreting a theorem. The [open plan](../PLAN.md#v--formal-verification-and-stronger-guarantees) tracks implementation refinement, actual storage qualification and later proof work.
 
 ## Scope
 

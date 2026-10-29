@@ -92,7 +92,7 @@ internal static class SyntheticDatabases
     /// <summary>
     /// Rows in <see cref="OrdersTable"/>: 10 per customer, fewer than planned
     /// (see <c>docs/design/read-performance-bottlenecks.md</c>; raising it is
-    /// open work in <c>docs/todo.md</c>).
+    /// open work in <c>PLAN.md</c>).
     /// </summary>
     public const int RelationalOrders = 10_000;
 

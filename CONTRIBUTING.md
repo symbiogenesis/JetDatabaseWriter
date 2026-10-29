@@ -18,7 +18,7 @@ Replace the example test class with one relevant to your change. See [the projec
 - Work on your own local branch and worktree.
 - Write a focused test first when changing behavior; for bugs, make it fail before applying the fix.
 - Follow the [coding rules](AGENTS.md#code) and [test conventions](AGENTS.md#tests). Release builds must have zero warnings and errors.
-- Update affected documentation. Keep [docs/todo.md](docs/todo.md) limited to open work.
+- Update affected documentation. Keep [PLAN.md](PLAN.md) limited to open work.
 
 ## Validation
 

@@ -83,7 +83,7 @@ internal static class TextIndexEncoderFixtureHarness
             IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
 
             // Users2_8_idx's fixed-length Text column reads as Null; this
-            // fixture gap remains in docs/todo.md.
+            // fixture gap remains in PLAN.md.
             List<IndexMetadata> textIndexes = [.. indexes.Where(index =>
                 index.Columns.Count == 1 && !index.IsForeignKey && index.FirstDp > 0
                 && colByName.TryGetValue(index.Columns[0].Name, out ColumnMetadata? column) && column.ClrType == typeof(string)

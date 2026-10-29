@@ -6,7 +6,7 @@ Reference material, read when a task needs it:
 
 - [docs/glossary.md](docs/glossary.md): Access/JET acronyms, constants and on-disk terms used in the code, docs and comments.
 - [docs/design/](docs/design/): format notes for pages, rows, indexes, relationships, long values, complex columns, encryption and calculated columns.
-- [docs/todo.md](docs/todo.md): all open work, and the wave-2 plan.
+- [PLAN.md](PLAN.md): all open project work, dependencies and acceptance criteria, including formal verification.
 - [PUBLISH.md](PUBLISH.md): how a release is cut and published.
 
 ## The project
@@ -71,7 +71,7 @@ The helper never publishes or deletes Git refs. After publishing `main`, `-Sha <
 
 ## Formal models
 
-`verification/` contains Dafny models and the source of the small executable recovery kernel. Only its reviewed generated C# enters the library; Dafny, its solver and runtime support are not shipping dependencies. Follow [the proof tooling and trust policy](verification/README.md), keep every `.dfy` and its normal-source dependencies in the exact manifest, and run `scripts/verify-proofs.ps1` with the integrity-pinned toolchain after changing proofs, generated code or proof tooling. The default checks generated freshness; use `-UpdateGeneratedSource` to regenerate after reviewing a source change. Do not add assumptions, admitted lemmas, unchecked external contracts or disabled verification. Changes to mapped recovery code require review of [the model boundary](docs/design/formal-verification.md); the mapping alone is not a C# refinement proof. Keep [the formal verification todo plan](docs/formal-verification-todo.md) open-work-only. The required `ci.yml` formal job verifies the proofs, trust audit, negative controls and generated freshness independently of ordinary builds.
+`verification/` contains Dafny models and the source of the small executable recovery kernel. Only its reviewed generated C# enters the library; Dafny, its solver and runtime support are not shipping dependencies. Follow [the proof tooling and trust policy](verification/README.md), keep every `.dfy` and its normal-source dependencies in the exact manifest, and run `scripts/verify-proofs.ps1` with the integrity-pinned toolchain after changing proofs, generated code or proof tooling. The default checks generated freshness; use `-UpdateGeneratedSource` to regenerate after reviewing a source change. Do not add assumptions, admitted lemmas, unchecked external contracts or disabled verification. Changes to mapped recovery code require review of [the model boundary](docs/design/formal-verification.md); the mapping alone is not a C# refinement proof. Keep [the formal verification workstream](PLAN.md#v--formal-verification-and-stronger-guarantees) open-work-only. The required `ci.yml` formal job verifies the proofs, trust audit, negative controls and generated freshness independently of ordinary builds.
 
 ## Tests
 
@@ -164,12 +164,12 @@ BenchmarkDotNet practice on CI:
 - Commit titles follow Conventional Commits: `feat:`, `fix:`, `refactor:`, `perf:`, `test:`, `docs:`, `build:`, `ci:`, with `!` for a breaking change.
 - Commit in isolated local work branches, integrate reviewed session work into local `main`, and publish only `main`. Never push work branches or publication tags. Preserve other active sessions' uncommitted work; only remove this session's eligible worktrees and local branches after integration and validation.
 
-## docs/todo.md
+## PLAN.md
 
-`docs/todo.md` lists open work only. When a fix lands, the fixing commit, in the same pass:
+`PLAN.md` lists open work only. When a fix lands, the fixing commit, in the same pass:
 
-- deletes the item and every reference to it;
-- adds any new follow-ups as self-contained items (cause, repro, plan label);
+- deletes the completed item and every reference to it, or narrows the item and its references to the remaining gap;
+- adds any new follow-ups as self-contained items (cause, repro or evidence gap, plan label, dependencies and acceptance conditions);
 - updates the design docs the fix invalidates.
 
 Never add "Fixed" entries, test counts, history, or a narrative of what changed: the commit messages record fixes. Facts worth keeping belong in the README or `docs/design/`.

@@ -45,7 +45,7 @@ Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from yo
 
 ### Security
 
-The parser enforces bounds on several page, long-value, attachment and encryption paths. Hostile-file auditing and fuzz coverage remain ongoing; the CVE review is a threat-model inventory, not proof that every attack surface is mitigated. See [the security work](docs/todo.md#s--hostile-file-parsing-and-schema-preservation) and [the vulnerability review](docs/cve-vulnerability-analysis.md).
+The parser enforces bounds on several page, long-value, attachment and encryption paths. Hostile-file auditing and fuzz coverage remain ongoing; the CVE review is a threat-model inventory, not proof that every attack surface is mitigated. See [the security work](PLAN.md#s--hostile-file-parsing-and-schema-preservation) and [the vulnerability review](docs/cve-vulnerability-analysis.md).
 
 Access/text linked data requires a `LinkedSourceResolver` that supplies an authorized stream. The library reads that exact stream without opening catalog paths or filename-derived sidecars; see [linked-source configuration](docs/operations.md#configuration).
 
@@ -55,7 +55,7 @@ Access/text linked data requires a `LinkedSourceResolver` that supplies an autho
 
 The test suite draws from and extends the coverage of [Jackcess](https://jackcess.sourceforge.io/), [mdbtools](https://github.com/mdbtools/mdbtools), [OpenMcdf](https://github.com/ironfede/openmcdf), and Microsoft's [Extensible Storage Engine](https://github.com/microsoft/Extensible-Storage-Engine) for analogous storage-engine risk categories, with additional coverage for corner cases, corruption resilience, and format variants.
 
-Access compatibility is checked with Microsoft-authored fixtures and DAO tests. Coverage is incomplete; see the [writer disk-format validation matrix](docs/design/writer-disk-format-validation-matrix.md) for tested formats and native-engine results, and the [open requirements](docs/todo.md) for remaining work.
+Access compatibility is checked with Microsoft-authored fixtures and DAO tests. Coverage is incomplete; see the [writer disk-format validation matrix](docs/design/writer-disk-format-validation-matrix.md) for tested formats and native-engine results, and the [open requirements](PLAN.md) for remaining work.
 
 Beyond functional tests, the codebase is validated by:
 
@@ -148,6 +148,8 @@ await writer.InsertRowAsync("Contacts", new RowValues
 To edit an existing file, open it with `AccessWriter.OpenAsync("contacts.mdb")`. Use one writer per file and dispose it when finished; `await using` does this automatically. The [writing guide](docs/writing.md) covers updates, deletes, schema changes and constraints, and the [operations guide](docs/operations.md#transactions) explains transactions.
 
 ## Documentation
+
+See [PLAN.md](PLAN.md) for open work, dependencies and acceptance criteria across all workstreams, including formal verification.
 
 | I want to… | Guide |
 |---|---|

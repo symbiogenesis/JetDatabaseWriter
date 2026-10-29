@@ -167,7 +167,7 @@ release-quality benchmark results justify reopening a specific area.
   usage-map window threw `NotSupportedException`, which creating the
   relationship over 20,000 orders that already have two indexes did; the
   rebuild now writes a REFERENCE usage map, so the relational database can
-  grow (docs/todo.md). The attachment database stays small because
+  grow (PLAN.md). The attachment database stays small because
   `AddAttachmentAsync` rebuilds the hidden flat table's indexes on every call,
   so filling it grows quadratically.
 - The `OpenAsync` floor is settled at roughly 1.1 ms / 41 KB. Do not spend
@@ -251,7 +251,7 @@ met them. In that repeat, numeric reads measured 7.26 ± 0.10 ms against
 8.55 ± 0.16 ms against 8.61 ± 0.41 ms. Errors are BenchmarkDotNet's half-widths
 of its 99.9% confidence intervals. The slower first results were not reproduced,
 so they do not justify an additional hot-path change. These comparisons do not
-resolve the older typed-MEMO comparison against `dfd16210` in `docs/todo.md`.
+resolve the older typed-MEMO comparison against `dfd16210` in `PLAN.md`.
 
 ## Writer page-cache baseline (2026-10-05)
 

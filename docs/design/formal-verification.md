@@ -2,7 +2,7 @@
 
 The verification work covers selected recovery algorithms, writer lifecycles and small executable recovery, shared parsing and long-value descriptor kernels in Dafny. Dafny and its solver are development tools, not runtime dependencies. The library targets, package references and managed execution requirements remain unchanged.
 
-A verified model establishes only the properties stated by its definitions, preconditions and theorems. The handwritten C# implementation, record parser, hashing, file APIs and operating system do not become verified because their intended behavior is represented in a model. Implementation conformance and physical persistence qualification are separate obligations in the [open plan](../formal-verification-todo.md).
+A verified model establishes only the properties stated by its definitions, preconditions and theorems. The handwritten C# implementation, record parser, hashing, file APIs and operating system do not become verified because their intended behavior is represented in a model. Implementation conformance and physical persistence qualification are separate obligations in the [open plan](../../PLAN.md#v--formal-verification-and-stronger-guarantees).
 
 ## Boundary expansion policy
 

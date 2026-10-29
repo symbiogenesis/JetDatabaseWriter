@@ -19,7 +19,7 @@ using Microsoft.Win32.SafeHandles;
 /// <remarks>
 /// The first scan of the MEMO and OLE tables also reads every page of the
 /// file to find the table's data pages, because the writer's inline
-/// owned-pages map misses most of them (see <c>docs/todo.md</c>), so those
+/// owned-pages map misses most of them (see <c>PLAN.md</c>), so those
 /// cases measure that whole-file pass as well.
 /// </remarks>
 [MemoryDiagnoser]
