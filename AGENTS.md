@@ -6,7 +6,7 @@ Reference material, read when a task needs it:
 
 - [docs/glossary.md](docs/glossary.md): Access/JET acronyms, constants and on-disk terms used in the code, docs and comments.
 - [docs/design/](docs/design/): format notes for pages, rows, indexes, relationships, long values, complex columns, encryption and calculated columns.
-- [PLAN.md](PLAN.md): all open project work, dependencies and acceptance criteria, including formal verification.
+- [PLAN.md](PLAN.md): the source of truth for all outstanding project work, dependencies and acceptance criteria, including formal verification.
 - [PUBLISH.md](PUBLISH.md): how a release is cut and published.
 
 ## The project
