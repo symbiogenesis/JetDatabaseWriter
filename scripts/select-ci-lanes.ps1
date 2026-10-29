@@ -8,8 +8,8 @@ function Get-CiLanes([string[]] $Paths) {
     $formal = $false
     foreach ($path in $Paths) {
         if ($path -imatch '\.dfy$' -or $path -cmatch '^verification/' -or
-            $path -cmatch '^scripts/(?:install-dafny|verify-proofs|check-proof-review)\.ps1$' -or
-            $path -cmatch '^scripts/tests/(?:verify-proofs|proof-review|formal-workflow)\.tests\.ps1$' -or
+            $path -cmatch '^scripts/(?:install-dafny|verify-proofs|check-proof-review|select-ci-lanes)\.ps1$' -or
+            $path -cmatch '^scripts/tests/(?:verify-proofs|proof-review|formal-workflow|select-ci-lanes)\.tests\.ps1$' -or
             $path -cmatch '^docs/design/(?:formal-verification|proof-trust-review|recovery-storage-contract|verification-[^/]+)\.md$') {
             $formal = $true
         } elseif ($path -cmatch '^src/JetDatabaseWriter/') {
@@ -30,7 +30,44 @@ function Get-CiLanes([string[]] $Paths) {
     return [ordered]@{ dotnet = $dotnet; formal = $formal }
 }
 
-function Get-CiBaseline([string] $Event, [string] $Ref, [string] $Sha, [string] $Repository, [string] $Token, [bool] $Full = $false) {
+function Get-CiLaneJobs([ValidateSet('dotnet', 'formal')][string] $Lane) {
+    if ($Lane -eq 'formal') { return @('Verify recovery models (Dafny)') }
+    return @(
+        'Analyze (library)', 'Analyze (tools)',
+        'Analyze and test (tests net10.0)', 'Analyze and test (tests net10.0 netstandard)', 'Analyze and test (tests net11.0)',
+        'Trimmed and NativeAOT consumers',
+        'Encryption replacement (ubuntu-latest, net10.0)', 'Encryption replacement (ubuntu-latest, net11.0)',
+        'Encryption replacement (macos-latest, net10.0)', 'Encryption replacement (macos-latest, net11.0)'
+    )
+}
+
+function Test-CiLaneSuccess($Run, [ValidateSet('dotnet', 'formal')][string] $Lane, [string] $Repository, $Headers) {
+    if ($Run.conclusion -eq 'success') { return $true }
+    if ($Run.conclusion -ne 'failure') { return $false }
+    # A failed independent lane cannot invalidate completed checks for unchanged
+    # inputs. Require every job in this lane, plus the common review checks.
+    $response = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/actions/runs/$($Run.id)/jobs?filter=latest&per_page=100" -Headers $Headers
+    $jobs = @($response.jobs)
+    if ($response.total_count -ne $jobs.Count) { return $false }
+    $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($job in $jobs) { if (-not $names.Add($job.name)) { return $false } }
+    $required = @('Select CI lanes', 'Script, security and proof review checks') + @(Get-CiLaneJobs $Lane)
+    foreach ($name in $required) {
+        $matching = @($jobs | Where-Object name -CEQ $name)
+        if ($matching.Count -ne 1 -or $matching[0].status -ne 'completed' -or $matching[0].conclusion -ne 'success') { return $false }
+    }
+    $otherLane = if ($Lane -eq 'dotnet') { 'formal' } else { 'dotnet' }
+    $allowedFailures = @('CI gate') + @(Get-CiLaneJobs $otherLane)
+    # New or unclassified jobs must pass too; an expanded gate cannot silently
+    # inherit a result that omits a newly introduced failing obligation.
+    foreach ($job in $jobs) {
+        if ($job.status -ne 'completed') { return $false }
+        if ($job.name -cnotin $allowedFailures -and $job.conclusion -ne 'success') { return $false }
+    }
+    return $true
+}
+
+function Get-CiBaseline([string] $Event, [string] $Ref, [string] $Sha, [string] $Repository, [string] $Token, [bool] $Full = $false, [ValidateSet('dotnet', 'formal')][string] $Lane = 'dotnet') {
     # Manual and release calls always validate everything, including package production.
     if ($Full -or $Event -notin 'push', 'pull_request' -or ($Event -eq 'push' -and $Ref -ne 'refs/heads/main')) { return $null }
     if ($Sha -cnotmatch '^[0-9a-f]{40}$' -or $Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or -not $Token) { return $null }
@@ -39,18 +76,30 @@ function Get-CiBaseline([string] $Event, [string] $Ref, [string] $Sha, [string] 
         # A bounded search may do extra work; it can never justify skipping a lane.
         $response = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/actions/workflows/ci.yml/runs?branch=main&per_page=100" -Headers $headers
         $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $partialChecks = 0
         foreach ($run in @($response.workflow_runs | Sort-Object { [long]$_.id } -Descending)) {
             if ($run.head_branch -ne 'main' -or $run.event -notin 'push', 'workflow_dispatch' -or
                 ($run.path -split '@', 2)[0] -ne '.github/workflows/ci.yml' -or
                 $run.head_sha -cnotmatch '^[0-9a-f]{40}$' -or $run.head_sha -eq $Sha -or -not $seen.Add($run.head_sha)) { continue }
             # A newer failed/pending rerun supersedes an older success for that SHA.
-            if ($run.status -ne 'completed' -or $run.conclusion -ne 'success') { continue }
+            if ($run.status -ne 'completed' -or $run.conclusion -notin 'success', 'failure') { continue }
             git merge-base --is-ancestor $run.head_sha $Sha 2>$null
-            if ($LASTEXITCODE -eq 0) { return $run.head_sha }
+            if ($LASTEXITCODE -eq 0) {
+                if ($run.conclusion -eq 'failure' -and ++$partialChecks -gt 5) { continue }
+                if (Test-CiLaneSuccess $run $Lane $Repository $headers) {
+                    return [ordered]@{
+                        sha = $run.head_sha
+                        runId = [long]$run.id
+                        url = "https://github.com/$Repository/actions/runs/$($run.id)"
+                        evidence = $(if ($run.conclusion -eq 'success') { 'workflow-success' } else { 'lane-success' })
+                    }
+                }
+                continue
+            }
             if ($LASTEXITCODE -ne 1) { return $null }
         }
     } catch {
-        Write-Warning 'Could not establish a successful CI ancestor; running every lane.'
+        Write-Warning "Could not establish a validated $Lane ancestor; running that lane."
     }
     return $null
 }
@@ -70,29 +119,34 @@ if ($CheckResults) {
     $results = @{}
     foreach ($job in $needs.Keys) { $results[$job] = $needs[$job].result }
     Assert-CiResults $lanes $results
-    Write-Output 'Every selected CI lane passed; unchanged lanes inherit the recorded successful ancestor.'
+    Write-Output 'Every selected CI lane passed; unchanged lanes inherit their recorded validated ancestors.'
     return
 }
 
-$baseline = Get-CiBaseline $env:GITHUB_EVENT_NAME $env:GITHUB_REF $env:GITHUB_SHA $env:GITHUB_REPOSITORY $env:GITHUB_TOKEN ($env:JDW_CI_FORCE_FULL -eq 'true')
-$paths = @()
-if ($baseline) {
-    # No API file-count cap, and --no-renames includes both sides of every rename/deletion.
-    # Git quotes unusual filenames; those fail the allowlist and run every lane.
-    $paths = @(git -c core.quotepath=true diff --no-renames --name-only $baseline $env:GITHUB_SHA)
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot compare the validated CI ancestor with this revision.' }
-    $lanes = Get-CiLanes $paths
-} else {
-    $lanes = [ordered]@{ dotnet = $true; formal = $true }
+$baselines = [ordered]@{}
+$paths = [ordered]@{}
+$lanes = [ordered]@{}
+foreach ($lane in 'dotnet', 'formal') {
+    $baseline = Get-CiBaseline $env:GITHUB_EVENT_NAME $env:GITHUB_REF $env:GITHUB_SHA $env:GITHUB_REPOSITORY $env:GITHUB_TOKEN ($env:JDW_CI_FORCE_FULL -eq 'true') $lane
+    $baselines[$lane] = $baseline
+    $paths[$lane] = @()
+    $lanes[$lane] = $true
+    if ($baseline) {
+        # No API file-count cap; --no-renames includes both sides of every rename/deletion.
+        # Quoted unusual filenames fail the allowlist and run every lane.
+        $paths[$lane] = @(git -c core.quotepath=true diff --no-renames --name-only $baseline.sha $env:GITHUB_SHA)
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot compare the validated CI ancestor with this revision.' }
+        $lanes[$lane] = (Get-CiLanes $paths[$lane])[$lane]
+    }
 }
-$selection = [ordered]@{ revision = $env:GITHUB_SHA; baseline = $baseline; dotnet = $lanes.dotnet; formal = $lanes.formal; paths = $paths }
+$selection = [ordered]@{ revision = $env:GITHUB_SHA; baselines = $baselines; dotnet = $lanes.dotnet; formal = $lanes.formal; paths = $paths }
 $json = $selection | ConvertTo-Json -Depth 4
 Write-Output $json
 if ($env:GITHUB_OUTPUT) {
     foreach ($lane in 'dotnet', 'formal') { "$lane=$($lanes[$lane].ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8NoBOM }
 }
 if ($env:GITHUB_STEP_SUMMARY) {
-    $summary = "### CI lane selection`n`nRevision: ``$($env:GITHUB_SHA)```n`nValidated ancestor: ``$baseline```n`n.NET: $($lanes.dotnet); Dafny: $($lanes.formal). Review, script and security checks always run.`n"
+    $summary = "### CI lane selection`n`nRevision: ``$($env:GITHUB_SHA)```n`n.NET ancestor: ``$($baselines.dotnet.sha)`` $($baselines.dotnet.url)`n`nDafny ancestor: ``$($baselines.formal.sha)`` $($baselines.formal.url)`n`n.NET: $($lanes.dotnet); Dafny: $($lanes.formal). Review, script and security checks always run.`n"
     Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary -Encoding utf8NoBOM
 }
 if ($env:RUNNER_TEMP) { [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'ci-selection.json'), $json) }
