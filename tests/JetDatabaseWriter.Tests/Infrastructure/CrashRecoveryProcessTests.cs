@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Infrastructure;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.TestSupport;
 using Xunit;
 
@@ -17,6 +18,7 @@ public sealed class CrashRecoveryProcessTests
         if (Environment.GetEnvironmentVariable(childVariable) is { } childPath)
         {
             CrashRecoveryProcess.MarkReady(childPath);
+            Assert.True(TableDefReader.VerifyCacheHits);
             File.WriteAllText(childPath + ".crashed", phase);
             Assert.Fail("Injected ordinary failure after recording the requested phase.");
             return;

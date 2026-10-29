@@ -70,6 +70,7 @@ internal static class TestProgram
                 throw new ArgumentException("Crash child path is missing or is not absolute: " + child.PathVariable);
             }
 
+            using var verification = new SchemaCacheVerificationFixture();
             await child.Run();
             return 0;
         }
