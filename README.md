@@ -188,40 +188,7 @@ JetDatabaseWriter reads and writes the database's pages directly: the catalog id
 
 ## Contributing
 
-Issues and pull requests are welcome. Please open an issue to discuss larger changes before submitting a PR.
-
-The library and scaffolding CLI live under `src/`, tests and their shared helpers under `tests/`, benchmarks under `benchmarks/`, and FormatProbe under `tools/`. Run solution commands from the repository root.
-
-Local builds and targeted tests are welcome, for example:
-
-```bash
-dotnet build JetDatabaseWriter.slnx -c Release
-dotnet test --project tests/JetDatabaseWriter.Tests -c Release -f net10.0 --no-build --filter-class "JetDatabaseWriter.Tests.Indexes.IndexWriterTests"
-```
-
-Full test suites run only on CI, including a full run of one target framework. All benchmarks also run only on CI, even single-case, short, or dry runs. Local builds and selected tests do not replace the required CI gate. See [AGENTS.md](AGENTS.md#local-execution-and-ci) for the execution policy and hosted workflow commands.
-
-For hosted compiler and analyzer feedback on an unpublished local change, stage newly created files, then run:
-
-```powershell
-pwsh -NoProfile -File scripts/submit-candidate.ps1 -Base origin/main
-```
-
-The [candidate workflow](.github/workflows/candidate.yml) runs from `main`, applies the patch against its published base, installs the candidate SDK and checks every solution target. Its `candidate-results` artifact contains logs, formatter reports, `format-fixes.patch` and the complete tested `candidate.patch`. Review formatter fixes before applying them. Workflow input limits restrict patch size; the helper refuses oversized or incomplete submissions. The final integrated `main` revision still requires ordinary CI.
-
-SDK changes update the exact pin and all dependency locks together, including the separate seed, trimmed and NativeAOT consumer configurations:
-
-```powershell
-pwsh -NoProfile -File scripts/update-sdk.ps1 -Version 10.0.402
-# Or receive a hosted patch without installing or building locally:
-gh workflow run sdk-lock-refresh.yml --ref main -f sdk-version=10.0.402
-```
-
-The local updater performs restores only and rolls back file changes if verification fails. The hosted workflow returns `sdk-lock-patch`, with the patch's base revision and restore verdict. Review and commit the SDK pin and changed locks, then run the ordinary `main` gate.
-
-Local development uses the pinned .NET 10 SDK. CI additionally installs the .NET 11 prerelease pinned in `.github/dotnet11/global.json` and runs the existing `net10.0` package on that runtime; no `net11.0` package target or local .NET 11 SDK is required. The `TestNetStandard` test configuration selects the standard library asset and its separate dependency locks. CI retains normalized golden specimens in `golden-bytes-net10.0`, `golden-bytes-net10.0-netstandard` and `golden-bytes-net11.0`. Failure reports identify every changed byte's offset and page, including added or removed bytes. The approved binaries and pinned hashes are reviewed together for deliberate format changes; Microsoft-authored fixtures and DAO checks provide separate compatibility evidence. Benchmark comparisons require successful exact CI for both head and published baseline, and shared fixture correctness also runs in ordinary tests.
-
-Releases are published from version tags; [PUBLISH.md](PUBLISH.md) describes the steps.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, development and validation guidance.
 
 ## License
 
