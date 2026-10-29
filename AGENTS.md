@@ -158,7 +158,8 @@ BenchmarkDotNet practice on CI:
 ## Git
 
 - Several agents often work in this repository at the same time, in the main checkout and in their own worktrees.
-  - Work on a branch in your own worktree.
+  - Work on a branch in your own worktree. When fanning out parallel work, give each agent or task its own individual Git worktree and branch.
+  - Commit each logical change within a worktree separately; do not combine unrelated changes into one commit.
   - Never modify, remove or prune another worktree, branch or stash. The stash stack is shared, so never use a bare `git stash` or `git stash pop`.
   - Land work by fast-forwarding `main` to the reviewed branch.
 - Commit titles follow Conventional Commits: `feat:`, `fix:`, `refactor:`, `perf:`, `test:`, `docs:`, `build:`, `ci:`, with `!` for a breaking change.
