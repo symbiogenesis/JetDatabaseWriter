@@ -7,7 +7,7 @@ function Get-CiLanes([string[]] $Paths) {
     $dotnet = $false
     $formal = $false
     foreach ($path in $Paths) {
-        if ($path -cmatch '^verification/' -or
+        if ($path -imatch '\.dfy$' -or $path -cmatch '^verification/' -or
             $path -cmatch '^scripts/(?:install-dafny|verify-proofs|check-proof-review)\.ps1$' -or
             $path -cmatch '^scripts/tests/(?:verify-proofs|proof-review|formal-workflow)\.tests\.ps1$' -or
             $path -cmatch '^docs/design/(?:formal-verification|proof-trust-review|recovery-storage-contract|verification-[^/]+)\.md$') {
