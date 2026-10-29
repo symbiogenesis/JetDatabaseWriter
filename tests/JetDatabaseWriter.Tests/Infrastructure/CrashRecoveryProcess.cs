@@ -81,7 +81,7 @@ internal static class CrashRecoveryProcess
     }
 
     internal static string[] ChildArguments(string method, string coreLibraryPath)
-        => ["exec", "--fx-version", RuntimeProductVersion(coreLibraryPath), "--roll-forward", "Disable", typeof(CrashRecoveryProcess).Assembly.Location, "-method", method];
+        => ["exec", "--fx-version", RuntimeProductVersion(coreLibraryPath), "--roll-forward", "Disable", typeof(CrashRecoveryProcess).Assembly.Location, "--jdw-crash-child", method];
 
     internal static void AssertMatchingRuntime(string parentRuntime, string childRuntime, string diagnostic)
         => Assert.True(string.Equals(parentRuntime, childRuntime, StringComparison.Ordinal), $"Child runtime differs from the parent runtime. {diagnostic}");

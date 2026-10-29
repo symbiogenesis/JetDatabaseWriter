@@ -43,6 +43,29 @@ public sealed class CrashRecoveryProcessTests
     }
 
     [Fact]
+    public void CrashChild_UnknownMethod_ExitsWithoutDiscoveringTests()
+    {
+        string[] arguments = CrashRecoveryProcess.ChildArguments("Unrecognized.CrashChild", typeof(object).Assembly.Location);
+        PowerShellRunResult result = PowerShellProcessRunner.Run("dotnet", arguments, TimeSpan.FromSeconds(30));
+        Assert.Equal(1, result.ExitCode);
+        Assert.False(result.TimedOut);
+        Assert.Contains("Unknown crash child method", result.StandardError, StringComparison.Ordinal);
+        Assert.DoesNotContain("Discovering", result.StandardOutput, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CrashChild_MissingPath_ExitsWithoutRunningParentScenario()
+    {
+        const string method = "JetDatabaseWriter.Tests.Writer.TransactionCrashRecoveryTests.InterruptedWrites_RecoverExactOriginalBytes";
+        string[] arguments = CrashRecoveryProcess.ChildArguments(method, typeof(object).Assembly.Location);
+        PowerShellRunResult result = PowerShellProcessRunner.Run("dotnet", arguments, TimeSpan.FromSeconds(30));
+        Assert.Equal(1, result.ExitCode);
+        Assert.False(result.TimedOut);
+        Assert.Contains("Crash child path is missing", result.StandardError, StringComparison.Ordinal);
+        Assert.DoesNotContain("Discovering", result.StandardOutput, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void MarkReady_RecordsExactLoadedSharedFrameworkProductVersion()
     {
         string path = Path.Combine(Path.GetTempPath(), $"CrashRuntime_{Guid.NewGuid():N}.accdb");
@@ -67,7 +90,7 @@ public sealed class CrashRecoveryProcessTests
     {
         string coreLibrary = Path.Combine(Path.GetTempPath(), "dotnet", "shared", "Microsoft.NETCore.App", productVersion, "System.Private.CoreLib.dll");
         string[] arguments = CrashRecoveryProcess.ChildArguments("Example.Test", coreLibrary);
-        Assert.Equal(["exec", "--fx-version", productVersion, "--roll-forward", "Disable", typeof(CrashRecoveryProcess).Assembly.Location, "-method", "Example.Test"], arguments);
+        Assert.Equal(["exec", "--fx-version", productVersion, "--roll-forward", "Disable", typeof(CrashRecoveryProcess).Assembly.Location, "--jdw-crash-child", "Example.Test"], arguments);
         CrashRecoveryProcess.AssertMatchingRuntime(productVersion, productVersion, "matching runtime");
     }
 
