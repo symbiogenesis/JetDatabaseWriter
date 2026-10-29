@@ -234,6 +234,27 @@ function Assert-ProofAudit($Result, [string] $ReportPath, [string] $Name) {
     if ([IO.File]::ReadAllText($ReportPath).Length -ne 0 -or $Result.Stdout -notmatch 'Dafny auditor completed with 0 findings\b') { throw "Unreviewed audit findings for $Name. $([IO.File]::ReadAllText($ReportPath)) $($Result.Stdout)" }
 }
 
+function Invoke-ProofInventory([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [string[]] $Files, [string[]] $Options, [int] $TimeoutSeconds) {
+    # Supply every inventoried source as an ordinary verified input together.
+    # This checks shared dependencies once rather than re-proving their bodies
+    # separately for every importing module. Translation still verifies each
+    # native kernel and its declared normal-source dependencies independently.
+    $result = Invoke-ProofProcess $DafnyPath (@('verify') + $Files + $Options) $OutputDirectory 'inventory.verify' $TimeoutSeconds
+    Assert-ProofResult $result 'complete inventory'
+    $report = Join-Path $OutputDirectory 'inventory.audit.txt'
+    $audit = Invoke-ProofProcess $DafnyPath (@('audit') + $Files + @('--report-file', $report, '--report-format', 'txt')) $OutputDirectory 'inventory.audit' $TimeoutSeconds
+    Assert-ProofAudit $audit $report 'complete inventory'
+    foreach ($file in $Files) {
+        [ordered]@{
+            file = [IO.Path]::GetRelativePath($RepositoryRoot, $file).Replace('\', '/')
+            sha256 = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            verification = $result.Stdout.Trim()
+            verificationLog = 'inventory.verify.stdout.log'
+            auditFindings = 0
+        }
+    }
+}
+
 function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update) {
     $output = $OutputDirectory
     if (-not [IO.Path]::IsPathFullyQualified($DafnyPath)) { throw 'DafnyPath must be absolute.' }
@@ -248,7 +269,8 @@ function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyP
     $files = @(Get-ProofFiles $RepositoryRoot (Join-Path $RepositoryRoot 'verification/proofs.json'))
     $dependenciesByFile = Get-ProofDependencies $RepositoryRoot (Join-Path $RepositoryRoot 'verification/proofs.json') $files
     foreach ($file in $files) { Assert-ProofSource $file ([IO.File]::ReadAllText($file)) }
-    $options = @('--cores', '1', '--verification-time-limit', '60', '--solver-path', $solver, '--verify-included-files')
+    $cores = [Math]::Max(1, [Math]::Min(4, [Environment]::ProcessorCount))
+    $options = @('--cores', $cores.ToString([Globalization.CultureInfo]::InvariantCulture), '--verification-time-limit', '60', '--solver-path', $solver, '--verify-included-files')
     # Negative controls are mandatory: detect a disabled verifier and audit tools
     # which report success despite finding an assumption.
     $falsePath = Join-Path $output 'FalseTheorem.dfy'
@@ -269,24 +291,14 @@ function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyP
         $auditRejected = $true
     }
     if (-not $auditRejected) { throw 'Assumption negative control was accepted by the audit policy.' }
-    $summary = [Collections.Generic.List[object]]::new()
-    foreach ($file in $files) {
-        $name = [IO.Path]::GetFileNameWithoutExtension($file)
-        $inputs = @($dependenciesByFile[$file]) + @($file)
-        $result = Invoke-ProofProcess $executable (@('verify') + $inputs + $options) $output "$name.verify" $TimeoutSeconds
-        Assert-ProofResult $result $name
-        $report = Join-Path $output "$name.audit.txt"
-        $audit = Invoke-ProofProcess $executable (@('audit') + $inputs + @('--report-file', $report, '--report-format', 'txt')) $output "$name.audit" $TimeoutSeconds
-        Assert-ProofAudit $audit $report $name
-        $summary.Add([ordered]@{ file = [IO.Path]::GetRelativePath($RepositoryRoot, $file).Replace('\', '/'); sha256 = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant(); verification = $result.Stdout.Trim(); auditFindings = 0 })
-        Write-Output "Verified and audited: $name"
-    }
+    $summary = @(Invoke-ProofInventory $RepositoryRoot $executable $output $files $options $TimeoutSeconds)
+    Write-Output "Verified and audited complete inventory: $($files.Count) sources with $cores verifier cores"
     $kernels = foreach ($kernelName in 'RecoveryKernel', 'LongValueKernel') {
         $kernelSource = Join-Path $RepositoryRoot "verification/$kernelName.dfy"
         if ($kernelSource -cnotin $files) { throw "Native kernel is missing from the proof inventory: $kernelName" }
         Sync-NativeKernel $kernelName $RepositoryRoot $executable $output $dependenciesByFile[$kernelSource] $options $TimeoutSeconds $Update
     }
-    $receipt = [ordered]@{ schemaVersion = 2; dafny = $version.Stdout.Trim(); solver = $solverVersion.Stdout.Trim(); negativeControls = 'false theorem rejected; assumption audit detected'; proofs = @($summary.ToArray()); executableKernels = @($kernels) }
+    $receipt = [ordered]@{ schemaVersion = 2; dafny = $version.Stdout.Trim(); solver = $solverVersion.Stdout.Trim(); negativeControls = 'false theorem rejected; assumption audit detected'; proofs = $summary; executableKernels = @($kernels) }
     [IO.File]::WriteAllText((Join-Path $output 'summary.json'), ($receipt | ConvertTo-Json -Depth 6))
     Write-Output "Proofs and generated native kernels verified; handwritten code and storage assumptions remain separate obligations. Results: $output"
 }

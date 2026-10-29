@@ -98,6 +98,48 @@ Assert-Scenario 'only reviewed native kernel names admitted' { ConvertFrom-Nativ
 Assert-Scenario 'wrong kernel namespace rejected' { ConvertFrom-NativeKernelTranslation 'LongValueKernel' $translation } 'Unsupported native kernel translation'
 Assert-Scenario 'second kernel refuses runtime-dependent translation' { ConvertFrom-NativeKernelTranslation 'LongValueKernel' ($longValueTranslation.Replace('return (value) == ((byte)(0));', 'return LongValueNativeTypes.Value(value);')) } 'runtime support'
 $originalProofProcess = ${function:Invoke-ProofProcess}
+$inventoryCalls = [Collections.Generic.List[object]]::new()
+function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [string] $WorkingDirectory, [string] $Name, [int] $TimeoutSeconds) {
+    $inventoryCalls.Add([pscustomobject]@{ Arguments = $Arguments; Name = $Name })
+    if ($Arguments[0] -eq 'audit') {
+        $reportIndex = [Array]::IndexOf($Arguments, '--report-file') + 1
+        [IO.File]::WriteAllText($Arguments[$reportIndex], '')
+        return [pscustomobject]@{ ExitCode = 0; Stdout = 'Dafny auditor completed with 0 findings'; Stderr = '' }
+    }
+    return [pscustomobject]@{ ExitCode = 0; Stdout = 'Dafny program verifier finished with 3 verified, 0 errors'; Stderr = '' }
+}
+try {
+    Assert-Scenario 'complete inventory verified and audited once with every normal source' {
+        $inventoryCalls.Clear()
+        $summaries = @(Invoke-ProofInventory $fixture 'mock' $fixture @($source, $dependent) @('--cores', '2', '--verify-included-files') 10)
+        if ($inventoryCalls.Count -ne 2 -or $inventoryCalls[0].Arguments[0] -ne 'verify' -or
+            $inventoryCalls[1].Arguments[0] -ne 'audit') { throw 'The inventory must be verified and audited once.' }
+        foreach ($call in $inventoryCalls) {
+            if ($call.Arguments -notcontains $source -or $call.Arguments -notcontains $dependent -or
+                $call.Arguments -contains '--library' -or $call.Arguments -contains '--no-verify') { throw 'Every proof must be a normal checked input.' }
+        }
+        if ($summaries.Count -ne 2 -or $summaries[0].file -cne 'verification/Good.dfy' -or
+            $summaries[1].file -cne 'verification/RecoveryKernel.dfy' -or
+            $summaries[0].sha256 -cne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant() -or
+            $summaries[1].sha256 -cne (Get-FileHash -LiteralPath $dependent -Algorithm SHA256).Hash.ToLowerInvariant() -or
+            $summaries[0].verification -cne $summaries[1].verification -or
+            $summaries[0].verificationLog -cne 'inventory.verify.stdout.log' -or
+            $summaries[1].verificationLog -cne 'inventory.verify.stdout.log' -or
+            $summaries[0].auditFindings -ne 0 -or $summaries[1].auditFindings -ne 0) { throw 'Exact per-file evidence was not retained.' }
+    }
+    $inventoryFailure = 'verify'
+    function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [string] $WorkingDirectory, [string] $Name, [int] $TimeoutSeconds) {
+        if ($Arguments[0] -eq 'verify') {
+            return [pscustomobject]@{ ExitCode = $(if ($inventoryFailure -eq 'verify') { 4 } else { 0 }); Stdout = 'Dafny program verifier finished with 3 verified, 0 errors'; Stderr = '' }
+        }
+        $reportIndex = [Array]::IndexOf($Arguments, '--report-file') + 1
+        [IO.File]::WriteAllText($Arguments[$reportIndex], 'Unreviewed assumption')
+        return [pscustomobject]@{ ExitCode = 0; Stdout = 'Dafny auditor completed with 1 findings'; Stderr = '' }
+    }
+    Assert-Scenario 'any inventory verification failure rejects the batch' { Invoke-ProofInventory $fixture 'mock' $fixture @($source, $dependent) @() 10 } 'Verification failed'
+    $inventoryFailure = 'audit'
+    Assert-Scenario 'any zero-exit inventory audit finding rejects the batch' { Invoke-ProofInventory $fixture 'mock' $fixture @($source, $dependent) @() 10 } 'audit findings'
+} finally { ${function:Invoke-ProofProcess} = $originalProofProcess }
 function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [string] $WorkingDirectory, [string] $Name, [int] $TimeoutSeconds) {
     if ($Arguments -contains '--no-verify' -or $Arguments -contains '--include-runtime' -or
         $Arguments -contains '--library' -or $Arguments -notcontains $source) { throw 'Generation must verify with its declared source dependencies and omit the runtime.' }
