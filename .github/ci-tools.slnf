@@ -1,0 +1,11 @@
+{
+  "solution": {
+    "path": "../JetDatabaseWriter.slnx",
+    "projects": [
+      "src/JetDatabaseWriter.Scaffold/JetDatabaseWriter.Scaffold.csproj",
+      "tests/JetDatabaseWriter.TestSupport/JetDatabaseWriter.TestSupport.csproj",
+      "benchmarks/JetDatabaseWriter.Benchmarks/JetDatabaseWriter.Benchmarks.csproj",
+      "tools/JetDatabaseWriter.FormatProbe/JetDatabaseWriter.FormatProbe.csproj"
+    ]
+  }
+}
