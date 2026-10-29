@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   # The full CI run (Release build with analyzers, both test legs, pack) must pass first.

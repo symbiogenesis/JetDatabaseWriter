@@ -10,6 +10,7 @@ $workflow = [IO.File]::ReadAllText($WorkflowPath).Replace("`r`n", "`n")
 $solution = [xml][IO.File]::ReadAllText((Join-Path $repoRoot 'JetDatabaseWriter.slnx'))
 $buildProps = [xml][IO.File]::ReadAllText((Join-Path $repoRoot 'Directory.Build.props'))
 $testProject = [xml][IO.File]::ReadAllText((Join-Path $repoRoot 'tests/JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj'))
+$toolsFilter = [IO.File]::ReadAllText((Join-Path $repoRoot '.github/ci-tools.slnf')) | ConvertFrom-Json
 
 function Assert-Contract([bool] $Condition, [string] $Message) {
     if (-not $Condition) { throw $Message }
@@ -41,13 +42,15 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract ($lanes.Count -gt 0) 'The analyzer matrix is missing or its structure changed.'
 
     # Every solution project is analyzed: library and tests have dedicated lanes;
-    # the solution lane covers all remaining projects and all of their frameworks.
+    # the tools solution filter covers all remaining projects and frameworks.
     $projects = @($Solution.SelectNodes('//Project[@Path]') | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.Path) })
     Assert-Contract ('JetDatabaseWriter' -in $projects -and 'JetDatabaseWriter.Tests' -in $projects) 'The solution must include the library and test projects.'
     $library = @($lanes | Where-Object project -eq 'src/JetDatabaseWriter')
     Assert-Contract ($library.Count -eq 1 -and -not $library[0].options) 'The library lane must analyze every library framework.'
-    $tools = @($lanes | Where-Object project -eq 'JetDatabaseWriter.slnx')
-    Assert-Contract ($tools.Count -eq 1 -and $tools[0].options -eq '-p:AnalyzeExcept=JetDatabaseWriter JetDatabaseWriter.Tests') 'The tools lane must analyze the complete solution except the separately analyzed library and tests.'
+    $tools = @($lanes | Where-Object project -eq '.github/ci-tools.slnf')
+    Assert-Contract ($tools.Count -eq 1 -and $tools[0].options -eq '-p:AnalyzeExcept=JetDatabaseWriter JetDatabaseWriter.Tests') 'The tools lane must analyze the complete tools filter except the separately analyzed library and tests.'
+    $filtered = @($toolsFilter.solution.projects | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.Replace('\', '/')) })
+    Assert-Contract (@(Compare-Object @($projects | Where-Object { $_ -notin 'JetDatabaseWriter', 'JetDatabaseWriter.Tests' }) @($filtered | Where-Object { $_ -ne 'JetDatabaseWriter' })).Count -eq 0) 'Every remaining solution project must belong to the tools filter.'
 
     $frameworks = @($TestProject.SelectNodes('/Project/PropertyGroup/TargetFrameworks') | ForEach-Object { $_.InnerText.Split(';', [StringSplitOptions]::RemoveEmptyEntries) } | Sort-Object -Unique)
     Assert-Contract ($frameworks.Count -gt 0) 'The test project framework declaration is missing.'
@@ -84,7 +87,11 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     $runnerPath = 'path: tests/JetDatabaseWriter.Tests/bin/Release/net10.0/'
     $upload = [regex]::Match($analyze, '(?ms)^      - name: Upload DAO test runner\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($upload -match '(?m)^        if: matrix.runner$' -and $upload.Contains($runnerName) -and $upload.Contains($runnerPath) -and $upload -match 'uses: actions/upload-artifact@[0-9a-f]{40}(?:\s|$)' -and $upload.Contains('if-no-files-found: error')) 'Analyzer jobs must publish the complete matching test runner with a pinned action.'
-    Assert-Contract ($analyze -notmatch '(?m)^    needs:') 'Test analyzer lanes must start independently of other analyzer lanes.'
+    foreach ($name in 'analyze', 'aot', 'encryption-replacement') {
+        $laneJob = Get-CiJob $Workflow $name
+        Assert-Contract ($laneJob -match '(?m)^    needs: changes$' -and [regex]::Matches($laneJob, '(?m)^    needs:').Count -eq 1) 'Test analyzer lanes must start independently of other analyzer lanes.'
+        Assert-Contract ($laneJob -match "(?m)^    if: needs\.changes\.outputs\.dotnet == 'true'$" -and [regex]::Matches($laneJob, '(?m)^    if:').Count -eq 1) 'All .NET jobs must use the same reviewed lane selection.'
+    }
     $testSteps = [regex]::Matches($test, '(?ms)^      - name: Test\n(?<step>.*?)(?=^      - |\z)')
     Assert-Contract ($testSteps.Count -eq 1) 'Every test analyzer lane must execute the ordinary suite exactly once.'
     $testStep = $testSteps[0].Groups['step'].Value
@@ -106,6 +113,14 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     $golden = [regex]::Match($analyze, '(?ms)^      - name: Upload golden diagnostics\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($golden.Contains('if: ${{ !cancelled() && matrix.runner }}') -and $golden.Contains('name: golden-bytes-${{ matrix.tf }}') -and $golden.Contains('path: artifacts/golden/${{ matrix.tf }}/')) 'Golden diagnostics must be uploaded after failing tests as well as successful tests.'
     Assert-Contract ($Workflow -notmatch '(?i)infersharp') 'InferSharp must remain in its independent workflow.'
+
+    $changes = Get-CiJob $Workflow 'changes'
+    Assert-Contract ($changes.Contains('fetch-depth: 0') -and $changes.Contains('run: ./scripts/select-ci-lanes.ps1') -and $changes.Contains('GITHUB_TOKEN: ${{ github.token }}') -and $changes -notmatch '(?m)^    (?:if|needs):') 'Path selection must inspect complete history and run unconditionally.'
+    Assert-Contract ($Workflow.Contains("  workflow_call:`n    inputs:`n      full:") -and $Workflow.Contains('        default: true') -and $changes.Contains('JDW_CI_FORCE_FULL: ${{ inputs.full || false }}')) 'Reusable workflow calls must default to complete validation.'
+    $checks = Get-CiJob $Workflow 'checks'
+    Assert-Contract ($checks -notmatch '(?m)^    (?:if|needs):' -and $checks.Contains('run: ./scripts/test-scripts.ps1') -and $checks.Contains('run: ./scripts/check-security-traceability.ps1')) 'Script and security checks must remain unconditional.'
+    $gate = Get-CiJob $Workflow 'gate'
+    Assert-Contract ($gate.Contains('needs: [changes, checks, formal, analyze, aot, encryption-replacement]') -and $gate.Contains('if: always()') -and $gate.Contains('JDW_CI_NEEDS: ${{ toJSON(needs) }}') -and $gate.Contains('run: ./scripts/select-ci-lanes.ps1 -CheckResults')) 'The aggregate gate must reject failure, cancellation and missing selected jobs.'
 }
 
 function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedError, [xml] $Props = $buildProps, [xml] $Tests = $testProject) {
@@ -120,11 +135,14 @@ function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedE
 }
 
 Assert-Scenario 'hosted coverage and immediate validated binary execution' $workflow
-Assert-Scenario 'incomplete solution analysis' ($workflow.Replace('project: JetDatabaseWriter.slnx', 'project: tests/JetDatabaseWriter.TestSupport')) 'The tools lane must analyze the complete solution'
+Assert-Scenario 'incomplete solution analysis' ($workflow.Replace('project: .github/ci-tools.slnf', 'project: tests/JetDatabaseWriter.TestSupport')) 'The tools lane must analyze the complete tools filter'
 Assert-Scenario 'Debug analyzer build' ($workflow.Replace('dotnet build ${{ matrix.project }} -c Release', 'dotnet build ${{ matrix.project }} -c Debug')) 'The analyzer build must use Release'
 Assert-Scenario 'disabled analyzers' ($workflow.Replace('dotnet build ${{ matrix.project }}', 'dotnet build -p:RunAnalyzers=false ${{ matrix.project }}')) 'Analyzer jobs must retain all strict build guarantees'
 Assert-Scenario 'ordinary suite disabled' ($workflow.Replace("      - name: Test`n        if: matrix.runner", "      - name: Test`n        if: false")) 'Every test analyzer lane must run its full ordinary suite'
 Assert-Scenario 'unrelated analyzer barrier' ($workflow.Replace("    name: Analyze", "    needs: another-analyzer`n    name: Analyze")) 'Test analyzer lanes must start independently'
+Assert-Scenario 'dotnet lane selection disabled' ($workflow.Replace("if: needs.changes.outputs.dotnet == 'true'", 'if: false')) 'All .NET jobs must use the same reviewed lane selection'
+Assert-Scenario 'missing aggregate gate' ($workflow.Replace('  gate:', '  removed:')) "The 'gate' CI job is missing"
+Assert-Scenario 'aggregate ignores skipped prerequisites' ($workflow.Replace('if: always()', 'if: success()')) 'The aggregate gate must reject failure'
 
 $analyzeJob = Get-CiJob $workflow 'analyze'
 $testStep = [regex]::Match($analyzeJob, '(?ms)^      - name: Test\n.*?(?=^      - |\z)').Value

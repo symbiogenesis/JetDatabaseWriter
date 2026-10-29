@@ -11,9 +11,15 @@ on:
   # publish.yml calls this workflow so a tag is packed only after the tests pass, and
   # then publishes the package this run uploads.
   workflow_call:
+    inputs:
+      full:
+        description: Validate every lane for a reusable workflow caller
+        type: boolean
+        default: true
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -28,17 +34,67 @@ env:
 # parallel. The analyzers take most of a Release build, so five jobs share them, and the
 # test legs execute their own analyzed Release binaries immediately in the same job.
 jobs:
+  changes:
+    name: Select CI lanes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      dotnet: ${{ steps.select.outputs.dotnet }}
+      formal: ${{ steps.select.outputs.formal }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Select lanes since successful CI ancestor
+        id: select
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          JDW_CI_FORCE_FULL: ${{ inputs.full || false }}
+        run: ./scripts/select-ci-lanes.ps1
+      - name: Upload lane selection
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-selection
+          path: ${{ runner.temp }}/ci-selection.json
+          if-no-files-found: error
+          retention-days: 30
+
+  checks:
+    name: Script, security and proof review checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check PowerShell scripts
+        shell: pwsh
+        run: ./scripts/test-scripts.ps1
+      - name: Check security traceability
+        shell: pwsh
+        run: ./scripts/check-security-traceability.ps1
+      - name: Check proof/trust review records
+        shell: pwsh
+        run: ./scripts/check-proof-review.ps1 -OutputDirectory "${{ runner.temp }}/jdw-proof-review"
+      - name: Upload proof review
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: proof-trust-review
+          path: ${{ runner.temp }}/jdw-proof-review/
+          if-no-files-found: error
+          retention-days: 30
+
   formal:
+    needs: changes
+    if: needs.changes.outputs.formal == 'true'
     name: Verify recovery models (Dafny)
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Check proof/trust review records
-        shell: pwsh
-        run: ./scripts/check-proof-review.ps1 -OutputDirectory "${{ runner.temp }}/jdw-proof-review"
 
       - name: Install pinned verifier
         shell: pwsh
@@ -60,16 +116,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Upload proof review
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: proof-trust-review
-          path: ${{ runner.temp }}/jdw-proof-review/
-          if-no-files-found: error
-          retention-days: 30
-
   analyze:
+    needs: changes
+    if: needs.changes.outputs.dotnet == 'true'
     name: Analyze${{ matrix.runner && ' and test' || '' }} (${{ matrix.name }})
     runs-on: windows-latest
     # Exhaustive statement fault sweeps need longer than analyzer-only lanes.
@@ -84,7 +133,7 @@ jobs:
             pack: true
           # Every other project but the tests; the library builds without analyzers here.
           - name: tools
-            project: JetDatabaseWriter.slnx
+            project: .github/ci-tools.slnf
             options: '"-p:AnalyzeExcept=JetDatabaseWriter JetDatabaseWriter.Tests"'
           # The test project once per target framework; the projects it references build
           # without analyzers here.
@@ -111,17 +160,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-
-      - name: Check PowerShell scripts
-        if: matrix.pack
-        shell: pwsh
-        run: ./scripts/test-scripts.ps1
-
-      # Keep each security-survey CVE linked to a canonical test or explicit N/A reason.
-      - name: Check security traceability
-        if: matrix.pack
-        shell: pwsh
-        run: ./scripts/check-security-traceability.ps1
 
       # global.json pins the .NET 10 SDK; .NET 11 is installed only to run compatibility tests.
       - name: Setup .NET
@@ -206,6 +244,8 @@ jobs:
           retention-days: 7
 
   aot:
+    needs: changes
+    if: needs.changes.outputs.dotnet == 'true'
     name: Trimmed and NativeAOT consumers
     runs-on: windows-latest
     timeout-minutes: 30
@@ -225,6 +265,8 @@ jobs:
         run: ./scripts/test-aot.ps1
 
   encryption-replacement:
+    needs: changes
+    if: needs.changes.outputs.dotnet == 'true'
     name: Encryption replacement (${{ matrix.os }}, ${{ matrix.tf }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -290,3 +332,18 @@ jobs:
           JetDatabaseWriter.Tests.Relationships.LinkedSourceCapabilityTests
           JetDatabaseWriter.Tests.Relationships.LinkedSourceSecurityTests
           JetDatabaseWriter.Tests.Relationships.SystemLinkedExecutionTests
+
+  gate:
+    name: CI gate
+    needs: [changes, checks, formal, analyze, aot, encryption-replacement]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require every selected lane to pass
+        shell: pwsh
+        env:
+          JDW_CI_NEEDS: ${{ toJSON(needs) }}
+        run: ./scripts/select-ci-lanes.ps1 -CheckResults

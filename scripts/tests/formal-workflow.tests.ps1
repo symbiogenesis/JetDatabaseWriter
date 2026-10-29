@@ -13,9 +13,11 @@ function Assert-ProofJob([string] $Workflow) {
     $job = $match.Groups['body'].Value
     if ($job -notmatch '(?m)^    runs-on: ubuntu-22\.04$' -or
         $job -notmatch '(?m)^    timeout-minutes: 15$' -or
-        $job -match '(?m)^    (?:if|needs|continue-on-error):' -or
+        $job -notmatch '(?m)^    needs: changes$' -or
+        $job -notmatch "(?m)^    if: needs\.changes\.outputs\.formal == 'true'$" -or
+        [regex]::Matches($job, '(?m)^    (?:if|needs):').Count -ne 2 -or
         $job -match 'continue-on-error:|--(?:no-verify|allow-warnings)|-Skip|-UpdateGeneratedSource') {
-        throw 'The proof lane must run independently and fail closed within its time bound.'
+        throw 'The proof lane must depend only on reviewed path selection and fail closed within its time bound.'
     }
     $checkout = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
     if (-not $job.Contains($checkout)) { throw 'The proof lane must pin checkout.' }
@@ -38,12 +40,14 @@ function Assert-ProofJob([string] $Workflow) {
         -not $upload.Contains('path: ${{ runner.temp }}/jdw-proof-results/')) {
         throw 'Proof diagnostics must survive failed verification.'
     }
-    $review = [regex]::Match($job, '(?ms)^      - name: Check proof/trust review records\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    $checks = [regex]::Match($Workflow, '(?ms)^  checks:\n(?<body>.*?)(?=^  [\w-]+:\n|\z)').Groups['body'].Value
+    if (-not $checks -or $checks -match '(?m)^    (?:if|needs|continue-on-error):') { throw 'Proof review must run unconditionally, including when expensive lanes are skipped.' }
+    $review = [regex]::Match($checks, '(?ms)^      - name: Check proof/trust review records\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     if (-not $review -or $review -match '(?m)^        if:' -or $review -notmatch '(?m)^        shell: pwsh$' -or
         -not $review.Contains('./scripts/check-proof-review.ps1 -OutputDirectory "${{ runner.temp }}/jdw-proof-review"')) {
         throw 'Mapped implementation and pin changes must have unconditional proof/trust review freshness checks.'
     }
-    $reviewUpload = [regex]::Match($job, '(?ms)^      - name: Upload proof review\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    $reviewUpload = [regex]::Match($checks, '(?ms)^      - name: Upload proof review\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     if (-not $reviewUpload.Contains('if: ${{ !cancelled() }}') -or
         -not $reviewUpload.Contains('uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a') -or
         -not $reviewUpload.Contains('path: ${{ runner.temp }}/jdw-proof-review/') -or

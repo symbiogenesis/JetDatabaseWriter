@@ -444,9 +444,9 @@
     },
     {
       "boundary": "proof-trust",
-      "obligations": "Reviewed the exact eight-model inventory and normal-source LongValueTraversal-to-LongValueKernel dependency, native traversal/count/capacity/probe additions and unchanged generated projection, Dafny 4.11.0/bundled-Z3 and compiler/runtime pins. LongValueTraversal proves distinct visits, decreasing budgets, bounded probes and cumulative allocation under named row/write effects. MultiProcessOwnership proves arbitrary finite multi-client trace invariants, historical current-ticket authority, crash revocation and constructive fresh/recorded acquisition and cleanup schedules; checked counterexamples cover premature coordinator release and stale pathname deletion. Mandatory source policy, audits, negative controls, generated freshness and failed-input retention remain unchanged. Reviewed the source-backed 23-behavior inventory and matching proof/production/effect/native/resource evidence map, including all library source domains and fallback/failure paths. Established continuing semantic/specification/coverage/tool/runtime/native/storage/claim review triggers, including dependencies outside mechanical hash detection. Retired maintenance setup and inventory/map setup only; specification adequacy, machine-checked composition, architecture/trust and environmental qualification remain open.",
-      "conformance": "The dedicated traversal and multi-client mapping documents identify production invocations, independent malformed/membership tests and the exact successful-effect/manual correspondence boundaries. The caller-stream contract separates current live rollback from future journal/reopen/lease capabilities. Existing focused proof-review, verifier-tooling and formal-workflow regressions pass; final exact-source proof/audit/freshness receipts and all settled-main CI runtime/library, analyzer and consumer verdicts are reported separately. Scope/map IDs and local evidence targets were independently checked; V11 obligations moved into durable policy and V12 implementation/qualification obligations remain in PLAN.md. Existing review helpers hash the new cited inventory/map/design evidence without changing verifier policy, manifests, code generation, tools or CI.",
-      "remainingAssumptions": "The pinned verifier/solver, native-source projection, C# compiler, runtime and host remain trusted; no new assumption, admitted lemma, external declaration or shipping dependency is introduced. Multi-client Coordinate assumes atomic canonical exclusion; complete missing-destination composite acquisition and ordinary held-handle disposal are not mechanically refined by the retained-database cleanup schedule. Actual OS exclusion, lock-rank/deadlock prevention, physical namespace/device durability and whole-parser refinement remain separate. Receipt freshness does not attest reviewer identity or judgment. A complete inventory and a fresh receipt do not verify the inventoried C#, establish specification adequacy or qualify native/platform behavior.",
+      "obligations": "Reviewed the exact eight-model inventory and normal-source LongValueTraversal-to-LongValueKernel dependency, native traversal/count/capacity/probe additions and unchanged generated projection, Dafny 4.11.0/bundled-Z3 and compiler/runtime pins. LongValueTraversal proves distinct visits, decreasing budgets, bounded probes and cumulative allocation under named row/write effects. MultiProcessOwnership proves arbitrary finite multi-client trace invariants, historical current-ticket authority, crash revocation and constructive fresh/recorded acquisition and cleanup schedules; checked counterexamples cover premature coordinator release and stale pathname deletion. Mandatory source policy, audits, negative controls, generated freshness and failed-input retention remain unchanged. Reviewed the source-backed 23-behavior inventory and matching proof/production/effect/native/resource evidence map, including all library source domains and fallback/failure paths. Established continuing semantic/specification/coverage/tool/runtime/native/storage/claim review triggers, including dependencies outside mechanical hash detection. Retired maintenance setup and inventory/map setup only; specification adequacy, machine-checked composition, architecture/trust and environmental qualification remain open. Reviewed cumulative Git-tree lane selection against successful main ancestors, newest-run-per-SHA precedence, force/PR ancestry, unknown-path fallback, unconditional review/security/script checks, complete analyzer/runtime/consumer selection and failure-closed aggregate results. Reusable/manual/release execution retains all gates. Reviewed complete-inventory ordinary-source verification and audit with bounded verifier cores, exact per-source hashes, mandatory negative controls and independently verified native translations. Reviewed the complete tools solution filter and isolated bounded script-regression coordinator. Direct crash dispatch preserves allowlisted original methods, schema-cache assembly-fixture verification, exact child runtime selection, readiness/phase markers and forced-kill evidence; independent crash scenarios use unique files and child-only environment overrides.",
+      "conformance": "The dedicated traversal and multi-client mapping documents identify production invocations, independent malformed/membership tests and the exact successful-effect/manual correspondence boundaries. The caller-stream contract separates current live rollback from future journal/reopen/lease capabilities. Existing focused proof-review, verifier-tooling and formal-workflow regressions pass; final exact-source proof/audit/freshness receipts and all settled-main CI runtime/library, analyzer and consumer verdicts are reported separately. Scope/map IDs and local evidence targets were independently checked; V11 obligations moved into durable policy and V12 implementation/qualification obligations remain in PLAN.md. Existing review helpers hash the new cited inventory/map/design evidence without changing verifier policy, manifests, code generation, tools or CI. Focused path-selection tests cover failed/pending pushes, superseding runs, unrelated history, PR/manual/reusable/release events, mixed paths, renames and unknown files; workflow mutations exercise missing/disabled lanes and aggregate gates. Verifier tests reject batch verification/audit failure and retain each exact source hash. Coordinator tests cover overlap, child failure diagnostics and parse-before-execute. The pinned local proof run passes complete-inventory verification, audit, both negative controls and both generated freshness checks. Focused crash helper and process-interruption tests retain ordinary-failure rejection and all original scenario assertions. Settled-main hosted results remain separate execution evidence.",
+      "remainingAssumptions": "The pinned verifier/solver, native-source projection, C# compiler, runtime and host remain trusted; no new assumption, admitted lemma, external declaration or shipping dependency is introduced. Multi-client Coordinate assumes atomic canonical exclusion; complete missing-destination composite acquisition and ordinary held-handle disposal are not mechanically refined by the retained-database cleanup schedule. Actual OS exclusion, lock-rank/deadlock prevention, physical namespace/device durability and whole-parser refinement remain separate. Receipt freshness does not attest reviewer identity or judgment. A complete inventory and a fresh receipt do not verify the inventoried C#, establish specification adequacy or qualify native/platform behavior. Unchanged lanes inherit a successful ancestor only through Git ancestry and complete-tree equality of classified inputs; GitHub verdict integrity and maintained path classification remain CI trust. Failed or unavailable baseline evidence selects every lane. Batched proof counts describe the complete manifest rather than per-model counts and do not change proof scope or refinement claims. Test scheduling and child startup optimizations do not establish physical durability.",
       "evidence": [
         "docs/design/calculated-columns-format-notes.md",
         "docs/design/caller-stream-recovery.md",
@@ -463,12 +463,16 @@
       ],
       "inputs": [
         {
+          "path": ".github/ci-tools.slnf",
+          "sha256": "cb6d3ac0821f47819113b990350872ef5d9d4677ad3974a9a5206621540d5b32"
+        },
+        {
           "path": ".github/dotnet11/global.json",
           "sha256": "fd3fdaae1b349b01d6e6835ec111903f107a2643f3bce313fad4dc20180f5fb2"
         },
         {
           "path": ".github/workflows/ci.yml",
-          "sha256": "a3b5f851e6925875d6984a8cfa626099d76d4ffdf19363296752d9dc5c0c0d34"
+          "sha256": "0673725c8ee5fad28f330410727fa83edde57eba5dbd91b5a88fe9e72ab97c0d"
         },
         {
           "path": "Directory.Build.props",
@@ -524,35 +528,71 @@
         },
         {
           "path": "scripts/check-proof-review.ps1",
-          "sha256": "81870a24e9c83804425019b89bc5f8611e56e4ca4bd5cb771f04468afba5415a"
+          "sha256": "6682cd7ad15ba61fe49623bbda7ecb79a171732e1dfd7402e6915e6f58632063"
         },
         {
           "path": "scripts/install-dafny.ps1",
           "sha256": "04ee09b77363c37f0272a4d21d25f8d473c92e359cf4696773144e09ddc800f5"
         },
         {
+          "path": "scripts/select-ci-lanes.ps1",
+          "sha256": "93fc0f0d072bf7c7a7352dcdd9d1d2d2a151278ac4f45466aff173987a125e13"
+        },
+        {
           "path": "scripts/test-scripts.ps1",
-          "sha256": "524124f1eb302e9d27fad5d38edf12d84317d2044d82207715d4cd66130149a4"
+          "sha256": "92fad551c5bc16576d74090786573ca26ecd826269515d3dba3867c9c059aa60"
+        },
+        {
+          "path": "scripts/tests/ci-tools.tests.ps1",
+          "sha256": "443160b789923e80148eb4e286c3b8bba3005d975fee650264482009c2084104"
+        },
+        {
+          "path": "scripts/tests/ci-workflow.tests.ps1",
+          "sha256": "f1c08d24754d55a58ede0f001c9f3df539c0c1cbce1c0bdc757380f45082bb0b"
         },
         {
           "path": "scripts/tests/formal-workflow.tests.ps1",
-          "sha256": "bcd5d82ac0e25ab1c6f12a48f40c0007cb25d55369520f4b2ba3ae3caaea85fb"
+          "sha256": "f27af1a4106f9a19bad8bde8a11d9f25142d249cfa9bd4a17854caf1d6c1b324"
         },
         {
           "path": "scripts/tests/proof-review.tests.ps1",
           "sha256": "d99535cdf470cef93e204140be9132436039407124cc699fae752e74dd0daad4"
         },
         {
+          "path": "scripts/tests/select-ci-lanes.tests.ps1",
+          "sha256": "7c3595b75fdc14d04255db2d4eb097f8fb74a7231f24cde978faab3fe39e5ad6"
+        },
+        {
+          "path": "scripts/tests/test-scripts.tests.ps1",
+          "sha256": "0791c82e789f7c4d9d34b3dbbbac9c1b5d4f1a7768e4644a67f9b576916980f0"
+        },
+        {
           "path": "scripts/tests/verify-proofs.tests.ps1",
-          "sha256": "fd7f25345fc50ee988df82c5c15cc0b95176c656fe83c632e2bc5dc1db6be8d6"
+          "sha256": "3c954fe86d3ff1d1eea8894cbe908752022095f65d0bc59967075baba14fca96"
         },
         {
           "path": "scripts/verify-proofs.ps1",
-          "sha256": "04a268d5ce19cb1f82e4c8d6c2bc3eed86446652281d6aa79b3372428cd80cda"
+          "sha256": "cc0915370bbbaf6e402239f654375152b10664487d0547f3476e260a9b72ecb6"
         },
         {
           "path": "src/JetDatabaseWriter/JetDatabaseWriter.csproj",
           "sha256": "4141872d60b258e680ed71c70112e77f52d37a353a636d7931b20a2309cea157"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Infrastructure/CrashRecoveryProcess.cs",
+          "sha256": "f9c2087dd579035da1ec75a4b9d8128dd721f2d402fc43ba6f374dd3b90cf6ae"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Infrastructure/CrashRecoveryProcessTests.cs",
+          "sha256": "6c0bc15e138d4f9f06d109b8dc1154cdecf9e82eae6408e375a36e9b4a74e704"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj",
+          "sha256": "0e15be728c27c0fc51e9f11513f7042beb8066bf0b78a1cc66cbb7c51e7d6503"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/TestProgram.cs",
+          "sha256": "60000554d24ddfc5cb3dcc9b64bcdd91814e1921839bb29ad8b85dc163c2c42b"
         },
         {
           "path": "verification/dafny-toolchain.json",
@@ -580,7 +620,7 @@
         },
         {
           "path": "verification/README.md",
-          "sha256": "3d9ef72d3afd6d13ee55b9c4cfa7de6fe4d786fd2e64f0c7598f41e50a3b9f0f"
+          "sha256": "999f852dc06941ad5dec0df1dfdcc7ded2dc4c03b283b187e6b1a4529b33c245"
         },
         {
           "path": "verification/RecoveryKernel.dfy",
