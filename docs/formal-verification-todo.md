@@ -55,15 +55,13 @@ Cause: E4/F6/I15 remain limited by namespace persistence, bootstrap and device o
 - [ ] Extend hosted VM/block-level or physical interruption testing to journal creation, decisions, truncation, replay, replacement and cleanup; process termination alone is insufficient.
 - [ ] Qualify the buffered model's exact bytes-and-length flush fence and crash quiescence against actual OS caches and outstanding I/O; a restarted recovery must not be overwritten by an older queued operation.
 - [ ] Qualify lock/receipt lifecycle and missing-name bootstrap, including macOS cooperation. Do not change Access compatibility by requiring native Access to replay a library log.
-- [ ] Define a separate caller-stream journal/reopen/exclusive-access contract before promising persistent recovery for arbitrary streams.
 
 Acceptance: E4/F6/I15 evidence for each advertised platform. Never infer hardware durability from a successful flush call or a model that assumes it.
 
 ## V8 — Verify bounded parsing and arithmetic kernels
 
-Cause: S1's remaining resource and traversal audit spans many handwritten readers. The generated complete descriptor codec proves bounded field acquisition/serialization, inverse laws, payload-admission priority and row-pointer packing. Shared range/read kernels cover bounded slices and exact positive-read consumption. External-page acquisition, native pointer/token meaning, containing parser traversal and aggregate resource bounds remain separate obligations.
+Cause: S1's remaining resource and traversal audit spans many handwritten readers. The descriptor codec and shared range/read kernels cover their named bounded representation and acquisition decisions. The selected external chained-payload traversal proves distinct visits, decreasing row/payload budgets and aggregate traversal-owned array bounds, with production invocation and focused conformance. Exact handwritten table membership, containing public parser traversal, locator/cache/pool and destination resources, native pointer/token meaning and other reader surfaces remain separate obligations.
 
-- [ ] Prove parser progress, finite traversal with visited identities, decreasing budgets and aggregate allocation bounds for a selected hostile-file surface.
 - [ ] Connect kernels to production paths before claiming a public parser is verified. Retain fuzzing and independent malformed-file tests.
 
 Acceptance: named surface coverage with implementation correspondence; no whole-library hostile-file claim from isolated lemmas.
@@ -82,9 +80,9 @@ Acceptance: I2/I17 requirements proven for named page forms and independently va
 
 ## V10 — Verify lifecycle and concurrency boundaries
 
-Cause: the serialized writer lifecycle specification does not establish cross-process acquisition/recovery interleavings, lock ordering or cache pin/lease and copy-on-write correctness. Those require explicit coordination and storage assumptions beyond a single-writer trace.
+Cause: the serialized writer lifecycle and multi-client acquisition/recovery/cleanup models preserve their named invariants under explicit successful effects and canonical coordination. The multi-client model covers arbitrary finite interleavings and stale-ticket refusal; actual composite coordination acquisition, OS exclusion, lock ordering and cache pin/lease and copy-on-write correctness still require implementation and storage correspondence.
 
-- [ ] Model cross-process acquisition/recovery/cleanup interleavings; optionally use TLA+/TLC for bounded exploration and TLAPS or Dafny for unbounded invariants.
+- [ ] Refine the multi-client model's atomic canonical coordinator to complete existing/missing-destination acquisition and ordinary held-handle disposal. Repro: replacement recovery can bootstrap before a database handle exists, while ordinary owner disposal can run after it closes; neither is mechanically refined by the retained-database cleanup schedule. Bind composite intent/native/source leases, stale attempts and crash quiescence to production traces (V10/V7).
 - [ ] Prove lock-order/rank rules or comparable deadlock prevention for supported cooperating clients, with explicit OS assumptions.
 - [ ] Tie pin/lease and copy-on-write invariants to I7 before changing cache reuse.
 

@@ -61,6 +61,8 @@ byte[] modified = ms.ToArray();
 
 > The stream must be readable and seekable. For `AccessWriter`, it must also be writable.
 
+Give a writer exclusive access to the stream and underlying bytes until disposal; keep a reader's source unchanged. A non-`FileStream`, including a wrapper around one, has live rollback only. `leaveOpen` controls disposal ownership and does not enable persistent recovery. See the [caller-stream contract](design/caller-stream-recovery.md) for resize/flush requirements, failure ownership and reopen limits.
+
 If you open a `FileStream` yourself for `AccessReader`, open it without `FileOptions.Asynchronous`. The reader reads every page through the stream, and on Windows, in our measurements, a page read on an overlapped handle took about twice as long as one on a synchronous handle, even when the page was already in the OS cache. `AccessReader.OpenAsync(path)` opens its file that way.
 
 ## Transactions

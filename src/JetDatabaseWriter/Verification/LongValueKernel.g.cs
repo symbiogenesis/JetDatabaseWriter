@@ -71,6 +71,53 @@ namespace JetDatabaseWriter.Verification {
         return (byte)(0);
       }
     }
+    public static byte ChainVisitAdmission(uint pointer, uint rows, uint budget, bool repeated)
+    {
+      if ((pointer) == (0U)) {
+        return (byte)(1);
+      } else if ((rows) >= (budget)) {
+        return (byte)(2);
+      } else if (repeated) {
+        return (byte)(3);
+      } else {
+        return (byte)(0);
+      }
+    }
+    public static uint ChainPayloadCount(uint total, uint copied, uint pageLength, uint start, uint size, uint prefix, bool single)
+    {
+      if ((((((copied) >= (total)) || ((start) > (pageLength))) || ((size) > ((pageLength) - (start)))) || ((size) <= (prefix))) || ((single) && (((size) - (prefix)) < ((total) - (copied))))) {
+        return 0U;
+      } else if (((size) - (prefix)) < ((total) - (copied))) {
+        return (size) - (prefix);
+      } else {
+        return (total) - (copied);
+      }
+    }
+    public static uint NextVisitedCapacity(uint capacity) {
+      if ((capacity) == (0U)) {
+        return 16U;
+      } else if (((capacity) < (16U)) || ((capacity) >= (1073741824U))) {
+        return 0U;
+      } else {
+        return (capacity) * (2U);
+      }
+    }
+    public static uint VisitedSlot(uint pointer, uint capacity)
+    {
+      if ((capacity) == (0U)) {
+        return 0U;
+      } else {
+        return (uint)((((((ulong)(pointer)) * (2654435761UL)) + ((ulong)((pointer) / (256U)))) + ((ulong)((pointer) / (65536U)))) % ((ulong)(capacity)));
+      }
+    }
+    public static uint NextVisitedSlot(uint slot, uint capacity)
+    {
+      if (((capacity) == (0U)) || ((slot) >= ((capacity) - (1U)))) {
+        return 0U;
+      } else {
+        return (slot) + (1U);
+      }
+    }
     public static void DecodeFields(byte b0, byte b1, byte b2, byte b3, byte b4, byte b5, byte b6, byte b7, byte b8, byte b9, byte b10, byte b11, out uint length, out byte mode, out uint firstDp, out uint token)
     {
       length = 0;

@@ -36,6 +36,6 @@ For that fixed configuration, record the following evidence before promoting a s
 
 ## Caller streams
 
-Persistent recovery for caller streams needs an explicit future contract before implementation or promotion: a stable database/journal identity, durable decision storage, exact read/write/length semantics, a successful fence, crash quiescence, reopen/discovery and caller-enforced exclusive ownership across the whole recovery lifecycle. Ownership of stream disposal and failure retention must also be defined. `CanSeek`, successful `FlushAsync` or an in-process semaphore cannot establish these properties by themselves.
+The [caller-stream recovery contract](caller-stream-recovery.md) defines current stream classification, live rollback, disposal/failure ownership and exclusive-access obligations, together with the complete journal identity, discovery, fence, reopen, lease and evidence-retention capabilities required of a future persistent stream adapter. The current public stream overloads provide no persistent journal-stream API. A wrapper around a `FileStream` follows the custom-stream path; `CanSeek`, successful `FlushAsync` or an in-process semaphore cannot establish persistent recovery.
 
 The library's current file sidecars are library recovery evidence. Microsoft Access does not replay them; a native open after an interrupted library mutation must follow library recovery. Format interoperability and physical persistence remain separate acceptance requirements.

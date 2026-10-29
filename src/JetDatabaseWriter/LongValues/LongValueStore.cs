@@ -205,16 +205,17 @@ internal static class LongValueStore
         uint currentDp = descriptor.FirstDp;
         int copied = 0;
         int rows = 0;
-        SmallLvalDpSet seen = default;
+        LongValueVisitedSet seen = default;
         while (copied < descriptor.Length)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (currentDp == 0)
+            byte visit = LongValueKernel.ChainVisitAdmission(currentDp, checked((uint)rows), checked((uint)maxChainRows), false);
+            if (visit == 1)
             {
                 throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, $"the chain ended after {copied} of {descriptor.Length} byte(s)");
             }
 
-            if (rows >= maxChainRows)
+            if (visit == 2)
             {
                 throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"The long value exceeds the configured limit of {maxChainRows} external row(s).");
             }
@@ -247,7 +248,14 @@ internal static class LongValueStore
                 }
 
                 currentDp = descriptor.IsSinglePage ? 0 : Ru32(location.Page, location.Start);
-                int count = Math.Min(available, descriptor.Length - copied);
+                int count = checked((int)LongValueKernel.ChainPayloadCount(
+                    checked((uint)descriptor.Length),
+                    checked((uint)copied),
+                    checked((uint)validPageLength),
+                    checked((uint)location.Start),
+                    checked((uint)location.Size),
+                    checked((uint)prefixLength),
+                    descriptor.IsSinglePage));
                 await destination.WriteAsync(location.Page.AsMemory(location.Start + prefixLength, count), cancellationToken).ConfigureAwait(false);
                 copied += count;
             }

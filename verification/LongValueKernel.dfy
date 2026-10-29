@@ -70,6 +70,60 @@ module LongValueKernel {
     else 0
   }
 
+  // Traversal admission precedes acquisition. A repeated identity never grants
+  // another lookup; exhaustion and null pointers preserve their error priority.
+  function ChainVisitAdmission(pointer: U32, rows: U32, budget: U32, repeated: bool): Byte {
+    if pointer == 0 then 1 else if rows >= budget then 2 else if repeated then 3 else 0
+  }
+
+  // Zero is refusal, so every admitted row strictly consumes the byte budget.
+  function ChainPayloadCount(total: U32, copied: U32, pageLength: U32,
+      start: U32, size: U32, prefix: U32, single: bool): U32 {
+    if copied >= total || start > pageLength || size > pageLength - start ||
+       size <= prefix || (single && size - prefix < total - copied) then 0
+    else if size - prefix < total - copied then size - prefix else total - copied
+  }
+
+  // Bounded geometric arrays replace undocumented HashSet allocation policy.
+  // Zero refuses growth before checked array-length arithmetic can overflow.
+  function NextVisitedCapacity(capacity: U32): U32 {
+    if capacity == 0 then 16
+    else if capacity < 16 || capacity >= 1073741824 then 0
+    else capacity * 2
+  }
+
+  function VisitedSlot(pointer: U32, capacity: U32): U32 {
+    if capacity == 0 then 0
+    else (((pointer as U64) * 2654435761 + (pointer / 256) as U64 + (pointer / 65536) as U64) % (capacity as U64)) as U32
+  }
+
+  function NextVisitedSlot(slot: U32, capacity: U32): U32 {
+    if capacity == 0 || slot >= capacity - 1 then 0 else slot + 1
+  }
+
+  lemma ChainPayloadMakesBoundedProgress(total: U32, copied: U32, pageLength: U32,
+      start: U32, size: U32, prefix: U32, single: bool)
+    ensures ChainPayloadCount(total,copied,pageLength,start,size,prefix,single) > 0 ==>
+      copied < total && start <= pageLength && size <= pageLength - start && prefix < size
+    ensures ChainPayloadCount(total,copied,pageLength,start,size,prefix,single) > 0 ==>
+      0 < ChainPayloadCount(total,copied,pageLength,start,size,prefix,single) <= total - copied &&
+      ChainPayloadCount(total,copied,pageLength,start,size,prefix,single) <= size - prefix
+  { }
+
+  lemma ValidChainBoundsAdmitProgress(total: U32, copied: U32, pageLength: U32,
+      start: U32, size: U32, prefix: U32, single: bool)
+    requires copied < total && start <= pageLength && size <= pageLength - start
+    requires prefix < size && (single ==> size - prefix >= total - copied)
+    ensures ChainPayloadCount(total,copied,pageLength,start,size,prefix,single) > 0
+  { }
+  lemma VisitedAllocationAndProbeBounds(pointer: U32, capacity: U32, slot: U32)
+    ensures capacity > 0 ==> VisitedSlot(pointer,capacity) < capacity
+    ensures capacity > 0 ==> NextVisitedSlot(slot,capacity) < capacity
+    ensures NextVisitedCapacity(capacity) != 0 ==>
+      16 <= NextVisitedCapacity(capacity) <= 2147483646
+    ensures capacity > 0 && NextVisitedCapacity(capacity) != 0 ==>
+      NextVisitedCapacity(capacity) == 2 * capacity
+  { }
   lemma DescriptorAdmissionIsExact(length: U32, mode: Byte, inlineLength: U32,
       maxValueBytes: U32, maxChainRows: U32)
     ensures DescriptorAdmission(length, mode, inlineLength, maxValueBytes, maxChainRows) == 0 <==>
