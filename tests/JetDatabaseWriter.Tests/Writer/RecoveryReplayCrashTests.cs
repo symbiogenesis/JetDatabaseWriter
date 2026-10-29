@@ -33,7 +33,7 @@ public sealed class RecoveryReplayCrashTests(ITestOutputHelper output)
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    [Fact(DisableParallelization = true)]
+    [Fact]
     public async Task ProcessInterruptedReplay_RestoresOriginalOrKeepsCommittedRawImage()
     {
         if (Environment.GetEnvironmentVariable(ChildPath) is { } childPath)
@@ -129,7 +129,7 @@ public sealed class RecoveryReplayCrashTests(ITestOutputHelper output)
         });
     }
 
-    [Fact(DisableParallelization = true)]
+    [Fact]
     public Task InterruptedReplay_ConflictingBytesPreserveDatabaseJournalAndLock()
         => this.WithDirectoryAsync(async directory =>
         {
@@ -168,7 +168,7 @@ public sealed class RecoveryReplayCrashTests(ITestOutputHelper output)
             }
         });
 
-    [Theory(DisableParallelization = true)]
+    [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb, "")]
     [InlineData(DatabaseFormat.Jet4Mdb, "")]
     [InlineData(DatabaseFormat.AceAccdb, "")]
@@ -197,7 +197,7 @@ public sealed class RecoveryReplayCrashTests(ITestOutputHelper output)
             }
         });
 
-    [Fact(DisableParallelization = true)]
+    [Fact]
     public Task CleanupRefused_ProcessKilled_RetainsStableDecisionForRetry()
         => this.WithDirectoryAsync(async directory =>
         {

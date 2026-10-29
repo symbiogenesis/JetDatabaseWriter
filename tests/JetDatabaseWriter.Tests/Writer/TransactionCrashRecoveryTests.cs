@@ -20,7 +20,7 @@ public sealed class TransactionCrashRecoveryTests
     private const string ChildExplicit = "JDW_CRASH_TEST_EXPLICIT";
     private const string Method = "JetDatabaseWriter.Tests.Writer.TransactionCrashRecoveryTests.InterruptedWrites_RecoverExactOriginalBytes";
 
-    [Fact(DisableParallelization = true)]
+    [Fact]
     public async Task InterruptedWrites_RecoverExactOriginalBytes()
     {
         if (Environment.GetEnvironmentVariable(ChildPath) is { } childPath)
