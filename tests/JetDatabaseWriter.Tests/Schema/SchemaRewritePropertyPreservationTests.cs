@@ -141,6 +141,27 @@ public sealed class SchemaRewritePropertyPreservationTests
         return data;
     }
 
+    /// <summary>Gets causal lookup dependencies across formats, modes and schema edits.</summary>
+    public static TheoryData<DatabaseFormat, WriteMode, string, string> LookupPropertyRefusals()
+    {
+        var data = new TheoryData<DatabaseFormat, WriteMode, string, string>();
+        foreach (DatabaseFormat format in Enum.GetValues<DatabaseFormat>())
+        {
+            foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
+            {
+                foreach (string operation in new[] { "rename", "drop", "table" })
+                {
+                    foreach (string source in new[] { "T", "SELECT [T].[Id] FROM [T] WHERE 'private-token' = 'x'" })
+                    {
+                        data.Add(format, mode, operation, source);
+                    }
+                }
+            }
+        }
+
+        return data;
+    }
+
     /// <summary>
     /// An added column gets the writer's properties for its definition, and
     /// every target and entry of the Access-authored table stays as stored.
@@ -619,6 +640,151 @@ public sealed class SchemaRewritePropertyPreservationTests
         await PlantPropertiesAsync(ms, "T", builder => builder.GetOrAddTableTarget().AddText("Filter", "[Note] > 0", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
         await AssertDisplayPropertyRefusalAsync(ms, mode, writer => writer.RenameColumnAsync("T", "Note", "note", Ct).AsTask());
     }
+
+    /// <summary>Dependent lookups in another table refuse name edits before any write.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <param name="operation">The schema edit.</param>
+    /// <param name="source">The lookup source.</param>
+    [Theory]
+    [MemberData(nameof(LookupPropertyRefusals))]
+    public async Task SchemaRewrite_LookupSource_RefusesWithoutChangingBytes(DatabaseFormat format, WriteMode mode, string operation, string source)
+    {
+        await using MemoryStream ms = await CreateDatabaseAsync(format);
+        await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await initial.CreateTableAsync("T", [new("Id", typeof(int)), new("Note", typeof(int))], Ct);
+            await initial.CreateTableAsync("Lookup", [new("Id", typeof(int)), new("Note", typeof(int))], Ct);
+        }
+
+        await PlantPropertiesAsync(ms, "Lookup", builder =>
+        {
+            ColumnPropertyTargetBuilder target = builder.GetOrAddTarget("Id");
+            target.AddText("RowSourceType", "Table/Query", JetFormat.ForNewDatabase(format));
+            target.AddText("RowSource", source, JetFormat.ForNewDatabase(format));
+        });
+        byte[] before = ms.ToArray();
+        async Task CheckAsync(AccessWriter writer)
+        {
+            JetOperationException failure = await Assert.ThrowsAsync<JetOperationException>(() => RunLookupEditAsync(writer, operation));
+            Assert.Equal(JetErrorCode.FeatureNotSupported, failure.ErrorCode);
+            Assert.Equal("T", failure.ErrorInfo.TableName);
+            Assert.Contains("Lookup", failure.Message, StringComparison.Ordinal);
+            Assert.Contains("RowSource", failure.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("private-token", failure.Message, StringComparison.Ordinal);
+            Assert.Equal(before, ms.ToArray());
+            await writer.InsertRowAsync("T", [1, 2], Ct);
+        }
+
+        await RunRewriteAsync(ms, mode, CheckAsync);
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        Assert.Equal(1, await reader.GetRealRowCountAsync("T", Ct));
+    }
+
+    /// <summary>Value lists and references to other tables retain their raw lookup properties.</summary>
+    /// <param name="sourceType">The lookup source type.</param>
+    /// <param name="source">The lookup source.</param>
+    /// <param name="operation">The schema edit.</param>
+    [Theory]
+    [InlineData("Value List", "T;Id;Note", "rename")]
+    [InlineData("Value List", "T;Id;Note", "drop")]
+    [InlineData("Value List", "T;Id;Note", "table")]
+    [InlineData("Table/Query", "SELECT [Id] FROM [Other] WHERE [Label] = 'T'", "rename")]
+    [InlineData("Table/Query", "SELECT [Id] FROM [Other] WHERE [Label] = 'T'", "drop")]
+    [InlineData("Table/Query", "SELECT [Id] FROM [Other] WHERE [Label] = 'T'", "table")]
+    public async Task SchemaRewrite_UnrelatedLookupSource_PreservesProperties(string sourceType, string source, string operation)
+    {
+        await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet4Mdb);
+        await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await initial.CreateTableAsync("T", [new("Id", typeof(int)), new("Note", typeof(int))], Ct);
+            await initial.CreateTableAsync("Lookup", [new("Id", typeof(int))], Ct);
+        }
+
+        await PlantPropertiesAsync(ms, "Lookup", builder =>
+        {
+            ColumnPropertyTargetBuilder target = builder.GetOrAddTarget("Id");
+            target.AddText("RowSourceType", sourceType, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb));
+            target.AddText("RowSource", source, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb));
+        });
+        List<TargetView> before = await ReadTargetsAsync(ms, "Lookup");
+        await RunRewriteAsync(ms, WriteMode.Direct, writer => RunLookupEditAsync(writer, operation));
+        AssertSameTargets(before, await ReadTargetsAsync(ms, "Lookup"));
+    }
+
+    /// <summary>Lookups removed with their owning column or table leave no dangling dependency.</summary>
+    /// <param name="operation">The schema edit.</param>
+    [Theory]
+    [InlineData("drop")]
+    [InlineData("table")]
+    public async Task SchemaRewrite_RemovedLookupOwner_AllowsEdit(string operation)
+    {
+        await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet4Mdb);
+        await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await initial.CreateTableAsync("T", [new("Id", typeof(int)), new("Note", typeof(int))], Ct);
+        }
+
+        await PlantPropertiesAsync(ms, "T", builder => builder.GetOrAddTarget("Note").AddText("RowSource", "T", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+        await RunRewriteAsync(ms, WriteMode.Direct, writer => RunLookupEditAsync(writer, operation));
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        if (operation == "table")
+        {
+            Assert.Empty(await reader.ListTablesAsync(Ct));
+        }
+        else
+        {
+            Assert.Equal("Id", Assert.Single(await reader.GetColumnMetadataAsync("T", Ct)).Name);
+        }
+    }
+
+    /// <summary>Added columns preserve a surviving lookup, and case-only renames still refuse.</summary>
+    [Fact]
+    public async Task SchemaRewrite_SurvivingLookup_AddPreservesAndCaseOnlyRenameRefuses()
+    {
+        await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet4Mdb);
+        await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await initial.CreateTableAsync("T", [new("Id", typeof(int)), new("Note", typeof(int))], Ct);
+        }
+
+        await PlantPropertiesAsync(ms, "T", builder => builder.GetOrAddTarget("Id").AddText("RowSource", "[t]", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+        List<TargetView> before = await ReadTargetsAsync(ms, "T");
+        await RunRewriteAsync(ms, WriteMode.Direct, writer => writer.AddColumnAsync("T", new ColumnDefinition("Added", typeof(int)), Ct));
+        AssertSameTargets(before, await ReadTargetsAsync(ms, "T"));
+        await AssertDisplayPropertyRefusalAsync(ms, WriteMode.Direct, writer => writer.RenameColumnAsync("T", "Note", "note", Ct).AsTask());
+    }
+
+    /// <summary>Later repeated source entries and contradictory source types cannot hide a dependency.</summary>
+    [Fact]
+    public async Task SchemaRewrite_RepeatedLookupProperties_RefusesWithoutChangingBytes()
+    {
+        await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet4Mdb);
+        await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await initial.CreateTableAsync("T", [new("Id", typeof(int)), new("Note", typeof(int))], Ct);
+            await initial.CreateTableAsync("Lookup", [new("Id", typeof(int))], Ct);
+        }
+
+        await PlantPropertiesAsync(ms, "Lookup", builder =>
+        {
+            ColumnPropertyTargetBuilder target = builder.GetOrAddTarget("Id");
+            var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+            target.AddText("RowSourceType", "Value List", format);
+            target.AddText("RowSourceType", "Table/Query", format);
+            target.AddText("RowSource", "Other", format);
+            target.AddText("RowSource", "T", format);
+        });
+        await AssertDisplayPropertyRefusalAsync(ms, WriteMode.Direct, writer => writer.DropTableAsync("T", Ct).AsTask());
+    }
+
+    private static Task RunLookupEditAsync(AccessWriter writer, string operation) => operation switch
+    {
+        "rename" => writer.RenameColumnAsync("T", "Note", "Renamed", Ct).AsTask(),
+        "drop" => writer.DropColumnAsync("T", "Note", Ct).AsTask(),
+        "table" => writer.DropTableAsync("T", Ct).AsTask(),
+        _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+    };
 
     private static async Task AssertDisplayPropertyRefusalAsync(MemoryStream ms, WriteMode mode, Func<AccessWriter, Task> rewrite)
     {

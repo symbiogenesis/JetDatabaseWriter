@@ -125,6 +125,27 @@ public sealed class QueryOperandEvaluationTests
         Assert.Empty(await query.ToListAsync(TestContext.Current.CancellationToken));
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task ProjectedCaptures_AreLiveAcrossRepeatedExecution(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await BuildAsync(format);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        int offset = 1;
+        int threshold = 0;
+        IQueryable<int> query = reader.Query<Person>("People").Select(person => person.Score + offset)
+            .Where(score => score > threshold);
+
+        Assert.Equal(11, Assert.Single(await query.ToListAsync(TestContext.Current.CancellationToken)));
+        offset = 5;
+        threshold = 14;
+        Assert.Equal(15, Assert.Single(await query.ToListAsync(TestContext.Current.CancellationToken)));
+        threshold = 15;
+        Assert.Empty(await query.ToListAsync(TestContext.Current.CancellationToken));
+    }
+
     private static int ThrowValue() => throw new InvalidOperationException("Seek operand was evaluated.");
 
     private static async ValueTask<MemoryStream> BuildAsync(DatabaseFormat format, int rowCount = 1)

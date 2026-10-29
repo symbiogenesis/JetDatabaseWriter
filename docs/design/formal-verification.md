@@ -12,6 +12,8 @@ Keep effectful I/O, cryptographic implementations, native interoperability and p
 
 Each executable increment must have total entry points or checked caller preconditions, production callers, focused conformance and rejection tests, pinned verification and audit, reproducible generated source and a reviewed compilation boundary. Preserve supported targets, package dependencies, trimming and NativeAOT. Retain ordinary tests and native-format evidence as the boundary grows.
 
+The [critical-behavior inventory](verification-scope.md) defines the required surfaces, properties and fault/platform scope. Its [evidence map](verification-evidence-map.md) records proof and production coverage, contracts and remaining obligations for each behavior. The [continuing review policy](proof-trust-review.md#continuing-review-policy) applies to semantic changes affecting that coverage, including dependencies outside the mechanical receipt inputs.
+
 ## Recovery contract
 
 Let `O` be the exact raw database image and length before a transaction, and `C` the complete image selected by its durable commit decision. Images include encrypted bytes when the database is encrypted. Under validated, discoverable recovery evidence, exclusive cooperating access and the modeled storage contract, a completed recovery must return exactly `O` or `C`. A successfully acknowledged commit must select `C`. An interrupted commit whose decision may have persisted can legitimately have an uncertain outcome; the writer must retain evidence and must not perform a contradictory rollback.

@@ -308,13 +308,13 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
     private static byte[] AssertAndUnwrapCalculatedPayload(byte[] wrapped, string columnName)
     {
         Assert.True(
-            wrapped.Length >= Constants.CalculatedColumn.DataOffset,
-            $"Calculated column '{columnName}' wrapper should contain the 23-byte header.");
+            wrapped.Length >= Constants.CalculatedColumn.ExtraDataLen,
+            $"Calculated column '{columnName}' wrapper should contain the full 23-byte envelope overhead.");
 
         int declaredLength = BinaryPrimitives.ReadInt32LittleEndian(wrapped.AsSpan(Constants.CalculatedColumn.DataLenOffset, 4));
         Assert.True(declaredLength >= 0, $"Calculated column '{columnName}' payload length should be non-negative.");
         Assert.True(
-            wrapped.Length >= Constants.CalculatedColumn.DataOffset + declaredLength,
+            wrapped.Length >= Constants.CalculatedColumn.ExtraDataLen + declaredLength,
             $"Calculated column '{columnName}' wrapper is shorter than its declared payload length.");
 
         byte[] payload = CalculatedColumnUtil.Unwrap(wrapped);

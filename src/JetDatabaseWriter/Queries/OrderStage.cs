@@ -88,7 +88,7 @@ internal sealed class OrderStage : QueryStage
     {
         ParameterExpression parameter = selector.Parameters[0];
         Expression body = Expression.Convert(selector.Body, typeof(object));
-        return Expression.Lambda<Func<T, object?>>(body, parameter).Compile();
+        return QueryLambdaCompiler.Shared.Compile(Expression.Lambda<Func<T, object?>>(body, parameter));
     }
 
     private static bool TryDescribeIntegerKey(OrderingKey key, out string? column)

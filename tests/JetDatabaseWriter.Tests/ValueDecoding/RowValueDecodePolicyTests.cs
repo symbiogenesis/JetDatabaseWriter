@@ -1,9 +1,11 @@
 namespace JetDatabaseWriter.Tests.ValueDecoding;
 
 using System;
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
@@ -146,6 +148,36 @@ public sealed class RowValueDecodePolicyTests
         var cancellation = new OperationCanceledException();
         Assert.Same(io, Assert.Throws<IOException>(() => RowValueDecodePolicy.MalformedVariableValue(column, io, strict)));
         Assert.Same(cancellation, Assert.Throws<OperationCanceledException>(() => RowValueDecodePolicy.MalformedVariableValue(column, cancellation, strict)));
+    }
+
+    [Theory]
+    [InlineData(20)]
+    [InlineData(21)]
+    [InlineData(22)]
+    public void CalculatedEnvelope_TruncatedOverheadCannotBecomeNull(int length)
+    {
+        byte[] envelope = new byte[length];
+        JetCorruptDataException exception = Assert.Throws<JetCorruptDataException>(() => RowValueDecodePolicy.UnwrapCalculatedPayload(envelope));
+        Assert.Equal(JetErrorCode.MalformedValue, exception.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void CalculatedEnvelope_PayloadCannotConsumeTrailingOverhead(int excess)
+    {
+        byte[] envelope = CalculatedColumnUtil.Wrap([1, 2, 3, 4]);
+        BinaryPrimitives.WriteInt32LittleEndian(envelope.AsSpan(Constants.CalculatedColumn.DataLenOffset), 4 + excess);
+        JetCorruptDataException exception = Assert.Throws<JetCorruptDataException>(() => RowValueDecodePolicy.UnwrapCalculatedPayload(envelope));
+        Assert.Equal(JetErrorCode.MalformedValue, exception.ErrorCode);
+    }
+
+    [Fact]
+    public void CalculatedEnvelope_CompleteNullAndPayloadKeepTheirValues()
+    {
+        Assert.Empty(RowValueDecodePolicy.UnwrapCalculatedPayload(CalculatedColumnUtil.Wrap([])));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, RowValueDecodePolicy.UnwrapCalculatedPayload(CalculatedColumnUtil.Wrap([1, 2, 3, 4])));
     }
 
     private sealed class ThrowingTraceListener : TraceListener

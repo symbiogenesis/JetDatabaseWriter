@@ -29,7 +29,7 @@ internal abstract class IncludeOperation
     {
         ParameterExpression element = Expression.Parameter(typeof(object), "e");
         Expression body = RebindToObject(predicate, element);
-        return Expression.Lambda<Func<object, bool>>(body, element).Compile();
+        return QueryLambdaCompiler.Shared.Compile(Expression.Lambda<Func<object, bool>>(body, element));
     }
 
     /// <summary>
@@ -42,7 +42,7 @@ internal abstract class IncludeOperation
     {
         ParameterExpression element = Expression.Parameter(typeof(object), "e");
         Expression body = RebindToObject(selector, element);
-        return Expression.Lambda<Func<object, object?>>(Expression.Convert(body, typeof(object)), element).Compile();
+        return QueryLambdaCompiler.Shared.Compile(Expression.Lambda<Func<object, object?>>(Expression.Convert(body, typeof(object)), element));
     }
 
     private static Expression RebindToObject(LambdaExpression lambda, ParameterExpression element)

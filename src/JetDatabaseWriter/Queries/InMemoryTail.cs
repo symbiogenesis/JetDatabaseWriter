@@ -20,7 +20,7 @@ using JetDatabaseWriter.Linq;
 /// boundary <see cref="AccessQueryTranslator"/> finds: a <c>Select</c> projection and the
 /// operators after it, or an operator the engine does not translate, such as an ordering with
 /// a comparer. Each operator becomes one step over a sequence of boxed elements, so no step is
-/// built per element type: lambdas are compiled once per execution against an
+/// built per element type: lambdas reuse bounded compiled templates against an
 /// <see cref="object"/> parameter, and ordering and equality go through the key or element
 /// type's own comparer (the default one, or the one the query passes), so the results are the
 /// ones LINQ to Objects gives. <c>Where</c>, <c>Select</c>, the paging operators,
@@ -187,7 +187,7 @@ internal static class InMemoryTail
             body = Expression.Convert(body, typeof(TResult));
         }
 
-        return Expression.Lambda<Func<object?, TResult>>(body, item).Compile();
+        return QueryLambdaCompiler.Shared.Compile(Expression.Lambda<Func<object?, TResult>>(body, item));
     }
 
     private static Func<object?, object?> CompileCast(Type target)

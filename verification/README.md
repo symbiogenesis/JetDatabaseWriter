@@ -63,6 +63,8 @@ No Dafny runtime source is bundled and no Dafny license-bearing runtime material
 
 ## Review and updates
 
+Follow the [continuing review policy](../docs/design/proof-trust-review.md#continuing-review-policy) whenever a change affects the [scope inventory](../docs/design/verification-scope.md) or its [evidence map](../docs/design/verification-evidence-map.md), including semantic dependencies outside the receipt inputs. Keep concrete unfinished work in the root plan; review maintenance continues under that policy.
+
 - Keep all proof files listed exactly once in [proofs.json](proofs.json), with earlier normal-source dependencies declared explicitly. Do not add assumptions, axioms, bodyless trusted lemmas, disabled verification or unchecked external declarations. Do not relax the audit to accept a finding.
 - Review mapped production changes and proof/tool pin changes under the [proof/trust review policy](../docs/design/proof-trust-review.md), updating concrete obligations and conformance evidence before recording new hashes. Source-name additions, removals or moves require boundary classification; the freshness gate does not attest reviewer judgment.
 - Keep integrity pins, exact version output and solver paths together in [dafny-toolchain.json](dafny-toolchain.json). The archive hashes cover both Dafny and its distributed solver; downloads come from the upstream `dafny-lang/dafny` release.

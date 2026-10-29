@@ -213,6 +213,10 @@ and whitespace-only text do not block an edit. The refusal leaves database bytes
 transaction unchanged; native Name AutoCorrect and dependency rewrite behavior
 remain unverified.
 
+Column rename/drop and table drop also inspect surviving user-table column lookups before mutation. A direct `RowSource` naming the changed table, or a conservative identifier match in a stored source expression, causes refusal. This identifier scan is not a complete SQL dependency parser and can refuse an unrelated SQL identifier with the same spelling. It skips string literals; it never rewrites or executes the stored source. An explicit `Value List` is exempt only when every declared source-type entry in that target agrees. A lookup removed with its owning column/table cannot leave a surviving dependency. Adding a column preserves raw lookup properties. Unreadable owner metadata refuses inspection rather than granting absence of dependencies.
+
+`SchemaRewritePropertyPreservationTests` checks byte-identical refusal and usable caller transactions across Jet3/Jet4/ACE and direct/automatic/explicit modes, plus allowed value lists, unrelated sources, owner removal, add-column preservation and conflicting repeated source properties. These synthetic properties establish managed behavior; saved-query indirection, opaque source forms and native Name AutoCorrect remain separate evidence gaps.
+
 AddColumn, DropColumn and RenameColumn rebuild a table and write its blob again. [`PersistedPropertyProjector`](../../src/JetDatabaseWriter/Schema/PersistedPropertyProjector.cs) builds the new blob from the stored one and changes only what the rewrite changes:
 
 - The table-level block keeps its position and every entry except `NameMap`, which is dropped.

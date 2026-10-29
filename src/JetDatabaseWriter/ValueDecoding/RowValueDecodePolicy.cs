@@ -52,13 +52,15 @@ internal static class RowValueDecodePolicy
 
     internal static byte[] UnwrapCalculatedPayload(ReadOnlySpan<byte> data)
     {
-        if (data.Length < Constants.CalculatedColumn.DataOffset)
+        if (data.Length < Constants.CalculatedColumn.ExtraDataLen)
         {
             throw new JetCorruptDataException(JetErrorCode.MalformedValue, "Calculated value envelope is truncated.");
         }
 
         int length = JetTypeInfo.Ri32(data, Constants.CalculatedColumn.DataLenOffset);
-        if (length < 0 || length > data.Length - Constants.CalculatedColumn.DataOffset)
+
+        // The 23-byte envelope includes three bytes after the cached payload.
+        if (length < 0 || length > data.Length - Constants.CalculatedColumn.ExtraDataLen)
         {
             throw new JetCorruptDataException(JetErrorCode.MalformedValue, "Calculated value envelope declares an invalid payload length.");
         }

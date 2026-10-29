@@ -90,14 +90,16 @@ Names are pinned in `Constants.ColumnPropertyNames.Expression` /
 ### 3. Stored value wrapper (data pages)
 
 Even though the value is calculated by the engine, Access also **persists the
-last evaluated result** on the row, prefixed by a 23-byte header:
+last evaluated result** on the row, with 23 bytes of envelope overhead:
 
 | Constant | Value | Meaning |
 | --- | --- | --- |
-| `CALC_EXTRA_DATA_LEN` | `23` | Header length prepended to every stored value. |
+| `CALC_EXTRA_DATA_LEN` | `23` | Total envelope overhead: 20 prefix bytes and three trailing bytes. |
 | `CALC_DATA_LEN_OFFSET` | `16` | Offset within the header where the payload length (Int32 LE) lives. |
 | `CALC_DATA_OFFSET` | `20` | Offset within the header where the payload begins. |
-| `CALC_FIXED_FIELD_LEN` | `39` | The fixed-portion column length used for *all* fixed-width calc columns (largest fixed payload `16` + the `23`-byte header). |
+| `CALC_FIXED_FIELD_LEN` | `39` | The fixed-portion column length used for *all* fixed-width calc columns (largest fixed payload `16` + the `23`-byte envelope overhead). |
+
+Calculated-value validation requires the complete 23-byte envelope overhead: a 20-byte prefix followed by the declared payload and three trailing bytes. A truncated envelope or a payload length that consumes those trailing bytes is corruption. Strict public reads report contextual corruption; lenient reads diagnose a missing value, and writes refuse to erase unreadable calculated content. A complete zero-length envelope remains valid framing; distinguishing native cached errors from ordinary Null is a separate semantic requirement.
 
 For variable-width source types the on-disk `col_len` becomes
 `originalLen + CALC_EXTRA_DATA_LEN`. For fixed-width source types it is forced

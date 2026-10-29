@@ -28,16 +28,16 @@ using Xunit;
 /// <summary>Missing calculated long-value descriptors cannot become empty strings during read or write-back.</summary>
 public sealed class CalculatedLongValueDecodePolicyTests
 {
-    public static TheoryData<int, bool, bool> EnvelopeCases()
+    public static TheoryData<int, int, bool> EnvelopeCases()
     {
-        var data = new TheoryData<int, bool, bool>();
-        for (int fault = 0; fault < 4; fault++)
+        var data = new TheoryData<int, int, bool>();
+        for (int fault = 0; fault < 6; fault++)
         {
-            foreach (bool external in new[] { false, true })
+            foreach (int valueLength in new[] { 7, 300, 3000 })
             {
                 foreach (bool strict in new[] { false, true })
                 {
-                    data.Add(fault, external, strict);
+                    data.Add(fault, valueLength, strict);
                 }
             }
         }
@@ -47,10 +47,10 @@ public sealed class CalculatedLongValueDecodePolicyTests
 
     [Theory]
     [MemberData(nameof(EnvelopeCases))]
-    public async Task MalformedCalculatedMemo_PublicReadsDiagnoseMissingValue(int fault, bool external, bool strict)
+    public async Task MalformedCalculatedMemo_PublicReadsDiagnoseMissingValue(int fault, int valueLength, bool strict)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream original = await CreateDamagedDatabaseAsync(fault, external, ct);
+        await using MemoryStream original = await CreateDamagedDatabaseAsync(fault, valueLength, ct);
         await using var messages = new StringWriter(CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(messages);
         var traceScope = new TestTraceScope(listener);
@@ -88,18 +88,28 @@ public sealed class CalculatedLongValueDecodePolicyTests
     }
 
     [Theory]
-    [InlineData(0, false)]
-    [InlineData(0, true)]
-    [InlineData(1, false)]
-    [InlineData(1, true)]
-    [InlineData(2, false)]
-    [InlineData(2, true)]
-    [InlineData(3, false)]
-    [InlineData(3, true)]
-    public async Task MalformedCalculatedMemo_WriteBackRefusesLoss(int fault, bool external)
+    [InlineData(0, 7)]
+    [InlineData(0, 300)]
+    [InlineData(0, 3000)]
+    [InlineData(1, 7)]
+    [InlineData(1, 300)]
+    [InlineData(1, 3000)]
+    [InlineData(2, 7)]
+    [InlineData(2, 300)]
+    [InlineData(2, 3000)]
+    [InlineData(3, 7)]
+    [InlineData(3, 300)]
+    [InlineData(3, 3000)]
+    [InlineData(4, 7)]
+    [InlineData(4, 300)]
+    [InlineData(4, 3000)]
+    [InlineData(5, 7)]
+    [InlineData(5, 300)]
+    [InlineData(5, 3000)]
+    public async Task MalformedCalculatedMemo_WriteBackRefusesLoss(int fault, int valueLength)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream stream = await CreateDamagedDatabaseAsync(fault, external, ct);
+        await using MemoryStream stream = await CreateDamagedDatabaseAsync(fault, valueLength, ct);
         byte[] before = stream.ToArray();
         await using AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct);
         JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await writer.UpdateRowsAsync("Values", RowCriteria.All(), new RowValues { ["Id"] = 2 }, ct));
@@ -107,12 +117,12 @@ public sealed class CalculatedLongValueDecodePolicyTests
         Assert.Equal(before, stream.ToArray());
     }
 
-    private static async Task<MemoryStream> CreateDamagedDatabaseAsync(int fault, bool external, CancellationToken ct)
+    private static async Task<MemoryStream> CreateDamagedDatabaseAsync(int fault, int valueLength, CancellationToken ct)
     {
         await using var original = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(original, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct))
         {
-            string value = external ? new string('v', 300) : "visible";
+            string value = new('v', valueLength);
             await writer.CreateTableAsync("Values", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Value", typeof(string)) { IsCalculated = true, CalculationExpression = "\"" + value + "\"" }], ct);
             await writer.InsertRowAsync("Values", [1, value], ct);
         }
@@ -141,16 +151,17 @@ public sealed class CalculatedLongValueDecodePolicyTests
             int pageOffset = checked((int)(number * profile.PageSize));
             int descriptorOffset = pageOffset + bound.RowStart + slice.DataStart;
             Assert.True(LongValueDescriptor.TryRead(bytes.AsSpan(descriptorOffset, slice.DataLen), out LongValueDescriptor descriptor));
-            Assert.Equal(external, !descriptor.IsInline);
+            Assert.Equal(valueLength > 7, !descriptor.IsInline);
+            bool external = !descriptor.IsInline;
             int payloadOffset = descriptorOffset + Constants.LongValue.HeaderSize;
             if (external)
             {
-                Assert.True(descriptor.IsSinglePage);
+                Assert.Equal(valueLength == 300, descriptor.IsSinglePage);
                 int lvalPage = LongValueStore.PageNumber(descriptor.FirstDp);
                 byte[] lvalBytes = await harness.ReadPageCopyAsync(lvalPage, ct);
                 RowBound lvalBound = Assert.Single(DataPageRows.EnumerateLiveRowBounds(profile, lvalBytes));
                 Assert.Equal(LongValueStore.RowIndex(descriptor.FirstDp), lvalBound.RowIndex);
-                payloadOffset = (lvalPage * profile.PageSize) + lvalBound.RowStart;
+                payloadOffset = (lvalPage * profile.PageSize) + lvalBound.RowStart + (descriptor.IsSinglePage ? 0 : sizeof(uint));
             }
 
             switch (fault)
@@ -170,6 +181,13 @@ public sealed class CalculatedLongValueDecodePolicyTests
                     break;
                 case 3:
                     BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(payloadOffset + Constants.CalculatedColumn.DataLenOffset), descriptor.Length);
+                    break;
+                case 4:
+                    (descriptor with { Length = Constants.CalculatedColumn.ExtraDataLen - 1 }).WriteTo(bytes.AsSpan(descriptorOffset));
+                    BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(payloadOffset + Constants.CalculatedColumn.DataLenOffset), 0);
+                    break;
+                case 5:
+                    BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(payloadOffset + Constants.CalculatedColumn.DataLenOffset), descriptor.Length - Constants.CalculatedColumn.DataOffset);
                     break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(fault));

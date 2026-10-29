@@ -18,6 +18,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Queries;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -192,7 +193,7 @@ internal sealed class IndexRowReader(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(predicate, nameof(predicate));
 
-        Func<T, bool> compiled = predicate.Compile();
+        Func<T, bool> compiled = QueryLambdaCompiler.Shared.Compile(predicate);
         RowCriteria pushable = IndexPredicateTranslator.ExtractPushableCriteria(predicate);
         return this.RowsInferredAsync(tableName, compiled, pushable, progress, cancellationToken);
     }

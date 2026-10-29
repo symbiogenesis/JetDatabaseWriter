@@ -176,6 +176,7 @@ public sealed class CalculatedNumericDecodePolicyTests
                 Assert.Equal(ColumnSliceKind.Var, slice.Kind);
                 byte[] payload = CalculatedColumnUtil.Unwrap(page.AsSpan(bound.RowStart + slice.DataStart, slice.DataLen));
                 Assert.Equal(16, payload.Length);
+                Assert.Equal(Constants.CalculatedColumn.ExtraDataLen + payload.Length, slice.DataLen);
                 Assert.Equal(14, BinaryPrimitives.ReadInt16LittleEndian(payload));
                 decimal value = Assert.IsType<decimal>(CalculatedColumnUtil.ReadPayloadTyped(payload, ColumnType.NumericType, strictNumeric: true));
                 Assert.Equal(expected[payloadCount], value);

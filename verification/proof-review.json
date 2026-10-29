@@ -1,51 +1,80 @@
 {
   "schemaVersion": 1,
-  "productionInventorySha256": "17c0b90f171b7a27ff4aa710c19567eb6d7438877a5c6e1c3c7eb6f97331dcdf",
-  "inventoryReview": "Classified the new LongValues/LongValueVisitedSet.cs as traversal-owned bounded identity storage for CopyPayloadAsync, with direct generated capacity/probe calls included in implementation review. The existing deallocation tracker and all other production source names remain unchanged.",
+  "productionInventorySha256": "d745dfc3efd2fa3d005e6af9496110c30567537541b9cba7a855e7cfb0a5f063",
+  "inventoryReview": "Classified Queries/QueryLambdaCompiler.cs as bounded handwritten compilation/cache ownership for the deferred query semantics and L2 tested/manual boundary; it contains no generated kernel calls or new proof claim. All other production source names are unchanged. Reviewed the complete 23-behavior scope and evidence map across the existing library domains, retaining every remaining production, native and platform obligation.",
   "reviews": [
     {
       "boundary": "implementation",
-      "obligations": "Reviewed generated null/budget admission and positive bounded payload consumption before each CopyPayloadAsync output effect, checked casts/counter headroom, release-before-next-acquisition and preserved malformed/single-page error priority. Reviewed lazy 16-slot visited-table allocation, half-occupancy doubling, bounded circular probing, duplicate refusal before growth and exact rehash membership manually. Reviewed the explicit caller-stream live I/O, failure/disposal and exclusive-access contract against direct FileStream classification and custom-stream rollback. Existing journal/replacement codecs, shared range/read and serialized writer-lifecycle mappings retain their separate payload, authority and returned-I/O contracts. Reviewed the model-boundary and proof-documentation links to the unified root PLAN.md; all implementation, proof and storage qualification obligations remain open under the same scope.",
-      "conformance": "LongValueTraversalTests independently checks collision/growth membership, cycles before reacquisition, no-progress refusal and wide slice/count boundaries; LongValueStreamingTests and LongValueStoreTests retain cancellation, partial output, release and existing format behavior. PageStoreTests, LeaveOpenTests, StatementSpillTests, JetTransactionTests and WriterLifecycleConformanceTests bind the live-stream contract. ReplacementCleanupConformanceTests and RecoverableWriterLockTests supplement the new multi-client model with removed-name, competing-handle, retry, stale-owner and exact-evidence controls. Exact build/test execution receipts and settled-main CI verdicts are reported separately. Consolidation retains the existing requirement IDs, open tasks and evidence distinctions; the link edits supply no additional implementation conformance or platform qualification evidence.",
-      "remainingAssumptions": "The traversal model bounds aggregate uint-array payload allocations and logical page-prefix acquisition work; CLR overhead/GC, locator/cache/pool and destination resources remain separate. Exact handwritten table membership/rehash is manual correspondence with independent tests, not an automatic C# proof. Returned I/O, immutable borrowed bytes, cryptographic identity, snapshot effects, canonical coordination, stale-I/O fencing, OS locks and physical persistence remain contracts. Non-FileStream callers retain live rollback only; stream disposal can itself persist buffered bytes. No complete public parser, arbitrary concurrent C# correctness or caller-stream persistent recovery claim is admitted. Plan location and organization do not change these assumptions or promote any guarantee.",
+      "obligations": "Reviewed generated null/budget admission and positive bounded payload consumption before each CopyPayloadAsync output effect, checked casts/counter headroom, release-before-next-acquisition and preserved malformed/single-page error priority. Reviewed lazy 16-slot visited-table allocation, half-occupancy doubling, bounded circular probing, duplicate refusal before growth and exact rehash membership manually. Reviewed the explicit caller-stream live I/O, failure/disposal and exclusive-access contract against direct FileStream classification and custom-stream rollback. Existing journal/replacement codecs, shared range/read and serialized writer-lifecycle mappings retain their separate payload, authority and returned-I/O contracts. Reviewed full calculated-envelope overhead before payload extraction; lookup-source refusal before schema effects, surviving-owner/type/duplicate handling and unreadable metadata; and bounded query template shape identity, deferred constant binding, synchronization, retention, eviction and direct-compilation fallback. These handwritten boundaries have regression/manual evidence rather than a new proof.",
+      "conformance": "LongValueTraversalTests independently checks collision/growth membership, cycles before reacquisition, no-progress refusal and wide slice/count boundaries; LongValueStreamingTests and LongValueStoreTests retain cancellation, partial output, release and existing format behavior. PageStoreTests, LeaveOpenTests, StatementSpillTests, JetTransactionTests and WriterLifecycleConformanceTests bind the live-stream contract. ReplacementCleanupConformanceTests and RecoverableWriterLockTests supplement the new multi-client model with removed-name, competing-handle, retry, stale-owner and exact-evidence controls. Exact build/test execution receipts and settled-main CI verdicts are reported separately. Calculated envelope regressions cover inline/single/chained public reads and unchanged write refusal with committed native framing controls. Schema lookup tests cover all three formats and write modes, unchanged refusal, usable transactions and allowed nondependent edits. Query tests cover independent/live captures, deferred calls, short circuiting, concurrency, eviction, failed compilation, checked arithmetic, lexical scopes, names, quoted/deep fallback and post-projection public reads. Exact settled-main CI is reported separately.",
+      "remainingAssumptions": "The traversal model bounds aggregate uint-array payload allocations and logical page-prefix acquisition work; CLR overhead/GC, locator/cache/pool and destination resources remain separate. Exact handwritten table membership/rehash is manual correspondence with independent tests, not an automatic C# proof. Returned I/O, immutable borrowed bytes, cryptographic identity, snapshot effects, canonical coordination, stale-I/O fencing, OS locks and physical persistence remain contracts. Non-FileStream callers retain live rollback only; stream disposal can itself persist buffered bytes. No complete public parser, arbitrary concurrent C# correctness or caller-stream persistent recovery claim is admitted. Native Numeric/error semantics, complete saved-query/lookup dependencies, Name AutoCorrect, whole translation plans and remaining query cache/projection/seek work stay open. No benchmark improvement is claimed.",
       "evidence": [
+        "docs/design/calculated-columns-format-notes.md",
+        "docs/design/caller-stream-recovery.md",
         "docs/design/formal-verification.md",
+        "docs/design/library-structure.md",
+        "docs/design/long-value-traversal.md",
+        "docs/design/multi-process-ownership.md",
+        "docs/design/persisted-column-properties-format-notes.md",
+        "docs/design/verification-evidence-map.md",
+        "docs/design/verification-scope.md",
         "docs/design/writer-lifecycle.md",
+        "src/JetDatabaseWriter/AccessReader.cs",
+        "src/JetDatabaseWriter/Queries/FilterStage.cs",
+        "src/JetDatabaseWriter/Queries/IncludeOperation.cs",
+        "src/JetDatabaseWriter/Queries/InMemoryTail.cs",
+        "src/JetDatabaseWriter/Queries/OrderStage.cs",
+        "src/JetDatabaseWriter/Queries/QueryLambdaCompiler.cs",
+        "src/JetDatabaseWriter/Tables/IndexRowReader.cs",
+        "src/JetDatabaseWriter/Tables/TableRewritePlanner.cs",
+        "src/JetDatabaseWriter/Tables/TableSchemaEditor.cs",
+        "src/JetDatabaseWriter/ValueDecoding/RowValueDecodePolicy.cs",
+        "tests/JetDatabaseWriter.Tests/Encryption/ReplacementCleanupConformanceTests.cs",
         "tests/JetDatabaseWriter.Tests/Infrastructure/SharedParsingKernelTests.cs",
-        "tests/JetDatabaseWriter.Tests/Writer/WriterLifecycleConformanceTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactActiveCatalogRowsTests.cs",
         "tests/JetDatabaseWriter.Tests/Maintenance/CompactEncodedDatabaseCopyTests.cs",
         "tests/JetDatabaseWriter.Tests/Maintenance/CompactGlobalAllocationTests.cs",
         "tests/JetDatabaseWriter.Tests/Maintenance/CompactGlobalMapTests.cs",
-        "tests/JetDatabaseWriter.Tests/Maintenance/CompactTDefChainInstallerTests.cs",
-        "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawIndexValidatorTests.cs",
-        "tests/JetDatabaseWriter.Tests/Maintenance/CompactUsageMapValidatorTests.cs",
-        "tests/JetDatabaseWriter.Tests/Maintenance/CompactRowRelocationMapTests.cs",
-        "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawDataLongValueValidatorTests.cs",
         "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawDataLongValueRelocatorTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawDataLongValueValidatorTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawIndexValidatorTests.cs",
         "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawTableValidatorTests.cs",
-        "tests/JetDatabaseWriter.Tests/Maintenance/CompactActiveCatalogRowsTests.cs",
-        "docs/design/long-value-traversal.md",
-        "docs/design/multi-process-ownership.md",
-        "docs/design/caller-stream-recovery.md",
-        "src/JetDatabaseWriter/AccessReader.cs",
-        "tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueTraversalTests.cs",
-        "tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueStreamingTests.cs",
-        "tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueStoreTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactRowRelocationMapTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactTDefChainInstallerTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactUsageMapValidatorTests.cs",
         "tests/JetDatabaseWriter.Tests/Pages/Paging/PageStoreTests.cs",
-        "tests/JetDatabaseWriter.Tests/Reader/LeaveOpenTests.cs",
         "tests/JetDatabaseWriter.Tests/Pages/Paging/StatementSpillTests.cs",
+        "tests/JetDatabaseWriter.Tests/Queries/QueryLambdaCompilerTests.cs",
+        "tests/JetDatabaseWriter.Tests/Queries/QueryOperandEvaluationTests.cs",
+        "tests/JetDatabaseWriter.Tests/Reader/LeaveOpenTests.cs",
+        "tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnPayloadTests.cs",
+        "tests/JetDatabaseWriter.Tests/Schema/SchemaRewritePropertyPreservationTests.cs",
+        "tests/JetDatabaseWriter.Tests/Transactions/RecoverableWriterLockTests.cs",
+        "tests/JetDatabaseWriter.Tests/ValueDecoding/CalculatedLongValueDecodePolicyTests.cs",
+        "tests/JetDatabaseWriter.Tests/ValueDecoding/CalculatedNumericDecodePolicyTests.cs",
+        "tests/JetDatabaseWriter.Tests/ValueDecoding/RowValueDecodePolicyTests.cs",
+        "tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueStoreTests.cs",
+        "tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueStreamingTests.cs",
+        "tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueTraversalTests.cs",
         "tests/JetDatabaseWriter.Tests/Writer/JetTransactionTests.cs",
-        "tests/JetDatabaseWriter.Tests/Encryption/ReplacementCleanupConformanceTests.cs",
-        "tests/JetDatabaseWriter.Tests/Transactions/RecoverableWriterLockTests.cs"
+        "tests/JetDatabaseWriter.Tests/Writer/WriterLifecycleConformanceTests.cs"
       ],
       "inputs": [
+        {
+          "path": "docs/design/calculated-columns-format-notes.md",
+          "sha256": "e508f4bf82ef91a834df51aa20bf6a2f06bb12f1e8ada49598221507aeae3005"
+        },
         {
           "path": "docs/design/caller-stream-recovery.md",
           "sha256": "94ef23b3a6ae4f9bafaf6df9cff128ccf8fd3142bd2754a8e434551872a6fdb6"
         },
         {
           "path": "docs/design/formal-verification.md",
-          "sha256": "895e5c89ef58ab51c7e6e5b782c67ea0202d70a68a73146b45dc7abe08f6f710"
+          "sha256": "c6c22fde9f5c5d8bcb69b4a0ba17e624d9dfb131a637beb832f6a65cec375762"
+        },
+        {
+          "path": "docs/design/library-structure.md",
+          "sha256": "99d13ce3a435befe112c02c978f8f534f6dba6569d8aa16cf4c9ba27e700bc47"
         },
         {
           "path": "docs/design/long-value-traversal.md",
@@ -54,6 +83,18 @@
         {
           "path": "docs/design/multi-process-ownership.md",
           "sha256": "4cfe4cfdad8182bee9924bdfbe210969fb7bbb721a3a9935ffdc90647e02b215"
+        },
+        {
+          "path": "docs/design/persisted-column-properties-format-notes.md",
+          "sha256": "9698a0a3d05f3f486bbdea3f7c30b36c822598c1a93f1bc1af79b352490b8091"
+        },
+        {
+          "path": "docs/design/verification-evidence-map.md",
+          "sha256": "48de6fec926a8db161963f99c5f15587d20eca2de7d922905aeb31accf6ab1fb"
+        },
+        {
+          "path": "docs/design/verification-scope.md",
+          "sha256": "fd5bbd6f34d7d95aa013bc503da001be0a775a153fcc4ca06386a97c635eab70"
         },
         {
           "path": "docs/design/writer-lifecycle.md",
@@ -216,6 +257,38 @@
           "sha256": "3e53c5849b0c87190b484955d1fd6da60e4a49a978148355f71e60ec984f5b54"
         },
         {
+          "path": "src/JetDatabaseWriter/Queries/FilterStage.cs",
+          "sha256": "468345f3c1fd77a0db0910188c33d81899f24e527f3397bd6115de8a4e698c42"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Queries/IncludeOperation.cs",
+          "sha256": "f11f4b7d303f0beda34b1968f79934c717ddfa3614586983e8940b4318fba4a8"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Queries/InMemoryTail.cs",
+          "sha256": "26444d4967099ee13f513dd990eb0d7aa404aedf1cc7b29f41d2e0623ad26323"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Queries/OrderStage.cs",
+          "sha256": "df94c654043f7195ab6252e9cbb78b79b4dc4cd60d85ed1841df888e4054f712"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Queries/QueryLambdaCompiler.cs",
+          "sha256": "8ac878bfa82d8aefcb72c04009e99d9d060d1b44cb9473069466202d66c30098"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Tables/IndexRowReader.cs",
+          "sha256": "cef3e390951603d09298c4fd6700253de31c0ac4e766bb0e759b31cf00162cd9"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Tables/TableRewritePlanner.cs",
+          "sha256": "567ee47b9124e8a42908e97d1447904d0f0be2b800872b3cd92d0bcf05078a9a"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Tables/TableSchemaEditor.cs",
+          "sha256": "9c2f6cc3c68a9130ff5d58264754ff3b947e7ee6147a82197d25f9d7ef371c7b"
+        },
+        {
           "path": "src/JetDatabaseWriter/Transactions/LockFileCoordinator.cs",
           "sha256": "03dae75cbaab4808ec68b4bb116ea745ea31092693b28fdf4f3d9789c63cb22c"
         },
@@ -238,6 +311,10 @@
         {
           "path": "src/JetDatabaseWriter/ValueDecoding/RowDecodePlan.cs",
           "sha256": "3dfdb7da0b0436635f4688543681962410becf215c1ac8598dc51c2867a4a384"
+        },
+        {
+          "path": "src/JetDatabaseWriter/ValueDecoding/RowValueDecodePolicy.cs",
+          "sha256": "cd313d094081eead8690465e67235166ee2e9510d3c38723f77bf114b083d18c"
         },
         {
           "path": "src/JetDatabaseWriter/Verification/LongValueKernel.g.cs",
@@ -308,12 +385,40 @@
           "sha256": "48da7e08e38807a0bc9cd0692e2cc7cbed8e5ad2c06a1db3bb82c81f5460feec"
         },
         {
+          "path": "tests/JetDatabaseWriter.Tests/Queries/QueryLambdaCompilerTests.cs",
+          "sha256": "5b9bd4e46b93a2e434ca4b92f8276209a1998310ff2596db37065afbcbd3af51"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Queries/QueryOperandEvaluationTests.cs",
+          "sha256": "2409761e2f643a3bb96201e4be30ef942f51779f7eb927da4b0f0a4f413c2c76"
+        },
+        {
           "path": "tests/JetDatabaseWriter.Tests/Reader/LeaveOpenTests.cs",
           "sha256": "4e290ee12ec1b6c61693706a85aaa3ec81d9bd4ae5cc77e4e61ab7336dfc9911"
         },
         {
+          "path": "tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnPayloadTests.cs",
+          "sha256": "25bced3bbe884e5ffcba9b32959e111de4a98acf853635adb2c2b8ca9efe40f5"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Schema/SchemaRewritePropertyPreservationTests.cs",
+          "sha256": "5f09c03f76a8c11e84f4ef406ea092ac9ec39abdb52430a8721094fe6e277870"
+        },
+        {
           "path": "tests/JetDatabaseWriter.Tests/Transactions/RecoverableWriterLockTests.cs",
           "sha256": "6460b1a9b46429cff921dfcca2bcacd9e7bf1417906022b8a56a5d56728ce7f5"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/ValueDecoding/CalculatedLongValueDecodePolicyTests.cs",
+          "sha256": "f5967b00751139766d00e16d26ebcb9b4063f5c81f1d979957ddfcaabf457eaf"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/ValueDecoding/CalculatedNumericDecodePolicyTests.cs",
+          "sha256": "0007290577fd9cdb128aa9546fff96ed52580c459b19ac083de76242a72e39e8"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/ValueDecoding/RowValueDecodePolicyTests.cs",
+          "sha256": "41e1a75a7d447e28fe2b5fdc13057d8403eaeb10637d3d5a30705758f03ab6b2"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueStoreTests.cs",
@@ -339,17 +444,22 @@
     },
     {
       "boundary": "proof-trust",
-      "obligations": "Reviewed the exact eight-model inventory and normal-source LongValueTraversal-to-LongValueKernel dependency, native traversal/count/capacity/probe additions and unchanged generated projection, Dafny 4.11.0/bundled-Z3 and compiler/runtime pins. LongValueTraversal proves distinct visits, decreasing budgets, bounded probes and cumulative allocation under named row/write effects. MultiProcessOwnership proves arbitrary finite multi-client trace invariants, historical current-ticket authority, crash revocation and constructive fresh/recorded acquisition and cleanup schedules; checked counterexamples cover premature coordinator release and stale pathname deletion. Mandatory source policy, audits, negative controls, generated freshness and failed-input retention remain unchanged. Reviewed the model-boundary and proof-documentation links to the unified root PLAN.md; all implementation, proof and storage qualification obligations remain open under the same scope.",
-      "conformance": "The dedicated traversal and multi-client mapping documents identify production invocations, independent malformed/membership tests and the exact successful-effect/manual correspondence boundaries. The caller-stream contract separates current live rollback from future journal/reopen/lease capabilities. Existing focused proof-review, verifier-tooling and formal-workflow regressions pass; final exact-source proof/audit/freshness receipts and all settled-main CI runtime/library, analyzer and consumer verdicts are reported separately. Consolidation retains the existing requirement IDs, open tasks and evidence distinctions; the link edits supply no additional implementation conformance or platform qualification evidence.",
-      "remainingAssumptions": "The pinned verifier/solver, native-source projection, C# compiler, runtime and host remain trusted; no new assumption, admitted lemma, external declaration or shipping dependency is introduced. Multi-client Coordinate assumes atomic canonical exclusion; complete missing-destination composite acquisition and ordinary held-handle disposal are not mechanically refined by the retained-database cleanup schedule. Actual OS exclusion, lock-rank/deadlock prevention, physical namespace/device durability and whole-parser refinement remain separate. Receipt freshness does not attest reviewer identity or judgment. Plan location and organization do not change these assumptions or promote any guarantee.",
+      "obligations": "Reviewed the exact eight-model inventory and normal-source LongValueTraversal-to-LongValueKernel dependency, native traversal/count/capacity/probe additions and unchanged generated projection, Dafny 4.11.0/bundled-Z3 and compiler/runtime pins. LongValueTraversal proves distinct visits, decreasing budgets, bounded probes and cumulative allocation under named row/write effects. MultiProcessOwnership proves arbitrary finite multi-client trace invariants, historical current-ticket authority, crash revocation and constructive fresh/recorded acquisition and cleanup schedules; checked counterexamples cover premature coordinator release and stale pathname deletion. Mandatory source policy, audits, negative controls, generated freshness and failed-input retention remain unchanged. Reviewed the source-backed 23-behavior inventory and matching proof/production/effect/native/resource evidence map, including all library source domains and fallback/failure paths. Established continuing semantic/specification/coverage/tool/runtime/native/storage/claim review triggers, including dependencies outside mechanical hash detection. Retired maintenance setup and inventory/map setup only; specification adequacy, machine-checked composition, architecture/trust and environmental qualification remain open.",
+      "conformance": "The dedicated traversal and multi-client mapping documents identify production invocations, independent malformed/membership tests and the exact successful-effect/manual correspondence boundaries. The caller-stream contract separates current live rollback from future journal/reopen/lease capabilities. Existing focused proof-review, verifier-tooling and formal-workflow regressions pass; final exact-source proof/audit/freshness receipts and all settled-main CI runtime/library, analyzer and consumer verdicts are reported separately. Scope/map IDs and local evidence targets were independently checked; V11 obligations moved into durable policy and V12 implementation/qualification obligations remain in PLAN.md. Existing review helpers hash the new cited inventory/map/design evidence without changing verifier policy, manifests, code generation, tools or CI.",
+      "remainingAssumptions": "The pinned verifier/solver, native-source projection, C# compiler, runtime and host remain trusted; no new assumption, admitted lemma, external declaration or shipping dependency is introduced. Multi-client Coordinate assumes atomic canonical exclusion; complete missing-destination composite acquisition and ordinary held-handle disposal are not mechanically refined by the retained-database cleanup schedule. Actual OS exclusion, lock-rank/deadlock prevention, physical namespace/device durability and whole-parser refinement remain separate. Receipt freshness does not attest reviewer identity or judgment. A complete inventory and a fresh receipt do not verify the inventoried C#, establish specification adequacy or qualify native/platform behavior.",
       "evidence": [
-        "docs/design/proof-trust-review.md",
-        "scripts/tests/proof-review.tests.ps1",
-        "scripts/tests/verify-proofs.tests.ps1",
-        "scripts/tests/formal-workflow.tests.ps1",
+        "docs/design/calculated-columns-format-notes.md",
+        "docs/design/caller-stream-recovery.md",
+        "docs/design/library-structure.md",
         "docs/design/long-value-traversal.md",
         "docs/design/multi-process-ownership.md",
-        "docs/design/caller-stream-recovery.md"
+        "docs/design/persisted-column-properties-format-notes.md",
+        "docs/design/proof-trust-review.md",
+        "docs/design/verification-evidence-map.md",
+        "docs/design/verification-scope.md",
+        "scripts/tests/formal-workflow.tests.ps1",
+        "scripts/tests/proof-review.tests.ps1",
+        "scripts/tests/verify-proofs.tests.ps1"
       ],
       "inputs": [
         {
@@ -365,12 +475,20 @@
           "sha256": "e7c7846c9edb7be0d86ba5bf65ea616f3a0fd1a0253d6f17ed35405327137ff5"
         },
         {
+          "path": "docs/design/calculated-columns-format-notes.md",
+          "sha256": "e508f4bf82ef91a834df51aa20bf6a2f06bb12f1e8ada49598221507aeae3005"
+        },
+        {
           "path": "docs/design/caller-stream-recovery.md",
           "sha256": "94ef23b3a6ae4f9bafaf6df9cff128ccf8fd3142bd2754a8e434551872a6fdb6"
         },
         {
           "path": "docs/design/formal-verification.md",
-          "sha256": "895e5c89ef58ab51c7e6e5b782c67ea0202d70a68a73146b45dc7abe08f6f710"
+          "sha256": "c6c22fde9f5c5d8bcb69b4a0ba17e624d9dfb131a637beb832f6a65cec375762"
+        },
+        {
+          "path": "docs/design/library-structure.md",
+          "sha256": "99d13ce3a435befe112c02c978f8f534f6dba6569d8aa16cf4c9ba27e700bc47"
         },
         {
           "path": "docs/design/long-value-traversal.md",
@@ -381,12 +499,24 @@
           "sha256": "4cfe4cfdad8182bee9924bdfbe210969fb7bbb721a3a9935ffdc90647e02b215"
         },
         {
+          "path": "docs/design/persisted-column-properties-format-notes.md",
+          "sha256": "9698a0a3d05f3f486bbdea3f7c30b36c822598c1a93f1bc1af79b352490b8091"
+        },
+        {
           "path": "docs/design/proof-trust-review.md",
-          "sha256": "2b3cb8dd72524aea677019f436a865bb0ad5fef62b1f7a23c9f524a1872c479f"
+          "sha256": "03238ca56ccd191a87b0508c3b8d6e461e010fb9608f873aff7d389b6a4a8cc4"
         },
         {
           "path": "docs/design/recovery-storage-contract.md",
           "sha256": "7e07e37bea3058c8b333a3d4565ca1ea99b64ee07994669fad2f433c04d1b765"
+        },
+        {
+          "path": "docs/design/verification-evidence-map.md",
+          "sha256": "48de6fec926a8db161963f99c5f15587d20eca2de7d922905aeb31accf6ab1fb"
+        },
+        {
+          "path": "docs/design/verification-scope.md",
+          "sha256": "fd5bbd6f34d7d95aa013bc503da001be0a775a153fcc4ca06386a97c635eab70"
         },
         {
           "path": "global.json",
@@ -450,7 +580,7 @@
         },
         {
           "path": "verification/README.md",
-          "sha256": "376edaf4a6a707d92d669045ca603a645b3100c76070eb0b49539d75bb107998"
+          "sha256": "3d9ef72d3afd6d13ee55b9c4cfa7de6fe4d786fd2e64f0c7598f41e50a3b9f0f"
         },
         {
           "path": "verification/RecoveryKernel.dfy",

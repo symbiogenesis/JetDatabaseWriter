@@ -8,7 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 
 /// <summary>A <c>Where</c> stage that keeps the rows matching its predicate.</summary>
-/// <param name="predicate">The row predicate; compiled once per execution and applied to each row.</param>
+/// <param name="predicate">The row predicate; bound to its current constants and applied to each row.</param>
 internal sealed class FilterStage(LambdaExpression predicate) : QueryStage
 {
     public LambdaExpression Predicate { get; } = predicate;
@@ -41,7 +41,7 @@ internal sealed class FilterStage(LambdaExpression predicate) : QueryStage
         IAsyncEnumerable<T> source,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var compiled = (Func<T, bool>)this.Predicate.Compile();
+        var compiled = (Func<T, bool>)QueryLambdaCompiler.Shared.Compile(this.Predicate);
         await foreach (T item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             if (compiled(item))
