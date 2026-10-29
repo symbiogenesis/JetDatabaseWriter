@@ -22,9 +22,9 @@
       },
       "StyleCop.Analyzers": {
         "type": "Direct",
-        "requested": "[1.3.149-beta, )",
-        "resolved": "1.3.149-beta",
-        "contentHash": "J8q6nHMJj5B2HTt2FiWRdKheP5sDGbxnJGCODcMkeFz7U0ZiO+N7+wpsGu4FZUclDGY0yX1aLg0GKlacpiH1XQ=="
+        "requested": "[1.3.151-beta, )",
+        "resolved": "1.3.151-beta",
+        "contentHash": "AGruKOaxfcJ/QFaJ5Um3SqHgenUFxNu2Gbksuq2piz6uwFwS/xWgwXQXrHJeLmOLG/W9BZ90v7by+SnwoUlEpg=="
       }
     }
   }
