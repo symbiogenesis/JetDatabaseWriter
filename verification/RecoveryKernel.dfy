@@ -1215,8 +1215,15 @@ module RecoveryKernel {
     var headerValid := FoldReplacementHeader(header, pathIdentity, digest(bytes[..224]), 256) &&
       FoldReplacementGeneration(header, 256);
     var decisionValid := |bytes| == 352 && FoldReplacementDecision(header, bytes[256..], digest(bytes[256..320]), 96);
+    // Bind each scanned field to the original record before converting its
+    // bounded natural value to the native-width admission argument.
+    assert header[64..72] == bytes[64..72];
+    assert header[72..80] == bytes[72..80];
+    var oldLength := Replacement.LittleEndian64(header[64..72]);
+    var newLength := Replacement.LittleEndian64(header[72..80]);
+    assert (oldLength as U64) as int == oldLength;
+    assert (newLength as U64) as int == newLength;
     ReplacementAdmissionRefinesRecordBytes(bytes, pathIdentity, digest, headerValid,
-      Replacement.LittleEndian64(header[64..72]) as U64,
-      Replacement.LittleEndian64(header[72..80]) as U64, decisionValid);
+      oldLength as U64, newLength as U64, decisionValid);
   }
 }
