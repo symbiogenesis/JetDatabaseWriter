@@ -33,6 +33,7 @@ function Get-ProofReviewFixedInputs([string] $Boundary) {
                 'global.json'
                 '.github/dotnet11/global.json'
                 'Directory.Build.props'
+                'Directory.Packages.props'
                 'src/JetDatabaseWriter/JetDatabaseWriter.csproj'
                 '.github/workflows/ci.yml'
                 '.github/ci-tools.slnf'
