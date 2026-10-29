@@ -36,6 +36,7 @@ function Get-AnalyzerLanes([string] $Analyze) {
 }
 
 function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProps, [xml] $TestProject) {
+    Assert-Contract ($Workflow.Contains('group: ci-${{ github.ref }}') -and $Workflow.Contains("cancel-in-progress: `${{ !startsWith(github.ref, 'refs/tags/') }}")) 'Superseded branch runs must be cancelled without cancelling release runs.'
     $analyze = Get-CiJob $Workflow 'analyze'
     $test = $analyze
     $lanes = @(Get-AnalyzerLanes $analyze)
@@ -135,6 +136,7 @@ function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedE
 }
 
 Assert-Scenario 'hosted coverage and immediate validated binary execution' $workflow
+Assert-Scenario 'obsolete branch runs block current validation' ($workflow.Replace("cancel-in-progress: `${{ !startsWith(github.ref, 'refs/tags/') }}", 'cancel-in-progress: false')) 'Superseded branch runs must be cancelled'
 Assert-Scenario 'incomplete solution analysis' ($workflow.Replace('project: .github/ci-tools.slnf', 'project: tests/JetDatabaseWriter.TestSupport')) 'The tools lane must analyze the complete tools filter'
 Assert-Scenario 'Debug analyzer build' ($workflow.Replace('dotnet build ${{ matrix.project }} -c Release', 'dotnet build ${{ matrix.project }} -c Debug')) 'The analyzer build must use Release'
 Assert-Scenario 'disabled analyzers' ($workflow.Replace('dotnet build ${{ matrix.project }}', 'dotnet build -p:RunAnalyzers=false ${{ matrix.project }}')) 'Analyzer jobs must retain all strict build guarantees'
