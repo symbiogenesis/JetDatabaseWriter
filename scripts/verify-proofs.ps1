@@ -209,6 +209,15 @@ function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [strin
                 [IO.File]::WriteAllText((Join-Path $WorkingDirectory "$Name.$($stream[0]).log"), $captured)
             }
             if ($failure) { [IO.File]::WriteAllText((Join-Path $WorkingDirectory "$Name.failure.txt"), $failure) }
+            $outcome = [ordered]@{
+                name = $Name
+                executable = $Executable
+                arguments = @($Arguments)
+                started = $started
+                exitCode = $(if ($started -and $process.HasExited) { $process.ExitCode } else { $null })
+                failure = $failure
+            }
+            [IO.File]::WriteAllText((Join-Path $WorkingDirectory "$Name.process.json"), ($outcome | ConvertTo-Json -Depth 4))
             $process.Dispose()
         }
     }
@@ -225,10 +234,8 @@ function Assert-ProofAudit($Result, [string] $ReportPath, [string] $Name) {
     if ([IO.File]::ReadAllText($ReportPath).Length -ne 0 -or $Result.Stdout -notmatch 'Dafny auditor completed with 0 findings\b') { throw "Unreviewed audit findings for $Name. $([IO.File]::ReadAllText($ReportPath)) $($Result.Stdout)" }
 }
 
-function Invoke-ProofVerification([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update) {
-    $output = Assert-ProofOutputDirectory $OutputDirectory $RepositoryRoot
-    if (Test-Path -LiteralPath $output) { throw 'Proof output directory must not already exist; retain each run separately.' }
-    [void][IO.Directory]::CreateDirectory($output)
+function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update) {
+    $output = $OutputDirectory
     if (-not [IO.Path]::IsPathFullyQualified($DafnyPath)) { throw 'DafnyPath must be absolute.' }
     $executable = (Resolve-Path -LiteralPath $DafnyPath).Path
     $toolchain = [IO.File]::ReadAllText((Join-Path $RepositoryRoot 'verification/dafny-toolchain.json')) | ConvertFrom-Json
@@ -282,6 +289,85 @@ function Invoke-ProofVerification([string] $RepositoryRoot, [string] $DafnyPath,
     $receipt = [ordered]@{ schemaVersion = 2; dafny = $version.Stdout.Trim(); solver = $solverVersion.Stdout.Trim(); negativeControls = 'false theorem rejected; assumption audit detected'; proofs = @($summary.ToArray()); executableKernels = @($kernels) }
     [IO.File]::WriteAllText((Join-Path $output 'summary.json'), ($receipt | ConvertTo-Json -Depth 6))
     Write-Output "Proofs and generated native kernels verified; handwritten code and storage assumptions remain separate obligations. Results: $output"
+}
+
+function Test-ProofDiagnosticLocalInput([string] $RepositoryRoot, [string] $Path) {
+    $root = [IO.Path]::GetFullPath($RepositoryRoot).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $full = [IO.Path]::GetFullPath($Path)
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    if (-not $full.Equals($root, $comparison) -and -not $full.StartsWith($root + [IO.Path]::DirectorySeparatorChar, $comparison)) { throw 'Diagnostic input escapes the repository.' }
+    if ([IO.File]::GetAttributes($root) -band [IO.FileAttributes]::ReparsePoint) { return $false }
+    $current = $root
+    $relative = [IO.Path]::GetRelativePath($root, $full).Replace('\', '/')
+    foreach ($part in $relative.Split('/')) {
+        $current = Join-Path $current $part
+        if ([IO.File]::GetAttributes($current) -band [IO.FileAttributes]::ReparsePoint) { return $false }
+    }
+    return $true
+}
+
+function Write-ProofFailureReceipt([string] $RepositoryRoot, [string] $OutputDirectory, [string] $Failure) {
+    # Snapshot failures are supplemental evidence; they never authorize following
+    # linked inputs or replacing the original verifier error.
+    $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $snapshotErrors = [Collections.Generic.List[string]]::new()
+    try {
+        foreach ($file in Get-ChildItem -LiteralPath $RepositoryRoot -Filter '*.dfy' -File -Recurse -Force) { [void]$paths.Add($file.FullName) }
+        $verification = Join-Path $RepositoryRoot 'verification'
+        if (Test-ProofDiagnosticLocalInput $RepositoryRoot $verification) {
+            foreach ($file in Get-ChildItem -LiteralPath $verification -Filter '*.json' -File -Recurse -Force) { [void]$paths.Add($file.FullName) }
+        } else { $snapshotErrors.Add('Refused linked verification directory.') }
+    } catch { $snapshotErrors.Add($_.Exception.Message) }
+    foreach ($relative in 'scripts/verify-proofs.ps1', 'scripts/install-dafny.ps1', 'scripts/check-proof-review.ps1', 'src/JetDatabaseWriter/Verification/RecoveryKernel.g.cs', 'src/JetDatabaseWriter/Verification/LongValueKernel.g.cs') {
+        $path = Join-Path $RepositoryRoot $relative
+        if ([IO.File]::Exists($path)) { [void]$paths.Add($path) }
+    }
+    $inputs = foreach ($path in @($paths | Sort-Object -CaseSensitive)) {
+        $relative = [IO.Path]::GetRelativePath($RepositoryRoot, $path).Replace('\', '/')
+        try {
+            if (-not (Test-ProofDiagnosticLocalInput $RepositoryRoot $path)) {
+                $snapshotErrors.Add("Refused linked diagnostic input: $relative")
+                [ordered]@{ path = $relative; status = 'refused-linked' }
+                continue
+            }
+            $copy = Join-Path $OutputDirectory "inputs/$relative"
+            [void][IO.Directory]::CreateDirectory((Split-Path $copy -Parent))
+            [IO.File]::Copy($path, $copy)
+            [ordered]@{ path = $relative; status = 'retained'; sha256 = (Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash.ToLowerInvariant() }
+        } catch {
+            $snapshotErrors.Add("${relative}: $($_.Exception.Message)")
+            [ordered]@{ path = $relative; status = 'snapshot-failed'; error = $_.Exception.Message }
+        }
+    }
+    $artifacts = @(Get-ChildItem -LiteralPath $OutputDirectory -File | Sort-Object Name | ForEach-Object Name)
+    $receipt = [ordered]@{
+        schemaVersion = 1
+        status = 'failed'
+        failure = $Failure
+        githubSha = $env:GITHUB_SHA
+        negativeControls = 'Expected false-theorem verification and assumed-theorem audit failures are controls, not admitted proof inputs. This receipt records a genuine gate failure.'
+        inputs = @($inputs)
+        snapshotErrors = @($snapshotErrors.ToArray())
+        artifacts = $artifacts
+    }
+    [IO.File]::WriteAllText((Join-Path $OutputDirectory 'failure.json'), ($receipt | ConvertTo-Json -Depth 6))
+}
+
+function Invoke-ProofVerification([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update) {
+    $output = Assert-ProofOutputDirectory $OutputDirectory $RepositoryRoot
+    if (Test-Path -LiteralPath $output) { throw 'Proof output directory must not already exist; retain each run separately.' }
+    [void][IO.Directory]::CreateDirectory($output)
+    try { Invoke-ProofVerificationCore $RepositoryRoot $DafnyPath $output $TimeoutSeconds $Update }
+    catch {
+        $originalFailure = $_
+        try { Write-ProofFailureReceipt $RepositoryRoot $output $originalFailure.Exception.Message }
+        catch {
+            $snapshotFailure = $_.Exception.Message
+            try { [IO.File]::WriteAllText((Join-Path $output 'failure-receipt.error.txt'), $snapshotFailure) }
+            catch { [Console]::Error.WriteLine("Could not retain proof failure receipt: $snapshotFailure") }
+        }
+        throw $originalFailure
+    }
 }
 
 Invoke-ProofVerification (Split-Path $PSScriptRoot -Parent) $DafnyPath $OutputDirectory $TimeoutSeconds $UpdateGeneratedSource.IsPresent

@@ -311,7 +311,7 @@ internal static class CompactRawDataLongValueRelocator
                     throw Corrupt(number, "The private destination returned a truncated packed data page.");
                 }
 
-                offset += read;
+                offset = StreamRead.AdvanceRead(this.page.Length, offset, read);
             }
 
             this.CheckLength();

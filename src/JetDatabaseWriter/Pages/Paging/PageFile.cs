@@ -130,7 +130,7 @@ internal class PageFile : IPageSource, IAsyncDisposable
 
         byte[] hdr = new byte[Constants.DatabaseHeader.Length];
         _ = stream.Seek(0, SeekOrigin.Begin);
-        await stream.ReadExactlyAsync(hdr.AsMemory(), cancellationToken).ConfigureAwait(false);
+        await StreamRead.ReadExactlyAsync(stream, hdr.AsMemory(), cancellationToken).ConfigureAwait(false);
 
         return hdr;
     }

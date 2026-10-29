@@ -413,7 +413,7 @@ src/JetDatabaseWriter/
     ├── BinaryStringParser.cs              (base64 and data-URI decoding helpers)
     ├── BoxCache.cs                        (interned boxes for low-cardinality fixed-width cell values)
     ├── FileStreamFactory.cs               (central FileStream construction helpers)
-    ├── StreamReadExtensions.cs            (cross-target stream read helpers)
+    ├── StreamRead.cs                      (verified shared stream read cursors)
     ├── DiagnosticTrace.cs                 (best-effort trace delivery with callback reentry protection)
     ├── JetFailureMetrics.cs               (atomic diagnostic totals; optional JetDiagnostics EventSource)
     ├── ScalarConversion.cs                (nonthrowing built-in scalar conversion probes)

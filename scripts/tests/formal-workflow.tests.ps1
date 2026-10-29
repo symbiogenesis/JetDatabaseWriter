@@ -38,6 +38,19 @@ function Assert-ProofJob([string] $Workflow) {
         -not $upload.Contains('path: ${{ runner.temp }}/jdw-proof-results/')) {
         throw 'Proof diagnostics must survive failed verification.'
     }
+    $review = [regex]::Match($job, '(?ms)^      - name: Check proof/trust review records\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    if (-not $review -or $review -match '(?m)^        if:' -or $review -notmatch '(?m)^        shell: pwsh$' -or
+        -not $review.Contains('./scripts/check-proof-review.ps1 -OutputDirectory "${{ runner.temp }}/jdw-proof-review"')) {
+        throw 'Mapped implementation and pin changes must have unconditional proof/trust review freshness checks.'
+    }
+    $reviewUpload = [regex]::Match($job, '(?ms)^      - name: Upload proof review\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    if (-not $reviewUpload.Contains('if: ${{ !cancelled() }}') -or
+        -not $reviewUpload.Contains('uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a') -or
+        -not $reviewUpload.Contains('path: ${{ runner.temp }}/jdw-proof-review/') -or
+        -not $reviewUpload.Contains('if-no-files-found: error') -or
+        -not $reviewUpload.Contains('retention-days: 30') -or -not $upload.Contains('retention-days: 30')) {
+        throw 'Review outcomes and proof counterexample diagnostics must be retained, including failed gates.'
+    }
 }
 
 function Assert-Case([string] $Name, [string] $Workflow, [bool] $ShouldFail) {
@@ -58,3 +71,7 @@ Assert-Case 'verification omitted' ($workflow.Replace('./scripts/verify-proofs.p
 Assert-Case 'audit bypass option' ($workflow.Replace('./scripts/verify-proofs.ps1', './scripts/verify-proofs.ps1 -SkipAudit')) $true
 Assert-Case 'generated freshness cannot repair itself in CI' ($workflow.Replace('./scripts/verify-proofs.ps1', './scripts/verify-proofs.ps1 -UpdateGeneratedSource')) $true
 Assert-Case 'failure diagnostics lost' ($workflow.Replace('if: ${{ !cancelled() }}', 'if: success()')) $true
+Assert-Case 'review gate omitted' ($workflow.Replace('./scripts/check-proof-review.ps1', 'echo reviewed')) $true
+Assert-Case 'review gate conditional' ($workflow.Replace('      - name: Check proof/trust review records', "      - name: Check proof/trust review records`n        if: false")) $true
+Assert-Case 'review report lost on failure' ($workflow.Replace('      - name: Upload proof review' + "`n" + '        if: ${{ !cancelled() }}', '      - name: Upload proof review' + "`n" + '        if: success()')) $true
+Assert-Case 'counterexamples retention shortened' ($workflow.Replace('retention-days: 30', 'retention-days: 1')) $true

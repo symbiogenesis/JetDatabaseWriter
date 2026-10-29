@@ -61,9 +61,8 @@ Acceptance: E4/F6/I15 evidence for each advertised platform. Never infer hardwar
 
 ## V8 — Verify bounded parsing and arithmetic kernels
 
-Cause: S1's remaining resource and traversal audit spans many handwritten readers. The generated complete descriptor codec proves bounded field acquisition/serialization, inverse laws, payload-admission priority and row-pointer packing. External-page acquisition, native pointer/token meaning, chain traversal and aggregate resource bounds remain outside that kernel.
+Cause: S1's remaining resource and traversal audit spans many handwritten readers. The generated complete descriptor codec proves bounded field acquisition/serialization, inverse laws, payload-admission priority and row-pointer packing. Shared range/read kernels cover bounded slices and exact positive-read consumption. External-page acquisition, native pointer/token meaning, containing parser traversal and aggregate resource bounds remain separate obligations.
 
-- [ ] Identify remaining shared range/offset/length primitives beyond the descriptor codec and prove overflow-safe slicing, exact reads and monotone consumption for both target frameworks.
 - [ ] Prove parser progress, finite traversal with visited identities, decreasing budgets and aggregate allocation bounds for a selected hostile-file surface.
 - [ ] Connect kernels to production paths before claiming a public parser is verified. Retain fuzzing and independent malformed-file tests.
 
@@ -83,9 +82,8 @@ Acceptance: I2/I17 requirements proven for named page forms and independently va
 
 ## V10 — Verify lifecycle and concurrency boundaries
 
-Cause: exclusive ownership, lock ordering, cache generations and nested undo are outside a single-threaded storage model.
+Cause: the serialized writer lifecycle specification does not establish cross-process acquisition/recovery interleavings, lock ordering or cache pin/lease and copy-on-write correctness. Those require explicit coordination and storage assumptions beyond a single-writer trace.
 
-- [ ] Specify legal writer/transaction/lease lifecycles, disposal idempotence, generation invalidation and nested savepoint semantics.
 - [ ] Model cross-process acquisition/recovery/cleanup interleavings; optionally use TLA+/TLC for bounded exploration and TLAPS or Dafny for unbounded invariants.
 - [ ] Prove lock-order/rank rules or comparable deadlock prevention for supported cooperating clients, with explicit OS assumptions.
 - [ ] Tie pin/lease and copy-on-write invariants to I7 before changing cache reuse.
@@ -98,7 +96,6 @@ Cause: future code, verifier or storage changes can invalidate proof claims with
 
 - [ ] Extend the evidence matrix as implementation and platform coverage grow; link each additional theorem to production conformance and independently qualified storage assumptions.
 - [ ] Promote individual README guarantees only after their remaining implementation/platform criteria hold. Keep Partial format/expression/native-compatibility statuses until E1/E2 and feature work establish them.
-- [ ] Add proof/trust review to changes in mapped storage code and pin updates. Preserve counterexamples and failed proof diagnostics as useful CI evidence.
 - [ ] Reassess F* only for a concrete boundary where its extraction/trust tradeoff improves on Dafny under the unchanged-runtime constraint; verification-only F* remains possible without runtime dependencies.
 
 Acceptance: readers can distinguish verified abstract algorithms, tested implementation behavior and qualified physical durability without following commit history.

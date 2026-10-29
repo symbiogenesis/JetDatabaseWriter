@@ -268,7 +268,7 @@ internal static class CompactUsageMapValidator
                     throw Corrupt("A private map page is truncated or returned an invalid read count.");
                 }
 
-                offset += read;
+                offset = StreamRead.AdvanceRead(buffer.Length, offset, read);
             }
         }
     }

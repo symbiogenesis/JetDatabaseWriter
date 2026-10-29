@@ -351,7 +351,8 @@ internal static class EncryptionManager
         cancellationToken.ThrowIfCancellationRequested();
         _ = stream.Seek(0, SeekOrigin.Begin);
         byte[] headerPage = new byte[Constants.PageSizes.Jet4];
-        int read = await stream.ReadAtLeastAsync(
+        int read = await StreamRead.ReadAtLeastAsync(
+            stream,
             headerPage.AsMemory(),
             headerPage.Length,
             throwOnEndOfStream: false,
@@ -382,7 +383,8 @@ internal static class EncryptionManager
     {
         _ = stream.Seek(0, SeekOrigin.Begin);
         byte[] headerPage = new byte[Constants.PageSizes.Jet4];
-        _ = await stream.ReadAtLeastAsync(
+        _ = await StreamRead.ReadAtLeastAsync(
+            stream,
             headerPage.AsMemory(),
             headerPage.Length,
             throwOnEndOfStream: false,

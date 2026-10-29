@@ -186,7 +186,7 @@ internal static class CompactRawDataValidator
                     throw Corrupt("The private row allocation or ledger ended before a complete read.");
                 }
 
-                offset += read;
+                offset = StreamRead.AdvanceRead(buffer.Length, offset, read);
             }
         }
 

@@ -167,7 +167,7 @@ internal sealed class CompactRowRelocationMap
                 throw Corrupt("The relocation ledger ended before a complete record.");
             }
 
-            offset += read;
+            offset = StreamRead.AdvanceRead(this.record.Length, offset, read);
         }
     }
 }

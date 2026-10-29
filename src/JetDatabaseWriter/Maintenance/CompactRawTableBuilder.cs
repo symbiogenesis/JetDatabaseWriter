@@ -308,17 +308,10 @@ internal static class CompactRawTableBuilder
 
         private static async ValueTask ReadExactlyAsync(Stream stream, byte[] buffer, CancellationToken token)
         {
-            int offset = 0;
-            while (offset < buffer.Length)
+            int read = await StreamRead.ReadAtLeastAsync(stream, buffer, buffer.Length, throwOnEndOfStream: false, token).ConfigureAwait(false);
+            if (read != buffer.Length)
             {
-                token.ThrowIfCancellationRequested();
-                int read = await stream.ReadAsync(buffer.AsMemory(offset), token).ConfigureAwait(false);
-                if (read <= 0 || read > buffer.Length - offset)
-                {
-                    throw new JetCorruptDataException(JetErrorCode.MalformedValue, "A private table map input was truncated.");
-                }
-
-                offset += read;
+                throw new JetCorruptDataException(JetErrorCode.MalformedValue, "A private table map input was truncated.");
             }
         }
 

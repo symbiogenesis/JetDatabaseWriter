@@ -36,6 +36,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Check proof/trust review records
+        shell: pwsh
+        run: ./scripts/check-proof-review.ps1 -OutputDirectory "${{ runner.temp }}/jdw-proof-review"
+
       - name: Install pinned verifier
         shell: pwsh
         run: ./scripts/install-dafny.ps1 -Destination "${{ runner.temp }}/jdw-dafny-${{ github.run_id }}-${{ github.run_attempt }}"
@@ -54,7 +58,16 @@ jobs:
           name: formal-verification
           path: ${{ runner.temp }}/jdw-proof-results/
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 30
+
+      - name: Upload proof review
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: proof-trust-review
+          path: ${{ runner.temp }}/jdw-proof-review/
+          if-no-files-found: error
+          retention-days: 30
 
   analyze:
     name: Analyze${{ matrix.runner && ' and test' || '' }} (${{ matrix.name }})

@@ -13,6 +13,138 @@ module RecoveryKernel {
   import Undo = UndoJournal
   import Replacement = ReplacementProtocol
 
+  // Shared parser slices use the signed managed offset domain. Subtraction
+  // follows offset admission, so even hostile native-width values are total.
+  function IsByteRange(length: U64, offset: U64, count: U64): bool {
+    length <= 9223372036854775807 && offset <= length && count <= length - offset
+  }
+
+  lemma ByteRangeIsExactAndOverflowSafe(length: U64, offset: U64, count: U64)
+    ensures IsByteRange(length, offset, count) <==>
+      0 <= offset as int <= offset as int + count as int <= length as int <= 9223372036854775807
+    ensures IsByteRange(length, offset, count) ==>
+      offset + count <= 9223372036854775807
+  { }
+
+  lemma NestedByteSlicesCompose(length: U64, offset: U64, count: U64,
+      innerOffset: U64, innerCount: U64)
+    requires IsByteRange(length, offset, count)
+    requires IsByteRange(count, innerOffset, innerCount)
+    ensures IsByteRange(length, offset + innerOffset, innerCount)
+    ensures offset + innerOffset + innerCount <= offset + count
+  { }
+
+  // uint.MaxValue is outside every managed buffer. A successful positive
+  // read consumes exactly its count and strictly decreases remaining bytes.
+  function BufferReadAdvance(length: U32, offset: U32, count: U32): U32 {
+    if length > 2147483647 || offset >= length || count == 0 || count > length - offset
+    then 4294967295 else offset + count
+  }
+
+  lemma BufferReadMakesExactProgress(length: U32, offset: U32, count: U32)
+    ensures BufferReadAdvance(length, offset, count) != 4294967295 <==>
+      length <= 2147483647 && offset < length && 0 < count <= length - offset
+    ensures BufferReadAdvance(length, offset, count) != 4294967295 ==>
+      offset < BufferReadAdvance(length, offset, count) <= length &&
+      BufferReadAdvance(length, offset, count) == offset + count &&
+      length - BufferReadAdvance(length, offset, count) < length - offset
+    ensures BufferReadAdvance(length, offset, count) != 4294967295 ==>
+      IsByteRange(length as U64, offset as U64, count as U64)
+  { }
+
+  function ReadMinimumSatisfied(length: U32, minimum: U32, consumed: U32): bool {
+    length <= 2147483647 && minimum <= consumed <= length
+  }
+
+  lemma ExactReadIsExactlyFull(length: U32, consumed: U32)
+    ensures ReadMinimumSatisfied(length, length, consumed) <==>
+      length <= 2147483647 && consumed == length
+  { }
+
+  ghost predicate SuccessfulReadTrace(length: U32, offset: U32, counts: seq<U32>)
+    decreases |counts|
+  {
+    length <= 2147483647 && offset <= length &&
+      (|counts| == 0 ||
+        (BufferReadAdvance(length, offset, counts[0]) != 4294967295 &&
+          SuccessfulReadTrace(length, BufferReadAdvance(length, offset, counts[0]), counts[1..])))
+  }
+
+  ghost function ReadTraceEnd(length: U32, offset: U32, counts: seq<U32>): U32
+    requires SuccessfulReadTrace(length, offset, counts)
+    ensures offset <= ReadTraceEnd(length, offset, counts) <= length
+    decreases |counts|
+  {
+    if |counts| == 0 then offset
+    else ReadTraceEnd(length, BufferReadAdvance(length, offset, counts[0]), counts[1..])
+  }
+
+  lemma ReadTraceConsumesBoundedPrefix(length: U32, offset: U32, counts: seq<U32>)
+    requires SuccessfulReadTrace(length, offset, counts)
+    ensures offset <= ReadTraceEnd(length, offset, counts) <= length
+    ensures |counts| <= ReadTraceEnd(length, offset, counts) as int - offset as int
+    ensures |counts| <= length as int - offset as int
+    decreases |counts|
+  {
+    if |counts| > 0 {
+      BufferReadMakesExactProgress(length, offset, counts[0]);
+      ReadTraceConsumesBoundedPrefix(length, BufferReadAdvance(length, offset, counts[0]), counts[1..]);
+    }
+  }
+
+  // This models Stream's successful read effect, not a trusted declaration
+  // about .NET: each acquired chunk is the next exact source prefix.
+  lemma ExactReadChunkPreservesSourcePrefix(source: seq<Byte>, prefix: seq<Byte>,
+      chunk: seq<Byte>, length: U32, offset: U32, count: U32)
+    requires SuccessfulReadTrace(length, offset, [count])
+    requires length as int <= |source|
+    requires prefix == source[..offset as int]
+    requires chunk == source[offset as int..(offset as int + count as int)]
+    ensures prefix + chunk == source[..BufferReadAdvance(length, offset, count) as int]
+    ensures BufferReadAdvance(length, offset, count) == length ==>
+      prefix + chunk == source[..length as int]
+  {
+    BufferReadMakesExactProgress(length, offset, count);
+  }
+  ghost function ConcatenateReadChunks(chunks: seq<seq<Byte>>): seq<Byte>
+    decreases |chunks|
+  {
+    if |chunks| == 0 then [] else chunks[0] + ConcatenateReadChunks(chunks[1..])
+  }
+
+  ghost predicate ReadEffectsMatchSource(source: seq<Byte>, length: U32,
+      offset: U32, counts: seq<U32>, chunks: seq<seq<Byte>>)
+    requires SuccessfulReadTrace(length, offset, counts)
+    requires length as int <= |source|
+    decreases |counts|
+  {
+    |counts| == |chunks| && (|counts| == 0 ||
+      (chunks[0] == source[offset as int..(offset as int + counts[0] as int)] &&
+        ReadEffectsMatchSource(source, length, BufferReadAdvance(length, offset, counts[0]),
+          counts[1..], chunks[1..])))
+  }
+
+  // Arbitrary finite successful reads compose to the exact requested prefix.
+  // The named effect premise excludes malicious streams inventing bytes;
+  // cursor progress alone cannot establish that premise or I/O termination.
+  lemma ExactReadTraceAcquiresRequestedPrefix(source: seq<Byte>, prefix: seq<Byte>,
+      length: U32, offset: U32, counts: seq<U32>, chunks: seq<seq<Byte>>)
+    requires SuccessfulReadTrace(length, offset, counts)
+    requires length as int <= |source|
+    requires prefix == source[..offset as int]
+    requires ReadEffectsMatchSource(source, length, offset, counts, chunks)
+    ensures prefix + ConcatenateReadChunks(chunks) ==
+      source[..ReadTraceEnd(length, offset, counts) as int]
+    ensures ReadTraceEnd(length, offset, counts) == length ==>
+      prefix + ConcatenateReadChunks(chunks) == source[..length as int]
+    decreases |counts|
+  {
+    if |counts| > 0 {
+      ExactReadChunkPreservesSourcePrefix(source, prefix, chunks[0], length, offset, counts[0]);
+      ExactReadTraceAcquiresRequestedPrefix(source, prefix + chunks[0], length,
+        BufferReadAdvance(length, offset, counts[0]), counts[1..], chunks[1..]);
+    }
+  }
   // Decode the on-disk signed-length field as raw unsigned bits. Admission
   // below rejects every negative encoding before production narrows to long.
   function DecodeReplacementLength(b0: Byte, b1: Byte, b2: Byte, b3: Byte,
@@ -763,7 +895,7 @@ module RecoveryKernel {
   // reads strictly decrease remaining bytes; zero/oversized results refuse.
   function ReplacementReadAdvance(length: U32, offset: U32, count: U32): U32 {
     if (length != 256 && length != 96) || offset >= length || count == 0 || count > length - offset
-    then 353 else offset + count
+    then 353 else BufferReadAdvance(length, offset, count)
   }
 
   lemma ReplacementReadMakesExactProgress(length: U32, offset: U32, count: U32)

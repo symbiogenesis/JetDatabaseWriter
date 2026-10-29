@@ -440,7 +440,7 @@ internal static class CompactPinnedDatabaseValidator
             try
             {
                 stream.Position = checked(pageNumber * pageSize);
-                await stream.ReadExactlyAsync(page.AsMemory(0, pageSize), cancellationToken).ConfigureAwait(false);
+                await StreamRead.ReadExactlyAsync(stream, page.AsMemory(0, pageSize), cancellationToken).ConfigureAwait(false);
                 return page;
             }
             catch

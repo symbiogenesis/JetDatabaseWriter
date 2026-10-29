@@ -1,14 +1,14 @@
-#if !NET7_0_OR_GREATER
 namespace JetDatabaseWriter.Infrastructure;
 
 using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Verification;
 
-internal static class StreamReadExtensions
+internal static class StreamRead
 {
-    public static void ReadExactly(this Stream stream, Span<byte> buffer)
+    public static void ReadExactly(Stream stream, Span<byte> buffer)
     {
         Guard.NotNull(stream, nameof(stream));
         int totalRead = 0;
@@ -20,35 +20,37 @@ internal static class StreamReadExtensions
                 throw new EndOfStreamException();
             }
 
-            totalRead += bytesRead;
+            totalRead = AdvanceRead(buffer.Length, totalRead, bytesRead);
         }
     }
 
     public static async ValueTask ReadExactlyAsync(
-        this Stream stream,
+        Stream stream,
         Memory<byte> buffer,
-        CancellationToken cancellationToken = default) => _ = await stream.ReadAtLeastAsync(
+        CancellationToken cancellationToken = default) => _ = await ReadAtLeastAsync(
+            stream,
             buffer,
             buffer.Length,
             throwOnEndOfStream: true,
             cancellationToken: cancellationToken).ConfigureAwait(false);
 
     public static async ValueTask<int> ReadAtLeastAsync(
-        this Stream stream,
+        Stream stream,
         Memory<byte> buffer,
         int minimumBytes,
         bool throwOnEndOfStream = true,
         CancellationToken cancellationToken = default)
     {
         Guard.NotNull(stream, nameof(stream));
-        if ((uint)minimumBytes > (uint)buffer.Length)
+        if (!BinaryBuffer.IsRange(buffer.Length, 0, minimumBytes))
         {
             throw new ArgumentOutOfRangeException(nameof(minimumBytes));
         }
 
         int totalRead = 0;
-        while (totalRead < minimumBytes)
+        while (!RecoveryKernel.ReadMinimumSatisfied(checked((uint)buffer.Length), checked((uint)minimumBytes), checked((uint)totalRead)))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int bytesRead = await stream.ReadAsync(buffer[totalRead..], cancellationToken).ConfigureAwait(false);
             if (bytesRead == 0)
             {
@@ -60,10 +62,25 @@ internal static class StreamReadExtensions
                 return totalRead;
             }
 
-            totalRead += bytesRead;
+            totalRead = AdvanceRead(buffer.Length, totalRead, bytesRead);
         }
 
         return totalRead;
     }
+
+    internal static int AdvanceRead(int length, int offset, int count)
+    {
+        if (count < 0)
+        {
+            throw new IOException("The stream returned an invalid read count.");
+        }
+
+        uint next = RecoveryKernel.BufferReadAdvance(checked((uint)length), checked((uint)offset), checked((uint)count));
+        if (next == uint.MaxValue)
+        {
+            throw new IOException("The stream returned an invalid read count.");
+        }
+
+        return checked((int)next);
+    }
 }
-#endif

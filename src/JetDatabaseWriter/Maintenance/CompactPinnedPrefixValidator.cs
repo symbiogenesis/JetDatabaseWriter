@@ -336,7 +336,7 @@ internal static class CompactPinnedPrefixValidator
                     throw Corrupt("A complete reopened pinned private page could not be read.");
                 }
 
-                offset += read;
+                offset = StreamRead.AdvanceRead(buffer.Length, offset, read);
             }
         }
 

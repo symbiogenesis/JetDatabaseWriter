@@ -338,7 +338,7 @@ internal static class CompactRawDataLongValueValidator
                     throw Corrupt("The reopened private destination or row ledger ended before a complete read.");
                 }
 
-                offset += read;
+                offset = StreamRead.AdvanceRead(buffer.Length, offset, read);
             }
 
             this.CheckLengths();

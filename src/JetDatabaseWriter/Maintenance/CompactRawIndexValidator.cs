@@ -466,7 +466,7 @@ internal static class CompactRawIndexValidator
                         throw Corrupt("The reopened private index ended before a complete allocation page.");
                     }
 
-                    offset += read;
+                    offset = StreamRead.AdvanceRead(buffer.Length, offset, read);
                 }
 
                 this.ThrowIfDisposedOrCancelled(cancellationToken);

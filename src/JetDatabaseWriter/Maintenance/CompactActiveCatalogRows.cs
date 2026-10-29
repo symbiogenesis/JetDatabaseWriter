@@ -336,7 +336,7 @@ internal sealed class CompactActiveCatalogRows : IDisposable
                 throw Corrupt("The complete catalog relocation ledger is truncated.");
             }
 
-            offset += count;
+            offset = StreamRead.AdvanceRead(record.Length, offset, count);
         }
     }
 

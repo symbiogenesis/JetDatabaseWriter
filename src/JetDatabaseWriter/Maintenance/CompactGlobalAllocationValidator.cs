@@ -175,7 +175,7 @@ internal static class CompactGlobalAllocationValidator
                     throw Corrupt("A reopened global allocation header or record is truncated or returned an invalid read count.");
                 }
 
-                offset += read;
+                offset = StreamRead.AdvanceRead(buffer.Length, offset, read);
             }
         }
     }

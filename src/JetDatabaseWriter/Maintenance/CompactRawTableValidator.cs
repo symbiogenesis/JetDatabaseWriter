@@ -278,17 +278,10 @@ internal static class CompactRawTableValidator
 
         private static async ValueTask ReadExactlyAsync(Stream stream, byte[] buffer, CancellationToken token)
         {
-            int offset = 0;
-            while (offset < buffer.Length)
+            int read = await StreamRead.ReadAtLeastAsync(stream, buffer, buffer.Length, throwOnEndOfStream: false, token).ConfigureAwait(false);
+            if (read != buffer.Length)
             {
-                token.ThrowIfCancellationRequested();
-                int read = await stream.ReadAsync(buffer.AsMemory(offset), token).ConfigureAwait(false);
-                if (read <= 0 || read > buffer.Length - offset)
-                {
-                    throw Corrupt("A reopened private table or ledger is truncated.");
-                }
-
-                offset += read;
+                throw Corrupt("A reopened private table or ledger is truncated.");
             }
         }
 

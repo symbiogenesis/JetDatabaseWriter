@@ -4,9 +4,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-#if !NET6_0_OR_GREATER
 using JetDatabaseWriter.Infrastructure;
-#endif
 
 /// <summary>Stream storage with its own seek gate and optional positional reads.</summary>
 internal class StreamPageStore : IPageStore
@@ -63,6 +61,11 @@ internal class StreamPageStore : IPageStore
     public async ValueTask ReadAsync(long offset, Memory<byte> buffer, bool inline, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (!BinaryBuffer.IsRange(long.MaxValue, offset, buffer.Length))
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset), "The requested read exceeds the supported offset range.");
+        }
+
 #if NET6_0_OR_GREATER
         if (this.handle is { } fileHandle)
         {
@@ -70,14 +73,14 @@ internal class StreamPageStore : IPageStore
             while (total < buffer.Length)
             {
                 int read = inline
-                    ? RandomAccess.Read(fileHandle, buffer.Span[total..], offset + total)
-                    : await RandomAccess.ReadAsync(fileHandle, buffer[total..], offset + total, cancellationToken).ConfigureAwait(false);
+                    ? RandomAccess.Read(fileHandle, buffer.Span[total..], checked(offset + total))
+                    : await RandomAccess.ReadAsync(fileHandle, buffer[total..], checked(offset + total), cancellationToken).ConfigureAwait(false);
                 if (read == 0)
                 {
                     throw new EndOfStreamException();
                 }
 
-                total += read;
+                total = StreamRead.AdvanceRead(buffer.Length, total, read);
             }
 
             return;
@@ -89,11 +92,11 @@ internal class StreamPageStore : IPageStore
             _ = this.Stream.Seek(offset, SeekOrigin.Begin);
             if (inline)
             {
-                this.Stream.ReadExactly(buffer.Span);
+                StreamRead.ReadExactly(this.Stream, buffer.Span);
             }
             else
             {
-                await this.Stream.ReadExactlyAsync(buffer, cancellationToken).ConfigureAwait(false);
+                await StreamRead.ReadExactlyAsync(this.Stream, buffer, cancellationToken).ConfigureAwait(false);
             }
         }
         finally

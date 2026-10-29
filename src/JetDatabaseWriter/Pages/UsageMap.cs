@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -30,7 +31,7 @@ internal static class UsageMap
     internal static bool TryReadPointer(byte[] page, int offset, out UsageMapPointer pointer)
     {
         pointer = default;
-        if (offset < 0 || offset + 3 >= page.Length)
+        if (!BinaryBuffer.IsRange(page.Length, offset, 4))
         {
             return false;
         }

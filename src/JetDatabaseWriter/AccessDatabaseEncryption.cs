@@ -315,7 +315,7 @@ public static class AccessDatabaseEncryption
 
     private static async ValueTask ReadHeaderBytesAsync(Stream source, Memory<byte> bytes, CancellationToken cancellationToken)
     {
-        int read = await source.ReadAtLeastAsync(bytes, bytes.Length, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
+        int read = await StreamRead.ReadAtLeastAsync(source, bytes, bytes.Length, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
         if (read != bytes.Length)
         {
             throw new JetCorruptDataException(JetErrorCode.CorruptDatabaseHeader, "The source database header is truncated.", new JetErrorInfo { PageNumber = 0 });

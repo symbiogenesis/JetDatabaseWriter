@@ -306,7 +306,7 @@ public static class ComplexCellValue
     private static byte[] ReadByteArray(BinaryReader reader)
     {
         int length = reader.ReadInt32();
-        if (length < 0 || length > reader.BaseStream.Length - reader.BaseStream.Position)
+        if (!BinaryBuffer.IsRange(reader.BaseStream.Length, reader.BaseStream.Position, length))
         {
             throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The complex column cell byte length exceeds the available data.");
         }

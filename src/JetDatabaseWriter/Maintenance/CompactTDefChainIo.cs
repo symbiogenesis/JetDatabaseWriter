@@ -151,7 +151,7 @@ internal sealed class CompactTDefChainIo
                 throw Corrupt("A complete pinned private definition page could not be read.");
             }
 
-            offset += read;
+            offset = StreamRead.AdvanceRead(buffer.Length, offset, read);
         }
 
         this.Check(token);

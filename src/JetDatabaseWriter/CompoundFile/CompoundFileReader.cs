@@ -386,7 +386,7 @@ internal static class CompoundFileReader
         // Header occupies the first sector position (512 bytes for v3, padded
         // to 4096 for v4); sector index 0 begins immediately after that.
         long offset = ((long)sectorIndex + 1) * sectorSize;
-        if (offset > stream.Length - sectorSize)
+        if (!BinaryBuffer.IsRange(stream.Length, offset, sectorSize))
         {
             throw Corrupt("CFB sector points beyond the physical file.");
         }
@@ -628,7 +628,7 @@ internal static class CompoundFileReader
 
     private static async ValueTask ReadExactlyAsync(Stream stream, Memory<byte> buffer, CancellationToken cancellationToken)
     {
-        int read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
+        int read = await StreamRead.ReadAtLeastAsync(stream, buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
         if (read != buffer.Length)
         {
             throw Corrupt("The compound file is truncated.");

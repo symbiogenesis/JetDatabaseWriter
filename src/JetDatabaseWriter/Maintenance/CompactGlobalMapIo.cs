@@ -205,7 +205,7 @@ internal sealed class CompactGlobalMapIo
                 throw Corrupt("A private global-map page is truncated or returns an invalid read count.");
             }
 
-            offset += read;
+            offset = StreamRead.AdvanceRead(bytes.Length, offset, read);
         }
 
         this.Check(token);

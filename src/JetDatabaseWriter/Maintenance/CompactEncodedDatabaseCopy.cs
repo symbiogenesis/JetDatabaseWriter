@@ -289,7 +289,7 @@ internal static class CompactEncodedDatabaseCopy
                     throw Corrupt("Private codec input has a truncated native page.");
                 }
 
-                offset += read;
+                offset = StreamRead.AdvanceRead(buffer.Length, offset, read);
             }
         }
 

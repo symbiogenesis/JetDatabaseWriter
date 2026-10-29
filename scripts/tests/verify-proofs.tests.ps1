@@ -170,4 +170,89 @@ Assert-Scenario 'launch failure is bounded' { Invoke-ProofProcess (Join-Path $fi
 Assert-Scenario 'launch failure retains diagnostics' {
     if (-not [IO.File]::Exists((Join-Path $fixture 'launch.failure.txt'))) { throw 'Launch evidence was not retained.' }
 }
+Assert-Scenario 'process result receipt retains exit and arguments' {
+    $receipt = [IO.File]::ReadAllText((Join-Path $fixture 'streams.process.json')) | ConvertFrom-Json
+    if ($receipt.exitCode -ne 0 -or $receipt.name -ne 'streams' -or $receipt.arguments -notcontains '-NoProfile') { throw 'Process outcome was not retained.' }
+}
+$originalVerificationCore = ${function:Invoke-ProofVerificationCore}
+function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update) {
+    [IO.File]::WriteAllText((Join-Path $OutputDirectory 'FalseTheorem.dfy'), 'lemma FalseTheorem() ensures false {}')
+    [IO.File]::WriteAllText((Join-Path $OutputDirectory 'negative-false.stdout.log'), 'postcondition might not hold')
+    throw 'synthetic failed proof'
+}
+try {
+    $failureOutput = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-failure-' + [guid]::NewGuid().ToString('N'))
+    Assert-Scenario 'failed proof is still rejected' { Invoke-ProofVerification $fixture 'mock' $failureOutput 10 $false } 'synthetic failed proof'
+    Assert-Scenario 'failure receipt binds source and retains counterexample diagnostics' {
+        $failure = [IO.File]::ReadAllText((Join-Path $failureOutput 'failure.json')) | ConvertFrom-Json
+        $saved = Join-Path $failureOutput 'inputs/verification/Good.dfy'
+        if ($failure.status -ne 'failed' -or $failure.failure -ne 'synthetic failed proof' -or
+            $failure.artifacts -notcontains 'negative-false.stdout.log' -or
+            -not [IO.File]::Exists((Join-Path $failureOutput 'FalseTheorem.dfy')) -or
+            -not [IO.File]::Exists((Join-Path $failureOutput 'inputs/verification/RecoveryKernel.dfy')) -or
+            $failure.negativeControls -notmatch 'genuine gate failure' -or
+            [IO.File]::ReadAllText($saved) -ne [IO.File]::ReadAllText($source) -or
+            -not (@($failure.inputs | Where-Object path -CEQ 'verification/Good.dfy').sha256 -ceq (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()) -or
+            [IO.File]::Exists((Join-Path $failureOutput 'summary.json'))) { throw 'Failed proof evidence is incomplete or claims success.' }
+    }
+    Assert-Scenario 'existing result directories remain untouched' { Invoke-ProofVerification $fixture 'mock' $failureOutput 10 $false } 'must not already exist'
+} finally { ${function:Invoke-ProofVerificationCore} = $originalVerificationCore }
+$originalFailureReceipt = ${function:Write-ProofFailureReceipt}
+function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update) { throw 'original verification failure' }
+function Write-ProofFailureReceipt([string] $RepositoryRoot, [string] $OutputDirectory, [string] $Failure) { throw 'snapshot retention failure' }
+try {
+    $snapshotOutput = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-snapshot-failure-' + [guid]::NewGuid().ToString('N'))
+    Assert-Scenario 'snapshot failure preserves original verification error' { Invoke-ProofVerification $fixture 'mock' $snapshotOutput 10 $false } 'original verification failure'
+    Assert-Scenario 'snapshot failure retains a supplemental error' {
+        if (-not [IO.File]::ReadAllText((Join-Path $snapshotOutput 'failure-receipt.error.txt')).Contains('snapshot retention failure')) { throw 'Snapshot failure was not retained separately.' }
+    }
+} finally {
+    ${function:Invoke-ProofVerificationCore} = $originalVerificationCore
+    ${function:Write-ProofFailureReceipt} = $originalFailureReceipt
+}
+$linkTarget = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-link-target-' + [guid]::NewGuid().ToString('N') + '.txt')
+[IO.File]::WriteAllText($linkTarget, 'outside proof data must not be copied')
+$linkPath = Join-Path $fixture 'verification/Linked.dfy'
+$linkSupported = $false
+try { [void][IO.File]::CreateSymbolicLink($linkPath, $linkTarget); $linkSupported = $true }
+catch { "Symbolic-link creation unavailable on this host: $($_.Exception.Message)" }
+if ($linkSupported) {
+    try {
+        Assert-Scenario 'failure snapshot refuses linked proof contents' {
+            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-linked-input-' + [guid]::NewGuid().ToString('N'))
+            [void][IO.Directory]::CreateDirectory($output)
+            Write-ProofFailureReceipt $fixture $output 'linked proof rejected'
+            $failure = [IO.File]::ReadAllText((Join-Path $output 'failure.json')) | ConvertFrom-Json
+            $input = @($failure.inputs | Where-Object path -CEQ 'verification/Linked.dfy')
+            if ($input.Count -ne 1 -or $input[0].status -ne 'refused-linked' -or $input[0].sha256 -or
+                [IO.File]::Exists((Join-Path $output 'inputs/verification/Linked.dfy'))) { throw 'Linked input was followed or refusal evidence was lost.' }
+        }
+    } finally { [IO.File]::Delete($linkPath) }
+}
+$linkedRoot = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-linked-root-' + [guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory((Join-Path $linkedRoot 'verification'))
+[void][IO.Directory]::CreateDirectory((Join-Path $linkedRoot 'src/JetDatabaseWriter'))
+$targetDirectory = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-linked-generated-' + [guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($targetDirectory)
+[IO.File]::WriteAllText((Join-Path $targetDirectory 'RecoveryKernel.g.cs'), 'outside generated data must not be copied')
+$directoryLink = Join-Path $linkedRoot 'src/JetDatabaseWriter/Verification'
+$directoryLinkSupported = $false
+try {
+    if ($IsWindows) { New-Item -ItemType Junction -Path $directoryLink -Target $targetDirectory | Out-Null }
+    else { [void][IO.Directory]::CreateSymbolicLink($directoryLink, $targetDirectory) }
+    $directoryLinkSupported = $true
+} catch { "Directory-link creation unavailable on this host: $($_.Exception.Message)" }
+if ($directoryLinkSupported) {
+    try {
+        Assert-Scenario 'failure snapshot refuses a linked generated directory' {
+            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-linked-directory-' + [guid]::NewGuid().ToString('N'))
+            [void][IO.Directory]::CreateDirectory($output)
+            Write-ProofFailureReceipt $linkedRoot $output 'linked generated directory rejected'
+            $failure = [IO.File]::ReadAllText((Join-Path $output 'failure.json')) | ConvertFrom-Json
+            $input = @($failure.inputs | Where-Object path -CEQ 'src/JetDatabaseWriter/Verification/RecoveryKernel.g.cs')
+            if ($input.Count -ne 1 -or $input[0].status -ne 'refused-linked' -or
+                [IO.File]::Exists((Join-Path $output 'inputs/src/JetDatabaseWriter/Verification/RecoveryKernel.g.cs'))) { throw 'Linked input directory was followed.' }
+        }
+    } finally { [IO.Directory]::Delete($directoryLink) }
+}
 'Proof gate regression checks passed.'

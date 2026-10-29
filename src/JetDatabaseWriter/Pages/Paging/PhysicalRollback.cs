@@ -5,9 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-#if NETSTANDARD2_1
 using JetDatabaseWriter.Infrastructure;
-#endif
 
 /// <summary>Owns physical rollback and its selective raw file or stream before-images.</summary>
 internal sealed class PhysicalRollback : IAsyncDisposable
@@ -143,7 +141,7 @@ internal sealed class PhysicalRollback : IAsyncDisposable
 
         byte[] raw = new byte[record.Length];
         this.spill!.Position = record.Position;
-        await this.spill.ReadExactlyAsync(raw.AsMemory(), CancellationToken.None).ConfigureAwait(false);
+        await StreamRead.ReadExactlyAsync(this.spill, raw.AsMemory(), CancellationToken.None).ConfigureAwait(false);
         return raw;
     }
 

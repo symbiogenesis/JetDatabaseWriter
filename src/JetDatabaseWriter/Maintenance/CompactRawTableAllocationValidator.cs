@@ -131,7 +131,7 @@ internal static class CompactRawTableAllocationValidator
                     throw Corrupt("A complete per-column LVAL allocation ledger record is truncated.");
                 }
 
-                offset += read;
+                offset = StreamRead.AdvanceRead(this.record.Length, offset, read);
             }
 
             token.ThrowIfCancellationRequested();

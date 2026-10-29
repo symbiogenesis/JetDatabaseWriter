@@ -1,6 +1,6 @@
 # Formal verification boundary
 
-The verification work covers selected recovery algorithms and small executable recovery and long-value descriptor kernels in Dafny. Dafny and its solver are development tools, not runtime dependencies. The library targets, package references and managed execution requirements remain unchanged.
+The verification work covers selected recovery algorithms, writer lifecycles and small executable recovery, shared parsing and long-value descriptor kernels in Dafny. Dafny and its solver are development tools, not runtime dependencies. The library targets, package references and managed execution requirements remain unchanged.
 
 A verified model establishes only the properties stated by its definitions, preconditions and theorems. The handwritten C# implementation, record parser, hashing, file APIs and operating system do not become verified because their intended behavior is represented in a model. Implementation conformance and physical persistence qualification are separate obligations in the [open plan](../formal-verification-todo.md).
 
@@ -83,6 +83,18 @@ The copy refinement retains a validated immutable source, a read cursor and buff
 
 Inverse laws cover every pointer/token word and each supported 30-bit length/storage-mode encoding. Generated payload-admission decisions preserve malformed-data and configured-budget error priority; the row-pointer codec refuses pages beyond 24 bits or rows beyond 8 bits rather than wrapping into another identity. `LongValueDescriptorKernelTests` uses independent byte/range oracles, boundary encodings, untouched-destination checks and pointer-alias regressions; decoder controls retain reserved-mode refusal across exact, string, raw and streaming paths. Span glue, external-page acquisition, token meaning, chain traversal and aggregate resource budgets remain separate contracts. This verifies the named bounded descriptor representation, not a complete public long-value parser or native format compatibility.
 
+## Shared parsing primitives
+
+The shared primitive boundary covers range admission, slice composition and positive-read cursor progress. `RecoveryKernel.IsByteRange` admits only offsets and lengths whose sum fits both the containing range and the signed managed offset domain. `BufferReadAdvance` accepts only a positive returned count within the requested remainder; refusal cannot wrap or advance the cursor. `ReadMinimumSatisfied` distinguishes a sufficiently acquired prefix from exact completion.
+
+Production buffer slices and exact-read adapters use these decisions on both library targets. The bounds and cursor decisions are total on their native input domains. Exact source-byte acquisition additionally depends on the stream's read-effect contract: a successful read supplies the reported next source prefix and does not mutate outside its requested destination. EOF, cancellation and exceptions remain effectful outcomes; a proof about successful chunks does not establish filesystem persistence or arbitrary custom-stream behavior. Parser traversal, aggregate allocation budgets and format interpretation remain separate obligations.
+
+## Writer lifecycle specification
+
+[The writer lifecycle specification](writer-lifecycle.md) records the legal serialized writer, transaction and lease states, terminal transaction identities, nested savepoint behavior, disposal and cache invalidation. The checked model describes the protocol; it adds no shipping code or runtime dependency. Its successful effects and exclusive ownership are explicit premises, and focused production traces support only the named correspondence boundaries.
+
+Cross-process interleavings, deadlock prevention, OS lease semantics and cache pin/copy-on-write correctness remain separate V10 obligations. The specification does not prove arbitrary concurrent C# execution or physical durability.
+
 ## Storage and integrity assumptions
 
 | Boundary | Required assumption or separate obligation |
@@ -116,6 +128,10 @@ Paths are relative to the repository root. Method names identify the intended re
 | Complete long-value descriptor codec, bounded acquisition/serialization, payload admission and row-pointer packing | `LongValues/Models/LongValueDescriptor.cs` `TryRead`, `WriteTo`; `LongValues/LongValueStore.cs` pointer helpers and `ValidatePayload`; `Verification/LongValueKernel.g.cs` | `LongValueDescriptorKernelTests`, `LongValueStoreTests`, malformed long-value and compact-audit tests | Generated array methods prove complete 12-byte acquisition/serialization, exact field inverses, bounds, atomic refusal and preservation outside the descriptor. Span adapters use generated range/field decisions. Payload admission and 24-bit page/8-bit row packing are generated. External-chain traversal, aggregate resource bounds, token meaning and native compatibility remain separate. |
 | Generation bootstrap and cleanup | `Transactions/RecoverableWriterLock.cs` `RecoveryLease`; `Pages/Paging/PersistentRollbackJournal.cs` `CleanupCompleted` | `RecoverableWriterLockTests`, `RecoveryLockFileTests`, `RecoveryReplayCrashTests`, completed-journal disposal regressions | Staged bootstrap, the abstract coordinated schedule and production-order leased cleanup are modeled; selected incomplete-evidence/refusal/reconstruction/deletion traces have production tests. GUID freshness, receipt parsing and actual lock/fence behavior remain separate obligations. |
 
+The shared range/read boundary is exercised by `SharedParsingKernelTests`: wide-arithmetic boundary oracles, overflowing native pointer offsets, every short-read partition of an eight-byte request, EOF, cancellation, exceptions and invalid returned counts. `ByteRangeIsExactAndOverflowSafe` and `NestedByteSlicesCompose` prove bounded slicing; `BufferReadMakesExactProgress` and `ReadTraceConsumesBoundedPrefix` prove exact cursor progress and bound the successful read count by the initial remainder. `ExactReadTraceAcquiresRequestedPrefix` composes arbitrary finite chunks into the exact requested source prefix under the named stream effects. Production `BinaryBuffer`, pointer readers and exact-read adapters invoke these decisions on both targets; containing parser loops and aggregate budgets remain unproved.
+
+`WriterLifecycle.StepPreserves` and `TracePreserves` preserve legal scope/lease states and terminal transaction identities through arbitrary finite modeled traces. Named rollback, statement, stale-generation and disposal lemmas refine the specification under its explicit successful-effect and bounded-counter contracts. `WriterLifecycleConformanceTests` supplements existing transaction, pager and ownership tests with composed released-child/failed-statement/rollback, maximum-depth disposal and faulted current-generation read/disposal traces. See the [lifecycle mapping](writer-lifecycle.md) for exact operations, assumptions and remaining correspondence gaps.
+
 The recovery-kernel tests exercise the generated boundary and its production callers. `ClassifyJournalRecord` consumes the exact unsigned interpretation of the stored 64-bit tag after framing/checksum validation. Its total native-byte result admits only terminal commits, tail-authorized replay markers, pre-replay truncations, original aligned before-images and bounded after-images. `JournalRecordClassificationIsExact` specifies all result classes; `ReplayStateRefusesFurtherMutations` excludes write/truncate records after replay begins. The handwritten enum-to-result mapping is covered by production conformance tests.
 
 `JournalRecordStart` computes the bounded rounded-up page-hash manifest end. `CompleteJournalEnd` selects exactly the maximal complete-record prefix and excludes the trailing fragment, under the 16 GiB journal bound. Both are total native functions; zero denotes invalid inputs, while every valid start/end is at least 128. Signed adapters reject that sentinel before narrowing. Production manifest validation, preparation-copy comparison and record append/replacement use these generated decisions. The framing proofs establish arithmetic bounds, page rounding and the exact incomplete suffix; actual byte reads and integrity validation remain handwritten.
@@ -143,6 +159,8 @@ Review mapped changes against this remaining manual refinement inventory:
 | Effect ordering | Journal flush must precede database mutation; exact database flush and its fence must precede a commit decision; uncertain decisions must prohibit contradictory in-place undo. |
 | Replacement admission and ownership | Byte fields must bind the intended canonical path/generation and validated copies; record admission must not substitute for exclusive receipt/lease authority. |
 | Cleanup | Durable selected content and exact-generation ownership must survive interrupted cleanup; stale disposal must preserve a successor's names. |
+
+Mapped source, conformance evidence, tool pins and proof-policy changes require a fresh [proof/trust review record](proof-trust-review.md). CI checks content freshness before verification and retains review refusals, failed inputs, expected-negative-control sources and process diagnostics. This gate records review obligations; it does not establish reviewer judgment or remove the manual refinement inventory above.
 
 ## Evidence levels and public claims
 

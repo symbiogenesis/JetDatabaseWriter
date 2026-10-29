@@ -53,7 +53,7 @@ internal static class EncryptionConverter
             for (long page = 1; page < length / pageSize; page++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                int read = await source.ReadAtLeastAsync(buffer.AsMemory(), pageSize, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
+                int read = await StreamRead.ReadAtLeastAsync(source, buffer.AsMemory(), pageSize, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
                 if (read != pageSize)
                 {
                     throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The source database page is truncated.", new JetErrorInfo { PageNumber = page });

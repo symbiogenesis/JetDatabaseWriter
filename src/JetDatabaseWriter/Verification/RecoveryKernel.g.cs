@@ -4,6 +4,22 @@
 namespace JetDatabaseWriter.Verification {
 
   internal static class RecoveryKernel {
+    public static bool IsByteRange(ulong length, ulong offset, ulong count)
+    {
+      return (((length) <= (9223372036854775807UL)) && ((offset) <= (length))) && ((count) <= ((length) - (offset)));
+    }
+    public static uint BufferReadAdvance(uint length, uint offset, uint count)
+    {
+      if (((((length) > (2147483647U)) || ((offset) >= (length))) || ((count) == (0U))) || ((count) > ((length) - (offset)))) {
+        return 4294967295U;
+      } else {
+        return (offset) + (count);
+      }
+    }
+    public static bool ReadMinimumSatisfied(uint length, uint minimum, uint consumed)
+    {
+      return ((length) <= (2147483647U)) && (((minimum) <= (consumed)) && ((consumed) <= (length)));
+    }
     public static ulong DecodeReplacementLength(byte b0, byte b1, byte b2, byte b3, byte b4, byte b5, byte b6, byte b7)
     {
       return ((((((((ulong)(b0)) + ((256UL) * ((ulong)(b1)))) + ((65536UL) * ((ulong)(b2)))) + ((16777216UL) * ((ulong)(b3)))) + ((4294967296UL) * ((ulong)(b4)))) + ((1099511627776UL) * ((ulong)(b5)))) + ((281474976710656UL) * ((ulong)(b6)))) + ((72057594037927936UL) * ((ulong)(b7)));
@@ -206,7 +222,7 @@ namespace JetDatabaseWriter.Verification {
       if ((((((length) != (256U)) && ((length) != (96U))) || ((offset) >= (length))) || ((count) == (0U))) || ((count) > ((length) - (offset)))) {
         return 353U;
       } else {
-        return (offset) + (count);
+        return JetDatabaseWriter.Verification.RecoveryKernel.BufferReadAdvance(length, offset, count);
       }
     }
     public static byte ReplacementHeaderFixedByte(uint index) {

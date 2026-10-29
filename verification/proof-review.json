@@ -1,0 +1,382 @@
+{
+  "schemaVersion": 1,
+  "productionInventorySha256": "dcb16c6eee9e96008fa4ae1ebb2022203cbc6049e58e6cfe45351813dbeca542",
+  "inventoryReview": "Classified StreamRead.cs as the shared cross-target acquisition adapter replacing StreamReadExtensions.cs; generated native decisions, pointer/range callers, budgeted maintenance reads and lifecycle mappings are included in implementation review. No other library source-name changes are admitted by this record.",
+  "reviews": [
+    {
+      "boundary": "implementation",
+      "obligations": "Reviewed total signed-domain range admission before slice allocation, pointer decoding and page-store I/O; positive bounded read advances for stream and RandomAccess paths; complete source-prefix acquisition under explicit read effects; preserved maintenance per-attempt budgets, cancellation and error priority. Reviewed serialized writer/transaction/lease states against nested savepoints, terminal token identity, failed and uncertain outer completion, signed-long generation headroom, faulted reads and disposal. Existing journal, replacement and descriptor mappings retain their separate payload, authority and returned-I/O contracts.",
+      "conformance": "SharedParsingKernelTests independently checks native/signed range boundaries, every short-read partition, EOF/cancellation/errors, invalid counts and page-store range refusal. WriterLifecycleConformanceTests composes released-child, failed-statement, rollback, seven-depth disposal and faulted-generation reads. Existing maintenance partial-read budget and ledger controls, pager generation controls, transaction failure traces and ownership tests supplement the named boundaries. Execution receipts and settled-main CI verdicts are reported separately.",
+      "remainingAssumptions": "Exact returned stream/RandomAccess bytes, stable source identity, cryptographic identity, snapshot capture/restore, serialized calls, exclusive generation authority, OS locks, namespace persistence and physical durability remain explicit contracts. Total arithmetic and abstract lifecycle proofs do not establish whole-parser traversal/resources, complete effectful C# refinement, arbitrary custom-stream honesty or concurrent C# correctness. Review freshness does not certify reviewer judgment.",
+      "evidence": [
+        "docs/design/formal-verification.md",
+        "docs/design/writer-lifecycle.md",
+        "tests/JetDatabaseWriter.Tests/Infrastructure/SharedParsingKernelTests.cs",
+        "tests/JetDatabaseWriter.Tests/Writer/WriterLifecycleConformanceTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactEncodedDatabaseCopyTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactGlobalAllocationTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactGlobalMapTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactTDefChainInstallerTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawIndexValidatorTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactUsageMapValidatorTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactRowRelocationMapTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawDataLongValueValidatorTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawDataLongValueRelocatorTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawTableValidatorTests.cs",
+        "tests/JetDatabaseWriter.Tests/Maintenance/CompactActiveCatalogRowsTests.cs"
+      ],
+      "inputs": [
+        {
+          "path": "docs/design/formal-verification.md",
+          "sha256": "7ea9cbaa43198b1c786d75566e0d6c8c41a59585c176175d75cedee49b7f0624"
+        },
+        {
+          "path": "docs/design/writer-lifecycle.md",
+          "sha256": "9e1bfa9c7692a22c6bfd0c1d7eeb491943e0abe3b8386f542081f31fbb0c7a80"
+        },
+        {
+          "path": "src/JetDatabaseWriter/AccessDatabaseEncryption.cs",
+          "sha256": "b0873de4efba6eb6ca59e261e1bd8f6ba13dfa2333d1bcc00b902eaab82e26d5"
+        },
+        {
+          "path": "src/JetDatabaseWriter/AccessWriter.cs",
+          "sha256": "3b519bba813478f64c72cb43e1046113f66c0cde5f70bcbec404734ab8d3319b"
+        },
+        {
+          "path": "src/JetDatabaseWriter/CompoundFile/CompoundFileReader.cs",
+          "sha256": "e74fbc2928346bcfdbcfcf05085183e27fc6e470ceb15ffe2478e3ea4222fed3"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Encryption/EncryptionConverter.cs",
+          "sha256": "4e68c8fb052302093d9d6d22ca9bd067e8d6f370f4f8a39728256f5c7ca919f7"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Encryption/EncryptionManager.cs",
+          "sha256": "cabbf4b754257ead2816968c29de699b6d7ab02c94634aebd120254b286ed37d"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Encryption/EncryptionReplacementIntent.cs",
+          "sha256": "50f370672634dbaa5d3f2e3c62b0e77eb9c35706e19a6524db85a2b79e089a23"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Indexes/IndexPageCodec.cs",
+          "sha256": "d322dfc1bc45d55fd130db5a968b9076471aa4cf3014e6d8ffbd35b52d0b8c29"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Infrastructure/BinaryBuffer.cs",
+          "sha256": "f4d2df9ca901e022cc0a73464f422d7cde3e9d42e649661de789448e8cd2d476"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Infrastructure/StreamRead.cs",
+          "sha256": "33dedd08aae848b5e8327b4f696c3d008fc820b9210db1ebcb7a41cb080e0916"
+        },
+        {
+          "path": "src/JetDatabaseWriter/JetTransaction.cs",
+          "sha256": "e2c463a1ae3fcf67ab552f89669310fa6a8de763ebcdfe904ee5b682e21e0d95"
+        },
+        {
+          "path": "src/JetDatabaseWriter/LongValues/LongValueStore.cs",
+          "sha256": "ff10729f4bf9c1ffc5649b43a19c625267d4bff6a1ae00d16d9675d9bd2d1ff3"
+        },
+        {
+          "path": "src/JetDatabaseWriter/LongValues/Models/LongValueDescriptor.cs",
+          "sha256": "1ea73c1a3f6ad9c8b8014e015bdc3f7e022994964e18cc0b5c0b2516b67c4754"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactActiveCatalogRows.cs",
+          "sha256": "18129ceb4b1fd71be005542be51077a7ff99e278c82e2639a54f1c565945f239"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactEncodedDatabaseCopy.cs",
+          "sha256": "36d1dbf13da57fd692d6fdd67e22a4449ff3b3f3e6aee2452b0f3c6d6b0db90b"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactGlobalAllocationValidator.cs",
+          "sha256": "f1e0874799bca75ae6bb695c2821928cc5f6a9863d38b127c99dda1dc0be32eb"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactGlobalMapIo.cs",
+          "sha256": "75a3394b60ceeccbd756fb261ed37b65c7ebf589cd7be068cd507584f37b2e8a"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactPinnedDatabaseValidator.cs",
+          "sha256": "3ae21edf210e7b35966935728098e101375eae9504c0cca6ac96ca544699386b"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactPinnedPrefixValidator.cs",
+          "sha256": "0374aed31eb1a9ff1d393bc0b55e5598ddd329b956d2d9fc9fc114940701abd7"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactRawDataLongValueRelocator.cs",
+          "sha256": "90ab20b9bb16c536764956b06d5827d5e6a4f379f61db51e7e34524e01be4538"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactRawDataLongValueValidator.cs",
+          "sha256": "b81c373dd132c83df20dff50ee13311b3a81e90228e0a8fe0562b208f7974a21"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactRawDataValidator.cs",
+          "sha256": "59bfe5500a9e138f6292bbb4cfd3ab8e2c6d976bb05a51f75aab77b1e5e3721a"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactRawIndexBuilder.cs",
+          "sha256": "bb0b6704bdbf444d4e94b8b8f9d4e7f72e187e877c1781e241607964be34dfa0"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactRawIndexValidator.cs",
+          "sha256": "b399658fa4eae3389a28e0083c4d763fe9761a5adc417969a3b879a7ab802fab"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactRawTableAllocationValidator.cs",
+          "sha256": "32a0a6d9f88cb95bd9ba57cfe1905772644ec9386cc94dbce4170b2d35ad8b57"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactRawTableBuilder.cs",
+          "sha256": "9e362d311c8eb9f79b5ac376a5ebf367602857c201ed08afe49b234011ff6f97"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactRawTableValidator.cs",
+          "sha256": "ec9075dc6b9799209b9d73b113ccb953dc39d6f1b90253e5c85dfb16f78ee04c"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactRowRelocationMap.cs",
+          "sha256": "bec319a751c47ef2523923579ca18761d86c30773620610311eaebf93f303c57"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactTDefChainIo.cs",
+          "sha256": "62b5a9a44a43083206f04c2774194fb398b7f1ae5fff9e53506f4796b320acfa"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Maintenance/CompactUsageMapValidator.cs",
+          "sha256": "10f89f63ca4b1e1937270e2e3bf83812afc5fc06cefc202887d88ecbaa7f1c2c"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Models/ComplexCellValue.cs",
+          "sha256": "2f804a15cf684ca454d59f4caedc77486dcd8b2911335cf0a7d8091ba63139fc"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Pages/Paging/PageFile.cs",
+          "sha256": "635be147540726fed820b91e57e1a4f858bec1a405ebeaeb3b3c46caf8602e9c"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Pages/Paging/Pager.cs",
+          "sha256": "c1b45bc9101c7ce0599e8779c9488b5fce8a18977dc958de1c3a46ccf322838e"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Pages/Paging/PagerTransaction.cs",
+          "sha256": "d299e6bf9828d81656bda592ac100c03e1a8e3e5279d94f694650664af097a4e"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Pages/Paging/PersistentRollbackJournal.cs",
+          "sha256": "ff10000500ddc72c1b75cb8f2391784b8eb1bd12fca19a3cd3f2170b30a986e5"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Pages/Paging/PhysicalRollback.cs",
+          "sha256": "f80b297398c1266a0a80c95850296e3d3ae14b799a3af1d4b599e0577e1ca7e4"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Pages/Paging/StreamPageStore.cs",
+          "sha256": "b1ebe2dcb4f14427bd608faa4610b17e1cfa222eb748495dcedcec7b74f88392"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Pages/UsageMap.cs",
+          "sha256": "3e53c5849b0c87190b484955d1fd6da60e4a49a978148355f71e60ec984f5b54"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Transactions/LockFileCoordinator.cs",
+          "sha256": "03dae75cbaab4808ec68b4bb116ea745ea31092693b28fdf4f3d9789c63cb22c"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Transactions/RecoverableWriterLock.cs",
+          "sha256": "98baaf461ebf8298f2f01c72c06b171ed5282172772832a8444bbd97d57e5f35"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
+          "sha256": "f9a4b3c305b05fad06254f4098105ff2b596c05e40dde2f411b04f3a21b21baa"
+        },
+        {
+          "path": "src/JetDatabaseWriter/ValueDecoding/DirectRowDecoderBuilder.cs",
+          "sha256": "ccc585db759ac5496e4d3cec20899081100fe915002188bf35d921f22576ef24"
+        },
+        {
+          "path": "src/JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs",
+          "sha256": "60d070944c3f404077a7efd8c03bae0eed486e535e1dac66bb6b561ba5b22a85"
+        },
+        {
+          "path": "src/JetDatabaseWriter/ValueDecoding/RowDecodePlan.cs",
+          "sha256": "3dfdb7da0b0436635f4688543681962410becf215c1ac8598dc51c2867a4a384"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Verification/LongValueKernel.g.cs",
+          "sha256": "93a02856ff2ebfcd53fb84808e545f98c104e9900688eba003186ebb8b981b48"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Verification/RecoveryKernel.g.cs",
+          "sha256": "933559cc8dcf66520f2fd23ef800ed75af4421df94e93fc8e719089b5389dbb2"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Infrastructure/SharedParsingKernelTests.cs",
+          "sha256": "36c6add41ffdd5085191d6816742a5e4fb2093c7c2c700faf5d2f19759a08d78"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactActiveCatalogRowsTests.cs",
+          "sha256": "ffe18b6f5b22661dba484b0ee08595db6b7e705622fed8f7dfcf5efbf81707bd"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactEncodedDatabaseCopyTests.cs",
+          "sha256": "204b95659443bda78686beb61dd48be087b9dfdccf2a3be74e9c1a5100998287"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactGlobalAllocationTests.cs",
+          "sha256": "9add8237d55d490c9b2298a0994741104682281c6a4e15cd70d158680833ca38"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactGlobalMapTests.cs",
+          "sha256": "605a322b32daaa4d70b4d6f3d7708ecb03aad79ac2649ef658d0b7ca163764fe"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawDataLongValueRelocatorTests.cs",
+          "sha256": "0c2246c07859cf5145637353cfffab324090c9c062d85927ffe74ad91e6079cb"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawDataLongValueValidatorTests.cs",
+          "sha256": "1b65eabce4a0f6f1e56ee077f703c7d2321c9f2752f1baca22d409f7b2dd52e5"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawIndexValidatorTests.cs",
+          "sha256": "f1b1fc945c766dec2e6b362ae713f0541f3f3a807f3a17616ba4c4674d0c56db"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawTableValidatorTests.cs",
+          "sha256": "579058459412088fc49b8e0cbcba2857f18f2c54f022fe6e6b36887783290aee"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactRowRelocationMapTests.cs",
+          "sha256": "989521be857ae939736c5c62ae7b196594d228a96e4cb29f16f2e17343d73708"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactTDefChainInstallerTests.cs",
+          "sha256": "8e049e7d0e9900a3aae07f4dfdc89b544327b8acc31159883a2fa3c347ef9792"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactUsageMapValidatorTests.cs",
+          "sha256": "db955042344d573a2f8c64a5e8f100bc124ba728e574f9a6f6048cd2d75c68dc"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Writer/WriterLifecycleConformanceTests.cs",
+          "sha256": "a3987ad6631cdcf079ed07a51a69025cb4f6771a619fe06787f53e01ad52a235"
+        }
+      ]
+    },
+    {
+      "boundary": "proof-trust",
+      "obligations": "Reviewed the unconditional source/trust review gate, exact normal-source dependency manifest including WriterLifecycle and GenerationOwnership, total native range/read additions and unchanged Dafny 4.11.0/bundled-Z3 and compiler/runtime pins. The reviewed projection preserves generated bodies and shipping dependencies. Failure receipts retain normal-source proofs and per-process outcomes while refusing linked inputs and preserving original failures; negative controls, audits and generated freshness remain mandatory.",
+      "conformance": "Synthetic review controls cover stale mapped inputs and pins, hidden/new/renamed/deleted sources, new direct and adapter kernel callers, missing evidence and refusal reports. Verifier regressions exercise process outcomes, copied proof/dependency inputs, expected negative controls, linked-path refusal and original-error preservation. Workflow mutation controls require unconditional review/verification, failed-gate artifacts and thirty-day retention. Ordinary settled-main CI, all runtime/library lanes and consumer/analyzer gates remain required.",
+      "remainingAssumptions": "The pinned verifier/solver, native-source projection, C# compiler, runtime and execution host remain trusted. No additional assumption, admitted theorem, unchecked external declaration or new shipping dependency is accepted. Fresh review hashes do not attest identity or judgment; source inspection supplements textual caller discovery. Cancellation or hosting failures may prevent artifact upload. The lifecycle model and successful read-effect contracts retain the documented implementation/storage boundaries.",
+      "evidence": [
+        "docs/design/proof-trust-review.md",
+        "scripts/tests/proof-review.tests.ps1",
+        "scripts/tests/verify-proofs.tests.ps1",
+        "scripts/tests/formal-workflow.tests.ps1"
+      ],
+      "inputs": [
+        {
+          "path": ".github/dotnet11/global.json",
+          "sha256": "fd3fdaae1b349b01d6e6835ec111903f107a2643f3bce313fad4dc20180f5fb2"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "a3b5f851e6925875d6984a8cfa626099d76d4ffdf19363296752d9dc5c0c0d34"
+        },
+        {
+          "path": "Directory.Build.props",
+          "sha256": "e7c7846c9edb7be0d86ba5bf65ea616f3a0fd1a0253d6f17ed35405327137ff5"
+        },
+        {
+          "path": "docs/design/formal-verification.md",
+          "sha256": "7ea9cbaa43198b1c786d75566e0d6c8c41a59585c176175d75cedee49b7f0624"
+        },
+        {
+          "path": "docs/design/proof-trust-review.md",
+          "sha256": "2b3cb8dd72524aea677019f436a865bb0ad5fef62b1f7a23c9f524a1872c479f"
+        },
+        {
+          "path": "docs/design/recovery-storage-contract.md",
+          "sha256": "96030ce6c1b508433ab007dfb1782f8c1a217ab4a06c86b4b911bece5ee5df57"
+        },
+        {
+          "path": "global.json",
+          "sha256": "6cac8ed8559756539f2db0e8cbf6d545ccc81d3d4b1ebbfcf3ee204d218847b4"
+        },
+        {
+          "path": "scripts/check-proof-review.ps1",
+          "sha256": "81870a24e9c83804425019b89bc5f8611e56e4ca4bd5cb771f04468afba5415a"
+        },
+        {
+          "path": "scripts/install-dafny.ps1",
+          "sha256": "04ee09b77363c37f0272a4d21d25f8d473c92e359cf4696773144e09ddc800f5"
+        },
+        {
+          "path": "scripts/test-scripts.ps1",
+          "sha256": "524124f1eb302e9d27fad5d38edf12d84317d2044d82207715d4cd66130149a4"
+        },
+        {
+          "path": "scripts/tests/formal-workflow.tests.ps1",
+          "sha256": "bcd5d82ac0e25ab1c6f12a48f40c0007cb25d55369520f4b2ba3ae3caaea85fb"
+        },
+        {
+          "path": "scripts/tests/proof-review.tests.ps1",
+          "sha256": "d99535cdf470cef93e204140be9132436039407124cc699fae752e74dd0daad4"
+        },
+        {
+          "path": "scripts/tests/verify-proofs.tests.ps1",
+          "sha256": "fd7f25345fc50ee988df82c5c15cc0b95176c656fe83c632e2bc5dc1db6be8d6"
+        },
+        {
+          "path": "scripts/verify-proofs.ps1",
+          "sha256": "04a268d5ce19cb1f82e4c8d6c2bc3eed86446652281d6aa79b3372428cd80cda"
+        },
+        {
+          "path": "src/JetDatabaseWriter/JetDatabaseWriter.csproj",
+          "sha256": "4141872d60b258e680ed71c70112e77f52d37a353a636d7931b20a2309cea157"
+        },
+        {
+          "path": "verification/dafny-toolchain.json",
+          "sha256": "c5247ca96843d4fb952043b738d964df43ad5f1b307a3cdb0c093267b2f16d6a"
+        },
+        {
+          "path": "verification/GenerationOwnership.dfy",
+          "sha256": "3ac0b1e156393fc6bbf0e910b8b9d01d97dab8bd394ee5fba1b88e00fef3f52c"
+        },
+        {
+          "path": "verification/LongValueKernel.dfy",
+          "sha256": "11e32a28417a402dfcacbf0c4fb450c5f1a3f7ad730c46eeb774946e5d949946"
+        },
+        {
+          "path": "verification/proofs.json",
+          "sha256": "e92b575f7ca29d54bc096ed47add6a7b1a1f8b7fa31be2dda9906d0347791afb"
+        },
+        {
+          "path": "verification/README.md",
+          "sha256": "4de102dd408f00909e4c75b2169bbe4700c7900d052a47af09314a33a58482e9"
+        },
+        {
+          "path": "verification/RecoveryKernel.dfy",
+          "sha256": "f48af2d97c2206b6c03bb00bd2cfc999a3aadc60247af1d6be3c9d9d2e71a1f0"
+        },
+        {
+          "path": "verification/ReplacementProtocol.dfy",
+          "sha256": "9bf85603041d5c8feba484b7812e8cc686e56d90282df9454ff973270ec76788"
+        },
+        {
+          "path": "verification/UndoJournal.dfy",
+          "sha256": "1fc2bd1a9922c3a69f9cb36dccb58dbab7e7111eb9326395de8c6c4588b50ed3"
+        },
+        {
+          "path": "verification/WriterLifecycle.dfy",
+          "sha256": "9e39663cf35bcb21dc76a1e42fd691f87b70d337d0d4a3ef0b01cf10a7c0f9ca"
+        }
+      ]
+    }
+  ]
+}

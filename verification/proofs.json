@@ -5,10 +5,12 @@
     "verification/GenerationOwnership.dfy",
     "verification/ReplacementProtocol.dfy",
     "verification/RecoveryKernel.dfy",
-    "verification/LongValueKernel.dfy"
+    "verification/LongValueKernel.dfy",
+    "verification/WriterLifecycle.dfy"
   ],
   "dependencies": {
     "verification/ReplacementProtocol.dfy": ["verification/GenerationOwnership.dfy"],
-    "verification/RecoveryKernel.dfy": ["verification/UndoJournal.dfy", "verification/GenerationOwnership.dfy", "verification/ReplacementProtocol.dfy"]
+    "verification/RecoveryKernel.dfy": ["verification/UndoJournal.dfy", "verification/GenerationOwnership.dfy", "verification/ReplacementProtocol.dfy"],
+    "verification/WriterLifecycle.dfy": ["verification/GenerationOwnership.dfy"]
   }
 }

@@ -125,17 +125,10 @@ internal static class CompactRawIndexBuilder
 
     private static async ValueTask ReadExactlyAsync(Stream stream, byte[] bytes, CancellationToken token)
     {
-        int offset = 0;
-        while (offset < bytes.Length)
+        int read = await StreamRead.ReadAtLeastAsync(stream, bytes, bytes.Length, throwOnEndOfStream: false, token).ConfigureAwait(false);
+        if (read != bytes.Length)
         {
-            token.ThrowIfCancellationRequested();
-            int read = await stream.ReadAsync(bytes.AsMemory(offset), token).ConfigureAwait(false);
-            if (read == 0)
-            {
-                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The private fence stream ended before a complete record.");
-            }
-
-            offset += read;
+            throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The private fence stream ended before a complete record.");
         }
     }
 

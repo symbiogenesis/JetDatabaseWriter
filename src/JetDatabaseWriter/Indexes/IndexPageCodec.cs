@@ -418,7 +418,7 @@ internal static class IndexPageCodec
     /// <param name="offset">The offset.</param>
     public static long DecodeIntermediateChildPointer(byte[] page, int offset)
     {
-        if (page == null || offset < 0 || offset + 4 > page.Length)
+        if (page == null || !BinaryBuffer.IsRange(page.Length, offset, 4))
         {
             return 0;
         }
@@ -1105,7 +1105,7 @@ internal static class IndexPageCodec
     private static void WritePageNumber32(byte[] page, int offset, long pageNumber, string parameterName)
     {
         Guard.NotNull(page, nameof(page));
-        if (offset < 0 || offset + 4 > page.Length)
+        if (!BinaryBuffer.IsRange(page.Length, offset, 4))
         {
             throw new ArgumentOutOfRangeException(nameof(offset), "Page number offset is outside the page buffer.");
         }
