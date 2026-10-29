@@ -30,6 +30,25 @@ function Get-Option([string[]] $Arguments, [string] $Name) {
     return ''
 }
 
+function Remove-ConsumerMocks {
+    foreach ($consumerPath in $aotTestContext.ConsumerFunctions) {
+        # A slash-prefixed command name is not a drive-relative Function: path.
+        # The provider's own qualified path preserves the literal function name.
+        $mock = Get-ChildItem Function: | Where-Object Name -CEQ $consumerPath
+        Assert-Check ($null -ne $mock) "Missing consumer mock: $consumerPath"
+        Remove-Item -LiteralPath $mock.PSPath
+    }
+    $aotTestContext.ConsumerFunctions.Clear()
+}
+
+# Exercise Unix command names even on Windows, where the coordinator normally
+# registers drive-prefixed names. Cleanup must remove the function itself.
+$unixConsumerPath = '/tmp/jdw-aot-mock-' + [guid]::NewGuid().ToString('N')
+Set-Item -LiteralPath ('Function:\global:' + $unixConsumerPath) -Value { }
+$aotTestContext.ConsumerFunctions.Add($unixConsumerPath)
+Remove-ConsumerMocks
+Assert-Check ($null -eq (Get-Command -Name $unixConsumerPath -ErrorAction SilentlyContinue)) 'Unix-style consumer mock survived cleanup.'
+
 function dotnet {
     $arguments = [string[]]$args
     $stage = if ($arguments[0] -eq 'restore') {
@@ -82,10 +101,7 @@ function Invoke-Scenario([string] $Name, [string] $Failure = '') {
     try { & $subject -OutputDirectory $output }
     catch { $caught = $_.Exception.Message }
     finally {
-        foreach ($consumerPath in $aotTestContext.ConsumerFunctions) {
-            Remove-Item -LiteralPath ('Function:\' + $consumerPath)
-        }
-        $aotTestContext.ConsumerFunctions.Clear()
+        Remove-ConsumerMocks
     }
     Assert-Check ((Get-Location).Path -eq $location.Path) "$Name did not restore the caller's working directory."
     return [pscustomobject]@{ Output = $output; Error = $caught }
