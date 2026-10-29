@@ -20,6 +20,9 @@ public sealed class StatementAtomicityTests(DatabaseCache db, GeneratedDatabaseC
     /// <summary>Bounds each theory row while retaining every fault position across the shards.</summary>
     private const int FaultShardCount = 8;
 
+    private static readonly string InsertedNote = new('b', 35000);
+    private static readonly string UpdatedNote = new('c', 36000);
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>Gets the database formats and mutations swept for faults.</summary>
@@ -158,7 +161,7 @@ public sealed class StatementAtomicityTests(DatabaseCache db, GeneratedDatabaseC
             stream.FailWritesFrom(int.MaxValue);
             stream.CancelAfterReads(reads, source);
             AggregateException failure = await Assert.ThrowsAsync<AggregateException>(async () =>
-                await target.UpdateRowsAsync("T", RowCriteria.All(), new RowValues { ["Note"] = new string('c', 36000) }, source.Token));
+                await target.UpdateRowsAsync("T", RowCriteria.All(), new RowValues { ["Note"] = UpdatedNote }, source.Token));
             Assert.True(source.IsCancellationRequested);
             Assert.Contains(failure.Flatten().InnerExceptions, exception => exception is OperationCanceledException);
             Assert.Contains(failure.Flatten().InnerExceptions, exception => exception is IOException);
@@ -236,11 +239,10 @@ public sealed class StatementAtomicityTests(DatabaseCache db, GeneratedDatabaseC
         switch (statement)
         {
             case "Insert":
-                string note = new('b', 35000);
-                _ = await writer.InsertRowsAsync("T", Enumerable.Range(100, 8).Select(id => new object?[] { id, note }), Ct);
+                _ = await writer.InsertRowsAsync("T", Enumerable.Range(100, 8).Select(static id => new object?[] { id, InsertedNote }), Ct);
                 break;
             case "Update":
-                _ = await writer.UpdateRowsAsync("T", RowCriteria.All(), new RowValues { ["Note"] = new string('c', 36000) }, Ct);
+                _ = await writer.UpdateRowsAsync("T", RowCriteria.All(), new RowValues { ["Note"] = UpdatedNote }, Ct);
                 break;
             case "Delete":
                 _ = await writer.DeleteRowsAsync("T", RowCriteria.All(), Ct);
