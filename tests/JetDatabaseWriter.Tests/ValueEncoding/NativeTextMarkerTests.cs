@@ -125,26 +125,6 @@ public sealed class NativeTextMarkerTests(ITestOutputHelper output)
         Assert.Equal(before, stream.ToArray());
     }
 
-    [Fact]
-    public async Task CalculatedTextLeadingMarker_RefusesInsertAndRecalculationWithoutChangingDatabase()
-    {
-        await using var stream = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct))
-        {
-            await writer.CreateTableAsync("Items", [new("Id", typeof(int)), new("Content", typeof(string), 40) { IsCompressedUnicode = false }, new("Cached", typeof(string), 40) { IsCalculated = true, CalculationExpression = "[Content]" }], Ct);
-            await writer.InsertRowAsync("Items", [1, "original", null], Ct);
-        }
-
-        byte[] before = stream.ToArray();
-        await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
-        {
-            await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.InsertRowAsync("Items", [2, "\uFEFFtail", null], Ct));
-            await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync("Items", "Id", 1, new Dictionary<string, object?> { ["Content"] = "\uFEFFtail" }, Ct));
-        }
-
-        Assert.Equal(before, stream.ToArray());
-    }
-
     [Theory(
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
         SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
@@ -220,7 +200,7 @@ public sealed class NativeTextMarkerTests(ITestOutputHelper output)
             Assert.Equal(values, actual.OrderBy(static row => (int)row[0]).Select(static row => Assert.IsType<string>(row[1])));
             if (calculated)
             {
-                Assert.Equal(cached, actual.OrderBy(static row => (int)row[0]).Select(static row => Assert.IsType<string>(row[2])));
+                Assert.Equal(cached, actual.OrderBy(static row => (int)row[0]).Select(static row => row[2] is DBNull ? string.Empty : Assert.IsType<string>(row[2])));
             }
         }
     }
@@ -240,10 +220,11 @@ public sealed class NativeTextMarkerTests(ITestOutputHelper output)
         if (cached is not null)
         {
             string[] expectedCached = cached.Order(StringComparer.Ordinal).ToArray();
-            Assert.Equal(expectedCached, typed.Select(static row => Assert.IsType<string>(row[2])).Order(StringComparer.Ordinal));
+            Assert.Equal(cached.Count(static value => value.Length == 0), typed.Count(static row => row[2] is DBNull));
+            Assert.Equal(expectedCached, typed.Select(static row => row[2] is DBNull ? string.Empty : Assert.IsType<string>(row[2])).Order(StringComparer.Ordinal));
             Assert.Equal(expectedCached, strings.Select(static row => row[2]).Order(StringComparer.Ordinal));
-            Assert.Equal(expectedCached, pocos.Select(static row => row.Cached).Order(StringComparer.Ordinal));
-            Assert.Equal(expectedCached, table.Rows.Cast<System.Data.DataRow>().Select(static row => Assert.IsType<string>(row["Cached"])).Order(StringComparer.Ordinal));
+            Assert.Equal(expectedCached, pocos.Select(static row => row.Cached ?? string.Empty).Order(StringComparer.Ordinal));
+            Assert.Equal(expectedCached, table.Rows.Cast<System.Data.DataRow>().Select(static row => row["Cached"] is DBNull ? string.Empty : Assert.IsType<string>(row["Cached"])).Order(StringComparer.Ordinal));
         }
     }
 
@@ -252,7 +233,7 @@ public sealed class NativeTextMarkerTests(ITestOutputHelper output)
     {
         public string Content { get; set; } = string.Empty;
 
-        public string Cached { get; set; } = string.Empty;
+        public string? Cached { get; set; }
     }
 #pragma warning restore CA1812
 }

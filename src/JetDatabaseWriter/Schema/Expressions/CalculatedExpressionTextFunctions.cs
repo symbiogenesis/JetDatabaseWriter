@@ -26,7 +26,7 @@ internal static partial class CalculatedExpressionTextFunctions
 
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
-        AddFunction(functions, "LEN", 1, 1, static function => ToText(function.Arg(0)).Length);
+        AddFunction(functions, "LEN", 1, 1, static function => Length(function.Arg(0)));
         AddFunction(functions, "LEFT", 2, 2, static function => Left(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1)))));
         AddFunction(functions, "RIGHT", 2, 2, static function => Right(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1)))));
         AddFunction(functions, "MID", 2, 3, static function => Mid(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1))), function.Count > 2 ? checked((int)ToDecimal(function.Arg(2))) : int.MaxValue));
@@ -60,6 +60,8 @@ internal static partial class CalculatedExpressionTextFunctions
         EnsureGeneratedTextLength((long)leftText.Length + rightText.Length);
         return leftText + rightText;
     }
+
+    private static object Length(object value) => IsNull(value) ? DBNull.Value : ToText(value).Length;
 
     private static string Left(string text, int count)
     {

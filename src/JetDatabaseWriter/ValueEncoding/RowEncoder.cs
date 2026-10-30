@@ -668,13 +668,8 @@ internal sealed class RowEncoder(JetFormat format)
         ColumnType valueType = JetTypeInfo.ResolveValueType(column);
         if (valueType == TextType)
         {
-            if (Convert.ToString(value, CultureInfo.InvariantCulture) is { Length: > 0 } text && text[0] == '\uFEFF')
-            {
-                throw new JetLimitationException(JetErrorCode.FeatureNotSupported, "Leading U+FEFF in calculated Text has no verified native-safe representation.");
-            }
-
             return CalculatedColumnUtil.Wrap(
-                this.EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), GetCalculatedVariableSize(column, valueType), compress: false) ?? []);
+                JetFormat.EncodeCalculatedText(Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty, GetCalculatedVariableSize(column, valueType)));
         }
 
         if (valueType == BinaryType)

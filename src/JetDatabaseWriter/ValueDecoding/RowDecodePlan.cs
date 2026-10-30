@@ -1040,7 +1040,8 @@ internal sealed class RowDecodePlan
             if (valueType == TextType)
             {
                 byte[] textPayload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
-                return source.DecodeCalculatedText(textPayload, 0, textPayload.Length);
+                string text = source.DecodeCalculatedText(textPayload, 0, textPayload.Length);
+                return text.Length == 0 ? DBNull.Value : text;
             }
 
             if (valueType == BinaryType)

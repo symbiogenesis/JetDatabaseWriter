@@ -585,6 +585,22 @@ Persisted expressions may have one terminal NUL in their property encoding;
 runtime compilation removes that terminator while preserving the raw property
 bytes and any NUL inside a string literal.
 
+### Native calculated Text markers
+
+Calculated Text follows Access's cached conversion for leading U+FEFF. Native
+mixed-mode Unicode compression accepts a tie with plain UTF-16; a zero low byte
+forces plain storage. Short or ineligible plain marker-prefixed results can
+therefore decode to a different value, exactly as native calculated caches do.
+An empty decoded calculated Text result is ordinary Null. Dependent calculated
+expressions see the converted cached value, including that Null, while functions
+inside the original expression can still return an empty string.
+
+`CalculatedTextLeadingMarkerDaoTests` independently authors native source and
+compacted controls, compares exact original payloads with writer output, checks
+dependent lengths, and exercises writer/native updates and native compact.
+`NativeTextMarkerTests` keeps the corresponding frozen native read expectations.
+These calculated conversions are separate from ordinary Text/Memo preservation.
+
 ## Floating expression values
 
 The shared row-local interpreter retains Single/Double intermediates for
@@ -740,4 +756,4 @@ caller-field/storage conversions and broader native context/representation quali
 
 ## Literal Unicode markers in Text
 
-Ordinary variable Text with Unicode compression disabled stores plain UTF-16, including literal FF FE at the beginning. Row, string, POCO and write-back decoding use that column storage rule. Calculated Text still permits compressed Unicode inside its envelope. Its dedicated decoder accepts the verified terminal low-byte form; ordinary Text and Memo retain separate decoding rules pending their own native controls. Native controls preserve leading U+FEFF in a cached Latin-1 string using an escaped compressed payload; other controlled native cached values lose or reinterpret that marker. A source field's original text is not authority to invent a different cached result. Raw compact assembly preserves each observed envelope without recalculation. Writers still refuse calculated Text beginning with U+FEFF before allocation. Ordinary compressed variable Text supports an independently verified 6 through 255-unit escape: an optional contiguous nonsurrogate wide prefix with nonzero low bytes precedes at least four nonzero Latin-1 units; without a wide prefix at least five Latin-1 units follow the marker. The complete value fits the declared character limit. Short values/tails, NUL, low-byte-zero wide units, surrogates and wide units after the Latin-1 tail remain refused. Native DAO3.6 Jet4 read/update/compact and frozen native-row fixtures establish that ordinary subset; fresh DAO120 confirmation remains separate.
+Ordinary variable Text with Unicode compression disabled stores plain UTF-16, including literal FF FE at the beginning. Row, string, POCO and write-back decoding use that column storage rule. Calculated Text still permits compressed Unicode inside its envelope. Its dedicated decoder accepts the verified terminal low-byte form; ordinary Text and Memo retain separate decoding rules pending their own native controls. Native controls preserve leading U+FEFF in a cached Latin-1 string using an escaped compressed payload; other controlled native cached values lose or reinterpret that marker. A source field's original text is not authority to invent a different cached result. Raw compact assembly preserves each observed envelope without recalculation. Writers reproduce the native calculated cache conversion and project dependent expressions through the stored value. Ordinary compressed variable Text supports an independently verified 6 through 255-unit escape: an optional contiguous nonsurrogate wide prefix with nonzero low bytes precedes at least four nonzero Latin-1 units; without a wide prefix at least five Latin-1 units follow the marker. The complete value fits the declared character limit. Short values/tails, NUL, low-byte-zero wide units, surrogates and wide units after the Latin-1 tail remain refused. Native DAO3.6 Jet4 read/update/compact and frozen native-row fixtures establish that ordinary subset; fresh DAO120 confirmation remains separate.

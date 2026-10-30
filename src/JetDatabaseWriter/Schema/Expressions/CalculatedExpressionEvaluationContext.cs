@@ -119,6 +119,13 @@ internal sealed class CalculatedExpressionEvaluationContext
         // the expression must see the value as the field holds it.
         ColumnConstraint referenced = this.constraints[index];
         object value = referenced.IsCalculated ? this.EvaluateColumn(index) : this.values[index];
+        if (referenced.IsCalculated && referenced.CalculatedResultType == ColumnType.TextType && value is string text)
+        {
+            int size = referenced.PhysicalColumn?.Size ?? 0;
+            int payloadLimit = size > Constants.CalculatedColumn.ExtraDataLen ? size - Constants.CalculatedColumn.ExtraDataLen : Constants.CalculatedColumn.MaxTextResultBytes;
+            return JetFormat.NormalizeCalculatedTextReference(text, payloadLimit);
+        }
+
         object coerced = CoerceInput(value, referenced.ClrType);
         ColumnType storageType = referenced.IsCalculated ? referenced.CalculatedResultType : referenced.StorageType;
         return storageType == ColumnType.MoneyType && !IsNull(coerced) ? ToCurrency(coerced) : coerced;

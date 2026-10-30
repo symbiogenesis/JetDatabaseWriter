@@ -632,7 +632,7 @@ internal sealed class TableDataWriter(
             {
                 if (column.IsCalculated)
                 {
-                    throw new JetLimitationException(JetErrorCode.FeatureNotSupported, $"Leading U+FEFF in calculated Text column '{column.Name}' of table '{tableName}' has no verified native-safe representation.", new JetErrorInfo { TableName = tableName, ColumnName = column.Name });
+                    continue;
                 }
 
                 JetFormat.ValidateEscapedVariableText(text, column.Size, new JetErrorInfo { TableName = tableName, ColumnName = column.Name });
