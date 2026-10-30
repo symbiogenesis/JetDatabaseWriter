@@ -201,10 +201,14 @@ rename to such a name throws `ArgumentException` before the table is read.
 `InvalidOperationException` and before anything is written, to drop a column
 that another column's `Expression`, `ValidationRule` or `DefaultValue` names; a
 mention in a string literal, or in the dropped column's own rule, does not
-block it. What Access itself does when a field that a calculated column uses
-is renamed or deleted is not verified: `DaoCalculatedColumnRenameTests` checks
-both through DAO, and that DAO evaluates and compacts a table the writer
-renamed a field of, but it runs only on a host with Microsoft Access.
+block it. `DaoCalculatedColumnRenameTests` observes DAO120 renaming `Score` to
+`Points` while retaining the expression `[Score]*2`, then accepting deletion of
+the renamed field. The writer instead rewrites the dependency and refuses its
+deletion before changing bytes. A separate Access-authored fixture control
+renames `Salary` to `Pay` through the writer, then verifies native expression
+metadata, recalculation after updating `Pay`, and compacted values. These native
+controls require Microsoft Access; they do not establish Access UI Name
+AutoCorrect behavior.
 
 Two result types have Access-specific payload encodings inside the wrapper:
 
@@ -221,8 +225,10 @@ and sign, and reads coefficient words at fixed offsets. Payload widths from
 four through sixteen bytes zero-fill omitted trailing bytes; a four-byte header
 is Decimal zero. An empty calculated envelope is ordinary Null. Short headers,
 invalid scale/sign and oversized payloads report contextual corruption.
-`CalculatedNumericNativeLayoutTests` checks native ordinary/reference/arithmetic
-payloads, native compaction and public writer/native recalculation.
+`CalculatedNumericNativeLayoutTests` compares reserved-word mutations and every
+payload width from four through sixteen bytes with DAO120 reads and compaction.
+Independent width expectations also exercise the typed/string payload decoders;
+public rows retain the measured Decimal values.
 Helpers in this codebase: `CalculatedColumnUtil.Wrap` / `.Unwrap` (round-trip
 verified by `CalculatedColumnUtilTests`).
 
