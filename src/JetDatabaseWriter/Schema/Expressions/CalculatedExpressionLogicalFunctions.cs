@@ -114,8 +114,9 @@ internal static class CalculatedExpressionLogicalFunctions
             values[index] = function.Arg(index);
         }
 
-        int choiceIndex = checked((int)ToDecimal(values[0]));
-        return choiceIndex >= 1 && choiceIndex < values.Length ? values[choiceIndex] : DBNull.Value;
+        float choiceIndex = ToSingle(values[0]);
+        _ = AccessVariantOperators.Finite(choiceIndex);
+        return choiceIndex >= 1 && choiceIndex < values.Length ? values[checked((int)choiceIndex)] : DBNull.Value;
     }
 
     private static object EvaluateSwitch(CalculatedFunctionInvocation function)

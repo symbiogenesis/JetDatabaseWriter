@@ -1,0 +1,894 @@
+{
+  "Culture": "en-US",
+  "Engine": "16.0",
+  "OfficeVersion": "16.0.20527.20112",
+  "Is64BitProcess": true,
+  "Inputs": [
+    "Null",
+    "0.5",
+    "0.9999999",
+    "0.99999999",
+    "1.5",
+    "1.9999999",
+    "1.99999999",
+    "2.5",
+    "2.99999999",
+    "3.5",
+    "4",
+    "2147483648",
+    "1E30",
+    "3.40282355E38",
+    "3.4028236E38",
+    "1E100",
+    "-1E30",
+    "-1E100"
+  ],
+  "Observations": [
+    {
+      "Table": "T",
+      "Id": 0,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "0"
+        },
+        "N": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "S": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "Choice": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceText": {
+          "Type": "COMNULL",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 1,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "1"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "0.5"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "0.5"
+        },
+        "Choice": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceText": {
+          "Type": "DBNull",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 2,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "2"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "0.9999999"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "0.9999999"
+        },
+        "Choice": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceText": {
+          "Type": "DBNull",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 3,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "3"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "0.99999999"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "0.99999999"
+        },
+        "Choice": {
+          "Type": "System.Double",
+          "Value": "10"
+        },
+        "ChoiceBinary": {
+          "Type": "System.Byte[]",
+          "Value": "0A000000"
+        },
+        "ChoiceText": {
+          "Type": "System.Double",
+          "Value": "10"
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 4,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "4"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "1.5"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "1.5"
+        },
+        "Choice": {
+          "Type": "System.Double",
+          "Value": "10"
+        },
+        "ChoiceBinary": {
+          "Type": "System.Byte[]",
+          "Value": "0A000000"
+        },
+        "ChoiceText": {
+          "Type": "System.Double",
+          "Value": "10"
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 5,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "5"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "1.9999999"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "1.9999999"
+        },
+        "Choice": {
+          "Type": "System.Double",
+          "Value": "10"
+        },
+        "ChoiceBinary": {
+          "Type": "System.Byte[]",
+          "Value": "0A000000"
+        },
+        "ChoiceText": {
+          "Type": "System.Double",
+          "Value": "10"
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 6,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "6"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "1.99999999"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "1.99999999"
+        },
+        "Choice": {
+          "Type": "System.Double",
+          "Value": "20"
+        },
+        "ChoiceBinary": {
+          "Type": "System.Byte[]",
+          "Value": "14000000"
+        },
+        "ChoiceText": {
+          "Type": "System.Double",
+          "Value": "20"
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 7,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "7"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "2.5"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "2.5"
+        },
+        "Choice": {
+          "Type": "System.Double",
+          "Value": "20"
+        },
+        "ChoiceBinary": {
+          "Type": "System.Byte[]",
+          "Value": "14000000"
+        },
+        "ChoiceText": {
+          "Type": "System.Double",
+          "Value": "20"
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 8,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "8"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "2.99999999"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "2.99999999"
+        },
+        "Choice": {
+          "Type": "System.Double",
+          "Value": "30"
+        },
+        "ChoiceBinary": {
+          "Type": "System.Byte[]",
+          "Value": "1E000000"
+        },
+        "ChoiceText": {
+          "Type": "System.Double",
+          "Value": "30"
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 9,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "9"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "3.5"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "3.5"
+        },
+        "Choice": {
+          "Type": "System.Double",
+          "Value": "30"
+        },
+        "ChoiceBinary": {
+          "Type": "System.Byte[]",
+          "Value": "1E000000"
+        },
+        "ChoiceText": {
+          "Type": "System.Double",
+          "Value": "30"
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 10,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "10"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "4"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "4"
+        },
+        "Choice": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceText": {
+          "Type": "DBNull",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 11,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "11"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "2147483648"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "2147483648"
+        },
+        "Choice": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceText": {
+          "Type": "DBNull",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 12,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "12"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "1E+30"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "1E30"
+        },
+        "Choice": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceText": {
+          "Type": "DBNull",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 13,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "13"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "3.40282355E+38"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "3.40282355E38"
+        },
+        "Choice": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceText": {
+          "Type": "DBNull",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 14,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "14"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "3.4028236E+38"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "3.4028236E38"
+        },
+        "Choice": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceText": {
+          "Type": "COMNULL",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 15,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "15"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "1E+100"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "1E100"
+        },
+        "Choice": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceText": {
+          "Type": "COMNULL",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 16,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "16"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "-1E+30"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "-1E30"
+        },
+        "Choice": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceText": {
+          "Type": "DBNull",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "T",
+      "Id": 17,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "17"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "-1E+100"
+        },
+        "S": {
+          "Type": "System.String",
+          "Value": "-1E100"
+        },
+        "Choice": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceText": {
+          "Type": "COMNULL",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "SingleIndices",
+      "Id": 0,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "0"
+        },
+        "N": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "Choice": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "SingleIndices",
+      "Id": 1,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "1"
+        },
+        "N": {
+          "Type": "System.Single",
+          "Value": "1"
+        },
+        "Choice": {
+          "Type": "System.Double",
+          "Value": "10"
+        },
+        "ChoiceBinary": {
+          "Type": "System.Byte[]",
+          "Value": "0A000000"
+        }
+      }
+    },
+    {
+      "Table": "SingleIndices",
+      "Id": 2,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "2"
+        },
+        "N": {
+          "Type": "System.Single",
+          "Value": "1.9999999"
+        },
+        "Choice": {
+          "Type": "System.Double",
+          "Value": "10"
+        },
+        "ChoiceBinary": {
+          "Type": "System.Byte[]",
+          "Value": "0A000000"
+        }
+      }
+    },
+    {
+      "Table": "SingleIndices",
+      "Id": 3,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "3"
+        },
+        "N": {
+          "Type": "System.Single",
+          "Value": "2"
+        },
+        "Choice": {
+          "Type": "System.Double",
+          "Value": "20"
+        },
+        "ChoiceBinary": {
+          "Type": "System.Byte[]",
+          "Value": "14000000"
+        }
+      }
+    },
+    {
+      "Table": "SingleIndices",
+      "Id": 4,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "4"
+        },
+        "N": {
+          "Type": "System.Single",
+          "Value": "16777216"
+        },
+        "Choice": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "SingleIndices",
+      "Id": 5,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "5"
+        },
+        "N": {
+          "Type": "System.Single",
+          "Value": "3.4028235E+38"
+        },
+        "Choice": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "DecimalIndices",
+      "Id": 0,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "0"
+        },
+        "N": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "Choice": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "DecimalIndices",
+      "Id": 1,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "1"
+        },
+        "N": {
+          "Type": "System.Decimal",
+          "Value": "0.9999999900"
+        },
+        "Choice": {
+          "Type": "System.Double",
+          "Value": "10"
+        },
+        "ChoiceBinary": {
+          "Type": "System.Byte[]",
+          "Value": "0A000000"
+        }
+      }
+    },
+    {
+      "Table": "DecimalIndices",
+      "Id": 2,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "2"
+        },
+        "N": {
+          "Type": "System.Decimal",
+          "Value": "1.9999999000"
+        },
+        "Choice": {
+          "Type": "System.Double",
+          "Value": "10"
+        },
+        "ChoiceBinary": {
+          "Type": "System.Byte[]",
+          "Value": "0A000000"
+        }
+      }
+    },
+    {
+      "Table": "DecimalIndices",
+      "Id": 3,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "3"
+        },
+        "N": {
+          "Type": "System.Decimal",
+          "Value": "1.9999999900"
+        },
+        "Choice": {
+          "Type": "System.Double",
+          "Value": "20"
+        },
+        "ChoiceBinary": {
+          "Type": "System.Byte[]",
+          "Value": "14000000"
+        }
+      }
+    },
+    {
+      "Table": "DecimalIndices",
+      "Id": 4,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "4"
+        },
+        "N": {
+          "Type": "System.Decimal",
+          "Value": "2147483648.0000000000"
+        },
+        "Choice": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "DecimalIndices",
+      "Id": 5,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "5"
+        },
+        "N": {
+          "Type": "System.Decimal",
+          "Value": "100000000000000000.0000000000"
+        },
+        "Choice": {
+          "Type": "DBNull",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "NonfiniteIndices",
+      "Id": 0,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "0"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "-Infinity"
+        },
+        "Choice": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "DirectInfinity": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "DirectNaN": {
+          "Type": "COMNULL",
+          "Value": ""
+        }
+      }
+    },
+    {
+      "Table": "NonfiniteIndices",
+      "Id": 1,
+      "Fields": {
+        "Id": {
+          "Type": "System.Int32",
+          "Value": "1"
+        },
+        "N": {
+          "Type": "System.Double",
+          "Value": "NaN"
+        },
+        "Choice": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "ChoiceBinary": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "DirectInfinity": {
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        "DirectNaN": {
+          "Type": "COMNULL",
+          "Value": ""
+        }
+      }
+    }
+  ],
+  "SourceHash": "E3CBD8DFE40A31D9D5D2D2DE2545369EBAA13352F322AED456BC86ECF572BF52",
+  "CompactedHash": "492D36470C2B9EE135AF5D52124C4D0A8BBFDC52F8D4F81AC65E13A3775ECDC8"
+}

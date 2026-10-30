@@ -65,5 +65,6 @@
 
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\scripts\new-native-calculated-choose-fixtures.ps1" Link="Scripts\new-native-calculated-choose-fixtures.ps1" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
