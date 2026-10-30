@@ -28,6 +28,7 @@ internal static class CalculatedExpressionCoercion
         "M/d/yyyy h:mm:ss tt",
         "M/d/yyyy",
         "MM/dd/yyyy",
+        "d/M/yyyy",
     ];
 
     private static ReadOnlySpan<double> DecimalPowersOfTen =>
