@@ -136,9 +136,9 @@ internal static class Constants
         /// <summary>
         /// Payload limit, in bytes, of a calculated Text value whose column
         /// descriptor is too small to hold the <see cref="ExtraDataLen"/>-byte
-        /// wrapper: Access's 255-character Text limit in UCS-2.
+        /// wrapper: Access's 243-character calculated Text limit in UCS-2.
         /// </summary>
-        public const int MaxTextResultBytes = 510;
+        public const int MaxTextResultBytes = 486;
     }
 
     /// <summary>

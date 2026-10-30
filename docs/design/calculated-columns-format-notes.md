@@ -115,6 +115,12 @@ to `CALC_FIXED_FIELD_LEN` regardless of the underlying type. Long-value result
 types (`MEMO` / `OLE`) keep the normal LVAL row header in the row; the bytes
 inside the LVAL payload are wrapped.
 
+Native calculated Text uses a 486-byte maximum payload (243 UTF-16 units) and
+a 509-byte descriptor width including the envelope. Caller `MaxLength` hints do
+not change this width. `CalculatedTextSchemaTests` compares newly declared fields
+with native metadata and verifies the writer's caches after native recalculation
+and compact.
+
 #### Descriptor `col_type` vs `ResultType`
 
 The descriptor `col_type` controls where the wrapped value is placed in the row

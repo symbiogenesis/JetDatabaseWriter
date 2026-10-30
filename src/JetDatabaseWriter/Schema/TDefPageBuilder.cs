@@ -177,7 +177,9 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 variable = (storageFlags & Constants.ColumnDescriptorFlags.Fixed) == 0;
             }
 
-            int declaredSize = GetDeclaredSize(type, definition.MaxLength, format);
+            int declaredSize = isCalculated && type == TextType
+                ? Constants.CalculatedColumn.MaxTextResultBytes
+                : GetDeclaredSize(type, definition.MaxLength, format);
             int size = definition.DescriptorSizeOverride ?? (isCalculated ? GetCalculatedDeclaredSize(type, declaredSize) : declaredSize);
 
             byte flags;
