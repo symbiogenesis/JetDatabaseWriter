@@ -99,6 +99,34 @@ internal static class RowValueDecodePolicy
         return true;
     }
 
+    internal static byte[] UnwrapCalculatedScalarPayload(ReadOnlySpan<byte> data, ColumnInfo column)
+    {
+        byte[] payload = UnwrapCalculatedPayload(data);
+
+        // DAO120 Byte overflow controls contain this exact 39-byte form.
+        // Its empty payload is an error, unlike the 23-byte Null envelope.
+        // Other result types and envelope forms remain separate native evidence
+        // gaps; do not assign meaning to their reserved header bytes here.
+        if (JetTypeInfo.ResolveValueType(column) == ByteType && data.Length == 39 && JetTypeInfo.Ri32(data, 0) == 6)
+        {
+            bool zeroTail = true;
+            for (int index = sizeof(int); index < data.Length; index++)
+            {
+                zeroTail &= data[index] == 0;
+            }
+
+            if (zeroTail)
+            {
+                throw new JetLimitationException(
+                    JetErrorCode.NumericOverflow,
+                    $"Calculated Byte column '{column.Name}' contains a native calculation error (code 6); it cannot be read as an ordinary Null.",
+                    new JetErrorInfo { ColumnName = column.Name, Reason = "Native calculated Byte error envelope, code 6." });
+            }
+        }
+
+        return payload;
+    }
+
     internal static object EmptyVariableValue(ColumnInfo column)
     {
         if (column.Type is TextType or MemoType)

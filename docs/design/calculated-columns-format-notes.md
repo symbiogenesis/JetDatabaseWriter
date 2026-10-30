@@ -107,7 +107,7 @@ last evaluated result** on the row, with 23 bytes of envelope overhead:
 | `CALC_DATA_OFFSET` | `20` | Offset within the header where the payload begins. |
 | `CALC_FIXED_FIELD_LEN` | `39` | The fixed-portion column length used for *all* fixed-width calc columns (largest fixed payload `16` + the `23`-byte envelope overhead). |
 
-Calculated-value validation requires the complete 23-byte envelope overhead: a 20-byte prefix followed by the declared payload and three trailing bytes. A truncated envelope or a payload length that consumes those trailing bytes is corruption. Strict public reads report contextual corruption; lenient reads diagnose a missing value, and writes refuse to erase unreadable calculated content. A complete zero-length envelope remains valid framing; distinguishing native cached errors from ordinary Null is a separate semantic requirement.
+Calculated-value validation requires the complete 23-byte envelope overhead: a 20-byte prefix followed by the declared payload and three trailing bytes. A truncated envelope or a payload length that consumes those trailing bytes is corruption. Strict public reads report contextual corruption; lenient reads diagnose a missing value, and writes refuse to erase unreadable calculated content. A complete zero-length envelope remains valid framing, but an empty payload alone does not establish ordinary Null. The measured calculated Byte error form below refuses before value conversion.
 
 For variable-width source types the on-disk `col_len` becomes
 `originalLen + CALC_EXTRA_DATA_LEN`. For fixed-width source types it is forced
@@ -407,11 +407,21 @@ Delivered:
   and all remaining bytes zero. Ordinary Null is a 23-byte zero envelope;
   valid Byte results carry a one-byte payload. DAO exposes errors as COM null,
   whereas ordinary Null is `DBNull`; `IsNull` and `IsError` also return COM null
-  for these errors. Public reads still conflate empty error and Null payloads,
-  and native error-envelope writes remain open under R4. The COM distinction is pinned by
+  for these errors. Public typed, string, POCO and DataTable reads refuse this
+  exact Byte error form with contextual `JetLimitationException`
+  (`NumericOverflow`), including with `StrictParsing = false`. Ordinary Null
+  and valid Byte 0/255 retain their values; malformed framing retains the
+  strict/lenient corruption policy. Unrelated updates refuse without changing
+  bytes. Other error forms, value-preserving error reads and native
+  error-envelope writes remain open under R4. The COM distinction is pinned by
   `CalculatedConversionDaoTests`; the envelope layout was measured in native
   byte probes, distinct from
   the writer's byte-preserving refusal regressions.
+  `CalculatedByteErrorReadTests` constructs that independently described layout
+  in a writer-created row; it is a native-layout regression control, not a
+  Microsoft-authored fixture. Its controls retain ordinary Null, Byte values
+  and malformed-envelope classification. Fresh DAO120 public-read checks in
+  `CalculatedConversionDaoTests` remain guarded on hosts without that engine.
   A number or Boolean is a date serial (days since 1899-12-30, so True is
   1899-12-29) in a Date result or the shared rule/default interpreter.
   `CByte(-1)` and `CByte(256)` overflow. `IsDate` is True only for a date or

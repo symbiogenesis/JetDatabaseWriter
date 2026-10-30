@@ -868,7 +868,7 @@ internal sealed class RowDecodePlan
 
             if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
             {
-                byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
+                byte[] payload = RowValueDecodePolicy.UnwrapCalculatedScalarPayload(page.AsSpan(start, length), column);
                 if (!RowValueDecodePolicy.HasCalculatedPayload(payload, valueType))
                 {
                     return string.Empty;
@@ -1056,7 +1056,7 @@ internal sealed class RowDecodePlan
 
             if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
             {
-                byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
+                byte[] payload = RowValueDecodePolicy.UnwrapCalculatedScalarPayload(page.AsSpan(start, length), column);
                 if (!RowValueDecodePolicy.HasCalculatedPayload(payload, valueType))
                 {
                     return DBNull.Value;

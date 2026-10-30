@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
@@ -100,6 +101,16 @@ public sealed class CalculatedConversionDaoTests
         AccessRoundTripEnvironment.CompactResult native = session.RunDaoDatabaseScript(session.SourcePath, authoringScript, TimeSpan.FromMinutes(1));
         Assert.True(native.ExitCode == 0, $"DAO failed: {native.StdOut}\n{native.StdErr}");
         Assert.Contains("BYTE_OVERFLOW_DISTINCT_FROM_NULL=OK", native.StdOut, StringComparison.Ordinal);
+        foreach (bool strict in new[] { true, false })
+        {
+            await using AccessReader reader = await AccessReader.OpenAsync(session.SourcePath, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, TestContext.Current.CancellationToken);
+            JetLimitationException typed = await Assert.ThrowsAsync<JetLimitationException>(async () => await reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken));
+            JetLimitationException strings = await Assert.ThrowsAsync<JetLimitationException>(async () => await reader.RowsAsStrings("T", cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(JetErrorCode.NumericOverflow, typed.ErrorCode);
+            Assert.Equal("ByteFlag", typed.ErrorInfo.ColumnName);
+            Assert.Equal(typed.Message, strings.Message);
+        }
+
         byte[] before = await System.IO.File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken);
         await using (AccessWriter writer = await AccessWriter.OpenAsync(session.SourcePath, new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken))
         {
