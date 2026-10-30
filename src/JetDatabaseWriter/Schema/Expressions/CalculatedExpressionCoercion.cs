@@ -191,10 +191,10 @@ internal static class CalculatedExpressionCoercion
     internal static bool CompareNonNullValues(object left, object right, Func<int, bool> predicate, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
     {
         int comparison;
-        if (left is string leftText && right is string rightText)
+        if (left is string or Guid && right is string or Guid)
         {
             // Two strings compare as text in Access, even when both look numeric ("10" < "9").
-            comparison = (textCollation ?? JetDatabaseWriter.Indexes.Collation.JetTextCollation.GeneralLegacy).Compare(leftText, rightText);
+            comparison = (textCollation ?? JetDatabaseWriter.Indexes.Collation.JetTextCollation.GeneralLegacy).Compare(ToText(left), ToText(right));
         }
         else if ((left is DateTime || right is DateTime)
             && TryConvertDateTime(left, out DateTime leftDateValue)
@@ -341,6 +341,11 @@ internal static class CalculatedExpressionCoercion
     /// <returns>The text value; empty for Null.</returns>
     internal static string ToText(object? value)
     {
+        if (value is Guid guid)
+        {
+            return guid.ToString("B").ToUpperInvariant();
+        }
+
         if (value is AccessCurrency currency)
         {
             return currency.ToString();

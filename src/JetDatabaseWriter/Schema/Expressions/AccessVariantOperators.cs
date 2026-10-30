@@ -43,7 +43,7 @@ internal static class AccessVariantOperators
     /// <returns>The sum, the joined text when both operands are text, or Null.</returns>
     internal static object Add(object left, object right)
     {
-        if (left is string && right is string)
+        if (left is string or Guid && right is string or Guid)
         {
             return CalculatedExpressionTextFunctions.ConcatText(left, right);
         }

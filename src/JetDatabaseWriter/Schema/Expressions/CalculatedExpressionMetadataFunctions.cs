@@ -43,7 +43,7 @@ internal static class CalculatedExpressionMetadataFunctions
             AccessCurrency => 6,
             decimal => 14,
             DateTime => 7,
-            string => 8,
+            string or Guid => 8,
             _ => 12,
         };
     }
@@ -66,7 +66,7 @@ internal static class CalculatedExpressionMetadataFunctions
             AccessCurrency => "Currency",
             decimal => "Decimal",
             DateTime => "Date",
-            string => "String",
+            string or Guid => "String",
             _ => "Variant",
         };
     }

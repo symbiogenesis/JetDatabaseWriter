@@ -884,6 +884,10 @@ long-value descriptors, regardless of the physical descriptor type. Ordinary
 Binary remains an inline byte field. Variant result bytes preserve native scalar
 widths, little-endian floating/date bits, scaled Currency, UTF-16 text and GUID
 identity. Decimal results use their native text conversion. Empty bytes are Null;
+GUID literals and references retain their 16-byte tag for Binary serialization,
+but use native string semantics in addition and string metadata. Their text form
+uses uppercase hexadecimal within braces. `CalculatedGuidExpressionTests`
+compares native expression and Binary results without discarding this identity.
 calculated errors use the independently measured 27-byte error envelope inside
 the long value, including status 11 for division by zero.
 
