@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema.Models;
 
@@ -118,7 +119,9 @@ internal sealed class CalculatedExpressionEvaluationContext
         // the expression must see the value as the field holds it.
         ColumnConstraint referenced = this.constraints[index];
         object value = referenced.IsCalculated ? this.EvaluateColumn(index) : this.values[index];
-        return CoerceInput(value, referenced.ClrType);
+        object coerced = CoerceInput(value, referenced.ClrType);
+        ColumnType storageType = referenced.IsCalculated ? referenced.CalculatedResultType : referenced.StorageType;
+        return storageType == ColumnType.MoneyType && !IsNull(coerced) ? ToCurrency(coerced) : coerced;
     }
 
     public double NextRandom(object? seed)

@@ -20,9 +20,9 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 /// operand switches to date-serial arithmetic: a date plus or minus a number, a Boolean,
 /// numeric text or another date is a date, a date minus a date is a <see cref="double"/>
 /// number of days, and <c>*</c>, <c>/</c> and <c>^</c> with a date give a
-/// <see cref="double"/>. A date plus or minus a Decimal value is also a date: the engine
-/// holds Currency and Decimal fields alike as <see cref="decimal"/>, and VBA returns a
-/// date for Currency.
+/// <see cref="double"/>. Currency retains its distinct fixed-point Variant identity;
+/// addition/subtraction and integral products retain Currency, while products with
+/// floating or text operands and non-Decimal division produce Double.
 /// </remarks>
 internal static class AccessVariantOperators
 {
@@ -58,6 +58,11 @@ internal static class AccessVariantOperators
             return FromOleDate(ToDateSerial(left) + ToDateSerial(right));
         }
 
+        if ((left is AccessCurrency || right is AccessCurrency) && left is not decimal && right is not decimal)
+        {
+            return CurrencyAdditiveResult(left, right, subtract: false);
+        }
+
         return UsesFloatingArithmetic(left, right)
             ? FloatingResult(ToDouble(left) + ToDouble(right), left, right)
             : DecimalArithmeticResult(ToDecimal(left) + ToDecimal(right), left, right);
@@ -84,6 +89,11 @@ internal static class AccessVariantOperators
             return FromOleDate(ToDateSerial(left) - ToDateSerial(right));
         }
 
+        if ((left is AccessCurrency || right is AccessCurrency) && left is not decimal && right is not decimal)
+        {
+            return CurrencyAdditiveResult(left, right, subtract: true);
+        }
+
         return UsesFloatingArithmetic(left, right)
             ? FloatingResult(ToDouble(left) - ToDouble(right), left, right)
             : DecimalArithmeticResult(ToDecimal(left) - ToDecimal(right), left, right);
@@ -103,6 +113,13 @@ internal static class AccessVariantOperators
         if (left is DateTime || right is DateTime)
         {
             return Finite(ToDateSerial(left) * ToDateSerial(right));
+        }
+
+        if ((left is AccessCurrency || right is AccessCurrency) && left is not decimal && right is not decimal)
+        {
+            return left is float or double or string || right is float or double or string
+                ? Finite(ToDouble(left) * ToDouble(right))
+                : AccessCurrency.FromDecimal(ToDecimal(left) * ToDecimal(right));
         }
 
         return UsesFloatingArithmetic(left, right)
@@ -169,6 +186,7 @@ internal static class AccessVariantOperators
 
         return value switch
         {
+            AccessCurrency currency => AccessCurrency.FromDecimal(-currency.Value),
             bool boolean => (short)(boolean ? 1 : 0),
             byte number => (short)-number,
             short number when number != short.MinValue => (short)-number,
@@ -194,6 +212,7 @@ internal static class AccessVariantOperators
 
         return value switch
         {
+            AccessCurrency => value,
             bool boolean => (short)(boolean ? -1 : 0),
             byte number => (short)number,
             float number => (float)Finite(number),
@@ -336,6 +355,7 @@ internal static class AccessVariantOperators
     /// <exception cref="InvalidCastException">The operand is not a date or a number.</exception>
     internal static double ToDateSerial(object value) => value switch
     {
+        AccessCurrency currency => currency.ToDouble(),
         DateTime date => date.ToOADate(),
         bool boolean => boolean ? -1d : 0d,
         byte or short or int or long or float or double or decimal => Convert.ToDouble(value, CultureInfo.InvariantCulture),
@@ -355,6 +375,7 @@ internal static class AccessVariantOperators
     {
         decimal number = value switch
         {
+            AccessCurrency currency => currency.Value,
             bool boolean => boolean ? -1m : 0m,
             byte or short or int or long or decimal => Convert.ToDecimal(value, CultureInfo.InvariantCulture),
             float or double => RoundedDouble(Convert.ToDouble(value, CultureInfo.InvariantCulture)),
@@ -441,6 +462,20 @@ internal static class AccessVariantOperators
     };
 
     private static bool IsZero(object value) => ToBitwiseOperand(value) == 0;
+
+    private static AccessCurrency CurrencyAdditiveResult(object left, object right, bool subtract)
+    {
+        if (left is float or double || right is float or double)
+        {
+            double leftValue = ToDouble(left);
+            double rightValue = ToDouble(right);
+            return AccessCurrency.FromDouble(subtract ? leftValue - rightValue : leftValue + rightValue);
+        }
+
+        decimal leftDecimal = left is string ? ToCurrency(left).Value : ToDecimal(left);
+        decimal rightDecimal = right is string ? ToCurrency(right).Value : ToDecimal(right);
+        return AccessCurrency.FromDecimal(subtract ? leftDecimal - rightDecimal : leftDecimal + rightDecimal);
+    }
 
 #pragma warning disable CA1859 // Native arithmetic deliberately boxes Integer, Long, Double or Decimal.
     private static object DecimalArithmeticResult(decimal result, object left, object right)

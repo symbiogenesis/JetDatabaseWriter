@@ -31,7 +31,8 @@ internal static class CalculatedExpressionNumericFunctions
         AddFunction(functions, "CLNG", 1, 1, static function => Convert.ToInt32(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture));
         AddFunction(functions, "CDBL", 1, 1, static function => AccessVariantOperators.Finite(ToDouble(function.Arg(0))));
         AddFunction(functions, "CSNG", 1, 1, static function => (float)AccessVariantOperators.Finite(ToSingle(function.Arg(0))));
-        AddFunction(functions, "CDEC", 1, 1, static function => ToDecimal(function.Arg(0)), "CCUR");
+        AddFunction(functions, "CDEC", 1, 1, static function => ToDecimal(function.Arg(0)));
+        AddFunction(functions, "CCUR", 1, 1, static function => ToCurrency(function.Arg(0)));
         AddFunction(functions, "CBYTE", 1, 1, static function => ToByte(function.Arg(0)));
     }
 
@@ -52,6 +53,7 @@ internal static class CalculatedExpressionNumericFunctions
 
         return value switch
         {
+            AccessCurrency currency => digits >= 4 ? currency : AccessCurrency.FromDecimal(Math.Round(currency.Value, digits, MidpointRounding.ToEven)),
             bool boolean => (short)(boolean ? -1 : 0),
             byte number => (short)number,
             short or int or long => value,
@@ -135,6 +137,7 @@ internal static class CalculatedExpressionNumericFunctions
 
     private static object EvaluateAbsolute(object value) => value switch
     {
+        AccessCurrency currency => AccessCurrency.FromDecimal(Math.Abs(currency.Value)),
         bool boolean => (short)(boolean ? 1 : 0),
         byte number => (short)number,
         short number when number != short.MinValue => Math.Abs(number),
@@ -148,6 +151,11 @@ internal static class CalculatedExpressionNumericFunctions
 
     private static object EvaluateIntegral(object value, bool truncate)
     {
+        if (value is AccessCurrency currency)
+        {
+            return AccessCurrency.FromDecimal(truncate ? Math.Truncate(currency.Value) : Math.Floor(currency.Value));
+        }
+
         if (value is bool boolean)
         {
             return (short)(boolean ? -1 : 0);

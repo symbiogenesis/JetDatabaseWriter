@@ -607,7 +607,7 @@ Its guarded native query controls use x86 DAO3.6, `dao360.dll` 10.0.26100.5074,
 including formatting boundaries and invalid text divisors. These checks do not
 establish fresh ACE native behavior, all locale formats or calculated-field
 admissibility of every function. Remaining division, Mod, bitwise and missing-result rules,
-Currency-versus-Decimal identity and other subtype-sensitive functions
+mixed Date/Decimal arithmetic and other subtype-sensitive functions
 remain R4 work. Expression evaluation remains handwritten and tested.
 
 ### Numeric literals and Decimal-to-floating expression coercion
@@ -648,9 +648,26 @@ Fresh DAO3.6 Jet4 query and stored-default controls use `dao360.dll`
 and managed compacted readback. Independent Decimal-field controls preserve
 source scale and compare native CDbl/CSng result bits. Public ACE cached
 insert/update/reopen remains library evidence; fresh ACE-native contexts,
-additional locales, Currency identity and remaining subtype-sensitive functions
+additional locales and remaining subtype-sensitive functions
 remain R4/E2 work. The OLE-derived routines retain their MIT notice and add no
 shipping dependency or formal expression proof.
+
+### Currency
+
+Currency field references retain a distinct internal fixed-point Variant subtype;
+public row values remain `decimal`. `CCur` rounds half to even to four places and
+checks the signed 64-bit scaled range. Currency addition/subtraction and products
+with integral/Currency operands retain Currency; floating/text products and
+non-Decimal division produce Double. Decimal mixing retains Decimal precision.
+Abs, Int, Fix, Round and unary signs retain Currency. Floating addition/subtraction
+performs the native floating operation before rounding; numeric text first converts
+to Currency.
+
+`CalculatedExpressionCurrencyTests` freezes independent native values and subtypes,
+repeats fresh ACE queries including Decimal fields, and exercises DAO-authored
+calculated Currency caches through writer/native updates and native compact.
+Text uses exact current ACE formatting at Currency boundaries. DAO3.6's older
+extreme Currency-to-text rounding differs and remains separate engine evidence.
 
 ### Round
 

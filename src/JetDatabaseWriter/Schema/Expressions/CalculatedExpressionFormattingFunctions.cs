@@ -27,6 +27,11 @@ internal static class CalculatedExpressionFormattingFunctions
         }
 
         string upperFormat = format.Trim().ToUpperInvariant();
+        if (value is AccessCurrency currency)
+        {
+            value = currency.Value;
+        }
+
         if (value is DateTime dateTime)
         {
             return upperFormat switch

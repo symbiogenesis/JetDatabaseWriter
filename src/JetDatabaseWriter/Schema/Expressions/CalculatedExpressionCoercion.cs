@@ -43,6 +43,21 @@ internal static class CalculatedExpressionCoercion
             return DBNull.Value;
         }
 
+        if (value is AccessCurrency currency)
+        {
+            if (targetType == typeof(double))
+            {
+                return currency.ToDouble();
+            }
+
+            if (targetType == typeof(float))
+            {
+                return (float)currency.ToDouble();
+            }
+
+            value = currency.Value;
+        }
+
         // A column of no specific type keeps the value as evaluated.
         if (targetType == typeof(object))
         {
@@ -321,6 +336,11 @@ internal static class CalculatedExpressionCoercion
     /// <returns>The text value; empty for Null.</returns>
     internal static string ToText(object? value)
     {
+        if (value is AccessCurrency currency)
+        {
+            return currency.ToString();
+        }
+
         if (value is bool boolean)
         {
             return boolean ? "-1" : "0";
@@ -388,6 +408,11 @@ internal static class CalculatedExpressionCoercion
     /// <returns>The argument, with a Boolean replaced by -1 or 0.</returns>
     internal static object? AsAccessNumber(object? value)
     {
+        if (value is AccessCurrency currency)
+        {
+            return currency.Value;
+        }
+
         if (value is bool boolean)
         {
             return boolean ? -1 : 0;
@@ -405,6 +430,11 @@ internal static class CalculatedExpressionCoercion
     /// <exception cref="OverflowException">A floating value is nonfinite or outside the Access Decimal range.</exception>
     internal static decimal ToDecimal(object? value)
     {
+        if (value is AccessCurrency currency)
+        {
+            return currency.Value;
+        }
+
         if (value is bool boolean)
         {
             return boolean ? -1m : 0m;
@@ -429,6 +459,11 @@ internal static class CalculatedExpressionCoercion
     /// <returns>The byte value.</returns>
     internal static byte ToByte(object? value)
     {
+        if (value is AccessCurrency currency)
+        {
+            return Convert.ToByte(currency.Value, CultureInfo.InvariantCulture);
+        }
+
         if (value is bool boolean)
         {
             return boolean ? byte.MaxValue : (byte)0;
@@ -439,6 +474,11 @@ internal static class CalculatedExpressionCoercion
 
     internal static double ToDouble(object? value)
     {
+        if (value is AccessCurrency currency)
+        {
+            return currency.ToDouble();
+        }
+
         if (value is bool boolean)
         {
             return boolean ? -1d : 0d;
@@ -448,7 +488,17 @@ internal static class CalculatedExpressionCoercion
     }
 
     internal static float ToSingle(object? value)
-        => value is decimal number ? (float)DecimalToDouble(number) : Convert.ToSingle(AsAccessNumber(value), CultureInfo.InvariantCulture);
+        => value switch
+        {
+            AccessCurrency currency => (float)currency.ToDouble(),
+            decimal number => (float)DecimalToDouble(number),
+            _ => Convert.ToSingle(AsAccessNumber(value), CultureInfo.InvariantCulture),
+        };
+
+    internal static AccessCurrency ToCurrency(object? value)
+        => value is float or double
+            ? AccessCurrency.FromDouble(ToDouble(value))
+            : AccessCurrency.FromDecimal(ToDecimal(value));
 
     private static double DecimalToDouble(decimal value)
     {
@@ -504,7 +554,7 @@ internal static class CalculatedExpressionCoercion
             return dateTime;
         }
 
-        if (value is bool or byte or short or int or long or float or double or decimal)
+        if (value is bool or byte or short or int or long or float or double or decimal or AccessCurrency)
         {
             return FromOleDate(ToDouble(value));
         }
@@ -580,6 +630,12 @@ internal static class CalculatedExpressionCoercion
 
     internal static bool TryConvertDecimal(object? value, out decimal result)
     {
+        if (value is AccessCurrency currency)
+        {
+            result = currency.Value;
+            return true;
+        }
+
         if (value is bool boolean)
         {
             result = boolean ? -1m : 0m;
@@ -609,7 +665,7 @@ internal static class CalculatedExpressionCoercion
             return true;
         }
 
-        if (value is bool or byte or short or int or long or float or double or decimal)
+        if (value is bool or byte or short or int or long or float or double or decimal or AccessCurrency)
         {
             double serial = ToDouble(value);
             if (IsOleDateInRange(serial))
