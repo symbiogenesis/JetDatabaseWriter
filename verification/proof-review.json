@@ -199,7 +199,7 @@
       "inputs": [
         {
           "path": "benchmarks/JetDatabaseWriter.Benchmarks/Indexes/IndexMutationBenchmarks.cs",
-          "sha256": "fe43a6874b0372db83f352bdedae04ea3c444362e6369e83ec6f64d8a6b4d5ee"
+          "sha256": "8e7610d81b23f9e56ce49c4c5c01ced71d97a32e64dc90fe8a4bc46260874683"
         },
         {
           "path": "docs/design/calculated-columns-format-notes.md",

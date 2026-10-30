@@ -16,6 +16,8 @@ using JetDatabaseWriter.Indexes.Models;
 [MemoryDiagnoser]
 public class IndexMutationBenchmarks : IAsyncDisposable
 {
+    private static readonly IComparer<byte[]> SpliceKeyComparer = Comparer<byte[]>.Create(IndexPageCodec.CompareKeyBytes);
+
     private readonly List<IndexEntry> leafEntries = [];
     private readonly List<DecodedIntermediateEntry> intermediateEntries = [];
     private readonly List<IndexEntry> spliceEntries = [];
@@ -56,8 +58,10 @@ public class IndexMutationBenchmarks : IAsyncDisposable
 
         this.unorderedSpliceAdditions.AddRange(this.spliceAdditions);
         this.unorderedSpliceAdditions.Reverse();
-        this.ValidateSplice(this.spliceEntries, this.spliceAdditions);
-        this.ValidateSplice(this.spliceEntries, this.unorderedSpliceAdditions);
+        this.ValidateSplice(this.spliceEntries, this.spliceAdditions, sortControl: false);
+        this.ValidateSplice(this.spliceEntries, this.unorderedSpliceAdditions, sortControl: false);
+        this.ValidateSplice(this.spliceEntries, this.spliceAdditions, sortControl: true);
+        this.ValidateSplice(this.spliceEntries, this.unorderedSpliceAdditions, sortControl: true);
 
         byte[] leaf = IndexPageCodec.BuildLeafPage(IndexPageLayout.Jet4, 4096, 7, this.leafEntries, true);
         if (IndexPageCodec.DecodeLeafEntries(IndexPageLayout.Jet4, leaf, 4096).Count != this.leafEntries.Count)
@@ -114,6 +118,18 @@ public class IndexMutationBenchmarks : IAsyncDisposable
         => IndexEntrySplicer.Splice(this.spliceEntries, this.unorderedSpliceAdditions, [])?.Count
             ?? throw new InvalidOperationException("The unordered splice fixture was refused.");
 
+    /// <summary>Runs the original stable-sort algorithm over the sorted splice fixture.</summary>
+    /// <returns>The resulting entry count.</returns>
+    [Benchmark]
+    public int SpliceSortedSortControl()
+        => SortSpliceControl(this.spliceEntries, this.spliceAdditions).Count;
+
+    /// <summary>Runs the original stable-sort algorithm over the unordered addition fixture.</summary>
+    /// <returns>The resulting entry count.</returns>
+    [Benchmark]
+    public int SpliceUnorderedSortControl()
+        => SortSpliceControl(this.spliceEntries, this.unorderedSpliceAdditions).Count;
+
     /// <summary>Inserts a batch whose keys share one target leaf.</summary>
     /// <returns>The inserted row count.</returns>
     [Benchmark]
@@ -168,12 +184,21 @@ public class IndexMutationBenchmarks : IAsyncDisposable
         return rows;
     }
 
-    private void ValidateSplice(List<IndexEntry> existing, List<IndexEntry> additions)
+    private static List<IndexEntry> SortSpliceControl(List<IndexEntry> existing, List<IndexEntry> additions)
+    {
+        var working = new List<IndexEntry>(existing.Count + additions.Count);
+        working.AddRange(existing);
+        working.AddRange(additions);
+        return working.OrderBy(static entry => entry.Key, SpliceKeyComparer).ToList();
+    }
+
+    private void ValidateSplice(List<IndexEntry> existing, List<IndexEntry> additions, bool sortControl)
     {
         IndexEntry[] original = [.. existing];
         IndexEntry[] added = [.. additions];
-        List<IndexEntry> result = IndexEntrySplicer.Splice(existing, additions, [])
-            ?? throw new InvalidOperationException("The splice fixture was refused.");
+        List<IndexEntry> result = sortControl
+            ? SortSpliceControl(existing, additions)
+            : IndexEntrySplicer.Splice(existing, additions, []) ?? throw new InvalidOperationException("The splice fixture was refused.");
         if (result.Count != this.spliceEntries.Count + this.spliceAdditions.Count
             || !original.SequenceEqual(existing) || !added.SequenceEqual(additions))
         {
