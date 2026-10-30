@@ -109,6 +109,26 @@ head, with the default adaptive job. It measures `InsertSameLeaf` and
 one runner. This comparison includes all changes between the revisions;
 algorithm attribution comes from the separate splice controls above.
 
+The revision comparison completed successfully, with all twelve measurements
+valid. Within each revision, allocations were identical across its runs.
+Timing ratios are head/baseline for the revision pairs and second/first
+for the identical-head pair:
+
+| Public insert case | Baseline-first time ratio | Head-first time ratio | Identical-head time ratio | Baseline bytes | Head bytes |
+|---|---:|---:|---:|---:|---:|
+| Same leaf | 1.0209 | 1.1535 | 1.0026 | 597,032 | 571,784 |
+| Cross leaf | 1.0718 | 0.9658 | 0.9576 | 785,160 | 734,664 |
+
+The named public workloads allocate 4.23% and 6.43% fewer bytes across the
+revision comparison. Public timing acceptance remains open under I12. The
+15.35% slower same-leaf pair exceeds its within-run error margins, while the
+four identical-source same-leaf head means span 3.181 to 3.753 milliseconds. The forward
+head cross-leaf distribution is multimodal. All six logs warn about short
+3-to-4-millisecond destructive iterations (`InvocationCount=1`). These results
+support neither causal attribution of the timing differences nor a public
+speedup or no-slowdown guarantee. Retain the measured allocation benefit;
+isolate source effects and runner variation before expanding the optimization.
+
 ### Exact visited-set behavior in generated production code
 
 [DafnyPro](https://arxiv.org/abs/2601.05385v1), a January 8 preprint, combines
