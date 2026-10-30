@@ -783,6 +783,8 @@ Both used to be the shared context their collaborators reached through. Writer m
 
 These are symmetric but independent. Shared types live in neutral domains such as `Schema/` (`ColumnInfo`, `JetTypeInfo`) and `LongValues/` (`LongValueDescriptor`, `LongValueStore`) so the read path and write path do not depend on each other's implementation folders. The one exception is `LongValueEncoder`, which parses a row's layout and finds a column's slice through `RowDecodePlan`'s static `TryParseRowLayout` and `ResolveColumnSlice`.
 
+`TableReader` shares physical row preparation across DataTable, object-array, mapped, direct and row-count scans. Ordinary slots complete synchronously; overflow resolution transfers its target lease into a row scope that survives each yield and releases on completion, cancellation or abandoned enumeration. Minimum-row-size policy lives in that shared view. Typed scans also share projection-aware complex and Hyperlink setup and postprocessing, while retaining their specialized decoders, buffer ownership, row limits and progress timing.
+
 `RowDecodePlan` is the read-side row decode coordinator. It is built from `TableDef`, an optional projection mask or partial-column ordinal list, and strictness requirements. The plan parses/preflights row layout once, resolves per-column slices itself through its static `TryParseRowLayout` and `ResolveColumnSlice`, which take the format's `RowFieldSizes` (`JetFormat.RowFields`), materializes `RowsAsStrings()` rows, decodes typed fixed/variable values, emits async LVAL sentinels for `RowDecoder` to resolve, supplies row-layout and slice resolution to the direct POCO expression-tree decoder, and serves the writer's index/FK partial key-column reader.
 
 ### 3. Models co-located with their domain

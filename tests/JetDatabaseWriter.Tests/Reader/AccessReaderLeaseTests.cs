@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>Real scans release pinned data and speculative reads on every enumeration exit.</summary>
@@ -69,4 +70,58 @@ public sealed class AccessReaderLeaseTests
             return count;
         }
     }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task OverflowRows_AbandonedAndCancelledAcrossMaterializers_ReleaseTargetLeases(DatabaseFormat format)
+    {
+        CancellationToken token = TestContext.Current.CancellationToken;
+        byte[] image = await SyntheticOverflowRows.CreateTableAsync(format, "Values", 20, primaryKey: false, token);
+        _ = await SyntheticOverflowRows.MoveRowAsync(image, "Values", OverflowRowLayout.CrossPage, token);
+        await using var stream = new MemoryStream(image, writable: false);
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            stream,
+            new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0, PageReadOptimizationMode = PageReadOptimizationMode.Enabled },
+            leaveOpen: true,
+            token);
+
+        await CheckAsync(ct => reader.Rows("Values", cancellationToken: ct), static row => Assert.Equal(1, row[0]));
+        await CheckAsync(ct => reader.Rows<OverflowLeaseRow>("Values", cancellationToken: ct), static row => Assert.Equal(1, row.Id));
+        await CheckAsync(
+            ct => reader.Services.Tables.RowsWithDecoder<OverflowLeaseRow>("Values", forceProjection: true, progress: null, cancellationToken: ct),
+            static row => Assert.Equal(1, row.Id));
+
+        async Task CheckAsync<T>(Func<CancellationToken, IAsyncEnumerable<T>> create, Action<T> assertFirst)
+        {
+            await using (IAsyncEnumerator<T> abandoned = create(token).GetAsyncEnumerator(token))
+            {
+                Assert.True(await abandoned.MoveNextAsync());
+                assertFirst(abandoned.Current);
+                Assert.True(reader.Services.PageCache.OutstandingLeases >= 2);
+            }
+
+            Assert.Equal(0, reader.Services.PageCache.OutstandingLeases);
+            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
+            await using (IAsyncEnumerator<T> cancelled = create(cancellation.Token).GetAsyncEnumerator(cancellation.Token))
+            {
+                Assert.True(await cancelled.MoveNextAsync());
+                assertFirst(cancelled.Current);
+                await cancellation.CancelAsync();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => _ = await cancelled.MoveNextAsync());
+            }
+
+            Assert.Equal(0, reader.Services.PageCache.OutstandingLeases);
+        }
+    }
+
+#pragma warning disable CA1812 // Generic row decoders construct this POCO.
+    private sealed class OverflowLeaseRow
+    {
+        public int Id { get; set; }
+
+        public string? Name { get; set; }
+    }
+#pragma warning restore CA1812
 }

@@ -297,22 +297,11 @@ internal sealed class TableReader(
 
             foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
             {
-                byte[] rowPage = scanPage.Page;
-                RowBound rb = slot;
-                using OverflowRowTarget? resolvedOverflow = slot.IsOverflowPointer
-                    ? await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false)
-                    : null;
-                if (slot.IsOverflowPointer)
-                {
-                    if (resolvedOverflow is not { } target)
-                    {
-                        continue;
-                    }
+                using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, cancellationToken).ConfigureAwait(false);
+                byte[] rowPage = sourceRow.Page;
+                RowBound rb = sourceRow.Bound;
 
-                    (rowPage, rb) = (target.Page, target.Bound);
-                }
-
-                if (rb.RowSize >= format.RowFields.NumCols
+                if (sourceRow.IsReadable(format)
                     && decodePlan.CanDecodeRow(format, rowPage, rb.RowStart, rb.RowSize))
                 {
                     count++;
@@ -744,10 +733,7 @@ internal sealed class TableReader(
                 return empty;
             }
 
-            Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
-                ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns: null, cancellationToken).ConfigureAwait(false)
-                : null;
-            IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            TypedTableScan scan = await this.PrepareTypedTableScanAsync(tableName, entry, td, wantedColumns: null, cancellationToken).ConfigureAwait(false);
 
             long rowCount = (await tableDefs.ReadTableCountersAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false))?.RowCount ?? 0;
             int minimumCapacity = ResolveDataTableMinimumCapacity(rowCount, maxRows);
@@ -769,28 +755,17 @@ internal sealed class TableReader(
             object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
             try
             {
-                await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+                await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, scan.PageNumbers, cancellationToken).ConfigureAwait(false))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
                     foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
                     {
-                        byte[] rowPage = scanPage.Page;
-                        RowBound rb = slot;
-                        using OverflowRowTarget? resolvedOverflow = slot.IsOverflowPointer
-                            ? await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false)
-                            : null;
-                        if (slot.IsOverflowPointer)
-                        {
-                            if (resolvedOverflow is not { } target)
-                            {
-                                continue;
-                            }
+                        using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, cancellationToken).ConfigureAwait(false);
+                        byte[] rowPage = sourceRow.Page;
+                        RowBound rb = sourceRow.Bound;
 
-                            (rowPage, rb) = (target.Page, target.Bound);
-                        }
-
-                        if (rb.RowSize < format.RowFields.NumCols)
+                        if (!sourceRow.IsReadable(format))
                         {
                             continue;
                         }
@@ -801,15 +776,7 @@ internal sealed class TableReader(
                             continue;
                         }
 
-                        if (td.HasComplexColumns)
-                        {
-                            ComplexColumnReader.ResolveColumns(rowBuffer, td.Columns, complexData);
-                        }
-
-                        if (td.HasHyperlinkColumns)
-                        {
-                            WrapHyperlinkColumns(rowBuffer, td.ClrTypes);
-                        }
+                        scan.Apply(rowBuffer);
 
                         DataRow newRow = dt.NewRow();
                         for (int i = 0; i < colCount; i++)
@@ -943,43 +910,24 @@ internal sealed class TableReader(
     {
         long rowCount = 0;
 
-        bool needsComplexPass = td.HasComplexColumns
-            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType));
-        bool needsHyperlinkPass = td.HasHyperlinkColumns
-            && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
-
-        Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
-            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns, cancellationToken).ConfigureAwait(false)
-            : null;
-        IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        TypedTableScan scan = await this.PrepareTypedTableScanAsync(tableName, entry, td, wantedColumns, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
 
         int colCount = td.Columns.Count;
         object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
         try
         {
-            await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+            await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, scan.PageNumbers, cancellationToken).ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
                 {
-                    byte[] rowPage = scanPage.Page;
-                    RowBound rb = slot;
-                    using OverflowRowTarget? resolvedOverflow = slot.IsOverflowPointer
-                        ? await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false)
-                        : null;
-                    if (slot.IsOverflowPointer)
-                    {
-                        if (resolvedOverflow is not { } target)
-                        {
-                            continue;
-                        }
+                    using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, cancellationToken).ConfigureAwait(false);
+                    byte[] rowPage = sourceRow.Page;
+                    RowBound rb = sourceRow.Bound;
 
-                        (rowPage, rb) = (target.Page, target.Bound);
-                    }
-
-                    if (rb.RowSize < format.RowFields.NumCols)
+                    if (!sourceRow.IsReadable(format))
                     {
                         continue;
                     }
@@ -990,15 +938,7 @@ internal sealed class TableReader(
                         continue;
                     }
 
-                    if (needsComplexPass)
-                    {
-                        ComplexColumnReader.ResolveColumns(rowBuffer, td.Columns, complexData);
-                    }
-
-                    if (needsHyperlinkPass)
-                    {
-                        WrapHyperlinkColumns(rowBuffer, td.ClrTypes);
-                    }
+                    scan.Apply(rowBuffer);
 
                     yield return factory(rowBuffer);
                     rowCount++;
@@ -1040,42 +980,20 @@ internal sealed class TableReader(
     {
         long rowCount = 0;
 
-        // Decide which post-processing passes are needed up front. When a
-        // projection mask is supplied, skip a pass entirely if no wanted
-        // column requires it; otherwise run with the table-wide flag.
-        bool needsComplexPass = td.HasComplexColumns
-            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType));
-        bool needsHyperlinkPass = td.HasHyperlinkColumns
-            && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
-
-        Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
-            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns, cancellationToken).ConfigureAwait(false)
-            : null;
-        IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        TypedTableScan scan = await this.PrepareTypedTableScanAsync(tableName, entry, td, wantedColumns, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
 
-        await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+        await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, scan.PageNumbers, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
             {
-                byte[] rowPage = scanPage.Page;
-                RowBound rb = slot;
-                using OverflowRowTarget? resolvedOverflow = slot.IsOverflowPointer
-                    ? await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false)
-                    : null;
-                if (slot.IsOverflowPointer)
-                {
-                    if (resolvedOverflow is not { } target)
-                    {
-                        continue;
-                    }
+                using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, cancellationToken).ConfigureAwait(false);
+                byte[] rowPage = sourceRow.Page;
+                RowBound rb = sourceRow.Bound;
 
-                    (rowPage, rb) = (target.Page, target.Bound);
-                }
-
-                if (rb.RowSize < format.RowFields.NumCols)
+                if (!sourceRow.IsReadable(format))
                 {
                     continue;
                 }
@@ -1086,15 +1004,7 @@ internal sealed class TableReader(
                     continue;
                 }
 
-                if (needsComplexPass)
-                {
-                    ComplexColumnReader.ResolveColumns(row, td.Columns, complexData);
-                }
-
-                if (needsHyperlinkPass)
-                {
-                    WrapHyperlinkColumns(row, td.ClrTypes);
-                }
+                scan.Apply(row);
 
                 yield return row;
                 rowCount++;
@@ -1141,22 +1051,11 @@ internal sealed class TableReader(
             foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                byte[] rowPage = scanPage.Page;
-                RowBound rb = slot;
-                using OverflowRowTarget? resolvedOverflow = slot.IsOverflowPointer
-                    ? await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false)
-                    : null;
-                if (slot.IsOverflowPointer)
-                {
-                    if (resolvedOverflow is not { } overflow)
-                    {
-                        continue;
-                    }
+                using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, cancellationToken).ConfigureAwait(false);
+                byte[] rowPage = sourceRow.Page;
+                RowBound rb = sourceRow.Bound;
 
-                    (rowPage, rb) = (overflow.Page, overflow.Bound);
-                }
-
-                if (rb.RowSize < format.RowFields.NumCols)
+                if (!sourceRow.IsReadable(format))
                 {
                     continue;
                 }
@@ -1182,6 +1081,40 @@ internal sealed class TableReader(
 
             progress?.Report(rowCount);
         }
+    }
+
+    private async ValueTask<TypedTableScan> PrepareTypedTableScanAsync(
+        string tableName,
+        CatalogEntry entry,
+        TableDef definition,
+        bool[]? wantedColumns,
+        CancellationToken cancellationToken)
+    {
+        bool needsComplexPass = definition.HasComplexColumns
+            && (wantedColumns == null || HasWantedColumnOfType(definition.Columns, wantedColumns, ComplexType));
+        bool needsHyperlinkPass = definition.HasHyperlinkColumns
+            && (wantedColumns == null || HasWantedHyperlinkColumn(definition.ClrTypes, wantedColumns));
+        Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
+            ? await complexColumns.BuildColumnDataAsync(tableName, definition.Columns, wantedColumns, cancellationToken).ConfigureAwait(false)
+            : null;
+        IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        return new TypedTableScan(definition, pageNumbers, complexData, needsComplexPass, needsHyperlinkPass);
+    }
+
+    /// <summary>Prepares a row synchronously unless its overflow target needs resolving.</summary>
+    /// <param name="page">The leased page containing the slot.</param>
+    /// <param name="slot">The live slot or overflow header.</param>
+    /// <param name="cancellationToken">Cancels overflow traversal.</param>
+    /// <returns>A borrowed row scope; an unreadable target produces an empty scope.</returns>
+    private ValueTask<TableScanRow> ReadTableScanRowAsync(TableScanPage page, RowBound slot, CancellationToken cancellationToken)
+        => slot.IsOverflowPointer
+            ? this.ResolveTableScanOverflowAsync(page, slot, cancellationToken)
+            : new ValueTask<TableScanRow>(new TableScanRow(page.Page, slot));
+
+    private async ValueTask<TableScanRow> ResolveTableScanOverflowAsync(TableScanPage page, RowBound slot, CancellationToken cancellationToken)
+    {
+        OverflowRowTarget? overflow = await rows.ResolveOverflowAsync(page.Page, slot, cancellationToken).ConfigureAwait(false);
+        return overflow is { } target ? new TableScanRow(target.Page, target.Bound, target.Lease) : default;
     }
 
     private async IAsyncEnumerable<TableScanPage> EnumerateTableScanPagesAsync(
@@ -1292,6 +1225,38 @@ internal sealed class TableReader(
     {
         PageLease page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         return new TableScanPage(pageNumber, page);
+    }
+
+    private readonly record struct TypedTableScan(
+        TableDef Definition,
+        IReadOnlyList<long> PageNumbers,
+        Dictionary<int, Dictionary<int, byte[]>>? ComplexData,
+        bool NeedsComplexPass,
+        bool NeedsHyperlinkPass)
+    {
+        internal void Apply(object?[] row)
+        {
+            if (this.NeedsComplexPass)
+            {
+                ComplexColumnReader.ResolveColumns(row, this.Definition.Columns, this.ComplexData);
+            }
+
+            if (this.NeedsHyperlinkPass)
+            {
+                WrapHyperlinkColumns(row, this.Definition.ClrTypes);
+            }
+        }
+    }
+
+    /// <summary>Borrows ordinary bytes from the page loop and owns any separately resolved overflow lease.</summary>
+    /// <param name="Page">The row image, valid throughout the row scope.</param>
+    /// <param name="Bound">The row bounds; default bounds indicate an unreadable target.</param>
+    /// <param name="OverflowLease">The resolved target lease owned by this scope, when any.</param>
+    private readonly record struct TableScanRow(byte[] Page, RowBound Bound, PageLease? OverflowLease = null) : IDisposable
+    {
+        internal bool IsReadable(JetFormat format) => this.Bound.RowSize >= format.RowFields.NumCols;
+
+        public void Dispose() => this.OverflowLease?.Dispose();
     }
 
     private readonly record struct TableScanPage(long PageNumber, PageLease Lease) : IDisposable
