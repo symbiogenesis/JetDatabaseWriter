@@ -844,9 +844,12 @@ Decimal overflow caches status 13. Ordinary Null remains Null.
 `Choose` evaluates all arguments before selecting a branch and truncates its
 one-based index. A Null index caches status 13; an error in an unselected argument
 still propagates. `IsEmpty` evaluates its argument and returns false for the
-available row values, including Null. Native bitwise operators treat nonnumeric
-strings, including an empty string, as true; numeric strings follow integer
-conversion. These rules are specific to table calculations; shared rule/default
+available row values, including Null. Table calculated And/Or/Not coerce operands to Boolean rather than applying
+VBA bitwise operations. Numeric magnitudes at or below one half are false; larger
+magnitudes, Infinity and NaN are true. Nonnumeric strings, including empty strings,
+are true; numeric strings follow the same Boolean conversion. Null/error masking
+retains native three-valued behavior. `CalculatedLogicalOperandTests` compares
+independent native controls and writer/native recomputation. These rules are specific to table calculations; shared rule/default
 contexts retain their independently qualified behavior.
 
 `CalculatedNativeLogicalTests` compares independent ACE-authored source and native

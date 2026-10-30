@@ -638,12 +638,6 @@ internal static class CalculatedExpressionCoercion
         _ => ToBoolean(value),
     };
 
-    /// <summary>Maps nonnumeric strings, including empty strings, to native True operands.</summary>
-    /// <param name="value">The operand.</param>
-    /// <returns>The native bitwise operand; numeric strings retain integer conversion.</returns>
-    internal static object ToCalculatedBitwiseOperand(object value)
-        => value is string text && !double.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out _) ? true : value;
-
     private static bool ToCalculatedBooleanResult(object value)
     {
         if (value is bool boolean)

@@ -1582,13 +1582,12 @@ public sealed class CalculatedColumnWriteTests
     }
 
     /// <summary>
-    /// <c>And</c> on a number is bitwise, so a flags test stores the masked bits in an
-    /// Integer column and a Boolean comparison on them; a Null flags value stores Null
-    /// in both, because <c>Null And 4</c> is Null.
+    /// Table calculated <c>And</c> coerces numeric operands to Boolean, preserving
+    /// native -1 results and Null rather than using shared VBA bitwise semantics.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
-    public async Task InsertRow_BitwiseFlagsExpression_StoresAccessResult()
+    public async Task InsertRow_NumericLogicalExpression_StoresNativeBooleanResults()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -1612,22 +1611,22 @@ public sealed class CalculatedColumnWriteTests
         DataRow twelve = Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1);
         DataRow eight = Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2);
         DataRow none = Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 3);
-        Assert.Equal((short)4, twelve["Bit2"]);
+        Assert.Equal((short)-1, twelve["Bit2"]);
         Assert.Equal(true, twelve["HasBit2"]);
-        Assert.Equal((short)0, eight["Bit2"]);
-        Assert.Equal(false, eight["HasBit2"]);
+        Assert.Equal((short)-1, eight["Bit2"]);
+        Assert.Equal(true, eight["HasBit2"]);
         Assert.Equal(DBNull.Value, none["Bit2"]);
         Assert.Equal(DBNull.Value, none["HasBit2"]);
     }
 
     /// <summary>
-    /// Single-quoted strings and bitwise expressions are accepted at
+    /// Single-quoted strings and numeric logical expressions are accepted at
     /// <see cref="AccessWriter.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, System.Threading.CancellationToken)"/>,
     /// evaluated on insert, and persisted exactly as written.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
-    public async Task CreateTable_SingleQuotedAndBitwiseExpressions_AreAcceptedAndEvaluated()
+    public async Task CreateTable_SingleQuotedAndLogicalExpressions_AreAcceptedAndEvaluated()
     {
         const string fullName = "[First] & ' ' & [Last]";
         const string lowBits = "[Flags] And 15";
@@ -1654,7 +1653,7 @@ public sealed class CalculatedColumnWriteTests
 
         DataRow row = Assert.Single((await reader.ReadTableAsync("CalcLiterals", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
         Assert.Equal("Ann O'Lee", row["FullName"]);
-        Assert.Equal(0x0A, row["LowBits"]);
+        Assert.Equal(-1, row["LowBits"]);
     }
 
     /// <summary>
