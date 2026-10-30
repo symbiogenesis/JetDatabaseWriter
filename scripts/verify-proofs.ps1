@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory)][string] $DafnyPath,
     [Parameter(Mandatory)][string] $OutputDirectory,
     [ValidateRange(10, 3600)][int] $TimeoutSeconds = 300,
-    [switch] $UpdateGeneratedSource
+    [switch] $UpdateGeneratedSource,
+    [switch] $AnalyzeProofCoverage
 )
 $ErrorActionPreference = 'Stop'
 
@@ -255,7 +256,61 @@ function Invoke-ProofInventory([string] $RepositoryRoot, [string] $DafnyPath, [s
     }
 }
 
-function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update) {
+function Invoke-ProofCoverage([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [string[]] $Files, [string[]] $Options, [int] $TimeoutSeconds, [object[]] $Proofs, [string] $DafnyVersion, [string] $SolverVersion) {
+    $dependencyLog = Join-Path $OutputDirectory 'proof-coverage.dependencies.log'
+    $coverageDirectory = Join-Path $OutputDirectory 'proof-coverage'
+    $receipt = [ordered]@{
+        schemaVersion = 1
+        status = 'failed'
+        acceptanceEvidence = $false
+        dafny = $DafnyVersion
+        solver = $SolverVersion
+        proofs = @($Proofs | ForEach-Object { [ordered]@{ file = $_.file; sha256 = $_.sha256 } })
+        dependencyLog = 'proof-coverage.dependencies.log'
+        coverageReport = 'proof-coverage/index_verification.html'
+        stdoutLog = 'proof-coverage.verify.stdout.log'
+        stderrLog = 'proof-coverage.verify.stderr.log'
+        process = 'proof-coverage.verify.process.json'
+        exitCode = $null
+        warnings = @()
+        failure = $null
+    }
+    try {
+        # Dependency analysis is supplemental. It never relaxes the preceding
+        # verification, audit, negative controls or generated-source checks.
+        $analysisOptions = @('--isolate-assertions', '--warn-contradictory-assumptions', '--warn-redundant-assumptions',
+            '--log-format', "text;LogFileName=$dependencyLog", '--verification-coverage-report', $coverageDirectory,
+            '--no-timestamp-for-coverage-report')
+        $result = Invoke-ProofProcess $DafnyPath (@('verify') + $Files + $Options + $analysisOptions) $OutputDirectory 'proof-coverage.verify' $TimeoutSeconds
+        $receipt.exitCode = $result.ExitCode
+        $messages = $result.Stdout + "`n" + $result.Stderr
+        $receipt.warnings = @([regex]::Matches($messages, '(?m)^(?:[^\r\n]*\(\d+,\d+\):\s*)?Warning:\s*[^\r\n]*') | ForEach-Object Value)
+        $complete = [regex]::Matches($result.Stdout, '(?m)^Dafny program verifier finished with [1-9][0-9]* verified, 0 errors\r?$').Count -eq 1
+        $errors = $messages -match '(?m)^(?:[^\r\n]*\(\d+,\d+\):\s*)?Error:'
+        $warningExit = $result.ExitCode -eq 2 -and $receipt.warnings.Count -gt 0
+        if (-not $complete -or $errors -or ($result.ExitCode -ne 0 -and -not $warningExit)) {
+            throw "Proof coverage analysis failed (exit $($result.ExitCode)); inspect the retained process and output logs."
+        }
+        if (-not [IO.File]::Exists($dependencyLog) -or (Get-Item -LiteralPath $dependencyLog).Length -eq 0 -or
+            -not [IO.File]::Exists((Join-Path $coverageDirectory 'index_verification.html'))) {
+            throw 'Proof coverage analysis did not retain its dependency log and HTML report.'
+        }
+        foreach ($proof in $Proofs) {
+            if ((Get-FileHash -LiteralPath (Join-Path $RepositoryRoot $proof.file) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $proof.sha256) {
+                throw "Proof source changed during verification or coverage analysis: $($proof.file)"
+            }
+        }
+        $receipt.status = if ($receipt.warnings.Count -gt 0) { 'warnings' } else { 'complete' }
+        Write-Output "Supplemental proof coverage: $($receipt.status), $($receipt.warnings.Count) warnings. Reports diagnose dependencies; they do not establish specification adequacy."
+    } catch {
+        $receipt.failure = $_.Exception.Message
+        throw
+    } finally {
+        [IO.File]::WriteAllText((Join-Path $OutputDirectory 'proof-coverage.json'), ($receipt | ConvertTo-Json -Depth 6))
+    }
+}
+
+function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update, [bool] $AnalyzeCoverage = $false) {
     $output = $OutputDirectory
     if (-not [IO.Path]::IsPathFullyQualified($DafnyPath)) { throw 'DafnyPath must be absolute.' }
     $executable = (Resolve-Path -LiteralPath $DafnyPath).Path
@@ -298,6 +353,7 @@ function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyP
         if ($kernelSource -cnotin $files) { throw "Native kernel is missing from the proof inventory: $kernelName" }
         Sync-NativeKernel $kernelName $RepositoryRoot $executable $output $dependenciesByFile[$kernelSource] $options $TimeoutSeconds $Update
     }
+    if ($AnalyzeCoverage) { Invoke-ProofCoverage $RepositoryRoot $executable $output $files $options $TimeoutSeconds $summary ($version.Stdout.Trim()) ($solverVersion.Stdout.Trim()) }
     $receipt = [ordered]@{ schemaVersion = 2; dafny = $version.Stdout.Trim(); solver = $solverVersion.Stdout.Trim(); negativeControls = 'false theorem rejected; assumption audit detected'; proofs = $summary; executableKernels = @($kernels) }
     [IO.File]::WriteAllText((Join-Path $output 'summary.json'), ($receipt | ConvertTo-Json -Depth 6))
     Write-Output "Proofs and generated native kernels verified; handwritten code and storage assumptions remain separate obligations. Results: $output"
@@ -365,11 +421,11 @@ function Write-ProofFailureReceipt([string] $RepositoryRoot, [string] $OutputDir
     [IO.File]::WriteAllText((Join-Path $OutputDirectory 'failure.json'), ($receipt | ConvertTo-Json -Depth 6))
 }
 
-function Invoke-ProofVerification([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update) {
+function Invoke-ProofVerification([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update, [bool] $AnalyzeCoverage = $false) {
     $output = Assert-ProofOutputDirectory $OutputDirectory $RepositoryRoot
     if (Test-Path -LiteralPath $output) { throw 'Proof output directory must not already exist; retain each run separately.' }
     [void][IO.Directory]::CreateDirectory($output)
-    try { Invoke-ProofVerificationCore $RepositoryRoot $DafnyPath $output $TimeoutSeconds $Update }
+    try { Invoke-ProofVerificationCore $RepositoryRoot $DafnyPath $output $TimeoutSeconds $Update $AnalyzeCoverage }
     catch {
         $originalFailure = $_
         try { Write-ProofFailureReceipt $RepositoryRoot $output $originalFailure.Exception.Message }
@@ -382,4 +438,4 @@ function Invoke-ProofVerification([string] $RepositoryRoot, [string] $DafnyPath,
     }
 }
 
-Invoke-ProofVerification (Split-Path $PSScriptRoot -Parent) $DafnyPath $OutputDirectory $TimeoutSeconds $UpdateGeneratedSource.IsPresent
+Invoke-ProofVerification (Split-Path $PSScriptRoot -Parent) $DafnyPath $OutputDirectory $TimeoutSeconds $UpdateGeneratedSource.IsPresent $AnalyzeProofCoverage.IsPresent

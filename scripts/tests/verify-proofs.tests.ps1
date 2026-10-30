@@ -217,6 +217,126 @@ Assert-Scenario 'process result receipt retains exit and arguments' {
     if ($receipt.exitCode -ne 0 -or $receipt.name -ne 'streams' -or $receipt.arguments -notcontains '-NoProfile') { throw 'Process outcome was not retained.' }
 }
 $originalVerificationCore = ${function:Invoke-ProofVerificationCore}
+$originalNativeKernelSync = ${function:Sync-NativeKernel}
+$coverageRoot = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-coverage-tests-' + [guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory((Join-Path $coverageRoot 'verification'))
+$coverageFiles = foreach ($name in 'Good', 'RecoveryKernel', 'LongValueKernel') {
+    $path = Join-Path $coverageRoot "verification/$name.dfy"
+    [IO.File]::WriteAllText($path, "module $name {}")
+    $path
+}
+[IO.File]::WriteAllText((Join-Path $coverageRoot 'verification/proofs.json'), '{"schemaVersion":1,"files":["verification/Good.dfy","verification/RecoveryKernel.dfy","verification/LongValueKernel.dfy"],"dependencies":{"verification/RecoveryKernel.dfy":["verification/Good.dfy"]}}')
+$coverageToolchain = [IO.File]::ReadAllText((Join-Path $repoRoot 'verification/dafny-toolchain.json')) | ConvertFrom-Json
+[IO.File]::WriteAllText((Join-Path $coverageRoot 'verification/dafny-toolchain.json'), ($coverageToolchain | ConvertTo-Json -Depth 5))
+$coverageExecutable = Join-Path $coverageRoot 'mock-dafny'
+[IO.File]::WriteAllText($coverageExecutable, '')
+$coverageCalls = [Collections.Generic.List[object]]::new()
+$coverageCase = 'clean'
+function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [string] $WorkingDirectory, [string] $Name, [int] $TimeoutSeconds) {
+    $coverageCalls.Add([pscustomobject]@{ Executable = $Executable; Arguments = $Arguments; Name = $Name; TimeoutSeconds = $TimeoutSeconds })
+    if ($Name -eq 'version') { return [pscustomobject]@{ ExitCode = 0; Stdout = $(if ($coverageCase -eq 'pin-mismatch') { 'unreviewed verifier' } else { $coverageToolchain.versionOutput }); Stderr = '' } }
+    if ($Name -eq 'solver-version') { return [pscustomobject]@{ ExitCode = 0; Stdout = $coverageToolchain.solver.versionOutput; Stderr = '' } }
+    if ($Name -eq 'negative-false') { return [pscustomobject]@{ ExitCode = $(if ($coverageCase -eq 'negative-control') { 0 } else { 4 }); Stdout = 'Dafny program verifier finished with 0 verified, 1 error'; Stderr = '' } }
+    if ($Arguments[0] -eq 'audit') {
+        $reportIndex = [Array]::IndexOf($Arguments, '--report-file') + 1
+        $finding = $Name -eq 'negative-assume' -or ($Name -eq 'inventory.audit' -and $coverageCase -eq 'audit-finding')
+        [IO.File]::WriteAllText($Arguments[$reportIndex], $(if ($finding) { 'assume' } else { '' }))
+        return [pscustomobject]@{ ExitCode = 0; Stdout = "Dafny auditor completed with $(if ($finding) { 1 } else { 0 }) findings"; Stderr = '' }
+    }
+    if ($Name -eq 'proof-coverage.verify') {
+        if ($coverageCase -eq 'timeout') { throw 'Proof process proof-coverage.verify timed out after 13 seconds.' }
+        if ($coverageCase -eq 'launch') { throw 'Cannot start proof process proof-coverage.verify' }
+        if ($coverageCase -ne 'missing-reports') {
+            $logIndex = [Array]::IndexOf($Arguments, '--log-format') + 1
+            [IO.File]::WriteAllText($Arguments[$logIndex].Substring('text;LogFileName='.Length), 'Proof dependencies: retained')
+            $coverageIndex = [Array]::IndexOf($Arguments, '--verification-coverage-report') + 1
+            [void][IO.Directory]::CreateDirectory($Arguments[$coverageIndex])
+            [IO.File]::WriteAllText((Join-Path $Arguments[$coverageIndex] 'index_verification.html'), '<html>coverage</html>')
+        }
+        if ($coverageCase -eq 'warnings') { return [pscustomobject]@{ ExitCode = 2; Stdout = "Good.dfy(1,1): Warning: unnecessary requires clause`nDafny program verifier finished with 3 verified, 0 errors"; Stderr = '' } }
+        if ($coverageCase -eq 'errors') { return [pscustomobject]@{ ExitCode = 4; Stdout = 'Dafny program verifier finished with 2 verified, 1 error'; Stderr = '' } }
+        if ($coverageCase -eq 'empty') { return [pscustomobject]@{ ExitCode = 0; Stdout = 'Dafny program verifier finished with 0 verified, 0 errors'; Stderr = '' } }
+        if ($coverageCase -eq 'missing-summary') { return [pscustomobject]@{ ExitCode = 2; Stdout = 'Good.dfy(1,1): Warning: unnecessary requires clause'; Stderr = '' } }
+        if ($coverageCase -eq 'unexplained-exit') { return [pscustomobject]@{ ExitCode = 2; Stdout = 'Dafny program verifier finished with 3 verified, 0 errors'; Stderr = '' } }
+        if ($coverageCase -eq 'error-diagnostic') { return [pscustomobject]@{ ExitCode = 2; Stdout = "Good.dfy(1,1): Warning: unnecessary requires clause`nGood.dfy(1,1): Error: unexpected failure`nDafny program verifier finished with 3 verified, 0 errors"; Stderr = '' } }
+        if ($coverageCase -eq 'source-change') { [IO.File]::AppendAllText($coverageFiles[0], '// changed during analysis') }
+    }
+    return [pscustomobject]@{ ExitCode = 0; Stdout = 'Dafny program verifier finished with 3 verified, 0 errors'; Stderr = '' }
+}
+function Sync-NativeKernel([string] $KernelName, [string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [string[]] $Dependencies, [string[]] $Options, [int] $TimeoutSeconds, [bool] $Update) {
+    $coverageCalls.Add([pscustomobject]@{ Executable = $DafnyPath; Arguments = $Options; Name = "$KernelName.translate"; Dependencies = $Dependencies })
+    return [ordered]@{ source = "verification/$KernelName.dfy"; sha256 = 'mock-native-source' }
+}
+try {
+    Assert-Scenario 'coverage diagnostics remain disabled by default after every strict control' {
+        $coverageCalls.Clear()
+        $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-default-' + [guid]::NewGuid().ToString('N'))
+        Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false
+        $names = @($coverageCalls | ForEach-Object Name)
+        if (($names -join ',') -cne 'version,solver-version,negative-false,negative-assume.verify,negative-assume,inventory.verify,inventory.audit,RecoveryKernel.translate,LongValueKernel.translate' -or
+            [IO.File]::Exists((Join-Path $output 'proof-coverage.json')) -or -not [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw 'The default strict verification flow changed.' }
+        foreach ($call in $coverageCalls) {
+            if ($call.Arguments -contains '--allow-warnings' -or $call.Arguments -contains '--warn-redundant-assumptions') { throw 'Diagnostic options reached the mandatory checks.' }
+        }
+    }
+    foreach ($case in 'clean', 'warnings') {
+        Assert-Scenario "optional coverage retains exact inputs and separate $case diagnostics" {
+            $coverageCase = $case
+            $coverageCalls.Clear()
+            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-coverage-' + [guid]::NewGuid().ToString('N'))
+            Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true
+            $analysis = [IO.File]::ReadAllText((Join-Path $output 'proof-coverage.json')) | ConvertFrom-Json
+            $call = $coverageCalls[-1]
+            $solverIndex = [Array]::IndexOf($call.Arguments, '--solver-path') + 1
+            $coreIndex = [Array]::IndexOf($call.Arguments, '--cores') + 1
+            $expectedSolver = Join-Path $coverageRoot $(if ($IsWindows) { $coverageToolchain.solver.windows } else { $coverageToolchain.solver.linux })
+            if ($call.Name -cne 'proof-coverage.verify' -or $call.Executable -cne $coverageExecutable -or $call.TimeoutSeconds -ne 13 -or
+                $call.Arguments[$solverIndex] -cne $expectedSolver -or [int]$call.Arguments[$coreIndex] -gt 4 -or [int]$call.Arguments[$coreIndex] -lt 1 -or
+                $call.Arguments -notcontains '--verify-included-files' -or $call.Arguments -notcontains '--isolate-assertions' -or
+                $call.Arguments -notcontains '--warn-contradictory-assumptions' -or $call.Arguments -notcontains '--warn-redundant-assumptions' -or
+                $call.Arguments -contains '--library' -or $call.Arguments -contains '--dont-verify-dependencies' -or $call.Arguments -contains '--allow-warnings' -or
+                $analysis.acceptanceEvidence -ne $false -or $analysis.dafny -cne $coverageToolchain.versionOutput -or
+                $analysis.solver -cne $coverageToolchain.solver.versionOutput -or $analysis.proofs.Count -ne 3 -or
+                $analysis.status -cne $(if ($case -eq 'warnings') { 'warnings' } else { 'complete' }) -or
+                $analysis.warnings.Count -ne $(if ($case -eq 'warnings') { 1 } else { 0 }) -or
+                -not [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw 'Coverage diagnostics changed trust, pins or status.' }
+            foreach ($file in $coverageFiles) {
+                $relative = [IO.Path]::GetRelativePath($coverageRoot, $file).Replace('\', '/')
+                $record = @($analysis.proofs | Where-Object file -CEQ $relative)
+                if ($call.Arguments -notcontains $file -or $record.Count -ne 1 -or
+                    $record[0].sha256 -cne (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'Coverage lost an exact normal-source input.' }
+            }
+            if (($coverageCalls | Where-Object Name -EQ 'RecoveryKernel.translate').Dependencies -notcontains $coverageFiles[0]) { throw 'Kernel dependency verification changed.' }
+        }
+    }
+    foreach ($case in 'errors', 'empty', 'missing-summary', 'unexplained-exit', 'error-diagnostic', 'missing-reports', 'timeout', 'launch', 'source-change') {
+        Assert-Scenario "requested coverage rejects $case and retains failure status" {
+            $coverageCase = $case
+            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-coverage-failure-' + [guid]::NewGuid().ToString('N'))
+            $caught = $null
+            try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true } catch { $caught = $_.Exception.Message }
+            $analysis = [IO.File]::ReadAllText((Join-Path $output 'proof-coverage.json')) | ConvertFrom-Json
+            if (-not $caught -or $analysis.status -cne 'failed' -or $analysis.acceptanceEvidence -ne $false -or
+                -not $analysis.failure -or [IO.File]::Exists((Join-Path $output 'summary.json')) -or
+                -not [IO.File]::Exists((Join-Path $output 'failure.json'))) { throw 'A failed requested diagnostic was silently accepted or lost.' }
+            if ($case -eq 'source-change') { [IO.File]::WriteAllText($coverageFiles[0], 'module Good {}') }
+        }
+    }
+    foreach ($case in 'pin-mismatch', 'negative-control', 'audit-finding') {
+        Assert-Scenario "requested coverage cannot bypass strict $case rejection" {
+            $coverageCase = $case
+            $coverageCalls.Clear()
+            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-before-coverage-' + [guid]::NewGuid().ToString('N'))
+            $caught = $null
+            try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true } catch { $caught = $_.Exception.Message }
+            if (-not $caught -or @($coverageCalls | Where-Object Name -EQ 'proof-coverage.verify').Count -ne 0 -or
+                [IO.File]::Exists((Join-Path $output 'proof-coverage.json')) -or [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw 'Analysis bypassed a mandatory proof check.' }
+        }
+    }
+} finally {
+    ${function:Invoke-ProofProcess} = $originalProofProcess
+    ${function:Sync-NativeKernel} = $originalNativeKernelSync
+}
 function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update) {
     [IO.File]::WriteAllText((Join-Path $OutputDirectory 'FalseTheorem.dfy'), 'lemma FalseTheorem() ensures false {}')
     [IO.File]::WriteAllText((Join-Path $OutputDirectory 'negative-false.stdout.log'), 'postcondition might not hold')
