@@ -22,16 +22,63 @@ using JetDatabaseWriter.Schema;
 
 internal static class FormatProbeApplication
 {
+    private static readonly ProbeMode[] Modes =
+    [
+        new("appendices", "Generate every research appendix", ["all", "appendix"], null, static async (fixtures, probeDir) =>
+        {
+            await RunAppendicesAsync(fixtures, probeDir);
+            return 0;
+        }),
+        new("index", "Generate the index/relationship appendix", ["indexes", "index-appendix"], null, static async (fixtures, probeDir) =>
+        {
+            await WriteIndexAppendixAsync(Path.Combine(fixtures, "NorthwindTraders.accdb"), FormatProbeArtifacts.GetFilePath(probeDir, "appendix-index.md"));
+            return 0;
+        }),
+        new("complex", "Generate the complex-column appendix", ["complex-columns", "complex-appendix"], null, static async (fixtures, probeDir) =>
+        {
+            await WriteComplexAppendixAsync(Path.Combine(fixtures, "ComplexFields.accdb"), FormatProbeArtifacts.GetFilePath(probeDir, "appendix-complex.md"));
+            return 0;
+        }),
+        new("jet3-index", "Generate the Jet3 index appendix", ["jet3", "jet3-indexes"], null, static async (fixtures, probeDir) =>
+        {
+            await WriteJet3IndexAppendixAsync(fixtures, FormatProbeArtifacts.GetFilePath(probeDir, "appendix-jet3-index.md"));
+            return 0;
+        }),
+        new("mdb-catalog", "Scan the fixture corpus for catalog tables", ["catalog", "catalogs", "mdb-catalogs"], null, static async (fixtures, probeDir) =>
+        {
+            await WriteMdbCatalogAppendixAsync(fixtures, FormatProbeArtifacts.GetFilePath(probeDir, "appendix-mdb-catalogs.md"));
+            return 0;
+        }),
+        new("fk-dao-baseline", "Run the FK DAO baseline probe", ["fk", "fk-dao"], "DIAG_FK_DAO_BASELINE", static (fixtures, probeDir) =>
+            FkDaoBaselineProbe.RunAsync(GetRoundTripBaseline(fixtures), FormatProbeArtifacts.CreateWorkDirectory(probeDir, "fk-dao-baseline"))),
+        new("rt-bisect", "Run the round-trip bisection probe", ["roundtrip-bisect", "round-trip-bisect"], "DIAG_RT_BISECT", RunRoundTripBisectAsync),
+        new("long-row-probe", "Dump long-row index leaf entries", ["long-row"], "DIAG_LONG_ROW_PROBE", static (fixtures, probeDir) =>
+            LongRowProbe.RunAsync(fixtures, FormatProbeArtifacts.GetFilePath(probeDir, "long-row-dump.md"))),
+        new("long-row-bisect", "Run long-row chunk-boundary bisection", ["long-row-boundary"], "DIAG_LONG_ROW_BISECT", static (fixtures, probeDir) =>
+            LongRowBisect.RunAsync(fixtures, FormatProbeArtifacts.GetFilePath(probeDir, "long-row-bisect.md"))),
+        new("long-row-corpus", "Scan V2010 fixtures for 510-byte long-row keys", ["long-row-scan", "long-row-suffix-corpus"], "DIAG_LONG_ROW_CORPUS", static (fixtures, probeDir) =>
+            LongRowSuffixProbe.RunCorpusScanAsync(fixtures, FormatProbeArtifacts.GetFilePath(probeDir, "long-row-corpus.md"))),
+        new("long-row-dao-lab", "Generate fresh DAO-authored V2010 suffix samples", ["long-row-dao", "long-row-suffix-dao"], "DIAG_LONG_ROW_DAO_LAB", static (fixtures, probeDir) =>
+            LongRowSuffixProbe.RunDaoLabAsync(fixtures, FormatProbeArtifacts.GetFilePath(probeDir, "long-row-dao-lab.md"), FormatProbeArtifacts.CreateWorkDirectory(probeDir, "long-row-dao-lab"))),
+        new("long-row-dao-tables", "Extract compact encoder tables from the latest DAO lab", ["long-row-suffix-tables"], "DIAG_LONG_ROW_DAO_TABLES", static (_, probeDir) =>
+            LongRowSuffixProbe.RunDaoTableExportAsync(FormatProbeArtifacts.GetFilePath(probeDir, "long-row-dao-tables.md"), probeDir)),
+        new("long-row-suffix", "Dump V2010 long-row suffix source diagnostics", ["long-row-suffix-analysis"], "DIAG_LONG_ROW_SUFFIX", static (fixtures, probeDir) =>
+            LongRowSuffixProbe.RunAnalysisAsync(fixtures, FormatProbeArtifacts.GetFilePath(probeDir, "long-row-suffix-analysis.md"))),
+        new("long-row-crc-sweep", "Run the slow V2010 long-row CRC-16 suffix sweep", ["long-row-crc", "long-row-suffix-crc"], "DIAG_LONG_ROW_CRC_SWEEP", static (fixtures, probeDir) =>
+            LongRowSuffixProbe.RunCrcSweepAsync(fixtures, FormatProbeArtifacts.GetFilePath(probeDir, "long-row-crc-sweep.md"))),
+        new("memo-readback", "Run the memo readback diagnostic", ["memo"], "DIAG_MEMO_READBACK", static (_, _) => RunMemoReadbackAsync()),
+        new("linked-odbc-lvprop", "Dump linked ODBC LvProp schema-cache structure", ["odbc-lvprop", "linked-odbc", "odbc-linked-lvprop"], "DIAG_LINKED_ODBC_LVPROP", static (fixtures, probeDir) =>
+            LinkedOdbcLvPropProbe.RunAsync(fixtures, FormatProbeArtifacts.GetFilePath(probeDir, "linked-odbc-lvprop.md"))),
+        new("rt-dao-baseline", "Run the round-trip DAO baseline probe", ["rt", "rt-dao"], "DIAG_RT_DAO_BASELINE", static (fixtures, probeDir) =>
+            DaoBaselineProbe.RunAsync(GetRoundTripBaseline(fixtures), FormatProbeArtifacts.CreateWorkDirectory(probeDir, "rt-dao-baseline"))),
+    ];
+
     public static async Task<int> RunAsync(string[] args)
     {
         if (args.Length > 0 && args[0].Equals("storage-audit", StringComparison.OrdinalIgnoreCase))
         {
             return await StorageAuditProbe.RunCliAsync(args[1..]);
         }
-
-        string repoRoot = FindRepoRoot();
-        string fixtures = Path.Combine(repoRoot, "tests", "JetDatabaseWriter.Tests", "Databases");
-        string probeDir = FormatProbeArtifacts.GetOutputDirectory(repoRoot);
 
         var modesArgument = new Argument<string[]>("modes")
         {
@@ -57,17 +104,12 @@ internal static class FormatProbeApplication
                 parseResult.GetValue(modesArgument) ?? [],
                 parseResult.GetValue(modeOption) ?? []);
 
-            if (selectedModes.Length == 0)
+            if (selectedModes.Length == 0 || selectedModes.Contains("help", StringComparer.OrdinalIgnoreCase))
             {
                 return await ShowHelpAsync(rootCommand, cancellationToken);
             }
 
-            if (selectedModes.Any(mode => mode.Equals("help", StringComparison.OrdinalIgnoreCase)))
-            {
-                return await ShowHelpAsync(rootCommand, cancellationToken);
-            }
-
-            string? unknownMode = selectedModes.FirstOrDefault(mode => !IsKnownMode(mode));
+            string? unknownMode = selectedModes.FirstOrDefault(mode => FindMode(mode) is null);
             if (unknownMode is not null)
             {
                 await Console.Error.WriteLineAsync($"Unknown FormatProbe mode: {unknownMode}");
@@ -75,9 +117,12 @@ internal static class FormatProbeApplication
                 return 1;
             }
 
+            string repoRoot = FindRepoRoot();
+            string fixtures = Path.Combine(repoRoot, "tests", "JetDatabaseWriter.Tests", "Databases");
+            string probeDir = FormatProbeArtifacts.GetOutputDirectory(repoRoot);
             foreach (string selectedMode in selectedModes)
             {
-                int result = await RunModeAsync(selectedMode, fixtures, probeDir);
+                int result = await FindMode(selectedMode)!.Run(fixtures, probeDir);
                 if (result != 0)
                 {
                     return result;
@@ -95,208 +140,53 @@ internal static class FormatProbeApplication
     private static string[] ResolveModes(IEnumerable<string> modeArguments, IEnumerable<string> modeOptions)
     {
         var modes = new List<string>();
-
-        foreach (string mode in modeArguments)
+        foreach (string value in modeArguments.Concat(modeOptions))
         {
-            AddModeValues(modes, mode);
-        }
-
-        foreach (string mode in modeOptions)
-        {
-            AddModeValues(modes, mode);
+            modes.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         }
 
         if (modes.Count == 0)
         {
-            AddLegacyEnvironmentModes(modes);
+            foreach (ProbeMode mode in Modes)
+            {
+                if (mode.EnvironmentVariable is { } variable && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(variable)))
+                {
+                    modes.Add(mode.Name);
+                }
+            }
         }
 
         return modes
-            .Select(NormalizeMode)
+            .Select(mode => FindMode(mode)?.Name ?? mode)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 
-    private static void AddModeValues(List<string> modes, string value)
-        => modes.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-
-    private static void AddLegacyEnvironmentModes(List<string> modes)
-    {
-        AddEnvMode(modes, "DIAG_FK_DAO_BASELINE", "fk-dao-baseline");
-        AddEnvMode(modes, "DIAG_RT_BISECT", "rt-bisect");
-        AddEnvMode(modes, "DIAG_LONG_ROW_PROBE", "long-row-probe");
-        AddEnvMode(modes, "DIAG_LONG_ROW_BISECT", "long-row-bisect");
-        AddEnvMode(modes, "DIAG_LONG_ROW_CORPUS", "long-row-corpus");
-        AddEnvMode(modes, "DIAG_LONG_ROW_DAO_LAB", "long-row-dao-lab");
-        AddEnvMode(modes, "DIAG_LONG_ROW_DAO_TABLES", "long-row-dao-tables");
-        AddEnvMode(modes, "DIAG_LONG_ROW_SUFFIX", "long-row-suffix");
-        AddEnvMode(modes, "DIAG_LONG_ROW_CRC_SWEEP", "long-row-crc-sweep");
-        AddEnvMode(modes, "DIAG_MEMO_READBACK", "memo-readback");
-        AddEnvMode(modes, "DIAG_LINKED_ODBC_LVPROP", "linked-odbc-lvprop");
-        AddEnvMode(modes, "DIAG_RT_DAO_BASELINE", "rt-dao-baseline");
-    }
-
-    private static void AddEnvMode(List<string> modes, string variableName, string mode)
-    {
-        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(variableName)))
-        {
-            modes.Add(mode);
-        }
-    }
-
-    private static string NormalizeMode(string mode) => mode.ToUpperInvariant() switch
-    {
-        "HELP" => "help",
-        "ALL" or "APPENDIX" or "APPENDICES" => "appendices",
-        "INDEX" or "INDEXES" or "INDEX-APPENDIX" => "index",
-        "COMPLEX" or "COMPLEX-COLUMNS" or "COMPLEX-APPENDIX" => "complex",
-        "JET3" or "JET3-INDEX" or "JET3-INDEXES" => "jet3-index",
-        "CATALOG" or "CATALOGS" or "MDB-CATALOG" or "MDB-CATALOGS" => "mdb-catalog",
-        "FK" or "FK-DAO" or "FK-DAO-BASELINE" => "fk-dao-baseline",
-        "RT" or "RT-DAO" or "RT-DAO-BASELINE" => "rt-dao-baseline",
-        "RT-BISECT" or "ROUNDTRIP-BISECT" or "ROUND-TRIP-BISECT" => "rt-bisect",
-        "LONG-ROW" or "LONG-ROW-PROBE" => "long-row-probe",
-        "LONG-ROW-BISECT" or "LONG-ROW-BOUNDARY" => "long-row-bisect",
-        "LONG-ROW-CORPUS" or "LONG-ROW-SCAN" or "LONG-ROW-SUFFIX-CORPUS" => "long-row-corpus",
-        "LONG-ROW-DAO" or "LONG-ROW-DAO-LAB" or "LONG-ROW-SUFFIX-DAO" => "long-row-dao-lab",
-        "LONG-ROW-DAO-TABLES" or "LONG-ROW-SUFFIX-TABLES" => "long-row-dao-tables",
-        "LONG-ROW-SUFFIX" or "LONG-ROW-SUFFIX-ANALYSIS" => "long-row-suffix",
-        "LONG-ROW-CRC" or "LONG-ROW-CRC-SWEEP" or "LONG-ROW-SUFFIX-CRC" => "long-row-crc-sweep",
-        "MEMO" or "MEMO-READBACK" => "memo-readback",
-        "ODBC-LVPROP" or "LINKED-ODBC" or "LINKED-ODBC-LVPROP" or "ODBC-LINKED-LVPROP" => "linked-odbc-lvprop",
-        _ => mode,
-    };
-
-    private static bool IsKnownMode(string mode) => mode is
-        "appendices" or
-        "index" or
-        "complex" or
-        "jet3-index" or
-        "mdb-catalog" or
-        "fk-dao-baseline" or
-        "rt-dao-baseline" or
-        "rt-bisect" or
-        "long-row-probe" or
-        "long-row-bisect" or
-        "long-row-corpus" or
-        "long-row-dao-lab" or
-        "long-row-dao-tables" or
-        "long-row-suffix" or
-        "long-row-crc-sweep" or
-        "linked-odbc-lvprop" or
-        "memo-readback";
+    private static ProbeMode? FindMode(string value) => Modes.FirstOrDefault(mode =>
+        mode.Name.Equals(value, StringComparison.OrdinalIgnoreCase) || mode.Aliases.Contains(value, StringComparer.OrdinalIgnoreCase));
 
     private static Task<int> ShowHelpAsync(RootCommand rootCommand, CancellationToken cancellationToken) =>
         rootCommand.Parse(["--help"]).InvokeAsync(cancellationToken: cancellationToken);
 
-    private static string GetRootCommandDescription() =>
-        """
-    Diagnostic probe that reads test fixtures and emits format research artifacts.
-
-    Modes:
-      appendices          Generate every appendix that the old default run produced
-      index               Generate the index/relationship appendix
-      complex             Generate the complex-column appendix
-      jet3-index          Generate the Jet3 index appendix
-      mdb-catalog         Scan the fixture corpus for catalog tables
-      fk-dao-baseline     Run the FK DAO baseline probe
-      rt-dao-baseline     Run the round-trip DAO baseline probe
-      rt-bisect           Run the round-trip bisection probe
-      long-row-probe      Dump long-row index leaf entries
-      long-row-bisect     Run long-row chunk-boundary bisection
-    long-row-corpus     Scan V2010 fixtures for 510-byte long-row keys
-    long-row-dao-lab    Generate fresh DAO-authored V2010 suffix samples
-        long-row-dao-tables Extract compact encoder tables from the latest DAO lab
-      long-row-suffix     Dump V2010 long-row suffix source diagnostics
-      long-row-crc-sweep  Run the slow V2010 long-row CRC-16 suffix sweep
-    linked-odbc-lvprop  Dump linked ODBC LvProp schema-cache structure
-      memo-readback       Run the memo readback diagnostic
-
-    Read-only storage inventory:
-      storage-audit --input <absolute database path> --output <absolute new NDJSON path>
-    Run storage-audit --help for traversal and report limits. This command requires
-    no repository working directory and does not validate row values or repair files.
-
-    Positional modes and --mode/-m values both accept comma-separated lists.
-    Legacy DIAG_* environment variables still select the matching mode when no CLI mode is supplied.
-    """;
-
-    private static async Task<int> RunModeAsync(string mode, string fixtures, string probeDir)
+    private static string GetRootCommandDescription()
     {
-        switch (mode)
+        var description = new StringBuilder("Diagnostic probe that reads test fixtures and emits format research artifacts.\n\nModes:\n");
+        foreach (ProbeMode mode in Modes)
         {
-            case "appendices":
-                await RunAppendicesAsync(fixtures, probeDir);
-                return 0;
-            case "index":
-                await WriteIndexAppendixAsync(
-                    Path.Combine(fixtures, "NorthwindTraders.accdb"),
-                    FormatProbeArtifacts.GetFilePath(probeDir, "appendix-index.md"));
-                return 0;
-            case "complex":
-                await WriteComplexAppendixAsync(
-                    Path.Combine(fixtures, "ComplexFields.accdb"),
-                    FormatProbeArtifacts.GetFilePath(probeDir, "appendix-complex.md"));
-                return 0;
-            case "jet3-index":
-                await WriteJet3IndexAppendixAsync(
-                    fixtures,
-                    FormatProbeArtifacts.GetFilePath(probeDir, "appendix-jet3-index.md"));
-                return 0;
-            case "mdb-catalog":
-                await WriteMdbCatalogAppendixAsync(
-                    fixtures,
-                    FormatProbeArtifacts.GetFilePath(probeDir, "appendix-mdb-catalogs.md"));
-                return 0;
-            case "fk-dao-baseline":
-                return await FkDaoBaselineProbe.RunAsync(
-                    GetRoundTripBaseline(fixtures),
-                    FormatProbeArtifacts.CreateWorkDirectory(probeDir, "fk-dao-baseline"));
-            case "rt-bisect":
-                return await RunRoundTripBisectAsync(fixtures, probeDir);
-            case "long-row-probe":
-                return await LongRowProbe.RunAsync(
-                    fixtures,
-                    FormatProbeArtifacts.GetFilePath(probeDir, "long-row-dump.md"));
-            case "long-row-bisect":
-                return await LongRowBisect.RunAsync(
-                    fixtures,
-                    FormatProbeArtifacts.GetFilePath(probeDir, "long-row-bisect.md"));
-            case "long-row-corpus":
-                return await LongRowSuffixProbe.RunCorpusScanAsync(
-                    fixtures,
-                    FormatProbeArtifacts.GetFilePath(probeDir, "long-row-corpus.md"));
-            case "long-row-dao-lab":
-                return await LongRowSuffixProbe.RunDaoLabAsync(
-                    fixtures,
-                    FormatProbeArtifacts.GetFilePath(probeDir, "long-row-dao-lab.md"),
-                    FormatProbeArtifacts.CreateWorkDirectory(probeDir, "long-row-dao-lab"));
-            case "long-row-dao-tables":
-                return await LongRowSuffixProbe.RunDaoTableExportAsync(
-                    FormatProbeArtifacts.GetFilePath(probeDir, "long-row-dao-tables.md"),
-                    probeDir);
-            case "long-row-suffix":
-                return await LongRowSuffixProbe.RunAnalysisAsync(
-                    fixtures,
-                    FormatProbeArtifacts.GetFilePath(probeDir, "long-row-suffix-analysis.md"));
-            case "long-row-crc-sweep":
-                return await LongRowSuffixProbe.RunCrcSweepAsync(
-                    fixtures,
-                    FormatProbeArtifacts.GetFilePath(probeDir, "long-row-crc-sweep.md"));
-            case "memo-readback":
-                return await RunMemoReadbackAsync();
-            case "linked-odbc-lvprop":
-                return await LinkedOdbcLvPropProbe.RunAsync(
-                    fixtures,
-                    FormatProbeArtifacts.GetFilePath(probeDir, "linked-odbc-lvprop.md"));
-            case "rt-dao-baseline":
-                return await DaoBaselineProbe.RunAsync(
-                    GetRoundTripBaseline(fixtures),
-                    FormatProbeArtifacts.CreateWorkDirectory(probeDir, "rt-dao-baseline"));
-            default:
-                await Console.Error.WriteLineAsync($"Unknown FormatProbe mode: {mode}");
-                return 1;
+            _ = description.Append("  ").Append(mode.Name.PadRight(20)).AppendLine(mode.Description);
         }
+
+        _ = description.AppendLine().Append(
+            """
+            Read-only storage inventory:
+              storage-audit --input <absolute database path> --output <absolute new NDJSON path>
+            Run storage-audit --help for traversal and report limits. This command requires
+            no repository working directory and does not validate row values or repair files.
+
+            Positional modes and --mode/-m values both accept comma-separated lists.
+            DIAG_* environment variables select the matching mode when no CLI mode is supplied.
+            """);
+        return description.ToString();
     }
 
     private static async Task RunAppendicesAsync(string fixtures, string probeDir)
@@ -1757,6 +1647,8 @@ internal static class FormatProbeApplication
     private static long U32(byte[] b, int o) => unchecked((uint)(b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)));
 
     private static string Md(string s) => s.Replace("|", "\\|", StringComparison.Ordinal).Replace("`", "\\`", StringComparison.Ordinal);
+
+    private sealed record ProbeMode(string Name, string Description, string[] Aliases, string? EnvironmentVariable, Func<string, string, Task<int>> Run);
 
     private sealed record CatalogScanResult(
         string RelPath,
