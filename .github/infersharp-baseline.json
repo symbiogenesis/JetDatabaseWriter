@@ -1,44 +1,54 @@
 {
   "version": 1,
   "analyzer": "InferSharp v1.5",
-  "reviewedRevision": "5de4704daf38215058a08231af9260bdfa0d6202",
+  "reviewedRevision": "209c80c64a7f35ecaabbdce49530edc90f245077",
   "sources": {
-    "src/JetDatabaseWriter/AccessDatabaseEncryption.cs": "f5cc1542ee78302e997859ef20cbc63873d957415c6643784c0a23112439c5a8",
+    "src/JetDatabaseWriter/AccessDatabaseEncryption.cs": "23f158e8d939afd81c20e1d2f9256c2ee3ee07067c5afe97b4802bc74fad04a9",
     "src/JetDatabaseWriter/AccessReader.cs": "1f482a6d15a90b66ef7b8b48538039a0bd3cb02d5cf8959af4845c9fbc3d7d12",
     "src/JetDatabaseWriter/Catalog/CatalogReader.cs": "6cbff8798b496372086ddde78f3e7e5d9b405a5d1e20bc4bcb2f4c56b87a33d1",
     "src/JetDatabaseWriter/Catalog/TableCatalog.cs": "2dd1c1764ce8a68a6863e2347a0eb0635685d8d90977befd7d0f4256014382f6",
-    "src/JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs": "f9851783686e2ba753b2b0c5578dd021c081fb40b8848d3739950481700619e4",
-    "src/JetDatabaseWriter/DatabaseFile.cs": "6e7aec4d0282d11554763f8568d1ae3f2e80921bf10a907a1c7ae67920d04536",
+    "src/JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs": "4f7235f81a37f2a462d3554e71bd378a0209aa2046eabf968726e72cf857ce05",
+    "src/JetDatabaseWriter/DatabaseFile.cs": "10846f26cda9ee6dcafc29fd05a116a3f7a40d7f6ce70a9c375210460191ec94",
     "src/JetDatabaseWriter/Encryption/OfficeCryptoStandard.cs": "df4ed1f39d8e0e5053601db56328a9b7f6ce9c60d0fa5417413a4f1809fea392",
-    "src/JetDatabaseWriter/Mapping/MaterializerCache.cs": "7867d93830aed211d83fcf4567c47f7c507a342fa7cce720e1f05c637f8552cf",
-    "src/JetDatabaseWriter/Pages/Paging/PageBuffers.cs": "8fd94c8c6b997dd94df77be4c1282a276f6b562125f72d5ecef2338ea0e26d00",
-    "src/JetDatabaseWriter/Pages/Paging/PageFile.cs": "8d79d9c19ce0ac989924ed616755e86343ae7a7dd2115c4dd3d6215f6257706a",
-    "src/JetDatabaseWriter/Pages/Paging/Pager.cs": "c1b45bc9101c7ce0599e8779c9488b5fce8a18977dc958de1c3a46ccf322838e",
-    "src/JetDatabaseWriter/Pages/ReaderPageCache.cs": "fa6defce8c720bb3a8f717e71968edefb52e7742dbc087b025d8e6f20edd1bd6",
-    "src/JetDatabaseWriter/ReaderServices.cs": "659fc6874eaab3445b8ab4f6dafc992403f5b1034112846fb42ad533327e711c",
-    "src/JetDatabaseWriter/Relationships/LinkedTableManager.cs": "490841845e54416286c85c8cd6fb930f79fc937e64f4b34d3f572411751547c7",
+    "src/JetDatabaseWriter/Pages/Paging/PageBuffers.cs": "1c08da50772d9694a2042c00023dc2bfa690c6b824be40e2a2cb88d73c71d107",
+    "src/JetDatabaseWriter/Pages/Paging/PageFile.cs": "635be147540726fed820b91e57e1a4f858bec1a405ebeaeb3b3c46caf8602e9c",
+    "src/JetDatabaseWriter/Pages/Paging/Pager.cs": "dbf98d79aea6c2749852ffff0f99e0ca371fe7e9e1c6fd627bb940d27a1e6fc3",
+    "src/JetDatabaseWriter/Pages/ReaderPageCache.cs": "afdd77368e56d6dd73bfcb71be965b69be90a54f71c14380d7021788cfa1852e",
+    "src/JetDatabaseWriter/ReaderServices.cs": "5fc13ac4c1963b0f34fe003dac6d1d45cc556f24823ad2468671ecdffdda5517",
+    "src/JetDatabaseWriter/Relationships/LinkedTableManager.cs": "193a8d18987c13bda3830f5bbe14d8353fe7e520880b460ed2558117af9caf99",
     "src/JetDatabaseWriter/Schema/TableDefReader.cs": "386db6af10dd4c165640cb90ea8b38076976330b2510c2fc4a1123fa9d82f72d",
     "src/JetDatabaseWriter/Tables/TableReader.cs": "8abfb4bf95f8fcbc7bb02131edeb1f732c6e7046897bdbf48d5714665e825106",
-    "src/JetDatabaseWriter/Transactions/LockFileCoordinator.cs": "c0ff1b36f3722124cf8b9b9ed104096361c048afea63b62a2548d84fa292a9f4",
+    "src/JetDatabaseWriter/Transactions/LockFileCoordinator.cs": "03dae75cbaab4808ec68b4bb116ea745ea31092693b28fdf4f3d9789c63cb22c",
     "src/JetDatabaseWriter/Transactions/LockFileSlotWriter.cs": "f0fc65d7098d01f3837978dcc6cffbf34fdfe4915ca05f4306b200d714ae88a8",
     "src/JetDatabaseWriter/Transactions/TransactionLifecycle.cs": "f9a4b3c305b05fad06254f4098105ff2b596c05e40dde2f411b04f3a21b21baa",
     "src/JetDatabaseWriter/ValueDecoding/RowMapper.cs": "ee9f04d270c9964f5bce0cbfdef01bc3bc858a6f72265004d18e1a316f146b18",
-    "src/JetDatabaseWriter/WriterServices.cs": "33a4a7b1df3a36ba8f6b63bc8fc563e9a3554e6d561997ebc28c1e81a5986f52",
+    "src/JetDatabaseWriter/WriterServices.cs": "f86d09af107808dff5d42b8d9038376931534e215e753fbdd63f3619548a975e",
     "src/JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs": "bf810bda25b02f8d17b7e2597729339e5ad70ce3612215250a91e392957b6b61",
-    "src/JetDatabaseWriter/Pages/Paging/StreamPageStore.cs": "ef2c31dbc79bf5813199391d4d1df327104972dfdfdcd0c0589ab056527ecea4",
+    "src/JetDatabaseWriter/Pages/Paging/StreamPageStore.cs": "b1ebe2dcb4f14427bd608faa4610b17e1cfa222eb748495dcedcec7b74f88392",
     "src/JetDatabaseWriter/Relationships/LinkedTextSourceStream.cs": "42e29a44ddc7c995df717c9d8291dddd248ee9719d9d8f67173166fb6945e583",
     "src/JetDatabaseWriter/AccessWriterOptions.cs": "009f18152d9cd9e848fade74346447433482d43dc0e3d4aaaf5ddb3f20c5d302",
-    "src/JetDatabaseWriter/AccessWriter.cs": "fb00830303f1e30fbc178f80c25e1a577b4f6edb79321ea2c7704e15b1b1de5b"
+    "src/JetDatabaseWriter/AccessWriter.cs": "432a8908784a42ce18511f35fc0b2ff16bdcde8290ca0b10c7fb3a059b63478b",
+    "src/JetDatabaseWriter/Infrastructure/BoundedCache.cs": "5519f282810e348400a448f37f1dacc90c8bafcc4f5fe4c0206cf2181474d7ad",
+    "src/JetDatabaseWriter/Infrastructure/FileStreamFactory.cs": "e46ec3e656fd4c45204b4ca660c084dfe3f26f6db63cceb65eb3aecb51a05347",
+    "src/JetDatabaseWriter/Maintenance/CompactActiveCatalogRows.cs": "2ce3ae7a9332361a5daada76c90713630a8555f81c9da986b1a71402b206c61d",
+    "src/JetDatabaseWriter/Maintenance/CompactRawFieldReader.cs": "58df18fd00a28baea2bd18b38722d6de6ba56b9dd1abd84093f9ed67f2d8c967",
+    "src/JetDatabaseWriter/Schema/Models/TDefImage.cs": "747cdc1faefb816f6bb70cca91d4cd500d50ae19807cfceed3650c9fe15f137d",
+    "src/JetDatabaseWriter/Pages/Paging/PageFrame.cs": "90e5117ac065f7375b2e6cd2f20f9eb0c2b9068ca1d59b659501c79259c1f17c",
+    "src/JetDatabaseWriter/Pages/Paging/PageLease.cs": "b79c43af17ef05727afc7837dce7b1b9a7fede15ca185d8627e78b8279f689f9",
+    "src/JetDatabaseWriter/ReaderOpenContext.cs": "f3b8653fd6b821ec3aa6d1d81d0752a2d990abd0a49b2fd49b3b5b69f22a0a69",
+    "src/JetDatabaseWriter/Transactions/RecoverableWriterLock.cs": "98baaf461ebf8298f2f01c72c06b171ed5282172772832a8444bbd97d57e5f35",
+    "src/JetDatabaseWriter/Encryption/EncryptionFileReplacement.cs": "67ce66d6d46271942685ca43952327ad33c8ffb4dcd25b92a3ce02a28a1d6dfb",
+    "src/JetDatabaseWriter/Encryption/EncryptionReplacementIntent.cs": "50f370672634dbaa5d3f2e3c62b0e77eb9c35706e19a6524db85a2b79e089a23"
   },
   "targets": {
     "netstandard2.1": [
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/AccessDatabaseEncryption.cs",
-        "line": 209,
-        "fingerprint": "bff3d62f4f59b19868c9b31c7f8c42d1",
+        "line": 212,
+        "fingerprint": "affad7599a1cd1453ca2d5550957f975",
         "symbol": "AccessDatabaseEncryption.cs|ConvertFileAsync|PULSE_RESOURCE_LEAK",
-        "reason": "ConvertFileAsync owns fileLock in using; LockFileCoordinator.Dispose closes its acquired slot, whose LockFileSlotWriter.Dispose closes FileStream in finally. InferSharp loses ownership through the coordinator."
+        "reason": "The trace follows source from FileStreamFactory.Open at line 148, not the lock coordinator. ConvertFileAsync immediately encloses every use in try/finally and awaits source.DisposeAsync in that finally. EncryptionFileReplacement also receives source ownership through its using-owned EncryptionReplacementIntent. InferSharp loses the async-finally disposal summary."
       },
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
@@ -92,7 +102,7 @@
         "ruleId": "NULLPTR_DEREFERENCE",
         "path": "src/JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
         "line": 108,
-        "fingerprint": "feaebe3908fcc4492f72e632fba5cf93",
+        "fingerprint": "9bf8c3d0317aedafd9a3b2bf8deabf07",
         "symbol": "TransactionLifecycle.cs|<BeginTransactionAsync>b__0|NULLPTR_DEREFERENCE",
         "reason": "The trace treats ConfiguredValueTaskAwaiter<JournalGate>.GetResult as nullable. Pager.EnterJournalGateAsync returns new JournalGate or throws; the scoped using cannot receive null. InferSharp lacks this awaited-result summary."
       },
@@ -100,7 +110,7 @@
         "ruleId": "NULLPTR_DEREFERENCE",
         "path": "src/JetDatabaseWriter/Transactions/TransactionLifecycle.cs",
         "line": 108,
-        "fingerprint": "9bf8c3d0317aedafd9a3b2bf8deabf07",
+        "fingerprint": "feaebe3908fcc4492f72e632fba5cf93",
         "symbol": "TransactionLifecycle.cs|<BeginTransactionAsync>b__0|NULLPTR_DEREFERENCE",
         "reason": "The trace treats ConfiguredValueTaskAwaiter<JournalGate>.GetResult as nullable. Pager.EnterJournalGateAsync returns new JournalGate or throws; the scoped using cannot receive null. InferSharp lacks this awaited-result summary."
       },
@@ -142,7 +152,7 @@
         "line": 103,
         "fingerprint": "4a096686a961568c59f506ccfb8a1bab",
         "symbol": "RowMapper.cs|Build|THREAD_SAFETY_VIOLATION",
-        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates; concurrent initialization creates equivalent immutable delegates. RowMapper uses capacity-64 BoundedCache.GetOrCreate, whose retained factories and entries/recent mutations are under its gate. Materializer construction is under lock(entry), with Volatile Read/Write publication or volatile DirectInitialized/HybridInitialized flags."
       },
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
@@ -150,7 +160,7 @@
         "line": 113,
         "fingerprint": "2dfaa472aa12d7cdb3683452a3f58568",
         "symbol": "RowMapper.cs|Build|THREAD_SAFETY_VIOLATION",
-        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates; concurrent initialization creates equivalent immutable delegates. RowMapper uses capacity-64 BoundedCache.GetOrCreate, whose retained factories and entries/recent mutations are under its gate. Materializer construction is under lock(entry), with Volatile Read/Write publication or volatile DirectInitialized/HybridInitialized flags."
       },
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
@@ -158,7 +168,7 @@
         "line": 145,
         "fingerprint": "71be074ef515071203c65602a7b7344d",
         "symbol": "RowMapper.cs|GetHybrid|THREAD_SAFETY_VIOLATION",
-        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates; concurrent initialization creates equivalent immutable delegates. RowMapper uses capacity-64 BoundedCache.GetOrCreate, whose retained factories and entries/recent mutations are under its gate. Materializer construction is under lock(entry), with Volatile Read/Write publication or volatile DirectInitialized/HybridInitialized flags."
       },
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
@@ -166,17 +176,49 @@
         "line": 159,
         "fingerprint": "0fdac20f97eb3c199805daa3c81dc68f",
         "symbol": "RowMapper.cs|GetHybrid|THREAD_SAFETY_VIOLATION",
-        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates; concurrent initialization creates equivalent immutable delegates. RowMapper uses capacity-64 BoundedCache.GetOrCreate, whose retained factories and entries/recent mutations are under its gate. Materializer construction is under lock(entry), with Volatile Read/Write publication or volatile DirectInitialized/HybridInitialized flags."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "src/JetDatabaseWriter/AccessWriter.cs",
+        "line": 560,
+        "fingerprint": "e3c8699192fd2e0fc682974b2a829d5e",
+        "symbol": "AccessWriter.cs|RewriteNativeSecurityAsync|PULSE_RESOURCE_LEAK",
+        "reason": "RewriteNativeSecurityAsync owns services in a synchronous using declaration spanning the awaited rewrite. WriterServices.Dispose explicitly disposes SnapshotPages, whose Dispose releases cache frame ownership. InferSharp loses the using cleanup across the async state machine; the borrowed database and pager remain owned by the caller."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "src/JetDatabaseWriter/AccessWriter.cs",
+        "line": 560,
+        "fingerprint": "53855c432d5091750b4bacc396d4f694",
+        "symbol": "AccessWriter.cs|RewriteNativeSecurityAsync|PULSE_RESOURCE_LEAK",
+        "reason": "TransactionLifecycle.mutationGate is not explicitly disposed. It is private, never exposed, and its only uses are WaitAsync and finally Release; no AvailableWaitHandle or synchronous Wait is called. It therefore owns no OS wait handle: .NET allocates that event only in AvailableWaitHandle (https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/Threading/SemaphoreSlim.cs). RunDisposalAsync serializes teardown through the same gate, and each successful acquisition releases in finally, including queued calls after teardown. The remaining gate/awaiter graph is managed and collectible; disposing the gate during teardown would conflict with pending releases."
+      },
+      {
+        "ruleId": "NULLPTR_DEREFERENCE",
+        "path": "src/JetDatabaseWriter/Maintenance/CompactActiveCatalogRows.cs",
+        "line": 202,
+        "fingerprint": "94f5b21143e04e014150da992c9a77d2",
+        "symbol": "CompactActiveCatalogRows.cs|MoveNext|NULLPTR_DEREFERENCE",
+        "reason": "The trace follows the optional null hydratedColumns argument into ScanAsync, then assumes the unsummarized IEnumerable.GetEnumerator result is null. ScanAsync iterates hydratedColumns ?? definition.Columns after guarding definition. TDefImage.Columns is an Array.AsReadOnly copy created in its constructor, so this call uses a nonnull collection and nonnull enumerator; null optional metadata is an intentional fallback."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "src/JetDatabaseWriter/WriterServices.cs",
+        "line": 36,
+        "fingerprint": "b1e2d7325caf3c2b374818df3114ec55",
+        "symbol": "WriterServices.cs|.ctor|PULSE_RESOURCE_LEAK",
+        "reason": "WriterServices transfers SnapshotPages ownership to its completed graph and Dispose explicitly closes it; AccessWriter calls this on normal teardown and failed outer initialization, and RewriteNativeSecurityAsync uses services. This constructor creates a capacity-0 ReaderPageCache and performs no page reads, so that cache has no retained frames or other disposable resources even if later graph construction throws. InferSharp treats allocating the empty managed wrapper as allocating an external resource."
       }
     ],
     "net10.0": [
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/AccessDatabaseEncryption.cs",
-        "line": 209,
-        "fingerprint": "bff3d62f4f59b19868c9b31c7f8c42d1",
+        "line": 212,
+        "fingerprint": "affad7599a1cd1453ca2d5550957f975",
         "symbol": "AccessDatabaseEncryption.cs|ConvertFileAsync|PULSE_RESOURCE_LEAK",
-        "reason": "ConvertFileAsync owns fileLock in using; LockFileCoordinator.Dispose closes its acquired slot, whose LockFileSlotWriter.Dispose closes FileStream in finally. InferSharp loses ownership through the coordinator."
+        "reason": "The trace follows source from FileStreamFactory.Open at line 148, not the lock coordinator. ConvertFileAsync immediately encloses every use in try/finally and awaits source.DisposeAsync in that finally. EncryptionFileReplacement also receives source ownership through its using-owned EncryptionReplacementIntent. InferSharp loses the async-finally disposal summary."
       },
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
@@ -277,7 +319,7 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/Relationships/LinkedTableManager.cs",
-        "line": 1143,
+        "line": 1085,
         "fingerprint": "5e9100ea7247c46534a07587a13d0105",
         "symbol": "LinkedTableManager.cs|MoveNext|PULSE_RESOURCE_LEAK",
         "reason": "OpenAsync disposes records in finally until ownership transfers to the returned LinkedTextRowReader. Its Dispose closes records, StreamReader, wrapper and source; every row-reader consumer uses using."
@@ -317,7 +359,7 @@
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
         "path": "src/JetDatabaseWriter/Tables/TableReader.cs",
-        "line": 505,
+        "line": 497,
         "fingerprint": "b6890118a22f55d10cd55e74efcddb27",
         "symbol": "TableReader.cs|ReadTableAsync|THREAD_SAFETY_VIOLATION",
         "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
@@ -325,7 +367,7 @@
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
         "path": "src/JetDatabaseWriter/Tables/TableReader.cs",
-        "line": 546,
+        "line": 538,
         "fingerprint": "f421c30303e50632b325d84e9f25fc04",
         "symbol": "TableReader.cs|ReadTableAsStringsAsync|THREAD_SAFETY_VIOLATION",
         "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
@@ -374,9 +416,9 @@
         "ruleId": "THREAD_SAFETY_VIOLATION",
         "path": "src/JetDatabaseWriter/ValueDecoding/RowMapper.cs",
         "line": 96,
-        "fingerprint": "22b49e478db9e15e07df75a524ab5f6b",
+        "fingerprint": "70147a96219289d6d413eb4495ee5637",
         "symbol": "RowMapper.cs|Build|THREAD_SAFETY_VIOLATION",
-        "reason": "MaterializerCache.Get guards every entries/recent access with lock(this.gate). The net10 target uses System.Threading.Lock.EnterScope; v1.5 CallParser models Monitor.Enter/Exit but not this newer lock lowering."
+        "reason": "RowMapper uses BoundedCache with constant capacity 64. BoundedCache.GetOrCreate guards every entries/recent access and retained factory call with lock(this.gate); its disabled-retention branch cannot apply here. The net10 target uses System.Threading.Lock.EnterScope, which InferSharp v1.5 does not model as Monitor locking. Per-entry materializers are constructed under lock(entry) and published with Volatile fields or volatile completion flags."
       },
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
@@ -384,7 +426,7 @@
         "line": 103,
         "fingerprint": "4a096686a961568c59f506ccfb8a1bab",
         "symbol": "RowMapper.cs|Build|THREAD_SAFETY_VIOLATION",
-        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates; concurrent initialization creates equivalent immutable delegates. RowMapper uses capacity-64 BoundedCache.GetOrCreate, whose retained factories and entries/recent mutations are under its gate. Materializer construction is under lock(entry), with Volatile Read/Write publication or volatile DirectInitialized/HybridInitialized flags."
       },
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
@@ -392,7 +434,7 @@
         "line": 113,
         "fingerprint": "2dfaa472aa12d7cdb3683452a3f58568",
         "symbol": "RowMapper.cs|Build|THREAD_SAFETY_VIOLATION",
-        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates; concurrent initialization creates equivalent immutable delegates. RowMapper uses capacity-64 BoundedCache.GetOrCreate, whose retained factories and entries/recent mutations are under its gate. Materializer construction is under lock(entry), with Volatile Read/Write publication or volatile DirectInitialized/HybridInitialized flags."
       },
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
@@ -400,7 +442,7 @@
         "line": 145,
         "fingerprint": "71be074ef515071203c65602a7b7344d",
         "symbol": "RowMapper.cs|GetHybrid|THREAD_SAFETY_VIOLATION",
-        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates; concurrent initialization creates equivalent immutable delegates. RowMapper uses capacity-64 BoundedCache.GetOrCreate, whose retained factories and entries/recent mutations are under its gate. Materializer construction is under lock(entry), with Volatile Read/Write publication or volatile DirectInitialized/HybridInitialized flags."
       },
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
@@ -408,7 +450,39 @@
         "line": 159,
         "fingerprint": "0fdac20f97eb3c199805daa3c81dc68f",
         "symbol": "RowMapper.cs|GetHybrid|THREAD_SAFETY_VIOLATION",
-        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates. Concurrent initialization only creates equivalent immutable delegates; MaterializerCache.Get executes factories and mutates cache state under its lock."
+        "reason": "The reported <>c.<>9 fields cache captureless static factory delegates; concurrent initialization creates equivalent immutable delegates. RowMapper uses capacity-64 BoundedCache.GetOrCreate, whose retained factories and entries/recent mutations are under its gate. Materializer construction is under lock(entry), with Volatile Read/Write publication or volatile DirectInitialized/HybridInitialized flags."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "src/JetDatabaseWriter/AccessWriter.cs",
+        "line": 560,
+        "fingerprint": "e3c8699192fd2e0fc682974b2a829d5e",
+        "symbol": "AccessWriter.cs|RewriteNativeSecurityAsync|PULSE_RESOURCE_LEAK",
+        "reason": "RewriteNativeSecurityAsync owns services in a synchronous using declaration spanning the awaited rewrite. WriterServices.Dispose explicitly disposes SnapshotPages, whose Dispose releases cache frame ownership. InferSharp loses the using cleanup across the async state machine; the borrowed database and pager remain owned by the caller."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "src/JetDatabaseWriter/AccessWriter.cs",
+        "line": 560,
+        "fingerprint": "53855c432d5091750b4bacc396d4f694",
+        "symbol": "AccessWriter.cs|RewriteNativeSecurityAsync|PULSE_RESOURCE_LEAK",
+        "reason": "TransactionLifecycle.mutationGate is not explicitly disposed. It is private, never exposed, and its only uses are WaitAsync and finally Release; no AvailableWaitHandle or synchronous Wait is called. It therefore owns no OS wait handle: .NET allocates that event only in AvailableWaitHandle (https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/Threading/SemaphoreSlim.cs). RunDisposalAsync serializes teardown through the same gate, and each successful acquisition releases in finally, including queued calls after teardown. The remaining gate/awaiter graph is managed and collectible; disposing the gate during teardown would conflict with pending releases."
+      },
+      {
+        "ruleId": "NULLPTR_DEREFERENCE",
+        "path": "src/JetDatabaseWriter/Maintenance/CompactActiveCatalogRows.cs",
+        "line": 202,
+        "fingerprint": "94f5b21143e04e014150da992c9a77d2",
+        "symbol": "CompactActiveCatalogRows.cs|MoveNext|NULLPTR_DEREFERENCE",
+        "reason": "The trace follows the optional null hydratedColumns argument into ScanAsync, then assumes the unsummarized IEnumerable.GetEnumerator result is null. ScanAsync iterates hydratedColumns ?? definition.Columns after guarding definition. TDefImage.Columns is an Array.AsReadOnly copy created in its constructor, so this call uses a nonnull collection and nonnull enumerator; null optional metadata is an intentional fallback."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "src/JetDatabaseWriter/WriterServices.cs",
+        "line": 36,
+        "fingerprint": "b1e2d7325caf3c2b374818df3114ec55",
+        "symbol": "WriterServices.cs|.ctor|PULSE_RESOURCE_LEAK",
+        "reason": "WriterServices transfers SnapshotPages ownership to its completed graph and Dispose explicitly closes it; AccessWriter calls this on normal teardown and failed outer initialization, and RewriteNativeSecurityAsync uses services. This constructor creates a capacity-0 ReaderPageCache and performs no page reads, so that cache has no retained frames or other disposable resources even if later graph construction throws. InferSharp treats allocating the empty managed wrapper as allocating an external resource."
       }
     ]
   }
