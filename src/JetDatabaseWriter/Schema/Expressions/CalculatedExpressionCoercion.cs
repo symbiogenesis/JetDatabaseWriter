@@ -31,6 +31,13 @@ internal static class CalculatedExpressionCoercion
         "d/M/yyyy",
     ];
 
+    private static readonly string[] AlternativeDateParseFormats = [
+        "yy/M/d",
+        "d/M/yy",
+        "d-M-yyyy",
+        "d/M/yyyy H:mm",
+    ];
+
     private static ReadOnlySpan<double> DecimalPowersOfTen =>
     [
         1d, 1E1, 1E2, 1E3, 1E4, 1E5, 1E6, 1E7, 1E8, 1E9,
@@ -775,7 +782,13 @@ internal static class CalculatedExpressionCoercion
 
         // Without NoCurrentDateDefault, text with no date part takes today's date.
         // With it, that text gets 0001-01-01, a date no Access date can have.
-        var parsed = DateTime.Parse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault);
+        const DateTimeStyles styles = DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault;
+        if (!DateTime.TryParse(text, CultureInfo.InvariantCulture, styles, out DateTime parsed)
+            && !DateTime.TryParseExact(text, AlternativeDateParseFormats, CultureInfo.InvariantCulture, styles, out parsed))
+        {
+            throw new FormatException($"'{text}' is not a valid date.");
+        }
+
         return parsed.Date == DateTime.MinValue ? TimeOnDayZero(parsed) : parsed;
     }
 
@@ -833,7 +846,9 @@ internal static class CalculatedExpressionCoercion
                 return true;
             }
 
-            if (DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault, out DateTime parsed))
+            const DateTimeStyles styles = DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault;
+            if (DateTime.TryParse(text, CultureInfo.InvariantCulture, styles, out DateTime parsed)
+                || DateTime.TryParseExact(text, AlternativeDateParseFormats, CultureInfo.InvariantCulture, styles, out parsed))
             {
                 result = parsed.Date == DateTime.MinValue ? TimeOnDayZero(parsed) : parsed;
                 return true;
