@@ -1,0 +1,69 @@
+name: Calculated native profiles
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: calculated-native-profiles-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prerequisite:
+    name: Require successful CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify the exact main revision passed CI
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/assert-ci-success.ps1
+
+  probe:
+    needs: prerequisite
+    name: Native profile (${{ matrix.culture }})
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      NATIVE_CULTURE: ${{ matrix.culture }}
+    strategy:
+      fail-fast: false
+      matrix:
+        culture: [en-US, fr-FR, de-DE, tr-TR, ja-JP, ar-SA]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install signed Microsoft Access Runtime on disposable runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP 'officedeploymenttool.exe'
+          Invoke-WebRequest 'https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20430-20146.exe' -OutFile $installer
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash -cne 'AF1594121AB610CD8ABC3DD6FF0A504E0CBC6CE54372E5C3813926352D1179C6') { throw 'Office Deployment Tool digest mismatch.' }
+          $signature = Get-AuthenticodeSignature $installer
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notlike 'CN=Microsoft Corporation,*') { throw 'Office Deployment Tool signature mismatch.' }
+          $deployment = Join-Path $env:RUNNER_TEMP 'office-deployment'
+          $extract = Start-Process $installer -ArgumentList @('/quiet', "/extract:`"$deployment`"") -WindowStyle Hidden -Wait -PassThru
+          if ($extract.ExitCode -ne 0) { throw "Office Deployment Tool extraction failed: $($extract.ExitCode)" }
+          $configuration = Join-Path $deployment 'access-runtime.xml'
+          [IO.File]::WriteAllText($configuration, '<Configuration><Add OfficeClientEdition="64" Channel="Current" Version="16.0.20527.20112"><Product ID="AccessRuntimeRetail"><Language ID="en-us"/><ExcludeApp ID="OneDrive"/></Product></Add><Display Level="None" AcceptEULA="TRUE"/></Configuration>')
+          $install = Start-Process (Join-Path $deployment 'setup.exe') -ArgumentList @('/configure', "`"$configuration`"") -WindowStyle Hidden -Wait -PassThru
+          if ($install.ExitCode -notin @(0,3010)) { throw "Access Runtime installation failed: $($install.ExitCode)" }
+      - name: Set disposable runner user regional profile
+        shell: pwsh
+        run: Set-Culture -CultureInfo $env:NATIVE_CULTURE
+      - name: Author and compact independent native controls in a fresh process
+        shell: pwsh
+        run: ./scripts/probe-calculated-native-profile.ps1 -OutputDirectory "${{ runner.temp }}/native-profile"
+      - name: Retain native controls and observations
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: calculated-native-${{ matrix.culture }}
+          path: ${{ runner.temp }}/native-profile/
+          if-no-files-found: error
+          retention-days: 30
