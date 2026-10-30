@@ -756,4 +756,20 @@ caller-field/storage conversions and broader native context/representation quali
 
 ## Literal Unicode markers in Text
 
+
 Ordinary variable Text with Unicode compression disabled stores plain UTF-16, including literal FF FE at the beginning. Row, string, POCO and write-back decoding use that column storage rule. Calculated Text still permits compressed Unicode inside its envelope. Its dedicated decoder accepts the verified terminal low-byte form; ordinary Text and Memo retain separate decoding rules pending their own native controls. Native controls preserve leading U+FEFF in a cached Latin-1 string using an escaped compressed payload; other controlled native cached values lose or reinterpret that marker. A source field's original text is not authority to invent a different cached result. Raw compact assembly preserves each observed envelope without recalculation. Writers reproduce the native calculated cache conversion and project dependent expressions through the stored value. Ordinary compressed variable Text supports an independently verified 6 through 255-unit escape: an optional contiguous nonsurrogate wide prefix with nonzero low bytes precedes at least four nonzero Latin-1 units; without a wide prefix at least five Latin-1 units follow the marker. The complete value fits the declared character limit. Short values/tails, NUL, low-byte-zero wide units, surrogates and wide units after the Latin-1 tail remain refused. Native DAO3.6 Jet4 read/update/compact and frozen native-row fixtures establish that ordinary subset; fresh DAO120 confirmation remains separate.
+## Financial functions
+
+FV, PV, Pmt, NPer, IPmt, PPmt, DDB, SLN, SYD and Rate use the measured ACE
+parameter domains and arithmetic order. Payment timing rounds half to even to
+a signed Integer before selecting beginning/end timing. Invalid cash-flow
+combinations and nonconvergent Rate calculations report evaluation failures;
+Rate uses a bounded forty-step secant search. Native financial Infinity and NaN
+results remain Double values rather than ordinary Null or numeric overflow.
+
+`CalculatedExpressionFinancialTests` freezes independent native normal,
+boundary and nonfinite results and invalid domains, repeats fresh ACE queries,
+and verifies native calculated caches through writer recomputation, native
+updates and compact. The bounded Rate algorithm adapts the MIT-licensed .NET
+implementation named in THIRD-PARTY-NOTICES.md; other operations preserve the
+independently measured Access order where it differs from .NET.

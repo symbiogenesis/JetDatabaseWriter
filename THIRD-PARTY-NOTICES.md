@@ -113,7 +113,7 @@ https://github.com/microsoft/Extensible-Storage-Engine/blob/master/LICENSE.
 
 Copyright (c) Microsoft Corporation.
 
-## Microsoft .NET runtime numeric conversion
+## Microsoft .NET runtime numeric conversion and financial functions
 
 The floating-to-Decimal and Decimal-to-floating expression coercion in
 `src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionCoercion.cs` adapts
@@ -124,7 +124,14 @@ construction, limb/scale conversion and explicit native precision rules without
 runtime layout access.
 This adds no runtime dependency on the .NET 10 implementation.
 
+The bounded Rate convergence algorithm in
+`src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionFinancialFunctions.cs`
+also adapts `Microsoft.VisualBasic.Core`'s `Financial.vb`, pinned to commit
+`2201016c1e13bdb9abf49e2e38cadf4ee0568df2`. The other financial operations retain
+independently measured Access behavior where it differs from .NET.
+
 Source: https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/Decimal.DecCalc.cs
+Financial source: https://github.com/dotnet/runtime/blob/2201016c1e13bdb9abf49e2e38cadf4ee0568df2/src/libraries/Microsoft.VisualBasic.Core/src/Microsoft/VisualBasic/Financial.vb
 License: https://github.com/dotnet/runtime/blob/v10.0.0/LICENSE.TXT
 
 ```
