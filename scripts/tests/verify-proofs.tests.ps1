@@ -297,6 +297,8 @@ try {
                 $call.Arguments -contains '--library' -or $call.Arguments -contains '--dont-verify-dependencies' -or $call.Arguments -contains '--allow-warnings' -or
                 $analysis.acceptanceEvidence -ne $false -or $analysis.dafny -cne $coverageToolchain.versionOutput -or
                 $analysis.solver -cne $coverageToolchain.solver.versionOutput -or $analysis.proofs.Count -ne 3 -or
+                $analysis.scope -cne 'complete-inventory' -or $analysis.requestedSources.Count -ne 0 -or
+                ($analysis.dependencyClosure -join ',') -cne 'verification/Good.dfy,verification/RecoveryKernel.dfy,verification/LongValueKernel.dfy' -or
                 $analysis.status -cne $(if ($case -eq 'warnings') { 'warnings' } else { 'complete' }) -or
                 $analysis.warnings.Count -ne $(if ($case -eq 'warnings') { 1 } else { 0 }) -or
                 -not [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw 'Coverage diagnostics changed trust, pins or status.' }
@@ -308,6 +310,78 @@ try {
             }
             if (($coverageCalls | Where-Object Name -EQ 'RecoveryKernel.translate').Dependencies -notcontains $coverageFiles[0]) { throw 'Kernel dependency verification changed.' }
         }
+    }
+    Assert-Scenario 'coverage source closure follows transitive normal dependencies in manifest order' {
+        $baseFile = Join-Path $coverageRoot 'verification/Base.dfy'
+        $files = @($baseFile) + $coverageFiles
+        $dependencies = @{ $coverageFiles[1] = @($coverageFiles[0]); $coverageFiles[0] = @($baseFile) }
+        $selected = Get-ProofCoverageFiles $coverageRoot $files $dependencies @('verification/RecoveryKernel.dfy')
+        if (($selected -join ',') -cne (($files | Select-Object -First 3) -join ',')) { throw 'Transitive coverage dependency closure or ordering changed.' }
+    }
+    foreach ($selection in @(
+        @{ name = 'independent'; requested = @('verification/LongValueKernel.dfy'); expected = @('verification/LongValueKernel.dfy') },
+        @{ name = 'dependent'; requested = @('verification/RecoveryKernel.dfy'); expected = @('verification/Good.dfy', 'verification/RecoveryKernel.dfy') },
+        @{ name = 'multiple'; requested = @('verification/LongValueKernel.dfy', 'verification/RecoveryKernel.dfy'); expected = @('verification/Good.dfy', 'verification/RecoveryKernel.dfy', 'verification/LongValueKernel.dfy') }
+    )) {
+        Assert-Scenario "selected $($selection.name) coverage leaves every strict source checked" {
+            $coverageCase = 'clean'
+            $coverageCalls.Clear()
+            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-selected-coverage-' + [guid]::NewGuid().ToString('N'))
+            Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true $selection.requested
+            $analysis = [IO.File]::ReadAllText((Join-Path $output 'proof-coverage.json')) | ConvertFrom-Json
+            $call = $coverageCalls[-1]
+            $normalSources = @($call.Arguments | Where-Object { $_ -cmatch '\.dfy$' })
+            $expectedPaths = @($selection.expected | ForEach-Object { Join-Path $coverageRoot $_ })
+            if ($analysis.scope -cne 'selected' -or $analysis.acceptanceEvidence -ne $false -or
+                ($analysis.requestedSources -join ',') -cne ($selection.requested -join ',') -or
+                ($analysis.dependencyClosure -join ',') -cne ($selection.expected -join ',') -or
+                ($analysis.proofs.file -join ',') -cne ($selection.expected -join ',') -or
+                ($normalSources -join ',') -cne ($expectedPaths -join ',')) { throw 'Selected coverage lost its exact source/dependency scope.' }
+            $strict = @($coverageCalls | Where-Object Name -EQ 'inventory.verify')
+            foreach ($file in $coverageFiles) {
+                if ($strict.Count -ne 1 -or $strict[0].Arguments -notcontains $file) { throw 'Diagnostic selection narrowed the strict manifest.' }
+            }
+            foreach ($proof in $analysis.proofs) {
+                if ($proof.sha256 -cne (Get-FileHash -LiteralPath (Join-Path $coverageRoot $proof.file) -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'Selected source hash changed.' }
+            }
+        }
+    }
+    foreach ($selection in @(
+        @{ name = 'unknown'; requested = @('verification/Unknown.dfy') },
+        @{ name = 'escaping'; requested = @('verification/../LongValueKernel.dfy') },
+        @{ name = 'absolute'; requested = @($coverageFiles[2]) },
+        @{ name = 'case-mismatched'; requested = @('verification/longvaluekernel.dfy') },
+        @{ name = 'duplicate'; requested = @('verification/LongValueKernel.dfy', 'verification/LongValueKernel.dfy') },
+        @{ name = 'empty'; requested = [string[]]@() }
+    )) {
+        Assert-Scenario "invalid $($selection.name) coverage selection refuses before proof execution" {
+            $coverageCalls.Clear()
+            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-invalid-selection-' + [guid]::NewGuid().ToString('N'))
+            $caught = $null
+            try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true $selection.requested } catch { $caught = $_.Exception.Message }
+            if (-not $caught -or @($coverageCalls | Where-Object { $_.Name -in 'inventory.verify', 'proof-coverage.verify', 'negative-false' }).Count -ne 0 -or
+                [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw 'Invalid coverage selection was accepted or reached verification.' }
+        }
+    }
+    Assert-Scenario 'coverage source selection requires explicit diagnostic mode' {
+        $coverageCalls.Clear()
+        $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-selection-without-mode-' + [guid]::NewGuid().ToString('N'))
+        $caught = $null
+        try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $false @('verification/LongValueKernel.dfy') } catch { $caught = $_.Exception.Message }
+        if (-not $caught -or $caught -notmatch 'AnalyzeProofCoverage' -or $coverageCalls.Count -ne 0 -or
+            [IO.Directory]::Exists($output)) { throw 'Source selection silently enabled diagnostics or was ignored.' }
+    }
+    Assert-Scenario 'focused analysis still refuses drift in nonselected mandatory sources' {
+        $coverageCase = 'source-change'
+        $originalSource = [IO.File]::ReadAllText($coverageFiles[0])
+        $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-nonselected-drift-' + [guid]::NewGuid().ToString('N'))
+        $caught = $null
+        try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true @('verification/LongValueKernel.dfy') } catch { $caught = $_.Exception.Message }
+        finally { [IO.File]::WriteAllText($coverageFiles[0], $originalSource) }
+        $analysis = [IO.File]::ReadAllText((Join-Path $output 'proof-coverage.json')) | ConvertFrom-Json
+        if (-not $caught -or $caught -notmatch 'Proof source changed' -or $analysis.status -cne 'failed' -or
+            $analysis.proofs.Count -ne 1 -or $analysis.proofs[0].file -cne 'verification/LongValueKernel.dfy' -or
+            [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw 'Focused analysis hid a change to the complete strict inventory.' }
     }
     foreach ($case in 'errors', 'empty', 'missing-summary', 'unexplained-exit', 'error-diagnostic', 'missing-reports', 'timeout', 'launch', 'source-change') {
         Assert-Scenario "requested coverage rejects $case and retains failure status" {
