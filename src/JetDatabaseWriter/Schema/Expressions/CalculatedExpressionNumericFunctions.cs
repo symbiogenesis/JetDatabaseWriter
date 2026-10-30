@@ -20,7 +20,7 @@ internal static class CalculatedExpressionNumericFunctions
         AddFunction(functions, "EXP", 1, 1, static function => Math.Exp(ToDouble(function.Arg(0))));
         AddFunction(functions, "LOG", 1, 1, static function => Math.Log(ToDouble(function.Arg(0))));
         AddFunction(functions, "RND", 0, 1, static function => function.Context.NextRandom(function.Count > 0 ? function.Arg(0) : DBNull.Value));
-        AddFunction(functions, "SGN", 1, 1, static function => Math.Sign(ToDecimal(function.Arg(0))));
+        AddFunction(functions, "SGN", 1, 1, static function => EvaluateSign(function.Arg(0)));
         AddFunction(functions, "SIN", 1, 1, static function => Math.Sin(ToDouble(function.Arg(0))));
         AddFunction(functions, "SQR", 1, 1, static function => Math.Sqrt(ToDouble(function.Arg(0))), "SQRT");
         AddFunction(functions, "TAN", 1, 1, static function => Math.Tan(ToDouble(function.Arg(0))));
@@ -137,6 +137,8 @@ internal static class CalculatedExpressionNumericFunctions
 
     private static object EvaluateAbsolute(object value) => value switch
     {
+        DBNull or null => DBNull.Value,
+        DateTime date => FromOleDate(Math.Abs(date.ToOADate())),
         AccessCurrency currency => AccessCurrency.FromDecimal(Math.Abs(currency.Value)),
         bool boolean => (short)(boolean ? 1 : 0),
         byte number => (short)number,
@@ -151,6 +153,16 @@ internal static class CalculatedExpressionNumericFunctions
 
     private static object EvaluateIntegral(object value, bool truncate)
     {
+        if (IsNull(value))
+        {
+            return DBNull.Value;
+        }
+
+        if (value is DateTime date)
+        {
+            return FromOleDate(truncate ? Math.Truncate(date.ToOADate()) : Math.Floor(date.ToOADate()));
+        }
+
         if (value is AccessCurrency currency)
         {
             return AccessCurrency.FromDecimal(truncate ? Math.Truncate(currency.Value) : Math.Floor(currency.Value));
@@ -185,5 +197,16 @@ internal static class CalculatedExpressionNumericFunctions
 
         decimal number = ToDecimal(value);
         return truncate ? Math.Truncate(number) : Math.Floor(number);
+    }
+
+    private static object EvaluateSign(object value)
+    {
+        if (IsNull(value))
+        {
+            return DBNull.Value;
+        }
+
+        double number = value is DateTime date ? date.ToOADate() : ToDouble(value);
+        return (short)Math.Sign(AccessVariantOperators.Finite(number));
     }
 }

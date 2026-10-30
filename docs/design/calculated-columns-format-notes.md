@@ -669,6 +669,13 @@ calculated Currency caches through writer/native updates and native compact.
 Text uses exact current ACE formatting at Currency boundaries. DAO3.6's older
 extreme Currency-to-text rounding differs and remains separate engine evidence.
 
+Abs, Sgn, Int and Fix preserve ordinary Null. Sgn returns a signed Integer and
+accepts finite Double values outside Decimal range and Date serials. Abs, Int
+and Fix preserve Date results, applying their operations to the OLE serial.
+`CalculatedExpressionNumericNullTests` compares fresh ACE queries and calculated
+cached values through writer updates, native reads and compact. Other numeric
+functions have distinct native Null/error behavior and do not inherit this rule.
+
 ### Round
 
 `Round` retains the measured native Single/Double/Integer/Long/Date subtype;
