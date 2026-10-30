@@ -24,6 +24,12 @@ records withdrawals, repairs and formalization changes. Counts and status here
 describe the material read on the survey date; check individual revisions
 before relying on a result.
 
+Catalog screening means reviewing the family descriptions for a matching
+computational problem, then examining selected papers and formalization scopes;
+it does not mean checking all 721 manuscripts. This literature review did not
+rerun the upstream Lean or Rocq artifacts. Publisher-reported verification,
+independent examination and this repository's own CI evidence remain separate.
+
 Distinguish these forms of evidence:
 
 - A manuscript's theorem and hypotheses, including its computational model.
@@ -37,6 +43,17 @@ allocation reduction or Microsoft Access compatibility. A proof-generation
 benchmark does not establish the correctness of a generated repository proof.
 The [formal boundary](formal-verification.md), [scope inventory](verification-scope.md)
 and [evidence map](verification-evidence-map.md) define the library's claims.
+
+The current applicability decisions, in order of practical relevance, are:
+
+| Opportunity | Expected benefit and next evidence |
+|---|---|
+| Reuse ordered runs before general stable sorting | Existing splice measurements establish a named allocation benefit. I12 still owns public timing acceptance; a full sorting implementation needs a remaining measured bottleneck. |
+| Compose exact visited-table operations with their caller | Integrity and explicit resource bounds under V8/S1. Include adversarial probe work, growth overlap and cancellation; exact membership alone is insufficient. |
+| Fixed-contract proof repair and dependency review | Less proof-maintenance work under V6/V12, while preserving supported behavior and independently reviewed specifications. A benchmark solve rate is not repository acceptance. |
+| Compact metadata and cache accounting | Possible allocation reductions under I7/I17/S1. Compare existing disk ledgers, ranges and bitmaps first; account for in-flight and leased storage as well as retained entries. |
+| Proactive B-tree splitting | A later I2/V9 experiment after native byte-capacity and ownership invariants, incremental edits and workload evidence exist. |
+| SAT, matrix arithmetic and unrelated pure mathematics | No matching production bottleneck or demonstrated drop-in improvement. Keep their theorem statements separate from practical performance claims. |
 
 ## Results with concrete repository applications
 
@@ -155,6 +172,16 @@ any source array in distinct, larger, initially zero-filled storage. The
 wrapper supplies absent identities and maintains the half-load growth policy;
 those caller obligations remain manually reviewed rather than proved.
 
+Resource composition must also count work inside an insertion. `Add` performs
+a membership probe, possible rehash, and insertion probe using deterministic
+hashing. Half occupancy does not bound every collision cluster by a constant.
+The containing `LongValueStore.CopyPayloadAsync` checks cancellation between
+rows; the synchronous probe and rehash loops run inside one row. Under V8/S1,
+assess total probes and cancellation latency on colliding valid identities,
+and count both arrays while growth holds the old and new tables. A terminating
+array loop and a row limit do not establish a useful latency bound. Preserve
+exact cycle refusal when evaluating any alternative representation.
+
 V8 owns the remaining composition into the full named parser. Validate the
 exact source using the integrity-pinned verifier, audit, negative controls and
 generated freshness, then exercise production collision, growth, duplicate and
@@ -217,6 +244,37 @@ Its measured models are not a universal limit. It supports V6/V12's separate
 obligation to compose parsing, admission, effects and recovery through the
 executing controller. Successful isolated lemmas do not discharge that work.
 
+### Fixed-contract repair and compiler trust
+
+[AxDafny](https://arxiv.org/abs/2606.32007v1), a June 30 preprint from Axiomatic
+AI, evaluates iterative synthesis of implementations and proof annotations.
+Its separate evaluation of programs compiled to Python finds that verified
+programs can still exceed resource limits: functional contracts need not
+specify complexity.
+Its static preservation check retains the original `requires` and `ensures`
+clauses as a subset. Consequently, that check alone cannot reject an added
+precondition that excludes supported inputs. The paper additionally uses
+model-based review.
+
+Transfer the repair loop, not its acceptance predicate. For V6/V8/V12, fix
+reviewed entry domains, guarantees and semantic helper definitions before
+annotation search; inspect added preconditions and changes to executable work
+separately. Retain successful supported-input witnesses as well as refusal
+controls. Specify resource counters when a resource bound is the intended
+claim, then qualify allocations and timing on the executing managed path.
+An automated reviewer does not replace the repository's trust review.
+
+[Verified VCG and Verified Compiler for Dafny](https://arxiv.org/abs/2512.05262v1)
+is CPP 2026 work, first submitted December 4, 2025. Its HOL4 development proves
+a verification-condition generator and compilation to CakeML for an imperative
+Dafny subset with arrays, loops and mutually recursive calls. This is relevant
+to V12's residual-trust inventory, but it does not verify the pinned upstream
+Dafny-to-C# compiler, the repository's projection, Roslyn or .NET. It therefore
+does not reduce the current shipping trust boundary. Reconsider only if a
+checked translation covers the exact source subset and managed output without
+changing the library's targets or runtime dependencies; introducing a second
+shipping engine would add an unrelated maintenance obligation.
+
 ### B-tree edits and bounded structural work
 
 [Towards a B+-tree with Fluctuation-Free Performance](https://arxiv.org/abs/2603.04785v2),
@@ -255,6 +313,37 @@ queries, cancellation and scratch construction in the comparison. Internal
 metadata can change; Access's prescribed usage-map encoding cannot be replaced
 by a research representation. No alternative is selected without evidence.
 
+Use the existing immutable path as a concrete baseline:
+[CompactRowRelocationMap](../../src/JetDatabaseWriter/Maintenance/CompactRowRelocationMap.cs)
+validates strictly increasing source and destination bookmarks and searches a
+disk-capable fixed-width ledger with one eight-byte scratch buffer.
+[CompactRawIndexBuilder](../../src/JetDatabaseWriter/Maintenance/CompactRawIndexBuilder.cs)
+already streams sorted keys and supports disk-backed level fences. A dynamic
+dictionary does not automatically improve immutable metadata. Compare disk bytes, seeks,
+construction scratch and decode work as well as retained managed bytes, and
+preserve bookmark order because it controls equal-key tie order.
+
+### Cache movement versus live storage
+
+OpenAI's [randomized k-server formalization scope](https://github.com/openai/math/blob/main/lean/docs/110.md)
+gives an `O(log^2(k+1))` competitive movement bound against oblivious finite
+request sequences. Its uniform finite-rational-metric algorithm has polynomial
+preprocessing and per-request bit cost, with an instance-dependent additive
+movement constant. These are not constant-time cache operations or bounds on
+the memory occupied by live page images.
+
+[LruCache](../../src/JetDatabaseWriter/Infrastructure/LruCache.cs) implements a
+CLOCK approximation rather than strict LRU. In
+[ReaderPageCache](../../src/JetDatabaseWriter/Pages/ReaderPageCache.cs), the
+non-`Pager` miss path loads outside the cache lock, so overlapping misses can
+create multiple images of one page; a displaced leased image remains live.
+`Pager` serializes its loads through `frameGate`, which must be represented
+separately. I7/V10 accounting therefore needs retained frames, displaced leased
+frames, in-flight loads, row directories and lease objects. Measure duplicate
+reader misses, invalidation, cancellation and abandoned enumeration before
+selecting an eviction or request-coalescing change. The k-server theorem alone
+does not justify replacing CLOCK or establish an allocation improvement.
+
 ## Headline results and unsuitable transfers
 
 ### Exponential Time Hypothesis
@@ -266,6 +355,13 @@ Impagliazzo, Paturi and Williams. The
 states exact fixed-width CNF counting in subexponential time and polynomial
 space. Its time bound is weaker than the sharper October 25 manuscript's
 bound. These scopes must be cited separately.
+
+In the formalized bound, `k >= 2` is fixed and `L` is the canonical input's
+bit length: time is `(L+1)^{O_k(1)} * 2^{O_k(n (log log n)^2 / sqrt(log n))}`
+with polynomial tape space. The manuscript removes one `log log n` factor
+from that exponent, and removes the other for `m <= Dn` with fixed `D`.
+The announced independent examination is a review process, not a published
+verdict or a benchmark of an executable SAT solver.
 
 The production library does not solve SAT, and its development verifier does
 not acquire a practical solver improvement merely from this theorem.
@@ -279,11 +375,11 @@ identified workload and computational model.
 
 | Primary result and status on the survey date | Repository decision |
 |---|---|
-| [Optimal-order randomized k-server](https://github.com/openai/math/blob/main/lean/docs/110.md), September manuscript and Lean scope | The general-metric competitive bound does not demonstrate a better eviction policy for the present cache. Revisit only with a matching heterogeneous cost model and measured benefit; include pinned images and lease ownership in I7. |
+| [Optimal-order randomized k-server](https://github.com/openai/math/blob/main/lean/docs/110.md), September manuscript and Lean scope | See [cache movement versus live storage](#cache-movement-versus-live-storage). The metric movement bound does not supply the current cache's aggregate memory or ownership contract. |
 | [Unbounded bin-packing configuration-LP gaps](https://github.com/openai/math/blob/main/lean/docs/118.md), September manuscript and Lean scope | Useful caution for I17: a configuration-LP estimate has no universal fixed additive guarantee in the theorem's general setting. It supplies no faster compact implementation or lower bound specialized to fixed-size Access pages. |
 | [Braided cuckoo hashing](https://arxiv.org/abs/2610.33229v1), October 23 preprint, stated to appear at SODA 2027 | Its near-full-table high-probability bounds assume a specified randomized model and operation sequence. The deterministic half-full visited set does not inherit them. No table replacement is selected. |
 | [Near-Optimal In-Place Sorting](https://arxiv.org/abs/2607.27040v2), July 29 preprint, revised October 11 | Its main algorithms are unstable. Direct use violates splice/query tie contracts. Ordinal decoration costs storage; consider only at independently justified unstable-sort sites. |
-| [Space-Efficient Lock-Free Linear-Probing Hash Table](https://arxiv.org/abs/2606.17315), June 15 preprint | Linearizability and lock-freedom do not establish cache eviction, pinning or publication semantics. Its complexity assumptions require separate review. No concurrency is needed in the per-traversal visited set. |
+| [Space-Efficient Lock-Free Linear-Probing Hash Table](https://arxiv.org/abs/2606.17315v1), June 15 preprint | Its expected amortized step analysis assumes no concurrent insertions of the same key and depends on point contention. Reader misses can target the same page; table linearizability also does not establish frame ownership, eviction or publication. No concurrency is needed in the per-traversal visited set. |
 | [Locality in Open Addressing Hash Tables](https://arxiv.org/abs/2607.16390), July 17 preprint | High-occupancy probe/locality tradeoffs caution against saving array space by raising load without measuring collision behavior. The current half-occupancy policy remains. |
 | [Consensus for Compressed Static Functions](https://arxiv.org/abs/2609.39557), September 30 preprint | Queries outside the fixed domain can return arbitrary values. This cannot replace exact ownership, corruption or visited-set membership. |
 | [The Case for Synthesized Data Compression](https://arxiv.org/abs/2610.09913), October 7 experimental proposal | Dataset-specific compression measurements are not a universal codec theorem. Prescribed native encodings and arbitrary-input parser safety exclude using synthesized code carried in database data. |
@@ -320,6 +416,9 @@ levels. See the [proof review procedure](proof-trust-review.md) and
 
 ## Acceptance and plan ownership
 
+The implementation results below belong to the named revisions. The literature
+review and documentation refinements add no new execution or benchmark evidence.
+
 The [integration CI gate](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/41108919138)
 passed for `33668cee06fcd74c0ec04f825fc049f61ed61638`. All 26 expected checks
 passed, including the fifteen test partitions across the three runtime/library
@@ -332,10 +431,10 @@ scope and native/platform evidence limits described above.
 
 | Existing plan owner | Research-informed work and acceptance |
 |---|---|
-| V8/S1 | Exact visited-set operations composed with count/growth, acquisition and the containing parser's complete resource/ownership bounds. Production executes generated verified behavior or a checked refinement. |
+| V8/S1 | Exact visited-set operations composed with count/growth, acquisition and the containing parser's complete resource/ownership bounds, including collision probes, rehash overlap and cancellation latency. Production executes generated verified behavior or a checked refinement. |
 | V12 | Review the pinned verifier's dependency diagnostics against independent examples. Consider optional ProofPulse only for a concrete attribution gap and demonstrate exact-pin compatibility. Preserve ordinary verification and negative controls; coverage alone cannot promote a guarantee. |
 | I2/V9/I13 | Stable splice behavior and verified native incremental edits before proactive splitting. Retain fallback contracts, ordering, ownership, byte-capacity and DAO checks. |
-| I7/S1/I17 | Evidence-led metadata representations with aggregate accounting, including pinned/evicted images, live leases and simultaneous traversals. |
+| I7/S1/I17 | Evidence-led metadata representations with aggregate accounting, including pinned/evicted images, in-flight loads, live leases and simultaneous traversals; compare immutable disk-ledger and simple bitmap/range baselines before dynamic compression. |
 | I9 | Rounded-bound seek inference requires a separate no-false-negatives proof under native numeric semantics and preserved predicate evaluation. None of the surveyed asymptotic results discharges it. |
 | I12 | Settled-main CI and hosted paired measurements with allocation controls and representative workload shapes before accepting performance claims. |
 
