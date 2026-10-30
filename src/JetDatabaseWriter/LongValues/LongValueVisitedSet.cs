@@ -13,6 +13,7 @@ internal struct LongValueVisitedSet
     /// <param name="pointer">The nonzero external-row identity.</param>
     /// <returns>Whether the identity was absent.</returns>
     /// <exception cref="JetLimitationException">The bounded tracking capacity is exhausted.</exception>
+    /// <exception cref="JetOperationException">The table violates its insertion capacity invariant.</exception>
     internal bool Add(uint pointer)
     {
         if (pointer == 0 || (this.entries is not null && LongValueKernel.ContainsVisited(this.entries, pointer)))
