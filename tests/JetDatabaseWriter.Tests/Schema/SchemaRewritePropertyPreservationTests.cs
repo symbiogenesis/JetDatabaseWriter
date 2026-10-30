@@ -10,7 +10,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
@@ -141,8 +140,8 @@ public sealed class SchemaRewritePropertyPreservationTests
         return data;
     }
 
-    /// <summary>Gets causal lookup dependencies across formats, modes and schema edits.</summary>
-    public static TheoryData<DatabaseFormat, WriteMode, string, string> LookupPropertyRefusals()
+    /// <summary>Gets lookup preservation cases across formats, modes and schema edits.</summary>
+    public static TheoryData<DatabaseFormat, WriteMode, string, string> LookupPropertyCases()
     {
         var data = new TheoryData<DatabaseFormat, WriteMode, string, string>();
         foreach (DatabaseFormat format in Enum.GetValues<DatabaseFormat>())
@@ -151,7 +150,7 @@ public sealed class SchemaRewritePropertyPreservationTests
             {
                 foreach (string operation in new[] { "rename", "drop", "table" })
                 {
-                    foreach (string source in new[] { "T", "SELECT [T].[Id] FROM [T] WHERE 'private-token' = 'x'" })
+                    foreach (string source in new[] { "T", "SELECT X.Id, X.Note FROM T AS X", "SavedLookup", "OpaqueProvider('T')", "[unterminated" })
                     {
                         data.Add(format, mode, operation, source);
                     }
@@ -637,14 +636,14 @@ public sealed class SchemaRewritePropertyPreservationTests
         Assert.Equal(before, Assert.Single(await ReadTargetsAsync(ms, "T"), target => target.Name.Length == 0));
     }
 
-    /// <summary>Dependent lookups in another table refuse name edits before any write.</summary>
+    /// <summary>Dependent and opaque lookup source text survives native-style schema edits.</summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">The write mode.</param>
     /// <param name="operation">The schema edit.</param>
     /// <param name="source">The lookup source.</param>
     [Theory]
-    [MemberData(nameof(LookupPropertyRefusals))]
-    public async Task SchemaRewrite_LookupSource_RefusesWithoutChangingBytes(DatabaseFormat format, WriteMode mode, string operation, string source)
+    [MemberData(nameof(LookupPropertyCases))]
+    public async Task SchemaRewrite_LookupSource_PreservesProperties(DatabaseFormat format, WriteMode mode, string operation, string source)
     {
         await using MemoryStream ms = await CreateDatabaseAsync(format);
         await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
@@ -659,22 +658,11 @@ public sealed class SchemaRewritePropertyPreservationTests
             target.AddText("RowSourceType", "Table/Query", JetFormat.ForNewDatabase(format));
             target.AddText("RowSource", source, JetFormat.ForNewDatabase(format));
         });
-        byte[] before = ms.ToArray();
-        async Task CheckAsync(AccessWriter writer)
-        {
-            JetOperationException failure = await Assert.ThrowsAsync<JetOperationException>(() => RunLookupEditAsync(writer, operation));
-            Assert.Equal(JetErrorCode.FeatureNotSupported, failure.ErrorCode);
-            Assert.Equal("T", failure.ErrorInfo.TableName);
-            Assert.Contains("Lookup", failure.Message, StringComparison.Ordinal);
-            Assert.Contains("RowSource", failure.Message, StringComparison.Ordinal);
-            Assert.DoesNotContain("private-token", failure.Message, StringComparison.Ordinal);
-            Assert.Equal(before, ms.ToArray());
-            await writer.InsertRowAsync("T", [1, 2], Ct);
-        }
-
-        await RunRewriteAsync(ms, mode, CheckAsync);
+        List<TargetView> before = await ReadTargetsAsync(ms, "Lookup");
+        await RunRewriteAsync(ms, mode, writer => RunLookupEditAsync(writer, operation));
+        AssertSameTargets(before, await ReadTargetsAsync(ms, "Lookup"));
         await using AccessReader reader = await OpenReaderAsync(ms);
-        Assert.Equal(1, await reader.GetRealRowCountAsync("T", Ct));
+        Assert.Equal(2, (await reader.GetColumnMetadataAsync("Lookup", Ct)).Count);
     }
 
     /// <summary>Value lists and references to other tables retain their raw lookup properties.</summary>
@@ -734,9 +722,9 @@ public sealed class SchemaRewritePropertyPreservationTests
         }
     }
 
-    /// <summary>Added columns preserve a surviving lookup, and case-only renames still refuse.</summary>
+    /// <summary>Added columns and case-only renames preserve surviving lookup text.</summary>
     [Fact]
-    public async Task SchemaRewrite_SurvivingLookup_AddPreservesAndCaseOnlyRenameRefuses()
+    public async Task SchemaRewrite_SurvivingLookup_AddAndCaseOnlyRenamePreserve()
     {
         await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet4Mdb);
         await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
@@ -748,12 +736,13 @@ public sealed class SchemaRewritePropertyPreservationTests
         List<TargetView> before = await ReadTargetsAsync(ms, "T");
         await RunRewriteAsync(ms, WriteMode.Direct, writer => writer.AddColumnAsync("T", new ColumnDefinition("Added", typeof(int)), Ct));
         AssertSameTargets(before, await ReadTargetsAsync(ms, "T"));
-        await AssertDisplayPropertyRefusalAsync(ms, WriteMode.Direct, writer => writer.RenameColumnAsync("T", "Note", "note", Ct).AsTask());
+        await RunRewriteAsync(ms, WriteMode.Direct, writer => writer.RenameColumnAsync("T", "Note", "note", Ct).AsTask());
+        AssertSameTargets(before, await ReadTargetsAsync(ms, "T"));
     }
 
-    /// <summary>Later repeated source entries and contradictory source types cannot hide a dependency.</summary>
+    /// <summary>Repeated source entries and contradictory source types retain their raw bytes.</summary>
     [Fact]
-    public async Task SchemaRewrite_RepeatedLookupProperties_RefusesWithoutChangingBytes()
+    public async Task SchemaRewrite_RepeatedLookupProperties_PreservesEntries()
     {
         await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet4Mdb);
         await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
@@ -770,8 +759,11 @@ public sealed class SchemaRewritePropertyPreservationTests
             target.AddText("RowSourceType", "Table/Query", format);
             target.AddText("RowSource", "Other", format);
             target.AddText("RowSource", "T", format);
+            target.Entries.Add(new ColumnPropertyEntryBuilder { Name = "RowSource", DataType = ColumnType.OleType, DdlFlag = 0xA5, Value = [0xFF, 0x00, 0x82] });
         });
-        await AssertDisplayPropertyRefusalAsync(ms, WriteMode.Direct, writer => writer.DropTableAsync("T", Ct).AsTask());
+        List<TargetView> before = await ReadTargetsAsync(ms, "Lookup");
+        await RunRewriteAsync(ms, WriteMode.Direct, writer => writer.DropTableAsync("T", Ct).AsTask());
+        AssertSameTargets(before, await ReadTargetsAsync(ms, "Lookup"));
     }
 
     private static Task RunLookupEditAsync(AccessWriter writer, string operation) => operation switch
@@ -781,20 +773,6 @@ public sealed class SchemaRewritePropertyPreservationTests
         "table" => writer.DropTableAsync("T", Ct).AsTask(),
         _ => throw new ArgumentOutOfRangeException(nameof(operation)),
     };
-
-    private static async Task AssertDisplayPropertyRefusalAsync(MemoryStream ms, WriteMode mode, Func<AccessWriter, Task> rewrite)
-    {
-        byte[] before = ms.ToArray();
-        async Task CheckAsync(AccessWriter writer)
-        {
-            JetOperationException failure = await Assert.ThrowsAsync<JetOperationException>(() => rewrite(writer));
-            Assert.Equal(JetErrorCode.FeatureNotSupported, failure.ErrorCode);
-            Assert.Equal(before, ms.ToArray());
-        }
-
-        await RunRewriteAsync(ms, mode, CheckAsync);
-        Assert.Equal(before, ms.ToArray());
-    }
 
     private static string RewriteSalary(string entry)
     {

@@ -139,15 +139,9 @@ internal sealed class TableRewritePlanner(
 
         // Project the stored properties onto the new columns, and serialize them,
         // before anything is written: the rebuilt table's catalog row carries them.
-        foreach (ColumnDefinition column in existingDefs)
-        {
-            if (!string.Equals(column.Name, mapColumnName(column.Name), StringComparison.Ordinal))
-            {
-                await this.ThrowIfLookupDependenciesUnmaintainableAsync(tableName, column.Name, mapColumnName, cancellationToken).ConfigureAwait(false);
-                break;
-            }
-        }
-
+        // DAO retains lookup RowSource and saved-query text even when a schema
+        // edit leaves stale references. Preserve those definitions without parsing
+        // or executing them; enforced row-local rules retain their checks below.
         originalProperties = this.ProjectTableRuleReferences(tableName, originalProperties, existingDefs, mapColumnName);
 
         // Capture the table's relationship state, and refuse to drop a
@@ -541,94 +535,6 @@ internal sealed class TableRewritePlanner(
                 row[i] = value;
             }
         }
-    }
-
-    /// <summary>Refuses edits that would leave a surviving lookup naming the changed table.</summary>
-    /// <param name="tableName">The changed table.</param>
-    /// <param name="columnName">The changed column, or null when dropping the table.</param>
-    /// <param name="mapColumnName">The column projection, or null when dropping the table.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The completed dependency check.</returns>
-    /// <exception cref="JetOperationException">A surviving lookup source names the changed table.</exception>
-    /// <exception cref="JetCorruptDataException">A lookup owner's table definition cannot be read.</exception>
-    internal async ValueTask ThrowIfLookupDependenciesUnmaintainableAsync(string tableName, string? columnName, Func<string, string?>? mapColumnName, CancellationToken cancellationToken)
-    {
-        foreach (CatalogEntry owner in await catalog.GetUserTablesAsync(cancellationToken).ConfigureAwait(false))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            bool sameTable = string.Equals(owner.Name, tableName, StringComparison.OrdinalIgnoreCase);
-            if (sameTable && columnName is null)
-            {
-                continue;
-            }
-
-            ColumnPropertyBlock? properties = await snapshots.ReadLvPropBlockAsync(owner.TDefPage, cancellationToken).ConfigureAwait(false);
-            if (properties is null)
-            {
-                continue;
-            }
-
-            TableDef definition = await catalog.ReadTableDefAsync(owner.TDefPage, cancellationToken).ConfigureAwait(false)
-                ?? throw new JetCorruptDataException(
-                    JetErrorCode.CorruptTableDefinition,
-                    $"Lookup dependencies for table '{owner.Name}' cannot be inspected because its table definition could not be read.",
-                    new JetErrorInfo { TableName = owner.Name, PageNumber = owner.TDefPage });
-            foreach (ColumnPropertyTarget target in properties.Targets)
-            {
-                if (target.ChunkType != ColumnPropertyChunkType.PropertyBlockAlt1
-                    || definition.FindColumnIndex(target.Name) < 0
-                    || (sameTable && mapColumnName is not null && mapColumnName(target.Name) is null)
-                    || IsValueList(target, format))
-                {
-                    continue;
-                }
-
-                foreach (ColumnPropertyEntry entry in target.Entries)
-                {
-                    if (!string.Equals(entry.Name, "RowSource", StringComparison.OrdinalIgnoreCase)
-                        || entry.DataType is not (TextType or MemoType))
-                    {
-                        continue;
-                    }
-
-                    // This is conservative identifier detection, not a SQL dependency parser.
-                    // Named queries and opaque source forms still need independent evidence.
-                    string source = (target.TextEncoding ?? format.PropertyTextEncoding).GetString(entry.Value);
-                    if (!string.Equals(source.Trim(), tableName, StringComparison.OrdinalIgnoreCase)
-                        && !ExpressionFieldReferences.References(source, tableName, string.Empty))
-                    {
-                        continue;
-                    }
-
-                    throw new JetOperationException(
-                        JetErrorCode.FeatureNotSupported,
-                        $"Cannot change table '{tableName}': lookup '{owner.Name}.{target.Name}' has a persisted 'RowSource' that names it and cannot be maintained safely.",
-                        new JetErrorInfo { TableName = tableName, ColumnName = columnName });
-                }
-            }
-        }
-    }
-
-    private static bool IsValueList(ColumnPropertyTarget target, JetFormat format)
-    {
-        bool found = false;
-        foreach (ColumnPropertyEntry entry in target.Entries)
-        {
-            if (!string.Equals(entry.Name, "RowSourceType", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (entry.DataType is not (TextType or MemoType)
-                || !string.Equals((target.TextEncoding ?? format.PropertyTextEncoding).GetString(entry.Value).Trim(), "Value List", StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            found = true;
-        }
-
-        return found;
     }
 
     /// <summary>Preserves a table rule's field dependencies through a schema rewrite.</summary>

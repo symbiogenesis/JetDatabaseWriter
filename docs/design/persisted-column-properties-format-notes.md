@@ -218,9 +218,21 @@ preservation coverage and separate DAO120-guarded controls; those native checks
 remain an evidence gap when DAO120 is unavailable. Access UI Name AutoCorrect
 remains a separate requirement and is not applied by this API.
 
-Column rename/drop and table drop also inspect surviving user-table column lookups before mutation. A direct `RowSource` naming the changed table, or a conservative identifier match in a stored source expression, causes refusal. This identifier scan is not a complete SQL dependency parser and can refuse an unrelated SQL identifier with the same spelling. It skips string literals; it never rewrites or executes the stored source. An explicit `Value List` is exempt only when every declared source-type entry in that target agrees. A lookup removed with its owning column/table cannot leave a surviving dependency. Adding a column preserves raw lookup properties. Unreadable owner metadata refuses inspection rather than granting absence of dependencies.
+Column rename/drop and table drop preserve surviving lookup `RowSource` and
+`RowSourceType` entries unchanged. DAO3.6 retains direct table names, SQL and
+saved-query SQL through the tested referenced-column edits and table deletion,
+then compacts the database. Preservation does not rebind stale names or promise
+that a lookup or saved query can still execute after its referenced object is
+renamed or removed. Schema edits do not execute those sources. Table validation
+rules and calculated expressions retain their separate dependency checks.
 
-`SchemaRewritePropertyPreservationTests` checks byte-identical refusal and usable caller transactions across Jet3/Jet4/ACE and direct/automatic/explicit modes, plus allowed value lists, unrelated sources, owner removal, add-column preservation and conflicting repeated source properties. These synthetic properties establish managed behavior; saved-query indirection, opaque source forms and native Name AutoCorrect remain separate evidence gaps.
+`SchemaRewritePropertyPreservationTests` checks raw lookup metadata preservation
+across Jet3/Jet4/ACE and direct/automatic/explicit modes, including repeated and
+opaque entries. `NativeLookupPropertyTests` compares native and writer edits
+for direct sources, SQL and saved-query indirection through reopen and compact.
+The native engine is DAO3.6 for Jet3/Jet4; fresh ACE DAO120 confirmation,
+broader query/application forms and Access UI Name AutoCorrect remain separate
+evidence gaps.
 
 AddColumn, DropColumn and RenameColumn rebuild a table and write its blob again. [`PersistedPropertyProjector`](../../src/JetDatabaseWriter/Schema/PersistedPropertyProjector.cs) builds the new blob from the stored one and changes only what the rewrite changes:
 

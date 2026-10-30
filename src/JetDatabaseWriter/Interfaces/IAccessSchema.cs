@@ -146,8 +146,9 @@ public interface IAccessSchema : IAccessBase
     /// rewritten while retaining string literals. Bare calculated qualifiers bind to the current
     /// row, including after a table rename; stale bracketed qualifiers yield Null for known fields.
     /// Stored table <c>Filter</c> and <c>OrderBy</c> text is preserved unchanged, including
-    /// references to the old name, as in native DAO edits. Lookup RowSource and saved-query
-    /// dependencies are not fully handled; Access UI Name AutoCorrect is not applied.
+    /// references to the old name, as in native DAO edits. Lookup <c>RowSource</c> and saved-query
+    /// definitions are also retained unchanged; stale references are not rebound, and
+    /// Access UI Name AutoCorrect is not applied.
     /// A rename may change only the letter case of the name, and is then handled like any other
     /// rename, matching observed DAO3.6 edits on Jet3 and Jet4. A rename to the name the column
     /// already has, spelled as stored, changes nothing and does not rewrite the table;

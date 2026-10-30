@@ -307,7 +307,6 @@ internal sealed class TableSchemaEditor(
         IReadOnlyList<string> relationshipNames = [];
         if (await catalog.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) is not null)
         {
-            await rewritePlanner.ThrowIfLookupDependenciesUnmaintainableAsync(tableName, columnName: null, mapColumnName: null, cancellationToken).ConfigureAwait(false);
             relationshipNames = await relationships.PlanTableDropRelationshipsAsync(tableName, cancellationToken).ConfigureAwait(false);
         }
 
