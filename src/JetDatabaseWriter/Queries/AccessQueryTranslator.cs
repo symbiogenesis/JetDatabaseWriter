@@ -133,23 +133,8 @@ internal static class AccessQueryTranslator
             return true;
         }
 
-        if (call.Method.DeclaringType != typeof(Queryable))
-        {
-            return false;
-        }
-
-        return call.Method.Name switch
-        {
-            // The indexed Where overload (Func<T,int,bool>) cannot be pushed as a row
-            // predicate, so only the single-parameter form stays in the engine.
-            "Where" => call.Arguments.Count == 2 && IsSingleParameterLambda(call.Arguments[1]),
-
-            // A trailing IComparer<TKey> argument would be ignored by the engine's sort,
-            // so only the two-argument ordering forms stay in the engine.
-            "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" => call.Arguments.Count == 2,
-            "Skip" or "Take" => call.Arguments.Count == 2 && call.Arguments[1].Type == typeof(int),
-            _ => false,
-        };
+        return call.Method.DeclaringType == typeof(Queryable) && IsPipelineOperator(call)
+            && (call.Method.Name is not ("Skip" or "Take") || call.Arguments[1].Type == typeof(int));
     }
 
     private static bool IsSingleParameterLambda(Expression argument)
@@ -162,7 +147,7 @@ internal static class AccessQueryTranslator
     {
         if (call.Method.DeclaringType == typeof(Queryable))
         {
-            ApplyQueryableOperator(call, plan);
+            AppendOperator(call, plan.Stages);
             return;
         }
 
@@ -181,54 +166,39 @@ internal static class AccessQueryTranslator
         throw InMemoryTail.UnsupportedOperator(call.Method.Name);
     }
 
-    private static void ApplyQueryableOperator(MethodCallExpression call, AccessQueryPlan plan)
+    private static void AppendOperator(MethodCallExpression call, List<QueryStage> stages)
     {
         switch (call.Method.Name)
         {
             case "Where":
-                plan.Stages.Add(new FilterStage(ExtractLambda(call.Arguments[1])));
+                stages.Add(new FilterStage(ExtractLambda(call.Arguments[1])));
                 break;
             case "OrderBy":
-                plan.Stages.Add(NewOrderStage(ExtractLambda(call.Arguments[1]), descending: false));
-                break;
             case "OrderByDescending":
-                plan.Stages.Add(NewOrderStage(ExtractLambda(call.Arguments[1]), descending: true));
-                break;
             case "ThenBy":
-                AppendOrdering(plan, ExtractLambda(call.Arguments[1]), descending: false);
-                break;
             case "ThenByDescending":
-                AppendOrdering(plan, ExtractLambda(call.Arguments[1]), descending: true);
+                OrderStage order;
+                if (call.Method.Name is "ThenBy" or "ThenByDescending" && stages.Count > 0 && stages[^1] is OrderStage current)
+                {
+                    order = current;
+                }
+                else
+                {
+                    order = new OrderStage();
+                    stages.Add(order);
+                }
+
+                order.Keys.Add(new OrderingKey(ExtractLambda(call.Arguments[1]), call.Method.Name.EndsWith("Descending", StringComparison.Ordinal)));
                 break;
             case "Skip":
-                plan.Stages.Add(new SkipStage(Convert.ToInt32(EvaluateConstant(call.Arguments[1]), CultureInfo.InvariantCulture)));
+                stages.Add(new SkipStage(ToCount(call.Arguments[1])));
                 break;
             case "Take":
-                plan.Stages.Add(new TakeStage(Convert.ToInt32(EvaluateConstant(call.Arguments[1]), CultureInfo.InvariantCulture)));
+                stages.Add(new TakeStage(ToCount(call.Arguments[1])));
                 break;
             default:
                 throw InMemoryTail.UnsupportedOperator(call.Method.Name);
         }
-    }
-
-    private static OrderStage NewOrderStage(LambdaExpression keySelector, bool descending)
-    {
-        var stage = new OrderStage();
-        stage.Keys.Add(new OrderingKey(keySelector, descending));
-        return stage;
-    }
-
-    private static void AppendOrdering(AccessQueryPlan plan, LambdaExpression keySelector, bool descending)
-    {
-        // ThenBy refines the most recent ordering run; if an operator intervened (the
-        // last stage is not an OrderStage), start a fresh ordering instead of crashing.
-        if (plan.Stages.Count > 0 && plan.Stages[^1] is OrderStage order)
-        {
-            order.Keys.Add(new OrderingKey(keySelector, descending));
-            return;
-        }
-
-        plan.Stages.Add(NewOrderStage(keySelector, descending));
     }
 
     private static LambdaExpression ExtractLambda(Expression expression) => expression switch
@@ -237,15 +207,6 @@ internal static class AccessQueryTranslator
         LambdaExpression lambda => lambda,
         _ => throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Expected a lambda argument in the query expression."),
     };
-
-    /// <summary>
-    /// Evaluates a <c>Skip</c> or <c>Take</c> count: a constant (which <see cref="Queryable"/>
-    /// makes of the outer operators' counts) or a captured variable inside an include's
-    /// navigation lambda is read without compiling, and anything computed is compiled once.
-    /// </summary>
-    /// <param name="expression">The count expression.</param>
-    /// <returns>The count's value.</returns>
-    private static object? EvaluateConstant(Expression expression) => ClosureValueReader.Evaluate(expression);
 
     /// <summary>
     /// Resolves an <c>Include</c> / <c>ThenInclude</c> navigation lambda into the navigation
@@ -280,94 +241,54 @@ internal static class AccessQueryTranslator
     /// </summary>
     /// <param name="call">The candidate operator call inside the navigation lambda.</param>
     /// <returns><see langword="true"/> when the call is a supported include operator.</returns>
-    private static bool IsIncludeOperation(MethodCallExpression call)
-    {
-        if (call.Arguments.Count != 2 ||
-            (call.Method.DeclaringType != typeof(Enumerable) && call.Method.DeclaringType != typeof(Queryable)))
-        {
-            return false;
-        }
+    private static bool IsIncludeOperation(MethodCallExpression call) =>
+        (call.Method.DeclaringType == typeof(Enumerable) || call.Method.DeclaringType == typeof(Queryable)) && IsPipelineOperator(call);
 
-        return call.Method.Name switch
+    private static bool IsPipelineOperator(MethodCallExpression call) =>
+        call.Arguments.Count == 2 && call.Method.Name switch
         {
             "Where" => IsSingleParameterLambda(call.Arguments[1]),
             "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" or "Skip" or "Take" => true,
             _ => false,
         };
-    }
 
     private static List<IncludeOperation> BuildIncludeOperations(List<MethodCallExpression> calls)
     {
-        if (calls.Count == 0)
-        {
-            return [];
-        }
-
+        var stages = new List<QueryStage>(calls.Count);
         var operations = new List<IncludeOperation>(calls.Count);
-        IncludeOrderOperation? currentOrder = null;
         foreach (MethodCallExpression call in calls)
         {
-            switch (call.Method.Name)
+            AppendOperator(call, stages);
+            QueryStage stage = stages[^1];
+            if (stages.Count > operations.Count)
             {
-                case "Where":
-                    currentOrder = null;
-                    operations.Add(new IncludeFilterOperation(ExtractLambda(call.Arguments[1])));
-                    break;
-                case "OrderBy":
-                    currentOrder = StartOrdering(operations, ExtractLambda(call.Arguments[1]), descending: false);
-                    break;
-                case "OrderByDescending":
-                    currentOrder = StartOrdering(operations, ExtractLambda(call.Arguments[1]), descending: true);
-                    break;
-                case "ThenBy":
-                    currentOrder = ContinueOrdering(currentOrder, operations, ExtractLambda(call.Arguments[1]), descending: false);
-                    break;
-                case "ThenByDescending":
-                    currentOrder = ContinueOrdering(currentOrder, operations, ExtractLambda(call.Arguments[1]), descending: true);
-                    break;
-                case "Skip":
-                    currentOrder = null;
-                    operations.Add(new IncludeSkipOperation(ToCount(call.Arguments[1])));
-                    break;
-                case "Take":
-                    currentOrder = null;
-                    operations.Add(new IncludeTakeOperation(ToCount(call.Arguments[1])));
-                    break;
-                default:
-                    throw InMemoryTail.UnsupportedOperator(call.Method.Name);
+                operations.Add(stage switch
+                {
+                    FilterStage filter => new IncludeFilterOperation(filter.Predicate),
+                    OrderStage => new IncludeOrderOperation(),
+                    SkipStage skip => new IncludeSkipOperation(skip.Count),
+                    TakeStage take => new IncludeTakeOperation(take.Count),
+                    _ => throw new JetOperationException(JetErrorCode.InvalidOperationState, "Unsupported include stage."),
+                });
+            }
+
+            // Prepare each delegate before reading the next operand, including a ThenBy
+            // key appended to an existing run. Per-parent execution remains synchronous.
+            if (stage is OrderStage order)
+            {
+                OrderingKey key = order.Keys[^1];
+                ((IncludeOrderOperation)operations[^1]).AddKey(key.KeySelector, key.Descending);
             }
         }
 
         return operations;
     }
 
-    private static IncludeOrderOperation StartOrdering(List<IncludeOperation> operations, LambdaExpression selector, bool descending)
-    {
-        var order = new IncludeOrderOperation();
-        order.AddKey(selector, descending);
-        operations.Add(order);
-        return order;
-    }
-
-    private static IncludeOrderOperation ContinueOrdering(
-        IncludeOrderOperation? current,
-        List<IncludeOperation> operations,
-        LambdaExpression selector,
-        bool descending)
-    {
-        // ThenBy refines the most recent ordering run; if none is open (a malformed tree),
-        // start a fresh ordering rather than crash.
-        IncludeOrderOperation order = current ?? StartOrdering(operations, selector, descending);
-        if (current is not null)
-        {
-            order.AddKey(selector, descending);
-        }
-
-        return order;
-    }
-
+    /// <summary>Reads a paging operand once when translating this execution, preserving any getter exception.</summary>
+    /// <param name="expression">The constant, captured or computed count.</param>
+    /// <returns>The number of elements to skip or take.</returns>
     private static int ToCount(Expression expression) =>
-        Convert.ToInt32(EvaluateConstant(expression), CultureInfo.InvariantCulture);
+        Convert.ToInt32(ClosureValueReader.Evaluate(expression), CultureInfo.InvariantCulture);
 
     private static Expression StripConvert(Expression expression) =>
         expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary

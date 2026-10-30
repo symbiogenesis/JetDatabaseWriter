@@ -69,19 +69,13 @@ internal sealed class OrderStage : QueryStage
 
     private static List<T> Sort<T>(List<T> buffer, List<OrderingKey> keys)
     {
-        Func<T, object?> first = CompileKey<T>(keys[0].KeySelector);
-        IOrderedEnumerable<T> ordered = keys[0].Descending
-            ? buffer.OrderByDescending(first, QueryKeyComparer.Instance)
-            : buffer.OrderBy(first, QueryKeyComparer.Instance);
-        for (int i = 1; i < keys.Count; i++)
+        var compiled = new QuerySortKey<T>[keys.Count];
+        for (int i = 0; i < keys.Count; i++)
         {
-            Func<T, object?> key = CompileKey<T>(keys[i].KeySelector);
-            ordered = keys[i].Descending
-                ? ordered.ThenByDescending(key, QueryKeyComparer.Instance)
-                : ordered.ThenBy(key, QueryKeyComparer.Instance);
+            compiled[i] = new QuerySortKey<T>(CompileKey<T>(keys[i].KeySelector), QueryKeyComparer.Instance, keys[i].Descending);
         }
 
-        return ordered.ToList();
+        return QueryOrdering.Apply(buffer, compiled).ToList();
     }
 
     private static Func<T, object?> CompileKey<T>(LambdaExpression selector)

@@ -9,14 +9,16 @@ using System.Threading.Tasks;
 /// <param name="count">The maximum number of leading rows to yield.</param>
 internal sealed class TakeStage(int count) : QueryStage
 {
+    internal int Count { get; } = count;
+
     /// <summary>Gets a value indicating whether this stage completes without advancing its source.</summary>
-    internal bool SkipsSource => count <= 0;
+    internal bool SkipsSource => this.Count <= 0;
 
     public override async IAsyncEnumerable<T> Apply<T>(
         IAsyncEnumerable<T> source,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        if (count <= 0)
+        if (this.Count <= 0)
         {
             yield break;
         }
@@ -25,7 +27,7 @@ internal sealed class TakeStage(int count) : QueryStage
         await foreach (T item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             yield return item;
-            if (++taken >= count)
+            if (++taken >= this.Count)
             {
                 yield break;
             }

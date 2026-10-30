@@ -101,7 +101,7 @@ internal static class InMemoryTail
             }
 
             // An ordering and the ThenBy calls that refine it sort together, in one buffer.
-            List<SortKey> keys = [CreateSortKey(call)];
+            List<QuerySortKey<object?>> keys = [CreateSortKey(call)];
             while (i + 1 < calls.Count && IsThenBy(calls[i + 1]))
             {
                 i++;
@@ -148,15 +148,15 @@ internal static class InMemoryTail
     private static bool IsThenBy(MethodCallExpression call) =>
         call.Method.DeclaringType == typeof(Queryable) && call.Method.Name is "ThenBy" or "ThenByDescending";
 
-    private static SortKey CreateSortKey(MethodCallExpression call)
+    private static QuerySortKey<object?> CreateSortKey(MethodCallExpression call)
     {
         Type[] typeArguments = call.Method.GetGenericArguments();
         bool descending = call.Method.Name.EndsWith("Descending", StringComparison.Ordinal);
 
         // Order and OrderDescending sort the elements themselves; the others take a key selector.
         return call.Method.Name is "Order" or "OrderDescending"
-            ? new SortKey(Identity, KeyOrder(typeArguments[0], OptionalArgument(call, 1)), descending)
-            : new SortKey(CompileElementLambda<object?>(call), KeyOrder(typeArguments[1], OptionalArgument(call, 2)), descending);
+            ? new QuerySortKey<object?>(Identity, KeyOrder(typeArguments[0], OptionalArgument(call, 1)), descending)
+            : new QuerySortKey<object?>(CompileElementLambda<object?>(call), KeyOrder(typeArguments[1], OptionalArgument(call, 2)), descending);
     }
 
     private static Expression? OptionalArgument(MethodCallExpression call, int index) =>
@@ -302,26 +302,14 @@ internal static class InMemoryTail
 
     private static async IAsyncEnumerable<object?> SortAsync(
         IAsyncEnumerable<object?> source,
-        List<SortKey> keys,
+        List<QuerySortKey<object?>> keys,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         List<object?> buffer = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
 
         // Keep Enumerable's stable ordering: async ordering can lose a later key selector's
         // exception and instead throw from comparing its uninitialized key buffer.
-        SortKey first = keys[0];
-        IOrderedEnumerable<object?> ordered = first.Descending
-            ? buffer.OrderByDescending(first.Selector, first.Comparer)
-            : buffer.OrderBy(first.Selector, first.Comparer);
-        for (int i = 1; i < keys.Count; i++)
-        {
-            SortKey key = keys[i];
-            ordered = key.Descending
-                ? ordered.ThenByDescending(key.Selector, key.Comparer)
-                : ordered.ThenBy(key.Selector, key.Comparer);
-        }
-
-        foreach (object? item in ordered)
+        foreach (object? item in QueryOrdering.Apply(buffer, keys))
         {
             yield return item;
         }
@@ -356,12 +344,6 @@ internal static class InMemoryTail
             yield return item;
         }
     }
-
-    /// <summary>One ordering key: its selector over the boxed element, its comparer and its direction.</summary>
-    /// <param name="Selector">Projects the boxed element to its boxed key.</param>
-    /// <param name="Comparer">Orders the boxed keys through the key type's comparer.</param>
-    /// <param name="Descending">Whether the key sorts in descending order.</param>
-    private readonly record struct SortKey(Func<object?, object?> Selector, Comparer<object?> Comparer, bool Descending);
 
     /// <summary>Equates boxed elements through compiled calls to the element type's equality comparer.</summary>
     /// <param name="equals">Unboxes both elements and compares them.</param>
