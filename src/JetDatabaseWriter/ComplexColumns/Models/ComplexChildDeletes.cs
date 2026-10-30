@@ -9,8 +9,8 @@ using JetDatabaseWriter.Relationships;
 /// The hidden flat-table rows that one group of the rows a delete statement
 /// removes takes with it, found before the statement writes any row:
 /// <see cref="ComplexColumnManager.PlanComplexChildDeletesAsync"/> adds them
-/// and <see cref="ComplexColumnManager.ApplyComplexChildDeletesAsync"/>
-/// deletes them just before the statement deletes the group's own rows. A
+/// and <see cref="ComplexColumnManager.AddComplexChildDeletesAsync"/>
+/// stages their deletion before the statement's own rows. A
 /// group is the rows of one cascade (<see cref="CascadeDelete.FlatRows"/>) or
 /// the statement's matching rows. The groups of one statement, each made from
 /// another with <see cref="NewGroup"/>, share one record of the flat rows

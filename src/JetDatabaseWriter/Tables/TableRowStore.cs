@@ -59,17 +59,6 @@ internal sealed class TableRowStore(
     /// <exception cref="ArgumentException">Thrown when <paramref name="values"/> does not contain one value per column in <paramref name="tableDef"/>.</exception>
     internal async ValueTask<RowLocation> InsertRowDataLocAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, IReadOnlyDictionary<int, byte[]>? fixedTextBytes = null, CancellationToken cancellationToken = default)
     {
-        if (values.Length != tableDef.Columns.Count)
-        {
-            throw new ArgumentException(
-                $"Expected {tableDef.Columns.Count} values for table row but received {values.Length}.",
-                nameof(values));
-        }
-
-        // Callers that rewrite snapshot rows check before deleting the old row;
-        // this guard keeps a placeholder from ever reaching the page.
-        UnreadableLongValue.ThrowIfAny(values, tableName: null);
-
         // A MEMO or OLE value over its inline cap goes to LVAL pages, and so
         // do the largest of the others while the row is too long for a page.
         // They are written only after the row has been encoded and measured
@@ -129,6 +118,7 @@ internal sealed class TableRowStore(
     /// itself when no value leaves the row) and the serialized row, whose
     /// length is final.
     /// </returns>
+    /// <exception cref="ArgumentException">The values do not contain one entry per column.</exception>
     /// <exception cref="JetLimitationException">
     /// The row is longer than one data page with every MEMO and byte-array
     /// OLE value it holds moved out, or a value is past what its column
@@ -138,6 +128,14 @@ internal sealed class TableRowStore(
     /// <exception cref="OverflowException">A value does not fit its column's type, such as a Currency value past ±922,337,203,685,477.5807.</exception>
     internal (object[] Values, byte[] RowBytes) EncodeRow(TableDef tableDef, object[] values, IReadOnlyDictionary<int, byte[]>? fixedTextBytes = null)
     {
+        if (values.Length != tableDef.Columns.Count)
+        {
+            throw new ArgumentException(
+                $"Expected {tableDef.Columns.Count} values for table row but received {values.Length}.",
+                nameof(values));
+        }
+
+        UnreadableLongValue.ThrowIfAny(values, tableName: null);
         object[] prepared = longValueEncoder.PrepareLongValues(tableDef, values);
         if (rowEncoder.TrySerializeRow(tableDef, prepared, out int rowLength, fixedTextBytes) is { } rowBytes)
         {

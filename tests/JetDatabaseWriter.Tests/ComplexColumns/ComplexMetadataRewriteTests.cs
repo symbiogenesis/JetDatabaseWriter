@@ -37,7 +37,7 @@ public sealed class ComplexMetadataRewriteTests
         definition.SetValueByName(original, "ComplexTypeObjectID", -17);
         definition.SetValueByName(original, "ConceptualTableID", 70_002);
         definition.SetValueByName(original, "FlatTableID", DBNull.Value);
-        await writer.Services.Indexes.InsertSystemRowAndMaintainAsync(page, definition, Constants.SystemTableNames.ComplexColumns, original, cancellationToken: ct);
+        await writer.Services.Mutations.InsertSystemRowAndMaintainAsync(page, definition, Constants.SystemTableNames.ComplexColumns, original, cancellationToken: ct);
         object[] expected = (object[])original.Clone();
         if (rename)
         {

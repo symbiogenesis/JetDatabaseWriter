@@ -17,7 +17,6 @@ using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
-using JetDatabaseWriter.ValueDecoding.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -26,28 +25,23 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// (<see cref="MaintainIndexesAsync"/>), incremental fast-path
 /// (<see cref="TryMaintainIndexesIncrementalAsync"/>), the catalog-index
 /// splice (<see cref="TrySpliceCatalogIndexEntryAsync"/>), and the system-table
-/// row writes that must keep their indexes current
-/// (<see cref="InsertSystemRowAndMaintainAsync"/>,
-/// <see cref="RewriteSystemTableRowsAsync"/>).
+/// index policy used by prepared row mutations
+/// (<see cref="MaintainSystemTableIndexesIncrementallyAsync"/>).
 /// </summary>
 /// <param name="format">The database's immutable format profile.</param>
 /// <param name="tableDefs">The table-definition reader.</param>
-/// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="pager">The writer's page file, through which index and data pages are written.</param>
 /// <param name="tdefWriter">Writes index roots and usage-map pointers back into TDEF chains.</param>
 /// <param name="pageAllocator">Reserves and frees index pages.</param>
-/// <param name="tableRows">Writes system-table rows ahead of their index splice.</param>
 /// <param name="dataPages">Owns usage-map rows and empty data pages.</param>
 /// <param name="snapshots">Reads decoded table rows for full index rebuilds.</param>
 /// <param name="catalogRows">Discovers surviving table definitions when proving usage-map ownership.</param>
 internal sealed class IndexMaintainer(
     JetFormat format,
     TableDefReader tableDefs,
-    OwnedDataPages ownedPages,
     Pager pager,
     TDefWriter tdefWriter,
     PageAllocator pageAllocator,
-    TableRowStore tableRows,
     DataPageInserter dataPages,
     TableSnapshotReader snapshots,
     CatalogRowReader catalogRows)
@@ -72,108 +66,6 @@ internal sealed class IndexMaintainer(
     /// Diagnostic-only; not part of the public contract.
     /// </summary>
     public string? LastIncrementalBail { get; private set; }
-
-    /// <summary>Gets the most recent system-table index-maintenance path.</summary>
-    internal SystemTableIndexMaintenancePath LastSystemTableIndexMaintenancePath { get; private set; }
-
-    /// <summary>
-    /// Inserts one row into a system table (MSysObjects, MSysRelationships,
-    /// MSysComplexColumns, …) and refreshes that table's indexes so external
-    /// readers (Microsoft Access / DAO Compact &amp; Repair) can locate the
-    /// new row through the catalog indexes. Bare <see cref="TableRowStore.InsertRowDataAsync"/>
-    /// only writes the data row; index leaves are not maintained, so DAO
-    /// walking via <c>ParentIdName</c> / <c>Id</c> never sees the row and the
-    /// catalog appears empty from outside.
-    /// </summary>
-    /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="tableDef">The table def.</param>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="values">The values.</param>
-    /// <param name="updateTDefRowCount">Whether to update the table row count in the TDEF.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <remarks>
-    /// User-row inserts are batched by <see cref="AccessWriter.InsertRowsAsync(string, IEnumerable{object[]}, CancellationToken)"/>
-    /// for performance; system-table inserts are infrequent and can afford to
-    /// pay the per-call index-maintenance cost.
-    /// </remarks>
-    internal async ValueTask InsertSystemRowAndMaintainAsync(
-        long tdefPage,
-        TableDef tableDef,
-        string tableName,
-        object[] values,
-        bool updateTDefRowCount = true,
-        CancellationToken cancellationToken = default)
-    {
-        this.LastSystemTableIndexMaintenancePath = SystemTableIndexMaintenancePath.None;
-        RowLocation loc = await tableRows.InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken: cancellationToken).ConfigureAwait(false);
-
-        var hint = new List<(RowLocation Loc, object[] Row)>(1) { (loc, values) };
-        this.LastSystemTableIndexMaintenancePath = await this.MaintainSystemTableIndexesIncrementallyAsync(
-            tdefPage,
-            tableDef,
-            tableName,
-            hint,
-            deletedRows: null,
-            cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Rewrites all data pages for a small system table with the supplied live rows.
-    /// Used when tombstones themselves are not DAO-compatible, such as
-    /// <c>MSysRelationships</c> rename/drop mutations.
-    /// </summary>
-    /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="tableDef">The table def.</param>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="rows">The row collection.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="JetCorruptDataException">Thrown when the system table has rows to rewrite but no data pages are present.</exception>
-    internal async ValueTask RewriteSystemTableRowsAsync(
-        long tdefPage,
-        TableDef tableDef,
-        string tableName,
-        IReadOnlyList<object[]> rows,
-        CancellationToken cancellationToken)
-    {
-        foreach (object[] row in rows)
-        {
-            UnreadableLongValue.ThrowIfAny(row, tableName);
-        }
-
-        var dataPageNumbers = new List<long>();
-        await ownedPages.ForEachOwnedDataPageAsync(
-            tdefPage,
-            (pageNumber, _, _) =>
-            {
-                dataPageNumbers.Add(pageNumber);
-                return new ValueTask<bool>(true);
-            },
-            cancellationToken).ConfigureAwait(false);
-
-        if (dataPageNumbers.Count == 0 && rows.Count > 0)
-        {
-            throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"System table '{tableName}' has no data pages to rewrite.", new JetErrorInfo { TableName = tableName, PageNumber = tdefPage });
-        }
-
-        foreach (long pageNumber in dataPageNumbers)
-        {
-            await pager.WritePageAsync(pageNumber, dataPages.CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
-        }
-
-        if (dataPageNumbers.Count > 0)
-        {
-            dataPages.SetCachedInsertPageNumber(tdefPage, dataPageNumbers[0]);
-        }
-
-        foreach (object[] row in rows)
-        {
-            object[] rowValues = (object[])row.Clone();
-            await tableRows.InsertRowDataLocAsync(tdefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-
-        await tableRows.SetTDefRowCountAsync(tdefPage, checked((uint)rows.Count), cancellationToken).ConfigureAwait(false);
-        await this.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
-    }
 
     internal async ValueTask<SystemTableIndexMaintenancePath> MaintainSystemTableIndexesIncrementallyAsync(
         long tdefPage,
@@ -259,7 +151,7 @@ internal sealed class IndexMaintainer(
     /// Returns <c>true</c> when every real-idx slot of the TDEF chain rooted at
     /// <paramref name="tdefPage"/> references a valid in-range data page
     /// through its <c>first_dp</c> pointer. Used by
-    /// <see cref="InsertSystemRowAndMaintainAsync"/> to avoid index
+    /// <see cref="MaintainSystemTableIndexesIncrementallyAsync"/> to avoid index
     /// maintenance on writer-bootstrapped system tables whose real-idx
     /// descriptors point at unallocated pages.
     /// </summary>

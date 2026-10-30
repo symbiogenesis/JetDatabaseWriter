@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -35,7 +34,7 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// <param name="format">The database's immutable format profile.</param>
 /// <param name="tableDefs">The table-definition reader.</param>
 /// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
-/// <param name="indexes">Inserts and rewrites system-table rows with index maintenance.</param>
+/// <param name="mutations">Applies prepared system rows with native index maintenance.</param>
 /// <param name="catalogRows">Locates the <c>MSysRelationships</c> table.</param>
 /// <param name="snapshots">Reads decoded <c>MSysRelationships</c> rows for enforcement.</param>
 /// <param name="tableCatalog">The writer's table catalog, whose <see cref="TableCatalog.Generation"/> keys the cache.</param>
@@ -43,7 +42,7 @@ internal sealed class RelationshipCatalogStore(
     JetFormat format,
     TableDefReader tableDefs,
     OwnedDataPages ownedPages,
-    IndexMaintainer indexes,
+    MutationExecutor mutations,
     CatalogRowReader catalogRows,
     TableSnapshotReader snapshots,
     TableCatalog tableCatalog)
@@ -89,6 +88,8 @@ internal sealed class RelationshipCatalogStore(
 
             int ccolumn = relationship.PrimaryColumns.Count;
             int grbitInt = unchecked((int)grbit);
+            var plan = new MutationPlan();
+            MutationPlan.TableChanges changes = plan.ForTable(msysRelTdefPage, msysRelDef, Constants.SystemTableNames.Relationships, MutationPlan.IndexPolicy.System);
 
             for (int column = 0; column < ccolumn; column++)
             {
@@ -103,13 +104,10 @@ internal sealed class RelationshipCatalogStore(
                 msysRelDef.SetValueByName(values, "szReferencedObject", relationship.PrimaryTable);
                 msysRelDef.SetValueByName(values, "szRelationship", relationship.Name);
 
-                await indexes.InsertSystemRowAndMaintainAsync(
-                    msysRelTdefPage,
-                    msysRelDef,
-                    Constants.SystemTableNames.Relationships,
-                    values,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                changes.Insert(values);
             }
+
+            await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -216,7 +214,7 @@ internal sealed class RelationshipCatalogStore(
     {
         try
         {
-            await indexes.RewriteSystemTableRowsAsync(
+            await mutations.RewriteSystemTableRowsAsync(
                 msysRelTdefPage,
                 msysRelDef,
                 Constants.SystemTableNames.Relationships,

@@ -243,6 +243,7 @@ public sealed class ServiceGraphTests
             typeof(TableRewritePlanner),
             typeof(TableStorageEditor),
             typeof(TableRowStore),
+            typeof(MutationExecutor),
             typeof(RelationshipManager),
             typeof(ForeignKeyMetadataEditor),
             typeof(RelationshipEnforcer),
@@ -263,6 +264,19 @@ public sealed class ServiceGraphTests
         {
             Assert.Contains(service, state.Keys);
         }
+    }
+
+    [Fact]
+    public void RowMutationPlanning_UsesOneSharedStorageExecutor()
+    {
+        Assert.All<Type>(
+            [typeof(TableDataWriter), typeof(RelationshipEnforcer), typeof(ComplexColumnManager), typeof(CatalogWriter), typeof(AppendOnlyHistoryWriter)],
+            static planner => Assert.DoesNotContain(typeof(TableRowStore), DependenciesOf(planner)));
+
+        Assert.DoesNotContain(typeof(TableRowStore), DependenciesOf(typeof(IndexMaintainer)));
+        Assert.Contains(typeof(TableRowStore), DependenciesOf(typeof(MutationExecutor)));
+        Assert.Contains(typeof(IndexMaintainer), DependenciesOf(typeof(MutationExecutor)));
+        Assert.DoesNotContain(typeof(TransactionLifecycle), DependenciesOf(typeof(MutationExecutor)));
     }
 
     [Fact]

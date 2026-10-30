@@ -100,19 +100,20 @@ internal sealed class WriterServices : IDisposable
             },
             new JetDatabaseWriter.Indexes.Collation.JetTextCollation(db.Format.DefaultTextSortOrder));
 
-        this.Indexes = new IndexMaintainer(db.Format, db.TableDefs, db.OwnedPages, pager, this.TDefWriter, this.PageAllocator, tableRows, dataPages, snapshots, catalogRows);
-        var catalogWriter = new CatalogWriter(db.Format, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, longValueEncoder, this.CatalogRows, pager, snapshots);
+        this.Indexes = new IndexMaintainer(db.Format, db.TableDefs, pager, this.TDefWriter, this.PageAllocator, dataPages, snapshots, catalogRows);
+        this.Mutations = new MutationExecutor(db.Format, pager, db.OwnedPages, dataPages, tableRows, this.Indexes, autoNumbers);
+        var catalogWriter = new CatalogWriter(db.Format, db.TableDefs, db.OwnedPages, catalog, this.Indexes, this.Mutations, longValueEncoder, this.CatalogRows, pager, snapshots);
         this.CatalogWriter = catalogWriter;
         this.CatalogArtifacts = new CatalogArtifactWriter(db.Format, pager, catalog, this.PageAllocator, tdefPageBuilder, dataPages, this.OwnedMaps, catalogWriter, constraints);
-        this.SystemCatalog = new SystemCatalogBootstrapper(db.Format, db.TableDefs, pager, this.Indexes, this.CatalogArtifacts);
+        this.SystemCatalog = new SystemCatalogBootstrapper(db.Format, db.TableDefs, pager, this.Mutations, this.CatalogArtifacts);
         var uniqueIndexes = new UniqueIndexChecker(db.Format, db.Pages, db.TableDefs, snapshots);
         var complexReader = new ComplexColumnReader(db.Format, db.TableDefs, snapshotCatalog, snapshotRows, diagnosticsEnabled: false);
-        this.ComplexColumns = new ComplexColumnManager(db.Format, db.TableDefs, db.OwnedPages, pager, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, uniqueIndexes, autoNumbers, complexReferenceSeeds, this.Snapshots, complexReader);
-        var history = new AppendOnlyHistoryWriter(db.Format, catalog, complexReader, snapshots, complexReferenceSeeds, tableRows, this.Indexes, constraints, uniqueIndexes, autoNumbers);
+        this.ComplexColumns = new ComplexColumnManager(db.Format, db.TableDefs, db.OwnedPages, pager, catalog, this.Mutations, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, uniqueIndexes, autoNumbers, complexReferenceSeeds, this.Snapshots, complexReader);
+        var history = new AppendOnlyHistoryWriter(db.Format, catalog, complexReader, snapshots, complexReferenceSeeds, this.Indexes, constraints, uniqueIndexes);
         var historySchemas = new AppendOnlyHistorySchemaEditor(db.Format, pager, db.TableDefs, this.PageAllocator, catalog, complexReader, snapshots, catalogWriter, catalogRows);
 
-        var relationshipCatalog = new RelationshipCatalogStore(db.Format, db.TableDefs, db.OwnedPages, this.Indexes, this.CatalogRows, snapshots, catalog);
-        var enforcer = new RelationshipEnforcer(db.Format, db.Pages, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots, constraints);
+        var relationshipCatalog = new RelationshipCatalogStore(db.Format, db.TableDefs, db.OwnedPages, this.Mutations, this.CatalogRows, snapshots, catalog);
+        var enforcer = new RelationshipEnforcer(db.Format, db.Pages, db.TableDefs, db.OwnedPages, catalog, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots, constraints);
         this.Relationships = new RelationshipManager(db.Format, db.TableDefs, pager, catalog, this.Indexes, new ForeignKeyMetadataEditor(db.Format, db.TableDefs, pager, this.PageAllocator, catalogRows), this.CatalogArtifacts, this.CatalogRows, relationshipCatalog, snapshots);
 
         this.Transactions = new TransactionLifecycle(db.Format, pager, options, byteRangeLock, catalog, dataPages, this.OwnedMaps, constraints);
@@ -120,10 +121,9 @@ internal sealed class WriterServices : IDisposable
             db.Format,
             db.Pages,
             catalog,
-            tableRows,
             this.Indexes,
             uniqueIndexes,
-            autoNumbers,
+            this.Mutations,
             constraints,
             enforcer,
             this.ComplexColumns,
@@ -205,6 +205,9 @@ internal sealed class WriterServices : IDisposable
 
     /// <summary>Gets the index B-tree maintainer.</summary>
     internal IndexMaintainer Indexes { get; }
+
+    /// <summary>Gets the shared prepared-row mutation executor.</summary>
+    internal MutationExecutor Mutations { get; }
 
     /// <summary>Gets the global page allocator.</summary>
     internal PageAllocator PageAllocator { get; }

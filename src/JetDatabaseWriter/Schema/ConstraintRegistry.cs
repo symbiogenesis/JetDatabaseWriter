@@ -276,11 +276,12 @@ internal sealed class ConstraintRegistry(
     /// <summary>
     /// Applies registered column constraints to <paramref name="values"/>, the
     /// row an insert is about to write, and returns a list of auto-increment
-    /// counter checkpoints captured for the row. Callers should pass the
-    /// returned list to <see cref="RestoreAutoCounters"/> if a later step (FK
-    /// enforcement, data-page write, deferred unique-index check) rejects the
-    /// row, so the counter rewinds to the value the failed insert tried to
-    /// consume.
+    /// counter checkpoints captured for the row. Writer statements restore
+    /// the registry through <see cref="Transactions.TransactionLifecycle"/>'s
+    /// statement or savepoint snapshot when a later step rejects the row.
+    /// Direct callers without that scope must pass the checkpoints to
+    /// <see cref="RestoreAutoCounters"/> after a later failure, so rejected
+    /// inserts do not consume generated values.
     /// </summary>
     /// <remarks>
     /// As in an Access SQL <c>INSERT</c>, a supplied null or

@@ -249,7 +249,7 @@ public sealed class ForeignKeyPartialNullTests(DatabaseCache db) : IClassFixture
                 definition.SetValueByName(row, "szReferencedColumn", index == 0 ? "A" : "B");
                 definition.SetValueByName(row, "szReferencedObject", "P");
                 definition.SetValueByName(row, "szRelationship", "FK_C_P");
-                await harness.Services.Indexes.InsertSystemRowAndMaintainAsync(page, definition, Constants.SystemTableNames.Relationships, row, cancellationToken: Ct);
+                await harness.Services.Mutations.InsertSystemRowAndMaintainAsync(page, definition, Constants.SystemTableNames.Relationships, row, cancellationToken: Ct);
             }
         }
 

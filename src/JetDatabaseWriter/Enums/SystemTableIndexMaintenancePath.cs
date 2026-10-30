@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Enums;
 
 /// <summary>
-/// Last maintenance path used by <see cref="Indexes.IndexMaintainer.InsertSystemRowAndMaintainAsync"/>.
+/// Last maintenance path used by <see cref="Tables.MutationExecutor.InsertSystemRowAndMaintainAsync"/>.
 /// </summary>
 internal enum SystemTableIndexMaintenancePath
 {

@@ -41,13 +41,13 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="pager">The writer's page file, through which patched parent rows are written.</param>
 /// <param name="catalog">Resolves parent tables by name.</param>
-/// <param name="tableRows">Writes and tombstones flat-table and <c>MSysComplexColumns</c> rows.</param>
-/// <param name="indexes">Keeps system-table indexes current.</param>
+/// <param name="mutations">Applies prepared flat-table and system row changes.</param>
+/// <param name="indexes">Validates native index support before planning.</param>
 /// <param name="catalogArtifacts">Creates the hidden flat child tables and system-table templates.</param>
 /// <param name="catalogRows">Scans <c>MSysObjects</c> rows and locates system tables.</param>
 /// <param name="constraints">Applies flat-table column constraints on row-level inserts.</param>
 /// <param name="uniqueIndexes">Validates flat-table unique keys before an item is written.</param>
-/// <param name="autoNumbers">Advances a flat table's persisted AutoNumber high-water value after a row-level insert, a parent table's complex AutoNumber after a reference is allocated, and <c>MSysComplexColumns</c>' ComplexID counter.</param>
+/// <param name="autoNumbers">Reads parent counters and maintains the <c>MSysComplexColumns</c> ComplexID high-water value.</param>
 /// <param name="seeds">Resolves flat tables and reads the per-row complex references a parent table already uses.</param>
 /// <param name="snapshots">Streams strict typed projected parent rows.</param>
 /// <param name="complexReader">Validates native complex descriptors and their kinds.</param>
@@ -57,7 +57,7 @@ internal sealed class ComplexColumnManager(
     OwnedDataPages ownedPages,
     Pager pager,
     TableCatalog catalog,
-    TableRowStore tableRows,
+    MutationExecutor mutations,
     IndexMaintainer indexes,
     CatalogArtifactWriter catalogArtifacts,
     CatalogRowReader catalogRows,
@@ -730,7 +730,7 @@ internal sealed class ComplexColumnManager(
         msysComplex.SetValueByName(values, "ConceptualTableID", conceptualTableId);
         msysComplex.SetValueByName(values, "ComplexID", complexId);
 
-        await indexes.InsertSystemRowAndMaintainAsync(pg, msysComplex, Constants.SystemTableNames.ComplexColumns, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await mutations.InsertSystemRowAndMaintainAsync(pg, msysComplex, Constants.SystemTableNames.ComplexColumns, values, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         // ComplexID is an AutoNumber column; keep its TDEF counter at the last
         // ID handed out, as Access does, so neither this library nor Access
@@ -912,10 +912,9 @@ internal sealed class ComplexColumnManager(
 
             if (remove)
             {
-                RowLocation location = existingRows[target].Location;
-                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, flatDef, cancellationToken).ConfigureAwait(false);
-                await tableRows.AdjustTDefRowCountAsync(flatTdefPage, -1, cancellationToken).ConfigureAwait(false);
-                await indexes.MaintainIndexesAsync(flatTdefPage, flatDef, flatTableName, cancellationToken).ConfigureAwait(false);
+                var deletePlan = new MutationPlan();
+                deletePlan.ForTable(flatTdefPage, flatDef, flatTableName).Delete(existingRows[target].Location, existingRows[target].Values);
+                await mutations.ApplyAsync(deletePlan, cancellationToken).ConfigureAwait(false);
                 return;
             }
         }
@@ -942,12 +941,11 @@ internal sealed class ComplexColumnManager(
             flatValues = replacement;
             await constraints.ApplyUpdateAsync(flatTableName, flatDef, flatValues, assignedColumns, cancellationToken).ConfigureAwait(false);
             IReadOnlyDictionary<int, byte[]>? fixedText = existingRows[target].GetPreservedFixedText(flatValues, assignedColumns);
-            _ = tableRows.EncodeRow(flatDef, flatValues, fixedText);
+
             await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(flatTdefPage, flatDef, flatTableName, existingRows!, [(target, existingRows![target].Values, flatValues)], cancellationToken).ConfigureAwait(false);
-            RowLocation location = existingRows[target].Location;
-            await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, flatDef, cancellationToken).ConfigureAwait(false);
-            _ = await tableRows.InsertRowDataLocAsync(flatTdefPage, flatDef, flatValues, updateTDefRowCount: false, fixedTextBytes: fixedText, cancellationToken).ConfigureAwait(false);
-            await indexes.MaintainIndexesAsync(flatTdefPage, flatDef, flatTableName, cancellationToken).ConfigureAwait(false);
+            var updatePlan = new MutationPlan();
+            updatePlan.ForTable(flatTdefPage, flatDef, flatTableName).Update(existingRows[target].Location, existingRows[target].Values, flatValues, fixedText);
+            await mutations.ApplyAsync(updatePlan, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -960,9 +958,11 @@ internal sealed class ComplexColumnManager(
         await constraints.ApplyAsync(flatTableName, flatDef, flatValues, cancellationToken).ConfigureAwait(false);
         await uniqueIndexes.CheckUniqueIndexesPreInsertAsync(flatTdefPage, flatDef, flatTableName, [flatValues], cancellationToken).ConfigureAwait(false);
 
-        await tableRows.InsertRowDataAsync(flatTdefPage, flatDef, flatValues, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await indexes.MaintainIndexesAsync(flatTdefPage, flatDef, flatTableName, cancellationToken).ConfigureAwait(false);
-        await autoNumbers.UpdateHighWaterAsync(flatTdefPage, flatDef, [flatValues], cancellationToken).ConfigureAwait(false);
+        var insertPlan = new MutationPlan();
+        MutationPlan.TableChanges changes = insertPlan.ForTable(flatTdefPage, flatDef, flatTableName);
+        changes.Insert(flatValues);
+        changes.RaiseAutoNumbers = true;
+        await mutations.ApplyAsync(insertPlan, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1150,7 +1150,7 @@ internal sealed class ComplexColumnManager(
     /// <paramref name="plan"/>. Must be called BEFORE any of the statement's
     /// rows is marked deleted, since the per-row complex-reference slot value
     /// is needed to identify which flat rows to delete; the statement then
-    /// deletes them with <see cref="ApplyComplexChildDeletesAsync"/> just
+    /// adds them with <see cref="AddComplexChildDeletesAsync"/> just
     /// before it deletes the parent rows.
     /// </summary>
     /// <param name="parentDef">The parent def.</param>
@@ -1287,26 +1287,22 @@ internal sealed class ComplexColumnManager(
     }
 
     /// <summary>
-    /// Deletes the flat rows the group <paramref name="plan"/> holds and
-    /// lowers each flat table's row count once; the statement calls it just
-    /// before it deletes the group's parent rows. Takes no cancellation token:
-    /// it is part of the delete statement's writes, and a statement that has
-    /// started writing runs to completion.
+    /// Adds a group's flat-row deletions to the statement's shared table change sets.
     /// </summary>
+    /// <param name="mutationsPlan">The statement's accumulated changes.</param>
     /// <param name="plan">The group's flat rows, which <see cref="PlanComplexChildDeletesAsync"/> found.</param>
+    /// <param name="cancellationToken">The cancellation token used while resolving descriptors.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    public async ValueTask ApplyComplexChildDeletesAsync(ComplexChildDeletes plan)
+    public async ValueTask AddComplexChildDeletesAsync(MutationPlan mutationsPlan, ComplexChildDeletes plan, CancellationToken cancellationToken)
     {
         foreach ((long flatTdefPage, List<RowLocation> rows) in plan.Tables)
         {
-            TableDef flatDef = await this.tableDefs.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", CancellationToken.None).ConfigureAwait(false);
+            TableDef flatDef = await this.tableDefs.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
+            MutationPlan.TableChanges changes = mutationsPlan.ForTable(flatTdefPage, flatDef, "<flat>");
             foreach (RowLocation row in rows)
             {
-                await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, flatDef, CancellationToken.None).ConfigureAwait(false);
+                changes.Delete(row);
             }
-
-            await tableRows.AdjustTDefRowCountAsync(flatTdefPage, -rows.Count, CancellationToken.None).ConfigureAwait(false);
-            await indexes.MaintainIndexesAsync(flatTdefPage, flatDef, "<flat>", CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -1367,7 +1363,8 @@ internal sealed class ComplexColumnManager(
             return;
         }
 
-        var replacements = new List<(LocatedRow Original, object[] Values, IReadOnlyDictionary<int, byte[]>? FixedText)>();
+        var plan = new MutationPlan();
+        MutationPlan.TableChanges changes = plan.ForTable(page, definition, tableName, MutationPlan.IndexPolicy.System);
         foreach (LocatedRow original in await snapshots.ReadRowsAsync(page, cancellationToken).ConfigureAwait(false))
         {
             if (original.Values[idIndex] is not int id || id != complexId
@@ -1379,30 +1376,16 @@ internal sealed class ComplexColumnManager(
             object[] values = (object[])original.Values.Clone();
             values[assignedIndex] = value;
             IReadOnlyDictionary<int, byte[]>? fixedText = original.GetPreservedFixedText(values, [assignedIndex]);
-            _ = tableRows.EncodeRow(definition, values, fixedText);
-            replacements.Add((original, values, fixedText));
+
+            changes.Update(original.Location, original.Values, values, fixedText, DeletedRowDataMode.Clear);
         }
 
-        if (replacements.Count == 0)
+        if (changes.Rows.Count == 0)
         {
             return;
         }
 
-        var deleted = new List<(RowLocation Loc, object[] Row)>(replacements.Count);
-        var inserted = new List<(RowLocation Loc, object[] Row)>(replacements.Count);
-        foreach ((LocatedRow original, _, _) in replacements)
-        {
-            await tableRows.MarkRowDeletedAsync(original.Location.PageNumber, original.Location.RowIndex, definition, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
-            deleted.Add((original.Location, original.Values));
-        }
-
-        foreach ((_, object[] values, IReadOnlyDictionary<int, byte[]>? fixedText) in replacements)
-        {
-            RowLocation location = await tableRows.InsertRowDataLocAsync(page, definition, values, updateTDefRowCount: false, fixedTextBytes: fixedText, cancellationToken).ConfigureAwait(false);
-            inserted.Add((location, values));
-        }
-
-        _ = await indexes.MaintainSystemTableIndexesIncrementallyAsync(page, definition, tableName, inserted, deleted, cancellationToken).ConfigureAwait(false);
+        await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
         this.catalog.Invalidate();
     }
 
@@ -1505,15 +1488,16 @@ internal sealed class ComplexColumnManager(
 
         Dictionary<long, TableDef> definitions = await this.ReadFlatDefinitionsBeforeDropAsync(flatTdefPages, cxRowsToDelete, msysCxPg, msysCxDef, cancellationToken).ConfigureAwait(false);
 
-        foreach ((long pg, int ri) in cxRowsToDelete)
-        {
-            await tableRows.MarkRowDeletedAsync(pg, ri, msysCxDef, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
-        }
-
         if (cxRowsToDelete.Count > 0)
         {
-            await tableRows.AdjustTDefRowCountAsync(msysCxPg, -cxRowsToDelete.Count, cancellationToken).ConfigureAwait(false);
-            await indexes.MaintainIndexesAsync(msysCxPg, msysCxDef, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+            var plan = new MutationPlan();
+            MutationPlan.TableChanges changes = plan.ForTable(msysCxPg, msysCxDef, Constants.SystemTableNames.ComplexColumns, MutationPlan.IndexPolicy.Rebuild);
+            foreach ((long pg, int ri) in cxRowsToDelete)
+            {
+                changes.Delete(new RowLocation(pg, ri, 0, 0), dataMode: DeletedRowDataMode.Clear);
+            }
+
+            await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
         }
 
         if (flatTdefPages.Count == 0)

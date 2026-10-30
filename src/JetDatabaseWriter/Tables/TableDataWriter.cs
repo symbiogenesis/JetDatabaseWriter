@@ -29,18 +29,17 @@ using JetDatabaseWriter.ValueDecoding.Models;
 /// checks that every index of the table can be maintained
 /// (<see cref="IndexMaintainer.ThrowIfIndexesUnmaintainableAsync"/>), and runs
 /// foreign-key and unique-index checks before any page is mutated, then
-/// writes the rows and maintains indexes. Cancellation is honoured through
-/// those reads and checks; an insert also honours it between rows, while an
-/// update or delete ignores it from its first page write and runs to
-/// completion. The public facade owns the auto-commit scope around each call.
+/// composes a shared mutation plan. The executor checks storage encoding
+/// before applying rows and maintains each affected table once. Cancellation
+/// before publication restores the statement through its transaction scope;
+/// physical write-back completes under the transaction lifecycle's fence.
 /// </summary>
 /// <param name="format">The database's immutable format profile.</param>
 /// <param name="pageSource">The database's page source.</param>
 /// <param name="catalog">Resolves the target table by name.</param>
-/// <param name="tableRows">Writes and tombstones the affected rows.</param>
-/// <param name="indexes">Maintains index B-trees after each batch.</param>
+/// <param name="indexes">Validates target index support before planning.</param>
 /// <param name="uniqueIndexes">Runs pre-write unique-index checks.</param>
-/// <param name="autoNumbers">Advances AutoNumber high-water values after inserts.</param>
+/// <param name="mutations">Applies composed row changes and table bookkeeping.</param>
 /// <param name="constraints">Applies defaults, AutoNumber, required, validation, and calculated-column rules.</param>
 /// <param name="enforcer">Enforces and cascades foreign-key constraints.</param>
 /// <param name="complexColumns">Cascades deletes into complex-column child rows.</param>
@@ -50,10 +49,9 @@ internal sealed class TableDataWriter(
     JetFormat format,
     IPageSource pageSource,
     TableCatalog catalog,
-    TableRowStore tableRows,
     IndexMaintainer indexes,
     UniqueIndexChecker uniqueIndexes,
-    AutoNumberMaintainer autoNumbers,
+    MutationExecutor mutations,
     ConstraintRegistry constraints,
     RelationshipEnforcer enforcer,
     ComplexColumnManager complexColumns,
@@ -343,16 +341,6 @@ internal sealed class TableDataWriter(
             await enforcer.EnforceFkOnPlannedUpdateAsync(tableName, tableDef, rowChanges, cascades, fkCtx, cancellationToken).ConfigureAwait(false);
         }
 
-        // Every new version is final now, a self-relationship's cascaded key
-        // included, so each is encoded and measured as its re-insert will
-        // encode it: a value the encoder refuses, or a row longer than a data
-        // page, refuses the update before any row is deleted. A row is never
-        // measured with a key the plan replaces.
-        foreach ((int index, _, object[] newRow) in pendingUpdates)
-        {
-            _ = tableRows.EncodeRow(tableDef, newRow, rows[index].GetPreservedFixedText(newRow, updateIndexes.Keys));
-        }
-
         // Pre-write unique-index enforcement: after FK checks succeed,
         // validate that the post-update key set contains no duplicates for
         // any unique index. The check sees the table's rows with
@@ -390,48 +378,17 @@ internal sealed class TableDataWriter(
 
         await history.ValidateAsync(historyBatches, cancellationToken).ConfigureAwait(false);
 
-        // The statement journal can discard a partial row rewrite before write-back.
-        cancellationToken.ThrowIfCancellationRequested();
-
-        // Rewrite the dependent rows the cascades reach, then the matching rows.
-        await enforcer.ApplyCascadeUpdatesAsync(cascades).ConfigureAwait(false);
-
-        var updateInsertedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
-        var updateDeletedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
+        var plan = new MutationPlan();
+        RelationshipEnforcer.AddCascadeUpdates(plan, cascades);
+        MutationPlan.TableChanges changes = plan.ForTable(entry.TDefPage, tableDef, tableName);
         foreach ((int i, object[] oldRow, object[] newRow) in pendingUpdates)
         {
-            RowLocation oldLoc = rows[i].Location;
-            await tableRows.MarkRowDeletedAsync(oldLoc.PageNumber, oldLoc.RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
-            updateDeletedHints.Add((oldLoc, oldRow));
-            RowLocation newLoc = await tableRows.InsertRowDataLocAsync(entry.TDefPage, tableDef, newRow, updateTDefRowCount: false, fixedTextBytes: rows[i].GetPreservedFixedText(newRow, updateIndexes.Keys), cancellationToken: cancellationToken).ConfigureAwait(false);
-            updateInsertedHints.Add((newLoc, newRow));
+            changes.Update(rows[i].Location, oldRow, newRow, rows[i].GetPreservedFixedText(newRow, updateIndexes.Keys));
         }
 
-        bool incremental = await indexes.TryMaintainIndexesIncrementalAsync(
-            entry.TDefPage,
-            tableDef,
-            updateInsertedHints,
-            updateDeletedHints,
-            cancellationToken).ConfigureAwait(false);
-        if (!incremental)
-        {
-            await indexes.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
-        }
-
-        // An explicit AutoNumber value raises the TDEF high-water exactly as it
-        // does on insert, so Access never issues that number again.
-        if (AssignsAutoNumberColumn(tableDef, updateIndexes.Keys))
-        {
-            var newRows = new List<object[]>(pendingUpdates.Count);
-            foreach ((_, _, object[] newRow) in pendingUpdates)
-            {
-                newRows.Add(newRow);
-            }
-
-            await autoNumbers.UpdateHighWaterAsync(entry.TDefPage, tableDef, newRows, cancellationToken).ConfigureAwait(false);
-        }
-
-        await history.ApplyAsync(historyBatches, cancellationToken).ConfigureAwait(false);
+        changes.RaiseAutoNumbers = AssignsAutoNumberColumn(tableDef, updateIndexes.Keys);
+        AppendOnlyHistoryWriter.AddToPlan(plan, historyBatches);
+        await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
         return pendingUpdates.Count;
     }
 
@@ -515,37 +472,17 @@ internal sealed class TableDataWriter(
 
         await complexColumns.PlanComplexChildDeletesAsync(tableDef, parentLocs, complexChildren, cancellationToken).ConfigureAwait(false);
 
-        // The statement journal can discard partial deletes before write-back.
-        cancellationToken.ThrowIfCancellationRequested();
-
-        // Each set of rows loses its flat rows just before it is deleted, so
-        // a cascade whose index rebuild throws leaves the rows not yet
-        // deleted, the matching rows among them, with their items.
-        await enforcer.ApplyCascadeDeletesAsync(cascades).ConfigureAwait(false);
-        await complexColumns.ApplyComplexChildDeletesAsync(complexChildren).ConfigureAwait(false);
-
-        int deleted = 0;
-        var deleteHints = new List<(RowLocation Loc, object[] Row)>(matchingRows.Count);
+        var plan = new MutationPlan();
+        await enforcer.AddCascadeDeletesAsync(plan, cascades, cancellationToken).ConfigureAwait(false);
+        await complexColumns.AddComplexChildDeletesAsync(plan, complexChildren, cancellationToken).ConfigureAwait(false);
+        MutationPlan.TableChanges changes = plan.ForTable(entry.TDefPage, tableDef, tableName);
         foreach ((RowLocation location, object[] oldRow) in matchingRows)
         {
-            await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
-            deleteHints.Add((location, oldRow));
-            deleted++;
+            changes.Delete(location, oldRow);
         }
 
-        await tableRows.AdjustTDefRowCountAsync(entry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
-        bool incremental = await indexes.TryMaintainIndexesIncrementalAsync(
-            entry.TDefPage,
-            tableDef,
-            insertedRows: null,
-            deleteHints,
-            cancellationToken).ConfigureAwait(false);
-        if (!incremental)
-        {
-            await indexes.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
-        }
-
-        return deleted;
+        await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
+        return matchingRows.Count;
     }
 
     private async ValueTask<int> InsertMappedRowsAfterValidationAsync<TItem>(
@@ -569,7 +506,7 @@ internal sealed class TableDataWriter(
         IReadOnlyList<FkRelationship> relationships = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         FkContext? fkContext = relationships.Count > 0 ? new FkContext(relationships) : null;
 
-        (List<object[]> pendingRows, List<ICollection<int>> insertAssignments, List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints) =
+        (List<object[]> pendingRows, List<ICollection<int>> insertAssignments) =
             await this.PrepareInsertBatchAsync(
                 tableName,
                 tableDef,
@@ -584,12 +521,11 @@ internal sealed class TableDataWriter(
             tableDef,
             pendingRows,
             insertAssignments,
-            autoCheckpoints,
             fkContext,
             cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask<(List<object[]> PendingRows, List<ICollection<int>> InsertAssignments, List<(ColumnConstraint Constraint, long? PreviousValue)>? AutoCheckpoints)> PrepareInsertBatchAsync<TItem>(
+    private async ValueTask<(List<object[]> PendingRows, List<ICollection<int>> InsertAssignments)> PrepareInsertBatchAsync<TItem>(
         string tableName,
         TableDef tableDef,
         IEnumerable<TItem> items,
@@ -600,44 +536,28 @@ internal sealed class TableDataWriter(
     {
         var pendingRows = new List<object[]>();
         var insertAssignments = new List<ICollection<int>>();
-        List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints = null;
-
-        try
+        foreach (TItem item in items)
         {
-            foreach (TItem item in items)
+            cancellationToken.ThrowIfCancellationRequested();
+            Guard.NotNull(item, itemParamName);
+
+            object[] row = mapRow(tableDef, item);
+            var assigned = new HashSet<int>();
+            for (int index = 0; index < Math.Min(row.Length, tableDef.Columns.Count); index++)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                Guard.NotNull(item, itemParamName);
-
-                object[] row = mapRow(tableDef, item);
-                var assigned = new HashSet<int>();
-                for (int index = 0; index < Math.Min(row.Length, tableDef.Columns.Count); index++)
+                if (tableDef.Columns[index].Type == ColumnType.MemoType && row[index] is not DbDefault)
                 {
-                    if (tableDef.Columns[index].Type == ColumnType.MemoType && row[index] is not DbDefault)
-                    {
-                        assigned.Add(index);
-                    }
+                    assigned.Add(index);
                 }
-
-                List<(ColumnConstraint Constraint, long? PreviousValue)>? rowCheckpoints =
-                    await constraints.ApplyAsync(tableName, tableDef, row, cancellationToken).ConfigureAwait(false);
-                if (rowCheckpoints != null)
-                {
-                    (autoCheckpoints ??= []).AddRange(rowCheckpoints);
-                }
-
-                this.ThrowIfTextNotStorable(tableName, tableDef, row);
-                pendingRows.Add(row);
-                insertAssignments.Add(assigned);
             }
-        }
-        catch
-        {
-            ConstraintRegistry.RestoreAutoCounters(autoCheckpoints);
-            throw;
+
+            _ = await constraints.ApplyAsync(tableName, tableDef, row, cancellationToken).ConfigureAwait(false);
+            this.ThrowIfTextNotStorable(tableName, tableDef, row);
+            pendingRows.Add(row);
+            insertAssignments.Add(assigned);
         }
 
-        return (pendingRows, insertAssignments, autoCheckpoints);
+        return (pendingRows, insertAssignments);
     }
 
     private async ValueTask<int> InsertPreparedBatchAsync(
@@ -646,73 +566,31 @@ internal sealed class TableDataWriter(
         TableDef tableDef,
         List<object[]> pendingRows,
         List<ICollection<int>> insertAssignments,
-        List<(ColumnConstraint Constraint, long? PreviousValue)>? autoCheckpoints,
         FkContext? fkContext,
         CancellationToken cancellationToken)
     {
-        int inserted = 0;
-
-        try
+        await uniqueIndexes.CheckUniqueIndexesPreInsertAsync(tdefPage, tableDef, tableName, pendingRows, cancellationToken).ConfigureAwait(false);
+        List<AppendOnlyHistoryWriter.HistoryBatch> historyBatches = await history.PrepareAsync(tableName, tableDef, pendingRows, assignedColumns: null, insertAssignments, cancellationToken).ConfigureAwait(false);
+        await history.ValidateAsync(historyBatches, cancellationToken).ConfigureAwait(false);
+        var plan = new MutationPlan();
+        MutationPlan.TableChanges changes = plan.ForTable(tdefPage, tableDef, tableName);
+        foreach (object[] row in pendingRows)
         {
-            // AutoNumber values are already assigned, so the unique check sees
-            // the exact keys the row writer and index maintainer will encode.
-            await uniqueIndexes.CheckUniqueIndexesPreInsertAsync(
-                tdefPage,
-                tableDef,
-                tableName,
-                pendingRows,
-                cancellationToken).ConfigureAwait(false);
-
-            List<AppendOnlyHistoryWriter.HistoryBatch> historyBatches = await history.PrepareAsync(tableName, tableDef, pendingRows, assignedColumns: null, insertAssignments, cancellationToken).ConfigureAwait(false);
-            await history.ValidateAsync(historyBatches, cancellationToken).ConfigureAwait(false);
-            var batchHintRows = new List<(RowLocation Loc, object[] Row)>(pendingRows.Count);
-
-            // Row and index writes remain private until statement write-back.
-            foreach (object[] row in pendingRows)
+            cancellationToken.ThrowIfCancellationRequested();
+            if (fkContext != null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                if (fkContext != null)
-                {
-                    await enforcer.EnforceFkOnInsertAsync(tableName, tableDef, row, fkContext, cancellationToken).ConfigureAwait(false);
-                }
-
-                RowLocation location = await tableRows.InsertRowDataLocAsync(tdefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
-                batchHintRows.Add((location, row));
-
-                if (fkContext != null)
-                {
-                    RelationshipEnforcer.AugmentParentSetsAfterInsert(tableName, tableDef, row, fkContext);
-                }
-
-                inserted++;
+                await enforcer.EnforceFkOnInsertAsync(tableName, tableDef, row, fkContext, cancellationToken).ConfigureAwait(false);
+                RelationshipEnforcer.AugmentPlannedParentKeys(tableName, tableDef, row, fkContext);
             }
 
-            if (inserted > 0)
-            {
-                bool incremental = await indexes.TryMaintainIndexesIncrementalAsync(
-                    tdefPage,
-                    tableDef,
-                    batchHintRows,
-                    deletedRows: null,
-                    cancellationToken).ConfigureAwait(false);
-                if (!incremental)
-                {
-                    await indexes.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
-                }
-
-                await autoNumbers.UpdateHighWaterAsync(tdefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
-                await autoNumbers.UpdateComplexHighWaterAsync(tdefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
-                await history.ApplyAsync(historyBatches, cancellationToken).ConfigureAwait(false);
-            }
-        }
-        catch
-        {
-            ConstraintRegistry.RestoreAutoCounters(autoCheckpoints);
-            throw;
+            changes.Insert(row);
         }
 
-        return inserted;
+        changes.RaiseAutoNumbers = true;
+        changes.RaiseComplexReferences = true;
+        AppendOnlyHistoryWriter.AddToPlan(plan, historyBatches);
+        await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
+        return pendingRows.Count;
     }
 
     /// <summary>

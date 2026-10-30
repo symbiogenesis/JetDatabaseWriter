@@ -32,14 +32,14 @@ public sealed class SystemTableIndexMaintenanceTests
         tableDef.SetValueByName(row, "ACM", Constants.Aces.DefaultAcm);
         tableDef.SetValueByName(row, "FInheritable", false);
 
-        await writer.Services.Indexes.InsertSystemRowAndMaintainAsync(
+        await writer.Services.Mutations.InsertSystemRowAndMaintainAsync(
             tdefPage,
             tableDef,
             Constants.SystemTableNames.Aces,
             row,
             cancellationToken: ct);
 
-        Assert.Equal(SystemTableIndexMaintenancePath.Incremental, writer.Services.Indexes.LastSystemTableIndexMaintenancePath);
+        Assert.Equal(SystemTableIndexMaintenancePath.Incremental, writer.Services.Mutations.LastSystemTableIndexMaintenancePath);
     }
 
     [Fact]
@@ -62,14 +62,14 @@ public sealed class SystemTableIndexMaintenanceTests
             tableDef.SetValueByName(row, "ACM", Constants.Aces.DefaultAcm);
             tableDef.SetValueByName(row, "FInheritable", false);
 
-            await writer.Services.Indexes.InsertSystemRowAndMaintainAsync(
+            await writer.Services.Mutations.InsertSystemRowAndMaintainAsync(
                 tdefPage,
                 tableDef,
                 Constants.SystemTableNames.Aces,
                 row,
                 cancellationToken: ct);
 
-            Assert.Equal(SystemTableIndexMaintenancePath.Incremental, writer.Services.Indexes.LastSystemTableIndexMaintenancePath);
+            Assert.Equal(SystemTableIndexMaintenancePath.Incremental, writer.Services.Mutations.LastSystemTableIndexMaintenancePath);
         }
 
         List<long> roots = await IndexLeafChain.ReadRealIndexRootsAsync(writer.Database, tdefPage, ct);
@@ -147,14 +147,14 @@ public sealed class SystemTableIndexMaintenanceTests
         tableDef.SetValueByName(row, "ConceptualTableID", 70_003);
         tableDef.SetValueByName(row, "FlatTableID", 70_004);
 
-        await writer.Services.Indexes.InsertSystemRowAndMaintainAsync(
+        await writer.Services.Mutations.InsertSystemRowAndMaintainAsync(
             tdefPage,
             tableDef,
             Constants.SystemTableNames.ComplexColumns,
             row,
             cancellationToken: ct);
 
-        Assert.Equal(SystemTableIndexMaintenancePath.Incremental, writer.Services.Indexes.LastSystemTableIndexMaintenancePath);
+        Assert.Equal(SystemTableIndexMaintenancePath.Incremental, writer.Services.Mutations.LastSystemTableIndexMaintenancePath);
     }
 
     [Fact]
@@ -175,7 +175,7 @@ public sealed class SystemTableIndexMaintenanceTests
         tableDef.SetValueByName(row, "FInheritable", false);
 
         JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(() =>
-            writer.Services.Indexes.InsertSystemRowAndMaintainAsync(
+            writer.Services.Mutations.InsertSystemRowAndMaintainAsync(
                 tdefPage,
                 tableDef,
                 Constants.SystemTableNames.Aces,

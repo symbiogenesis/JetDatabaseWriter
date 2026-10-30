@@ -1,18 +1,21 @@
 {
   "schemaVersion": 1,
-  "productionInventorySha256": "345761e4c6b48b835c094ccc2751f6828c354b7c128b5b16571672d3dff9634d",
-  "inventoryReview": "Classified PageFrame.cs and PageLease.cs as handwritten immutable pooled-image/reference ownership and scoped reader lifetime. Removed RelationshipPageReader.cs after cursor consumers adopted bounded leases instead of owned clone adapters. Existing query helper classifications remain unchanged. The new verification-only ownership model is not shipped or mechanically refined C#; generated kernels, runtime requirements and native/storage contracts are unchanged.",
+  "productionInventorySha256": "31ec5c708b95db73d3b5622233d3109188290a7b9eb3fba8b6c3da2a5e63462f",
+  "inventoryReview": "Classified MutationPlan.cs and MutationExecutor.cs as handwritten prepared logical-row data and effect orchestration under the existing statement/savepoint or private initialization/replacement context. Semantic validation remains contributor-owned; shared preflight covers row encoding. Existing immutable-frame/lease and query helper classifications remain unchanged. No new generated kernel call, recovery authority, runtime dependency or machine-checked mutation composition is claimed.",
   "reviews": [
     {
       "boundary": "implementation",
-      "obligations": "Reviewed generated null/budget admission and positive bounded payload consumption before each CopyPayloadAsync output effect, checked casts/counter headroom, release-before-next-acquisition and preserved malformed/single-page error priority. Reviewed lazy 16-slot visited-table allocation, half-occupancy doubling, bounded circular probing, duplicate refusal before growth and exact rehash membership manually. Reviewed the explicit caller-stream live I/O, failure/disposal and exclusive-access contract against direct FileStream classification and custom-stream rollback. Existing journal/replacement codecs, shared range/read and serialized writer-lifecycle mappings retain their separate payload, authority and returned-I/O contracts. Reviewed full calculated-envelope overhead before payload extraction; exact lookup/query metadata preservation through schema edits without source interpretation; and bounded query template shape identity, deferred constant binding, synchronization, retention, eviction and direct-compilation fallback. These handwritten boundaries have regression/manual evidence rather than a new proof. Reviewed S9 display metadata against DAO3.6 column edits: removing the blanket Filter/OrderBy refusal delegates unchanged entry preservation to the existing property projector; table rules, lookup preservation, malformed-property parsing and transactional preflight remain separate and unchanged. Opaque and repeated display entries are carried without interpretation or execution. Reviewed R4 stale bracketed qualification: an explicit table context and a known local field precede Null for a mismatched bracketed qualifier; bare qualifiers retain row-local binding, and missing context/unknown fields refuse. CreateTable/AddColumn declaration admission rejects newly declared bracketed foreign qualifiers while persisted schema rewrites retain original text. Qualified defaults/validation rules remain unsupported and no foreign lookup is performed. Reviewed F8 Memo escape admission before page allocation: only Unicode-compressed columns, total length6..2048 and a nonzero Latin1 tail select FFFE00FFFE00 plus one-byte tail. This boundary saves native compact space and remains readable after inline spill; unsupported short/flag/character shapes refuse. Larger plain chains and calculated Memo envelopes retain separate existing rules; no storage-descriptor or traversal kernel changes. Statement fault coverage retains every original read, write, partial-write and flush position, byte restoration check, retry and completion assertion; only fixed database-format wrappers and shared test helpers partition the existing evidence. Production source names, contracts and verified kernels are unchanged. Reviewed S9 removal of the global RowSource identifier scan: existing raw property projection and untouched query catalog/storage preserve native stale text through column rename/drop and referenced-table deletion. Table/column validation, calculated-expression dependencies, relationship planning and edited-table corruption checks retain their independent admission paths. No stored source is executed or rebound; this is native/tested preservation rather than a verified query dependency controller. Reviewed F8 ordinary compressed variable Text: leading U+FEFF, total length6..255, nonzero Latin1 tail and the descriptor character limit precede allocation. The complete length+5 escape fits the uncompressed descriptor for every admitted length; no escape is truncated. Whole-row TableDataWriter preflight carries table/column context before LVAL preparation, and RowEncoder repeats bounded admission. Fixed/uncompressed Text, Memo and calculated Text retain their independent paths. This native-tested handwritten encoder adds no verified parsing or mutation-composition claim. Reviewed R4 Single/Double arithmetic selection, finite result/operand validation, Single overflow promotion, unary and Abs/Int/Fix retention, CDbl/CSng finite conversion and 15/7-digit numeric text. Division checks both converted operands before arithmetic, preventing nonfinite text divisors from collapsing to zero. Numeric formatting applies the native complete fractional-width decision whether initial G output is fixed or scientific. Decimal paths retain existing behavior; no integral/Currency identity, native error-envelope, whole-expression or locale-completeness proof is implied. Reviewed ordinal exponent/decimal scans and the site-local CA1859 suppression: FloatingResult must retain an object return to box either Single or Double, rather than accepting an analyzer conversion that erases the Variant subtype. Reviewed shared root/include operator classification and stage construction with immediate per-operator include adaptation, preserving delegate preparation before later count operands. Root/include/tail ordering shares the existing Enumerable stable sort through prepared selector/comparer/direction values; each executor retains its buffering, captures, comparer selection and boundary behavior. Reviewed immutable PageFrame bytes and co-located lazy row directories, checked CAS reference/accounting headroom, producer/cache transfer and exception rollback, idempotent leases and one final pool return. Reader lookup/acquisition and cache detach serialize without awaiting under their locks; pager writes and zero reservations replace images, while generation checks exclude stale retention. Scoped scan/prefetch, cursor, overflow and located-LVAL leases remain alive through awaited/yielded consumption and release on completion, abandonment, cancellation and failure. Writer and temporary native-security service graphs dispose snapshot caches through the facade without introducing collaborator cycles. Actual frame/array identity, atomics, pool behavior and parser borrowing remain manual correspondence contracts.",
-      "conformance": "LongValueTraversalTests independently checks collision/growth membership, cycles before reacquisition, no-progress refusal and wide slice/count boundaries; LongValueStreamingTests and LongValueStoreTests retain cancellation, partial output, release and existing format behavior. PageStoreTests, LeaveOpenTests, StatementSpillTests, JetTransactionTests and WriterLifecycleConformanceTests bind the live-stream contract. ReplacementCleanupConformanceTests and RecoverableWriterLockTests supplement the new multi-client model with removed-name, competing-handle, retry, stale-owner and exact-evidence controls. Exact build/test execution receipts and settled-main CI verdicts are reported separately. Calculated envelope regressions cover inline/single/chained public reads and unchanged write refusal with committed native framing controls. Schema lookup tests cover all three formats and write modes, exact raw source preservation, opaque and repeated entries, owner removal and case-only rename. Query tests cover independent/live captures, deferred calls, short circuiting, concurrency, eviction, failed compilation, checked arithmetic, lexical scopes, names, quoted/deep fallback and post-projection public reads. Exact settled-main CI is reported separately. NativeDisplayPropertyTests compares independently native-edited and writer-edited Jet3/Jet4 controls through exact column names, raw display entry metadata, native read/insert/update/delete and compact. SchemaRewritePropertyPreservationTests covers related/unrelated/case-only edits, opaque repeats and all three managed formats/write modes. DAO120 ACE cases remain guarded; exact execution and settled-main CI receipts are reported separately. QualifiedExpressionReferenceTests and TableRenamedQualifiedExpressionTests cover Null/IsNull/Nz, bare binding, context/name refusal, cached Null insert/update and byte-identical declaration refusal. Previously recorded DAO controls establish native syntax-dependent behavior and compact error3790; extended writer-native confirmation remains guarded and was unavailable locally without DAO120. NativeMemoCompressionTests pins existing DAO120-authored Jet4/ACE file hashes and exact11/1025-character payload parity, exercises inline/external and inclusive length boundaries, all255 nonzero Latin1 tail characters, writer update/delete/schema rewrites, DAO3.6 Jet4 exact read/compact and unchanged insert/update refusal. Fresh ACE DAO120 controls remain guarded; settled-main CI results are reported separately. StatementAtomicityTestBase and its Jet3/Jet4/ACE wrappers retain the six-mutation, eight-shard sweep per format. StatementAtomicityPartitionTests rejects missing or duplicate mutation/shard pairs. The lifecycle evidence links name the extracted shared sweep and concrete partitions; these remain tested/manual correspondence. NativeLookupPropertyTests compares DAO3.6 Jet3/Jet4 controls with writer subjects through rename, case-only rename, column drop and table drop, checking raw source properties, complete query and matching catalog fields, native QueryDef SQL, healthy surrounding DML and native compact/readback. ACE DAO120 controls remain guarded; execution receipts and settled-main CI are reported separately. NativeCompressedTextMarkerTests pins hashes, compression bits and exact field slices of writer-schema/native-row DAO3.6 Jet4 source/compact specimens; checks public reads, writer insert/update/schema rewrites, native read/update/compact and all255 allowed tail units; and preserves full database bytes on contextual unsupported-shape/declared-limit refusal. The fixture README records native short-marker loss and rejects property-only compression claims. Fresh DAO120 checks remain guarded. CalculatedExpressionFloatingSubtypeTests covers native-context subtype/text controls, positive/negative notation boundaries, Boolean/narrow/Long interactions, finite limits, division-by-zero and nonfinite text refusal. Public defaults across three formats and ACE calculated Double insert/update exercise the containing writer; invalid/overflowing updates preserve exact bytes. Its guarded DAO3.6 Jet4 query method compares native values/types/formatting and exact invalid-text refusal controls. Independent review reproduced and closed notation-width and nonfinite-divisor gaps; exact source execution and settled-main CI remain separate receipts. QualifiedExpressionReferenceTests retains exact subtype assertions after the floating correction: ordinary/scientific tokens select the existing Double representation, while integral fields plus radix literals retain the Decimal fallback. Qualified name binding, reserved-name renaming, value equality and refusal checks remain intact. These internal parser-subtype checks do not establish the still-open native literal/integral-promotion semantics. QueryPipelineParityTests independently compares root/include/tail ordering runs, stable ties, paging, live captures, zero-count source/key avoidance and late secondary-key exceptions; existing operand, tail, translation and filtered-include tests retain custom-comparer and execution-boundary coverage. This is tested query correspondence rather than a new proof or performance result. PageLeaseTests, AccessReaderLeaseTests, retained-writer-lease cache tests and PagerFrameCacheTests exercise final/repeated returns, overflow refusal, row-directory identity, shared hits, COW and invalidation/disposal with live leases, tiny/disabled caches, abandoned scan/seek, cancellation and concurrent scans. LruCacheTests covers once-only owned-value release through replacement/eviction/clear/disposal. Streaming/traversal controls retain delayed output and failure release after removing the separate LVAL return callback; architecture/native-security, overflow, index and compact controls retain surrounding behavior. Exact local build/test and hosted verdicts are separate execution receipts; no performance acceptance is inferred.",
+      "obligations": "Reviewed generated null/budget admission and positive bounded payload consumption before each CopyPayloadAsync output effect, checked casts/counter headroom, release-before-next-acquisition and preserved malformed/single-page error priority. Reviewed lazy 16-slot visited-table allocation, half-occupancy doubling, bounded circular probing, duplicate refusal before growth and exact rehash membership manually. Reviewed the explicit caller-stream live I/O, failure/disposal and exclusive-access contract against direct FileStream classification and custom-stream rollback. Existing journal/replacement codecs, shared range/read and serialized writer-lifecycle mappings retain their separate payload, authority and returned-I/O contracts. Reviewed full calculated-envelope overhead before payload extraction; exact lookup/query metadata preservation through schema edits without source interpretation; and bounded query template shape identity, deferred constant binding, synchronization, retention, eviction and direct-compilation fallback. These handwritten boundaries have regression/manual evidence rather than a new proof. Reviewed S9 display metadata against DAO3.6 column edits: removing the blanket Filter/OrderBy refusal delegates unchanged entry preservation to the existing property projector; table rules, lookup preservation, malformed-property parsing and transactional preflight remain separate and unchanged. Opaque and repeated display entries are carried without interpretation or execution. Reviewed R4 stale bracketed qualification: an explicit table context and a known local field precede Null for a mismatched bracketed qualifier; bare qualifiers retain row-local binding, and missing context/unknown fields refuse. CreateTable/AddColumn declaration admission rejects newly declared bracketed foreign qualifiers while persisted schema rewrites retain original text. Qualified defaults/validation rules remain unsupported and no foreign lookup is performed. Reviewed F8 Memo escape admission before page allocation: only Unicode-compressed columns, total length6..2048 and a nonzero Latin1 tail select FFFE00FFFE00 plus one-byte tail. This boundary saves native compact space and remains readable after inline spill; unsupported short/flag/character shapes refuse. Larger plain chains and calculated Memo envelopes retain separate existing rules; no storage-descriptor or traversal kernel changes. Statement fault coverage retains every original read, write, partial-write and flush position, byte restoration check, retry and completion assertion; only fixed database-format wrappers and shared test helpers partition the existing evidence. Production source names, contracts and verified kernels are unchanged. Reviewed S9 removal of the global RowSource identifier scan: existing raw property projection and untouched query catalog/storage preserve native stale text through column rename/drop and referenced-table deletion. Table/column validation, calculated-expression dependencies, relationship planning and edited-table corruption checks retain their independent admission paths. No stored source is executed or rebound; this is native/tested preservation rather than a verified query dependency controller. Reviewed F8 ordinary compressed variable Text: leading U+FEFF, total length6..255, nonzero Latin1 tail and the descriptor character limit precede allocation. The complete length+5 escape fits the uncompressed descriptor for every admitted length; no escape is truncated. Whole-row TableDataWriter preflight carries table/column context before LVAL preparation, and RowEncoder repeats bounded admission. Fixed/uncompressed Text, Memo and calculated Text retain their independent paths. This native-tested handwritten encoder adds no verified parsing or mutation-composition claim. Reviewed R4 Single/Double arithmetic selection, finite result/operand validation, Single overflow promotion, unary and Abs/Int/Fix retention, CDbl/CSng finite conversion and 15/7-digit numeric text. Division checks both converted operands before arithmetic, preventing nonfinite text divisors from collapsing to zero. Numeric formatting applies the native complete fractional-width decision whether initial G output is fixed or scientific. Decimal paths retain existing behavior; no integral/Currency identity, native error-envelope, whole-expression or locale-completeness proof is implied. Reviewed ordinal exponent/decimal scans and the site-local CA1859 suppression: FloatingResult must retain an object return to box either Single or Double, rather than accepting an analyzer conversion that erases the Variant subtype. Reviewed shared root/include operator classification and stage construction with immediate per-operator include adaptation, preserving delegate preparation before later count operands. Root/include/tail ordering shares the existing Enumerable stable sort through prepared selector/comparer/direction values; each executor retains its buffering, captures, comparer selection and boundary behavior. Reviewed immutable PageFrame bytes and co-located lazy row directories, checked CAS reference/accounting headroom, producer/cache transfer and exception rollback, idempotent leases and one final pool return. Reader lookup/acquisition and cache detach serialize without awaiting under their locks; pager writes and zero reservations replace images, while generation checks exclude stale retention. Scoped scan/prefetch, cursor, overflow and located-LVAL leases remain alive through awaited/yielded consumption and release on completion, abandonment, cancellation and failure. Writer and temporary native-security service graphs dispose snapshot caches through the facade without introducing collaborator cycles. Actual frame/array identity, atomics, pool behavior and parser borrowing remain manual correspondence contracts. Reviewed ordinary/cascade/complex/history/catalog/system producers staging common per-TDEF changes, first-use grouping, same-layout contributor contract and contradictory native-policy refusal. Whole-plan row-encoding preflight checks arity, unreadable values and capacity before effects; semantic/FK/unique validation remains in specialized preparation. Executor-owned row application, fixed Text bytes, erase modes, count/counter updates and explicit standard/rebuild/system/catalog-splice/change/relocation policies preserve native fallbacks and stored catalog keys. Public mutations retain statement/savepoint snapshot rollback, including constraint entries loaded after capture; local redundant counter checkpoints were removed only for those coordinated producers. Cancellation reaches the executor; failed physical restoration retains the existing faulted/evidence outcome. Private schema storage copy/publication remains separate.",
+      "conformance": "LongValueTraversalTests independently checks collision/growth membership, cycles before reacquisition, no-progress refusal and wide slice/count boundaries; LongValueStreamingTests and LongValueStoreTests retain cancellation, partial output, release and existing format behavior. PageStoreTests, LeaveOpenTests, StatementSpillTests, JetTransactionTests and WriterLifecycleConformanceTests bind the live-stream contract. ReplacementCleanupConformanceTests and RecoverableWriterLockTests supplement the new multi-client model with removed-name, competing-handle, retry, stale-owner and exact-evidence controls. Exact build/test execution receipts and settled-main CI verdicts are reported separately. Calculated envelope regressions cover inline/single/chained public reads and unchanged write refusal with committed native framing controls. Schema lookup tests cover all three formats and write modes, exact raw source preservation, opaque and repeated entries, owner removal and case-only rename. Query tests cover independent/live captures, deferred calls, short circuiting, concurrency, eviction, failed compilation, checked arithmetic, lexical scopes, names, quoted/deep fallback and post-projection public reads. Exact settled-main CI is reported separately. NativeDisplayPropertyTests compares independently native-edited and writer-edited Jet3/Jet4 controls through exact column names, raw display entry metadata, native read/insert/update/delete and compact. SchemaRewritePropertyPreservationTests covers related/unrelated/case-only edits, opaque repeats and all three managed formats/write modes. DAO120 ACE cases remain guarded; exact execution and settled-main CI receipts are reported separately. QualifiedExpressionReferenceTests and TableRenamedQualifiedExpressionTests cover Null/IsNull/Nz, bare binding, context/name refusal, cached Null insert/update and byte-identical declaration refusal. Previously recorded DAO controls establish native syntax-dependent behavior and compact error3790; extended writer-native confirmation remains guarded and was unavailable locally without DAO120. NativeMemoCompressionTests pins existing DAO120-authored Jet4/ACE file hashes and exact11/1025-character payload parity, exercises inline/external and inclusive length boundaries, all255 nonzero Latin1 tail characters, writer update/delete/schema rewrites, DAO3.6 Jet4 exact read/compact and unchanged insert/update refusal. Fresh ACE DAO120 controls remain guarded; settled-main CI results are reported separately. StatementAtomicityTestBase and its Jet3/Jet4/ACE wrappers retain the six-mutation, eight-shard sweep per format. StatementAtomicityPartitionTests rejects missing or duplicate mutation/shard pairs. The lifecycle evidence links name the extracted shared sweep and concrete partitions; these remain tested/manual correspondence. NativeLookupPropertyTests compares DAO3.6 Jet3/Jet4 controls with writer subjects through rename, case-only rename, column drop and table drop, checking raw source properties, complete query and matching catalog fields, native QueryDef SQL, healthy surrounding DML and native compact/readback. ACE DAO120 controls remain guarded; execution receipts and settled-main CI are reported separately. NativeCompressedTextMarkerTests pins hashes, compression bits and exact field slices of writer-schema/native-row DAO3.6 Jet4 source/compact specimens; checks public reads, writer insert/update/schema rewrites, native read/update/compact and all255 allowed tail units; and preserves full database bytes on contextual unsupported-shape/declared-limit refusal. The fixture README records native short-marker loss and rejects property-only compression claims. Fresh DAO120 checks remain guarded. CalculatedExpressionFloatingSubtypeTests covers native-context subtype/text controls, positive/negative notation boundaries, Boolean/narrow/Long interactions, finite limits, division-by-zero and nonfinite text refusal. Public defaults across three formats and ACE calculated Double insert/update exercise the containing writer; invalid/overflowing updates preserve exact bytes. Its guarded DAO3.6 Jet4 query method compares native values/types/formatting and exact invalid-text refusal controls. Independent review reproduced and closed notation-width and nonfinite-divisor gaps; exact source execution and settled-main CI remain separate receipts. QualifiedExpressionReferenceTests retains exact subtype assertions after the floating correction: ordinary/scientific tokens select the existing Double representation, while integral fields plus radix literals retain the Decimal fallback. Qualified name binding, reserved-name renaming, value equality and refusal checks remain intact. These internal parser-subtype checks do not establish the still-open native literal/integral-promotion semantics. QueryPipelineParityTests independently compares root/include/tail ordering runs, stable ties, paging, live captures, zero-count source/key avoidance and late secondary-key exceptions; existing operand, tail, translation and filtered-include tests retain custom-comparer and execution-boundary coverage. This is tested query correspondence rather than a new proof or performance result. PageLeaseTests, AccessReaderLeaseTests, retained-writer-lease cache tests and PagerFrameCacheTests exercise final/repeated returns, overflow refusal, row-directory identity, shared hits, COW and invalidation/disposal with live leases, tiny/disabled caches, abandoned scan/seek, cancellation and concurrent scans. LruCacheTests covers once-only owned-value release through replacement/eviction/clear/disposal. Streaming/traversal controls retain delayed output and failure release after removing the separate LVAL return callback; architecture/native-security, overflow, index and compact controls retain surrounding behavior. Exact local build/test and hosted verdicts are separate execution receipts; no performance acceptance is inferred. MutationPipelineTests covers composed self-cascade updates/counts, complex identity/byte rollback and whole-plan shape refusal before any earlier table write. Focused cascade/complex/system-policy, history, fixed-text, cancellation, nested/savepoint/statement rollback, ACE statement fault and unchanged bootstrap golden controls passed locally; the final integrated solution builds with strict Release analysis and selected architecture/mutation/lease/query/golden cases pass against those exact binaries. These are tested implementation boundaries, not new mutation or storage proofs; hosted validation and paired page-cache measurements remain separate acceptance gates.",
       "remainingAssumptions": "The traversal model bounds aggregate uint-array payload allocations and logical page-prefix acquisition work; CLR overhead/GC, locator/cache/pool and destination resources remain separate. Exact handwritten table membership/rehash is manual correspondence with independent tests, not an automatic C# proof. Returned I/O, immutable borrowed bytes, cryptographic identity, snapshot effects, canonical coordination, stale-I/O fencing, OS locks and physical persistence remain contracts. Non-FileStream callers retain live rollback only; stream disposal can itself persist buffered bytes. No complete public parser, arbitrary concurrent C# correctness or caller-stream persistent recovery claim is admitted. Native Numeric/error semantics, broader query/application semantics and fresh ACE lookup-native evidence, Name AutoCorrect, whole translation plans and remaining query cache/projection/seek work stay open. No benchmark improvement is claimed. DAO3.6 display-property preservation does not establish Access UI Name AutoCorrect or ACE native acceptance; ACE controls require a DAO120-equipped host. No new verified production boundary is claimed. Stale bracketed references whose local field is absent remain unverified and refuse; fresh DAO120 writer read/update/compact-refusal confirmation remains E2/R4 work. Expression evaluation and schema admission remain handwritten/tested rather than proved. Memo marker interpretation remains native/storage-context evidence, not a new proof: no support is inferred for short noncompressing escapes, disabled compression, NUL/nonLatin1 tails or unverified calculated/variable-Text marker forms. Frozen ACE payload parity does not replace fresh DAO120 read/update/compact acceptance. Ordinary compressed Text support is limited to the declared6..255 nonzero-Latin1-tail escape; short, NUL-tail, wide-tail and calculated forms plus fresh DAO120 Jet4/ACE acceptance remain F8/E2 work. Writer-created fixture schemas with native-authored rows are not wholly Microsoft-authored databases. Floating evidence names DAO3.6 Jet4 SQL expression context; it does not settle the distinct VBA Variant division matrix or fresh ACE-native/database-locale behavior. Integral literal/promotion rules, Currency-versus-Decimal identity, Round/other subtype functions and calculation-error envelopes remain R4. Native numeric-text overflow may yield Null where the writer conservatively refuses.",
       "evidence": [
         "docs/design/calculated-columns-format-notes.md",
         "docs/design/caller-stream-recovery.md",
+        "docs/design/catalog-index-maintenance-notes.md",
+        "docs/design/complex-columns-format-notes.md",
         "docs/design/data-page-row-format-notes.md",
         "docs/design/formal-verification.md",
+        "docs/design/index-and-relationship-format-notes.md",
         "docs/design/library-structure.md",
         "docs/design/long-value-traversal.md",
         "docs/design/multi-process-ownership.md",
@@ -26,7 +29,14 @@
         "src/JetDatabaseWriter/AccessDatabaseEncryption.cs",
         "src/JetDatabaseWriter/AccessReader.cs",
         "src/JetDatabaseWriter/AccessWriter.cs",
+        "src/JetDatabaseWriter/Catalog/CatalogWriter.cs",
+        "src/JetDatabaseWriter/Catalog/SystemCatalogBootstrapper.cs",
+        "src/JetDatabaseWriter/ComplexColumns/AppendOnlyHistoryWriter.cs",
+        "src/JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs",
+        "src/JetDatabaseWriter/ComplexColumns/Models/ComplexChildDeletes.cs",
+        "src/JetDatabaseWriter/Enums/SystemTableIndexMaintenancePath.cs",
         "src/JetDatabaseWriter/Indexes/IndexCursor.cs",
+        "src/JetDatabaseWriter/Indexes/IndexMaintainer.cs",
         "src/JetDatabaseWriter/Indexes/UniqueIndexChecker.cs",
         "src/JetDatabaseWriter/Infrastructure/LruCache.cs",
         "src/JetDatabaseWriter/JetFormat.MemoCodec.cs",
@@ -52,9 +62,11 @@
         "src/JetDatabaseWriter/Queries/QuerySortKey.cs",
         "src/JetDatabaseWriter/Queries/SkipStage.cs",
         "src/JetDatabaseWriter/Queries/TakeStage.cs",
+        "src/JetDatabaseWriter/Relationships/RelationshipCatalogStore.cs",
         "src/JetDatabaseWriter/Relationships/RelationshipChildRowLocator.cs",
         "src/JetDatabaseWriter/Relationships/RelationshipEnforcer.cs",
         "src/JetDatabaseWriter/Schema/AutoNumberMaintainer.cs",
+        "src/JetDatabaseWriter/Schema/ConstraintRegistry.cs",
         "src/JetDatabaseWriter/Schema/Expressions/AccessVariantOperators.cs",
         "src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionCoercion.cs",
         "src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluationContext.cs",
@@ -62,9 +74,12 @@
         "src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionNumericFunctions.cs",
         "src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionParser.cs",
         "src/JetDatabaseWriter/Tables/IndexRowReader.cs",
+        "src/JetDatabaseWriter/Tables/MutationExecutor.cs",
+        "src/JetDatabaseWriter/Tables/MutationPlan.cs",
         "src/JetDatabaseWriter/Tables/TableDataWriter.cs",
         "src/JetDatabaseWriter/Tables/TableReader.cs",
         "src/JetDatabaseWriter/Tables/TableRewritePlanner.cs",
+        "src/JetDatabaseWriter/Tables/TableRowStore.cs",
         "src/JetDatabaseWriter/Tables/TableSchemaEditor.cs",
         "src/JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs",
         "src/JetDatabaseWriter/ValueDecoding/RowDecoder.cs",
@@ -73,11 +88,14 @@
         "src/JetDatabaseWriter/WriterServices.cs",
         "tests/JetDatabaseWriter.Tests/Architecture/ServiceGraphTests.cs",
         "tests/JetDatabaseWriter.Tests/Catalog/LvPropReadTests.cs",
+        "tests/JetDatabaseWriter.Tests/Catalog/NativeJet3CatalogSecurityTests.cs",
+        "tests/JetDatabaseWriter.Tests/ComplexColumns/ComplexMetadataRewriteTests.cs",
         "tests/JetDatabaseWriter.Tests/Databases/NativeTextMarkers/README.md",
         "tests/JetDatabaseWriter.Tests/Encryption/ReplacementCleanupConformanceTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/Collation/TextCollationIndexMaintenanceTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/IndexCursorTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/IntermediateIndexCycleTests.cs",
+        "tests/JetDatabaseWriter.Tests/Indexes/SystemTableIndexMaintenanceTests.cs",
         "tests/JetDatabaseWriter.Tests/Infrastructure/LruCacheTests.cs",
         "tests/JetDatabaseWriter.Tests/Infrastructure/SharedParsingKernelTests.cs",
         "tests/JetDatabaseWriter.Tests/Maintenance/CompactActiveCatalogRowsTests.cs",
@@ -102,6 +120,11 @@
         "tests/JetDatabaseWriter.Tests/Reader/AccessReaderCacheTests.cs",
         "tests/JetDatabaseWriter.Tests/Reader/AccessReaderLeaseTests.cs",
         "tests/JetDatabaseWriter.Tests/Reader/LeaveOpenTests.cs",
+        "tests/JetDatabaseWriter.Tests/Relationships/DropTableRelationshipTests.cs",
+        "tests/JetDatabaseWriter.Tests/Relationships/ForeignKeyCascadeUpdateTests.cs",
+        "tests/JetDatabaseWriter.Tests/Relationships/ForeignKeyEnforcementTests.cs",
+        "tests/JetDatabaseWriter.Tests/Relationships/ForeignKeyPartialNullTests.cs",
+        "tests/JetDatabaseWriter.Tests/Relationships/ForeignKeyTestDatabase.cs",
         "tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnPayloadTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/CalculatedExpressionFloatingSubtypeTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/NativeDisplayPropertyTests.cs",
@@ -119,6 +142,7 @@
         "tests/JetDatabaseWriter.Tests/ValueEncoding/NativeCompressedTextMarkerTests.cs",
         "tests/JetDatabaseWriter.Tests/ValueEncoding/NativeMemoCompressionTests.cs",
         "tests/JetDatabaseWriter.Tests/Writer/JetTransactionTests.cs",
+        "tests/JetDatabaseWriter.Tests/Writer/MutationPipelineTests.cs",
         "tests/JetDatabaseWriter.Tests/Writer/StatementAtomicityAceTests.cs",
         "tests/JetDatabaseWriter.Tests/Writer/StatementAtomicityJet3Tests.cs",
         "tests/JetDatabaseWriter.Tests/Writer/StatementAtomicityJet4Tests.cs",
@@ -137,6 +161,14 @@
           "sha256": "94ef23b3a6ae4f9bafaf6df9cff128ccf8fd3142bd2754a8e434551872a6fdb6"
         },
         {
+          "path": "docs/design/catalog-index-maintenance-notes.md",
+          "sha256": "cb0522eb1738e6d020dd33f0dcf34fd65086ecf79e97d0008d9b53af88c78e0f"
+        },
+        {
+          "path": "docs/design/complex-columns-format-notes.md",
+          "sha256": "2d244de2eb3ea417f201cc1697d9d871e454afbc061fdc34fff0f9b08799b721"
+        },
+        {
           "path": "docs/design/data-page-row-format-notes.md",
           "sha256": "7fb69f3410e51f6375668d23e79fb803759c063bf6efee73f83fe49d22383e08"
         },
@@ -145,8 +177,12 @@
           "sha256": "2ec39aafd54ba129e1c498bede39af89e815bfc4c26c2b4f86ff4731006766eb"
         },
         {
+          "path": "docs/design/index-and-relationship-format-notes.md",
+          "sha256": "4a47bb04b4088836be372df85f08d8a2eecc4ca3c29f75b2261606f1cd764aee"
+        },
+        {
           "path": "docs/design/library-structure.md",
-          "sha256": "ff4f9a0996e52f26f0d80e548edf8ab8e9591c9d76d6b73176a1f9715d6320cf"
+          "sha256": "0c2d63eb011d4d4295ba84e55fba58abb279b84abdac5be47a306a7fa4a3d825"
         },
         {
           "path": "docs/design/long-value-traversal.md",
@@ -170,11 +206,11 @@
         },
         {
           "path": "docs/design/verification-evidence-map.md",
-          "sha256": "4dc619e1e7901a1afcccbc5a01dc855faa0284336cd0f888e280e8f4cf22c60a"
+          "sha256": "bf93409235e3aac02eb40691f109ce945a96975e64fcb77a5e94140c6d12af3a"
         },
         {
           "path": "docs/design/verification-scope.md",
-          "sha256": "44011bf0a0a60a3deb7017a8dbb870b2b6b415695842d615b872fba1e63cf19f"
+          "sha256": "c0494b458061ed66cc9dd1c682c170468683560d9b22fbf0549a3cc851cad26d"
         },
         {
           "path": "docs/design/writer-disk-format-validation-matrix.md",
@@ -197,6 +233,26 @@
           "sha256": "432a8908784a42ce18511f35fc0b2ff16bdcde8290ca0b10c7fb3a059b63478b"
         },
         {
+          "path": "src/JetDatabaseWriter/Catalog/CatalogWriter.cs",
+          "sha256": "a3edfd24469f9fe7a47746acccc7884b7000f5b1942ea24b49856804d8028a9e"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Catalog/SystemCatalogBootstrapper.cs",
+          "sha256": "46a4cc547327d6bc3a8f122ba1e17993c7868dd93ed4a19a2e7270118a1dc712"
+        },
+        {
+          "path": "src/JetDatabaseWriter/ComplexColumns/AppendOnlyHistoryWriter.cs",
+          "sha256": "39af585afb5f69146157ea752567612c2370cdc44f67aac9b9eecf20d75bb29e"
+        },
+        {
+          "path": "src/JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs",
+          "sha256": "4f7235f81a37f2a462d3554e71bd378a0209aa2046eabf968726e72cf857ce05"
+        },
+        {
+          "path": "src/JetDatabaseWriter/ComplexColumns/Models/ComplexChildDeletes.cs",
+          "sha256": "6c2953ce0f2fd3b8fba8eff8cf31e8778b70e1b6f609eee741f41e007b782250"
+        },
+        {
           "path": "src/JetDatabaseWriter/CompoundFile/CompoundFileReader.cs",
           "sha256": "e74fbc2928346bcfdbcfcf05085183e27fc6e470ceb15ffe2478e3ea4222fed3"
         },
@@ -213,8 +269,16 @@
           "sha256": "50f370672634dbaa5d3f2e3c62b0e77eb9c35706e19a6524db85a2b79e089a23"
         },
         {
+          "path": "src/JetDatabaseWriter/Enums/SystemTableIndexMaintenancePath.cs",
+          "sha256": "2afc809d44813930f22290b784eb169bb3ddc10e8884f1e1f9bc3374a250f51e"
+        },
+        {
           "path": "src/JetDatabaseWriter/Indexes/IndexCursor.cs",
           "sha256": "00e43194ea8ce2533378bcbb493fcc97b8313ebab7eb44434db9eef813b4694a"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Indexes/IndexMaintainer.cs",
+          "sha256": "29aeafb751a78e9d8d8c9e57adc0d56f129dbbc5266016ba3582b908ca0d5c7c"
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexPageCodec.cs",
@@ -437,16 +501,24 @@
           "sha256": "58da8063b53c0ac323ce876d58e573206c63f135336c313d91f446d3f132c6d2"
         },
         {
+          "path": "src/JetDatabaseWriter/Relationships/RelationshipCatalogStore.cs",
+          "sha256": "a9f39e576e06bb2366ccbed4363d2322e5c3b17409e0b1085c2ce9052294ae67"
+        },
+        {
           "path": "src/JetDatabaseWriter/Relationships/RelationshipChildRowLocator.cs",
           "sha256": "c333cff137c24a238d1fa4b4a8d7dc11843d7aa4dad2ff11f1185373556317a1"
         },
         {
           "path": "src/JetDatabaseWriter/Relationships/RelationshipEnforcer.cs",
-          "sha256": "79101591bd230486cb0f1b1f168072e7bed39323466afc550b3c17b83a00f59b"
+          "sha256": "d2f43456e004d2f225cbba418104f04324be2b8c685ee47be7a774862b055ae4"
         },
         {
           "path": "src/JetDatabaseWriter/Schema/AutoNumberMaintainer.cs",
           "sha256": "5b88c36b234ff674ac64a58ce4bab634094ec9e31ce289c91c1191dd991c2e60"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Schema/ConstraintRegistry.cs",
+          "sha256": "f2e4f7849d5ab2dad6d527700d8f76161bb4d983a66dfa3d85221fe773defe18"
         },
         {
           "path": "src/JetDatabaseWriter/Schema/Expressions/AccessVariantOperators.cs",
@@ -477,8 +549,16 @@
           "sha256": "e9f7b1ba44ba12ccd36bf0c3d20dbf849bde8bd600789fe1d63377d36351be80"
         },
         {
+          "path": "src/JetDatabaseWriter/Tables/MutationExecutor.cs",
+          "sha256": "bd2be617ed8f877c705a10ccc63bc6ec91d2a960edcc481ebde1d06a9c0e8ddb"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Tables/MutationPlan.cs",
+          "sha256": "953bb0a3c05ea0f1d5296afe3b22e783c4b80130b0e559134395229b4f5290d2"
+        },
+        {
           "path": "src/JetDatabaseWriter/Tables/TableDataWriter.cs",
-          "sha256": "d0578e20b5ab413dd4462b2bff44496c4207468cb9918b64f16f0f034e9a6416"
+          "sha256": "da8ec3ebc075ec7f12f1cd881c16fafea72da677ba626f98a657932018edfb70"
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableReader.cs",
@@ -487,6 +567,10 @@
         {
           "path": "src/JetDatabaseWriter/Tables/TableRewritePlanner.cs",
           "sha256": "7d65bb434f056463ff8922952e28bbf39c607cd27481383f128e231808d2229d"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Tables/TableRowStore.cs",
+          "sha256": "77d47d2d676cba686370c768cfdf79c4d7532a83e0606e9b0b26811cae73a7d2"
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableSchemaEditor.cs",
@@ -538,15 +622,23 @@
         },
         {
           "path": "src/JetDatabaseWriter/WriterServices.cs",
-          "sha256": "9fb02f77b07a06a39ff52015555024030e75a5ab84a43efd7c3a840c4e845c8b"
+          "sha256": "f86d09af107808dff5d42b8d9038376931534e215e753fbdd63f3619548a975e"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Architecture/ServiceGraphTests.cs",
-          "sha256": "06d44003df60fc02e66946a0e1ce512125f4fdda7a73e289948659933fb6bda5"
+          "sha256": "cb555f2ff5839ce69b1b649d3bd7b62c120bd804f081d419fb49625857e6563d"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Catalog/LvPropReadTests.cs",
           "sha256": "abf2f741585320bb2f46c054a87ef3a745712c1e95a6b75a07dea85723a02781"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Catalog/NativeJet3CatalogSecurityTests.cs",
+          "sha256": "c111f906f8039a3070d80d61d66f9638237b7f3987760d7a007c40d7c09ce44d"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/ComplexColumns/ComplexMetadataRewriteTests.cs",
+          "sha256": "5306386ab3931322fbfe985107ed48e99042dc636b5863764749e7da4271d0e4"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Databases/NativeTextMarkers/README.md",
@@ -567,6 +659,10 @@
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IntermediateIndexCycleTests.cs",
           "sha256": "66fb5ee99224fee41660c1175f2a24b43d61db7c4113ede146c777c844cdd8bb"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Indexes/SystemTableIndexMaintenanceTests.cs",
+          "sha256": "ac79a0000d004bee1bd9c638fab433b8cbbfaf78706f504736b6181d5c2856c4"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Infrastructure/LruCacheTests.cs",
@@ -665,6 +761,26 @@
           "sha256": "4e290ee12ec1b6c61693706a85aaa3ec81d9bd4ae5cc77e4e61ab7336dfc9911"
         },
         {
+          "path": "tests/JetDatabaseWriter.Tests/Relationships/DropTableRelationshipTests.cs",
+          "sha256": "89570b27821d7d362a3fb71aab7c0efcb166f193247b3433799f07c9e0fbed60"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Relationships/ForeignKeyCascadeUpdateTests.cs",
+          "sha256": "3254c456162615a65d2a4b1f6306dc73a450550a7dde906874725d49ec228cff"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Relationships/ForeignKeyEnforcementTests.cs",
+          "sha256": "e23c9f12f1d853e56dd8252c158140f16a2ebb028b4a8810a555bfc372fe6632"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Relationships/ForeignKeyPartialNullTests.cs",
+          "sha256": "6fa204dd1d9ca438601efa4610819f361c244b706a40ddce1408cbf3f7a52c16"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Relationships/ForeignKeyTestDatabase.cs",
+          "sha256": "222d89678af5eb5252802bfa8a828044bc1090e7122f6848d531226c922b1d7e"
+        },
+        {
           "path": "tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnPayloadTests.cs",
           "sha256": "25bced3bbe884e5ffcba9b32959e111de4a98acf853635adb2c2b8ca9efe40f5"
         },
@@ -733,6 +849,10 @@
           "sha256": "591a5c7504089d7b2606942ff7c807636e5767b26c6745c834ed7552efe23843"
         },
         {
+          "path": "tests/JetDatabaseWriter.Tests/Writer/MutationPipelineTests.cs",
+          "sha256": "e5fff47a09f408b58a672008344677ba08f59f1be68d98ccad71b2aa585bc20b"
+        },
+        {
           "path": "tests/JetDatabaseWriter.Tests/Writer/StatementAtomicityAceTests.cs",
           "sha256": "87ce05644871e7f7ccc3f9b1309992a1bf378d709ea5b03668fdb6fc67613778"
         },
@@ -764,12 +884,15 @@
     },
     {
       "boundary": "proof-trust",
-      "obligations": "Reviewed the exact nine-model inventory and normal-source LongValueTraversal-to-LongValueKernel dependency, native traversal/count/capacity/probe additions and unchanged generated projection, Dafny 4.11.0/bundled-Z3 and compiler/runtime pins. LongValueTraversal proves distinct visits, decreasing budgets, bounded probes and cumulative allocation under named row/write effects. MultiProcessOwnership proves arbitrary finite multi-client trace invariants, historical current-ticket authority, crash revocation and constructive fresh/recorded acquisition and cleanup schedules; checked counterexamples cover premature coordinator release and stale pathname deletion. Mandatory source policy, audits, negative controls, generated freshness and failed-input retention remain unchanged. Reviewed the source-backed 23-behavior inventory and matching proof/production/effect/native/resource evidence map, including all library source domains and fallback/failure paths. Established continuing semantic/specification/coverage/tool/runtime/native/storage/claim review triggers, including dependencies outside mechanical hash detection. Retired maintenance setup and inventory/map setup only; specification adequacy, machine-checked composition, architecture/trust and environmental qualification remain open. Reviewed cumulative Git-tree lane selection against successful main ancestors, newest-run-per-SHA precedence, force/PR ancestry, unknown-path fallback, unconditional review/security/script checks, complete analyzer/runtime/consumer selection and failure-closed aggregate results. Reusable/manual/release execution retains all gates. Reviewed complete-inventory ordinary-source verification and audit with bounded verifier cores, exact per-source hashes, mandatory negative controls and independently verified native translations. Reviewed the complete tools solution filter and isolated bounded script-regression coordinator. Direct crash dispatch preserves allowlisted original methods, schema-cache assembly-fixture verification, exact child runtime selection, readiness/phase markers and forced-kill evidence; independent crash scenarios use unique files and child-only environment overrides. Reviewed the concurrent .NET SDK 10.0.403 patch, StyleCop.Analyzers 1.3.151-beta, System.CommandLine 2.0.14 and System.Text.Encoding.CodePages 10.0.14 updates and matching standard/seed/trimmed/native lock refresh. Dafny/Z3, model sources, generated projection and shipping API contracts are unchanged. Central package pins are now explicit review inputs; C# compiler, runtime and analyzer behavior remain trusted and are checked by the selected strict hosted build, test and generated-consumer gates. Reviewed cancellation of superseded branch runs while preserving tag/release runs. Cancelled or pending revisions remain ineligible baselines, and cumulative ancestor comparison retains all unvalidated proof and .NET changes for the settled tip; cancellation never discharges a gate. Reviewed extension-first selection of every .dfy path, including proofs outside verification and alternate extension case, so documentation allowlisting cannot bypass the exact repository-wide manifest check. Reviewed independent lane baselines from completed main runs: a failed aggregate can supply only a lane whose required .NET jobs or formal job, plus both common checks, completed successfully. Every job must be completed, all names must be unique, required names must occur exactly once, response counts must be complete, and unknown jobs must pass. Only known opposite-lane and aggregate failures are allowed. Newest-per-SHA and ancestry checks remain mandatory; pending/cancelled runs and unavailable evidence never authorize inheritance. Exact baseline SHA, run ID, URL and evidence type are retained. Selector-only code/tests are classified as proof/trust tooling; they run unconditionally through script tests and review freshness, while .NET source/build/test/runtime/workflow changes still select all .NET checks. Independently reviewed explicit header-slice identities and lossless U64/int conversions in ReplacementScansRefineRecordAdmission; these ghost proof steps preserve the theorem contract and generated executable bodies. Reviewed the shared deterministic analyzer matrix and derived ancestor job inventory, real boolean conditions, complete selection-job JSON output and direct workflow consumption. Independent policy assertions require five disjoint test partitions in every runtime/library combination: ordinary excludes Schema/RoundTrip/Writer, schema-writer includes exactly those namespaces except the three concrete format fault classes, and each format partition selects its whole class. Every partition performs its own strict Release analyzer build and executes those exact binaries without rebuilding, requires at least48 discovered tests, and verifies its actual runtime/library asset at assembly-fixture startup. All partition job identities are required by partial-run inheritance; common review/security/script checks, formal verification, consumers, platform recovery checks, cancellation handling and aggregate failure refusal remain mandatory. Reviewed S9 native-preservation documentation and B3 evidence-map changes: removing the lookup scan adds tested DAO metadata behavior, not an executable proof, dependency rebinding or broader native/platform qualification. The model inventory, verifier/solver pins, generated kernels and effect assumptions are unchanged. Reviewed the bounded ordinary compressed Text native interpretation and B3 documentation: the new source is handwritten admission/encoding with tested DAO evidence, not an expansion of the executable proof boundary. Native assumptions and remaining F8/E2 qualification are explicit; proof sources, toolchain, generated kernels and shipping dependencies are unchanged. Reviewed the measured floating-expression scope and B3 evidence changes: subtype/format and conservative refusal regressions are handwritten/native-tested evidence, not newly proved expression semantics. Native context, locale and error-envelope gaps remain explicit; source names, proof inventory, generated kernels and effect contracts are unchanged. Reviewed PageFrameOwnership as an independent verification-only bounded ownership ledger, including cache/producer exclusivity and transfer without a count increment, fresh lease tickets, immutable bytes, positive retained/unretained completion witnesses, premature-return refusal, dead/full acquisition refusal and idempotent disposal. It adds no unchecked contract, generated shipping code or runtime dependency, and does not verify actual C# synchronization or aggregate parser memory.",
+      "obligations": "Reviewed the exact nine-model inventory and normal-source LongValueTraversal-to-LongValueKernel dependency, native traversal/count/capacity/probe additions and unchanged generated projection, Dafny 4.11.0/bundled-Z3 and compiler/runtime pins. LongValueTraversal proves distinct visits, decreasing budgets, bounded probes and cumulative allocation under named row/write effects. MultiProcessOwnership proves arbitrary finite multi-client trace invariants, historical current-ticket authority, crash revocation and constructive fresh/recorded acquisition and cleanup schedules; checked counterexamples cover premature coordinator release and stale pathname deletion. Mandatory source policy, audits, negative controls, generated freshness and failed-input retention remain unchanged. Reviewed the source-backed 23-behavior inventory and matching proof/production/effect/native/resource evidence map, including all library source domains and fallback/failure paths. Established continuing semantic/specification/coverage/tool/runtime/native/storage/claim review triggers, including dependencies outside mechanical hash detection. Retired maintenance setup and inventory/map setup only; specification adequacy, machine-checked composition, architecture/trust and environmental qualification remain open. Reviewed cumulative Git-tree lane selection against successful main ancestors, newest-run-per-SHA precedence, force/PR ancestry, unknown-path fallback, unconditional review/security/script checks, complete analyzer/runtime/consumer selection and failure-closed aggregate results. Reusable/manual/release execution retains all gates. Reviewed complete-inventory ordinary-source verification and audit with bounded verifier cores, exact per-source hashes, mandatory negative controls and independently verified native translations. Reviewed the complete tools solution filter and isolated bounded script-regression coordinator. Direct crash dispatch preserves allowlisted original methods, schema-cache assembly-fixture verification, exact child runtime selection, readiness/phase markers and forced-kill evidence; independent crash scenarios use unique files and child-only environment overrides. Reviewed the concurrent .NET SDK 10.0.403 patch, StyleCop.Analyzers 1.3.151-beta, System.CommandLine 2.0.14 and System.Text.Encoding.CodePages 10.0.14 updates and matching standard/seed/trimmed/native lock refresh. Dafny/Z3, model sources, generated projection and shipping API contracts are unchanged. Central package pins are now explicit review inputs; C# compiler, runtime and analyzer behavior remain trusted and are checked by the selected strict hosted build, test and generated-consumer gates. Reviewed cancellation of superseded branch runs while preserving tag/release runs. Cancelled or pending revisions remain ineligible baselines, and cumulative ancestor comparison retains all unvalidated proof and .NET changes for the settled tip; cancellation never discharges a gate. Reviewed extension-first selection of every .dfy path, including proofs outside verification and alternate extension case, so documentation allowlisting cannot bypass the exact repository-wide manifest check. Reviewed independent lane baselines from completed main runs: a failed aggregate can supply only a lane whose required .NET jobs or formal job, plus both common checks, completed successfully. Every job must be completed, all names must be unique, required names must occur exactly once, response counts must be complete, and unknown jobs must pass. Only known opposite-lane and aggregate failures are allowed. Newest-per-SHA and ancestry checks remain mandatory; pending/cancelled runs and unavailable evidence never authorize inheritance. Exact baseline SHA, run ID, URL and evidence type are retained. Selector-only code/tests are classified as proof/trust tooling; they run unconditionally through script tests and review freshness, while .NET source/build/test/runtime/workflow changes still select all .NET checks. Independently reviewed explicit header-slice identities and lossless U64/int conversions in ReplacementScansRefineRecordAdmission; these ghost proof steps preserve the theorem contract and generated executable bodies. Reviewed the shared deterministic analyzer matrix and derived ancestor job inventory, real boolean conditions, complete selection-job JSON output and direct workflow consumption. Independent policy assertions require five disjoint test partitions in every runtime/library combination: ordinary excludes Schema/RoundTrip/Writer, schema-writer includes exactly those namespaces except the three concrete format fault classes, and each format partition selects its whole class. Every partition performs its own strict Release analyzer build and executes those exact binaries without rebuilding, requires at least48 discovered tests, and verifies its actual runtime/library asset at assembly-fixture startup. All partition job identities are required by partial-run inheritance; common review/security/script checks, formal verification, consumers, platform recovery checks, cancellation handling and aggregate failure refusal remain mandatory. Reviewed S9 native-preservation documentation and B3 evidence-map changes: removing the lookup scan adds tested DAO metadata behavior, not an executable proof, dependency rebinding or broader native/platform qualification. The model inventory, verifier/solver pins, generated kernels and effect assumptions are unchanged. Reviewed the bounded ordinary compressed Text native interpretation and B3 documentation: the new source is handwritten admission/encoding with tested DAO evidence, not an expansion of the executable proof boundary. Native assumptions and remaining F8/E2 qualification are explicit; proof sources, toolchain, generated kernels and shipping dependencies are unchanged. Reviewed the measured floating-expression scope and B3 evidence changes: subtype/format and conservative refusal regressions are handwritten/native-tested evidence, not newly proved expression semantics. Native context, locale and error-envelope gaps remain explicit; source names, proof inventory, generated kernels and effect contracts are unchanged. Reviewed PageFrameOwnership as an independent verification-only bounded ownership ledger, including cache/producer exclusivity and transfer without a count increment, fresh lease tickets, immutable bytes, positive retained/unretained completion witnesses, premature-return refusal, dead/full acquisition refusal and idempotent disposal. It adds no unchecked contract, generated shipping code or runtime dependency, and does not verify actual C# synchronization or aggregate parser memory. Reviewed B3 mapping to shared prepared row execution and the remaining I5/I6 obligations. Native index policies, contributor semantic checks and lifecycle failure authority remain unchanged in scope; complete C# preflight/apply/index and rollback correspondence is still open. Schema private-copy effects remain a distinct inventoried path.",
       "conformance": "The dedicated traversal and multi-client mapping documents identify production invocations, independent malformed/membership tests and the exact successful-effect/manual correspondence boundaries. The caller-stream contract separates current live rollback from future journal/reopen/lease capabilities. Existing focused proof-review, verifier-tooling and formal-workflow regressions pass; final exact-source proof/audit/freshness receipts and all settled-main CI runtime/library, analyzer and consumer verdicts are reported separately. Scope/map IDs and local evidence targets were independently checked; V11 obligations moved into durable policy and V12 implementation/qualification obligations remain in PLAN.md. Existing review helpers hash the new cited inventory/map/design evidence without changing verifier policy, manifests, code generation, tools or CI. Focused path-selection tests cover failed/pending pushes, superseding runs, unrelated history, PR/manual/reusable/release events, mixed paths, renames and unknown files; workflow mutations exercise missing/disabled lanes and aggregate gates. Verifier tests reject batch verification/audit failure and retain each exact source hash. Coordinator tests cover overlap, child failure diagnostics and parse-before-execute. The pinned local proof run passes complete-inventory verification, audit, both negative controls and both generated freshness checks. Focused crash helper and process-interruption tests retain ordinary-failure rejection and all original scenario assertions. Settled-main hosted results remain separate execution evidence. The updated SDK completes solution, netstandard and all three consumer locked restores; the tools filter builds in strict Release without warnings or errors. Exact updated-source hosted gate results are reported separately. Workflow regression mutations require branch-run cancellation with release preservation; existing baseline regressions reject pending and failed verdicts, and aggregation rejects cancelled selected lanes. New failing-first path regressions cover docs/Unlisted.dfy and docs/.hidden.DFY; both now select formal verification instead of a documentation-only gate. Focused lane tests cover independent proof/.NET failure, all required analyzers/runtime lanes, common-check refusal, missing/duplicate/unknown jobs, truncated API results, pending rerun races, ancestry and exact provenance. Both independent reviews found no remaining blocker after completed-job and duplicate-name hardening. The full pinned local proof run passes all 789 obligations, audit, negative controls and independently verified translation/freshness with unchanged generated C#; no seed, timeout or trust-policy relaxation was used. Hosted baseline and final proof results are reported separately. CI workflow regressions independently reject altered matrix wiring, nonboolean runner/package flags and missing/duplicate partitions, namespace gaps/overlaps, unexpected filters, incomplete discovery, runtime selection changes, weakened analysis, rebuilds and colliding artifacts. Selector regressions reject every missing, failed, skipped or cancelled partition as inheritance evidence. Real selector entry-point controls retain exact receipts through manual, reusable and inherited selections and reject generator failure; the shared matrix is a mandatory freshness input. Local strict test analysis and focused target/fixture/data checks pass; a deliberately incorrect runtime expectation refuses in assembly-fixture startup. Exact settled-main CI verdict and latency comparison are reported separately. Independent model review prompted explicit producer transfer and both reachable retention branches. The complete pinned nine-source inventory verifies and audits with both negative controls and unchanged generated native kernels. The ownership design/evidence map retains manual C# correspondence and pending paired hosted performance qualification; full lifecycle composition remains open.",
       "remainingAssumptions": "The pinned verifier/solver, native-source projection, C# compiler, runtime and host remain trusted; no new assumption, admitted lemma, external declaration or shipping dependency is introduced. Multi-client Coordinate assumes atomic canonical exclusion; complete missing-destination composite acquisition and ordinary held-handle disposal are not mechanically refined by the retained-database cleanup schedule. Actual OS exclusion, lock-rank/deadlock prevention, physical namespace/device durability and whole-parser refinement remain separate. Receipt freshness does not attest reviewer identity or judgment. A complete inventory and a fresh receipt do not verify the inventoried C#, establish specification adequacy or qualify native/platform behavior. Unchanged lanes inherit a successful ancestor only through Git ancestry and complete-tree equality of classified inputs; GitHub verdict integrity and maintained path classification remain CI trust. Failed or unavailable baseline evidence selects every lane. Batched proof counts describe the complete manifest rather than per-model counts and do not change proof scope or refinement claims. Test scheduling and child startup optimizations do not establish physical durability. Independent lane reuse depends on the reviewed input classification and GitHub job identity/status evidence. It does not authorize specialized workflows from an overall failed revision: their exact successful overall CI prerequisite is unchanged. Proof robustness assertions clarify existing identities rather than introducing axioms or claims about handwritten code or physical durability. Partitioning depends on the reviewed complementary xUnit namespace/class filters and complete job inventories; it adds hosted runner concurrency and duplicate strict builds rather than reducing test or proof scope. Hosted queue capacity can affect elapsed time. Scheduling does not qualify additional production, native or physical-storage guarantees.",
       "evidence": [
         "docs/design/calculated-columns-format-notes.md",
         "docs/design/caller-stream-recovery.md",
+        "docs/design/catalog-index-maintenance-notes.md",
+        "docs/design/complex-columns-format-notes.md",
+        "docs/design/index-and-relationship-format-notes.md",
         "docs/design/library-structure.md",
         "docs/design/long-value-traversal.md",
         "docs/design/multi-process-ownership.md",
@@ -823,12 +946,24 @@
           "sha256": "94ef23b3a6ae4f9bafaf6df9cff128ccf8fd3142bd2754a8e434551872a6fdb6"
         },
         {
+          "path": "docs/design/catalog-index-maintenance-notes.md",
+          "sha256": "cb0522eb1738e6d020dd33f0dcf34fd65086ecf79e97d0008d9b53af88c78e0f"
+        },
+        {
+          "path": "docs/design/complex-columns-format-notes.md",
+          "sha256": "2d244de2eb3ea417f201cc1697d9d871e454afbc061fdc34fff0f9b08799b721"
+        },
+        {
           "path": "docs/design/formal-verification.md",
           "sha256": "2ec39aafd54ba129e1c498bede39af89e815bfc4c26c2b4f86ff4731006766eb"
         },
         {
+          "path": "docs/design/index-and-relationship-format-notes.md",
+          "sha256": "4a47bb04b4088836be372df85f08d8a2eecc4ca3c29f75b2261606f1cd764aee"
+        },
+        {
           "path": "docs/design/library-structure.md",
-          "sha256": "ff4f9a0996e52f26f0d80e548edf8ab8e9591c9d76d6b73176a1f9715d6320cf"
+          "sha256": "0c2d63eb011d4d4295ba84e55fba58abb279b84abdac5be47a306a7fa4a3d825"
         },
         {
           "path": "docs/design/long-value-traversal.md",
@@ -860,11 +995,11 @@
         },
         {
           "path": "docs/design/verification-evidence-map.md",
-          "sha256": "4dc619e1e7901a1afcccbc5a01dc855faa0284336cd0f888e280e8f4cf22c60a"
+          "sha256": "bf93409235e3aac02eb40691f109ce945a96975e64fcb77a5e94140c6d12af3a"
         },
         {
           "path": "docs/design/verification-scope.md",
-          "sha256": "44011bf0a0a60a3deb7017a8dbb870b2b6b415695842d615b872fba1e63cf19f"
+          "sha256": "c0494b458061ed66cc9dd1c682c170468683560d9b22fbf0549a3cc851cad26d"
         },
         {
           "path": "docs/design/writer-lifecycle.md",

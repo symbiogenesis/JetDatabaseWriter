@@ -5,10 +5,10 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Tables;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable SA1204 // Keep bootstrap steps together in execution order, as in the original service.
@@ -21,13 +21,13 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="format">The database format.</param>
 /// <param name="tableDefs">Reads the created permission table.</param>
 /// <param name="pager">Reads and patches the database header in the creation transaction.</param>
-/// <param name="indexes">Inserts permission rows with their indexes.</param>
+/// <param name="mutations">Applies permission rows and their native indexes.</param>
 /// <param name="catalogArtifacts">Creates the core tables and catalog objects.</param>
 internal sealed class SystemCatalogBootstrapper(
     JetFormat format,
     TableDefReader tableDefs,
     Pager pager,
-    IndexMaintainer indexes,
+    MutationExecutor mutations,
     CatalogArtifactWriter catalogArtifacts)
 {
     private readonly JetFormat format = format;
@@ -202,6 +202,8 @@ internal sealed class SystemCatalogBootstrapper(
             (Constants.SystemObjects.TablesParentId, users, 0xFFEFF, true),
             (Constants.SystemObjects.RelationshipsParentId, users, 0xFFFFF, true),
         ];
+        var plan = new MutationPlan();
+        MutationPlan.TableChanges changes = plan.ForTable(acesPage, definition, Constants.SystemTableNames.Aces, MutationPlan.IndexPolicy.System);
         foreach ((int objectId, byte[] sid, int acm, bool inheritable) in permissions)
         {
             object[] values = definition.CreateNullValueRow();
@@ -209,8 +211,10 @@ internal sealed class SystemCatalogBootstrapper(
             definition.SetValueByName(values, "SID", sid);
             definition.SetValueByName(values, "ACM", acm);
             definition.SetValueByName(values, "FInheritable", inheritable);
-            await indexes.InsertSystemRowAndMaintainAsync(acesPage, definition, Constants.SystemTableNames.Aces, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+            changes.Insert(values);
         }
+
+        await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask PatchHeaderSystemTablePagesAsync(

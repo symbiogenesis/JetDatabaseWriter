@@ -247,7 +247,7 @@ public sealed class NativeJet3CatalogSecurityTests
         definition.SetValueByName(values, "SID", sid);
         definition.SetValueByName(values, "ACM", mask);
         definition.SetValueByName(values, "FInheritable", inheritable);
-        await writer.Services.Indexes.InsertSystemRowAndMaintainAsync(page, definition, "MSysACEs", values, cancellationToken: Ct);
+        await writer.Services.Mutations.InsertSystemRowAndMaintainAsync(page, definition, "MSysACEs", values, cancellationToken: Ct);
     }
 
     private static async Task CorruptAsync(MemoryStream stream, string corruption)

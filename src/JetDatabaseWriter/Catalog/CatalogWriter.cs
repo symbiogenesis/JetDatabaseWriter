@@ -31,8 +31,8 @@ using JetDatabaseWriter.ValueEncoding;
 /// <param name="tableDefs">The table-definition reader.</param>
 /// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="catalog">The cached user-table catalog, invalidated after every catalog mutation.</param>
-/// <param name="tableRows">Writes and tombstones catalog rows.</param>
-/// <param name="indexes">Keeps the catalog and <c>MSysACEs</c> indexes current.</param>
+/// <param name="indexes">Validates native catalog index support.</param>
+/// <param name="mutations">Applies prepared catalog and security row changes.</param>
 /// <param name="longValueEncoder">Encodes linked-table memo fields as LVAL chains.</param>
 /// <param name="catalogRows">Scans <c>MSysObjects</c> rows and locates system tables.</param>
 /// <param name="pager">The writer page file.</param>
@@ -42,8 +42,8 @@ internal sealed class CatalogWriter(
     TableDefReader tableDefs,
     OwnedDataPages ownedPages,
     TableCatalog catalog,
-    TableRowStore tableRows,
     IndexMaintainer indexes,
+    MutationExecutor mutations,
     LongValueEncoder longValueEncoder,
     CatalogRowReader catalogRows,
     Pager pager,
@@ -97,8 +97,9 @@ internal sealed class CatalogWriter(
             msys.SetValueByName(values, "LvProp", this.PrepareCatalogProperties(lvProp));
         }
 
-        RowLocation loc = await tableRows.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await this.RequireCatalogIndexSpliceAsync(msys, loc, values, tableName, cancellationToken).ConfigureAwait(false);
+        var plan = new MutationPlan();
+        plan.ForTable(2, msys, Constants.SystemTableNames.Objects, MutationPlan.IndexPolicy.CatalogInsert, tableName).Insert(values);
+        await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -166,8 +167,9 @@ internal sealed class CatalogWriter(
             msys.SetValueByName(values, "Connect", artifact.Connect);
         }
 
-        RowLocation loc = await tableRows.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await this.RequireCatalogIndexSpliceAsync(msys, loc, values, artifact.ObjectName, cancellationToken).ConfigureAwait(false);
+        var plan = new MutationPlan();
+        plan.ForTable(2, msys, Constants.SystemTableNames.Objects, MutationPlan.IndexPolicy.CatalogInsert, artifact.ObjectName).Insert(values);
+        await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
 
         if (artifact.AcePolicy != CatalogObjectAcePolicy.None)
         {
@@ -287,27 +289,19 @@ internal sealed class CatalogWriter(
             return;
         }
 
-        await tableRows.MarkRowDeletedAsync(deletion.Original.Location.PageNumber, deletion.Original.Location.RowIndex, deletion.Objects, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
-        await tableRows.AdjustTDefRowCountAsync(2, -1, cancellationToken).ConfigureAwait(false);
-        await this.RequireMsysObjectsIndexMaintenanceAsync(
-            deletion.Objects,
-            insertedRows: null,
-            deletedRows: [(deletion.Original.Location, deletion.Original.Values)],
-            operation: $"dropping relationship '{deletion.Identity.Name}'",
-            cancellationToken).ConfigureAwait(false);
+        var plan = new MutationPlan();
+        plan.ForTable(2, deletion.Objects, Constants.SystemTableNames.Objects, MutationPlan.IndexPolicy.CatalogChange, $"dropping relationship '{deletion.Identity.Name}'")
+            .Delete(deletion.Original.Location, deletion.Original.Values, DeletedRowDataMode.Clear);
         if (deletion.Aces is TableDef aces && deletion.AceRows.Count > 0)
         {
-            var deletedRows = new List<(RowLocation Loc, object[] Row)>(deletion.AceRows.Count);
+            MutationPlan.TableChanges changes = plan.ForTable(deletion.AcesPage, aces, Constants.SystemTableNames.Aces, MutationPlan.IndexPolicy.System);
             foreach (LocatedRow row in deletion.AceRows)
             {
-                await tableRows.MarkRowDeletedAsync(row.Location.PageNumber, row.Location.RowIndex, aces, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
-                deletedRows.Add((row.Location, row.Values));
+                changes.Delete(row.Location, row.Values, DeletedRowDataMode.Clear);
             }
-
-            await tableRows.AdjustTDefRowCountAsync(deletion.AcesPage, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
-            await indexes.MaintainSystemTableIndexesIncrementallyAsync(deletion.AcesPage, aces, Constants.SystemTableNames.Aces, insertedRows: null, deletedRows: deletedRows, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
+        await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
         catalog.Invalidate();
     }
 
@@ -333,7 +327,7 @@ internal sealed class CatalogWriter(
         replacement[nameIndex] = newName;
         UnreadableLongValue.ThrowIfAny(replacement, Constants.SystemTableNames.Objects);
         IReadOnlyDictionary<int, byte[]>? fixedTextBytes = original.GetPreservedFixedText(replacement, [nameIndex]);
-        _ = tableRows.EncodeRow(objects, replacement, fixedTextBytes);
+
         return new RelationshipCatalogRenameArtifact(objects, original, replacement, fixedTextBytes);
     }
 
@@ -347,14 +341,10 @@ internal sealed class CatalogWriter(
             return;
         }
 
-        await tableRows.MarkRowDeletedAsync(rename.Original.Location.PageNumber, rename.Original.Location.RowIndex, rename.Definition, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
-        RowLocation inserted = await tableRows.InsertRowDataLocAsync(2, rename.Definition, rename.Replacement, updateTDefRowCount: false, fixedTextBytes: rename.FixedTextBytes, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await this.RequireMsysObjectsIndexMaintenanceAsync(
-            rename.Definition,
-            [(inserted, rename.Replacement)],
-            [(rename.Original.Location, rename.Original.Values)],
-            "renaming relationship catalog identity",
-            cancellationToken).ConfigureAwait(false);
+        var plan = new MutationPlan();
+        plan.ForTable(2, rename.Definition, Constants.SystemTableNames.Objects, MutationPlan.IndexPolicy.CatalogChange, "renaming relationship catalog identity")
+            .Update(rename.Original.Location, rename.Original.Values, rename.Replacement, rename.FixedTextBytes, DeletedRowDataMode.Clear);
+        await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
         catalog.Invalidate();
     }
 
@@ -415,21 +405,16 @@ internal sealed class CatalogWriter(
             },
             cancellationToken).ConfigureAwait(false);
 
-        foreach ((RowLocation row, _) in deletedRows)
-        {
-            await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, acesDef, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
-        }
-
         if (deletedRows.Count > 0)
         {
-            await tableRows.AdjustTDefRowCountAsync(acesTdefPage, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
-            await indexes.MaintainSystemTableIndexesIncrementallyAsync(
-                acesTdefPage,
-                acesDef,
-                Constants.SystemTableNames.Aces,
-                insertedRows: null,
-                deletedRows: deletedRows,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+            var plan = new MutationPlan();
+            MutationPlan.TableChanges changes = plan.ForTable(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, MutationPlan.IndexPolicy.System);
+            foreach ((RowLocation row, object[] values) in deletedRows)
+            {
+                changes.Delete(row, values, DeletedRowDataMode.Clear);
+            }
+
+            await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -696,6 +681,8 @@ internal sealed class CatalogWriter(
 
         TableDef acesDef = await tableDefs.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         (byte[] Sid, int Acm)[] inherited = await this.ReadInheritedPermissionsAsync(useRelationshipGroupAcm, acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
+        var plan = new MutationPlan();
+        MutationPlan.TableChanges changes = plan.ForTable(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, MutationPlan.IndexPolicy.System);
         foreach ((byte[] sid, int acm) in inherited)
         {
             object[] row = acesDef.CreateNullValueRow();
@@ -703,22 +690,10 @@ internal sealed class CatalogWriter(
             acesDef.SetValueByName(row, "ACM", acm);
             acesDef.SetValueByName(row, "FInheritable", false);
             acesDef.SetValueByName(row, "SID", sid);
-            await indexes.InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, row, cancellationToken: cancellationToken).ConfigureAwait(false);
+            changes.Insert(row);
         }
-    }
 
-    private async ValueTask RequireCatalogIndexSpliceAsync(
-        TableDef msys,
-        RowLocation loc,
-        object[] values,
-        string objectName,
-        CancellationToken cancellationToken)
-    {
-        bool spliced = await indexes.TrySpliceCatalogIndexEntryAsync(2, msys, loc, values, cancellationToken).ConfigureAwait(false);
-        if (!spliced)
-        {
-            throw new JetOperationException(JetErrorCode.CatalogIndexMaintenanceFailed, $"Could not maintain MSysObjects catalog indexes for '{objectName}'.");
-        }
+        await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
     }
 
     internal async ValueTask UpdateTablePropertiesAsync(
@@ -761,15 +736,12 @@ internal sealed class CatalogWriter(
 
         UnreadableLongValue.ThrowIfAny(replacement, Constants.SystemTableNames.Objects);
         IReadOnlyDictionary<int, byte[]>? fixedTextBytes = original.GetPreservedFixedText(replacement, [propertyIndex, flagsIndex]);
-        _ = tableRows.EncodeRow(objects, replacement, fixedTextBytes);
+
         await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
-        await tableRows.MarkRowDeletedAsync(original.Location.PageNumber, original.Location.RowIndex, objects, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
-        RowLocation inserted = await tableRows.InsertRowDataLocAsync(2, objects, replacement, updateTDefRowCount: false, fixedTextBytes: fixedTextBytes, cancellationToken: cancellationToken).ConfigureAwait(false);
-        bool maintained = await indexes.TryRelocateCatalogRowAsync(objects, original, new LocatedRow(inserted, replacement), cancellationToken).ConfigureAwait(false);
-        if (!maintained)
-        {
-            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, $"The native catalog indexes for '{tableName}' could not retain their stored keys.", new JetErrorInfo { TableName = tableName });
-        }
+        var plan = new MutationPlan();
+        plan.ForTable(2, objects, Constants.SystemTableNames.Objects, MutationPlan.IndexPolicy.CatalogRelocation, tableName)
+            .Update(original.Location, original.Values, replacement, fixedTextBytes, DeletedRowDataMode.Clear);
+        await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
 
         catalog.Invalidate();
     }
@@ -787,7 +759,8 @@ internal sealed class CatalogWriter(
         TableDef msys = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         var droppedTdefPages = new List<long>();
-        var deletedCatalogRows = new List<(RowLocation Loc, object[] Row)>();
+        var plan = new MutationPlan();
+        MutationPlan.TableChanges changes = plan.ForTable(2, msys, Constants.SystemTableNames.Objects, MutationPlan.IndexPolicy.CatalogChange, operation);
 
         foreach (CatalogRow row in rows)
         {
@@ -817,12 +790,10 @@ internal sealed class CatalogWriter(
             }
 
             object[] indexRow = CreateMsysObjectsIndexRow(msys, row);
-            deletedCatalogRows.Add((new RowLocation(row.PageNumber, row.RowIndex, 0, 0), indexRow));
-
-            await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, msys, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+            changes.Delete(new RowLocation(row.PageNumber, row.RowIndex, 0, 0), indexRow, DeletedRowDataMode.Clear);
         }
 
-        if (deletedCatalogRows.Count == 0)
+        if (changes.Rows.Count == 0)
         {
             if (throwIfNotFound)
             {
@@ -832,13 +803,7 @@ internal sealed class CatalogWriter(
             return [];
         }
 
-        await tableRows.AdjustTDefRowCountAsync(2, -deletedCatalogRows.Count, cancellationToken).ConfigureAwait(false);
-        await this.RequireMsysObjectsIndexMaintenanceAsync(
-            msys,
-            insertedRows: null,
-            deletedRows: deletedCatalogRows,
-            operation,
-            cancellationToken).ConfigureAwait(false);
+        await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
 
         catalog.Invalidate();
         return droppedTdefPages;
@@ -868,32 +833,6 @@ internal sealed class CatalogWriter(
         msys.SetValueByName(indexRow, "ParentId", Constants.SystemObjects.TablesParentId);
         msys.SetValueByName(indexRow, "Name", row.Name);
         return indexRow;
-    }
-
-    private async ValueTask RequireMsysObjectsIndexMaintenanceAsync(
-        TableDef msys,
-        List<(RowLocation Loc, object[] Row)>? insertedRows,
-        List<(RowLocation Loc, object[] Row)>? deletedRows,
-        string operation,
-        CancellationToken cancellationToken)
-    {
-        bool incremental = await indexes.TryMaintainIndexesIncrementalAsync(
-            2,
-            msys,
-            insertedRows,
-            deletedRows,
-            cancellationToken).ConfigureAwait(false);
-        if (incremental)
-        {
-            return;
-        }
-
-        if (!format.IsJet3)
-        {
-            throw new JetOperationException(JetErrorCode.CatalogIndexMaintenanceFailed, $"Could not maintain MSysObjects catalog indexes while {operation}.");
-        }
-
-        await indexes.MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask EnsureCatalogContainerNameAvailableAsync(TableDef msys, int parentId, string objectName, long? excludedTdefPage = null, CancellationToken cancellationToken = default)

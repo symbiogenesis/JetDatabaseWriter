@@ -481,7 +481,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, Ct);
         TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(page, Constants.SystemTableNames.Relationships, Ct);
-        var store = new RelationshipCatalogStore(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Services.Indexes, harness.Services.CatalogRows, harness.Services.Snapshots, harness.Services.Catalog);
+        var store = new RelationshipCatalogStore(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Services.Mutations, harness.Services.CatalogRows, harness.Services.Snapshots, harness.Services.Catalog);
         List<RelationshipRowSnapshot> rows = await store.CollectRowsAsync(page, definition, _ => true, Ct);
         List<object[]> keep = [.. rows.Where(r => !string.Equals(r.SzRelationship, relationshipName, StringComparison.OrdinalIgnoreCase)).Select(r => r.RowValues)];
         Assert.True(keep.Count < rows.Count, $"Relationship '{relationshipName}' has no MSysRelationships rows.");

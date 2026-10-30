@@ -1173,7 +1173,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         definition.SetValueByName(row, "szReferencedColumn", "Id");
         definition.SetValueByName(row, "szReferencedObject", "P");
         definition.SetValueByName(row, "szRelationship", "FK_C_P");
-        await harness.Services.Indexes.InsertSystemRowAndMaintainAsync(page, definition, Constants.SystemTableNames.Relationships, row, cancellationToken: Ct);
+        await harness.Services.Mutations.InsertSystemRowAndMaintainAsync(page, definition, Constants.SystemTableNames.Relationships, row, cancellationToken: Ct);
     }
 
     /// <summary>

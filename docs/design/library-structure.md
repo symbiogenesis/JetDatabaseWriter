@@ -10,6 +10,32 @@ This document describes the architecture and folder organization of the `JetData
 
 `TableStorageEditor` owns row/index copying, validation of the completed `TableRewriteCopy`, then publication on the original TDEF root and reclamation. Replacement data/index pages retain a private temporary owner through validation. Publication transfers only the captured row pages and index pages reachable from the replacement roots/maps, including retained initial leaves; it does not scan the database to repair owners. The original catalog row retains its ID, owner, dates, unassigned fields and permission rows; only projected properties and the complex-column flag change. Validation and cancellation checks precede destruction of the original table. Dependent complex and relationship metadata repair remains inside the caller's transaction, using the same pager and cache checkpoints. Storage reclamation and publication are absent from the declaration service and the planner.
 
+## Prepared row mutations
+
+Ordinary rows, cascades, complex values, append-only history and catalog/system
+row operations build `MutationPlan` changes grouped by TDEF in first-use order.
+Contributors retain their validation and assignment policy and must resolve the
+same native layout. Conflicting index policies refuse before application.
+Rows carry their original locations/values, final replacements, unassigned fixed
+Text bytes, erase policy and count adjustments.
+
+`MutationExecutor.ApplyAsync` checks every replacement's arity, unreadable-value
+admission and encoded capacity before the first row effect. It applies the
+prepared changes and finalizes each reached table's indexes, row count and
+requested scalar/complex counter high-water values. Incremental/rebuild,
+required system maintenance, catalog splice, Jet3-only catalog fallback and
+stored-key relocation remain explicit native policies. Schema artifact steps
+that need intervening catalog reads use separate prepared applications.
+
+`TransactionLifecycle` owns statement/savepoint snapshots and restores constraint
+counters and derived state when rollback succeeds. Failed
+or uncertain physical restoration instead faults the writer and retains recovery
+evidence under its lifecycle contract. Preparing defaults/identities
+may change that in-memory state, so a plan belongs inside its caller's serialized
+statement or private initialization/replacement context. The row executor does
+not create a competing transaction lifecycle. Private schema storage copying,
+publication and reclamation remain `TableStorageEditor` responsibilities.
+
 ## Directory layout
 
 ```
@@ -360,6 +386,8 @@ src/JetDatabaseWriter/
 │   ├── IndexRowReader.cs                  (index metadata, seeks and range reads, predicate-inferred index reads)
 │   ├── SchemaReader.cs                    (column metadata, relationships, table lists and database statistics)
 │   ├── TableDataWriter.cs                 (row DML: insert / update / delete batches)
+│   ├── MutationPlan.cs                    (composed per-table row changes and native index policy)
+│   ├── MutationExecutor.cs                (shared preflight, row effects, indexes, counts and counters)
 │   ├── TableSchemaEditor.cs               (declaration policy and DDL orchestration)
 │   ├── TableRewritePlanner.cs             (schema/row/property projection and identity capture)
 │   ├── TableRewritePlan.cs                (validated replacement, preserved identities and counters)
@@ -513,7 +541,7 @@ AccessReader → ReaderServices
 
 ```
 AccessWriter → WriterServices
-  TableDataWriter     → TableCatalog, TableRowStore, IndexMaintainer, UniqueIndexChecker, AutoNumberMaintainer,
+  TableDataWriter     → TableCatalog, MutationExecutor, IndexMaintainer, UniqueIndexChecker,
                         ConstraintRegistry, RelationshipEnforcer, ComplexColumnManager, TableSnapshotReader
   TableSchemaEditor   → TableCatalog, CatalogWriter, CatalogArtifactWriter,
                         ComplexColumnManager, ConstraintRegistry, RelationshipManager, TableSnapshotReader, TableRewritePlanner, TableStorageEditor
@@ -523,15 +551,16 @@ AccessWriter → WriterServices
                         ComplexColumnManager, ConstraintRegistry, RelationshipManager, AutoNumberMaintainer
   RelationshipManager → TableCatalog, IndexMaintainer, ForeignKeyMetadataEditor, CatalogArtifactWriter, CatalogRowReader, RelationshipCatalogStore
   ForeignKeyMetadataEditor → Pager, TableDefReader, PageAllocator
-  SystemCatalogBootstrapper → Pager, TableDefReader, IndexMaintainer, CatalogArtifactWriter
-  RelationshipEnforcer → TableCatalog, TableRowStore, IndexMaintainer, RelationshipCatalogStore, ComplexColumnManager, TableSnapshotReader
-  ComplexColumnManager → TableCatalog, TableRowStore, IndexMaintainer, CatalogArtifactWriter, CatalogRowReader, ConstraintRegistry,
+  SystemCatalogBootstrapper → Pager, TableDefReader, MutationExecutor, CatalogArtifactWriter
+  RelationshipEnforcer → TableCatalog, IndexMaintainer, RelationshipCatalogStore, ComplexColumnManager, TableSnapshotReader, ConstraintRegistry
+  ComplexColumnManager → TableCatalog, MutationExecutor, IndexMaintainer, CatalogArtifactWriter, CatalogRowReader, ConstraintRegistry,
                         AutoNumberMaintainer, ComplexReferenceSeedReader
   ComplexReferenceSeedReader → CatalogRowReader, AutoNumberMaintainer
   CatalogArtifactWriter → TableCatalog, PageAllocator, TDefPageBuilder, DataPageInserter, CatalogOwnedMapPolicy, CatalogWriter,
                         ConstraintRegistry
-  CatalogWriter       → TableCatalog, TableRowStore, IndexMaintainer, LongValueEncoder, ConstraintRegistry, CatalogRowReader
-  IndexMaintainer     → IndexBTreeEditor, TDefWriter, PageAllocator, TableRowStore, DataPageInserter, TableSnapshotReader
+  CatalogWriter       → TableCatalog, MutationExecutor, IndexMaintainer, LongValueEncoder, CatalogRowReader, TableSnapshotReader
+  IndexMaintainer     → IndexBTreeEditor, TDefWriter, PageAllocator, DataPageInserter, TableSnapshotReader
+  MutationExecutor    → TableRowStore, IndexMaintainer, AutoNumberMaintainer, DataPageInserter
   TDefWriter          → Pager, TableDefReader
   TableSnapshotReader → RowDecoder, CatalogReader
   CatalogReader       → TableCatalog, CatalogRowReader, RowDecoder
@@ -579,7 +608,7 @@ ReaderServices (root) → every reader collaborator
 WriterServices (root) → every writer collaborator
 ```
 
-Because folders group by domain, several pairs reference each other: `Catalog` ↔ `Indexes`, `Catalog` ↔ `Pages`, `Catalog` ↔ `Schema`, `Catalog` ↔ `Tables`, `Catalog` ↔ `ValueDecoding`, `Catalog` ↔ `ValueEncoding`, `ComplexColumns` ↔ `Tables`, `Encryption` ↔ `Schema`, `Indexes` ↔ `Schema`, `Indexes` ↔ `Tables`, `Linq` ↔ `Queries`, `Pages` ↔ `Schema`, `Pages` ↔ `Transactions` (the writer's `Pager` takes the byte-range locks; `TransactionLifecycle` attaches the `PagerTransaction`), and `Relationships` ↔ `Tables`. Each pair comes from different classes in the two folders using one another (for example, `IndexMaintainer` in `Indexes/` uses `TableRowStore` in `Tables/`, while `TableDataWriter` in `Tables/` uses `IndexMaintainer`; `CatalogReader` decodes `MSysObjects` rows through `RowDecoder`, while the value decoders read `TableDef` from `Catalog.Models`). The reader's and writer's table-level workflow services all live in `Tables/`, so the read path adds only the `Catalog` ↔ `ValueDecoding` pair. The acyclicity guarantee applies to the two collaborator graphs above, not to the folder map. The library is a single project, so there are no project-level cycles. `Infrastructure/` and the pure layout and value helpers remain stable leaf dependencies.
+Because folders group by domain, several pairs reference each other: `Catalog` ↔ `Indexes`, `Catalog` ↔ `Pages`, `Catalog` ↔ `Schema`, `Catalog` ↔ `Tables`, `Catalog` ↔ `ValueDecoding`, `Catalog` ↔ `ValueEncoding`, `ComplexColumns` ↔ `Tables`, `Encryption` ↔ `Schema`, `Indexes` ↔ `Schema`, `Indexes` ↔ `Tables`, `Linq` ↔ `Queries`, `Pages` ↔ `Schema`, `Pages` ↔ `Transactions` (the writer's `Pager` takes the byte-range locks; `TransactionLifecycle` attaches the `PagerTransaction`), and `Relationships` ↔ `Tables`. Each pair comes from different classes in the two folders using one another (for example, `IndexMaintainer` in `Indexes/` uses `TableSnapshotReader` in `Tables/`, while `MutationExecutor` in `Tables/` uses `IndexMaintainer`; `CatalogReader` decodes `MSysObjects` rows through `RowDecoder`, while the value decoders read `TableDef` from `Catalog.Models`). The reader's and writer's table-level workflow services all live in `Tables/`, so the read path adds only the `Catalog` ↔ `ValueDecoding` pair. The acyclicity guarantee applies to the two collaborator graphs above, not to the folder map. The library is a single project, so there are no project-level cycles. `Infrastructure/` and the pure layout and value helpers remain stable leaf dependencies.
 
 ---
 

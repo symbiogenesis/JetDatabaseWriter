@@ -29,10 +29,9 @@ using JetDatabaseWriter.ValueDecoding.Models;
 /// <param name="tableDefs">The table-definition reader.</param>
 /// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="tableCatalog">Resolves child tables by name.</param>
-/// <param name="tableRows">Encodes, deletes and rewrites cascaded child rows.</param>
-/// <param name="indexes">Rebuilds child-table indexes after cascades.</param>
+/// <param name="indexes">Validates child-table index support before mutation.</param>
 /// <param name="catalog">Loads the enforced relationships from <c>MSysRelationships</c>.</param>
-/// <param name="complexColumns">Cascades deletes into complex-column child rows.</param>
+/// <param name="complexColumns">Plans dependent complex-item deletions.</param>
 /// <param name="snapshots">Reads decoded parent and child rows when no seekable index exists.</param>
 /// <param name="constraints">Checks constraints on cascaded keys.</param>
 internal sealed class RelationshipEnforcer(
@@ -41,7 +40,6 @@ internal sealed class RelationshipEnforcer(
     TableDefReader tableDefs,
     OwnedDataPages ownedPages,
     TableCatalog tableCatalog,
-    TableRowStore tableRows,
     IndexMaintainer indexes,
     RelationshipCatalogStore catalog,
     ComplexColumnManager complexColumns,
@@ -53,17 +51,17 @@ internal sealed class RelationshipEnforcer(
     private readonly RelationshipChildRowLocator childRowLocator = new(format, pageSource, ownedPages);
 
     /// <summary>
-    /// Records the key of a row just inserted into <paramref name="tableName"/>
+    /// Records the key of a row planned for insertion into <paramref name="tableName"/>
     /// in <see cref="FkContext.InsertedParentKeys"/> for every relationship that
     /// relates the table to itself, so a later row of the same batch can
     /// reference it. The table's indexes take the batch's rows only after the
-    /// last one is written, so an index seek cannot see them yet.
+    /// last one is applied, so an index seek cannot see them during planning.
     /// </summary>
     /// <param name="tableName">The table the row was inserted into.</param>
     /// <param name="tableDef">The table's definition.</param>
     /// <param name="insertedValues">The inserted row, in table-column order.</param>
     /// <param name="ctx">The call's relationship state.</param>
-    public static void AugmentParentSetsAfterInsert(string tableName, TableDef tableDef, object[] insertedValues, FkContext ctx)
+    public static void AugmentPlannedParentKeys(string tableName, TableDef tableDef, object[] insertedValues, FkContext ctx)
     {
         foreach (FkRelationship rel in ctx.All)
         {
@@ -87,6 +85,24 @@ internal sealed class RelationshipEnforcer(
             }
 
             _ = inserted.Add(key);
+        }
+    }
+
+    /// <summary>
+    /// Adds composed cascade replacements to the statement's table change sets.
+    /// </summary>
+    /// <param name="plan">The statement's accumulated changes.</param>
+    /// <param name="cascades">The planned rewrites, by table.</param>
+    public static void AddCascadeUpdates(MutationPlan plan, IReadOnlyList<CascadeUpdate> cascades)
+    {
+        foreach (CascadeUpdate cascade in cascades)
+        {
+            ResolvedTable table = cascade.Table;
+            MutationPlan.TableChanges changes = plan.ForTable(table.Entry.TDefPage, table.Definition, cascade.TableName);
+            foreach ((RowLocation location, object[] oldRow, object[] newRow) in cascade.Rows)
+            {
+                changes.Update(location, oldRow, newRow, cascade.FixedTextBytes[location]);
+            }
         }
     }
 
@@ -300,7 +316,7 @@ internal sealed class RelationshipEnforcer(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>
     /// The dependent rows to delete, by relationship, deepest cascades first,
-    /// for <see cref="ApplyCascadeDeletesAsync"/>.
+    /// for <see cref="AddCascadeDeletesAsync"/>.
     /// </returns>
     /// <exception cref="JetOperationException">
     /// A deleted key has dependent rows and the relationship does not cascade
@@ -338,30 +354,23 @@ internal sealed class RelationshipEnforcer(
     }
 
     /// <summary>
-    /// Deletes the dependent rows <see cref="PlanCascadeDeletesAsync(string, TableDef, List{object[]}, IReadOnlyList{LocatedRow}, FkContext, ComplexChildDeletes, CancellationToken)"/>
-    /// planned, in the planned order: for each cascade, its hidden flat-table
-    /// rows, then its rows, then it lowers the table's row count and
-    /// maintains its indexes. Takes no cancellation token: it is part of the
-    /// delete statement's writes, and a statement that has started writing
-    /// runs to completion. Only a child table's index rebuild checks that the
-    /// writer can maintain that table's indexes, so a failure there throws
-    /// after that table's rows and their flat rows are deleted; the rows of
-    /// the later cascades, and the statement's own rows, keep theirs.
+    /// Adds dependent and complex-child deletions to the statement's shared
+    /// table change sets before any row is written.
     /// </summary>
+    /// <param name="plan">The statement's accumulated changes.</param>
     /// <param name="cascades">The planned deletes, by relationship.</param>
+    /// <param name="cancellationToken">The cancellation token used during preparation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    public async ValueTask ApplyCascadeDeletesAsync(IReadOnlyList<CascadeDelete> cascades)
+    public async ValueTask AddCascadeDeletesAsync(MutationPlan plan, IReadOnlyList<CascadeDelete> cascades, CancellationToken cancellationToken)
     {
         foreach ((string tableName, ResolvedTable table, List<RowLocation> locations, ComplexChildDeletes flatRows) in cascades)
         {
-            await complexColumns.ApplyComplexChildDeletesAsync(flatRows).ConfigureAwait(false);
+            await complexColumns.AddComplexChildDeletesAsync(plan, flatRows, cancellationToken).ConfigureAwait(false);
+            MutationPlan.TableChanges changes = plan.ForTable(table.Entry.TDefPage, table.Definition, tableName);
             foreach (RowLocation location in locations)
             {
-                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, table.Definition, CancellationToken.None).ConfigureAwait(false);
+                changes.Delete(location);
             }
-
-            await tableRows.AdjustTDefRowCountAsync(table.Entry.TDefPage, -locations.Count, CancellationToken.None).ConfigureAwait(false);
-            await indexes.MaintainIndexesAsync(table.Entry.TDefPage, table.Definition, tableName, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -406,7 +415,7 @@ internal sealed class RelationshipEnforcer(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>
     /// The child rows to rewrite, by table, in the order the relationships
-    /// first reach the tables, for <see cref="ApplyCascadeUpdatesAsync"/>.
+    /// first reach the tables, for <see cref="AddCascadeUpdates"/>.
     /// </returns>
     /// <exception cref="JetOperationException">
     /// A changed key has dependent rows and the relationship does not cascade
@@ -640,11 +649,9 @@ internal sealed class RelationshipEnforcer(
             await constraints.ApplyUpdateAsync(tableName, definition, newRow, columns, cancellationToken).ConfigureAwait(false);
         }
 
-        // Every rewritten child row is final now, so each is encoded and
-        // measured as its re-insert will encode it: a value the encoder
-        // refuses, or a row longer than a data page, refuses the update before
-        // any row is deleted. The caller encodes its own rows, which are final
-        // once the plan returns.
+        // Validate each table's composed final keys and retain unassigned fixed
+        // Text bytes. The shared executor measures every final replacement
+        // before applying any of the statement's row changes.
         foreach (CascadeUpdate cascade in cascades)
         {
             string tableName = cascade.TableName;
@@ -684,7 +691,6 @@ internal sealed class RelationshipEnforcer(
                 LocatedRow stored = storedRows[location];
                 IReadOnlyDictionary<int, byte[]>? fixedTextBytes = stored.GetPreservedFixedText(newRow, keyAssignments[newRow].Columns);
                 cascade.FixedTextBytes.Add(location, fixedTextBytes);
-                _ = tableRows.EncodeRow(table.Definition, newRow, fixedTextBytes);
             }
         }
 
@@ -708,32 +714,6 @@ internal sealed class RelationshipEnforcer(
             }
 
             assigned.Columns.UnionWith(columns);
-        }
-    }
-
-    /// <summary>
-    /// Rewrites the dependent rows <see cref="PlanCascadeUpdatesAsync"/>
-    /// planned, each with the values it built, and then maintains each child
-    /// table's indexes once. Every write of a cascading key update happens
-    /// here or in the caller's rewrite of its own rows, after every check the
-    /// plan and the caller make. The plan checks each child table's unique
-    /// indexes before any rewrite. Takes no cancellation token: the writes start
-    /// here, and a statement that has started writing runs to completion.
-    /// </summary>
-    /// <param name="cascades">The planned rewrites, by table.</param>
-    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    public async ValueTask ApplyCascadeUpdatesAsync(IReadOnlyList<CascadeUpdate> cascades)
-    {
-        foreach (CascadeUpdate cascade in cascades)
-        {
-            ResolvedTable table = cascade.Table;
-            foreach ((RowLocation location, _, object[] newRow) in cascade.Rows)
-            {
-                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, table.Definition, CancellationToken.None).ConfigureAwait(false);
-                _ = await tableRows.InsertRowDataLocAsync(table.Entry.TDefPage, table.Definition, newRow, updateTDefRowCount: false, fixedTextBytes: cascade.FixedTextBytes[location], cancellationToken: CancellationToken.None).ConfigureAwait(false);
-            }
-
-            await indexes.MaintainIndexesAsync(table.Entry.TDefPage, table.Definition, cascade.TableName, CancellationToken.None).ConfigureAwait(false);
         }
     }
 

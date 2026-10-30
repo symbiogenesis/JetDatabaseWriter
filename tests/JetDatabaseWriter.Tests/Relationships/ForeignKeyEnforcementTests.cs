@@ -1190,7 +1190,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             relationshipsDef.SetValueByName(malformedRow, "szReferencedObject", parent);
             relationshipsDef.SetValueByName(malformedRow, "szRelationship", "FK_MalformedMissingColumn");
 
-            await harness.Services.Indexes.InsertSystemRowAndMaintainAsync(
+            await harness.Services.Mutations.InsertSystemRowAndMaintainAsync(
                 relationshipsTdefPage,
                 relationshipsDef,
                 Constants.SystemTableNames.Relationships,

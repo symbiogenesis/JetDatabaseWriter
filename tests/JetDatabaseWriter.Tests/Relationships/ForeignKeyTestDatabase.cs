@@ -190,7 +190,7 @@ internal static class ForeignKeyTestDatabase
         relationshipsDef.SetValueByName(row, "szReferencedColumn", primaryColumn);
         relationshipsDef.SetValueByName(row, "szReferencedObject", primaryTable);
         relationshipsDef.SetValueByName(row, "szRelationship", name);
-        await harness.Services.Indexes.InsertSystemRowAndMaintainAsync(
+        await harness.Services.Mutations.InsertSystemRowAndMaintainAsync(
             relationshipsPage,
             relationshipsDef,
             Constants.SystemTableNames.Relationships,

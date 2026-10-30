@@ -72,9 +72,9 @@ Phase C0 + C1 (below) closed that path: every `InsertCatalogEntryAsync` call now
 
 The historical full-rebuild paths explain why MSysObjects still cannot be treated like an ordinary table even though the general index maintainer has gained stronger incremental and surgical paths.
 
-### 2.1 `InsertSystemRowAndMaintainAsync` (`AccessWriter.cs`) — current state
+### 2.1 `MutationExecutor` system-table policy
 
-Used today by `MSysRelationships`, `MSysComplexColumns`, and `MSysACEs` writes. It inserts the row, verifies the system table's real-index roots look maintainable, then:
+Used by `MSysRelationships`, `MSysComplexColumns` and `MSysACEs` writes through prepared table changes. `InsertSystemRowAndMaintainAsync` is the single-row convenience entry; prepared relationship and permission batches call `ApplyAsync` directly. The shared executor preflights row encoding, applies the batch and selects the explicit system index policy:
 
 - Skips index maintenance when the system table has no maintainable real-index roots.
 - Requires `TryMaintainIndexesIncrementalAsync` for maintainable system tables, including `MSysRelationships`, `MSysComplexColumns`, and `MSysACEs`.

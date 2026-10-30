@@ -12,7 +12,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
@@ -23,23 +22,37 @@ using JetDatabaseWriter.Tables;
 /// <param name="complexColumns">Validates complex descriptors and their flat tables.</param>
 /// <param name="snapshots">Resolves hidden flat tables.</param>
 /// <param name="seeds">Validates existing parent references.</param>
-/// <param name="rows">Writes the staged flat rows.</param>
-/// <param name="indexes">Maintains the flat-table indexes.</param>
+/// <param name="indexes">Validates history flat-table index support.</param>
 /// <param name="constraints">Assigns native flat-table AutoNumbers.</param>
 /// <param name="uniqueIndexes">Checks the generated keys.</param>
-/// <param name="autoNumbers">Persists the flat-table AutoNumber counters.</param>
 internal sealed class AppendOnlyHistoryWriter(
     JetFormat format,
     TableCatalog catalog,
     ComplexColumnReader complexColumns,
     TableSnapshotReader snapshots,
     ComplexReferenceSeedReader seeds,
-    TableRowStore rows,
     IndexMaintainer indexes,
     ConstraintRegistry constraints,
-    UniqueIndexChecker uniqueIndexes,
-    AutoNumberMaintainer autoNumbers)
+    UniqueIndexChecker uniqueIndexes)
 {
+    /// <summary>Adds prepared history inserts to the statement's shared table change sets.</summary>
+    /// <param name="plan">The statement's accumulated changes.</param>
+    /// <param name="batches">The prepared history rows.</param>
+    internal static void AddToPlan(MutationPlan plan, IEnumerable<HistoryBatch> batches)
+    {
+        foreach (HistoryBatch batch in batches)
+        {
+            ResolvedTable table = batch.Table;
+            MutationPlan.TableChanges changes = plan.ForTable(table.Entry.TDefPage, table.Definition, table.Entry.Name);
+            foreach (object[] version in batch.Rows)
+            {
+                changes.Insert(version);
+            }
+
+            changes.RaiseAutoNumbers = true;
+        }
+    }
+
     /// <summary>Prepares history rows before any parent or cascaded row is changed.</summary>
     /// <param name="tableName">The parent table.</param>
     /// <param name="tableDef">Its definition.</param>
@@ -155,7 +168,6 @@ internal sealed class AppendOnlyHistoryWriter(
                 version[valueIndex] = string.IsNullOrEmpty(text) ? "\0" : text;
                 version[modifiedIndex] = modified;
                 _ = await constraints.ApplyAsync(flat.Entry.Name, flatDef, version, cancellationToken).ConfigureAwait(false);
-                _ = rows.EncodeRow(flatDef, version);
                 versions.Add(version);
             }
 
@@ -178,32 +190,6 @@ internal sealed class AppendOnlyHistoryWriter(
             ResolvedTable table = group.First().Table;
             List<object[]> versions = [.. group.SelectMany(batch => batch.Rows)];
             await uniqueIndexes.CheckUniqueIndexesPreInsertAsync(table.Entry.TDefPage, table.Definition, table.Entry.Name, versions, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>Appends each prepared batch and maintains its indexes and counter once.</summary>
-    /// <param name="batches">The prepared history rows.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    internal async ValueTask ApplyAsync(IEnumerable<HistoryBatch> batches, CancellationToken cancellationToken)
-    {
-        foreach (IGrouping<long, HistoryBatch> group in batches.GroupBy(batch => batch.Table.Entry.TDefPage))
-        {
-            HistoryBatch batch = group.First();
-            List<object[]> versions = [.. group.SelectMany(item => item.Rows)];
-            ResolvedTable table = batch.Table;
-            var inserted = new List<(RowLocation Loc, object[] Row)>(versions.Count);
-            foreach (object[] version in versions)
-            {
-                RowLocation location = await rows.InsertRowDataLocAsync(table.Entry.TDefPage, table.Definition, version, cancellationToken: cancellationToken).ConfigureAwait(false);
-                inserted.Add((location, version));
-            }
-
-            if (!await indexes.TryMaintainIndexesIncrementalAsync(table.Entry.TDefPage, table.Definition, inserted, deletedRows: null, cancellationToken).ConfigureAwait(false))
-            {
-                await indexes.MaintainIndexesAsync(table.Entry.TDefPage, table.Definition, table.Entry.Name, cancellationToken).ConfigureAwait(false);
-            }
-
-            await autoNumbers.UpdateHighWaterAsync(table.Entry.TDefPage, table.Definition, versions, cancellationToken).ConfigureAwait(false);
         }
     }
 
