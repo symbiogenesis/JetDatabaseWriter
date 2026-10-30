@@ -41,7 +41,7 @@ public sealed class VariableDateDecodePolicyTests
         await using var original = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(original, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct))
         {
-            await writer.CreateTableAsync("Values", [new ColumnDefinition("Value", typeof(DateTime)) { IsDateTimeExtended = extended, IsCalculated = calculated, CalculationExpression = calculated ? "Date()" : null, ForceVariableLengthStorage = true }, new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Payload", typeof(byte[]))], ct);
+            await writer.CreateTableAsync("Values", [new ColumnDefinition("Value", typeof(DateTime)) { IsDateTimeExtended = extended, IsCalculated = calculated, CalculationExpression = calculated ? "DateSerial(2026,1,1)" : null, ForceVariableLengthStorage = true }, new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Payload", typeof(byte[]))], ct);
             await writer.InsertRowAsync("Values", [new DateTime(2026, 1, 1), 1, new byte[] { 1, 2, 3 }], ct);
         }
 
@@ -172,7 +172,7 @@ public sealed class VariableDateDecodePolicyTests
         await using var original = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(original, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct))
         {
-            await writer.CreateTableAsync("Values", [new ColumnDefinition("Value", typeof(DateTime)) { IsCalculated = true, CalculationExpression = "Date()" }], ct);
+            await writer.CreateTableAsync("Values", [new ColumnDefinition("Value", typeof(DateTime)) { IsCalculated = true, CalculationExpression = "DateSerial(2026,1,1)" }], ct);
             await writer.InsertRowAsync("Values", [new DateTime(2026, 1, 1)], ct);
         }
 

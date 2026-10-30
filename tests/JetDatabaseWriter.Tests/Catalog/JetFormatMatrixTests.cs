@@ -85,8 +85,18 @@ public sealed class JetFormatMatrixTests(DatabaseCache db) : IClassFixture<Datab
             for (int i = 0; i < meta.Count; i++)
             {
                 Assert.Equal(meta[i].Name, dt.Columns[i].ColumnName);
-                Assert.Equal(meta[i].ClrType, dt.Columns[i].DataType);
+                Assert.Equal(meta[i].IsCalculated ? typeof(object) : meta[i].ClrType, dt.Columns[i].DataType);
             }
+
+            int rowIndex = 0;
+            await foreach (object[] row in reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken))
+            {
+                Assert.True(rowIndex < dt.Rows.Count);
+                Assert.Equal(row, dt.Rows[rowIndex].ItemArray);
+                rowIndex++;
+            }
+
+            Assert.Equal(rowIndex, dt.Rows.Count);
         }
     }
 

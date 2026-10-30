@@ -154,7 +154,7 @@ public sealed class RowDecodeParityTests
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct))
         {
-            await writer.CreateTableAsync("Values", [new ColumnDefinition("Value", typeof(int)) { ForceVariableLengthStorage = true, IsCalculated = calculated, CalculationExpression = calculated ? "Null" : null }], ct);
+            await writer.CreateTableAsync("Values", [new ColumnDefinition("Value", typeof(int)) { ForceVariableLengthStorage = true, IsCalculated = calculated, CalculationExpression = calculated ? "IIf(True, Null, 1)" : null }], ct);
             await writer.InsertRowAsync("Values", [null], ct);
         }
 

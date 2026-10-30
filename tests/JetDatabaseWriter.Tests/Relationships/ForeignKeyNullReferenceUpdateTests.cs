@@ -191,7 +191,7 @@ public sealed class ForeignKeyNullReferenceUpdateTests(DatabaseCache db) : IClas
                     new ColumnDefinition("Label", typeof(string), maxLength: 20)
                     {
                         IsCalculated = true,
-                        CalculationExpression = "Nz([ParentName], \"missing\")",
+                        CalculationExpression = "IIf(IsNull([ParentName]), \"missing\", [ParentName])",
                     },
                 ],
                 Ct);
