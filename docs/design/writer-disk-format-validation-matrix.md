@@ -76,9 +76,16 @@ Byte/Integer/Long/Currency/Single/Double/DateTime/GUID Null-slot geometry with
 writer insert/update and native update/compact. `FixedNullScalarTests` covers
 all declared scalar widths and no-allocation oversized-row refusal. The writer
 reserves complete fixed storage before variable data even for Null values.
-Fresh DAO120 Jet4/ACE confirmation, native Numeric/Large Number/DateTime Extended
-and dropped-slot variants, and broader record-limit acceptance remain F8/E2
-gaps. Existing approved golden specimens are unchanged.
+`NativeDroppedNullSlotTests` adds four pinned DAO3.6-authored Jet3/Jet4 source
+and compacted controls after dropping leading/middle/trailing fixed fields and a
+variable field beside surviving Null Double/GUID values. Public typed/string/POCO
+reads, insert/update, native reopen/update/compact and independent old/new row
+geometry qualify those shapes. Producer details and hashes are in
+`Databases/DroppedNullSlots/README.md`; native-only source and compacted fixtures
+are separate from writer-mutated subjects. Fresh DAO120 Jet4/ACE confirmation,
+native Numeric/Large Number/DateTime Extended, remaining dropped-slot variants
+and broader record-limit acceptance remain F8/E2 gaps. Existing approved golden
+specimens are unchanged.
 
 Validation on 2026-10-06 used revision
 `4b347f95886abdd72aadcfa59a997652e46badea`:

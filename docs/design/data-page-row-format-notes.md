@@ -76,9 +76,22 @@ fixed-area geometry through writer insert/update, native update and compact.
 Mixed variable rows begin their text after all 55 fixed bytes. Native fixed-only
 rows are 58/59 bytes; the writer's existing unused variable trailer makes the
 corresponding rows 60/63 bytes, accepted by the native read/update/compact checks.
-These controls use `dao360.dll` 10.0.26100.5074. Fresh DAO120 Jet4/ACE checks and
-native Numeric, Large Number, Date/Time Extended and dropped-slot variants
-remain F8/E2 work; synthetic width tests do not establish those native forms.
+These controls use `dao360.dll` 10.0.26100.5074.
+
+`NativeDroppedNullSlotTests` separately pins native Jet3/Jet4 source and compacted
+specimens after deleting leading/middle/trailing fixed fields and a variable
+field beside surviving Null Double/GUID fields. Source Value/GUID offsets are
+8/20; compact changes them to 4/12. The native old row retains 44 fixed bytes,
+the native post-drop row uses 36, and native compact uses 28, excluding the
+one/two-byte column-count prefix. Removed interior slots remain reserved; the
+old trailing Double slot need not be reserved by new rows. Frozen raw controls
+pin retained removed-field values and text starts; bytes beneath native Nulls
+and new-row gaps remain opaque rather than assumed zero. Public insert/update,
+native read/update/compact and typed/string/POCO reads qualify these shapes.
+Provenance and hashes are in
+[the fixture inventory](../../tests/JetDatabaseWriter.Tests/Databases/DroppedNullSlots/README.md).
+Fresh DAO120 Jet4/ACE, native Numeric/Large Number/DateTime Extended, remaining
+dropped-slot variants and broader record limits remain F8/E2 work.
 
 ## Fixed-length Text
 
