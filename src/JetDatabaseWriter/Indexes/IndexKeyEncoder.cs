@@ -885,9 +885,7 @@ internal static class IndexKeyEncoder
                 paramName);
         }
 
-        bool legacyNumeric = format.LegacyNumericIndexKeys;
-        byte[][] perColumn = new byte[keyValues.Count][];
-        int totalLength = 0;
+        var builder = new CompositeKeyBuilder(format, keyValues.Count);
 
         for (int i = 0; i < keyValues.Count; i++)
         {
@@ -896,22 +894,10 @@ internal static class IndexKeyEncoder
             ColumnInfo? column = tableDef.Columns.FirstOrDefault(c => c.ColNum == keyColumn.ColumnNumber)
                 ?? throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"Index '{index.Name}' on table '{tableName}' references missing column number {keyColumn.ColumnNumber}.", new JetErrorInfo { TableName = tableName, IndexName = index.Name });
 
-            object? value = keyValues[i];
-            perColumn[i] = column.Type == NumericType
-                ? EncodeNumericEntryAtDeclaredScale(value, keyColumn.IsAscending, column.NumericScale, legacyNumeric)
-                : EncodeColumnEntry(format, column, value, keyColumn.IsAscending);
-            totalLength += perColumn[i].Length;
+            builder.Add(i, column, keyValues[i], keyColumn.IsAscending);
         }
 
-        byte[] composite = new byte[totalLength];
-        int offset = 0;
-        for (int i = 0; i < perColumn.Length; i++)
-        {
-            Buffer.BlockCopy(perColumn[i], 0, composite, offset, perColumn[i].Length);
-            offset += perColumn[i].Length;
-        }
-
-        return composite;
+        return builder.Build();
     }
 
     private static void FlipBytes(byte[] arr)
@@ -1047,4 +1033,60 @@ internal static class IndexKeyEncoder
             or DateTimeType or DateTimeExtendedType or BinaryType or TextType or MemoType or GuidType or NumericType => true,
         BooleanType or OleType or BigBinaryType or ComplexType or _ => false,
     };
+
+    /// <summary>Encodes resolved key components and concatenates them in index order.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="componentCount">The number of components the caller will supply.</param>
+    internal struct CompositeKeyBuilder(JetFormat format, int componentCount)
+    {
+        private readonly byte[][] components = new byte[componentCount][];
+        private int totalLength;
+
+        /// <summary>Encodes one component, preserving the scalar encoder's exceptions.</summary>
+        /// <param name="ordinal">The component's position in the key.</param>
+        /// <param name="column">The resolved column descriptor.</param>
+        /// <param name="value">The component value.</param>
+        /// <param name="ascending">The key direction.</param>
+        internal void Add(int ordinal, ColumnInfo column, object? value, bool ascending)
+            => this.SetComponent(ordinal, EncodeColumnEntry(format, column, value, ascending));
+
+        /// <summary>Encodes one component, returning false for unsupported values or descriptors.</summary>
+        /// <param name="ordinal">The component's position in the key.</param>
+        /// <param name="column">The resolved column descriptor.</param>
+        /// <param name="value">The component value.</param>
+        /// <param name="ascending">The key direction.</param>
+        /// <returns>Whether the component can be encoded.</returns>
+        internal bool TryAdd(int ordinal, ColumnInfo column, object? value, bool ascending)
+        {
+            byte[]? encoded = TryEncodeColumnEntry(column.Type, value, ascending, column.NumericScale, format.LegacyNumericIndexKeys, column.TextSortOrder, column.IsFixed && !column.IsCalculated ? column.Size : 0);
+            if (encoded is null)
+            {
+                return false;
+            }
+
+            this.SetComponent(ordinal, encoded);
+            return true;
+        }
+
+        /// <summary>Concatenates the components after the caller has supplied each one.</summary>
+        /// <returns>The complete key bytes.</returns>
+        internal readonly byte[] Build()
+        {
+            byte[] composite = new byte[this.totalLength];
+            int offset = 0;
+            foreach (byte[] component in this.components)
+            {
+                component.AsSpan().CopyTo(composite.AsSpan(offset));
+                offset += component.Length;
+            }
+
+            return composite;
+        }
+
+        private void SetComponent(int ordinal, byte[] encoded)
+        {
+            this.components[ordinal] = encoded;
+            this.totalLength += encoded.Length;
+        }
+    }
 }

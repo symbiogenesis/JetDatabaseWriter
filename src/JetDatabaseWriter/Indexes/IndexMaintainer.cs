@@ -2269,29 +2269,14 @@ internal sealed class IndexMaintainer(
     /// <param name="cells">The cells.</param>
     private byte[] EncodeCompositeKey(List<KeyColumnInfo> keyColInfos, object?[] cells)
     {
-        bool legacyNumeric = format.LegacyNumericIndexKeys;
-
-        byte[][] perColumn = new byte[keyColInfos.Count][];
-        int totalLen = 0;
+        var builder = new IndexKeyEncoder.CompositeKeyBuilder(format, keyColInfos.Count);
         for (int k = 0; k < keyColInfos.Count; k++)
         {
             (ColumnInfo? col, int _, bool ascending) = keyColInfos[k];
-            object? value = cells[k];
-            perColumn[k] = col.Type == NumericType
-                ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, col.NumericScale, legacyNumeric)
-                : IndexKeyEncoder.EncodeColumnEntry(format, col, value, ascending);
-            totalLen += perColumn[k].Length;
+            builder.Add(k, col, cells[k], ascending);
         }
 
-        byte[] composite = new byte[totalLen];
-        int offset = 0;
-        for (int k = 0; k < perColumn.Length; k++)
-        {
-            Buffer.BlockCopy(perColumn[k], 0, composite, offset, perColumn[k].Length);
-            offset += perColumn[k].Length;
-        }
-
-        return composite;
+        return builder.Build();
     }
 
     /// <summary>
@@ -2307,8 +2292,7 @@ internal sealed class IndexMaintainer(
     /// <param name="row">The row values or row bytes.</param>
     private byte[]? TryEncodeCompositeKey(List<KeyColumnInfo> keyColInfos, object[] row)
     {
-        byte[][] pieces = new byte[keyColInfos.Count][];
-        int totalLength = 0;
+        var builder = new IndexKeyEncoder.CompositeKeyBuilder(format, keyColInfos.Count);
         for (int k = 0; k < keyColInfos.Count; k++)
         {
             int snapIdx = keyColInfos[k].SnapIdx;
@@ -2318,26 +2302,13 @@ internal sealed class IndexMaintainer(
             }
 
             KeyColumnInfo key = keyColInfos[k];
-            ColumnInfo column = key.Col;
-            byte[]? encoded = IndexKeyEncoder.TryEncodeColumnEntry(column.Type, row[snapIdx], key.Ascending, column.NumericScale, format.LegacyNumericIndexKeys, column.TextSortOrder, column.IsFixed && !column.IsCalculated ? column.Size : 0);
-            if (encoded is null)
+            if (!builder.TryAdd(k, key.Col, row[snapIdx], key.Ascending))
             {
                 return null;
             }
-
-            pieces[k] = encoded;
-            totalLength += encoded.Length;
         }
 
-        byte[] composite = new byte[totalLength];
-        int offset = 0;
-        foreach (byte[] piece in pieces)
-        {
-            piece.AsSpan().CopyTo(composite.AsSpan(offset));
-            offset += piece.Length;
-        }
-
-        return composite;
+        return builder.Build();
     }
 
     /// <summary>

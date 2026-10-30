@@ -107,7 +107,6 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         UniqueIndexDescriptor descriptor,
         object[] row)
     {
-        bool legacyNumeric = format.LegacyNumericIndexKeys;
         int keyCount = descriptor.KeyColumns.Count;
 
         // Single-column fast path: avoid the per-column array + copy.
@@ -116,34 +115,19 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
             (ColumnInfo? col, int snapIdx, bool ascending) = descriptor.KeyColumns[0];
             object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
             object? value = cell is null or DBNull ? null : cell;
-            return col.Type == NumericType
-                ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, col.NumericScale, legacyNumeric)
-                : IndexKeyEncoder.EncodeColumnEntry(format, col, value, ascending);
+            return IndexKeyEncoder.EncodeColumnEntry(format, col, value, ascending);
         }
 
-        // Multi-column: encode into per-column spans then concatenate.
-        byte[][] perColumn = new byte[keyCount][];
-        int totalLen = 0;
+        var builder = new IndexKeyEncoder.CompositeKeyBuilder(format, keyCount);
         for (int k = 0; k < keyCount; k++)
         {
             (ColumnInfo? col, int snapIdx, bool ascending) = descriptor.KeyColumns[k];
             object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
             object? value = cell is null or DBNull ? null : cell;
-            perColumn[k] = col.Type == NumericType
-                ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, col.NumericScale, legacyNumeric)
-                : IndexKeyEncoder.EncodeColumnEntry(format, col, value, ascending);
-            totalLen += perColumn[k].Length;
+            builder.Add(k, col, value, ascending);
         }
 
-        byte[] composite = new byte[totalLen];
-        int offset = 0;
-        for (int k = 0; k < keyCount; k++)
-        {
-            perColumn[k].AsSpan().CopyTo(composite.AsSpan(offset));
-            offset += perColumn[k].Length;
-        }
-
-        return composite;
+        return builder.Build();
     }
 
     /// <summary>
