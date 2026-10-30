@@ -344,6 +344,7 @@ public sealed class CalculatedBinaryResultTests
         using System.Data.DataTable table = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(11, Assert.IsType<CalculatedError>(table.Rows[0][2]).NativeCode);
     }
+
     private static ColumnDefinition[] CreateColumns() =>
     [
         new("Id", typeof(int)),
