@@ -33,7 +33,7 @@ Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from yo
 | ✅ | **Async&#8209;first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
 | ✅ | **Stream&#8209;based&nbsp;I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
 | ✅ | **Encryption** | Read/update built-in JET RC4 and ACE CryptoAPI, Standard AES and Agile AES; create JET RC4 or ACE Agile AES and maintain passwords. See [Encryption Support](#encryption-support) for provider and platform scope. |
-| Partial | **Schema&nbsp;features** | Supported indexes, primary & foreign keys with referential integrity (cascade update/delete), and linked tables; complete native schema and application dependency preservation remains incomplete |
+| Partial | **Schema&nbsp;features** | Supported indexes, selectable text collations, primary & foreign keys with referential integrity (cascade update/delete), and linked tables; complete native schema and application dependency preservation remains incomplete |
 | ✅ | **Complex&nbsp;columns** | Read, add, replace and remove attachments and multi-value items with native item IDs; maintain append-only Memo history (ACCDB) |
 | Partial | **Calculated&nbsp;columns** | ACCDB metadata, cached values, and a bounded row-local evaluator for a supported subset of Access expressions |
 | ✅ | **Concurrency** | `.ldb` / `.laccdb` lockfile + BCL page-level byte-range locks where supported |

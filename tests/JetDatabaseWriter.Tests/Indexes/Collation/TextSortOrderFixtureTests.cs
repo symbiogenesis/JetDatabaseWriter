@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Collation;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -48,11 +49,22 @@ public sealed class TextSortOrderFixtureTests
         foreach (CatalogEntry entry in tables)
         {
             TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, entry.Name, TestContext.Current.CancellationToken);
+            IReadOnlyList<ColumnMetadata> metadata = await harness.GetColumnMetadataAsync(entry.Name, TestContext.Current.CancellationToken);
             foreach (ColumnInfo column in definition.Columns)
             {
                 if (column.Type is ColumnType.TextType or ColumnType.MemoType)
                 {
                     Assert.Equal(expected, column.TextSortOrder);
+                    ColumnMetadata exposed = Assert.Single(metadata, value => value.Name == column.Name);
+                    TextCollation expectedCollation = (hasVersion, version) switch
+                    {
+                        (false, _) => TextCollation.General97,
+                        (_, 0) => TextCollation.GeneralLegacy,
+                        _ => TextCollation.General,
+                    };
+                    Assert.Equal(expectedCollation, exposed.TextCollation);
+                    Assert.Equal((ushort)0x0409, exposed.TextSortOrderId);
+                    Assert.Equal(hasVersion ? version : null, exposed.TextSortOrderVersion);
                     columnsChecked++;
                 }
             }

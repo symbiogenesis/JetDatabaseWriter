@@ -52,6 +52,19 @@ await writer.DropTableAsync("Contacts");
 
 New table, column, index, relationship and linked-table names follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of `.` `!` `` ` `` `[` `]` or a control character (U+0000–U+001F and U+007F). Spaces inside or at the end of a name, quotes, `#`, `=` and non-ASCII letters are fine. `CreateTableAsync`, `AddColumnAsync`, `RenameColumnAsync` (the new name), `CreateRelationshipAsync`, `RenameRelationshipAsync` (the new name) and the `CreateLinked*TableAsync` methods (the local name) throw `ArgumentException` for any other name before writing anything, and `CreateTableAsync` also rejects two columns whose names differ only by case, since Access compares names ignoring case. A linked table's foreign name, such as `dbo.Orders` or `orders.csv`, is not checked against these rules. On a Jet3 database every new name, and a linked table's foreign name, path and connect string, must also be in the database's code page (see above). Names that an existing database already holds are only looked up, so a table or column written with such a name by another tool can still be read, written, altered and dropped, and a column can be renamed to a valid name.
 
+#### Text collations
+
+Set `ColumnDefinition.TextCollation` to choose `General97` for Jet3, or `GeneralLegacy` / `General` for Jet4 and ACE. Leaving it null uses the database header's default. Text, Memo and calculated Text columns accept the option; other types and incompatible format choices refuse before mutation.
+
+```csharp
+new ColumnDefinition("Name", typeof(string), maxLength: 100)
+{
+    TextCollation = TextCollation.General,
+},
+```
+
+The choice controls stored index keys. Expression comparisons use the database's collation. Add, drop and rename preserve surviving columns' stored sort orders. `ColumnMetadata.TextCollation` reports a supported encoder family; `TextSortOrderId` and `TextSortOrderVersion` expose the raw descriptor fields. An unknown sort order has a null family with its raw fields retained. Jet3 has no version field. These choices do not change text encoding or provide complete locale/key coverage; see the [native evidence](design/index-and-relationship-format-notes.md#explicit-text-sort-orders).
+
 #### Decimal and Currency columns
 
 A `decimal` column is an Access Decimal with the declared `NumericPrecision` and `NumericScale`, and a value is rounded half to even to that scale when it is stored. Without them it is Access's default Decimal(18,0), which holds whole numbers only, so `95.5` would be stored as `96`. Set `IsCurrency` for an Access Currency column instead, on any format. Currency keeps four decimal places, rounding half to even past them, and holds -922,337,203,685,477.5808 to 922,337,203,685,477.5807; a value outside that range throws `OverflowException`. `ColumnMetadata.IsCurrency` reports Currency columns, so copying a column's metadata into a `ColumnDefinition` creates the same type.

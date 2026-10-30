@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Models;
 
 using System;
+using JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Rich metadata about a database column including type, size, and nullability information.
@@ -34,6 +35,21 @@ public sealed record ColumnMetadata
 
     /// <summary>Gets a value indicating whether the column is fixed-length.</summary>
     public bool IsFixedLength { get; init; }
+
+    /// <summary>
+    /// Gets the supported native text sort order, or null for a non-text column,
+    /// a linked text source without a native descriptor, or an unsupported sort
+    /// order. See <see cref="TextSortOrderId"/> and <see cref="TextSortOrderVersion"/>
+    /// for the stored descriptor values. This identifies encoder support, not
+    /// complete native validation of every possible text key.
+    /// </summary>
+    public TextCollation? TextCollation { get; init; }
+
+    /// <summary>Gets the raw Text/Memo sort-order identifier, or null when no native text descriptor exists.</summary>
+    public ushort? TextSortOrderId { get; init; }
+
+    /// <summary>Gets the raw Text/Memo sort-order version, or null for Jet3 or when no native text descriptor exists.</summary>
+    public byte? TextSortOrderVersion { get; init; }
 
     /// <summary>
     /// Gets a value indicating whether the column is a Microsoft Access Hyperlink column

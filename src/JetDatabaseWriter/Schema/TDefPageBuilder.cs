@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
@@ -47,6 +48,20 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
     {
         ValidateCalculatedColumn(definition, format, paramName);
         ColumnType type = ResolveStorageType(definition, TypeCodeFromDefinition(definition, paramName), format, paramName);
+
+        if (definition.TextCollation is { } collation)
+        {
+            var requested = TextSortOrder.FromCollation(collation, paramName);
+            if (type is not (TextType or MemoType))
+            {
+                throw new ArgumentException($"Column '{definition.Name}': a text collation requires a Text or Memo column.", paramName);
+            }
+
+            if (requested.HasVersion != format.DefaultTextSortOrder.HasVersion)
+            {
+                throw new ArgumentException($"Column '{definition.Name}': the text collation {collation} is incompatible with this database format.", paramName);
+            }
+        }
 
         if (type == BigIntType && !format.SupportsBigInt)
         {
@@ -221,7 +236,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 FixedOff = variable ? 0 : fixedOffset,
                 Size = size,
                 Flags = flags,
-                TextSortOrder = definition.TextSortOrderOverride ?? format.DefaultTextSortOrder,
+                TextSortOrder = definition.TextSortOrderOverride ?? (definition.TextCollation is { } collation ? TextSortOrder.FromCollation(collation, nameof(columns)) : format.DefaultTextSortOrder),
                 Misc = isComplex ? definition.ComplexId : definition.DescriptorNonTextMiscOverride ?? 0,
                 NumericPrecision = type == NumericType ? ResolveNumericPrecision(definition, nameof(columns)) : (byte)0,
                 NumericScale = type == NumericType ? ResolveNumericScale(definition, nameof(columns)) : (byte)0,

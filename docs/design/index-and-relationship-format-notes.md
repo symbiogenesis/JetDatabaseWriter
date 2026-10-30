@@ -74,6 +74,14 @@ rename. This observation establishes visibility for that specimen, not every
 bit of the trailing field. Native tests compare original visibility rather
 than requiring internal supporting indexes to become public DAO indexes.
 
+## Explicit text sort orders
+
+`ColumnDefinition.TextCollation` selects the existing General97 (Jet3), General Legacy (Jet4/ACE LCID `0x0409`, version 0) or General (Jet4/ACE LCID `0x0409`, version 1) encoder family. Null uses the header default. Validation rejects undefined enum values, non-Text/Memo storage and incompatible descriptor generations before mutation; calculated Text follows its declared result type. Schema rewrites retain surviving raw descriptors and unknown sort orders instead of replacing them with a public enum choice.
+
+`ColumnMetadata` reports the supported family separately from raw `TextSortOrderId` and nullable `TextSortOrderVersion`. Non-text and descriptorless linked-text columns have null fields; Jet3 has no version. Unknown identifiers retain raw fields with a null family. Native identifier zero retains the existing General Legacy encoder fallback; reporting it does not invent a new native collation. Stored key generation uses the column sort order, while expression comparisons use the database sort order. No encoder, locale rule or text code page changes here.
+
+`PublicTextCollationTests` checks declaration/default metadata, Text/Memo/calculated Text, preallocation refusal, unknown-ID reporting, uniqueness, seeks and preservation through add/drop/rename. `TextSortOrderFixtureTests` compares public metadata with pinned native fixture families. `PublicTextCollationDaoTests` covers writer-created columns, schema edits and row updates followed by native case-equivalent seek, duplicate refusal, insert/update and compact/readback. Local x86 DAO3.6 (`dao360.dll` 10.0.26100.5074) checks passed for Jet3 General97 and Jet4 General Legacy. Fresh DAO120 Jet4/ACE General Legacy/General checks remain guarded and were skipped on this host. Broader sort/code-page inventories, locale/long-key parity and mixed native column forms remain F9/E2 work.
+
 ## Null keys and cascade planning
 
 Non-primary unique indexes allow multiple all-Null keys; partly Null composite keys still participate in uniqueness. IgnoreNulls omits all-Null keys in rebuilds, incremental changes and catalog splices. Required and primary indexes reject a Null component before mutation. Northwind Employees supplies real-file evidence for repeated Null WindowsUserName keys; the format/write-mode regression matrix covers batch inserts, updates and reopen behavior.

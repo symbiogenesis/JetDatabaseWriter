@@ -169,6 +169,17 @@ public sealed record ColumnDefinition
     public bool IsCompressedUnicode { get; init; } = true;
 
     /// <summary>
+    /// Gets the native sort order to store for a Text or Memo column, including a
+    /// calculated Text result. Null uses the database header's default. General 97
+    /// requires Jet3; General Legacy and General require Jet4 or ACE. A choice on
+    /// any other column type or an incompatible format refuses schema creation
+    /// before mutation. Existing columns retain their stored sort order through
+    /// add, drop and rename operations. This choice governs stored index keys;
+    /// expression comparisons continue to use the database's sort order.
+    /// </summary>
+    public TextCollation? TextCollation { get; init; }
+
+    /// <summary>
     /// Gets a value indicating whether a <see cref="DateTime"/> column should
     /// be authored as Access 2019+ <c>Date/Time Extended</c> instead of the
     /// classic 8-byte <c>Date/Time</c> type. The stored value has 100 ns tick
