@@ -163,7 +163,7 @@ module LongValueKernel {
   }
 
   lemma EmptyInsertionPreservesTable(table: seq<U32>, slot: nat, pointer: U32)
-    requires VisitedTable(table) && slot < |table| && table[slot] == 0 && pointer != 0
+    requires VisitedTable(table) && slot < |table| && table[slot] == 0
     requires forall previous: nat :: (previous < |table| &&
       ProbeDistance(VisitedSlot(pointer, |table| as U32) as int, |table|, previous) <
       ProbeDistance(VisitedSlot(pointer, |table| as U32) as int, |table|, slot)) ==> table[previous] != 0
