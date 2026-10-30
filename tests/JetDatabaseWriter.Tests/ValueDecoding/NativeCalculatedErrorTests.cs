@@ -7,15 +7,60 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueDecoding.Models;
 using Xunit;
 
 /// <summary>Native calculated errors remain values distinct from ordinary Null.</summary>
 public sealed class NativeCalculatedErrorTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Fact]
+    public async Task WriterScalarErrors_UseNativeThirtyNineByteEnvelopes()
+    {
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, Enums.DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync("T", [new("Id", typeof(int)), new("BadByte", typeof(byte)) { IsCalculated = true, CalculationExpression = "300" }, new("BadDouble", typeof(double)) { IsCalculated = true, CalculationExpression = "1/0" }], Ct);
+            await writer.InsertRowAsync("T", new RowValues { ["Id"] = 1 }, Ct);
+        }
+
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
+        CatalogEntry entry = Assert.IsType<CatalogEntry>(await reader.GetCatalogEntryAsync("T", Ct));
+        TableDef definition = Assert.IsType<TableDef>(await reader.ReadTableDefAsync(entry.TDefPage, Ct));
+        JetFormat format = reader.Database.Format;
+        int seen = 0;
+        for (long number = 1; number < reader.Database.Pages.PageCount; number++)
+        {
+            byte[] page = await reader.ReadPageCopyAsync(number, Ct);
+            if (page[0] != Constants.PageTypes.Data || JetTypeInfo.Ri32(page, format.DataPage.TDefOff) != entry.TDefPage)
+            {
+                continue;
+            }
+
+            RowBound bound = Assert.Single(DataPageRows.EnumerateLiveRowBounds(format, page));
+            Assert.True(RowDecodePlan.TryParseRowLayout(format.RowFields, page, bound.RowStart, bound.RowSize, definition.HasVarColumns, out RowLayout layout));
+            foreach (ColumnInfo column in definition.Columns.Where(column => column.IsCalculated))
+            {
+                ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(format.RowFields, page, bound.RowStart, bound.RowSize, layout, column);
+                Assert.Equal(39, slice.DataLen);
+                Assert.Equal(column.Name == "BadByte" ? 6 : 11, JetTypeInfo.Ri32(page, bound.RowStart + slice.DataStart));
+                Assert.All(page.AsSpan(bound.RowStart + slice.DataStart + sizeof(int), slice.DataLen - sizeof(int)).ToArray(), value => Assert.Equal((byte)0, value));
+                seen++;
+            }
+        }
+
+        Assert.Equal(2, seen);
+    }
 
     [Theory]
     [InlineData("native-calculated-errors.accdb", "FC789B7ECD75FE9E371F69C2432D077660143BB3BD4C801C75DF838D265097EE")]

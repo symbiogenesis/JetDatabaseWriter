@@ -644,8 +644,9 @@ internal sealed class RowEncoder(JetFormat format)
     {
         if (value is CalculatedError error)
         {
-            byte[] envelope = CalculatedColumnUtil.EncodeError(error, JetTypeInfo.ResolveValueType(column) != MemoType);
-            return JetTypeInfo.UsesLongValueStorage(column) ? LongValueStore.WrapInlineLongValue(envelope) : envelope;
+            bool longValue = JetTypeInfo.UsesLongValueStorage(column);
+            byte[] envelope = CalculatedColumnUtil.EncodeError(error, longValue && JetTypeInfo.ResolveValueType(column) != MemoType);
+            return longValue ? LongValueStore.WrapInlineLongValue(envelope) : envelope;
         }
 
         // Access encodes the cached value by the column's ResultType, which can
