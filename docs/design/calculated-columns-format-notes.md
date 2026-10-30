@@ -277,7 +277,8 @@ Delivered:
   `tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnFixtureTests.cs`, and
   byte-level cached-payload assertions in
   `tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnPayloadTests.cs` (including
-  DAO-authored `IIf` / `Switch` calculated fields on Access-equipped hosts).
+  DAO-authored `IIf` calculated fields and native `Switch`/domain-aggregate
+  declaration refusals on Access-equipped hosts).
 
 ### Phase 2 — Subset expression evaluator **(DONE)**
 
@@ -498,11 +499,18 @@ Supported subset:
   `IPmt`, `PPmt`, `DDB`, `SLN`, `SYD`, `Rate`), `Choose` and `Switch`. `Partition` is supported for stored rules and defaults; table calculated columns refuse it before mutation, matching DAO120.
 
 The list above describes the shared row-local interpreter for defaults and
-validation rules. Native table calculated columns additionally refuse
+validation rules. Native table calculated columns additionally refuse `Switch`
+and the domain aggregates `DLookup`, `DCount`, `DSum`, `DAvg`, `DMin` and `DMax`, plus
 `CBool`, `CByte`, `CInt`, `CLng`, `CSng`, `CCur`, `CDec`, `CStr`, `CDate`,
 `TimeValue` and `DateValue`, including nested calls and normalized `$` aliases.
 `CalculatedExpressionParser` applies this restriction only in calculated-column
-context, before create/add/recalculation changes bytes. Existing cached values
+context, before create/add/recalculation changes bytes. Function names are
+case-insensitive; nested calls and normalized `$` aliases have the same
+restriction. Field names and literal text containing these names remain valid.
+`CalculatedFunctionContextTests` checks that refused create/add operations retain
+the complete database image. Shared defaults and validation plans retain their
+separate interpretation; domain/query evaluation remains unsupported there.
+Existing cached values
 remain readable. `CalculatedConversionContextTests` separates those refusals
 from supported defaults/rules and literal text. `CalculatedConversionDaoTests`
 checks DAO120's refusal set and accepted `CDbl`, `DateSerial`, `TimeSerial`

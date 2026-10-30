@@ -270,7 +270,9 @@ internal sealed class CalculatedExpressionParser
             name = name[..^1];
         }
 
-        if (this.isCalculatedColumn && name.ToUpperInvariant() is "PARTITION" or "CBOOL" or "CBYTE" or "CINT" or "CLNG" or "CSNG" or "CCUR" or "CDEC" or "CSTR" or "CDATE" or "TIMEVALUE" or "DATEVALUE")
+        if (this.isCalculatedColumn && name.ToUpperInvariant() is
+            "PARTITION" or "SWITCH" or "DLOOKUP" or "DCOUNT" or "DSUM" or "DAVG" or "DMIN" or "DMAX" or
+            "CBOOL" or "CBYTE" or "CINT" or "CLNG" or "CSNG" or "CCUR" or "CDEC" or "CSTR" or "CDATE" or "TIMEVALUE" or "DATEVALUE")
         {
             throw new JetNotSupportedException(JetErrorCode.UnsupportedExpression, $"Access table calculated columns do not accept the {name} function.");
         }

@@ -23,7 +23,7 @@ internal static class CalculatedExpressionMetadataFunctions
     private static object EvaluateDomainAggregate(CalculatedFunctionInvocation function)
         => throw new JetNotSupportedException(
             JetErrorCode.UnsupportedExpression,
-            $"Access table calculated columns reject domain aggregate function '{function.Name}' because it requires domain/query evaluation.");
+            $"Domain aggregate function '{function.Name}' requires domain/query evaluation, which is not supported by the row-local interpreter.");
 
     private static int VarType(object? value)
     {
