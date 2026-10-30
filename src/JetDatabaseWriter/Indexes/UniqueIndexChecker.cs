@@ -187,9 +187,9 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         List<object[]> pendingRows,
         CancellationToken cancellationToken)
     {
-        var cursor = new IndexCursor(
+        using var cursor = new IndexCursor(
             format.IndexPage,
-            this.ReadIndexPageOwnedAsync,
+            pageSource.ReadPageLeaseAsync,
             format.PageSize);
 
         var seenSets = new HashSet<byte[]>[descriptors.Count];
@@ -218,19 +218,6 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
                     throw new JetConstraintException(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. The conflict was detected before any row was written; the table is unchanged.", new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
                 }
             }
-        }
-    }
-
-    private async ValueTask<byte[]> ReadIndexPageOwnedAsync(long pageNumber, CancellationToken cancellationToken)
-    {
-        byte[] page = await pageSource.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return (byte[])page.Clone();
-        }
-        finally
-        {
-            PageBuffers.Return(page);
         }
     }
 

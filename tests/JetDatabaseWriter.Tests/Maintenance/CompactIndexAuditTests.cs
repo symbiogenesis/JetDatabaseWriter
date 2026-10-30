@@ -597,7 +597,7 @@ public sealed class CompactIndexAuditTests
             [5] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([2], 9, 1)], 7, 6, 0, true),
             [6] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([3], 9, 2)], 5, 0, 0, true),
         });
-        var cursor = new IndexCursor(format.IndexPage, (page, _) => ValueTask.FromResult(source.Images[page]), format.PageSize);
+        using var cursor = new IndexCursor(format.IndexPage, (page, _) => ValueTask.FromResult(PageLease.Own(source.Images[page], format.PageSize, static _ => { })), format.PageSize);
         Assert.Equal(!skipsEarlierKey, await cursor.ContainsKeyAsync(3, [2], Ct));
         List<CompactIndexRecord> records = await ScanAsync(source, format);
         CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
@@ -636,7 +636,7 @@ public sealed class CompactIndexAuditTests
             [4] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([1], 9, 0)], 0, 5, 0, true),
             [5] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([3], 9, 1)], 4, 0, 0, true),
         });
-        var cursor = new IndexCursor(format.IndexPage, (page, _) => ValueTask.FromResult(source.Images[page]), format.PageSize);
+        using var cursor = new IndexCursor(format.IndexPage, (page, _) => ValueTask.FromResult(PageLease.Own(source.Images[page], format.PageSize, static _ => { })), format.PageSize);
         Assert.True(await cursor.ContainsKeyAsync(3, [1], Ct));
         Assert.True(await cursor.ContainsKeyAsync(3, [3], Ct));
         Assert.False(await cursor.ContainsKeyAsync(3, [2], Ct));

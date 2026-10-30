@@ -8,7 +8,8 @@
     "verification/LongValueKernel.dfy",
     "verification/LongValueTraversal.dfy",
     "verification/WriterLifecycle.dfy",
-    "verification/MultiProcessOwnership.dfy"
+    "verification/MultiProcessOwnership.dfy",
+    "verification/PageFrameOwnership.dfy"
   ],
   "dependencies": {
     "verification/ReplacementProtocol.dfy": ["verification/GenerationOwnership.dfy"],

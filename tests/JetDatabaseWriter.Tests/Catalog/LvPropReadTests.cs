@@ -556,7 +556,7 @@ public sealed class LvPropReadTests
                     {
                         using var pages = new ReaderPageCache(harness.Database.Format, harness.Database.Pages, capacity: 0);
                         var decoder = new LongValueDecoder(harness.Database.Format, pages);
-                        LvalRowLocation location = await decoder.LocateLvalRowAsync(descriptor.FirstDp, token);
+                        using LvalRowLocation location = await decoder.LocateLvalRowAsync(descriptor.FirstDp, token);
                         Assert.False(location.Failed, location.Error);
                         int prefixLength = descriptor.IsSinglePage ? 0 : sizeof(uint);
                         Assert.True(location.Size >= prefixLength + sizeof(uint));

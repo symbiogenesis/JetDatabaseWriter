@@ -295,13 +295,16 @@ internal sealed class TableReader(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (RowBound slot in pages.GetRowDirectory(scanPage.PageNumber, scanPage.Page))
+            foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
             {
                 byte[] rowPage = scanPage.Page;
                 RowBound rb = slot;
+                using OverflowRowTarget? resolvedOverflow = slot.IsOverflowPointer
+                    ? await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false)
+                    : null;
                 if (slot.IsOverflowPointer)
                 {
-                    if (await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false) is not { } target)
+                    if (resolvedOverflow is not { } target)
                     {
                         continue;
                     }
@@ -460,7 +463,7 @@ internal sealed class TableReader(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            await foreach (string[] row in rows.EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, decodePlan, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in rows.EnumerateRowsAsync(scanPage.Lease, decodePlan, cancellationToken).ConfigureAwait(false))
             {
                 if (td.HasComplexColumns)
                 {
@@ -675,19 +678,21 @@ internal sealed class TableReader(
     }
 
     private static async ValueTask ObserveAbandonedTableScanReadAsync(Task<TableScanPage> task)
-    {
-        if (task.IsCompleted)
-        {
-            _ = task.Exception;
-            return;
-        }
-
-        await task.ContinueWith(
-            static completed => _ = completed.Exception,
+        => await task.ContinueWith(
+            static async completed =>
+            {
+                if (completed.IsCompletedSuccessfully)
+                {
+                    using TableScanPage page = await completed.ConfigureAwait(false);
+                }
+                else
+                {
+                    _ = completed.Exception;
+                }
+            },
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default).ConfigureAwait(false);
-    }
+            TaskScheduler.Default).Unwrap().ConfigureAwait(false);
 
     private async ValueTask<DataTable> ReadDataTableCoreAsync(
         string? tableName,
@@ -768,13 +773,16 @@ internal sealed class TableReader(
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    foreach (RowBound slot in pages.GetRowDirectory(scanPage.PageNumber, scanPage.Page))
+                    foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
                     {
                         byte[] rowPage = scanPage.Page;
                         RowBound rb = slot;
+                        using OverflowRowTarget? resolvedOverflow = slot.IsOverflowPointer
+                            ? await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false)
+                            : null;
                         if (slot.IsOverflowPointer)
                         {
-                            if (await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false) is not { } target)
+                            if (resolvedOverflow is not { } target)
                             {
                                 continue;
                             }
@@ -954,13 +962,16 @@ internal sealed class TableReader(
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                foreach (RowBound slot in pages.GetRowDirectory(scanPage.PageNumber, scanPage.Page))
+                foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
                 {
                     byte[] rowPage = scanPage.Page;
                     RowBound rb = slot;
+                    using OverflowRowTarget? resolvedOverflow = slot.IsOverflowPointer
+                        ? await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false)
+                        : null;
                     if (slot.IsOverflowPointer)
                     {
-                        if (await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false) is not { } target)
+                        if (resolvedOverflow is not { } target)
                         {
                             continue;
                         }
@@ -1047,13 +1058,16 @@ internal sealed class TableReader(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (RowBound slot in pages.GetRowDirectory(scanPage.PageNumber, scanPage.Page))
+            foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
             {
                 byte[] rowPage = scanPage.Page;
                 RowBound rb = slot;
+                using OverflowRowTarget? resolvedOverflow = slot.IsOverflowPointer
+                    ? await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false)
+                    : null;
                 if (slot.IsOverflowPointer)
                 {
-                    if (await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false) is not { } target)
+                    if (resolvedOverflow is not { } target)
                     {
                         continue;
                     }
@@ -1124,14 +1138,17 @@ internal sealed class TableReader(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (RowBound slot in pages.GetRowDirectory(scanPage.PageNumber, scanPage.Page))
+            foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 byte[] rowPage = scanPage.Page;
                 RowBound rb = slot;
+                using OverflowRowTarget? resolvedOverflow = slot.IsOverflowPointer
+                    ? await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false)
+                    : null;
                 if (slot.IsOverflowPointer)
                 {
-                    if (await rows.ResolveOverflowAsync(scanPage.Page, slot, cancellationToken).ConfigureAwait(false) is not { } overflow)
+                    if (resolvedOverflow is not { } overflow)
                     {
                         continue;
                     }
@@ -1177,7 +1194,8 @@ internal sealed class TableReader(
             foreach (long pageNumber in pageNumbers)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                yield return await this.ReadTableScanPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                using TableScanPage page = await this.ReadTableScanPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                yield return page;
             }
 
             yield break;
@@ -1189,7 +1207,8 @@ internal sealed class TableReader(
             int pageIndex = 0;
             if (options.PageReadOptimizationMode == PageReadOptimizationMode.Auto)
             {
-                yield return await this.ReadTableScanPageAsync(pageNumbers[pageIndex], cancellationToken).ConfigureAwait(false);
+                using TableScanPage page = await this.ReadTableScanPageAsync(pageNumbers[pageIndex], cancellationToken).ConfigureAwait(false);
+                yield return page;
                 pageIndex++;
             }
 
@@ -1203,7 +1222,8 @@ internal sealed class TableReader(
                     ? this.ReadTableScanPageAsync(pageNumbers[pageIndex + 1], cancellationToken).AsTask()
                     : null;
 
-                yield return await currentPageTask.ConfigureAwait(false);
+                using TableScanPage current = await currentPageTask.ConfigureAwait(false);
+                yield return current;
             }
         }
         finally
@@ -1225,10 +1245,10 @@ internal sealed class TableReader(
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Any page-cache size qualifies, including a disabled cache. Caches under
-    /// three pages used to be excluded because the cache returned evicted
-    /// buffers to the shared pool while a scan still read them; it now leaves
-    /// them to the GC, so the prefetch cannot overwrite the page being decoded.
+    /// Any page-cache size qualifies, including a disabled cache. A scan owns
+    /// a lease on its immutable current image; eviction releases only the cache
+    /// reference, and the pool receives the buffer after the last lease ends.
+    /// Prefetch therefore cannot overwrite the page being decoded.
     /// The two reads in flight can decode pages on two threads at once.
     /// </para>
     /// <para>
@@ -1270,9 +1290,14 @@ internal sealed class TableReader(
 
     private async ValueTask<TableScanPage> ReadTableScanPageAsync(long pageNumber, CancellationToken cancellationToken)
     {
-        byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        PageLease page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         return new TableScanPage(pageNumber, page);
     }
 
-    private readonly record struct TableScanPage(long PageNumber, byte[] Page);
+    private readonly record struct TableScanPage(long PageNumber, PageLease Lease) : IDisposable
+    {
+        internal byte[] Page => this.Lease.Buffer;
+
+        public void Dispose() => this.Lease.Dispose();
+    }
 }

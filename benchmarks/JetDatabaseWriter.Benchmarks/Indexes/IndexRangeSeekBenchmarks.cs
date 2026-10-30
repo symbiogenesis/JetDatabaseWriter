@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Pages.Paging;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 [MemoryDiagnoser]
@@ -42,6 +43,22 @@ public class IndexRangeSeekBenchmarks
             requiredPrefix);
     }
 
+    [GlobalCleanup]
+    public void Cleanup()
+    {
+        this.singleColumnCursor.Dispose();
+        this.compositeCursor.Dispose();
+        foreach (PageFrame frame in this.singleColumnTree.Pages.Values)
+        {
+            frame.Release();
+        }
+
+        foreach (PageFrame frame in this.compositeTree.Pages.Values)
+        {
+            frame.Release();
+        }
+    }
+
     [Benchmark]
     public async Task<int> BoundedRange()
     {
@@ -70,13 +87,13 @@ public class IndexRangeSeekBenchmarks
             (pageNumber, token) => ReadPageAsync(tree.Pages, pageNumber, token),
             tree.PageSize);
 
-    private static ValueTask<byte[]> ReadPageAsync(
-        Dictionary<long, byte[]> pages,
+    private static ValueTask<PageLease> ReadPageAsync(
+        Dictionary<long, PageFrame> pages,
         long pageNumber,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return new ValueTask<byte[]>(pages[pageNumber]);
+        return new ValueTask<PageLease>(pages[pageNumber].Acquire());
     }
 
     private static TreeFixture BuildTree(IReadOnlyList<IndexEntry> entries)
@@ -89,10 +106,11 @@ public class IndexRangeSeekBenchmarks
             entries,
             FirstPageNumber);
 
-        var pages = new Dictionary<long, byte[]>(build.Pages.Count);
+        var pages = new Dictionary<long, PageFrame>(build.Pages.Count);
         for (int pageIndex = 0; pageIndex < build.Pages.Count; pageIndex++)
         {
-            pages.Add(build.FirstPageNumber + pageIndex, build.Pages[pageIndex]);
+            // Fixture arrays are GC-owned; frames keep them immutable between lookups.
+            pages.Add(build.FirstPageNumber + pageIndex, PageFrame.Own(build.Pages[pageIndex], Constants.PageSizes.Jet4, static _ => { }));
         }
 
         return new TreeFixture(layout, Constants.PageSizes.Jet4, build.RootPageNumber, pages);
@@ -146,5 +164,5 @@ public class IndexRangeSeekBenchmarks
         IndexPageLayout Layout,
         int PageSize,
         long RootPageNumber,
-        Dictionary<long, byte[]> Pages);
+        Dictionary<long, PageFrame> Pages);
 }

@@ -544,6 +544,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Owns the temporary writer graph used while replacing native header-masked security identities.</summary>
+    /// <param name="database">The replacement database.</param>
+    /// <param name="pager">Its writable pages.</param>
+    /// <param name="options">The writer options.</param>
+    /// <param name="oldHeader">The original header.</param>
+    /// <param name="newHeader">The replacement header.</param>
+    /// <param name="bootstrap">Whether this is fresh database initialization.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The completion of the native identity rewrite.</returns>
+    internal static async ValueTask RewriteNativeSecurityAsync(DatabaseFile database, Pager pager, AccessWriterOptions options, byte[] oldHeader, byte[] newHeader, bool bootstrap, CancellationToken cancellationToken)
+    {
+        using var services = new WriterServices(database, pager, options, pager.ByteRangeLock);
+        await NativeJetSecurity.RewriteAsync(database.Format, database.TableDefs, database.OwnedPages, pager, services.Indexes, oldHeader, newHeader, cancellationToken, bootstrap).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Begins an explicit transaction, nested within the current scope when one exists.
     /// Up to seven levels may be open; database mutations require no more than five.
@@ -635,14 +650,27 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     private static FileStream CreateStream(string path) =>
         PageFile.OpenFileStream(path, FileAccess.ReadWrite, FileShare.None, FileOptions.Asynchronous | FileOptions.RandomAccess);
 
-    private ValueTask DisposeCoreAsync()
-        => this.Services.Transactions.IsFaulted
-            ? this.lockFileCoordinator.DisposeAfterAsync(
-                this.Database.DisposeAsync)
-            : this.lockFileCoordinator.DisposeAfterAsync(
-                this.Services.Transactions.DisposeActiveTransactionAsync,
-                this.Services.Transactions.FlushPendingWritesAsync,
-                this.Database.DisposeAsync);
+    private async ValueTask DisposeCoreAsync()
+    {
+        try
+        {
+            if (this.Services.Transactions.IsFaulted)
+            {
+                await this.lockFileCoordinator.DisposeAfterAsync(this.Database.DisposeAsync).ConfigureAwait(false);
+            }
+            else
+            {
+                await this.lockFileCoordinator.DisposeAfterAsync(
+                    this.Services.Transactions.DisposeActiveTransactionAsync,
+                    this.Services.Transactions.FlushPendingWritesAsync,
+                    this.Database.DisposeAsync).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            this.Services.Dispose();
+        }
+    }
 
     /// <summary>
     /// Runs the work in a private statement transaction when no explicit

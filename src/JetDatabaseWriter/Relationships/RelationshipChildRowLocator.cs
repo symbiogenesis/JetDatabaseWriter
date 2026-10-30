@@ -21,9 +21,9 @@ internal sealed class RelationshipChildRowLocator(JetFormat format, IPageSource 
         CancellationToken cancellationToken)
     {
         var pendingByLocation = new Dictionary<long, (long DataPage, int RowIndex, TPayload Payload)>();
-        var cursor = new IndexCursor(
+        using var cursor = new IndexCursor(
             format.IndexPage,
-            (page, token) => RelationshipPageReader.ReadOwnedAsync(pageSource, page, token),
+            pageSource.ReadPageLeaseAsync,
             format.PageSize);
 
         foreach ((object?[] oldPrimaryKey, TPayload? payload) in requests)

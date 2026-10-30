@@ -12,20 +12,22 @@ using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 
 /// <summary>
 /// Read-only cursor over a JET index B-tree. It performs layout-aware
 /// intermediate descent, tail-page fall-through, and leaf-chain walks while
 /// delegating page decoding to <see cref="IndexPageCodec"/>.
 /// </summary>
-internal sealed class IndexCursor
+internal sealed class IndexCursor : IDisposable
 {
     private const int MaxDepth = 32;
     private const int MaxLeafHops = 1_048_576;
 
     private readonly IndexPageLayout layout;
-    private readonly Func<long, CancellationToken, ValueTask<byte[]>> readPage;
+    private readonly Func<long, CancellationToken, ValueTask<PageLease>> readPage;
     private readonly int pageSize;
+    private PageLease? currentPage;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="IndexCursor"/> class using the supplied per-format index page layout.
@@ -35,7 +37,7 @@ internal sealed class IndexCursor
     /// <param name="pageSize">The page size.</param>
     public IndexCursor(
         IndexPageLayout layout,
-        Func<long, CancellationToken, ValueTask<byte[]>> readPage,
+        Func<long, CancellationToken, ValueTask<PageLease>> readPage,
         int pageSize)
     {
         Guard.NotNull(readPage, nameof(readPage));
@@ -43,6 +45,20 @@ internal sealed class IndexCursor
         this.layout = layout;
         this.readPage = readPage;
         this.pageSize = pageSize;
+    }
+
+    /// <summary>Releases the currently pinned image.</summary>
+    public void Dispose()
+    {
+        this.currentPage?.Dispose();
+        this.currentPage = null;
+    }
+
+    private async ValueTask<byte[]> ReadPageAsync(long pageNumber, CancellationToken cancellationToken)
+    {
+        this.Dispose();
+        this.currentPage = await this.readPage(pageNumber, cancellationToken).ConfigureAwait(false);
+        return this.currentPage.Buffer;
     }
 
     /// <summary>
@@ -212,7 +228,7 @@ internal sealed class IndexCursor
             }
 
             RegisterLeafTraversal(visited, next);
-            page = await this.readPage(next, cancellationToken).ConfigureAwait(false);
+            page = await this.ReadPageAsync(next, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -239,7 +255,7 @@ internal sealed class IndexCursor
 
         long pageNumber = rootPageNumber;
         HashSet<long>? descentVisited = null;
-        byte[] page = await this.readPage(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         for (int depth = 0; !IndexPageCodec.IsLeaf(page); depth++)
         {
             if (depth >= MaxDepth || !IndexPageCodec.IsIntermediate(page))
@@ -258,7 +274,7 @@ internal sealed class IndexCursor
             descentVisited ??= [pageNumber];
             RegisterIntermediateTraversal(descentVisited, nextPageNumber);
             pageNumber = nextPageNumber;
-            page = await this.readPage(pageNumber, cancellationToken).ConfigureAwait(false);
+            page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         }
 
         var visited = new HashSet<long> { pageNumber };
@@ -270,7 +286,7 @@ internal sealed class IndexCursor
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            page = await this.readPage(next, cancellationToken).ConfigureAwait(false);
+            page = await this.ReadPageAsync(next, cancellationToken).ConfigureAwait(false);
             if (!IndexPageCodec.IsLeaf(page))
             {
                 return null;
@@ -293,7 +309,7 @@ internal sealed class IndexCursor
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            page = await this.readPage(previous, cancellationToken).ConfigureAwait(false);
+            page = await this.ReadPageAsync(previous, cancellationToken).ConfigureAwait(false);
             if (!IndexPageCodec.IsLeaf(page))
             {
                 return null;
@@ -339,7 +355,7 @@ internal sealed class IndexCursor
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await this.readPage(currentPageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.ReadPageAsync(currentPageNumber, cancellationToken).ConfigureAwait(false);
             if (IndexPageCodec.IsLeaf(page))
             {
                 return (currentPageNumber, page);
@@ -396,7 +412,7 @@ internal sealed class IndexCursor
             }
 
             RegisterLeafTraversal(visited, nextPageNumber);
-            page = await this.readPage(nextPageNumber, cancellationToken).ConfigureAwait(false);
+            page = await this.ReadPageAsync(nextPageNumber, cancellationToken).ConfigureAwait(false);
         }
 
         return false;
@@ -428,7 +444,7 @@ internal sealed class IndexCursor
             }
 
             RegisterLeafTraversal(visited, nextPageNumber);
-            page = await this.readPage(nextPageNumber, cancellationToken).ConfigureAwait(false);
+            page = await this.ReadPageAsync(nextPageNumber, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -463,7 +479,7 @@ internal sealed class IndexCursor
             }
 
             RegisterLeafTraversal(visited, nextPageNumber);
-            page = await this.readPage(nextPageNumber, cancellationToken).ConfigureAwait(false);
+            page = await this.ReadPageAsync(nextPageNumber, cancellationToken).ConfigureAwait(false);
         }
     }
 }

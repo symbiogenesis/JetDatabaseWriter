@@ -41,7 +41,7 @@ guidance below to produce new evidence before changing the core reader.
 - Public seek APIs (`SeekRowsAsync`, `FromIndex`, inferred `Rows<T>(predicate)`) against a client-side scan: `benchmarks/JetDatabaseWriter.Benchmarks/Indexes/PublicSeekBenchmarks.cs`
 - Opening and scanning a file the OS has not cached (Windows only): `benchmarks/JetDatabaseWriter.Benchmarks/Reader/AccessReaderColdScanBenchmarks.cs`
 - Benchmark fixture sizes: `benchmarks/JetDatabaseWriter.Benchmarks/Infrastructure/SyntheticDatabases.cs`
-- Main read path: `src/JetDatabaseWriter/Tables/TableReader.cs` (table scans), `src/JetDatabaseWriter/ValueDecoding/RowDecoder.cs` (row decode), and `src/JetDatabaseWriter/Pages/ReaderPageCache.cs` (page and row-bound caches)
+- Main read path: `src/JetDatabaseWriter/Tables/TableReader.cs` (table scans), `src/JetDatabaseWriter/ValueDecoding/RowDecoder.cs` (row decode), and `src/JetDatabaseWriter/Pages/ReaderPageCache.cs` (page and row-directory frame cache)
 - Page I/O: `src/JetDatabaseWriter/Pages/Paging/PageFile.cs` (the writer's `Pager.cs` beside it); owned pages and row directories: `src/JetDatabaseWriter/Pages/OwnedDataPages.cs` and `DataPageRows.cs`; text decode helpers: `src/JetDatabaseWriter/Schema/JetTypeInfo.cs`
 - Long-value decode path: `src/JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs` plus shared LVAL chain traversal in `src/JetDatabaseWriter/LongValues/LongValueStore.cs`
 
@@ -552,10 +552,13 @@ explicit `Enabled` or at least three data pages for `Auto`, and no
 MEMO/OLE/complex/attachment columns. Any page-cache size qualifies, including a
 disabled cache. Caches under three pages and disabled caches used to be
 excluded because the cache returned evicted buffers to the shared pool while a
-scan still read them. `ReaderPageCache` now leaves evicted buffers to the GC,
-so the exclusion was removed after the 2026-10-02 eligibility benchmark showed
-a 12-17% gain on small or disabled caches. The long-value exclusion is no longer
-a safety rule for the same reason, but the same benchmark showed no gain on
+scan still read them. Scoped leases now retain immutable frames through each
+consumer; eviction cannot overwrite its page. The retained 2026-10-02 benchmark
+measured a 12-17% eligibility gain on small or disabled caches with the earlier
+GC-retained representation. The leased-frame representation still needs paired
+hosted qualification (I7); that result is not a measurement of the new ownership
+implementation. The long-value exclusion remains a workload policy: that
+benchmark showed no gain on
 MEMO or OLE tables, whose long-value page reads dwarf the one data page the
 prefetch overlaps, so those scans stay sequential. In `Auto`, the first page is
 yielded before prefetch begins to avoid adding speculative I/O to first-row

@@ -13,6 +13,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Tests.Relationships;
 using Xunit;
@@ -153,7 +154,7 @@ public sealed class TextCollationIndexMaintenanceTests(DatabaseCache cache) : IC
         stream.Position = 0;
         await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct);
         JetFormat format = harness.Database.Format;
-        var cursor = new IndexCursor(format.IndexPage, harness.ReadPageCopyAsync, format.PageSize);
+        using var cursor = new IndexCursor(format.IndexPage, harness.Database.Pages.ReadPageLeaseAsync, format.PageSize);
         foreach (string key in new[] { "\u0152uvre", "r\u00e9sum\u00e9" })
         {
             byte[] expected;

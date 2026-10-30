@@ -4,153 +4,157 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 
-/// <summary>
-/// The reader's page cache: an LRU of decrypted page buffers plus a parallel
-/// LRU of each data page's parsed row directory. The cache is absent
-/// altogether when its capacity is zero or negative, which it must be over
-/// the writer's file: those pages change, and every read must see the active
-/// transaction's journal, so the constructor refuses a positive capacity over
-/// a <see cref="Pager"/>.
-/// </summary>
+/// <summary>Retains immutable page images and their row directories; each read owns a disposable lease.</summary>
 internal sealed class ReaderPageCache : IDisposable
 {
-    private readonly JetFormat format;
+#if NET9_0_OR_GREATER
+    private readonly System.Threading.Lock sync = new();
+#else
+    private readonly object sync = new();
+#endif
     private readonly IPageSource pages;
-    private readonly LruCache<long, byte[]>? pageCache;
+    private readonly LruCache<long, PageFrame>? cache;
+    private readonly Action releaseLease;
+    private int outstandingLeases;
+    private bool disposed;
 
-    /// <summary>
-    /// Memoizes the parsed row directory per data page. Same eviction
-    /// profile as <see cref="pageCache"/> (sized 1:1 with it) so a page that's
-    /// still hot in the byte-cache also keeps its bounds array. Stale entries
-    /// left behind after a page is evicted from the byte-cache simply age out of
-    /// this LRU on their own — correctness doesn't depend on the two caches being
-    /// kept in lock-step.
-    /// </summary>
-    private readonly LruCache<long, RowBound[]>? rowBoundsCache;
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ReaderPageCache"/> class.
-    /// </summary>
-    /// <param name="format">The file's format profile, which parses the row directories.</param>
-    /// <param name="pages">The file's pages.</param>
-    /// <param name="capacity">The number of pages to keep; zero or negative disables caching.</param>
-    /// <exception cref="ArgumentException"><paramref name="capacity"/> is positive and <paramref name="pages"/> is the writer's <see cref="Pager"/>.</exception>
+    /// <summary>Initializes a new instance of the <see cref="ReaderPageCache"/> class.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="pages">The source of owned page copies.</param>
+    /// <param name="capacity">The retained image count; zero or negative disables reader retention.</param>
     internal ReaderPageCache(JetFormat format, IPageSource pages, int capacity)
     {
-        if (capacity > 0 && pages is Pager)
+        if (format.PageSize != pages.PageSize)
         {
-            throw new ArgumentException(
-                "A page cache over the writer's file must have capacity 0: its pages change, and every read must see the active transaction's journal.",
-                nameof(capacity));
+            throw new ArgumentException("The page source and database format must have the same page size.", nameof(pages));
         }
 
-        this.format = format;
         this.pages = pages;
-        if (capacity > 0)
+        this.releaseLease = () => Interlocked.Decrement(ref this.outstandingLeases);
+        if (capacity > 0 && pages is not Pager)
         {
-            // No eviction callback: callers keep using a cached buffer after it
-            // is evicted (a scan holds its data page while decoding a long-value
-            // chain that cycles the whole cache), so returning it to the shared
-            // pool would let the next rent overwrite it mid-scan. Evicted
-            // buffers are left to the GC instead.
-            this.pageCache = new LruCache<long, byte[]>(capacity);
-            this.rowBoundsCache = new LruCache<long, RowBound[]>(capacity);
+            this.cache = new LruCache<long, PageFrame>(capacity, static frame => frame.Release());
         }
     }
 
-    /// <summary>Gets the number of page reads served from the cache.</summary>
-    internal long Hits => this.pageCache?.Hits ?? 0;
+    /// <summary>Gets the cache-hit count.</summary>
+    internal long Hits => this.cache?.Hits ?? 0;
 
-    /// <summary>Gets the number of page reads that went to the file.</summary>
-    internal long Misses => this.pageCache?.Misses ?? 0;
+    /// <summary>Gets the cache-miss count.</summary>
+    internal long Misses => this.cache?.Misses ?? 0;
 
-    /// <summary>Gets the readable page count, including a writer's pending appended pages.</summary>
+    /// <summary>Gets the readable page count, including pending appended pages.</summary>
     internal long PageCount => this.pages.PageCount;
 
-    /// <summary>
-    /// Reads a page through the cache when one is configured. Cached buffers
-    /// are owned by the cache: callers must not return them to the pool.
-    /// </summary>
-    /// <param name="n">The page number.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<byte[]> ReadPageAsync(long n, CancellationToken cancellationToken)
+    /// <summary>Gets the number of reader leases not yet released.</summary>
+    internal int OutstandingLeases => Volatile.Read(ref this.outstandingLeases);
+
+    /// <summary>Acquires immutable page bytes, valid until the returned lease is disposed.</summary>
+    /// <param name="number">The page number.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A reader-owned lease, including when retention is disabled.</returns>
+    internal async ValueTask<PageLease> ReadPageAsync(long number, CancellationToken cancellationToken)
     {
         this.pages.ThrowIfDisposedOrCancelled(cancellationToken);
-
-        if (this.pageCache is null)
+        lock (this.sync)
         {
-            return await this.pages.ReadPageAsync(n, cancellationToken).ConfigureAwait(false);
+            this.ThrowIfDisposed();
+            if (this.cache is not null && this.cache.TryGetValue(number, out PageFrame frame))
+            {
+                return this.Acquire(frame);
+            }
         }
 
-        if (this.pageCache.TryGetValue(n, out byte[] cached))
+        if (this.pages is Pager pager)
         {
-            return cached;
+            this.CountLease();
+            try
+            {
+                return await pager.ReadPageLeaseAsync(number, this.releaseLease, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                Interlocked.Decrement(ref this.outstandingLeases);
+                throw;
+            }
         }
 
-        byte[] page = await this.pages.ReadPageAsync(n, cancellationToken).ConfigureAwait(false);
-        this.pageCache.Add(n, page);
-        return page;
-    }
-
-    /// <summary>
-    /// Releases a result of this cache's <see cref="ReadPageAsync"/> when caching
-    /// is disabled. Cached results remain shared and must not be returned.
-    /// </summary>
-    /// <param name="page">A buffer returned by this cache, no longer in use by the caller.</param>
-    internal void ReturnUncachedPage(byte[] page)
-    {
-        if (this.pageCache is null)
+        byte[] bytes = await this.pages.ReadPageAsync(number, cancellationToken).ConfigureAwait(false);
+        var loaded = PageFrame.Own(bytes, this.pages.PageSize);
+        bool retained = false;
+        try
         {
-            PageBuffers.Return(page);
-        }
-    }
+            lock (this.sync)
+            {
+                this.ThrowIfDisposed();
+                if (this.cache is not null)
+                {
+                    this.cache.Add(number, loaded);
+                    retained = true;
+                }
 
-    /// <summary>Returns a page that is already cached without touching the file.</summary>
-    /// <param name="n">The page number.</param>
-    /// <param name="page">Receives the cached page bytes, or an empty array.</param>
-    internal bool TryGetCachedPage(long n, out byte[] page)
-    {
-        if (this.pageCache is not null && this.pageCache.TryGetValue(n, out page))
+                return this.Acquire(loaded);
+            }
+        }
+        finally
         {
-            return true;
+            if (!retained)
+            {
+                loaded.Release();
+            }
         }
-
-        page = [];
-        return false;
-    }
-
-    /// <summary>
-    /// Returns the row directory for <paramref name="page"/> (see
-    /// <see cref="DataPageRows.ComputeRowDirectory"/>: live rows plus overflow headers
-    /// flagged <see cref="RowBound.IsOverflowPointer"/>), computing it on first request
-    /// and caching the result keyed by <paramref name="pageNumber"/> when a page cache
-    /// is configured. The returned array is owned by the cache — callers must not
-    /// mutate it. Used by the typed/untyped scan paths to avoid re-parsing the
-    /// row-offset trailer on repeated scans of the same table.
-    /// </summary>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="page">The page bytes.</param>
-    internal RowBound[] GetRowDirectory(long pageNumber, byte[] page)
-    {
-        if (this.rowBoundsCache is not null && this.rowBoundsCache.TryGetValue(pageNumber, out RowBound[]? cached))
-        {
-            return cached;
-        }
-
-        RowBound[] bounds = DataPageRows.ComputeRowDirectory(this.format, page);
-        this.rowBoundsCache?.Add(pageNumber, bounds);
-        return bounds;
     }
 
     /// <inheritdoc/>
     public void Dispose()
     {
-        this.pageCache?.Clear();
-        this.pageCache?.Dispose();
-        this.rowBoundsCache?.Clear();
-        this.rowBoundsCache?.Dispose();
+        lock (this.sync)
+        {
+            if (this.disposed)
+            {
+                return;
+            }
+
+            this.disposed = true;
+            this.cache?.Dispose();
+        }
     }
+
+    private PageLease Acquire(PageFrame frame)
+    {
+        this.CountLease();
+        try
+        {
+            return frame.Acquire(this.releaseLease);
+        }
+        catch
+        {
+            Interlocked.Decrement(ref this.outstandingLeases);
+            throw;
+        }
+    }
+
+    private void CountLease()
+    {
+        int current;
+        do
+        {
+            current = Volatile.Read(ref this.outstandingLeases);
+        }
+        while (Interlocked.CompareExchange(ref this.outstandingLeases, checked(current + 1), current) != current);
+    }
+
+    private void ThrowIfDisposed()
+#if NET8_0_OR_GREATER
+        => ObjectDisposedException.ThrowIf(this.disposed, this);
+#else
+    {
+        if (this.disposed)
+        {
+            throw new ObjectDisposedException(nameof(ReaderPageCache));
+        }
+    }
+#endif
 }

@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Verification;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -39,14 +40,16 @@ public sealed class LongValueTraversalTests
                     Assert.Equal(checked((uint)(acquired * 256)), pointer);
                     Wu32(page, 0, acquired == distinctRows ? 256u : checked((uint)((acquired + 1) * 256)));
                     page[4] = 42;
-                    return new ValueTask<LvalRowLocation>(new LvalRowLocation(page, 0, page.Length, null));
+                    return new ValueTask<LvalRowLocation>(new LvalRowLocation(page, 0, page.Length, null)
+                    {
+                        Lease = PageLease.Own(page, page.Length, buffer =>
+                        {
+                            Assert.Same(page, buffer);
+                            released++;
+                        }),
+                    });
                 },
-                TestContext.Current.CancellationToken,
-                buffer =>
-                {
-                    Assert.Same(page, buffer);
-                    released++;
-                }));
+                TestContext.Current.CancellationToken));
         Assert.Equal(distinctRows, acquired);
         Assert.Equal(acquired, released);
         Assert.Equal(distinctRows, output.Length);
@@ -74,10 +77,9 @@ public sealed class LongValueTraversalTests
                 (_, _) =>
                 {
                     acquired++;
-                    return new ValueTask<LvalRowLocation>(new LvalRowLocation(page, 0, rowSize, null));
+                    return new ValueTask<LvalRowLocation>(new LvalRowLocation(page, 0, rowSize, null) { Lease = PageLease.Own(page, page.Length, _ => released++) });
                 },
-                TestContext.Current.CancellationToken,
-                _ => released++));
+                TestContext.Current.CancellationToken));
         Assert.Equal(1, acquired);
         Assert.Equal(1, released);
         Assert.Equal(0, output.Length);

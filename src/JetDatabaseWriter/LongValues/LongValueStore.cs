@@ -164,7 +164,6 @@ internal static class LongValueStore
     /// <param name="maxChainRows">The maximum external rows, also bounding cycle-tracking storage.</param>
     /// <param name="locateRowAsync">Locates one borrowed row; it must remain valid until its write completes.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <param name="releasePage">Releases each located buffer after its awaited write, including failed locations. If locating throws, the locator retains ownership.</param>
     /// <returns>A task completed after copying the declared payload.</returns>
     /// <exception cref="ArgumentException">The destination is not writable.</exception>
     /// <exception cref="JetCorruptDataException">The descriptor or reachable row content is malformed or incomplete.</exception>
@@ -177,8 +176,7 @@ internal static class LongValueStore
         int maxValueBytes,
         int maxChainRows,
         Func<uint, CancellationToken, ValueTask<LvalRowLocation>> locateRowAsync,
-        CancellationToken cancellationToken,
-        Action<byte[]>? releasePage = null)
+        CancellationToken cancellationToken)
     {
         Guard.NotNull(destination, nameof(destination));
         Guard.NotNull(locateRowAsync, nameof(locateRowAsync));
@@ -261,10 +259,7 @@ internal static class LongValueStore
             }
             finally
             {
-                if (location.Page.Length > 0)
-                {
-                    releasePage?.Invoke(location.Page);
-                }
+                location.Dispose();
             }
         }
     }

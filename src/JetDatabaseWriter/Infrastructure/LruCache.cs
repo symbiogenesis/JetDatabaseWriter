@@ -25,6 +25,7 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     private readonly Dictionary<TKey, int> map;
     private readonly Node[] nodes;
     private readonly ReaderWriterLockSlim rwLock = new();
+    private readonly Action<TValue>? release;
 
     /// <summary>
     /// Tracks the next allocatable node slot; slot 0 is reserved for the sentinel.
@@ -40,10 +41,12 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     /// Cache miss counter for monitoring effectiveness. Updated with <see cref="Interlocked"/> because misses are recorded under the shared read lock, where concurrent readers may increment it simultaneously.
     /// </summary>
     private long misses;
+    private int disposed;
 
-    public LruCache(int capacity)
+    public LruCache(int capacity, Action<TValue>? release = null)
     {
         this.capacity = capacity;
+        this.release = release;
         this.map = new Dictionary<TKey, int>(capacity);
         this.nodes = new Node[capacity + 1]; // +1 for sentinel
         this.nodes[Sentinel].Next = Sentinel;
@@ -115,6 +118,7 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
                     this.MoveToFront(existingIdx);
                 }
 
+                this.release?.Invoke(this.nodes[existingIdx].Value);
                 this.nodes[existingIdx].Value = value;
 
                 // Now most-recently used by position, so drop any pending second chance.
@@ -130,6 +134,7 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
                 this.Detach(nodeIdx);
                 ref Node evicted = ref this.nodes[nodeIdx];
                 this.map.Remove(evicted.Key);
+                this.release?.Invoke(evicted.Value);
 
                 // Clear references so reused slot doesn't temporarily root the old key/value.
                 evicted.Key = default!;
@@ -159,6 +164,14 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
         this.rwLock.EnterWriteLock();
         try
         {
+            if (this.release is not null)
+            {
+                foreach (int index in this.map.Values)
+                {
+                    this.release(this.nodes[index].Value);
+                }
+            }
+
             // Null out references so the backing array doesn't keep keys/values alive.
             if (RuntimeHelpers.IsReferenceOrContainsReferences<Node>())
             {
@@ -242,5 +255,18 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
         public bool Referenced { get; set; }
     }
 
-    public void Dispose() => this.rwLock.Dispose();
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref this.disposed, 1) == 0)
+        {
+            try
+            {
+                this.Clear();
+            }
+            finally
+            {
+                this.rwLock.Dispose();
+            }
+        }
+    }
 }

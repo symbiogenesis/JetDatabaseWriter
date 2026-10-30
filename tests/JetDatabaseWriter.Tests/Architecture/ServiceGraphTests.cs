@@ -320,7 +320,7 @@ public sealed class ServiceGraphTests
         // Every part comes from the writer's own file, and snapshot page
         // caches keep nothing between calls.
         AssertSharesDatabaseParts(database, reachable);
-        Assert.All(reachable.OfType<ReaderPageCache>(), cache => Assert.Null(ReadField(cache, "pageCache")));
+        Assert.All(reachable.OfType<ReaderPageCache>(), cache => Assert.Null(ReadField(cache, "cache")));
         Assert.DoesNotContain(reachable, item => item is AccessReader);
     }
 

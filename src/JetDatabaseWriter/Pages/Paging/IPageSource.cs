@@ -27,10 +27,13 @@ internal interface IPageSource
     public bool IsDisposed { get; }
 
     /// <summary>
-    /// Reads and decrypts one page into a buffer rented from the shared pool.
-    /// The caller owns the buffer and gives it back through
+    /// Reads and decrypts one independently owned writable page copy into a
+    /// buffer rented from the shared pool. Cached frame bytes never escape
+    /// through this copy API. The caller gives its copy back through
     /// <see cref="PageBuffers.Return"/>; the buffer may be longer than
     /// <see cref="PageSize"/>.
+    /// Read-only consumers use a <see cref="PageLease"/> through the reader
+    /// cache or <see cref="PageBuffers.ReadPageLeaseAsync"/> instead.
     /// </summary>
     /// <param name="pageNumber">The page number.</param>
     /// <param name="cancellationToken">A token used to cancel the read.</param>

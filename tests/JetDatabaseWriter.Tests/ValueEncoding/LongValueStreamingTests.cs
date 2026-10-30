@@ -8,6 +8,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -340,13 +341,15 @@ public sealed class LongValueStreamingTests
             100,
             100,
             (_, _) => new ValueTask<LvalRowLocation>(new LvalRowLocation(
-                page, failureMode == 2 ? page.Length : 0, page.Length, failureMode == 1 ? "deleted row" : null)),
-            TestContext.Current.CancellationToken,
-            releasedPage =>
+                page, failureMode == 2 ? page.Length : 0, page.Length, failureMode == 1 ? "deleted row" : null)
             {
-                Assert.Same(page, releasedPage);
-                released++;
-            });
+                Lease = PageLease.Own(page, page.Length, releasedPage =>
+                {
+                    Assert.Same(page, releasedPage);
+                    released++;
+                }),
+            }),
+            TestContext.Current.CancellationToken);
 
         if (failureMode is 1 or 2)
         {
@@ -379,9 +382,8 @@ public sealed class LongValueStreamingTests
             64,
             100,
             100,
-            (_, _) => new ValueTask<LvalRowLocation>(new LvalRowLocation(page, 0, page.Length, null)),
-            TestContext.Current.CancellationToken,
-            _ => released = true).AsTask();
+            (_, _) => new ValueTask<LvalRowLocation>(new LvalRowLocation(page, 0, page.Length, null) { Lease = PageLease.Own(page, page.Length, _ => released = true) }),
+            TestContext.Current.CancellationToken).AsTask();
 
         await writeStarted.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
         Assert.False(released);

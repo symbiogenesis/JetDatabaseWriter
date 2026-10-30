@@ -27,7 +27,7 @@ internal sealed class Pager : PageFile
 #else
     private readonly object frameSync = new();
 #endif
-    private readonly Dictionary<long, Frame> frames = [];
+    private readonly Dictionary<long, PageFrame> frames = [];
     private readonly List<long> clock = [];
     private readonly int cacheSize;
 
@@ -228,9 +228,12 @@ internal sealed class Pager : PageFile
 
             lock (this.frameSync)
             {
-                if (this.frames.TryGetValue(pageNumber, out Frame? frame))
+                if (this.frames.TryGetValue(pageNumber, out PageFrame? frame))
                 {
-                    Array.Clear(frame.Bytes, 0, this.PageSize);
+                    byte[] zero = ArrayPool<byte>.Shared.Rent(this.PageSize);
+                    Array.Clear(zero, 0, this.PageSize);
+                    this.frames[pageNumber] = PageFrame.Own(zero, this.PageSize);
+                    frame.Release();
                 }
             }
 
@@ -474,6 +477,65 @@ internal sealed class Pager : PageFile
     public override ValueTask<byte[]> ReadPageAsync(long pageNumber, CancellationToken cancellationToken = default)
         => this.ReadPageAsync(pageNumber, PageReadHint.Normal, cancellationToken);
 
+    /// <summary>Acquires an immutable image without copying a retained frame; writes publish replacement images.</summary>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="released">Optional reader accounting callback.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A disposable reference that survives invalidation and subsequent writes.</returns>
+    internal async ValueTask<PageLease> ReadPageLeaseAsync(long pageNumber, Action? released, CancellationToken cancellationToken)
+    {
+        await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            this.ThrowIfDisposedOrCancelled(cancellationToken);
+            long generation;
+            lock (this.frameSync)
+            {
+                generation = this.InvalidationGeneration;
+                if (this.frames.TryGetValue(pageNumber, out PageFrame? frame))
+                {
+                    frame.Referenced = true;
+                    this.cacheHits++;
+                    return frame.Acquire(released);
+                }
+            }
+
+            byte[] page = await base.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            var loaded = PageFrame.Own(page, this.PageSize);
+            bool retained = false;
+            try
+            {
+                lock (this.frameSync)
+                {
+                    if (this.cacheSize > 0 && generation == this.InvalidationGeneration)
+                    {
+                        this.InstallFrame(pageNumber, loaded, ref retained);
+                    }
+
+                    return loaded.Acquire(released);
+                }
+            }
+            finally
+            {
+                if (!retained)
+                {
+                    loaded.Release();
+                }
+            }
+        }
+        finally
+        {
+            _ = this.frameGate.Release();
+        }
+    }
+
+    /// <summary>Acquires an immutable page without reader-specific accounting.</summary>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The pinned page image.</returns>
+    internal ValueTask<PageLease> ReadPageLeaseAsync(long pageNumber, CancellationToken cancellationToken)
+        => this.ReadPageLeaseAsync(pageNumber, released: null, cancellationToken);
+
     /// <summary>Reads an owned page, optionally bypassing cache retention.</summary>
     /// <param name="pageNumber">The page number.</param>
     /// <param name="hint">The cache hint.</param>
@@ -493,12 +555,12 @@ internal sealed class Pager : PageFile
             lock (this.frameSync)
             {
                 loadedGeneration = this.InvalidationGeneration;
-                if (this.frames.TryGetValue(pageNumber, out Frame? frame))
+                if (this.frames.TryGetValue(pageNumber, out PageFrame? frame))
                 {
                     frame.Referenced = true;
                     this.cacheHits++;
                     byte[] copy = ArrayPool<byte>.Shared.Rent(this.PageSize);
-                    Buffer.BlockCopy(frame.Bytes, 0, copy, 0, this.PageSize);
+                    Buffer.BlockCopy(frame.Buffer, 0, copy, 0, this.PageSize);
                     return copy;
                 }
             }
@@ -525,6 +587,11 @@ internal sealed class Pager : PageFile
     {
         lock (this.frameSync)
         {
+            foreach (PageFrame frame in this.frames.Values)
+            {
+                frame.Release();
+            }
+
             this.frames.Clear();
             this.clock.Clear();
             this.clockHand = 0;
@@ -540,10 +607,10 @@ internal sealed class Pager : PageFile
     {
         lock (this.frameSync)
         {
-            if (this.frames.TryGetValue(pageNumber, out Frame? frame))
+            if (this.frames.TryGetValue(pageNumber, out PageFrame? frame))
             {
                 byte[] copy = ArrayPool<byte>.Shared.Rent(this.PageSize);
-                Buffer.BlockCopy(frame.Bytes, 0, copy, 0, this.PageSize);
+                Buffer.BlockCopy(frame.Buffer, 0, copy, 0, this.PageSize);
                 return new ValueTask<byte[]>(copy);
             }
         }
@@ -645,11 +712,28 @@ internal sealed class Pager : PageFile
             return;
         }
 
-        byte[] bytes = new byte[this.PageSize];
-        Buffer.BlockCopy(page, 0, bytes, 0, this.PageSize);
-        if (this.frames.ContainsKey(pageNumber))
+        var frame = PageFrame.Copy(page, this.PageSize);
+        bool retained = false;
+        try
         {
-            this.frames[pageNumber] = new Frame(bytes);
+            this.InstallFrame(pageNumber, frame, ref retained);
+        }
+        finally
+        {
+            if (!retained)
+            {
+                frame.Release();
+            }
+        }
+    }
+
+    private void InstallFrame(long pageNumber, PageFrame frame, ref bool retained)
+    {
+        if (this.frames.TryGetValue(pageNumber, out PageFrame? previous))
+        {
+            this.frames[pageNumber] = frame;
+            retained = true;
+            previous.Release();
             return;
         }
 
@@ -661,17 +745,30 @@ internal sealed class Pager : PageFile
                 this.clockHand = (this.clockHand + 1) % this.clock.Count;
             }
 
-            _ = this.frames.Remove(this.clock[this.clockHand]);
+            long evicted = this.clock[this.clockHand];
+            PageFrame victim = this.frames[evicted];
+            this.frames.Add(pageNumber, frame);
+            retained = true;
+            _ = this.frames.Remove(evicted);
             this.clock[this.clockHand] = pageNumber;
             this.clockHand = (this.clockHand + 1) % this.clock.Count;
             this.evictions++;
+            victim.Release();
         }
         else
         {
             this.clock.Add(pageNumber);
+            try
+            {
+                this.frames.Add(pageNumber, frame);
+                retained = true;
+            }
+            catch
+            {
+                this.clock.RemoveAt(this.clock.Count - 1);
+                throw;
+            }
         }
-
-        this.frames.Add(pageNumber, new Frame(bytes));
     }
 
     /// <summary>Flushes outstanding call pages before disposal, with no extra flush after a completed replay.</summary>
@@ -921,13 +1018,6 @@ internal sealed class Pager : PageFile
             this.dirtyPages.Clear();
             this.bufferedPageCount = this.zeroReservations.Count == 0 ? this.PhysicalPageCount : Math.Max(this.PhysicalPageCount, checked(this.zeroReservations.Max + 1));
         }
-    }
-
-    private sealed class Frame(byte[] bytes)
-    {
-        internal byte[] Bytes { get; } = bytes;
-
-        internal bool Referenced { get; set; } = true;
     }
 
     /// <summary>

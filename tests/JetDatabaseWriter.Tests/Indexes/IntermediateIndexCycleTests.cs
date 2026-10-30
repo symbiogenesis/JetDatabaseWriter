@@ -11,6 +11,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using Xunit;
 
 /// <summary>Cyclic intermediate branches are refused before their pages are read again.</summary>
@@ -68,12 +69,12 @@ public sealed class IntermediateIndexCycleTests
         }
 
         int reads = 0;
-        var cursor = new IndexCursor(
+        using var cursor = new IndexCursor(
             profile.IndexPage,
             (page, _) =>
             {
                 reads++;
-                return new ValueTask<byte[]>(pages[page]);
+                return new ValueTask<PageLease>(PageLease.Own(pages[page], pages[page].Length, static _ => { }));
             },
             profile.PageSize);
         JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>

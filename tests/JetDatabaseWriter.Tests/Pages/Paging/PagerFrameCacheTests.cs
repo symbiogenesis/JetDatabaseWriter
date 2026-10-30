@@ -13,6 +13,35 @@ public sealed class PagerFrameCacheTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    /// <summary>Readers share immutable images while writes, reservations and invalidation replace cache ownership.</summary>
+    [Fact]
+    public async Task Leases_ShareHitsAndRetainOldImagesAcrossMutationAndDisposal()
+    {
+        await using var stream = new MemoryStream(new byte[48], writable: true);
+#pragma warning disable CA2000 // The awaited pager owns and disposes the page codec.
+        await using var pager = new Pager(stream, 16, new NoPageCodec(), leaveOpen: true, typeof(AccessWriter), cacheSize: 1);
+#pragma warning restore CA2000
+        using PageLease original = await pager.ReadPageLeaseAsync(1, Ct);
+        using PageLease shared = await pager.ReadPageLeaseAsync(1, Ct);
+        Assert.Same(original.Buffer, shared.Buffer);
+        byte[] update = new byte[16];
+        update[0] = 37;
+        await pager.WritePageAsync(1, update, Ct);
+        update[0] = 99;
+        using PageLease changed = await pager.ReadPageLeaseAsync(1, Ct);
+        Assert.Equal(0, original.Memory.Span[0]);
+        Assert.Equal(37, changed.Memory.Span[0]);
+        Assert.NotSame(original.Buffer, changed.Buffer);
+        Assert.Equal(1, await pager.ReserveZeroedPageAsync(Ct, 1));
+        using PageLease reserved = await pager.ReadPageLeaseAsync(1, Ct);
+        Assert.Equal(0, reserved.Memory.Span[0]);
+        Assert.Equal(37, changed.Memory.Span[0]);
+        pager.InvalidateAll();
+        await pager.DisposeAsync();
+        Assert.Equal(0, original.Memory.Span[0]);
+        Assert.Equal(37, changed.Memory.Span[0]);
+    }
+
     /// <summary>Mutating a returned page never mutates the cache; writes replace it.</summary>
     [Fact]
     public async Task Cache_OwnedCopies_WriteThrough_AndTruncate()

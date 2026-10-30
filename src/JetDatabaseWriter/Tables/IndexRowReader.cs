@@ -18,6 +18,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Queries;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
@@ -441,7 +442,7 @@ internal sealed class IndexRowReader(
             yield break;
         }
 
-        var cursor = new IndexCursor(
+        using var cursor = new IndexCursor(
             format.IndexPage,
             pages.ReadPageAsync,
             format.PageSize);
@@ -492,22 +493,26 @@ internal sealed class IndexRowReader(
         bool needsHyperlinkPass,
         CancellationToken cancellationToken)
     {
-        byte[] page = await pages.ReadPageAsync(dataPage, cancellationToken).ConfigureAwait(false);
+        using PageLease lease = await pages.ReadPageAsync(dataPage, cancellationToken).ConfigureAwait(false);
+        byte[] page = lease.Buffer;
         if (page[0] != Constants.PageTypes.Data || Ri32(page, format.DataPage.TDefOff) != expectedTDefPage)
         {
             return null;
         }
 
-        if (!this.TryFindRowEntry(page, dataPage, rowIndex, out RowBound rowBound))
+        if (!this.TryFindRowEntry(lease, rowIndex, out RowBound rowBound))
         {
             return null;
         }
 
         // Index entries name an overflow row's header slot; read the row from
         // the slot the header points at.
+        using OverflowRowTarget? resolved = rowBound.IsOverflowPointer
+            ? await rows.ResolveOverflowAsync(page, rowBound, cancellationToken).ConfigureAwait(false)
+            : null;
         if (rowBound.IsOverflowPointer)
         {
-            if (await rows.ResolveOverflowAsync(page, rowBound, cancellationToken).ConfigureAwait(false) is not { } target)
+            if (resolved is not { } target)
             {
                 return null;
             }
@@ -539,9 +544,9 @@ internal sealed class IndexRowReader(
         return row;
     }
 
-    private bool TryFindRowEntry(byte[] page, long pageNumber, int rowIndex, out RowBound rowBound)
+    private bool TryFindRowEntry(PageLease lease, int rowIndex, out RowBound rowBound)
     {
-        foreach (RowBound candidate in pages.GetRowDirectory(pageNumber, page))
+        foreach (RowBound candidate in lease.GetRowDirectory(format))
         {
             if (candidate.RowIndex == rowIndex)
             {

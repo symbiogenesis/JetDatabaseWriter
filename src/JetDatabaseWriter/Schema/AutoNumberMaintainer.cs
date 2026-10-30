@@ -373,7 +373,7 @@ internal sealed class AutoNumberMaintainer(JetFormat format, TableDefReader tabl
             return null;
         }
 
-        var cursor = new IndexCursor(format.IndexPage, pager.ReadPageCopyAsync, format.PageSize);
+        using var cursor = new IndexCursor(format.IndexPage, pager.ReadPageLeaseAsync, format.PageSize);
         IndexEntry? last = await cursor.TryReadLastEntryAsync(index.FirstDp, cancellationToken).ConfigureAwait(false);
         if (last is null)
         {

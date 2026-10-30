@@ -903,9 +903,9 @@ internal sealed class RelationshipEnforcer(
             byte[]? encodedKey = IndexHelpers.TryEncodeSeekKey(seekIndex, values);
             if (encodedKey != null)
             {
-                var cursor = new IndexCursor(
+                using var cursor = new IndexCursor(
                     format.IndexPage,
-                    (page, token) => RelationshipPageReader.ReadOwnedAsync(pageSource, page, token),
+                    pageSource.ReadPageLeaseAsync,
                     format.PageSize);
                 bool found = await cursor.ContainsKeyAsync(
                     seekIndex.RootPage,

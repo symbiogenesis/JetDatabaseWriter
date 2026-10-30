@@ -1,6 +1,6 @@
 namespace JetDatabaseWriter;
 
-using System.Diagnostics.CodeAnalysis;
+using System;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
@@ -24,7 +24,7 @@ using JetDatabaseWriter.ValueEncoding;
 /// collaborator receives the facade or this object, so the service graph is
 /// acyclic and each dependency is visible in a constructor signature.
 /// </summary>
-internal sealed class WriterServices
+internal sealed class WriterServices : IDisposable
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="WriterServices"/> class.
@@ -33,7 +33,6 @@ internal sealed class WriterServices
     /// <param name="pager">The database file's pager, from <see cref="DatabaseFile.ForWriter"/>; the services that write pages write through it.</param>
     /// <param name="options">The writer options.</param>
     /// <param name="byteRangeLock">The cooperative JET byte-range lock bound to the database stream.</param>
-    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "A capacity-0 ReaderPageCache allocates no caches, so its Dispose has nothing to release.")]
     internal WriterServices(DatabaseFile db, Pager pager, AccessWriterOptions options, JetByteRangeLock byteRangeLock)
     {
         // Decoded reads of the writer's own rows go through the same database
@@ -41,7 +40,8 @@ internal sealed class WriterServices
         // A capacity-0 page cache keeps nothing between calls, and names
         // resolve through the writer's catalog, so DDL and rollback cannot
         // leave a stale snapshot behind.
-        var snapshotPages = new ReaderPageCache(db.Format, db.Pages, capacity: 0);
+        this.SnapshotPages = new ReaderPageCache(db.Format, db.Pages, capacity: 0);
+        ReaderPageCache snapshotPages = this.SnapshotPages;
         var snapshotRows = new RowDecoder(db.Format, db.OwnedPages, snapshotPages, new LongValueDecoder(db.Format, snapshotPages), strictParsing: true);
         var columnProperties = new ColumnPropertyReader(db.Format, db.TableDefs, snapshotRows);
 
@@ -196,6 +196,12 @@ internal sealed class WriterServices
 
     /// <summary>Gets the decoded reads of the writer's own rows, index metadata, and column properties.</summary>
     internal TableSnapshotReader Snapshots { get; }
+
+    /// <summary>Gets the lease provider for the writer's journal-aware snapshot reads.</summary>
+    internal ReaderPageCache SnapshotPages { get; }
+
+    /// <summary>Releases snapshot-cache ownership after writer operations finish.</summary>
+    public void Dispose() => this.SnapshotPages.Dispose();
 
     /// <summary>Gets the index B-tree maintainer.</summary>
     internal IndexMaintainer Indexes { get; }

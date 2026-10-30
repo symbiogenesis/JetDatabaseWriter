@@ -482,8 +482,7 @@ internal sealed class CompactDiscoverySession
                 this.budget.MaxValueBytes,
                 this.budget.MaxChainRows,
                 LocateAsync,
-                cancellationToken,
-                cache.ReturnUncachedPage).ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
             this.pages.CheckGeometry(0, cancellationToken);
 
             ValueTask<LvalRowLocation> LocateAsync(uint pointer, CancellationToken token)

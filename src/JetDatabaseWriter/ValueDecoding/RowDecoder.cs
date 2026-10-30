@@ -10,6 +10,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.ValueDecoding.Models;
 
 /// <summary>
@@ -105,9 +106,9 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            using PageLease lease = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            await foreach (string[] row in this.EnumerateRowsAsync(pageNumber, page, decodePlan, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in this.EnumerateRowsAsync(lease, decodePlan, cancellationToken).ConfigureAwait(false))
             {
                 yield return row;
             }
@@ -194,14 +195,18 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] scanPage = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            foreach (RowBound entry in pages.GetRowDirectory(pageNumber, scanPage))
+            using PageLease lease = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] scanPage = lease.Buffer;
+            foreach (RowBound entry in lease.GetRowDirectory(format))
             {
                 byte[] page = scanPage;
                 RowBound rb = entry;
+                using OverflowRowTarget? resolved = entry.IsOverflowPointer
+                    ? await this.ResolveOverflowAsync(scanPage, entry, cancellationToken).ConfigureAwait(false)
+                    : null;
                 if (entry.IsOverflowPointer)
                 {
-                    if (await this.ResolveOverflowAsync(scanPage, entry, cancellationToken).ConfigureAwait(false) is not { } target)
+                    if (resolved is not { } target)
                     {
                         continue;
                     }
@@ -257,32 +262,34 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
     }
 
     /// <summary>Yields decoded rows from a single data page.</summary>
-    /// <param name="pageNumber">The page number, used to memoize the parsed row directory in the row-bounds cache.</param>
-    /// <param name="page">The data page to enumerate rows from.</param>
+    /// <param name="lease">The data page lease, held throughout enumeration.</param>
     /// <param name="td">The table definition containing column information.</param>
     /// <param name="cancellationToken">A cancellation token to observe while waiting for rows.</param>
-    internal IAsyncEnumerable<string[]> EnumerateRowsAsync(long pageNumber, byte[] page, TableDef td, CancellationToken cancellationToken)
+    internal IAsyncEnumerable<string[]> EnumerateRowsAsync(PageLease lease, TableDef td, CancellationToken cancellationToken)
     {
         var decodePlan = RowDecodePlan.CreateStrings(td, strictParsing);
-        return this.EnumerateRowsAsync(pageNumber, page, decodePlan, cancellationToken);
+        return this.EnumerateRowsAsync(lease, decodePlan, cancellationToken);
     }
 
     /// <summary>Yields the rows of a single data page decoded as strings.</summary>
-    /// <param name="pageNumber">The page number, used to memoize the parsed row directory in the row-bounds cache.</param>
-    /// <param name="page">The data page to enumerate rows from.</param>
+    /// <param name="lease">The data page lease, held throughout enumeration.</param>
     /// <param name="decodePlan">The string decode plan.</param>
     /// <param name="cancellationToken">A cancellation token to observe while waiting for rows.</param>
-    internal async IAsyncEnumerable<string[]> EnumerateRowsAsync(long pageNumber, byte[] page, RowDecodePlan decodePlan, [EnumeratorCancellation] CancellationToken cancellationToken)
+    internal async IAsyncEnumerable<string[]> EnumerateRowsAsync(PageLease lease, RowDecodePlan decodePlan, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        foreach (RowBound entry in pages.GetRowDirectory(pageNumber, page))
+        byte[] page = lease.Buffer;
+        foreach (RowBound entry in lease.GetRowDirectory(format))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             byte[] rowPage = page;
             RowBound rb = entry;
+            using OverflowRowTarget? resolved = entry.IsOverflowPointer
+                ? await this.ResolveOverflowAsync(page, entry, cancellationToken).ConfigureAwait(false)
+                : null;
             if (entry.IsOverflowPointer)
             {
-                if (await this.ResolveOverflowAsync(page, entry, cancellationToken).ConfigureAwait(false) is not { } target)
+                if (resolved is not { } target)
                 {
                     continue;
                 }
@@ -303,17 +310,57 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
         }
     }
 
-    /// <summary>
-    /// Follows an overflow header from a row directory (<see cref="ReaderPageCache.GetRowDirectory"/>)
-    /// to the row data, reading pages through the page cache. Returns <see langword="null"/>
-    /// when the pointer cannot be resolved; the caller skips the row, as it skips an
-    /// undecodable one. The returned page belongs to the cache and is not returned to the pool.
-    /// </summary>
-    /// <param name="page">The data page holding the header.</param>
-    /// <param name="header">The header's directory entry.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal ValueTask<OverflowRowTarget?> ResolveOverflowAsync(byte[] page, RowBound header, CancellationToken cancellationToken)
-        => ownedPages.TryResolveOverflowRowAsync(page, header, pages.ReadPageAsync, returnPage: null, cancellationToken);
+    /// <summary>Follows a bounded overflow chain, retaining the selected image until the result is disposed.</summary>
+    /// <param name="page">The pinned header image.</param>
+    /// <param name="header">The header slot.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The pinned target, or null for an unreadable chain.</returns>
+    internal async ValueTask<OverflowRowTarget?> ResolveOverflowAsync(byte[] page, RowBound header, CancellationToken cancellationToken)
+    {
+        PageLease? previous = null;
+        PageLease? current = null;
+        try
+        {
+            OverflowRowTarget? result = await ownedPages.TryResolveOverflowRowAsync(page, header, ReadAsync, Release, cancellationToken).ConfigureAwait(false);
+            if (result is { } target)
+            {
+                PageLease? selected = current;
+                current = null;
+                return target with { Lease = selected };
+            }
+
+            return null;
+        }
+        finally
+        {
+            previous?.Dispose();
+            current?.Dispose();
+        }
+
+        async ValueTask<byte[]> ReadAsync(long number, CancellationToken token)
+        {
+            previous?.Dispose();
+            previous = null;
+            PageLease next = await pages.ReadPageAsync(number, token).ConfigureAwait(false);
+            previous = current;
+            current = next;
+            return next.Buffer;
+        }
+
+        void Release(byte[] buffer)
+        {
+            if (previous is not null && ReferenceEquals(previous.Buffer, buffer))
+            {
+                previous.Dispose();
+                previous = null;
+            }
+            else if (current is not null && ReferenceEquals(current.Buffer, buffer))
+            {
+                current.Dispose();
+                current = null;
+            }
+        }
+    }
 
     // ── Typed row cracker ────────────────────────────────────
     //

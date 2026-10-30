@@ -9,6 +9,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Pages.Paging;
 using Xunit;
 using static JetDatabaseWriter.Enums.ColumnType;
 
@@ -60,7 +61,7 @@ public sealed class IndexCursorTests
     public async Task ContainsKeyAsync_MultiLevelTree_FindsExistingKey(DatabaseFormat format)
     {
         TreeFixture tree = BuildTree(format, BuildIntEntries(900));
-        IndexCursor cursor = CreateCursor(tree);
+        using IndexCursor cursor = CreateCursor(tree);
 
         byte[] existingKey = IndexKeyEncoder.EncodeEntry(LongIntegerType, 750, ascending: true);
         byte[] missingKey = IndexKeyEncoder.EncodeEntry(LongIntegerType, 5000, ascending: true);
@@ -77,7 +78,7 @@ public sealed class IndexCursorTests
         byte[] duplicateKey = IndexKeyEncoder.EncodeEntry(LongIntegerType, 42, ascending: true);
         List<IndexEntry> entries = BuildDuplicateEntries(duplicateKey, 500);
         TreeFixture tree = BuildTree(format, entries);
-        IndexCursor cursor = CreateCursor(tree);
+        using IndexCursor cursor = CreateCursor(tree);
 
         List<(long DataPage, int RowIndex)> matches = await cursor.FindRowLocationsAsync(
             tree.RootPageNumber,
@@ -103,7 +104,7 @@ public sealed class IndexCursorTests
         int[] expectedRowIndexes)
     {
         TreeFixture tree = BuildTree(DatabaseFormat.AceAccdb, BuildIntEntries(20));
-        IndexCursor cursor = CreateCursor(tree);
+        using IndexCursor cursor = CreateCursor(tree);
         var range = new EncodedIndexRange(
             new EncodedIndexBound(EncodeIntKey(5), lowerInclusive, IsPrefix: false),
             new EncodedIndexBound(EncodeIntKey(10), upperInclusive, IsPrefix: false));
@@ -120,7 +121,7 @@ public sealed class IndexCursorTests
     public async Task FindRowLocationsInRangeAsync_ExclusiveLowerPrefix_SkipsMatchingPrefix()
     {
         TreeFixture tree = BuildTree(DatabaseFormat.AceAccdb, BuildCompositeIntEntries(tenantCount: 5, valuesPerTenant: 3));
-        IndexCursor cursor = CreateCursor(tree);
+        using IndexCursor cursor = CreateCursor(tree);
         var range = new EncodedIndexRange(
             new EncodedIndexBound(EncodeIntKey(2), Inclusive: false, IsPrefix: true),
             EncodedIndexBound.None);
@@ -137,7 +138,7 @@ public sealed class IndexCursorTests
     public async Task FindRowLocationsInRangeAsync_InclusiveUpperPrefix_IncludesMatchingPrefix()
     {
         TreeFixture tree = BuildTree(DatabaseFormat.AceAccdb, BuildCompositeIntEntries(tenantCount: 5, valuesPerTenant: 3));
-        IndexCursor cursor = CreateCursor(tree);
+        using IndexCursor cursor = CreateCursor(tree);
         var range = new EncodedIndexRange(
             new EncodedIndexBound(EncodeIntKey(1), Inclusive: true, IsPrefix: true),
             new EncodedIndexBound(EncodeIntKey(2), Inclusive: true, IsPrefix: true));
@@ -154,7 +155,7 @@ public sealed class IndexCursorTests
     public async Task FindRowLocationsInRangeAsync_RequiredPrefix_FiltersCompositeLeadingKey()
     {
         TreeFixture tree = BuildTree(DatabaseFormat.AceAccdb, BuildCompositeIntEntries(tenantCount: 5, valuesPerTenant: 3));
-        IndexCursor cursor = CreateCursor(tree);
+        using IndexCursor cursor = CreateCursor(tree);
         byte[] requiredPrefix = EncodeIntKey(2);
         var range = new EncodedIndexRange(
             new EncodedIndexBound(requiredPrefix, Inclusive: true, IsPrefix: false),
@@ -194,7 +195,7 @@ public sealed class IndexCursorTests
             tailHeaderPage,
             enablePrefixCompression: true);
 
-        IndexCursor cursor = CreateCursor(tree);
+        using IndexCursor cursor = CreateCursor(tree);
 
         Assert.True(await cursor.ContainsKeyAsync(tree.RootPageNumber, appendedKey, this.cancellationToken));
         List<(long DataPage, int RowIndex)> matches = await cursor.FindRowLocationsAsync(
@@ -212,7 +213,8 @@ public sealed class IndexCursorTests
         TreeFixture tree = BuildTree(format, BuildIntEntries(8));
         Assert.True(IndexPageCodec.IsLeaf(tree.Pages[tree.RootPageNumber]));
 
-        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+        using IndexCursor cursor = CreateCursor(tree);
+        IndexEntry? last = await cursor.TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
 
         AssertLastKey(7, last);
     }
@@ -225,7 +227,8 @@ public sealed class IndexCursorTests
         TreeFixture tree = BuildTree(format, BuildIntEntries(900));
         Assert.True(IndexPageCodec.IsIntermediate(tree.Pages[tree.RootPageNumber]));
 
-        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+        using IndexCursor cursor = CreateCursor(tree);
+        IndexEntry? last = await cursor.TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
 
         AssertLastKey(899, last);
         Assert.Equal(100 + (899 / 200), last!.Value.DataPage);
@@ -242,7 +245,8 @@ public sealed class IndexCursorTests
         TreeFixture tree = BuildTree(format, BuildIntEntries(900));
         AppendLeaf(tree, [new IndexEntry(EncodeIntKey(5000), DataPage: 999, DataRow: 3)]);
 
-        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+        using IndexCursor cursor = CreateCursor(tree);
+        IndexEntry? last = await cursor.TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
 
         AssertLastKey(5000, last);
         Assert.Equal(999, last!.Value.DataPage);
@@ -256,7 +260,8 @@ public sealed class IndexCursorTests
         TreeFixture tree = BuildTree(format, BuildIntEntries(900));
         AppendLeaf(tree, []);
 
-        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+        using IndexCursor cursor = CreateCursor(tree);
+        IndexEntry? last = await cursor.TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
 
         AssertLastKey(899, last);
     }
@@ -268,7 +273,8 @@ public sealed class IndexCursorTests
     {
         TreeFixture tree = BuildTree(format, []);
 
-        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+        using IndexCursor cursor = CreateCursor(tree);
+        IndexEntry? last = await cursor.TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
 
         Assert.Null(last);
     }
@@ -283,7 +289,8 @@ public sealed class IndexCursorTests
         long firstLeaf = tree.Pages.First(page => IndexPageCodec.IsLeaf(page.Value) && IndexPageCodec.ReadPrevPage(tree.Layout, page.Value) == 0).Key;
         IndexPageCodec.WriteNextPage(tree.Layout, tree.Pages[tailPageNumber], firstLeaf);
 
-        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+        using IndexCursor cursor = CreateCursor(tree);
+        IndexEntry? last = await cursor.TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
 
         Assert.Null(last);
     }
@@ -296,7 +303,8 @@ public sealed class IndexCursorTests
         TreeFixture tree = BuildTree(format, BuildIntEntries(8));
         tree.Pages[tree.RootPageNumber][0] = Constants.PageTypes.Data;
 
-        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+        using IndexCursor cursor = CreateCursor(tree);
+        IndexEntry? last = await cursor.TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
 
         Assert.Null(last);
     }
@@ -308,12 +316,12 @@ public sealed class IndexCursorTests
     {
         TreeFixture tree = BuildTree(format, BuildIntEntries(25000));
         int reads = 0;
-        var cursor = new IndexCursor(
+        using var cursor = new IndexCursor(
             tree.Layout,
             (page, _) =>
             {
                 reads++;
-                return new ValueTask<byte[]>(tree.Pages[page]);
+                return new ValueTask<PageLease>(PageLease.Own(tree.Pages[page], tree.Pages[page].Length, static _ => { }));
             },
             tree.PageSize);
         int count = 0;
@@ -335,7 +343,7 @@ public sealed class IndexCursorTests
     public async Task StreamingRange_MatchesListAcrossLeaves(DatabaseFormat format)
     {
         TreeFixture tree = BuildTree(format, BuildIntEntries(5000));
-        IndexCursor cursor = CreateCursor(tree);
+        using IndexCursor cursor = CreateCursor(tree);
         var range = new EncodedIndexRange(new EncodedIndexBound(EncodeIntKey(100), false, false), new EncodedIndexBound(EncodeIntKey(4000), false, false));
         List<(long DataPage, int RowIndex)> expected = await cursor.FindRowLocationsInRangeAsync(tree.RootPageNumber, range, this.cancellationToken);
         var actual = new List<(long DataPage, int RowIndex)>();
@@ -356,12 +364,12 @@ public sealed class IndexCursorTests
         IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
         byte[] page = IndexPageCodec.BuildLeafPage(layout, pageSize, ParentTdefPage, BuildIntEntries(8), prevPage: 0, nextPage: FirstPageNumber, tailPage: 0, enablePrefixCompression: true);
         int reads = 0;
-        var cursor = new IndexCursor(
+        using var cursor = new IndexCursor(
             layout,
             (_, _) =>
             {
                 reads++;
-                return new ValueTask<byte[]>(page);
+                return new ValueTask<PageLease>(PageLease.Own(page, page.Length, static _ => { }));
             },
             pageSize);
         var actual = new List<(long DataPage, int RowIndex)>();
@@ -407,7 +415,7 @@ public sealed class IndexCursorTests
         byte[] upper = IndexKeyEncoder.EncodeEntry(LongIntegerType, 100, ascending: false);
         await this.AssertStreamingMatchesListAsync(tree, new EncodedIndexRange(new EncodedIndexBound(lower, false, false), new EncodedIndexBound(upper, true, false)));
         var empty = new List<(long DataPage, int RowIndex)>();
-        IndexCursor cursor = CreateCursor(tree);
+        using IndexCursor cursor = CreateCursor(tree);
         await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(tree.RootPageNumber, new EncodedIndexRange(new EncodedIndexBound(lower, false, false), new EncodedIndexBound(lower, false, false)), this.cancellationToken))
         {
             empty.Add(location);
@@ -436,12 +444,12 @@ public sealed class IndexCursorTests
             [FirstPageNumber + 1] = IndexPageCodec.BuildLeafPage(layout, pageSize, ParentTdefPage, entries.GetRange(8, 8), prevPage: FirstPageNumber, nextPage: FirstPageNumber, tailPage: 0, enablePrefixCompression: true),
         };
         int reads = 0;
-        var cursor = new IndexCursor(
+        using var cursor = new IndexCursor(
             layout,
             (page, _) =>
             {
                 reads++;
-                return new ValueTask<byte[]>(pages[page]);
+                return new ValueTask<PageLease>(PageLease.Own(pages[page], pages[page].Length, static _ => { }));
             },
             pageSize);
         var actual = new List<(long DataPage, int RowIndex)>();
@@ -488,12 +496,12 @@ public sealed class IndexCursorTests
         }
 
         int reads = 0;
-        var cursor = new IndexCursor(
+        using var cursor = new IndexCursor(
             layout,
             (page, _) =>
             {
                 Assert.True(++reads <= leafCount, "The cyclic leaf chain reread a page.");
-                return new ValueTask<byte[]>(pages[page]);
+                return new ValueTask<PageLease>(PageLease.Own(pages[page], pages[page].Length, static _ => { }));
             },
             pageSize);
         JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
@@ -533,13 +541,13 @@ public sealed class IndexCursorTests
         byte[] page = IndexPageCodec.BuildLeafPage(layout, pageSize, ParentTdefPage, BuildDuplicateEntries(key, 2), prevPage: 0, nextPage: FirstPageNumber + 1, tailPage: 0, enablePrefixCompression: true);
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(this.cancellationToken);
         int reads = 0;
-        var cursor = new IndexCursor(
+        using var cursor = new IndexCursor(
             layout,
             async (_, _) =>
             {
                 reads++;
                 await cancellation.CancelAsync();
-                return page;
+                return PageLease.Own(page, pageSize, static _ => { });
             },
             pageSize);
         _ = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
@@ -607,13 +615,13 @@ public sealed class IndexCursorTests
             (pageNumber, token) => ReadPageAsync(tree.Pages, pageNumber, token),
             tree.PageSize);
 
-    private static ValueTask<byte[]> ReadPageAsync(
+    private static ValueTask<PageLease> ReadPageAsync(
         Dictionary<long, byte[]> pages,
         long pageNumber,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return new ValueTask<byte[]>(pages[pageNumber]);
+        return new ValueTask<PageLease>(PageLease.Own(pages[pageNumber], pages[pageNumber].Length, static _ => { }));
     }
 
     private static TreeFixture BuildTree(DatabaseFormat format, IReadOnlyList<IndexEntry> entries)
@@ -733,7 +741,7 @@ public sealed class IndexCursorTests
 
     private async Task AssertStreamingMatchesListAsync(TreeFixture tree, EncodedIndexRange range)
     {
-        IndexCursor cursor = CreateCursor(tree);
+        using IndexCursor cursor = CreateCursor(tree);
         List<(long DataPage, int RowIndex)> expected = await cursor.FindRowLocationsInRangeAsync(tree.RootPageNumber, range, this.cancellationToken);
         var actual = new List<(long DataPage, int RowIndex)>();
         await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(tree.RootPageNumber, range, this.cancellationToken))

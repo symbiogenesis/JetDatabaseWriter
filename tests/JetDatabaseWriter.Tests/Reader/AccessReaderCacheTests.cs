@@ -13,7 +13,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
-using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -22,8 +21,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 {
     private const string AlphaRowsTable = "AlphaRows";
     private const string BetaRowsTable = "BetaRows";
-    private const string PageCacheFieldName = "pageCache";
-    private const string RowBoundsCacheFieldName = "rowBoundsCache";
+    private const string PageCacheFieldName = "cache";
     private const string CatalogCacheFieldName = "userTables";
     private const string OwnedDataPageIndexFieldName = "ownerIndex";
     private const string OwnedPageIndexInitializedFieldName = "initialized";
@@ -47,7 +45,6 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         Assert.Equal(0, reader.PageCacheSize);
         Assert.NotEmpty(await reader.ListTablesAsync(TestContext.Current.CancellationToken));
         Assert.Null(ReadPrivateField(reader.Services.PageCache, PageCacheFieldName));
-        Assert.Null(ReadPrivateField(reader.Services.PageCache, RowBoundsCacheFieldName));
     }
 
     [Fact]
@@ -71,13 +68,10 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
-        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader.Services.PageCache, PageCacheFieldName);
-        LruCache<long, RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, RowBound[]>>(reader.Services.PageCache, RowBoundsCacheFieldName);
+        LruCache<long, PageFrame> pageCache = ReadRequiredPrivateField<LruCache<long, PageFrame>>(reader.Services.PageCache, PageCacheFieldName);
         Assert.Equal(rowCount, actualRows);
         Assert.Equal(options.PageCacheSize, pageCache.Count);
         Assert.True(pageCache.Misses > pageCache.Count);
-        Assert.Equal(options.PageCacheSize, rowBoundsCache.Count);
-        Assert.True(rowBoundsCache.Misses > rowBoundsCache.Count);
     }
 
     [Fact]
@@ -139,7 +133,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     }
 
     [Fact]
-    public async Task InterleavedReads_ReuseCatalogAndRowBoundsCaches()
+    public async Task InterleavedReads_ReuseCatalogAndPageFrames()
     {
         const int alphaRows = 48;
         const int betaRows = 52;
@@ -157,8 +151,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         };
 
         await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
-        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader.Services.PageCache, PageCacheFieldName);
-        LruCache<long, RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, RowBound[]>>(reader.Services.PageCache, RowBoundsCacheFieldName);
+        LruCache<long, PageFrame> pageCache = ReadRequiredPrivateField<LruCache<long, PageFrame>>(reader.Services.PageCache, PageCacheFieldName);
 
         IReadOnlyList<string> tables = await reader.Services.Schema.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(AlphaRowsTable, tables);
@@ -172,15 +165,12 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
         Assert.Equal(alphaRows, await CountRowsAsync(reader, AlphaRowsTable, TestContext.Current.CancellationToken));
         Assert.Equal(betaRows, await CountRowsAsync(reader, BetaRowsTable, TestContext.Current.CancellationToken));
-        long rowBoundHitsAfterFirstInterleave = rowBoundsCache.Hits;
-        long rowBoundMissesAfterFirstInterleave = rowBoundsCache.Misses;
         long pageHitsAfterFirstInterleave = pageCache.Hits;
 
         Assert.Equal(betaRows, await CountRowsAsync(reader, BetaRowsTable, TestContext.Current.CancellationToken));
         Assert.Equal(alphaRows, await CountRowsAsync(reader, AlphaRowsTable, TestContext.Current.CancellationToken));
-        Assert.True(rowBoundsCache.Hits > rowBoundHitsAfterFirstInterleave);
-        Assert.Equal(rowBoundMissesAfterFirstInterleave, rowBoundsCache.Misses);
         Assert.True(pageCache.Hits > pageHitsAfterFirstInterleave);
+        Assert.Equal(0, reader.Services.PageCache.OutstandingLeases);
     }
 
     [Fact]
@@ -264,9 +254,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             TestContext.Current.CancellationToken);
 
         Assert.NotNull(ReadPrivateField(cachedReader.Services.PageCache, PageCacheFieldName));
-        Assert.NotNull(ReadPrivateField(cachedReader.Services.PageCache, RowBoundsCacheFieldName));
         Assert.Null(ReadPrivateField(uncachedReader.Services.PageCache, PageCacheFieldName));
-        Assert.Null(ReadPrivateField(uncachedReader.Services.PageCache, RowBoundsCacheFieldName));
 
         foreach (string tableName in (string[])[AlphaRowsTable, BetaRowsTable])
         {
@@ -282,8 +270,11 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     /// has pending, and the file's bytes again once it rolls back. (A reader
     /// can no longer have a journal attached: its page file cannot write.)
     /// </summary>
-    [Fact]
-    public async Task ReaderPageCache_OverWriterPager_ReadsThroughTheJournal()
+    /// <param name="cacheSize">The requested reader cache capacity over the writer.</param>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public async Task ReaderPageCache_OverWriterPager_ReadsThroughTheJournal(int cacheSize)
     {
         await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
@@ -292,7 +283,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             },
             TestContext.Current.CancellationToken);
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
-        using var cache = new ReaderPageCache(harness.Database.Format, harness.Database.Pages, capacity: 0);
+        using var cache = new ReaderPageCache(harness.Database.Format, harness.Database.Pages, cacheSize);
         int pageSize = harness.Database.Format.PageSize;
 
         byte[] original = await harness.Database.Pages.ReadPageCopyAsync(1, TestContext.Current.CancellationToken);
@@ -302,27 +293,15 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await harness.Pager.WritePageAsync(1, changed, TestContext.Current.CancellationToken);
 
-        byte[] pending = await cache.ReadPageAsync(1, TestContext.Current.CancellationToken);
-        try
-        {
-            Assert.Equal(changed, pending.AsSpan(0, pageSize).ToArray());
-        }
-        finally
-        {
-            PageBuffers.Return(pending);
-        }
-
+        using PageLease pending = await cache.ReadPageAsync(1, TestContext.Current.CancellationToken);
+        Assert.Equal(changed, pending.Memory.ToArray());
         await tx.RollbackAsync(TestContext.Current.CancellationToken);
-
-        byte[] afterRollback = await cache.ReadPageAsync(1, TestContext.Current.CancellationToken);
-        try
-        {
-            Assert.Equal(original, afterRollback.AsSpan(0, pageSize).ToArray());
-        }
-        finally
-        {
-            PageBuffers.Return(afterRollback);
-        }
+        using PageLease afterRollback = await cache.ReadPageAsync(1, TestContext.Current.CancellationToken);
+        Assert.Equal(original, afterRollback.Memory.ToArray());
+        Assert.Equal(changed, pending.Memory.ToArray());
+        pending.Dispose();
+        afterRollback.Dispose();
+        Assert.Equal(0, cache.OutstandingLeases);
     }
 
     private static async ValueTask<MemoryStream> CreateCacheExerciseDatabaseAsync(

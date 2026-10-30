@@ -11,6 +11,7 @@ using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 
 /// <summary>
 /// Reads LVAL (Long Value) pages from a JET database, resolving MEMO and
@@ -29,38 +30,29 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
         }
     }
 
-    internal ValueTask<LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
+    internal async ValueTask<LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
     {
         int lvalPage = LongValueStore.PageNumber(lvalDp);
         if (lvalPage <= 0 || lvalPage >= pages.PageCount)
         {
-            return new ValueTask<LvalRowLocation>(new LvalRowLocation([], 0, 0, $"invalid page {lvalPage}"));
+            return new LvalRowLocation([], 0, 0, $"invalid page {lvalPage}");
         }
 
-        if (pages.TryGetCachedPage(lvalPage, out byte[] page))
-        {
-            return new ValueTask<LvalRowLocation>(this.LocateLvalRow(lvalPage, LongValueStore.RowIndex(lvalDp), page));
-        }
-
-        return this.LocateLvalRowSlowAsync(lvalPage, LongValueStore.RowIndex(lvalDp), cancellationToken);
-    }
-
-    private async ValueTask<LvalRowLocation> LocateLvalRowSlowAsync(int lvalPage, int lvalRow, CancellationToken cancellationToken)
-    {
-        byte[] page = await pages.ReadPageAsync(lvalPage, cancellationToken).ConfigureAwait(false);
+        PageLease lease = await pages.ReadPageAsync(lvalPage, cancellationToken).ConfigureAwait(false);
         try
         {
-            return this.LocateLvalRow(lvalPage, lvalRow, page);
+            return this.LocateLvalRow(lvalPage, LongValueStore.RowIndex(lvalDp), lease) with { Lease = lease };
         }
         catch
         {
-            pages.ReturnUncachedPage(page);
+            lease.Dispose();
             throw;
         }
     }
 
-    private LvalRowLocation LocateLvalRow(int lvalPage, int lvalRow, byte[] page)
+    private LvalRowLocation LocateLvalRow(int lvalPage, int lvalRow, PageLease lease)
     {
+        byte[] page = lease.Buffer;
         if (page.Length < format.PageSize)
         {
             return new LvalRowLocation(page, 0, 0, "truncated LVAL page");
@@ -77,7 +69,7 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
             return new LvalRowLocation(page, 0, 0, "the LVAL row count exceeds its page directory capacity");
         }
 
-        RowBound[] rowDirectory = pages.GetRowDirectory(lvalPage, page);
+        RowBound[] rowDirectory = lease.GetRowDirectory(format);
         LvalRowLocation location = LongValueStore.LocateRow(lvalPage, lvalRow, page, format.DataPage, format.PageSize, rowDirectory);
         if (!location.Failed && location.Start < format.DataPage.RowsStart + (numRows * sizeof(ushort)))
         {
@@ -169,10 +161,7 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
             maxValueBytes,
             maxChainRows,
             this.LocateLvalRowAsync,
-            cancellationToken,
-            this.ReleaseLvalPage);
-
-    private void ReleaseLvalPage(byte[] page) => pages.ReturnUncachedPage(page);
+            cancellationToken);
 
     private LongValueDescriptor ReadDescriptor(byte[] row, int start, int len, int maxChainRows)
     {

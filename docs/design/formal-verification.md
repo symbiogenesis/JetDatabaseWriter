@@ -91,6 +91,24 @@ The selected [external chained-payload surface](long-value-traversal.md) is `Lon
 
 Production invokes generated row-admission/payload-count and visited capacity/probe decisions. The specialized visited table allocates lazily and doubles at half occupancy; the model bounds current capacity by `16 + 4*n` uint slots and cumulative allocations by `32 + 8*n` slots, including superseded arrays. Circular-probe lemmas establish decreasing probe work and complete bounded slot coverage. Exact C# table membership/rehash correspondence remains a manual obligation supported by independent collision/growth tests. CLR overhead, GC behavior, locator/cache/pool buffers, destination allocations, returned I/O effects and native pointer/ownership meaning remain separate contracts. These are named traversal bounds, not a verified complete public parser or a whole-library hostile-file claim.
 
+## Page-frame ownership
+
+`PageFrameOwnership.dfy` specifies the bounded reference ledger used to review
+immutable pooled page frames. Its inductive transition proof covers cache and
+producer ownership, fresh lease tickets, idempotent release, one final pool
+return and generation-checked producer-to-cache transfer. Explicit retained and
+unretained traces exercise successful acquisition, eviction and completion;
+dead/full references and stale generations refuse their named operations.
+
+The [ownership boundary](page-frame-ownership.md) maps this verification-only
+model to `PageFrame`, `PageLease`, reader retention, pager replacement and scoped
+scan/seek/overflow/LVAL callers. These remain handwritten implementations with
+manual correspondence and regression evidence. Array immutability and abstract
+atomic transitions do not prove C# synchronization, decoder lifetime discipline,
+complete aggregate memory bounds or the containing public parser. Existing
+generated kernels, runtime requirements and physical-storage claims are unchanged;
+I7/S1/V8/V10 retain their remaining composition and qualification obligations.
+
 ## Shared parsing primitives
 
 The shared primitive boundary covers range admission, slice composition and positive-read cursor progress. `RecoveryKernel.IsByteRange` admits only offsets and lengths whose sum fits both the containing range and the signed managed offset domain. `BufferReadAdvance` accepts only a positive returned count within the requested remainder; refusal cannot wrap or advance the cursor. `ReadMinimumSatisfied` distinguishes a sufficiently acquired prefix from exact completion.

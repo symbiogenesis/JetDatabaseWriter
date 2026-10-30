@@ -13,6 +13,22 @@ using System.Threading.Tasks;
 /// </summary>
 internal static class PageBuffers
 {
+    /// <summary>Acquires a pinned immutable image; writable callers continue to request owned copies.</summary>
+    /// <param name="pages">The page source.</param>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The disposable read reference.</returns>
+    internal static async ValueTask<PageLease> ReadPageLeaseAsync(this IPageSource pages, long pageNumber, CancellationToken cancellationToken)
+    {
+        if (pages is Pager pager)
+        {
+            return await pager.ReadPageLeaseAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        }
+
+        byte[] bytes = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        return PageLease.Own(bytes, pages.PageSize);
+    }
+
     /// <summary>Gives a page buffer that <see cref="IPageSource.ReadPageAsync"/> rented back to the shared pool.</summary>
     /// <param name="page">The pooled page buffer; the caller must not use it afterwards.</param>
     internal static void Return(byte[] page) => ArrayPool<byte>.Shared.Return(page);

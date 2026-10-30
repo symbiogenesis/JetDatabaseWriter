@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Infrastructure;
 
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
@@ -7,6 +8,19 @@ using Xunit;
 
 public class LruCacheTests
 {
+    [Fact]
+    public void OwnedValues_AreReleasedOnceOnReplacementEvictionAndDisposal()
+    {
+        var released = new List<int>();
+        using var cache = new LruCache<int, int>(1, released.Add);
+        cache.Add(1, 10);
+        cache.Add(1, 20);
+        cache.Add(2, 30);
+        cache.Dispose();
+        cache.Dispose();
+        Assert.Equal([10, 20, 30], released);
+    }
+
     [Fact]
     public void Add_And_TryGetValue_Returns_Stored_Value()
     {
