@@ -615,8 +615,29 @@ Its guarded native query controls use x86 DAO3.6, `dao360.dll` 10.0.26100.5074,
 including formatting boundaries and invalid text divisors. These checks do not
 establish fresh ACE native behavior, all locale formats or calculated-field
 admissibility of every function. Integral literal/promotion rules,
-Currency-versus-Decimal identity, Round and other subtype-sensitive functions
+Currency-versus-Decimal identity and other subtype-sensitive functions
 remain R4 work. Expression evaluation remains handwritten and tested.
+
+`Round` retains the measured native Single/Double/Integer/Long/Date subtype;
+Byte and Boolean produce Integer, numeric text produces Double, and Decimal
+fields retain Decimal. Precision is coerced half-even to Long. Negative precision
+refuses, including a Null input; Null and integral values otherwise retain their
+value for positive precision. Floating/date precision accepts 0 through 22;
+Decimal precision of 28 or more retains the input without a narrower .NET limit.
+Floating rounding scales the binary value directly before half-even rounding and
+division. It preserves native midpoints such as `Round(CDbl(1.225),2)=1.23` and
+valid large Double values; overflowing scale products retain the original value.
+
+`CalculatedExpressionRoundTests` freezes native query controls and exact source,
+stored and result Double bit patterns around precision/magnitude boundaries.
+Fresh DAO3.6 Jet4 Double and Decimal field controls distinguish function behavior
+from the still-unverified native literal-conversion rules. Decimal controls use
+native TypeName/CStr before DAO marshals a computed numeric result as Double.
+Public ACE calculated
+insert/update/reopen and byte-preserving invalid-precision refusal supply library
+regressions. These controls use `dao360.dll` 10.0.26100.5074; fresh ACE native
+contexts, additional locales and Currency identity remain separate R4/E2 gaps.
+
 ## Literal Unicode markers in Text
 
 Ordinary variable Text with Unicode compression disabled stores plain UTF-16, including literal FF FE at the beginning. Row, string, POCO and write-back decoding use that column storage rule. Calculated Text still permits compressed Unicode inside its envelope. Its dedicated decoder accepts the verified terminal low-byte form; ordinary Text and Memo retain separate decoding rules pending their own native controls. Native controls preserve leading U+FEFF in a cached Latin-1 string using an escaped compressed payload; other controlled native cached values lose or reinterpret that marker. A source field's original text is not authority to invent a different cached result. Raw compact assembly preserves each observed envelope without recalculation. Writers still refuse calculated Text beginning with U+FEFF before allocation. Ordinary compressed variable Text supports the independently verified 6 through 255-character escape with a nonzero Latin-1 tail, subject to the complete declared character limit; short, NUL-tail and wide-tail forms remain refused. Native DAO3.6 Jet4 read/update/compact and frozen native-row fixtures establish that ordinary subset; fresh DAO120 confirmation remains separate.

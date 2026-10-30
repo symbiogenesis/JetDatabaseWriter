@@ -24,7 +24,7 @@ internal static class CalculatedExpressionNumericFunctions
         AddFunction(functions, "SIN", 1, 1, static function => Math.Sin(ToDouble(function.Arg(0))));
         AddFunction(functions, "SQR", 1, 1, static function => Math.Sqrt(ToDouble(function.Arg(0))), "SQRT");
         AddFunction(functions, "TAN", 1, 1, static function => Math.Tan(ToDouble(function.Arg(0))));
-        AddFunction(functions, "ROUND", 1, 2, static function => Math.Round(ToDecimal(function.Arg(0)), function.Count > 1 ? checked((int)ToDecimal(function.Arg(1))) : 0, MidpointRounding.ToEven));
+        AddFunction(functions, "ROUND", 1, 2, static function => EvaluateRound(function));
         AddFunction(functions, "INT", 1, 1, static function => EvaluateIntegral(function.Arg(0), truncate: false));
         AddFunction(functions, "FIX", 1, 1, static function => EvaluateIntegral(function.Arg(0), truncate: true));
         AddFunction(functions, "CINT", 1, 1, static function => Convert.ToInt16(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture));
@@ -33,6 +33,57 @@ internal static class CalculatedExpressionNumericFunctions
         AddFunction(functions, "CSNG", 1, 1, static function => (float)AccessVariantOperators.Finite(Convert.ToSingle(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture)));
         AddFunction(functions, "CDEC", 1, 1, static function => ToDecimal(function.Arg(0)), "CCUR");
         AddFunction(functions, "CBYTE", 1, 1, static function => ToByte(function.Arg(0)));
+    }
+
+    private static object EvaluateRound(CalculatedFunctionInvocation function)
+    {
+        object value = function.Arg(0);
+        int digits = function.Count > 1 ? AccessVariantOperators.ToRoundedLong(function.Arg(1)) : 0;
+        if (digits < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(function), "Round requires a nonnegative number of decimal places.");
+        }
+
+        // Native Round validates its precision even when the result is Null.
+        if (IsNull(value))
+        {
+            return DBNull.Value;
+        }
+
+        return value switch
+        {
+            bool boolean => (short)(boolean ? -1 : 0),
+            byte number => (short)number,
+            short or int or long => value,
+            float number => (float)RoundFloating(number, digits),
+            double number => RoundFloating(number, digits),
+            DateTime date => FromOleDate(RoundFloating(date.ToOADate(), digits)),
+            decimal number => digits >= 28 ? number : Math.Round(number, digits, MidpointRounding.ToEven),
+            _ => RoundFloating(ToDouble(value), digits),
+        };
+    }
+
+    private static double RoundFloating(double number, int digits)
+    {
+        number = AccessVariantOperators.Finite(number);
+        if (digits > 22)
+        {
+            throw new ArgumentOutOfRangeException(nameof(digits), "Floating Round supports at most 22 decimal places.");
+        }
+
+        // DAO rounds the binary floating value after decimal scaling. Converting
+        // it to Decimal first changes native midpoints such as 1.225 and Single
+        // values, and rejects otherwise valid large Double values.
+        double scale = 1d;
+        for (int index = 0; index < digits; index++)
+        {
+            scale *= 10d;
+        }
+
+        double scaled = number * scale;
+        return double.IsInfinity(scaled)
+            ? number
+            : Math.Round(scaled, MidpointRounding.ToEven) / scale;
     }
 
 #pragma warning disable CA1859 // Partition returns either a range string or Access Null (DBNull).
