@@ -631,7 +631,9 @@ valid large Double values; overflowing scale products retain the original value.
 `CalculatedExpressionRoundTests` freezes native query controls and exact source,
 stored and result Double bit patterns around precision/magnitude boundaries.
 Fresh DAO3.6 Jet4 Double and Decimal field controls distinguish function behavior
-from the still-unverified native literal-conversion rules. Decimal controls use
+from the still-unverified native literal-conversion rules. For example, native
+`CDbl(99.99999999999999)` already yields `100` before rounding; exact field bits
+avoid treating that literal conversion as a Round result. Decimal controls use
 native TypeName/CStr before DAO marshals a computed numeric result as Double.
 Public ACE calculated
 insert/update/reopen and byte-preserving invalid-precision refusal supply library
