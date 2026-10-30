@@ -74,11 +74,7 @@ public sealed class ComplexColumnsCounterCorruptionTests
             TableDef flatDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(flatPage, "<flat>", Ct);
             ColumnInfo foreignKey = Assert.IsType<ColumnInfo>(flatDef.FindColumn("_Files"));
             RowLocation row = Assert.Single(await harness.Database.GetLiveRowLocationsAsync(flatPage, Ct));
-            byte[] page = await harness.Pager.ReadPageCopyAsync(row.DataPageNumber, Ct);
-            int nullMaskSize = JetFormat.GetNullMaskSizeBytes(harness.Database.Format.ReadRowColumnCount(page, row.RowStart));
-            JetFormat.SetNullMaskBit(page.AsSpan(row.RowStart + row.RowSize - nullMaskSize, nullMaskSize), foreignKey.ColNum, reference.HasValue);
-            BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(row.RowStart + harness.Database.Format.RowFields.NumCols + foreignKey.FixedOff, 4), reference ?? 0);
-            await harness.Pager.WritePageAsync(row.DataPageNumber, page, Ct);
+            await CorruptFlatForeignKeyAsync(harness, flatDef, row, foreignKey, reference);
         }
 
         byte[] baseline = ms.ToArray();

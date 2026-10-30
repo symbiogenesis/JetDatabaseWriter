@@ -318,9 +318,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
             TableDef flatDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(flatPage, "<flat>", Ct);
             ColumnInfo foreignKey = Assert.IsType<ColumnInfo>(flatDef.FindColumn("_Files"));
             RowLocation row = Assert.Single(await harness.Database.GetLiveRowLocationsAsync(flatPage, Ct));
-            byte[] page = await harness.Pager.ReadPageCopyAsync(row.DataPageNumber, Ct);
-            BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(row.RowStart + harness.Database.Format.RowFields.NumCols + foreignKey.FixedOff, 4), 2);
-            await harness.Pager.WritePageAsync(row.DataPageNumber, page, Ct);
+            await CorruptFlatForeignKeyAsync(harness, flatDef, row, foreignKey, 2);
         }
 
         byte[] baseline = ms.ToArray();

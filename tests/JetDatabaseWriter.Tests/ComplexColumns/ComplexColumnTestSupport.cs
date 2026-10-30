@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.ComplexColumns;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -19,6 +20,8 @@ using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueDecoding.Models;
 using Xunit;
 
 /// <summary>
@@ -157,6 +160,33 @@ internal static class ComplexColumnTestSupport
             tdef.AsSpan(ComplexAutoNumberOffset, 4).Clear();
             await harness.Pager.WritePageAsync(table.Entry.TDefPage, tdef, Ct);
         }
+    }
+
+    /// <summary>Corrupts a populated flat-table foreign key at its descriptor-selected row slice and verifies the stored value.</summary>
+    /// <param name="writer">The writer used to persist the corrupted page.</param>
+    /// <param name="definition">The flat-table definition.</param>
+    /// <param name="location">The row containing reference 1.</param>
+    /// <param name="column">The flat-table foreign-key column.</param>
+    /// <param name="reference">The invalid reference, or null to clear its assignment bit.</param>
+    public static async Task CorruptFlatForeignKeyAsync(AccessWriter writer, TableDef definition, RowLocation location, ColumnInfo column, int? reference)
+    {
+        JetFormat format = writer.Database.Format;
+        byte[] page = await writer.Pager.ReadPageCopyAsync(location.DataPageNumber, Ct);
+        Assert.False(column.IsFixed);
+        Assert.True(RowDecodePlan.TryParseRowLayout(format.RowFields, page, location.RowStart, location.RowSize, definition.HasVarColumns, out RowLayout layout));
+        ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(format.RowFields, page, location.RowStart, location.RowSize, layout, column);
+        Assert.Equal(ColumnSliceKind.Var, slice.Kind);
+        Assert.Equal(4, slice.DataLen);
+        Assert.Equal(1, BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(location.RowStart + slice.DataStart, slice.DataLen)));
+
+        // Resolve the populated payload before clearing its assignment bit; a Null slice has no payload bounds.
+        BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(location.RowStart + slice.DataStart, slice.DataLen), reference ?? 0);
+        JetFormat.SetNullMaskBit(page.AsSpan(location.RowStart + layout.NullMaskPos, location.RowSize - layout.NullMaskPos), column.ColNum, reference.HasValue);
+        await writer.Pager.WritePageAsync(location.DataPageNumber, page, Ct);
+
+        byte[] stored = await writer.Pager.ReadPageCopyAsync(location.DataPageNumber, Ct);
+        string actual = ScalarColumnReader.DecodeSimpleColumnValue(format, stored, location.RowStart, location.RowSize, column);
+        Assert.Equal(reference?.ToString(CultureInfo.InvariantCulture) ?? string.Empty, actual);
     }
 
     /// <summary>Reads the TDEF page of a system table such as <c>MSysComplexColumns</c>.</summary>
