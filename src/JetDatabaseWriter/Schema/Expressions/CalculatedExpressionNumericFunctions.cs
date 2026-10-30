@@ -16,25 +16,44 @@ internal static class CalculatedExpressionNumericFunctions
         AddFunction(functions, "MOD", 2, 2, static function => AccessVariantOperators.Modulo(function.Arg(0), function.Arg(1)));
         AddFunction(functions, "INTDIV", 2, 2, static function => AccessVariantOperators.IntegerDivide(function.Arg(0), function.Arg(1)));
         AddFunction(functions, "ABS", 1, 1, static function => EvaluateAbsolute(function.Arg(0)));
-        AddFunction(functions, "ATAN", 1, 1, static function => Math.Atan(ToDouble(function.Arg(0))), "ATN");
-        AddFunction(functions, "COS", 1, 1, static function => Math.Cos(ToDouble(function.Arg(0))));
-        AddFunction(functions, "EXP", 1, 1, static function => Math.Exp(ToDouble(function.Arg(0))));
-        AddFunction(functions, "LOG", 1, 1, static function => Math.Log(ToDouble(function.Arg(0))));
+        AddFunction(functions, "ATAN", 1, 1, static function => EvaluateMath(function, Math.Atan), "ATN");
+        AddFunction(functions, "COS", 1, 1, static function => EvaluateMath(function, Math.Cos, rejectInfinity: true));
+        AddFunction(functions, "EXP", 1, 1, static function => EvaluateMath(function, Math.Exp));
+        AddFunction(functions, "LOG", 1, 1, static function => EvaluateMath(function, Math.Log, positive: true));
         AddFunction(functions, "RND", 0, 1, static function => function.Context.NextRandom(function.Count > 0 ? function.Arg(0) : DBNull.Value));
         AddFunction(functions, "SGN", 1, 1, static function => EvaluateSign(function.Arg(0)));
-        AddFunction(functions, "SIN", 1, 1, static function => Math.Sin(ToDouble(function.Arg(0))));
-        AddFunction(functions, "SQR", 1, 1, static function => Math.Sqrt(ToDouble(function.Arg(0))), "SQRT");
-        AddFunction(functions, "TAN", 1, 1, static function => Math.Tan(ToDouble(function.Arg(0))));
+        AddFunction(functions, "SIN", 1, 1, static function => EvaluateMath(function, Math.Sin, rejectInfinity: true));
+        AddFunction(functions, "SQR", 1, 1, static function => EvaluateMath(function, Math.Sqrt, nonnegative: true), "SQRT");
+        AddFunction(functions, "TAN", 1, 1, static function => EvaluateMath(function, Math.Tan, rejectInfinity: true));
         AddFunction(functions, "ROUND", 1, 2, static function => EvaluateRound(function));
         AddFunction(functions, "INT", 1, 1, static function => EvaluateIntegral(function.Arg(0), truncate: false));
         AddFunction(functions, "FIX", 1, 1, static function => EvaluateIntegral(function.Arg(0), truncate: true));
         AddFunction(functions, "CINT", 1, 1, static function => Convert.ToInt16(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture));
         AddFunction(functions, "CLNG", 1, 1, static function => Convert.ToInt32(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture));
-        AddFunction(functions, "CDBL", 1, 1, static function => AccessVariantOperators.Finite(ToDouble(function.Arg(0))));
+        AddFunction(functions, "CDBL", 1, 1, static function => ToDouble(function.Arg(0)));
         AddFunction(functions, "CSNG", 1, 1, static function => (float)AccessVariantOperators.Finite(ToSingle(function.Arg(0))));
         AddFunction(functions, "CDEC", 1, 1, static function => ToDecimal(function.Arg(0)));
         AddFunction(functions, "CCUR", 1, 1, static function => ToCurrency(function.Arg(0)));
         AddFunction(functions, "CBYTE", 1, 1, static function => ToByte(function.Arg(0)));
+    }
+
+    private static double EvaluateMath(CalculatedFunctionInvocation function, Func<double, double> operation, bool positive = false, bool nonnegative = false, bool rejectInfinity = false)
+    {
+        double number = ToDouble(function.Arg(0));
+        if ((positive && number <= 0d) || (nonnegative && number < 0d) || (rejectInfinity && double.IsInfinity(number)))
+        {
+            throw new ArgumentOutOfRangeException(nameof(function), "The math function argument is outside its native domain.");
+        }
+
+        if (double.IsNaN(number))
+        {
+            return number;
+        }
+
+        double result = operation(number);
+        return double.IsInfinity(result) && !double.IsInfinity(number)
+            ? throw new OverflowException("The math result is outside the range of a Double.")
+            : result;
     }
 
     private static object EvaluateRound(CalculatedFunctionInvocation function)
@@ -69,10 +88,14 @@ internal static class CalculatedExpressionNumericFunctions
 
     private static double RoundFloating(double number, int digits)
     {
-        number = AccessVariantOperators.Finite(number);
         if (digits > 22)
         {
             throw new ArgumentOutOfRangeException(nameof(digits), "Floating Round supports at most 22 decimal places.");
+        }
+
+        if (double.IsNaN(number))
+        {
+            return number;
         }
 
         // DAO rounds the binary floating value after decimal scaling. Converting
@@ -149,8 +172,8 @@ internal static class CalculatedExpressionNumericFunctions
         short number => -number,
         int number when number != int.MinValue => Math.Abs(number),
         int number => -(double)number,
-        float number => Math.Abs((float)AccessVariantOperators.Finite(number)),
-        double number => Math.Abs(AccessVariantOperators.Finite(number)),
+        float number => Math.Abs(number),
+        double number => Math.Abs(number),
         _ => Math.Abs(ToDecimal(value)),
     };
 
@@ -193,13 +216,11 @@ internal static class CalculatedExpressionNumericFunctions
 
         if (value is double doubleValue)
         {
-            doubleValue = AccessVariantOperators.Finite(doubleValue);
             return truncate ? Math.Truncate(doubleValue) : Math.Floor(doubleValue);
         }
 
         if (value is float singleValue)
         {
-            singleValue = (float)AccessVariantOperators.Finite(singleValue);
             return (float)(truncate ? Math.Truncate(singleValue) : Math.Floor(singleValue));
         }
 
@@ -215,6 +236,11 @@ internal static class CalculatedExpressionNumericFunctions
         }
 
         double number = value is DateTime date ? date.ToOADate() : ToDouble(value);
-        return (short)Math.Sign(AccessVariantOperators.Finite(number));
+        if (number > 0d)
+        {
+            return (short)1;
+        }
+
+        return number < 0d ? (short)-1 : (short)0;
     }
 }

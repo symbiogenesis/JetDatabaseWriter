@@ -561,7 +561,19 @@ internal static class CalculatedExpressionCoercion
             return boolean ? -1d : 0d;
         }
 
-        return value is decimal number ? DecimalToDouble(number) : Convert.ToDouble(value, CultureInfo.InvariantCulture);
+        double result = value is decimal number ? DecimalToDouble(number) : Convert.ToDouble(value, CultureInfo.InvariantCulture);
+        if (value is string text && (double.IsNaN(result) || double.IsInfinity(result)))
+        {
+            string token = text.Trim().TrimStart('+', '-');
+            if (token.Equals("Infinity", StringComparison.OrdinalIgnoreCase) || token.Equals("NaN", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidCastException("A nonfinite name is not native numeric text.");
+            }
+
+            throw new OverflowException("The numeric text is outside the range of a Double.");
+        }
+
+        return result;
     }
 
     internal static float ToSingle(object? value)

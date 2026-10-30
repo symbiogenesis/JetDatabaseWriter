@@ -937,3 +937,22 @@ validation steps; exceeding either limit refuses with ValueTooLarge.
 source and native compacted fixtures and repeats writer/native recalculation and
 compact. Their hashes and reproducible manifest are retained in
 `Databases/CalculatedLike/README.md`.
+
+## Native numeric domains and calculated statuses
+
+Math functions retain native argument domains and cached failures: negative Sqr,
+nonpositive Log and infinite Sin/Cos/Tan use status 5; finite Exp/power overflow
+uses 6; invalid real powers use 440. Division distinguishes zero/zero (6) from a
+nonzero numerator divided by zero (11). Nonfinite numeric names in text produce
+status 13, while numeric exponent overflow produces 6.
+
+Valid financial Infinity/NaN values remain values through the measured unary and
+math functions. NaN signs are normalized only where native output establishes a
+specific bit pattern. Subsequent arithmetic retains its operation-specific errors;
+Infinity numerator division and NaN operands do not share a blanket missing-value
+rule. The measured ACE version can cache either 11 or 6 for compound Infinity/
+Infinity depending on native declaration/evaluation context; independent controls
+retain that variation rather than interpreting it as ordinary Null.
+
+`CalculatedMathDomainTests` compares independent native domains, exact floating
+results and error statuses through writer/native recalculation and compact.

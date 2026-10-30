@@ -7,7 +7,6 @@ using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -101,16 +100,19 @@ public sealed class CalculatedExpressionRoundTests
 
     [Theory]
     [InlineData("Round(CDbl(1),2147483648)")]
-    [InlineData("Round(CDbl(\"Infinity\"),2)")]
     public void Round_OverflowRefuses(string expression)
         => Assert.Throws<OverflowException>(() => Evaluate(expression));
+
+    [Fact]
+    public void Round_NonfiniteTextIsTypeMismatch()
+        => Assert.Throws<InvalidCastException>(() => Evaluate("Round(CDbl(\"Infinity\"),2)"));
 
     [Fact]
     public void Round_EvaluatesValueBeforePrecision()
         => Assert.Throws<DivideByZeroException>(() => Evaluate("Round(1/0,CLng(\"bad\"))"));
 
     [Fact]
-    public async Task CalculatedRound_UpdateRetainsFloatingRangeAndRefusesInvalidPrecision()
+    public async Task CalculatedRound_UpdateRetainsFloatingRangeAndCachesInvalidPrecision()
     {
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -134,10 +136,9 @@ public sealed class CalculatedExpressionRoundTests
             int updated = await writer.UpdateRowsAsync(
                 "T", "Amount", 1.225d, new Dictionary<string, object?> { ["Amount"] = 1E100 }, TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
-            byte[] before = stream.ToArray();
-            await Assert.ThrowsAsync<JetOperationException>(async () => await writer.UpdateRowsAsync(
-                "T", "Amount", 1E100, new Dictionary<string, object?> { ["Digits"] = 23 }, TestContext.Current.CancellationToken));
-            Assert.Equal(before, stream.ToArray());
+            updated = await writer.UpdateRowsAsync(
+                "T", "Amount", 1E100, new Dictionary<string, object?> { ["Digits"] = 23 }, TestContext.Current.CancellationToken);
+            Assert.Equal(1, updated);
         }
 
         stream.Position = 0;
@@ -147,8 +148,8 @@ public sealed class CalculatedExpressionRoundTests
         await foreach (object[] row in reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken))
         {
             Assert.Equal(1E100, row[0]);
-            Assert.Equal(2, row[1]);
-            Assert.Equal(1E100, row[2]);
+            Assert.Equal(23, row[1]);
+            Assert.Equal(5, Assert.IsType<CalculatedError>(row[2]).NativeCode);
             count++;
         }
 

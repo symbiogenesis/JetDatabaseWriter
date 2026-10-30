@@ -275,6 +275,14 @@ internal static class CalculatedExpressionFinancialFunctions
 
         double paymentFactor = paymentType == 1 ? rate + 1d : 1d;
         double compound = Math.Pow(rate + 1d, periods);
-        return (-futureValue - (presentValue * compound)) / (paymentFactor * (compound - 1d)) * rate;
+        double result = (-futureValue - (presentValue * compound)) / (paymentFactor * (compound - 1d)) * rate;
+        if (double.IsNaN(result) && !double.IsNaN(rate) && !double.IsNaN(periods) && !double.IsNaN(presentValue) && !double.IsNaN(futureValue))
+        {
+            // ACE's invalid financial operation emits a negative quiet NaN;
+            // ARM64 arithmetic can instead choose the positive canonical NaN.
+            return double.NaN;
+        }
+
+        return result;
     }
 }

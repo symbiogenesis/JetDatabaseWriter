@@ -23,12 +23,28 @@ internal sealed class CalculatedExpressionBinaryNode(string operation, Calculate
         {
             if (context.IsCalculatingColumn && !IsNull(leftValue) && !IsNull(rightValue))
             {
+                if (operation == "/" && (double.IsNaN(ToDouble(leftValue)) || double.IsNaN(ToDouble(rightValue))))
+                {
+                    return new CalculatedError(6);
+                }
+
+                if (operation == "/" && double.IsInfinity(ToDouble(leftValue)))
+                {
+                    return new CalculatedError(11);
+                }
+
                 if (operation == "/" && ToDouble(rightValue) == 0d)
                 {
                     return new CalculatedError(ToDouble(leftValue) == 0d ? 6 : 11);
                 }
 
-                if (operation == "^" && ToDouble(leftValue) < 0d && ToDouble(rightValue) % 1d != 0d)
+                if (operation == "/" && double.IsInfinity(ToDouble(rightValue)))
+                {
+                    return ToDouble(leftValue) / ToDouble(rightValue);
+                }
+
+                if (operation == "^" && ((ToDouble(leftValue) == 0d && ToDouble(rightValue) < 0d)
+                    || (ToDouble(leftValue) < 0d && !double.IsInfinity(ToDouble(rightValue)) && ToDouble(rightValue) % 1d != 0d)))
                 {
                     return new CalculatedError(440);
                 }

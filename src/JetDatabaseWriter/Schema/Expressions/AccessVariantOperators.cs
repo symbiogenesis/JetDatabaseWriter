@@ -166,6 +166,7 @@ internal static class AccessVariantOperators
     /// <param name="left">The left operand.</param>
     /// <param name="right">The right operand.</param>
     /// <returns>The power, or Null.</returns>
+    /// <exception cref="OverflowException">Finite operands produce an infinite Double result.</exception>
     internal static object Power(object left, object right)
     {
         if (IsNull(left) || IsNull(right))
@@ -173,9 +174,20 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        return IsDate(left) || IsDate(right)
-            ? Finite(Math.Pow(ToDateSerial(left), ToDateSerial(right)))
-            : Math.Pow(ToDouble(left), ToDouble(right));
+        if (IsDate(left) || IsDate(right))
+        {
+            return Finite(Math.Pow(ToDateSerial(left), ToDateSerial(right)));
+        }
+
+        double basis = ToDouble(left);
+        double exponent = ToDouble(right);
+        double result = Math.Pow(basis, exponent);
+        if (double.IsInfinity(result) && !double.IsInfinity(basis) && !double.IsInfinity(exponent))
+        {
+            throw new OverflowException("The power result is outside the range of a Double.");
+        }
+
+        return double.IsNaN(result) ? Math.Abs(result) : result;
     }
 
     /// <summary>Returns <c>-value</c>; the negation of a date is a date.</summary>
@@ -197,8 +209,8 @@ internal static class AccessVariantOperators
             short number => -number,
             int number when number != int.MinValue => -number,
             int number => -(double)number,
-            float number => (float)Finite(-number),
-            double number => Finite(-number),
+            float number => -number,
+            double number => -number,
             NativeDate native => NativeDate.FromSerial(-native.Serial),
             DateTime => FromOleDate(-ToDateSerial(value)),
             _ => -ToDecimal(value),
@@ -220,8 +232,7 @@ internal static class AccessVariantOperators
             AccessCurrency => value,
             bool boolean => (short)(boolean ? -1 : 0),
             byte number => (short)number,
-            float number => (float)Finite(number),
-            double number => Finite(number),
+            float or double => value,
             NativeDate or DateTime or short or int => value,
             _ => ToDecimal(value),
         };

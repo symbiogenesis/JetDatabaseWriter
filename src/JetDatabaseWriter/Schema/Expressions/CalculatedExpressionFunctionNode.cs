@@ -58,5 +58,5 @@ internal sealed class CalculatedExpressionFunctionNode(string name, IReadOnlyLis
     }
 
     private static bool MapsArgumentErrors(string functionName)
-        => functionName.TrimEnd('$').ToUpperInvariant() is "INSTR" or "ASC" or "LEN" or "LEFT" or "RIGHT" or "MID" or "UCASE" or "LCASE" or "TRIM" or "STR" or "STRING" or "CHOOSE" or "NOT" or "FV" or "PV" or "PMT" or "NPER" or "IPMT" or "PPMT" or "DDB" or "SLN" or "SYD" or "RATE";
+        => functionName.TrimEnd('$').ToUpperInvariant() is "ABS" or "ATN" or "COS" or "EXP" or "LOG" or "SGN" or "SIN" or "SQR" or "TAN" or "ROUND" or "INT" or "FIX" or "CDBL" or "INSTR" or "ASC" or "LEN" or "LEFT" or "RIGHT" or "MID" or "UCASE" or "LCASE" or "TRIM" or "STR" or "STRING" or "CHOOSE" or "NOT" or "FV" or "PV" or "PMT" or "NPER" or "IPMT" or "PPMT" or "DDB" or "SLN" or "SYD" or "RATE";
 }
