@@ -4,6 +4,8 @@ These Dafny files contain recovery models and the sources of small executable re
 
 Read the [contract and trusted boundary](../docs/design/formal-verification.md) before interpreting a theorem. The [open plan](../PLAN.md#v--formal-verification-and-stronger-guarantees) tracks implementation refinement, actual storage qualification and later proof work.
 
+The [proof and algorithm survey](../docs/design/proof-survey.md) records recent research, adoption decisions and concrete production targets. Its proof-search and coverage suggestions complement the pinned verifier, audit and negative controls below; they do not replace them.
+
 ## Scope
 
 | Model | Main checked properties | Deliberate boundary |
@@ -51,6 +53,33 @@ Mandatory negative controls run on every verification invocation: an intentional
 `summary.json` records proof and generated-source hashes, tool/solver versions, verification summaries, zero audit findings and the negative-control outcome. Each proof retains its exact source hash and references the shared `inventory.verify.stdout.log`; `inventory.audit.txt` covers the complete inventory. Per-process `*.process.json` records invocations and outcomes. A genuine failed attempt retains `failure.json` and exact proof/dependency, tool-manifest and generated-source copies under `inputs/`; expected negative-control failures are distinguished from that gate failure. CI retains separate `formal-verification` and `proof-trust-review` artifacts for 30 days, including refusing review reports and failed verifier diagnostics. Per-process stdout/stderr and audit reports explain failures. A successful receipt establishes the checked models and exact generated-kernel freshness, not refinement of the remaining handwritten implementation.
 
 [Proof and trust review records](../docs/design/proof-trust-review.md) bind mapped sources, conformance evidence, proof inputs, pins and gate tooling to reviewed content. The mandatory CI job checks their freshness and retains review refusals and failed proof inputs alongside verifier/auditor diagnostics. A fresh record does not certify reviewer judgment or qualify storage effects.
+
+## Proof-dependency diagnostics
+
+For a specification review, add `-AnalyzeProofCoverage` to the verification
+command above, using a fresh external output directory. The optional mode uses
+the exact pinned verifier and bundled solver over the complete admitted
+manifest after mandatory verification, audit, negative controls and generated
+freshness. It does not change the default command or enable diagnostics in CI.
+
+The extra invocation isolates assertions, requests contradictory/redundant
+assumption warnings and writes dependency text plus HTML coverage. Retain
+`proof-coverage.json`, `proof-coverage.dependencies.log`, the `proof-coverage/`
+reports and process/stdout/stderr logs. The diagnostic receipt records exact
+proof hashes, tool versions, warnings, exit/failure details and
+`acceptanceEvidence: false`. A warning exit is accepted only with a complete
+positive verification summary, zero errors and recognized warning output;
+verification errors, timeouts and tool/report failures fail the requested
+diagnostic run. Mandatory controls remain required on every invocation.
+
+These experimental Dafny diagnostics can be noisy and expensive on large
+proofs. Review findings against reachable success/refusal cases and intended
+contracts; unused assumptions alone do not establish vacuity, and coverage
+does not establish specification adequacy. Keep executable logic and intended
+contracts fixed during annotation search, and separately review changes to
+either. Optional third-party ProofPulse analysis requires exact-pin and
+dependency compatibility qualification before use; see the
+[survey](../docs/design/proof-survey.md#specification-adequacy-and-proof-maintenance).
 
 ## Executable kernel generation
 

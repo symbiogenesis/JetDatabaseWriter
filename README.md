@@ -158,6 +158,7 @@ See [PLAN.md](PLAN.md) for open work, dependencies and acceptance criteria acros
 | Use streams, configure options or handle failures | [Database operations](docs/operations.md) |
 | Generate C# models from an existing database | [Scaffolding](docs/scaffolding.md) |
 | Understand Access terminology and file formats | [Glossary](docs/glossary.md) and [design notes](docs/design/) |
+| Assess recent proofs and algorithms against this library | [Proof and algorithm survey](docs/design/proof-survey.md) |
 
 ## Encryption Support
 

@@ -14,6 +14,8 @@ Each executable increment must have total entry points or checked caller precond
 
 The [critical-behavior inventory](verification-scope.md) defines the required surfaces, properties and fault/platform scope. Its [evidence map](verification-evidence-map.md) records proof and production coverage, contracts and remaining obligations for each behavior. The [continuing review policy](proof-trust-review.md#continuing-review-policy) applies to semantic changes affecting that coverage, including dependencies outside the mechanical receipt inputs.
 
+The [proof and algorithm survey](proof-survey.md) maps recent research to these boundaries and the existing plan. Verifier-guided annotation search and proof-dependency diagnostics support contract review; their output does not establish specification adequacy or production composition. Keep intended contracts and independent success/refusal witnesses fixed while exploring annotations, and separately review every executable or contract change.
+
 ## Recovery contract
 
 Let `O` be the exact raw database image and length before a transaction, and `C` the complete image selected by its durable commit decision. Images include encrypted bytes when the database is encrypted. Under validated, discoverable recovery evidence, exclusive cooperating access and the modeled storage contract, a completed recovery must return exactly `O` or `C`. A successfully acknowledged commit must select `C`. An interrupted commit whose decision may have persisted can legitimately have an uncertain outcome; the writer must retain evidence and must not perform a contradictory rollback.
