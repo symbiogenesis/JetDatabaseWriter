@@ -139,6 +139,12 @@ internal static class JetTypeInfo
     public static ColumnType ResolveValueType(ColumnInfo col)
         => col.IsCalculated && col.CalculatedResultType != default ? col.CalculatedResultType : col.Type;
 
+    /// <summary>Returns whether the row slot holds a long-value descriptor, including calculated Binary results.</summary>
+    /// <param name="column">The column descriptor and calculated result metadata.</param>
+    /// <returns>Whether its effective storage uses a long-value descriptor.</returns>
+    internal static bool UsesLongValueStorage(ColumnInfo column)
+        => ResolveValueType(column) is MemoType or OleType || (column.IsCalculated && ResolveValueType(column) == BinaryType);
+
     /// <summary>
     /// Returns the human-friendly Access display name for a JET column-type code
     /// (e.g. <c>"Long Integer"</c> for <c>LongInteger</c>). Unknown codes surface as
@@ -367,10 +373,10 @@ internal static class JetTypeInfo
             case BinaryType:
             case TextType:
             case MemoType:
+            case OleType:
             case GuidType:
             case NumericType:
                 return;
-            case OleType:
             case BigBinaryType:
             case ComplexType:
             case DateTimeExtendedType:

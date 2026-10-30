@@ -148,9 +148,9 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
         ColumnType valueType = ResolveValueType(col);
         if (value is CalculatedError error)
         {
-            if (col.IsCalculated && valueType is MemoType or OleType)
+            if (col.IsCalculated && UsesLongValueStorage(col))
             {
-                data = CalculatedColumnUtil.EncodeError(error, isOle: valueType == OleType);
+                data = CalculatedColumnUtil.EncodeError(error, isOle: valueType != MemoType);
                 inlineCap = Constants.LongValue.MaxInlineBytes;
                 return true;
             }
@@ -158,12 +158,12 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
             return false;
         }
 
-        if (col.IsFixed || (valueType != OleType && valueType != MemoType) || value is null or DBNull or PreEncodedLongValue)
+        if (col.IsFixed || !UsesLongValueStorage(col) || value is null or DBNull or PreEncodedLongValue)
         {
             return false;
         }
 
-        if (valueType == OleType)
+        if (valueType is OleType or BinaryType)
         {
             if (value is not byte[] bytes)
             {
@@ -347,7 +347,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
 
         foreach (ColumnInfo column in tableDef.Columns)
         {
-            if (ResolveValueType(column) is not MemoType and not OleType)
+            if (!UsesLongValueStorage(column))
             {
                 continue;
             }

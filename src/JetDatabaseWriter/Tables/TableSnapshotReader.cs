@@ -111,7 +111,7 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                     // These cells can carry raw Complex references, exact date
                     // serials, calculation errors or unreadable long values.
                     // Their storage representations require object columns.
-                    Type clrType = column.IsCalculated || column.Type is ComplexType || ResolveValueType(column) is MemoType or OleType or DateTimeType
+                    Type clrType = column.IsCalculated || column.Type is ComplexType || UsesLongValueStorage(column) || ResolveValueType(column) == DateTimeType
                         ? typeof(object)
                         : ResolveClrType(column);
                     _ = table.Columns.Add(column.Name, clrType);

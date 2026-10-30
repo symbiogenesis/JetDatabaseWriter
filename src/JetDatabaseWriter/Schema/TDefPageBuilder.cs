@@ -775,6 +775,11 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
     private static int GetCalculatedDeclaredSize(ColumnType type, int declaredSize)
     {
+        if (type == BinaryType)
+        {
+            return checked(declaredSize * 2);
+        }
+
         if (type is MemoType or OleType)
         {
             return 0;

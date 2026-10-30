@@ -18,7 +18,7 @@
     "src/JetDatabaseWriter/ReaderServices.cs": "659fc6874eaab3445b8ab4f6dafc992403f5b1034112846fb42ad533327e711c",
     "src/JetDatabaseWriter/Relationships/LinkedTableManager.cs": "490841845e54416286c85c8cd6fb930f79fc937e64f4b34d3f572411751547c7",
     "src/JetDatabaseWriter/Schema/TableDefReader.cs": "386db6af10dd4c165640cb90ea8b38076976330b2510c2fc4a1123fa9d82f72d",
-    "src/JetDatabaseWriter/Tables/TableReader.cs": "805a6c721a43c5301e46047cfb325c2e82fe85a23d4487ea88c684c658e03706",
+    $18abfb4bf95f8fcbc7bb02131edeb1f732c6e7046897bdbf48d5714665e825106",
     "src/JetDatabaseWriter/Transactions/LockFileCoordinator.cs": "c0ff1b36f3722124cf8b9b9ed104096361c048afea63b62a2548d84fa292a9f4",
     "src/JetDatabaseWriter/Transactions/LockFileSlotWriter.cs": "f0fc65d7098d01f3837978dcc6cffbf34fdfe4915ca05f4306b200d714ae88a8",
     "src/JetDatabaseWriter/Transactions/TransactionLifecycle.cs": "f9a4b3c305b05fad06254f4098105ff2b596c05e40dde2f411b04f3a21b21baa",

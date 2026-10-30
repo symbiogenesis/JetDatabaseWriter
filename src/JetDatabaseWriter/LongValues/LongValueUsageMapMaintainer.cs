@@ -13,7 +13,6 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
-using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>Maintains each long-value column's independent native owned and free map pointers.</summary>
@@ -44,7 +43,7 @@ internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager,
             throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The long-value usage-map trailer is malformed.");
         }
 
-        var missing = definition.Columns.Where(column => (ResolveValueType(column) is MemoType or OleType) && !maps.Any(map => map.ColumnNumber == column.ColNum)).ToList();
+        var missing = definition.Columns.Where(column => UsesLongValueStorage(column) && !maps.Any(map => map.ColumnNumber == column.ColNum)).ToList();
         if (missing.Count == 0)
         {
             return;
@@ -90,7 +89,7 @@ internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager,
             // entry exists, including a schema rewrite's private replacement.
             TableDef definition = await catalog.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
                 ?? throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The long-value column definitions are malformed.");
-            if (!definition.Columns.Any(column => column.ColNum == columnNumber && !column.IsFixed && ResolveValueType(column) is MemoType or OleType))
+            if (!definition.Columns.Any(column => column.ColNum == columnNumber && !column.IsFixed && UsesLongValueStorage(column)))
             {
                 throw new JetCorruptDataException(JetErrorCode.CorruptUsageMap, "The selected column does not declare long-value storage.");
             }

@@ -28,16 +28,36 @@ using Xunit;
 /// <summary>Missing calculated long-value descriptors cannot become empty strings during read or write-back.</summary>
 public sealed class CalculatedLongValueDecodePolicyTests
 {
-    public static TheoryData<int, int, bool> EnvelopeCases()
+    public static TheoryData<int, int, bool, ColumnType> EnvelopeCases()
     {
-        var data = new TheoryData<int, int, bool>();
+        var data = new TheoryData<int, int, bool, ColumnType>();
         for (int fault = 0; fault < 6; fault++)
         {
             foreach (int valueLength in new[] { 7, 300, 3000 })
             {
                 foreach (bool strict in new[] { false, true })
                 {
-                    data.Add(fault, valueLength, strict);
+                    foreach (ColumnType type in new[] { ColumnType.MemoType, ColumnType.BinaryType, ColumnType.OleType })
+                    {
+                        data.Add(fault, valueLength, strict, type);
+                    }
+                }
+            }
+        }
+
+        return data;
+    }
+
+    public static TheoryData<int, int, ColumnType> WriteBackCases()
+    {
+        var data = new TheoryData<int, int, ColumnType>();
+        for (int fault = 0; fault < 6; fault++)
+        {
+            foreach (int valueLength in new[] { 7, 300, 3000 })
+            {
+                foreach (ColumnType type in new[] { ColumnType.MemoType, ColumnType.BinaryType, ColumnType.OleType })
+                {
+                    data.Add(fault, valueLength, type);
                 }
             }
         }
@@ -47,10 +67,10 @@ public sealed class CalculatedLongValueDecodePolicyTests
 
     [Theory]
     [MemberData(nameof(EnvelopeCases))]
-    public async Task MalformedCalculatedMemo_PublicReadsDiagnoseMissingValue(int fault, int valueLength, bool strict)
+    public async Task MalformedCalculatedLongValue_PublicReadsDiagnoseMissingValue(int fault, int valueLength, bool strict, ColumnType resultType)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream original = await CreateDamagedDatabaseAsync(fault, valueLength, ct);
+        await using MemoryStream original = await CreateDamagedDatabaseAsync(fault, valueLength, resultType, ct);
         await using var messages = new StringWriter(CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(messages);
         var traceScope = new TestTraceScope(listener);
@@ -88,28 +108,11 @@ public sealed class CalculatedLongValueDecodePolicyTests
     }
 
     [Theory]
-    [InlineData(0, 7)]
-    [InlineData(0, 300)]
-    [InlineData(0, 3000)]
-    [InlineData(1, 7)]
-    [InlineData(1, 300)]
-    [InlineData(1, 3000)]
-    [InlineData(2, 7)]
-    [InlineData(2, 300)]
-    [InlineData(2, 3000)]
-    [InlineData(3, 7)]
-    [InlineData(3, 300)]
-    [InlineData(3, 3000)]
-    [InlineData(4, 7)]
-    [InlineData(4, 300)]
-    [InlineData(4, 3000)]
-    [InlineData(5, 7)]
-    [InlineData(5, 300)]
-    [InlineData(5, 3000)]
-    public async Task MalformedCalculatedMemo_WriteBackRefusesLoss(int fault, int valueLength)
+    [MemberData(nameof(WriteBackCases))]
+    public async Task MalformedCalculatedLongValue_WriteBackRefusesLoss(int fault, int valueLength, ColumnType resultType)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream stream = await CreateDamagedDatabaseAsync(fault, valueLength, ct);
+        await using MemoryStream stream = await CreateDamagedDatabaseAsync(fault, valueLength, resultType, ct);
         byte[] before = stream.ToArray();
         await using AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct);
         JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await writer.UpdateRowsAsync("Values", RowCriteria.All(), new RowValues { ["Id"] = 2 }, ct));
@@ -117,13 +120,14 @@ public sealed class CalculatedLongValueDecodePolicyTests
         Assert.Equal(before, stream.ToArray());
     }
 
-    private static async Task<MemoryStream> CreateDamagedDatabaseAsync(int fault, int valueLength, CancellationToken ct)
+    private static async Task<MemoryStream> CreateDamagedDatabaseAsync(int fault, int valueLength, ColumnType resultType, CancellationToken ct)
     {
         await using var original = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(original, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct))
         {
             string value = new('v', valueLength);
-            await writer.CreateTableAsync("Values", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Value", typeof(string)) { IsCalculated = true, CalculationExpression = "\"" + value + "\"" }], ct);
+            Type resultClrType = resultType == ColumnType.MemoType ? typeof(string) : typeof(byte[]);
+            await writer.CreateTableAsync("Values", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Value", resultClrType) { IsCalculated = true, CalculatedResultType = (byte)resultType, CalculationExpression = "\"" + value + "\"" }], ct);
             await writer.InsertRowAsync("Values", [1, value], ct);
         }
 
@@ -134,7 +138,7 @@ public sealed class CalculatedLongValueDecodePolicyTests
         TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, ct));
         ColumnInfo column = definition.Columns[1];
         Assert.True(column.IsCalculated);
-        Assert.Equal(ColumnType.MemoType, JetTypeInfo.ResolveValueType(column));
+        Assert.Equal(resultType, JetTypeInfo.ResolveValueType(column));
         JetFormat profile = harness.Database.Format;
         for (long number = 1; number < harness.Database.Pages.PageCount; number++)
         {

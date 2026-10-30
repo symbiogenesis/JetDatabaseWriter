@@ -30,7 +30,7 @@ internal static class ScalarColumnReader
     /// <exception cref="JetNotSupportedException">Thrown when the column type is unknown.</exception>
     internal static string DecodeSimpleColumnValue(JetFormat format, byte[] page, int rowStart, int rowSize, ColumnInfo column)
     {
-        if (column == null || rowSize < format.RowFields.NumCols)
+        if (column == null || rowSize < format.RowFields.NumCols || UsesLongValueStorage(column))
         {
             return string.Empty;
         }

@@ -70,7 +70,9 @@ public sealed class CompactRawFieldReaderTests
     [InlineData(TextType, OleType, true)]
     [InlineData(MemoType, TextType, false)]
     [InlineData(MemoType, LongIntegerType, false)]
-    [InlineData(OleType, BinaryType, false)]
+    [InlineData(OleType, BinaryType, true)]
+    [InlineData(TextType, BinaryType, true)]
+    [InlineData(DoubleType, BinaryType, true)]
     public async Task Scan_CalculatedLongValueStorageFollowsPersistedResultType(ColumnType descriptorType, ColumnType resultType, bool expectedLongValue)
     {
         var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);

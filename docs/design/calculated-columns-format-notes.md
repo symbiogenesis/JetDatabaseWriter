@@ -113,7 +113,7 @@ Calculated-value validation requires the complete 23-byte envelope overhead: a 2
 For variable-width source types the on-disk `col_len` becomes
 `originalLen + CALC_EXTRA_DATA_LEN`. For fixed-width source types it is forced
 to `CALC_FIXED_FIELD_LEN` regardless of the underlying type. Long-value result
-types (`MEMO` / `OLE`) keep the normal LVAL row header in the row; the bytes
+types (`MEMO` / `OLE`, and calculated Binary) keep the normal LVAL row header in the row; the bytes
 inside the LVAL payload are wrapped.
 
 Native calculated Text uses a 486-byte maximum payload (243 UTF-16 units) and
@@ -876,3 +876,22 @@ month/day names. `CalculatedNativeDateFunctionTests` and its DAO controls retain
 native subtypes through Binary payloads and verify writer/native recalculation
 and compact. Database/thread locale probes are separate from changing operating
 system regional settings; they did not alter the measured naming profile.
+
+## Native calculated Binary and OLE results
+
+Binary result type 9 and OLE result type 11 both store their wrapped cache through
+long-value descriptors, regardless of the physical descriptor type. Ordinary
+Binary remains an inline byte field. Variant result bytes preserve native scalar
+widths, little-endian floating/date bits, scaled Currency, UTF-16 text and GUID
+identity. Decimal results use their native text conversion. Empty bytes are Null;
+calculated errors use the independently measured 27-byte error envelope inside
+the long value, including status 11 for division by zero.
+
+The shared storage decision covers decoding, snapshots, row encoding, allocation,
+usage-map reclamation and raw compact assembly. `CalculatedBinaryResultTests`
+compares independent native bytes, writer/native updates, rollback and compact,
+including Binary and OLE error repair. Long caches remain intact in managed
+reads/writes. The measured ACE version itself loses large chained calculated
+Binary/OLE caches during native CompactDatabase, reproduced without any library
+writes; shorter external controls survive. Native compaction is not authority to
+replace such independently readable source caches with Null in managed storage.

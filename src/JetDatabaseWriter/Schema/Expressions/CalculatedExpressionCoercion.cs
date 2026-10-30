@@ -44,6 +44,11 @@ internal static class CalculatedExpressionCoercion
             return DBNull.Value;
         }
 
+        if (isCalculatedColumn && targetType == typeof(byte[]))
+        {
+            return CalculatedExpressionBinaryCoercion.ConvertValue(value!);
+        }
+
         if (value is AccessCurrency currency)
         {
             if (targetType == typeof(double))

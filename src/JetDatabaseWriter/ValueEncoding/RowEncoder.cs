@@ -207,23 +207,16 @@ internal sealed class RowEncoder(JetFormat format)
         return payload;
     }
 
-    private static byte[]? EncodeCalculatedOleValue(object value)
+    private static byte[]? EncodeCalculatedBinaryValue(object value)
     {
         if (value is PreEncodedLongValue preOle)
         {
             return preOle.HeaderBytes;
         }
 
-        byte[]? data = value as byte[];
-        if (data == null)
+        if (value is not byte[] data)
         {
-            string? stringValue = value as string;
-            if (string.IsNullOrEmpty(stringValue))
-            {
-                return null;
-            }
-
-            data = Encoding.UTF8.GetBytes(stringValue);
+            throw new ArgumentException("A calculated Binary or OLE result must be converted to its native byte array before encoding.", nameof(value));
         }
 
         byte[] wrapped = CalculatedColumnUtil.Wrap(data);
@@ -651,8 +644,8 @@ internal sealed class RowEncoder(JetFormat format)
     {
         if (value is CalculatedError error)
         {
-            byte[] envelope = CalculatedColumnUtil.EncodeError(error, JetTypeInfo.ResolveValueType(column) == OleType);
-            return JetTypeInfo.ResolveValueType(column) is MemoType or OleType ? LongValueStore.WrapInlineLongValue(envelope) : envelope;
+            byte[] envelope = CalculatedColumnUtil.EncodeError(error, JetTypeInfo.ResolveValueType(column) != MemoType);
+            return JetTypeInfo.UsesLongValueStorage(column) ? LongValueStore.WrapInlineLongValue(envelope) : envelope;
         }
 
         // Access encodes the cached value by the column's ResultType, which can
@@ -666,19 +659,14 @@ internal sealed class RowEncoder(JetFormat format)
                 JetFormat.EncodeCalculatedText(Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty, GetCalculatedVariableSize(column, valueType)));
         }
 
-        if (valueType == BinaryType)
-        {
-            return CalculatedColumnUtil.Wrap(this.EncodeBinaryValue(value, GetCalculatedVariableSize(column, valueType)) ?? []);
-        }
-
         if (valueType == MemoType)
         {
             return this.EncodeCalculatedMemoValue(value);
         }
 
-        if (valueType == OleType)
+        if (valueType is BinaryType or OleType)
         {
-            return EncodeCalculatedOleValue(value);
+            return EncodeCalculatedBinaryValue(value);
         }
 
         if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))

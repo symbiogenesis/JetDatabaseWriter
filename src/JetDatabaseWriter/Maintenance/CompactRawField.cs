@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Maintenance;
 
 using System;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -20,5 +19,5 @@ internal readonly record struct CompactRawField(ColumnInfo Column, RowLocation L
 
     /// <summary>Gets a value indicating whether the verified stored value type uses a MEMO/OLE descriptor.</summary>
     /// <remarks>Only <see cref="CompactRawFieldKind.Stored"/> fields identify assigned descriptors to audit. Unassigned bytes remain opaque.</remarks>
-    internal bool IsLongValue => this.IsStorageTypeKnown && JetTypeInfo.ResolveValueType(this.Column) is ColumnType.MemoType or ColumnType.OleType;
+    internal bool IsLongValue => this.IsStorageTypeKnown && JetTypeInfo.UsesLongValueStorage(this.Column);
 }

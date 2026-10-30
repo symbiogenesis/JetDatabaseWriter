@@ -657,7 +657,7 @@ internal sealed class TableReader(
     {
         foreach (ColumnInfo column in tableDef.Columns)
         {
-            if (column.Type is MemoType or OleType or ComplexType)
+            if (column.Type == ComplexType || JetTypeInfo.UsesLongValueStorage(column))
             {
                 return true;
             }

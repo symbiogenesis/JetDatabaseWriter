@@ -438,7 +438,7 @@ internal sealed class RowDecodePlan
         }
 
         ColumnType valueType = JetTypeInfo.ResolveValueType(column);
-        if (valueType is MemoType or OleType)
+        if (JetTypeInfo.UsesLongValueStorage(column))
         {
             _ = LongValueReadPolicy.MissingValue(
                 column.Name,
@@ -747,7 +747,7 @@ internal sealed class RowDecodePlan
         CancellationToken cancellationToken) => slice.Kind switch
         {
             ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
-            ColumnSliceKind.Empty when JetTypeInfo.ResolveValueType(column) is MemoType or OleType => null!,
+            ColumnSliceKind.Empty when JetTypeInfo.UsesLongValueStorage(column) => null!,
             ColumnSliceKind.Null or ColumnSliceKind.Empty => string.Empty,
             ColumnSliceKind.Fixed when column.Type is DateTimeType or DateTimeExtendedType => this.DecodeFixedDateString(page, rowStart + slice.DataStart, column),
             ColumnSliceKind.Fixed when column.Type == ComplexType => this.DecodeFixedComplexReferenceString(page, rowStart + slice.DataStart, slice.DataLen, column),
@@ -775,7 +775,7 @@ internal sealed class RowDecodePlan
         if (length <= 0)
         {
             _ = this.DecodeEmptyVariableValue(column, length);
-            return column.IsCalculated && JetTypeInfo.ResolveValueType(column) is MemoType or OleType ? null! : string.Empty;
+            return column.IsCalculated && JetTypeInfo.UsesLongValueStorage(column) ? null! : string.Empty;
         }
 
         if (column.IsCalculated)
@@ -837,7 +837,7 @@ internal sealed class RowDecodePlan
         {
             throw;
         }
-        catch (JetCorruptDataException exception) when (exception.ErrorCode != JetErrorCode.MalformedValue && JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
+        catch (JetCorruptDataException exception) when (exception.ErrorCode != JetErrorCode.MalformedValue && JetTypeInfo.UsesLongValueStorage(column))
         {
             _ = LongValueReadPolicy.MissingValue(column.Name, exception, this.strictParsing);
             return null!;
@@ -860,7 +860,7 @@ internal sealed class RowDecodePlan
     {
         try
         {
-            if (JetTypeInfo.ResolveValueType(column) is not (MemoType or OleType))
+            if (!JetTypeInfo.UsesLongValueStorage(column))
             {
                 RowValueDecodePolicy.ValidateCalculatedEnvelope(page.AsSpan(start, length));
                 if (CalculatedColumnUtil.ReadError(page.AsSpan(start, length)) is { } error)
@@ -879,18 +879,18 @@ internal sealed class RowDecodePlan
                 return source.DecodeCalculatedText(textPayload, 0, textPayload.Length);
             }
 
-            if (valueType == BinaryType)
-            {
-                return JetTypeInfo.ToHexStringNoSeparator(RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length)));
-            }
-
-            if (valueType is MemoType or OleType)
+            if (JetTypeInfo.UsesLongValueStorage(column))
             {
                 byte[] raw = await longValueDecoder.ReadLongValueRawBytesAsync(page, start, length, cancellationToken).ConfigureAwait(false);
                 byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(raw);
                 if (CalculatedColumnUtil.ReadError(raw) is { } error)
                 {
                     return error.ToString();
+                }
+
+                if (valueType == BinaryType)
+                {
+                    return JetTypeInfo.ToHexStringNoSeparator(payload);
                 }
 
                 return longValueDecoder.DecodeLongValue(payload, 0, payload.Length, valueType == OleType, compressedStorage: false);
@@ -921,7 +921,7 @@ internal sealed class RowDecodePlan
         {
             throw;
         }
-        catch (JetCorruptDataException exception) when (exception.ErrorCode != JetErrorCode.MalformedValue && JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
+        catch (JetCorruptDataException exception) when (exception.ErrorCode != JetErrorCode.MalformedValue && JetTypeInfo.UsesLongValueStorage(column))
         {
             _ = LongValueReadPolicy.MissingValue(column.Name, exception, this.strictParsing);
             return null!;
@@ -929,7 +929,7 @@ internal sealed class RowDecodePlan
         catch (Exception exception) when (RowValueDecodePolicy.IsMalformedValueException(exception))
         {
             _ = RowValueDecodePolicy.MalformedVariableValue(column, exception, this.strictParsing);
-            return JetTypeInfo.ResolveValueType(column) is MemoType or OleType ? null! : string.Empty;
+            return JetTypeInfo.UsesLongValueStorage(column) ? null! : string.Empty;
         }
     }
 
@@ -1046,7 +1046,7 @@ internal sealed class RowDecodePlan
     {
         // A write-back snapshot must not turn an unreadable MEMO / OLE value
         // into DBNull, which an update or schema rewrite would then store.
-        if (this.PreservesStoredValues && JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
+        if (this.PreservesStoredValues && JetTypeInfo.UsesLongValueStorage(column))
         {
             return new UnreadableLongValue(column.Name, exception.Message);
         }
@@ -1064,7 +1064,7 @@ internal sealed class RowDecodePlan
     {
         try
         {
-            if (JetTypeInfo.ResolveValueType(column) is not (MemoType or OleType))
+            if (!JetTypeInfo.UsesLongValueStorage(column))
             {
                 RowValueDecodePolicy.ValidateCalculatedEnvelope(page.AsSpan(start, length));
                 if (CalculatedColumnUtil.ReadError(page.AsSpan(start, length)) is { } error)
@@ -1083,16 +1083,10 @@ internal sealed class RowDecodePlan
                 return text.Length == 0 ? DBNull.Value : text;
             }
 
-            if (valueType == BinaryType)
-            {
-                byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
-                return payload.Length == 0 ? DBNull.Value : payload;
-            }
-
-            if (valueType is MemoType or OleType)
+            if (JetTypeInfo.UsesLongValueStorage(column))
             {
                 needsLongValue = true;
-                return new CalculatedLongValueRef(start, length, valueType == OleType);
+                return new CalculatedLongValueRef(start, length, valueType != MemoType);
             }
 
             if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
