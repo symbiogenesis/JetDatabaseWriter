@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Security.Cryptography;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
@@ -166,6 +167,16 @@ internal sealed class CalculatedExpressionEvaluationContext
         }
 
         ColumnType storageType = referenced.IsCalculated ? referenced.CalculatedResultType : referenced.StorageType;
+        if (storageType == ColumnType.BooleanType && (!referenced.IsCalculated || !IsNull(coerced)))
+        {
+            return (short)(!IsNull(coerced) && Convert.ToBoolean(coerced, CultureInfo.InvariantCulture) ? -1 : 0);
+        }
+
+        if (storageType == ColumnType.ByteType && !IsNull(coerced))
+        {
+            return (int)Convert.ToByte(coerced, CultureInfo.InvariantCulture);
+        }
+
         if (!referenced.IsCalculated && storageType == ColumnType.NumericType && !IsNull(coerced))
         {
             return NumericEncoder.NormalizeStoredValue(this.columns[index], ToDecimal(coerced));

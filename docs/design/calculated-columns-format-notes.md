@@ -677,6 +677,12 @@ insert/update/reopen. These controls do not establish every missing-result
 boundary or fresh ACE behavior.
 Decimal expression text uses full fixed decimal digits without trailing zeros.
 
+Field references carry native expression subtypes rather than CLR storage types:
+Byte fields project as Long and Yes/No fields as signed Integer (-1 or 0),
+including calculated sources. An ordinary nullable Yes/No input projects the
+stored false value. `CalculatedFieldSubtypeTests` verifies mixed-Single result
+bits and Binary result widths through native read, recalculation and compact.
+
 Decimal-to-Double conversion explicitly follows OLE's low-64/high-32 limb
 conversion, addition and scale division. Decimal-to-Single uses that Double
 intermediate. This retains measured native bits across the .NET 11 conversion
