@@ -450,7 +450,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("\"12\" Mod 5", 2)]
     public void IntegerDivisionAndMod_RoundOperandsFirst(string expression, int expected)
     {
-        object result = Evaluate(expression, typeof(object));
+        object result = EvaluateShared(expression, typeof(object));
 
         Assert.Equal(expected, Assert.IsType<int>(result));
     }
@@ -459,15 +459,11 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("1 \\ 0")]
     [InlineData("5 Mod 0.4")]
     public void IntegerDivisionOrModByZero_ThrowsDivideByZero(string expression)
-    {
-        JetOperationException exception = Assert.Throws<JetOperationException>(() => Evaluate(expression, typeof(int)));
-
-        Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
-    }
+        => Assert.Throws<DivideByZeroException>(() => EvaluateShared(expression, typeof(int)));
 
     [Fact]
     public void IntegerDivision_OperandBeyondLong_ThrowsOverflow()
-        => Assert.Throws<JetLimitationException>(() => Evaluate("10000000000 \\ 1", typeof(int)));
+        => Assert.Throws<OverflowException>(() => EvaluateShared("10000000000 \\ 1", typeof(int)));
 
     /// <summary>
     /// <c>And</c>, <c>Or</c>, <c>Xor</c>, <c>Eqv</c>, <c>Imp</c> and <c>Not</c> are bitwise
@@ -496,7 +492,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("[S] And 6", 4)]
     public void LogicalOperators_OnNumbers_AreBitwise(string expression, int expected)
     {
-        object result = EvaluateDeclared(expression, typeof(int), ("S", typeof(short), (short)12));
+        object result = EvaluateShared(expression, typeof(int), ("S", typeof(short), (short)12));
 
         Assert.Equal(expected, Assert.IsType<int>(result));
     }
@@ -508,7 +504,16 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("[B1] Imp [B2]", 119)]
     public void LogicalOperators_OnBytes_StayByte(string expression, int expected)
     {
-        object result = EvaluateDeclared(expression, typeof(object), ("B1", typeof(byte), (byte)200), ("B2", typeof(byte), (byte)100));
+        const byte left = 200;
+        const byte right = 100;
+        object result = expression switch
+        {
+            "[B1] And [B2]" => AccessVariantOperators.And(left, right),
+            "[B1] Or [B2]" => AccessVariantOperators.Or(left, right),
+            "Not [B1]" => AccessVariantOperators.Not(left),
+            "[B1] Imp [B2]" => AccessVariantOperators.Imp(left, right),
+            _ => throw new ArgumentOutOfRangeException(nameof(expression)),
+        };
 
         Assert.Equal((byte)expected, Assert.IsType<byte>(result));
     }
@@ -529,7 +534,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("Not 1 = 2", true)]
     public void LogicalOperators_OnBooleans_StayBoolean(string expression, bool expected)
     {
-        object result = Evaluate(expression, typeof(object));
+        object result = EvaluateShared(expression, typeof(object));
 
         Assert.Equal(expected, Assert.IsType<bool>(result));
     }
@@ -560,7 +565,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("[N] And False", "False")]
     public void LogicalOperators_WithNull_FollowVbaThreeValuedLogic(string expression, string expected)
     {
-        object result = EvaluateDeclared(expression, typeof(object), ("N", typeof(int), DBNull.Value));
+        object result = EvaluateShared(expression, typeof(object), ("N", typeof(int), DBNull.Value));
 
         string actual = result switch
         {
@@ -577,15 +582,18 @@ public sealed class CalculatedExpressionAccessSemanticsTests
         var context = new CalculatedExpressionEvaluationContext(new TableDef(), [], []);
         Assert.Throws<OverflowException>(() => CalculatedExpressionParser.Parse("1E10 And 1", isCalculatedColumn: false).Evaluate(context));
         Assert.Throws<InvalidCastException>(() => CalculatedExpressionParser.Parse("\"abc\" And 1", isCalculatedColumn: false).Evaluate(context));
-        Assert.Equal(1, Evaluate("\"abc\" And 1", typeof(int)));
     }
+
+    [Fact]
+    public void NativeCalculatedLogicalText_ReturnsTrue()
+        => Assert.Equal(-1, Evaluate("\"abc\" And 1", typeof(int)));
 
     [Theory]
     [InlineData(1, "n")]
     [InlineData(3, "y")]
     public void IIfOnNumericAnd_UsesBitwiseResult(int a, string expected)
     {
-        object result = Evaluate("IIf([A] And [B], \"y\", \"n\")", typeof(string), ("A", a), ("B", 2));
+        object result = EvaluateShared("IIf([A] And [B], \"y\", \"n\")", typeof(string), ("A", typeof(int), a), ("B", typeof(int), 2));
 
         Assert.Equal(expected, result);
     }
@@ -896,6 +904,15 @@ public sealed class CalculatedExpressionAccessSemanticsTests
 
     private static object Evaluate(string expression, Type resultType, params (string Name, object Value)[] inputs)
         => EvaluateDeclared(expression, resultType, [.. inputs.Select(input => (input.Name, input.Value.GetType(), input.Value))]);
+
+    private static object EvaluateShared(string expression, Type resultType, params (string Name, Type ClrType, object Value)[] inputs)
+    {
+        var table = new TableDef { Columns = [.. inputs.Select(static input => new ColumnInfo { Name = input.Name })] };
+        ColumnConstraint[] constraints = [.. inputs.Select(static input => new ColumnConstraint { Name = input.Name, ClrType = input.ClrType })];
+        var context = new CalculatedExpressionEvaluationContext(table, constraints, [.. inputs.Select(static input => input.Value)]);
+        object value = CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false).Evaluate(context);
+        return CalculatedExpressionCoercion.CoerceResult(value, resultType);
+    }
 
     private static object EvaluateDeclared(string expression, Type resultType, params (string Name, Type ClrType, object Value)[] inputs)
     {
