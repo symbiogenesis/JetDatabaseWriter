@@ -351,6 +351,11 @@ internal static class CalculatedExpressionCoercion
             return ToGeneralDateText(date);
         }
 
+        if (value is Guid guid)
+        {
+            return guid.ToString("B", CultureInfo.InvariantCulture).ToUpperInvariant();
+        }
+
         if (value is double doubleValue)
         {
             return ToFloatingText(doubleValue, 15);

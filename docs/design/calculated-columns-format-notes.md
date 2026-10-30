@@ -479,7 +479,10 @@ Supported subset:
   and bitwise word operators (`Not`, `And`, `Or`, `Xor`, `Eqv`, `Imp`), and Access special
   comparisons (`Is [Not] Null`, `[Not] Like`, `[Not] Between`, `[Not] In`).
 - Literals: numbers, double- and single-quoted text, `#date#`, and `&H`/`&O`
-  radix literals.
+  radix literals in the shared interpreter; native `{guid {...}}` literals retain
+  Guid identity in table and shared contexts. A Guid converted to calculated Text
+  uses uppercase hexadecimal with braces. `CalculatedGuidLiteralTests` verifies
+  typed/text caches, writer updates and fresh DAO read/update/compact.
 - Constants and nulls: `True`/`False`, `Yes`/`No`, `On`/`Off`, common `vb*`
   constants, blank/null nodes, and `DBNull` values from the in-flight row.
 - Built-ins: `IIf`/`IF`, `Nz`, `IsNull`/`IsBlank`, `IsNumeric`/`IsNumber`,

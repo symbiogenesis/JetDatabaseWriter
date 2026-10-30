@@ -459,6 +459,11 @@ internal sealed class CalculatedExpressionParser
                     // A date literal is permitted where an explicit CDate call is not.
                     result.Add(new Token(TokenKind.Value, expression[start..index], Function("CDATE", new CalculatedExpressionValueNode(value))));
                 }
+                else if (current == '{')
+                {
+                    Guid value = this.ReadGuidLiteral(ref index);
+                    result.Add(new Token(TokenKind.Value, expression[start..index], new CalculatedExpressionValueNode(value)));
+                }
                 else if (current == '[' || IsNameStart(current))
                 {
                     result.Add(this.ReadName(ref index));
@@ -560,6 +565,33 @@ internal sealed class CalculatedExpressionParser
             return index < 0
                 ? throw this.SyntaxError("unterminated text literal")
                 : expression[start..(index - 1)].Replace(new string(quote, 2), quote.ToString(), StringComparison.Ordinal);
+        }
+
+        private Guid ReadGuidLiteral(ref int index)
+        {
+            index = SkipWhiteSpace(expression, index + 1);
+            if (expression.Length - index < 4 || !expression.AsSpan(index, 4).Equals("guid".AsSpan(), StringComparison.OrdinalIgnoreCase))
+            {
+                throw this.SyntaxError("an object literal must use {guid {...}} syntax");
+            }
+
+            index = SkipWhiteSpace(expression, index + 4);
+            int start = index;
+            int end = expression.IndexOf('}', start);
+            if (index >= expression.Length || expression[index] != '{' || end < 0
+                || !Guid.TryParseExact(expression.AsSpan(start, end - start + 1), "B".AsSpan(), out Guid value))
+            {
+                throw this.SyntaxError("the GUID literal is invalid");
+            }
+
+            index = SkipWhiteSpace(expression, end + 1);
+            if (index >= expression.Length || expression[index] != '}')
+            {
+                throw this.SyntaxError("the GUID literal has no closing brace");
+            }
+
+            index++;
+            return value;
         }
 
         private Token ReadNumber(ref int index)
