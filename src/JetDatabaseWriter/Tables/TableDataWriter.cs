@@ -752,7 +752,12 @@ internal sealed class TableDataWriter(
 
             if (!format.IsJet3 && text.Length > 0 && text[0] == '\uFEFF')
             {
-                throw new JetLimitationException(JetErrorCode.FeatureNotSupported, $"Leading U+FEFF in calculated or compressed Text column '{column.Name}' of table '{tableName}' has no verified native-safe representation.", new JetErrorInfo { TableName = tableName, ColumnName = column.Name });
+                if (column.IsCalculated)
+                {
+                    throw new JetLimitationException(JetErrorCode.FeatureNotSupported, $"Leading U+FEFF in calculated Text column '{column.Name}' of table '{tableName}' has no verified native-safe representation.", new JetErrorInfo { TableName = tableName, ColumnName = column.Name });
+                }
+
+                JetFormat.ValidateEscapedVariableText(text, column.Size, new JetErrorInfo { TableName = tableName, ColumnName = column.Name });
             }
 
             if (format.DescribeUnstorableCharacter(text) is { } character)

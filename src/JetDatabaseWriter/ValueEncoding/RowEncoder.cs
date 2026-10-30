@@ -732,7 +732,7 @@ internal sealed class RowEncoder(JetFormat format)
 
         if (!format.IsJet3 && compress && value.Length > 0 && value[0] == '\uFEFF')
         {
-            throw new JetLimitationException(JetErrorCode.FeatureNotSupported, "Leading U+FEFF in compressed Text has no verified native-safe representation.");
+            return JetFormat.EncodeEscapedVariableText(value, maxSize);
         }
 
         int limit = maxSize > 0 ? maxSize : int.MaxValue;
