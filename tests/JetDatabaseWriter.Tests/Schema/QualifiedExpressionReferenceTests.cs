@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -26,7 +27,7 @@ public sealed class QualifiedExpressionReferenceTests
     {
         CalculatedExpressionEvaluationContext context = Context("T");
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(reference + " * 2");
-        Assert.Equal(8m, Assert.IsType<decimal>(plan.Evaluate(context)));
+        Assert.Equal(8d, Assert.IsType<double>(plan.Evaluate(context)));
     }
 
     [Theory]
@@ -37,7 +38,7 @@ public sealed class QualifiedExpressionReferenceTests
     public void BareQualifier_BindsToCurrentRowEvenWhenNameDiffers(string reference)
     {
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(reference + " * 2");
-        Assert.Equal(8m, Assert.IsType<decimal>(plan.Evaluate(Context("Renamed T"))));
+        Assert.Equal(8d, Assert.IsType<double>(plan.Evaluate(Context("Renamed T"))));
         Assert.False(ColumnDefaultValue.Compile(reference).TryEvaluate(typeof(int), () => Context("Renamed T"), out _));
         Assert.Throws<JetNotSupportedException>(() => CalculatedExpressionParser.Parse(reference, isCalculatedColumn: false));
     }
@@ -77,12 +78,12 @@ public sealed class QualifiedExpressionReferenceTests
     {
         string expression = qualifier + "." + fieldName + " * 2";
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(expression);
-        Assert.Equal(8m, Assert.IsType<decimal>(plan.Evaluate(Context("T", fieldName))));
+        Assert.Equal(8d, Assert.IsType<double>(plan.Evaluate(Context("T", fieldName))));
         Assert.True(ExpressionFieldReferences.References(expression, fieldName, "T"));
         string renamed = Assert.IsType<string>(ExpressionFieldReferences.Rename(expression, fieldName, "Cost", "T"));
         Assert.Equal(qualifier + ".[Cost] * 2", renamed);
         CalculatedExpressionNode renamedPlan = CalculatedExpressionParser.Parse(renamed);
-        Assert.Equal(8m, Assert.IsType<decimal>(renamedPlan.Evaluate(Context("T", "Cost"))));
+        Assert.Equal(8d, Assert.IsType<double>(renamedPlan.Evaluate(Context("T", "Cost"))));
     }
 
     [Theory]
@@ -98,20 +99,21 @@ public sealed class QualifiedExpressionReferenceTests
     }
 
     [Theory]
-    [InlineData("[T].[Price] + 1e-3", 4.001d)]
-    [InlineData("T.Price + 1E+3", 1004d)]
-    [InlineData("[T]![Price] + .5E1", 9d)]
-    [InlineData("[T].[Price] + &HFFFF", 3d)]
-    [InlineData("T.Price + &HFFFF&", 65539d)]
-    [InlineData("[T]![Price] + &O17", 19d)]
-    [InlineData("T.Price + &17", 19d)]
-    public void QualifiedReference_WithScientificOrRadixLiteralRetainsNumericToken(string expression, double expected)
+    [InlineData("[T].[Price] + 1e-3", 4.001d, typeof(double))]
+    [InlineData("T.Price + 1E+3", 1004d, typeof(double))]
+    [InlineData("[T]![Price] + .5E1", 9d, typeof(double))]
+    [InlineData("[T].[Price] + &HFFFF", 3d, typeof(decimal))]
+    [InlineData("T.Price + &HFFFF&", 65539d, typeof(decimal))]
+    [InlineData("[T]![Price] + &O17", 19d, typeof(decimal))]
+    [InlineData("T.Price + &17", 19d, typeof(decimal))]
+    public void QualifiedReference_WithScientificOrRadixLiteralRetainsNumericToken(string expression, double expected, Type expectedType)
     {
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(expression);
-        decimal actual = Assert.IsType<decimal>(plan.Evaluate(Context("T")));
+        object actual = plan.Evaluate(Context("T"));
+        Assert.IsType(expectedType, actual);
 
         // Keep this tokenization check at the literals' double precision across runtime conversions.
-        Assert.Equal(expected, decimal.ToDouble(actual));
+        Assert.Equal(expected, Convert.ToDouble(actual, CultureInfo.InvariantCulture));
     }
 
     [Theory]
