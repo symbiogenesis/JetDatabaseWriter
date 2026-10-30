@@ -666,6 +666,11 @@ internal sealed class RowDecodePlan
 
                 case ColumnSliceKind.Null:
                 case ColumnSliceKind.Empty:
+                    if (column.IsCalculated)
+                    {
+                        return false;
+                    }
+
                     result[resultIndex] = null;
                     break;
 
@@ -747,6 +752,7 @@ internal sealed class RowDecodePlan
         CancellationToken cancellationToken) => slice.Kind switch
         {
             ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
+            ColumnSliceKind.Null when column.IsCalculated => CalculatedError.Uncached.ToString(),
             ColumnSliceKind.Empty when JetTypeInfo.UsesLongValueStorage(column) => null!,
             ColumnSliceKind.Null or ColumnSliceKind.Empty => string.Empty,
             ColumnSliceKind.Fixed when column.Type is DateTimeType or DateTimeExtendedType => this.DecodeFixedDateString(page, rowStart + slice.DataStart, column),
@@ -943,6 +949,8 @@ internal sealed class RowDecodePlan
         ref bool needsLongValue) => slice.Kind switch
         {
             ColumnSliceKind.Bool => BoxCache.Bool(slice.BoolValue),
+            ColumnSliceKind.Null when column.IsCalculated => CalculatedError.Uncached,
+            ColumnSliceKind.Empty when column.IsCalculated => this.DecodeEmptyVariableValue(column, 0),
             ColumnSliceKind.Empty when this.PreservesStoredValues && column.Type == BigBinaryType => throw new JetCorruptDataException(
                 JetErrorCode.MalformedValue,
                 $"Column '{column.Name}' has an unreadable BIGBINARY payload and cannot be written back.",

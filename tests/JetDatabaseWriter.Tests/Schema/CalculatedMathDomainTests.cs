@@ -110,7 +110,7 @@ public sealed class CalculatedMathDomainTests
         Assert.Equal(expressions.Length, nativeRows.Count);
         for (int index = 0; index < NativeErrors.Count; index++)
         {
-            int actual = Assert.IsType<CalculatedError>(nativeRows[index]).NativeCode;
+            int? actual = Assert.IsType<CalculatedError>(nativeRows[index]).NativeCode;
             Assert.True(actual == NativeErrors.ElementAt(index).Data.Item2, expressions[index] + " native status " + actual);
         }
 

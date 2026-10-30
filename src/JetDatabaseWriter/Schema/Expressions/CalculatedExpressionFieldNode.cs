@@ -10,6 +10,9 @@ internal sealed class CalculatedExpressionFieldNode(string name, string? qualifi
 {
     internal string Name => name;
 
+    internal override bool HasStaleQualifier(string tableName)
+        => qualifier is not null && !rowLocalQualifier && !string.Equals(qualifier, tableName, StringComparison.OrdinalIgnoreCase);
+
     public void ValidateDeclaredQualifier(string tableName)
     {
         if (qualifier is not null && !rowLocalQualifier && !string.Equals(qualifier, tableName, StringComparison.OrdinalIgnoreCase))

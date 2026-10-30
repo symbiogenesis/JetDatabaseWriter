@@ -5,6 +5,19 @@ using JetDatabaseWriter.Models;
 
 internal sealed class CalculatedExpressionFunctionNode(string name, IReadOnlyList<CalculatedExpressionNode> args) : CalculatedExpressionNode
 {
+    internal override bool HasStaleQualifier(string tableName)
+    {
+        foreach (CalculatedExpressionNode argument in args)
+        {
+            if (argument.HasStaleQualifier(tableName))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     internal override bool HasUntypedNullResult { get; } = ReturnsUntypedNull(name, args);
 
     public override object Evaluate(CalculatedExpressionEvaluationContext context)

@@ -148,6 +148,11 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
         ColumnType valueType = ResolveValueType(col);
         if (value is CalculatedError error)
         {
+            if (error.NativeCode is null)
+            {
+                return false;
+            }
+
             if (col.IsCalculated && UsesLongValueStorage(col))
             {
                 data = CalculatedColumnUtil.EncodeError(error, isOle: valueType != MemoType);

@@ -341,7 +341,7 @@ internal sealed class ConstraintRegistry(
 
                 if (c.IsCalculated)
                 {
-                    values[i] = value ?? DBNull.Value;
+                    values[i] = CalculatedError.Uncached;
                     continue;
                 }
 
@@ -853,9 +853,9 @@ internal sealed class ConstraintRegistry(
         try
         {
             rule.Plan ??= CalculatedExpressionParser.Parse(rule.Expression, isCalculatedColumn: false);
-            var context = CalculatedExpressionEvaluationContext.FromCalculatedRow(tableDef, columns, values, tableName, textCollation);
+            var context = CalculatedExpressionEvaluationContext.FromCalculatedRow(tableDef, columns, values, tableName, textCollation, liveStaleReferences: true);
             object result = rule.Plan.Evaluate(context);
-            if (CalculatedExpressionCoercion.IsNull(result) || CalculatedExpressionCoercion.ToBoolean(result))
+            if (result is not CalculatedError && (CalculatedExpressionCoercion.IsNull(result) || CalculatedExpressionCoercion.ToBoolean(result)))
             {
                 return;
             }

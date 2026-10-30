@@ -86,7 +86,7 @@ public sealed class TableRenamedQualifiedExpressionTests
     [InlineData("[T].[Price]")]
     [InlineData("[T]![Price]")]
     [InlineData("[T].Price")]
-    public async Task StaleBracketedQualifiedCalculation_InsertAndUpdatePersistNull(string reference)
+    public async Task StaleBracketedQualifiedCalculation_InsertAndUpdateRetainUncachedState(string reference)
     {
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -104,7 +104,7 @@ public sealed class TableRenamedQualifiedExpressionTests
             await writer.InsertRowAsync("Renamed T", [4, 8], TestContext.Current.CancellationToken);
         }
 
-        await AssertWriterRecalculatesNullAsync(stream.ToArray());
+        await AssertWriterPreservesStaleCachesAsync(stream.ToArray());
     }
 
     [Theory(
@@ -144,11 +144,11 @@ public sealed class TableRenamedQualifiedExpressionTests
         Assert.True(created.ExitCode == 0, $"DAO failed: {created.StdOut}\n{created.StdErr}");
         Assert.Contains("BEFORE=8", created.StdOut, StringComparison.Ordinal);
 
-        // Bracketed stale qualifiers produce native Null cached values;
-        // the bare forms bind to the current row and have separate writer coverage.
+        // Stale bracketed references retain their caches and expose COM errors;
+        // bare forms bind to the current row and have separate writer coverage.
         if (returnsNull)
         {
-            byte[] writerImage = await AssertWriterRecalculatesNullAsync(await File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken));
+            byte[] writerImage = await AssertWriterPreservesStaleCachesAsync(await File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken), expectedExisting: 8);
             string writerPath = session.CreateDatabasePath("writer_null");
             await File.WriteAllBytesAsync(writerPath, writerImage, TestContext.Current.CancellationToken);
             AccessRoundTripEnvironment.CompactResult writerRead = session.RunDaoDatabaseScript(
@@ -160,7 +160,7 @@ public sealed class TableRenamedQualifiedExpressionTests
                 try {
                     while (!$rs.EOF) {
                         $value = $rs.Fields('Calculated').Value
-                        if ($null -ne $value -and ![Convert]::IsDBNull($value)) { throw 'Expected native Null after writer recalculation.' }
+                        if ($null -ne $value) { throw 'Expected native COM error for the stale reference.' }
                         Write-Output ('WRITER_ROW=' + [string]$rs.Fields('Price').Value + ':NULL')
                         $rs.MoveNext()
                     }
@@ -337,7 +337,7 @@ public sealed class TableRenamedQualifiedExpressionTests
         Assert.Equal(12, values[6]);
     }
 
-    private static async Task<byte[]> AssertWriterRecalculatesNullAsync(byte[] image)
+    private static async Task<byte[]> AssertWriterPreservesStaleCachesAsync(byte[] image, int? expectedExisting = null)
     {
         await using var stream = new MemoryStream();
         await stream.WriteAsync(image, TestContext.Current.CancellationToken);
@@ -357,7 +357,15 @@ public sealed class TableRenamedQualifiedExpressionTests
         await foreach (object[] row in reader.Rows("Renamed T", cancellationToken: TestContext.Current.CancellationToken))
         {
             Assert.True(Assert.IsType<int>(row[0]) is 2 or 5);
-            Assert.Same(DBNull.Value, row[1]);
+            if ((int)row[0] == 5 && expectedExisting is int cached)
+            {
+                Assert.Equal(cached, row[1]);
+            }
+            else
+            {
+                Assert.Null(Assert.IsType<CalculatedError>(row[1]).NativeCode);
+            }
+
             count++;
         }
 

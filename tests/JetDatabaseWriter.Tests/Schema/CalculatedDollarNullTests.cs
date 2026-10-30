@@ -76,7 +76,7 @@ public sealed class CalculatedDollarNullTests
         {
             await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
             object[] row = Assert.Single(await reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken));
-            int[] actual = row[1..].Select(static value => Assert.IsType<CalculatedError>(value).NativeCode).ToArray();
+            int[] actual = row[1..].Select(static value => Assert.IsType<CalculatedError>(value).NativeCode!.Value).ToArray();
             Assert.Equal(Cases.Select(static item => item.Data.Item2), actual);
         }
     }

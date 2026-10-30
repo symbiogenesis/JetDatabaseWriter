@@ -35,7 +35,7 @@ internal static class CalculatedColumnUtil
         }
 
         int code = Ri32(data, 0);
-        if (code is not (5 or 6 or 11 or 13 or 93 or 94 or 440 or -3030))
+        if (code is not (5 or 6 or 11 or 13 or 93 or 94 or 440 or -3030 or -5617))
         {
             return null;
         }
@@ -53,8 +53,13 @@ internal static class CalculatedColumnUtil
 
     internal static byte[] EncodeError(CalculatedError error, bool isOle = false)
     {
+        if (error.NativeCode is not int code)
+        {
+            throw new ArgumentException("An absent calculated cache has no native error envelope.", nameof(error));
+        }
+
         byte[] data = new byte[isOle ? 27 : error.EnvelopeLength];
-        Wi32(data, 0, error.NativeCode);
+        Wi32(data, 0, code);
         return data;
     }
 

@@ -8,6 +8,8 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
 internal sealed class CalculatedExpressionBinaryNode(string operation, CalculatedExpressionNode left, CalculatedExpressionNode right) : CalculatedExpressionNode
 {
+    internal override bool HasStaleQualifier(string tableName) => left.HasStaleQualifier(tableName) || right.HasStaleQualifier(tableName);
+
     internal override bool HasUntypedNullResult { get; } = operation is "+" or "-" or "*" or "/" or "^" && (left.HasUntypedNullResult || right.HasUntypedNullResult);
 
     public override object Evaluate(CalculatedExpressionEvaluationContext context)

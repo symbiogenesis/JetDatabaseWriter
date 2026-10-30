@@ -24,6 +24,7 @@ internal sealed class CalculatedExpressionEvaluationContext
     private readonly bool[] evaluated;
     private double? lastRandomValue;
     private int calculationDepth;
+    private bool liveStaleReferences;
 
     public CalculatedExpressionEvaluationContext(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
     {
@@ -45,9 +46,9 @@ internal sealed class CalculatedExpressionEvaluationContext
 
     internal bool IsCalculatingColumn => this.calculationDepth != 0;
 
-    public static CalculatedExpressionEvaluationContext FromCalculatedRow(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
+    public static CalculatedExpressionEvaluationContext FromCalculatedRow(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null, bool liveStaleReferences = false)
     {
-        var context = new CalculatedExpressionEvaluationContext(tableDef, constraints, values, tableName, textCollation);
+        var context = new CalculatedExpressionEvaluationContext(tableDef, constraints, values, tableName, textCollation) { liveStaleReferences = liveStaleReferences };
 
         // Validation consumes the finished row, including calculated Nulls and
         // volatile results, without running those expressions a second time.
@@ -89,6 +90,15 @@ internal sealed class CalculatedExpressionEvaluationContext
             {
                 CalculatedExpressionBindings.ValidatePlan(this.constraints, index);
                 constraint.CalculatedExpressionPlan = CalculatedExpressionParser.Parse(constraint.CalculationExpression);
+            }
+
+            if (this.tableName is not null && constraint.CalculatedExpressionPlan.HasStaleQualifier(this.tableName))
+            {
+                // Native table rename leaves the old cache untouched, even for
+                // an unused branch. Missing fields still refuse mutation.
+                CalculatedExpressionBindings.ValidatePlan(this.constraints, index);
+                this.evaluated[index] = true;
+                return current ?? CalculatedError.Uncached;
             }
 
             raw = constraint.CalculatedExpressionPlan.Evaluate(this);
@@ -154,10 +164,16 @@ internal sealed class CalculatedExpressionEvaluationContext
         // Callers may pass "10" for an Integer field or 10 for a Text field;
         // the expression must see the value as the field holds it.
         ColumnConstraint referenced = this.constraints[index];
-        object value = referenced.IsCalculated ? this.EvaluateColumn(index) : this.values[index];
-        if (value is CalculatedError)
+        if (this.liveStaleReferences && referenced.IsCalculated && this.tableName is not null
+            && (referenced.CalculatedExpressionPlan ??= CalculatedExpressionParser.Parse(referenced.CalculationExpression!)).HasStaleQualifier(this.tableName))
         {
-            return new CalculatedError(-3030);
+            return CalculatedError.Uncached;
+        }
+
+        object value = referenced.IsCalculated ? this.EvaluateColumn(index) : this.values[index];
+        if (value is CalculatedError error)
+        {
+            return new CalculatedError(error.NativeCode is null ? -5617 : -3030);
         }
 
         object coerced = CoerceInput(value, referenced.ClrType);

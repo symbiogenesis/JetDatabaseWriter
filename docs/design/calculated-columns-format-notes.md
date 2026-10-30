@@ -22,9 +22,9 @@ assigned to table validation rules, field validation rules or defaults.
 Calculated plans retain qualifier syntax separately from the column name.
 An adjacent bare qualifier binds to the current row, even when its name is
 another existing table: DAO120 evaluates `Other.Price` and `Other![Price]`
-from `T.Price`, leaving the separate `Other` table unchanged. A bracketed
-qualifier that differs from the explicit current table yields Null for a known
-local field. Missing table context and unknown fields refuse. Plans require an explicit
+from `T.Price`, leaving the separate `Other` table unchanged. A stale bracketed
+qualifier makes its calculated plan retain the stored cache, as described below.
+Missing table context and unknown fields refuse. Plans require an explicit
 row/table context; multi-segment object references are refused, and no
 embedded code or cross-table lookup is executed. Defaults and validation
 rules reject every qualified reference before mutation. Column rename and
@@ -46,18 +46,23 @@ that row-local binding through insert, update and field rename; DAO then
 updates, compacts and reads the resulting expressions and values.
 `TableRenamedQualifiedExpressionTests` also uses the bare `Other` qualifier
 with a real separate table, and verifies that table's data is untouched.
-Bracketed qualifiers `[T].[Price]`, `[T]![Price]` and `[T].Price` instead
-return Null after native table rename, and compact refuses them with DAO
-error 3790. The writer preserves that expression text and stores Null when
-inserting or updating a row with a known local field and a stale bracketed
-qualifier. `CreateTableAsync` and `AddColumnAsync` reject new bracketed foreign
-qualifiers before mutation, following native declaration refusal; persisted
-schema rewrites do not apply that declaration check. Bare qualifiers retain
-their separate row-local semantics. The existing DAO controls establish the
-native syntax distinction. Extended checks of writer-produced Null caches
-through native read and update remain DAO120-guarded and were not executed on
-the current host; the native stale-expression compact refusal remains expected.
-Resolution when the local field is absent remains unverified and refuses.
+Bracketed qualifiers `[T].[Price]`, `[T]![Price]` and `[T].Price` retain existing
+cached bytes after a native table rename. Native UPDATE leaves every expression
+containing a stale qualifier untouched, including unused branches; dependent
+fields compute from the retained cache. New rows have no cached slot for those
+fields, and their dependents cache status -5617. Runtime DAO Value access reports
+a COM error rather than exposing the stored cache. Native compact refuses with
+3790. Public library reads expose stored values; an absent cache is CalculatedError
+with NativeCode null and display `#Error(Uncached)`, distinct from ordinary Null.
+
+The writer preserves these states, ignores supplied INSERT caches, validates
+field bindings before preserving a stale plan, and applies native Required/field/
+table-rule behavior. Unknown local fields remain a malformed-schema mutation
+refusal; ordinary native rename/drop operations cannot author the tested dangling
+field metadata. `CalculatedStaleCacheTests` pins independent native before/after
+and constraint specimens and compares all public read surfaces and writer edits.
+New bracketed foreign qualifiers refuse declaration before mutation. Bare aliases
+retain their current-row binding.
 
 ## On-disk format
 
@@ -253,7 +258,7 @@ Integer conversion; parenthesized, unary-plus and computed year expressions use
 runtime conversion. `CalculatedDeclarationAdmissionTests` compares every native
 result type and independent decimal/scientific year-token controls.
 
-Every insert and update computes its calculated caches from the stored source
+Insert and update compute active calculated caches from the stored source
 values. Caller-supplied caches do not override expressions. Dependencies evaluate
 once per statement in dependency order; constraints consume the completed row,
 including calculated Null, without evaluating expressions again. Source and cached
@@ -263,10 +268,12 @@ that projection. Blank or unsupported persisted expressions refuse atomically.
 writes, reopen, schema edits and original Access-authored result-type variants.
 
 Typed rows and object POCO properties retain immutable `CalculatedError` values
-with signed native status codes. String rows render `#Error(code)`. Calculated
+with signed native status codes, or null NativeCode for an absent cache.
+String rows render `#Error(code)` or `#Error(Uncached)`. Calculated
 DataTable columns use object so valid scalars, errors and ordinary Null survive.
 Incompatible scalar POCO projections fail with property/column context. Error
-operands propagate the measured dependency status -3030, with native branch and
+operands propagate dependency status -3030, or -5617 for an absent source cache,
+with native branch and
 logical masking. Required/rule constraints and calculated Text/Memo error results
 refuse statements as Access does. Native compaction can clear a dependency cache
 while retaining the source error; independent fixtures preserve that distinction.

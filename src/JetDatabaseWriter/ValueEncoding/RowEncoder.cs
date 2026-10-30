@@ -456,7 +456,7 @@ internal sealed class RowEncoder(JetFormat format)
                 continue;
             }
 
-            if (value is DBNull)
+            if (value is DBNull && !column.IsCalculated)
             {
                 if (column.IsFixed && (column.Type == ComplexType))
                 {
@@ -642,8 +642,19 @@ internal sealed class RowEncoder(JetFormat format)
 
     private byte[]? EncodeCalculatedValue(ColumnInfo column, object value)
     {
+        if (value is DBNull)
+        {
+            byte[] envelope = CalculatedColumnUtil.Wrap([]);
+            return JetTypeInfo.UsesLongValueStorage(column) ? LongValueStore.WrapInlineLongValue(envelope) : envelope;
+        }
+
         if (value is CalculatedError error)
         {
+            if (error.NativeCode is null)
+            {
+                return null;
+            }
+
             bool longValue = JetTypeInfo.UsesLongValueStorage(column);
             byte[] envelope = CalculatedColumnUtil.EncodeError(error, longValue && JetTypeInfo.ResolveValueType(column) != MemoType);
             return longValue ? LongValueStore.WrapInlineLongValue(envelope) : envelope;
