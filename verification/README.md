@@ -57,23 +57,44 @@ Mandatory negative controls run on every verification invocation: an intentional
 ## Proof-dependency diagnostics
 
 For a specification review, add `-AnalyzeProofCoverage` to the verification
-command above, using a fresh external output directory. The optional mode uses
-the exact pinned verifier and bundled solver over the complete admitted
-manifest after mandatory verification, audit, negative controls and generated
-freshness. It does not change the default command or enable diagnostics in CI.
+command above, using a fresh external output directory. Prefer a focused
+diagnostic source selection:
+
+```powershell
+$coverageRun = Join-Path ([IO.Path]::GetTempPath()) ('jdw-coverage-' + [guid]::NewGuid().ToString('N'))
+pwsh -NoProfile -File scripts/verify-proofs.ps1 `
+    -DafnyPath (Join-Path $proofRun "tool/$executable") `
+    -OutputDirectory $coverageRun `
+    -AnalyzeProofCoverage `
+    -ProofCoverageSources verification/LongValueKernel.dfy
+```
+
+The optional mode uses the exact pinned verifier and bundled solver after
+mandatory verification, audit, negative controls and generated freshness over
+the complete admitted manifest. `-ProofCoverageSources` accepts exact,
+case-sensitive repository-relative manifest paths, includes every transitive
+normal-source dependency in manifest order, and refuses unknown, duplicate or
+escaping paths. A selection without `-AnalyzeProofCoverage` refuses. Omitting
+the selection analyzes the complete inventory. Source selection affects only
+supplemental diagnostics; it never selects a smaller acceptance gate or enables
+diagnostics in CI.
 
 The extra invocation isolates assertions, requests contradictory/redundant
 assumption warnings and writes dependency text plus HTML coverage. Retain
 `proof-coverage.json`, `proof-coverage.dependencies.log`, the `proof-coverage/`
 reports and process/stdout/stderr logs. The diagnostic receipt records exact
 proof hashes, tool versions, warnings, exit/failure details and
-`acceptanceEvidence: false`. A warning exit is accepted only with a complete
+`acceptanceEvidence: false`, the requested source selection and its complete
+ordered dependency closure. A warning exit is accepted only with a complete
 positive verification summary, zero errors and recognized warning output;
 verification errors, timeouts and tool/report failures fail the requested
 diagnostic run. Mandatory controls remain required on every invocation.
 
 These experimental Dafny diagnostics can be noisy and expensive on large
-proofs. Review findings against reachable success/refusal cases and intended
+proofs. Whole-inventory assertion isolation can produce hundreds of megabytes
+of logs and exceed the process budget; retain those failure diagnostics and
+use a focused dependency closure for routine review. Review findings against
+reachable success/refusal cases and intended
 contracts; unused assumptions alone do not establish vacuity, and coverage
 does not establish specification adequacy. Keep executable logic and intended
 contracts fixed during annotation search, and separately review changes to

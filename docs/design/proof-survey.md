@@ -113,8 +113,13 @@ Use those diagnostics first through the optional `-AnalyzeProofCoverage` mode
 of [verify-proofs.ps1](../../scripts/verify-proofs.ps1); see its
 [execution instructions](../../verification/README.md#proof-dependency-diagnostics).
 The mode retains a separate diagnostic receipt and reports after strict
-verification, audit, negative controls and generated-source checks. It is not
-enabled by ordinary CI and never supplies acceptance evidence.
+complete-inventory verification, audit, negative controls and generated-source
+checks. Prefer `-ProofCoverageSources` for a small admitted source and its exact
+transitive normal-source dependencies; whole-inventory assertion isolation can
+produce very large logs and exceed the process budget. The diagnostic receipt
+names the complete selected closure. Selection never narrows mandatory
+verification, and ordinary CI never enables diagnostics. Coverage output never
+supplies acceptance evidence.
 
 If richer ProofPulse attribution becomes useful, an external pilot must
 demonstrate compatibility with the exact pinned verifier/solver, preserve
