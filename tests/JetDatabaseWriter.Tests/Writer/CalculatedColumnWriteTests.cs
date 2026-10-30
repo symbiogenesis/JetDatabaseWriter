@@ -123,7 +123,7 @@ public sealed class CalculatedColumnWriteTests
         Assert.True(calcLabel.IsCalculated);
         Assert.Equal("[Label] & \" #\" & [Score]", calcLabel.CalculationExpression);
         Assert.Equal(0x0A, calcLabel.CalculatedResultType);
-        Assert.Equal(160, calcLabel.MaxLength);
+        Assert.Equal(486, calcLabel.MaxLength);
 
         Assert.Equal(0x01, Assert.Single(metadata, c => c.Name == "IsHigh").CalculatedResultType);
         Assert.Equal(0x04, Assert.Single(metadata, c => c.Name == "NextScore").CalculatedResultType);
@@ -194,7 +194,7 @@ public sealed class CalculatedColumnWriteTests
                     new("SafeLabel", typeof(string), maxLength: 80)
                     {
                         IsCalculated = true,
-                        CalculationExpression = "Nz([Label], \"missing\")",
+                        CalculationExpression = "IIf(IsNull([Label]), \"missing\", [Label])",
                     },
                     new("CalcLabel", typeof(string), maxLength: 80)
                     {
@@ -364,135 +364,121 @@ public sealed class CalculatedColumnWriteTests
     }
 
     [Fact]
-    public async Task InsertRow_CalculatedColumns_EvaluatesAccessOperatorsAndBuiltins()
+    public void SharedInterpreter_EvaluatesAccessOperatorsAndBuiltins()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
-        {
-            await writer.CreateTableAsync(
-                "CalcAccessSyntax",
-                [
-                    new("Score", typeof(int)),
-                    new("Label", typeof(string), maxLength: 40),
-                    new("Code", typeof(string), maxLength: 20),
-                    new("IsEven", typeof(bool))
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "[Score] Mod 2 = 0",
-                    },
-                    new("MatchesLabel", typeof(bool))
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "[Label] Like \"Al*\"",
-                    },
-                    new("ScoreBand", typeof(string), maxLength: 20)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "IIf([Score] Between 10 And 20, \"Mid\", \"Other\")",
-                    },
-                    new("IsKnown", typeof(bool))
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "[Label] In (\"Alpha\", \"Beta\")",
-                    },
-                    new("LogicGate", typeof(bool))
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "Not ([Score] < 10) And [Label] Like \"A*\"",
-                    },
-                    new("NullState", typeof(string), maxLength: 20)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "IIf([Code] Is Null, \"missing\", [Code])",
-                    },
-                    new("IntDiv", typeof(int))
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "[Score] \\ 5",
-                    },
-                    new("FunctionText", typeof(string), maxLength: 80)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "Replace(UCase([Label]), \"A\", \"@\") & \"-\" & (DatePart(\"yyyy\", DateSerial(2025, 2, 3)))",
-                    },
-                    new("AtnValue", typeof(double))
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "Atn(1)",
-                    },
-                    new("AliasDate", typeof(DateTime))
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "CVDate(\"2025-02-03\")",
-                    },
-                    new("TypeInfo", typeof(string), maxLength: 40)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "TypeName([Label]) & \":\" & (VarType([Score]))",
-                    },
-                    new("StringAliases", typeof(string), maxLength: 40)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "Left$([Label], 2) & \"-\" & UCase$(Right$([Label], 2))",
-                    },
-                    new("CaseConv", typeof(string), maxLength: 40)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "StrConv([Label], vbUpperCase)",
-                    },
-                    new("CompareConstant", typeof(bool))
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "StrComp([Label], \"alpha\", vbTextCompare) = 0",
-                    },
-                    new("RandomValue", typeof(double))
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "Rnd()",
-                    },
-                    new("SeededRandom", typeof(double))
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "Rnd(-7)",
-                    },
-                    new("RepeatedRandom", typeof(double))
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "Rnd(0)",
-                    },
-                ],
-                TestContext.Current.CancellationToken);
-
-            await writer.InsertRowAsync(
-                "CalcAccessSyntax",
-                [
-                    12,
-                    "Alpha",
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                ],
-                TestContext.Current.CancellationToken);
-        }
-
-        await using AccessReader reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcAccessSyntax", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        Dictionary<string, object> row = EvaluateSharedExpressions(
+            [
+                new("Score", typeof(int)),
+                new("Label", typeof(string), maxLength: 40),
+                new("Code", typeof(string), maxLength: 20),
+                new("IsEven", typeof(bool))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "[Score] Mod 2 = 0",
+                },
+                new("MatchesLabel", typeof(bool))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "[Label] Like \"Al*\"",
+                },
+                new("ScoreBand", typeof(string), maxLength: 20)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "IIf([Score] Between 10 And 20, \"Mid\", \"Other\")",
+                },
+                new("IsKnown", typeof(bool))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "[Label] In (\"Alpha\", \"Beta\")",
+                },
+                new("LogicGate", typeof(bool))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "Not ([Score] < 10) And [Label] Like \"A*\"",
+                },
+                new("NullState", typeof(string), maxLength: 20)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "IIf([Code] Is Null, \"missing\", [Code])",
+                },
+                new("IntDiv", typeof(int))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "[Score] \\ 5",
+                },
+                new("FunctionText", typeof(string), maxLength: 80)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "Replace(UCase([Label]), \"A\", \"@\") & \"-\" & (DatePart(\"yyyy\", DateSerial(2025, 2, 3)))",
+                },
+                new("AtnValue", typeof(double))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "Atn(1)",
+                },
+                new("AliasDate", typeof(DateTime))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "CVDate(\"2025-02-03\")",
+                },
+                new("TypeInfo", typeof(string), maxLength: 40)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "TypeName([Label]) & \":\" & (VarType([Score]))",
+                },
+                new("StringAliases", typeof(string), maxLength: 40)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "Left$([Label], 2) & \"-\" & UCase$(Right$([Label], 2))",
+                },
+                new("CaseConv", typeof(string), maxLength: 40)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "StrConv([Label], vbUpperCase)",
+                },
+                new("CompareConstant", typeof(bool))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "StrComp([Label], \"alpha\", vbTextCompare) = 0",
+                },
+                new("RandomValue", typeof(double))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "Rnd()",
+                },
+                new("SeededRandom", typeof(double))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "Rnd(-7)",
+                },
+                new("RepeatedRandom", typeof(double))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "Rnd(0)",
+                },
+            ],
+            [
+                12,
+                "Alpha",
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+            ]);
 
         Assert.True(Convert.ToBoolean(row["IsEven"], CultureInfo.InvariantCulture));
         Assert.True(Convert.ToBoolean(row["MatchesLabel"], CultureInfo.InvariantCulture));
@@ -516,83 +502,69 @@ public sealed class CalculatedColumnWriteTests
     }
 
     [Fact]
-    public async Task InsertRow_CalculatedColumns_EvaluatesFunctionRegistryGoldenCases()
+    public void SharedInterpreter_EvaluatesFunctionRegistryGoldenCases()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
-        {
-            await writer.CreateTableAsync(
-                "CalcFunctionRegistry",
-                [
-                    new("Seed", typeof(int)),
-                    new("LogicalEdge", typeof(bool))
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "Not (True Xor False Xor True) And (False Imp False)",
-                    },
-                    new("ChoiceEdge", typeof(string), maxLength: 40)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "Choose(2, \"first\", \"second\")",
-                    },
-                    new("NullEdge", typeof(string), maxLength: 80)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "Nz(Null, \"fallback\") & \":\" & (IsNull(Null)) & \":\" & (IsNumeric(\"12.5\")) & \":\" & (IsDate(\"2025-02-03\"))",
-                    },
-                    new("TextEdge", typeof(string), maxLength: 80)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "Mid(\"Access\", 2, 3) & \":\" & (InStr(\"alphabet\", \"ph\")) & \":\" & (InStrRev(\"banana\", \"na\")) & \":\" & String(3, \"xy\") & \":\" & StrReverse(\"stressed\")",
-                    },
-                    new("DateEdge", typeof(string), maxLength: 80)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "(Year(DateAdd(\"m\", 1, DateSerial(2025, 12, 31)))) & \":\" & (DateDiff(\"d\", DateSerial(2025, 1, 1), DateSerial(2025, 1, 31))) & \":\" & WeekdayName(2, True, 1) & \":\" & MonthName(2)",
-                    },
-                    new("NumericEdge", typeof(string), maxLength: 80)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "(Int(-1.2)) & \":\" & (Fix(-1.2)) & \":\" & (Round(2.5, 0)) & \":\" & Hex(255) & \":\" & Oct(8) & \":\" & (Val(\" 12 apples\"))",
-                    },
-                    new("FormattingEdge", typeof(string), maxLength: 80)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "FormatNumber(1234.5, 1) & \"|\" & FormatPercent(0.125, 1) & \"|\" & FormatDateTime(DateSerial(2025, 2, 3), 2)",
-                    },
-                    new("FinancialEdge", typeof(string), maxLength: 40)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "FormatNumber(Pmt(0, 10, 1000), 2)",
-                    },
-                    new("MetadataEdge", typeof(string), maxLength: 40)
-                    {
-                        IsCalculated = true,
-                        CalculationExpression = "TypeName(Null) & \":\" & (VarType(Null)) & \":\" & (CVar(7))",
-                    },
-                ],
-                TestContext.Current.CancellationToken);
-
-            await writer.InsertRowAsync(
-                "CalcFunctionRegistry",
-                [
-                    1,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                    DBNull.Value,
-                ],
-                TestContext.Current.CancellationToken);
-        }
-
-        await using AccessReader reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcFunctionRegistry", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        Dictionary<string, object> row = EvaluateSharedExpressions(
+            [
+                new("Seed", typeof(int)),
+                new("LogicalEdge", typeof(bool))
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "Not (True Xor False Xor True) And (False Imp False)",
+                },
+                new("ChoiceEdge", typeof(string), maxLength: 40)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "Choose(2, \"first\", \"second\")",
+                },
+                new("NullEdge", typeof(string), maxLength: 80)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "Nz(Null, \"fallback\") & \":\" & (IsNull(Null)) & \":\" & (IsNumeric(\"12.5\")) & \":\" & (IsDate(\"2025-02-03\"))",
+                },
+                new("TextEdge", typeof(string), maxLength: 80)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "Mid(\"Access\", 2, 3) & \":\" & (InStr(\"alphabet\", \"ph\")) & \":\" & (InStrRev(\"banana\", \"na\")) & \":\" & String(3, \"xy\") & \":\" & StrReverse(\"stressed\")",
+                },
+                new("DateEdge", typeof(string), maxLength: 80)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "(Year(DateAdd(\"m\", 1, DateSerial(2025, 12, 31)))) & \":\" & (DateDiff(\"d\", DateSerial(2025, 1, 1), DateSerial(2025, 1, 31))) & \":\" & WeekdayName(2, True, 1) & \":\" & MonthName(2)",
+                },
+                new("NumericEdge", typeof(string), maxLength: 80)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "(Int(-1.2)) & \":\" & (Fix(-1.2)) & \":\" & (Round(2.5, 0)) & \":\" & Hex(255) & \":\" & Oct(8) & \":\" & (Val(\" 12 apples\"))",
+                },
+                new("FormattingEdge", typeof(string), maxLength: 80)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "FormatNumber(1234.5, 1) & \"|\" & FormatPercent(0.125, 1) & \"|\" & FormatDateTime(DateSerial(2025, 2, 3), 2)",
+                },
+                new("FinancialEdge", typeof(string), maxLength: 40)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "FormatNumber(Pmt(0, 10, 1000), 2)",
+                },
+                new("MetadataEdge", typeof(string), maxLength: 40)
+                {
+                    IsCalculated = true,
+                    CalculationExpression = "TypeName(Null) & \":\" & (VarType(Null)) & \":\" & (CVar(7))",
+                },
+            ],
+            [
+                1,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+                DBNull.Value,
+            ]);
 
         Assert.True(Convert.ToBoolean(row["LogicalEdge"], CultureInfo.InvariantCulture));
         Assert.Equal("second", row["ChoiceEdge"]);
@@ -713,58 +685,35 @@ public sealed class CalculatedColumnWriteTests
 
     [Theory]
     [InlineData("SUM(1, 2)")]
-    public async Task InsertRow_SpreadsheetOnlyCalculatedExpression_ThrowsNotSupportedException(string expression)
+    public async Task CreateTable_SpreadsheetOnlyCalculatedExpression_ThrowsNotSupportedException(string expression)
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         await using AccessWriter writer = await OpenWriterAsync(stream);
-        await writer.CreateTableAsync(
-            "CalcSpreadsheetOnly",
-            [
-                new("SpreadsheetValue", typeof(int))
-                {
-                    IsCalculated = true,
-                    CalculationExpression = expression,
-                },
-            ],
-            TestContext.Current.CancellationToken);
-
+        byte[] before = stream.ToArray();
         JetNotSupportedException exception = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
-            await writer.InsertRowAsync(
+            await writer.CreateTableAsync(
                 "CalcSpreadsheetOnly",
-                [DBNull.Value],
+                [new("SpreadsheetValue", typeof(int)) { IsCalculated = true, CalculationExpression = expression }],
                 TestContext.Current.CancellationToken));
 
-        Assert.Contains("Calculated-column", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("calculated columns", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(before, stream.ToArray());
     }
 
     [Fact]
-    public async Task InsertRow_CalculatedExpression_UsesAccessOperatorPrecedence()
+    public void SharedInterpreter_UsesAccessOperatorPrecedence()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
-        {
-            await writer.CreateTableAsync(
-                "CalcPrecedence",
-                [
-                    new("Id", typeof(int)),
-                    new("NegPow", typeof(double)) { IsCalculated = true, CalculationExpression = "-2^2" },
-                    new("NegPowMod", typeof(double)) { IsCalculated = true, CalculationExpression = "-2^2 + (0 Mod 5)" },
-                    new("NegFieldPow", typeof(double)) { IsCalculated = true, CalculationExpression = "-[Id]^2" },
-                    new("PowChain", typeof(double)) { IsCalculated = true, CalculationExpression = "2^3^2" },
-                    new("DivChain", typeof(int)) { IsCalculated = true, CalculationExpression = "7 \\ 2 * 2" },
-                ],
-                TestContext.Current.CancellationToken);
-
-            await writer.InsertRowAsync(
-                "CalcPrecedence",
-                [3, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value],
-                TestContext.Current.CancellationToken);
-        }
-
-        await using AccessReader reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcPrecedence", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        Dictionary<string, object> row = EvaluateSharedExpressions(
+            [
+                new("Id", typeof(int)),
+                new("NegPow", typeof(double)) { IsCalculated = true, CalculationExpression = "-2^2" },
+                new("NegPowMod", typeof(double)) { IsCalculated = true, CalculationExpression = "-2^2 + (0 Mod 5)" },
+                new("NegFieldPow", typeof(double)) { IsCalculated = true, CalculationExpression = "-[Id]^2" },
+                new("PowChain", typeof(double)) { IsCalculated = true, CalculationExpression = "2^3^2" },
+                new("DivChain", typeof(int)) { IsCalculated = true, CalculationExpression = "7 \\ 2 * 2" },
+            ],
+            [3, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value]);
 
         Assert.Equal(-4d, Convert.ToDouble(row["NegPow"], CultureInfo.InvariantCulture));
         Assert.Equal(-4d, Convert.ToDouble(row["NegPowMod"], CultureInfo.InvariantCulture));
@@ -1383,7 +1332,7 @@ public sealed class CalculatedColumnWriteTests
     }
 
     /// <summary>
-    /// A Memo result over the 1,024-byte inline limit spills to LVAL pages and
+    /// A Memo result over the native 64-byte inline limit spills to LVAL pages and
     /// reads back exactly, although the column descriptor says Text.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
@@ -1394,7 +1343,7 @@ public sealed class CalculatedColumnWriteTests
         string first = new('f', 200);
         string last = new('l', 200);
         string lastFirst = last + ", " + first;
-        string expected = lastFirst + "=" + lastFirst;
+        string expected = lastFirst + "=" + lastFirst[..243];
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
@@ -1547,7 +1496,7 @@ public sealed class CalculatedColumnWriteTests
             foreach (DataRow row in rows.Rows)
             {
                 string lastFirst = $"{row["LastName"]}, {row["FirstName"]}";
-                Assert.Equal($"{lastFirst}={lastFirst}", row["AllNames"]);
+                Assert.Equal($"{lastFirst}={lastFirst[..Math.Min(lastFirst.Length, 243)]}", row["AllNames"]);
             }
         }
     }
@@ -1682,16 +1631,16 @@ public sealed class CalculatedColumnWriteTests
     }
 
     /// <summary>
-    /// Single-quoted strings and <c>&amp;H</c> literals are accepted at
+    /// Single-quoted strings and bitwise expressions are accepted at
     /// <see cref="AccessWriter.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, System.Threading.CancellationToken)"/>,
     /// evaluated on insert, and persisted exactly as written.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
-    public async Task CreateTable_SingleQuotedAndHexExpressions_AreAcceptedAndEvaluated()
+    public async Task CreateTable_SingleQuotedAndBitwiseExpressions_AreAcceptedAndEvaluated()
     {
         const string fullName = "[First] & ' ' & [Last]";
-        const string lowBits = "[Flags] And &H0F";
+        const string lowBits = "[Flags] And 15";
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
@@ -1765,6 +1714,55 @@ public sealed class CalculatedColumnWriteTests
         DataTable table = await reader.ReadTableAsync("CalcDueText", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("Due 1/31/2020 6:30:05 PM", Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1)["Label"]);
         Assert.Equal("Due 12/9/2021 7:05:00 AM", Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2)["Label"]);
+    }
+
+    [Fact]
+    public void SharedInterpreter_RadixLiteralsRemainAvailable()
+    {
+        Dictionary<string, object> values = EvaluateSharedExpressions(
+            [new("Flags", typeof(int)), new("Low", typeof(int)) { IsCalculated = true, CalculationExpression = "[Flags] And &H0F" }],
+            [0x5A, DBNull.Value]);
+        Assert.Equal(10, values["Low"]);
+    }
+
+    [Theory]
+    [InlineData("-2^2", -4)]
+    [InlineData("2^3^2", 64)]
+    [InlineData("1 + 2 * 3", 7)]
+    [InlineData("8 + 4 / 2^2", 9)]
+    [InlineData("Not (1 = 2) And 3 > 2", -1)]
+    public async Task InsertRow_NativeCalculatedExpression_UsesAccessPrecedence(string expression, int expected)
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync("NativePrecedence", [new("Value", typeof(int)) { IsCalculated = true, CalculationExpression = expression }], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("NativePrecedence", [DBNull.Value], TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Assert.Equal(expected, Assert.Single(await reader.Rows("NativePrecedence", cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken))[0]);
+    }
+
+    private static Dictionary<string, object> EvaluateSharedExpressions(ColumnDefinition[] columns, object[] values)
+    {
+        var table = new TableDef { Columns = [.. columns.Select(static column => new ColumnInfo { Name = column.Name })] };
+        ColumnConstraint[] constraints = columns.Select(static column => new ColumnConstraint
+        {
+            Name = column.Name,
+            ClrType = column.ClrType,
+            IsCalculated = column.IsCalculated,
+            CalculationExpression = column.CalculationExpression,
+            CalculatedExpressionPlan = column.CalculationExpression is { } expression ? CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false) : null,
+        }).ToArray();
+        CalculatedExpressionEvaluator.Apply(table, constraints, values);
+        var result = new Dictionary<string, object>(columns.Length, StringComparer.OrdinalIgnoreCase);
+        for (int index = 0; index < columns.Length; index++)
+        {
+            result.Add(columns[index].Name, values[index]);
+        }
+
+        return result;
     }
 
     private static async Task WriteInModeAsync(MemoryStream stream, WriteMode mode, Func<AccessWriter, Task> work)
