@@ -318,7 +318,7 @@ See the [validation matrix](design/writer-disk-format-validation-matrix.md) for 
 
 ### Forms, reports, macros, queries, VBA
 
-The library does not execute forms, reports, macros, modules, saved queries or VBA. Unrelated storage edits aim to retain these objects, but complete preservation of application objects and their dependencies is not established. See the [schema-preservation requirements](../PLAN.md#s--hostile-file-parsing-and-schema-preservation).
+The library does not execute forms, reports, macros, modules, saved queries or VBA. Frozen native inert forms, reports, a macro, a constant-only module and saved-query metadata have focused preservation checks through public row and unrelated schema edits in every write mode. Complete preservation of application objects and their dependencies is not established; fresh DAO120 confirmation of those public edits remains guarded. See the [native evidence](design/writer-disk-format-validation-matrix.md). See the [schema-preservation requirements](../PLAN.md#s--hostile-file-parsing-and-schema-preservation).
 
 ### SQL and ODBC
 
