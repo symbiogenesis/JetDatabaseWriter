@@ -67,11 +67,47 @@ key bytes. [QueryOrdering](../../src/JetDatabaseWriter/Queries/QueryOrdering.cs)
 also preserves stable ties, but a replacement must additionally preserve
 deferred execution, multikey ordering, selector invocation and exceptions.
 
+The production splicer implements this ordered-run merge. It tests additions
+first so unordered additions can reach the fallback without scanning the
+survivor run. Backward merging reuses the private result buffer and preserves
+existing-before-added equal keys. The general stable sort remains available
+for either unordered run. Focused tests cover long shared-prefix keys,
+duplicates, removals, input immutability and the result's allocation bound.
+
 The relevant acceptance work is I2/I12/I13. Compare stable fast and fallback
 paths with a fixed baseline on hosted CI, including ordered, interleaved,
 duplicate-heavy and unordered inputs. Retain meaningful input-immutability and
 refusal tests. A targeted allocation regression can establish a named managed
 allocation bound; it does not establish a wall-clock speedup.
+
+The [hosted algorithm-control run](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/41112173782)
+passed for `33668cee06fcd74c0ec04f825fc049f61ed61638`, using the default
+adaptive job on Windows x64, .NET 10.0.14 and SDK 10.0.403. Its fixture has 600
+entries with 128-byte shared-prefix keys and 60 duplicate-key additions; the
+fallback reverses the additions. Both controls execute the original private
+list plus stable `OrderBy(...).ToList()` algorithm with the same inputs.
+
+| Case | Mean | Error | Allocated per operation |
+|---|---:|---:|---:|
+| Ordered merge | 14.108 microseconds | 0.240 microseconds | 15,896 bytes |
+| Ordered sort control | 63.282 microseconds | 0.541 microseconds | 55,848 bytes |
+| Unordered fallback | 68.248 microseconds | 1.354 microseconds | 55,848 bytes |
+| Unordered sort control | 66.300 microseconds | 0.888 microseconds | 55,848 bytes |
+
+For this fixture, the merge is 4.49 times faster and allocates 71.54% fewer
+bytes. The fallback's 2.94% higher timing estimate has overlapping 99.9%
+confidence intervals; the run establishes neither a fallback regression nor
+unchanged timing. Error is BenchmarkDotNet's half-width of that interval.
+All four setups and measurements completed with valid means and allocation
+counts. These are same-host algorithm controls, not public-insert speedups or
+a revision comparison; result storage remains allocated.
+
+The [public-insert revision comparison](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/41112178971)
+uses validated baseline `a662067f54dd231a21d53f51a27cfdee9207c9b3` and the same
+head, with the default adaptive job. It measures `InsertSameLeaf` and
+`InsertCrossLeaf` in baseline/head, head/baseline and identical-head pairs on
+one runner. This comparison includes all changes between the revisions;
+algorithm attribution comes from the separate splice controls above.
 
 ### Exact visited-set behavior in generated production code
 
@@ -90,6 +126,14 @@ termination at an empty slot. Keep count/growth callers, allocation failures,
 native row identity and the containing parser's resource/ownership obligations
 explicit. Deterministic hash correctness does not establish expected
 constant-time lookup for adversarial files.
+
+Production now calls generated `ContainsVisited`, `InsertVisited` and
+`RehashVisited` array operations. Their contracts establish exact nonzero
+membership, preservation of the probe-chain invariant, occupied-slot progress
+and unchanged full-table refusal. Rehash constructs a valid destination from
+any source array in distinct, larger, initially zero-filled storage. The
+wrapper supplies absent identities and maintains the half-load growth policy;
+those caller obligations remain manually reviewed rather than proved.
 
 V8 owns the remaining composition into the full named parser. Validate the
 exact source using the integrity-pinned verifier, audit, negative controls and
@@ -127,6 +171,13 @@ dependency closure and leave canonical sources, generated output and receipts
 unchanged. Keep third-party analysis outside the shipping package and required
 gate until its behavior and maintenance cost are qualified. Finding review
 belongs to V12; successful diagnostic execution alone does not close it.
+
+The focused visited-table review illustrates the distinction. Writing zero
+into an empty slot is an identity update, so the preservation lemma accepts
+zero; executable insertion still requires a nonzero identity for occupied-slot
+progress. The probe-distance injectivity lemma retains its ring-domain bounds
+because its calls require them, even when dependency analysis reports a bound
+as unnecessary. Neither disposition changes generated executable behavior.
 
 The [Comparator methodology](https://github.com/leanprover/comparator) separates
 a trusted theorem statement from an untrusted proposed proof, checks statement
@@ -248,6 +299,16 @@ levels. See the [proof review procedure](proof-trust-review.md) and
 [proof execution instructions](../../verification/README.md).
 
 ## Acceptance and plan ownership
+
+The [integration CI gate](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/41108919138)
+passed for `33668cee06fcd74c0ec04f825fc049f61ed61638`. All 26 expected checks
+passed, including the fifteen test partitions across the three runtime/library
+combinations, strict analyzers, package and generated consumers, platform
+encryption checks and formal verification. The formal receipt records nine
+sources, 814 verified checks, zero errors or audit findings, passing negative
+controls and fresh generated kernels. Only guarded DAO cases and the expected
+explicit fuzz harnesses were skipped or not run. These results retain the
+scope and native/platform evidence limits described above.
 
 | Existing plan owner | Research-informed work and acceptance |
 |---|---|
