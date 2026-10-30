@@ -118,6 +118,53 @@ internal sealed class CalculatedExpressionParser
     private static ArgumentException InvalidSyntax(string expression, string detail)
         => new($"Calculated-column expression '{expression}' is not valid Access expression syntax: {detail}.");
 
+    private static bool TryReadExactDecimal(string text, out decimal value)
+    {
+        if (!decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+        {
+            return false;
+        }
+
+        int exponentPosition = text.IndexOfAny(['e', 'E']);
+        int exponent = 0;
+        if (exponentPosition >= 0 && !int.TryParse(text.AsSpan(exponentPosition + 1), NumberStyles.Integer, CultureInfo.InvariantCulture, out exponent))
+        {
+            return false;
+        }
+
+        ReadOnlySpan<char> significand = exponentPosition >= 0 ? text.AsSpan(0, exponentPosition) : text.AsSpan();
+        int point = significand.IndexOf('.');
+        int fractionalDigits = point >= 0 ? significand.Length - point - 1 : 0;
+        int significantDigits = 0;
+        int trailingZeros = 0;
+        foreach (char digit in significand)
+        {
+            if (digit == '.')
+            {
+                continue;
+            }
+
+            if (digit != '0' || significantDigits != 0)
+            {
+                significantDigits++;
+            }
+
+            trailingZeros = digit == '0' ? trailingZeros + 1 : 0;
+        }
+
+        if (significantDigits == 0)
+        {
+            return true;
+        }
+
+        long scale = (long)fractionalDigits - exponent - trailingZeros;
+        int actualScale = (decimal.GetBits(value)[3] >> 16) & 0xFF;
+
+        // TryParse may round an overprecise mantissa or underflow it to zero.
+        // Native expression literals use Double when Decimal cannot retain every digit.
+        return significantDigits - trailingZeros <= 29 && scale <= 28 && actualScale >= scale;
+    }
+
     private CalculatedExpressionNode ParseExpression(int minimumPrecedence, CalculatedExpressionNode? left = null)
     {
         // Count recursive grammar edges, not a flat left-associative operator chain.
@@ -175,7 +222,15 @@ internal sealed class CalculatedExpressionParser
 
         if (token.Kind == TokenKind.Operator && (token.Text is "+" or "-"))
         {
-            return new CalculatedExpressionUnaryNode(token.Text == "-", this.ParseExpression(12));
+            Token literalToken = this.Peek();
+            CalculatedExpressionNode operand = this.ParseExpression(12);
+            if (token.Text == "-" && ReferenceEquals(literalToken.Node, operand)
+                && TryReadExactDecimal(literalToken.Text, out decimal literal) && literal == 2147483648m)
+            {
+                return new CalculatedExpressionValueNode(int.MinValue);
+            }
+
+            return new CalculatedExpressionUnaryNode(token.Text == "-", operand);
         }
 
         switch (token.Kind)
@@ -491,7 +546,17 @@ internal sealed class CalculatedExpressionParser
                 throw this.SyntaxError($"invalid numeric literal '{text}'");
             }
 
-            return new Token(TokenKind.Value, text, new CalculatedExpressionValueNode(value));
+            object literal = value;
+            if (TryReadExactDecimal(text, out decimal number))
+            {
+                // Native literals discard scale-only zeros before floating conversion.
+                number /= 1.0000000000000000000000000000m;
+                literal = number is >= int.MinValue and <= int.MaxValue && decimal.Truncate(number) == number
+                    ? (object)(int)number
+                    : number;
+            }
+
+            return new Token(TokenKind.Value, text, new CalculatedExpressionValueNode(literal));
         }
 
         private bool TryReadRadixLiteral(ref int index, out object? literal)

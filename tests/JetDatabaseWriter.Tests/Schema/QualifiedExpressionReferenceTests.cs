@@ -27,7 +27,7 @@ public sealed class QualifiedExpressionReferenceTests
     {
         CalculatedExpressionEvaluationContext context = Context("T");
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(reference + " * 2");
-        Assert.Equal(8d, Assert.IsType<double>(plan.Evaluate(context)));
+        Assert.Equal(8, Assert.IsType<int>(plan.Evaluate(context)));
     }
 
     [Theory]
@@ -38,7 +38,7 @@ public sealed class QualifiedExpressionReferenceTests
     public void BareQualifier_BindsToCurrentRowEvenWhenNameDiffers(string reference)
     {
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(reference + " * 2");
-        Assert.Equal(8d, Assert.IsType<double>(plan.Evaluate(Context("Renamed T"))));
+        Assert.Equal(8, Assert.IsType<int>(plan.Evaluate(Context("Renamed T"))));
         Assert.False(ColumnDefaultValue.Compile(reference).TryEvaluate(typeof(int), () => Context("Renamed T"), out _));
         Assert.Throws<JetNotSupportedException>(() => CalculatedExpressionParser.Parse(reference, isCalculatedColumn: false));
     }
@@ -78,12 +78,12 @@ public sealed class QualifiedExpressionReferenceTests
     {
         string expression = qualifier + "." + fieldName + " * 2";
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(expression);
-        Assert.Equal(8d, Assert.IsType<double>(plan.Evaluate(Context("T", fieldName))));
+        Assert.Equal(8, Assert.IsType<int>(plan.Evaluate(Context("T", fieldName))));
         Assert.True(ExpressionFieldReferences.References(expression, fieldName, "T"));
         string renamed = Assert.IsType<string>(ExpressionFieldReferences.Rename(expression, fieldName, "Cost", "T"));
         Assert.Equal(qualifier + ".[Cost] * 2", renamed);
         CalculatedExpressionNode renamedPlan = CalculatedExpressionParser.Parse(renamed);
-        Assert.Equal(8d, Assert.IsType<double>(renamedPlan.Evaluate(Context("T", "Cost"))));
+        Assert.Equal(8, Assert.IsType<int>(renamedPlan.Evaluate(Context("T", "Cost"))));
     }
 
     [Theory]
@@ -99,13 +99,13 @@ public sealed class QualifiedExpressionReferenceTests
     }
 
     [Theory]
-    [InlineData("[T].[Price] + 1e-3", 4.001d, typeof(double))]
-    [InlineData("T.Price + 1E+3", 1004d, typeof(double))]
-    [InlineData("[T]![Price] + .5E1", 9d, typeof(double))]
-    [InlineData("[T].[Price] + &HFFFF", 3d, typeof(decimal))]
-    [InlineData("T.Price + &HFFFF&", 65539d, typeof(decimal))]
-    [InlineData("[T]![Price] + &O17", 19d, typeof(decimal))]
-    [InlineData("T.Price + &17", 19d, typeof(decimal))]
+    [InlineData("[T].[Price] + 1e-3", 4.001d, typeof(decimal))]
+    [InlineData("T.Price + 1E+3", 1004d, typeof(int))]
+    [InlineData("[T]![Price] + .5E1", 9d, typeof(int))]
+    [InlineData("[T].[Price] + &HFFFF", 3d, typeof(int))]
+    [InlineData("T.Price + &HFFFF&", 65539d, typeof(int))]
+    [InlineData("[T]![Price] + &O17", 19d, typeof(int))]
+    [InlineData("T.Price + &17", 19d, typeof(int))]
     public void QualifiedReference_WithScientificOrRadixLiteralRetainsNumericToken(string expression, double expected, Type expectedType)
     {
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(expression);
@@ -137,7 +137,7 @@ public sealed class QualifiedExpressionReferenceTests
         CalculatedExpressionEvaluationContext context = Context("T");
         Assert.Same(DBNull.Value, CalculatedExpressionParser.Parse(reference + " * 2").Evaluate(context));
         Assert.True(Assert.IsType<bool>(CalculatedExpressionParser.Parse("IsNull(" + reference + ")").Evaluate(context)));
-        Assert.Equal(12d, CalculatedExpressionParser.Parse("Nz(" + reference + ", 12)").Evaluate(context));
+        Assert.Equal(12, CalculatedExpressionParser.Parse("Nz(" + reference + ", 12)").Evaluate(context));
         Assert.False(ColumnDefaultValue.Compile(reference).TryEvaluate(typeof(double), () => context, out _));
         Assert.False(ColumnValidationRule.Compile(reference + " > 0", "Price").IsSupported);
     }

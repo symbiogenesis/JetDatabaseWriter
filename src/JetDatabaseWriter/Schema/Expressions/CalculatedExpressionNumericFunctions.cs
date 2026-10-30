@@ -29,8 +29,8 @@ internal static class CalculatedExpressionNumericFunctions
         AddFunction(functions, "FIX", 1, 1, static function => EvaluateIntegral(function.Arg(0), truncate: true));
         AddFunction(functions, "CINT", 1, 1, static function => Convert.ToInt16(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture));
         AddFunction(functions, "CLNG", 1, 1, static function => Convert.ToInt32(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture));
-        AddFunction(functions, "CDBL", 1, 1, static function => AccessVariantOperators.Finite(Convert.ToDouble(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture)));
-        AddFunction(functions, "CSNG", 1, 1, static function => (float)AccessVariantOperators.Finite(Convert.ToSingle(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture)));
+        AddFunction(functions, "CDBL", 1, 1, static function => AccessVariantOperators.Finite(ToDouble(function.Arg(0))));
+        AddFunction(functions, "CSNG", 1, 1, static function => (float)AccessVariantOperators.Finite(ToSingle(function.Arg(0))));
         AddFunction(functions, "CDEC", 1, 1, static function => ToDecimal(function.Arg(0)), "CCUR");
         AddFunction(functions, "CBYTE", 1, 1, static function => ToByte(function.Arg(0)));
     }
@@ -135,6 +135,8 @@ internal static class CalculatedExpressionNumericFunctions
 
     private static object EvaluateAbsolute(object value) => value switch
     {
+        int number when number != int.MinValue => Math.Abs(number),
+        int number => -(double)number,
         float number => Math.Abs((float)AccessVariantOperators.Finite(number)),
         double number => Math.Abs(AccessVariantOperators.Finite(number)),
         _ => Math.Abs(ToDecimal(value)),
@@ -142,6 +144,11 @@ internal static class CalculatedExpressionNumericFunctions
 
     private static object EvaluateIntegral(object value, bool truncate)
     {
+        if (value is int)
+        {
+            return value;
+        }
+
         if (value is double doubleValue)
         {
             doubleValue = AccessVariantOperators.Finite(doubleValue);

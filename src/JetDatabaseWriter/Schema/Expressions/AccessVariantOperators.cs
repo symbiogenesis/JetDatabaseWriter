@@ -60,7 +60,7 @@ internal static class AccessVariantOperators
 
         return UsesFloatingArithmetic(left, right)
             ? FloatingResult(ToDouble(left) + ToDouble(right), left, right)
-            : ToDecimal(left) + ToDecimal(right);
+            : DecimalArithmeticResult(ToDecimal(left) + ToDecimal(right), left, right);
     }
 
     /// <summary>Returns <c>left - right</c>.</summary>
@@ -86,7 +86,7 @@ internal static class AccessVariantOperators
 
         return UsesFloatingArithmetic(left, right)
             ? FloatingResult(ToDouble(left) - ToDouble(right), left, right)
-            : ToDecimal(left) - ToDecimal(right);
+            : DecimalArithmeticResult(ToDecimal(left) - ToDecimal(right), left, right);
     }
 
     /// <summary>Returns <c>left * right</c>.</summary>
@@ -107,7 +107,7 @@ internal static class AccessVariantOperators
 
         return UsesFloatingArithmetic(left, right)
             ? FloatingResult(ToDouble(left) * ToDouble(right), left, right)
-            : ToDecimal(left) * ToDecimal(right);
+            : DecimalArithmeticResult(ToDecimal(left) * ToDecimal(right), left, right);
     }
 
     /// <summary>Returns <c>left / right</c>.</summary>
@@ -437,6 +437,19 @@ internal static class AccessVariantOperators
     };
 
     private static bool IsZero(object value) => ToBitwiseOperand(value) == 0;
+
+#pragma warning disable CA1859 // Native arithmetic deliberately boxes Long, Double or Decimal.
+    private static object DecimalArithmeticResult(decimal result, object left, object right)
+    {
+        if ((left is int || right is int) && left is bool or byte or short or int && right is bool or byte or short or int)
+        {
+            return result is >= int.MinValue and <= int.MaxValue ? (object)(int)result : (double)result;
+        }
+
+        return result;
+    }
+
+#pragma warning restore CA1859
 
     private static bool UsesFloatingArithmetic(object left, object right)
     {

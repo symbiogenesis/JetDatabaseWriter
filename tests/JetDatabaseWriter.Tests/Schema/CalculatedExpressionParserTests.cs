@@ -12,12 +12,12 @@ using Xunit;
 public sealed class CalculatedExpressionParserTests
 {
     [Theory]
-    [InlineData("1", 1d)]
-    [InlineData(".5", 0.5d)]
-    [InlineData("1e-3", 0.001d)]
-    [InlineData("1E+3", 1000d)]
-    public void DecimalLiteral_RetainsDoubleSubtype(string expression, double expected)
-        => Assert.Equal(expected, Assert.IsType<double>(Evaluate(expression)));
+    [InlineData("1", "Long")]
+    [InlineData(".5", "Decimal")]
+    [InlineData("1e-3", "Decimal")]
+    [InlineData("1E+3", "Long")]
+    public void DecimalLiteral_RetainsNativeSubtype(string expression, string expected)
+        => Assert.Equal(expected, Assert.IsType<string>(Evaluate("TypeName(" + expression + ")")));
 
     [Theory]
     [InlineData("'it''s [A1] #today# 5% &H10'", "it's [A1] #today# 5% &H10")]
@@ -132,7 +132,7 @@ public sealed class CalculatedExpressionParserTests
     public void ParenthesisLimit_AcceptsBoundaryAndRejectsNextLevel()
     {
         string expression = new string('(', CalculatedExpressionLimits.MaxExpressionNesting) + "1" + new string(')', CalculatedExpressionLimits.MaxExpressionNesting);
-        Assert.Equal(1d, Assert.IsType<double>(Evaluate(expression)));
+        Assert.Equal(1, Assert.IsType<int>(Evaluate(expression)));
         Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse("(" + expression + ")"));
     }
 

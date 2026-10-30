@@ -115,11 +115,13 @@ Copyright (c) Microsoft Corporation.
 
 ## Microsoft .NET runtime numeric conversion
 
-The floating-to-Decimal expression coercion in
+The floating-to-Decimal and Decimal-to-floating expression coercion in
 `src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionCoercion.cs` adapts
-the OLE-derived scaling policy of `VarDecFromR4` and `VarDecFromR8` in
+the OLE-derived scaling policy of `VarDecFromR4`, `VarDecFromR8`, `VarR4FromDec`
+and `VarR8FromDec` in
 dotnet/runtime v10.0.0 `System/Decimal.DecCalc.cs`. It uses managed integer/Decimal
-construction and explicit native precision rules without runtime layout access.
+construction, limb/scale conversion and explicit native precision rules without
+runtime layout access.
 This adds no runtime dependency on the .NET 10 implementation.
 
 Source: https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/Decimal.DecCalc.cs

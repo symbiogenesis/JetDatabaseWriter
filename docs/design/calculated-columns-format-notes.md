@@ -614,9 +614,45 @@ the interpreter, public stored defaults and ACE calculated Double insert/update.
 Its guarded native query controls use x86 DAO3.6, `dao360.dll` 10.0.26100.5074,
 including formatting boundaries and invalid text divisors. These checks do not
 establish fresh ACE native behavior, all locale formats or calculated-field
-admissibility of every function. Integral literal/promotion rules,
+admissibility of every function. Remaining narrow-integral promotion rules,
 Currency-versus-Decimal identity and other subtype-sensitive functions
 remain R4 work. Expression evaluation remains handwritten and tested.
+
+### Numeric literals and Decimal-to-floating expression coercion
+
+The shared interpreter selects Long for exactly integral literals within Int32,
+Decimal for other exactly representable Decimal literals, and finite Double
+otherwise. Decimal admission checks source digits and scale so parsing cannot
+silently round an overprecise literal or underflow it to zero. Native literals
+discard scale-only zeros before conversion. A direct `-2147483648` literal is
+Long; `-(2147483648)` remains Decimal. Exponentiation and other unary grouping
+retain their grammar. Measured Long addition/subtraction/multiplication with
+integral operands retain Long in range and promote to Double on overflow.
+Abs/Int/Fix preserve the measured Long behavior; Abs of Int32.MinValue is Double.
+Decimal expression text uses full fixed decimal digits without trailing zeros.
+
+Decimal-to-Double conversion explicitly follows OLE's low-64/high-32 limb
+conversion, addition and scale division. Decimal-to-Single uses that Double
+intermediate. This retains measured native bits across the .NET 11 conversion
+change, including a Single midpoint where directly correct rounding would
+produce a different result. Stored Decimal coefficient/scale remains intact:
+literal `99.9999999999999900` normalizes and CDbl returns `100`, while the same
+mathematical value in a native Decimal field retaining scale 16 converts to the
+lower Double. CDbl/CSng and floating result coercion use this expression policy;
+caller-input and storage conversions retain separate qualification obligations.
+
+`CalculatedExpressionNumericLiteralTests` freezes types, text and exact floating
+bits, including range, precision, underflow, signed-minimum and scale controls.
+Fresh DAO3.6 Jet4 query and stored-default controls use `dao360.dll`
+10.0.26100.5074, then accept writer default insertion, native read/update/compact
+and managed compacted readback. Independent Decimal-field controls preserve
+source scale and compare native CDbl/CSng result bits. Public ACE cached
+insert/update/reopen remains library evidence; fresh ACE-native contexts,
+additional locales, narrow-integral/Currency identity and remaining functions
+remain R4/E2 work. The OLE-derived routines retain their MIT notice and add no
+shipping dependency or formal expression proof.
+
+### Round
 
 `Round` retains the measured native Single/Double/Integer/Long/Date subtype;
 Byte and Boolean produce Integer, numeric text produces Double, and Decimal
@@ -631,7 +667,8 @@ valid large Double values; overflowing scale products retain the original value.
 `CalculatedExpressionRoundTests` freezes native query controls and exact source,
 stored and result Double bit patterns around precision/magnitude boundaries.
 Fresh DAO3.6 Jet4 Double and Decimal field controls distinguish function behavior
-from the still-unverified native literal-conversion rules. For example, native
+from literal conversion, separately covered by
+`CalculatedExpressionNumericLiteralTests`. For example, native
 `CDbl(99.99999999999999)` already yields `100` before rounding; exact field bits
 avoid treating that literal conversion as a Round result. Decimal controls use
 native TypeName/CStr before DAO marshals a computed numeric result as Double.
@@ -673,7 +710,7 @@ Native in-range Decimal product overflow exposes a missing result, while the
 writer conservatively refuses. Native missing/nonfinite mapping, fresh ACE and
 locale contexts remain R4/E2 work. Caller-field normalization and storage retain
 their shared conversion contract; remaining native/runtime qualification and
-general reverse Decimal-to-floating conversions remain separate obligations.
+caller-field/storage conversions and broader native context/representation qualification remain separate obligations; the expression reverse conversion policy and measured scope are described above.
 
 ## Literal Unicode markers in Text
 

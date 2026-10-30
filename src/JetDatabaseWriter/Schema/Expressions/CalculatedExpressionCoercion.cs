@@ -96,12 +96,12 @@ internal static class CalculatedExpressionCoercion
 
         if (targetType == typeof(float))
         {
-            return Convert.ToSingle(value, CultureInfo.InvariantCulture);
+            return ToSingle(value);
         }
 
         if (targetType == typeof(double))
         {
-            return Convert.ToDouble(value, CultureInfo.InvariantCulture);
+            return ToDouble(value);
         }
 
         if (targetType == typeof(decimal))
@@ -341,6 +341,11 @@ internal static class CalculatedExpressionCoercion
             return ToFloatingText(singleValue, 7);
         }
 
+        if (value is decimal decimalValue)
+        {
+            return decimalValue.ToString("0.############################", CultureInfo.InvariantCulture);
+        }
+
         return IsNull(value) ? string.Empty : Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
     }
 
@@ -439,7 +444,27 @@ internal static class CalculatedExpressionCoercion
             return boolean ? -1d : 0d;
         }
 
-        return Convert.ToDouble(value, CultureInfo.InvariantCulture);
+        return value is decimal number ? DecimalToDouble(number) : Convert.ToDouble(value, CultureInfo.InvariantCulture);
+    }
+
+    internal static float ToSingle(object? value)
+        => value is decimal number ? (float)DecimalToDouble(number) : Convert.ToSingle(AsAccessNumber(value), CultureInfo.InvariantCulture);
+
+    private static double DecimalToDouble(decimal value)
+    {
+#if NET6_0_OR_GREATER
+        Span<int> bits = stackalloc int[4];
+        decimal.GetBits(value, bits);
+#else
+        int[] bits = decimal.GetBits(value);
+#endif
+        ulong low = unchecked((uint)bits[0]) | ((ulong)unchecked((uint)bits[1]) << 32);
+        double high = unchecked((uint)bits[2]) * 18446744073709551616d;
+
+        // Keep OLE's two limb conversions, addition and scale division. The
+        // correctly rounded .NET 11 conversion changes native expression bits.
+        double result = (low + high) / DecimalPowersOfTen[(bits[3] >> 16) & 0xFF];
+        return bits[3] < 0 ? -result : result;
     }
 
     internal static bool ToBoolean(object? value)

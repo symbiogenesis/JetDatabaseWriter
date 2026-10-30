@@ -744,7 +744,7 @@ NativeMemoCompressionTests compares the leading-U+FEFF escape byte-for-byte with
 
 `CalculatedExpressionRoundTests` compares native DAO3.6 Jet4 Round subtypes,
 precision coercion, Null and large values. Exact Double-field source/stored/result
-bit controls isolate scaling boundaries from native literal-conversion gaps;
+bit controls isolate scaling boundaries from literal conversion;
 native Decimal-field controls retain values above the .NET rounding precision
 limit. Public ACE calculated updates/reopen and byte-identical invalid-precision
 refusal exercise the shared interpreter. Currency identity, additional locales
@@ -762,6 +762,20 @@ Decimal 0/1; public ACE calculated insert/update/reopen retains those results.
 Convertible operands still use Decimal arithmetic. Native Decimal-result
 overflow and nonfinite fields can expose missing results; the writer retains
 conservative refusal. Fresh ACE/locale contexts remain separate R4/E2 gaps.
-Caller-field/storage and reverse conversion qualification remain R4 work.
+Caller-field/storage and fresh ACE/locale conversion qualification remain R4 work.
+
+`CalculatedExpressionNumericLiteralTests` pins native Long/Decimal/Double literal
+selection, exact Decimal admission, scale normalization, signed-minimum grammar,
+Long arithmetic promotion and Decimal text. Explicit OLE Decimal-to-Single/Double
+conversion preserves native result bits across runtime changes. DAO3.6 Jet4
+query and stored-default controls ran through writer insertion, native
+read/update/compact and managed compacted readback; Decimal-field controls
+separately retain source scale. Literal `CDbl(99.99999999999999)` returns `100`,
+while equivalent field values can retain a different scale and result bits.
+Public ACE cached insert/update/reopen is library evidence. Narrow-integral and
+Currency identity, remaining functions, caller/storage conversions, additional
+locales and fresh ACE-native contexts remain R4/E2 work. The native module is
+`dao360.dll` 10.0.26100.5074; ordinary CI independently checks both shipped
+library assets and the .NET 10/.NET 11 runtime combinations.
 
 `PublicTextCollationTests` and `TextSortOrderFixtureTests` cover public General97/General Legacy/General choices, raw stored ID/version metadata, null header-default selection, unknown-ID reporting, no-mutation invalid-choice refusal, Text/Memo/calculated Text and schema preservation. `PublicTextCollationDaoTests` independently checks writer-created columns through schema edits and row updates, native case-equivalent seek, duplicate refusal, insert/update and compact/readback. Current x86 DAO3.6 (`dao360.dll` 10.0.26100.5074) controls passed for Jet3 General97 and Jet4 General Legacy. Four fresh DAO120 Jet4/ACE cases remain guarded and skipped on this host. Existing encoders and text code pages are unchanged; broader locale, long-key and native mixed-column coverage remains F9/E2 work.
