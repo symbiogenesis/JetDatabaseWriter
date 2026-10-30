@@ -842,7 +842,9 @@ The provenance, exact input manifests and hashes are retained in
 Slice lengths and positions use native rounded integer conversion with checked
 ranges. Plain string functions preserve Null; their dollar aliases retain the
 native invalid-Null status. Trim removes U+0020 only. Asc and numeric String
-characters use the measured CP1252 mapping. Str omits the leading zero before a
+characters use the measured CP1252 mapping. `String$` distinguishes a Null
+count (status 13) from a Null character (status 94); `Str$` Null is status 94.
+Str omits the leading zero before a
 fraction and prefixes nonnegative values with a space.
 
 UCase/LCase use pinned native mappings, independent of the host runtime's Unicode

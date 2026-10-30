@@ -28,10 +28,11 @@ internal readonly struct CalculatedFunctionInvocation(
             string function = this.Name.ToUpperInvariant();
             bool financial = function is "FV" or "PV" or "PMT" or "NPER" or "IPMT" or "PPMT" or "DDB" or "SLN" or "SYD" or "RATE";
             bool due = financial && index == (function is "IPMT" or "PPMT" ? 5 : 4) && function is not ("DDB" or "SLN" or "SYD");
+            bool nullStringCharacter = function == "STRING$" && index == 1;
             if (financial || function is "ASC" or "ATN" or "COS" or "EXP" or "LOG" or "SIN" or "SQR" or "TAN" or "CDBL"
-                || function == "STR$" || (function == "INSTR" && index is 0 or 3))
+                || function == "STR$" || nullStringCharacter || (function == "INSTR" && index is 0 or 3))
             {
-                int code = due || function is "CDBL" or "STR$" || (function == "INSTR" && index == 0) ? 94 : 13;
+                int code = due || function is "CDBL" or "STR$" || nullStringCharacter || (function == "INSTR" && index == 0) ? 94 : 13;
                 throw new CalculatedErrorPropagationException(new CalculatedError(code));
             }
         }
