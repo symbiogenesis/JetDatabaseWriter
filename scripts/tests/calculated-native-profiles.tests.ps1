@@ -33,4 +33,5 @@ Assert-Refusal 'missing signature verification' ($workflow.Replace('Get-Authenti
 Assert-Refusal 'missing native artifacts' ($workflow.Replace('if-no-files-found: error', 'if-no-files-found: warn')) 'retain independent'
 Assert-Contract ($probe.Contains('The fresh process did not acquire the requested user regional profile.') -and $probe -notmatch '\bSet-Culture\b|\bSet-ItemProperty\b') 'The reusable native probe must verify profiles without changing user settings.'
 Assert-Contract ($probe.Contains('$engine.CreateDatabase') -and $probe.Contains('$engine.CompactDatabase') -and $probe -notmatch '\bAccessWriter\b') 'Profile controls must be independently authored and compacted by Microsoft.'
+Assert-Contract ($probe.Contains('ExtendedTables =') -and $probe.Contains('MonthNames') -and $probe.Contains('WeekNames') -and $probe.Contains('RegionalNumbers') -and $probe.Contains('RegionalDates')) 'Regional qualification requires full native name, date and numeric tables beyond the initial controls.'
 Write-Output 'Native profile workflow contracts passed.'
