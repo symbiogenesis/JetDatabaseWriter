@@ -164,7 +164,7 @@ internal sealed class TableSchemaEditor(
         for (int i = 0; i < columns.Count; i++)
         {
             ValidateDeclaredAutoIncrement(columns[i], nameof(columns));
-            ValidateDeclaredCalculatedExpression(columns[i], nameof(columns));
+            ValidateDeclaredCalculatedExpression(columns[i], nameof(columns), tableName);
             ValidateDeclaredDefault(columns[i], nameof(columns));
         }
 
@@ -334,7 +334,7 @@ internal sealed class TableSchemaEditor(
         // then the default.
         _ = TDefPageBuilder.ValidateColumnForFormat(column, format, nameof(column));
         ValidateDeclaredAutoIncrement(column, nameof(column));
-        ValidateDeclaredCalculatedExpression(column, nameof(column));
+        ValidateDeclaredCalculatedExpression(column, nameof(column), tableName);
         ValidateDeclaredDefault(column, nameof(column));
         _ = JetExpressionConverter.BuildLvPropBlob([column], format);
 
@@ -574,13 +574,14 @@ internal sealed class TableSchemaEditor(
     /// now (CreateTable / AddColumn): rejects operators Access does not have
     /// (such as Excel's postfix <c>%</c>) and syntax the expression parser
     /// cannot read, so the error surfaces when the column is defined rather
-    /// than on the first insert. Functions and column names are still resolved
-    /// at evaluation.
+    /// than on the first insert. Bracketed table qualifiers must name the
+    /// declared table. Functions and column names are still resolved at evaluation.
     /// </summary>
     /// <param name="column">The column being declared.</param>
     /// <param name="paramName">The public parameter that carries the column.</param>
+    /// <param name="tableName">The table the column is declared on.</param>
     /// <exception cref="ArgumentException">The expression is not valid Access expression syntax.</exception>
-    private static void ValidateDeclaredCalculatedExpression(ColumnDefinition? column, string paramName)
+    private static void ValidateDeclaredCalculatedExpression(ColumnDefinition? column, string paramName, string tableName)
     {
         if (column is not { IsCalculated: true, CalculationExpression: { } expression } || string.IsNullOrWhiteSpace(expression))
         {
@@ -589,7 +590,7 @@ internal sealed class TableSchemaEditor(
 
         try
         {
-            _ = CalculatedExpressionParser.Parse(expression);
+            _ = CalculatedExpressionParser.Parse(expression, declaredTableName: tableName);
         }
         catch (ArgumentException ex)
         {

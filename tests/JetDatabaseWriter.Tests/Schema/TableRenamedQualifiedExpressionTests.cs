@@ -63,26 +63,48 @@ public sealed class TableRenamedQualifiedExpressionTests
     }
 
     [Theory]
+    [InlineData("[Other].[Price]")]
+    [InlineData("[Other]![Price]")]
+    [InlineData("[Other].Price")]
+    public async Task BracketedForeignDeclaration_CreateAndAddRefuseBeforeChangingImage(string reference)
+    {
+        await using var stream = new MemoryStream();
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
+        await writer.CreateTableAsync("T", [new ColumnDefinition("Price", typeof(int))], TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync("T", [4], TestContext.Current.CancellationToken);
+        byte[] before = stream.ToArray();
+        var calculated = new ColumnDefinition("Calculated", typeof(int)) { IsCalculated = true, CalculationExpression = reference + " * 2" };
+        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.CreateTableAsync(
+            "New T", [new ColumnDefinition("Price", typeof(int)), calculated], TestContext.Current.CancellationToken));
+        Assert.Equal(before, stream.ToArray());
+        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.AddColumnAsync("T", calculated, TestContext.Current.CancellationToken));
+        Assert.Equal(before, stream.ToArray());
+    }
+
+    [Theory]
     [InlineData("[T].[Price]")]
     [InlineData("[T]![Price]")]
     [InlineData("[T].Price")]
-    public async Task BracketedForeignQualifiedCalculation_InsertAndUpdateRefuseWithoutChangingImage(string reference)
+    public async Task StaleBracketedQualifiedCalculation_InsertAndUpdatePersistNull(string reference)
     {
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
         {
-            await writer.CreateTableAsync(
+            // Seed persisted stale metadata through the rewrite path, bypassing declaration admission.
+            await writer.Services.Schema.CreateTableAsync(
                 "Renamed T",
                 [
                     new ColumnDefinition("Price", typeof(int)),
                     new ColumnDefinition("Calculated", typeof(int)) { IsCalculated = true, CalculationExpression = reference + " * 2" },
                 ],
+                [],
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Renamed T", [4, 8], TestContext.Current.CancellationToken);
         }
 
-        await AssertWriterRefusesWithoutChangingImageAsync(stream.ToArray());
+        await AssertWriterRecalculatesNullAsync(stream.ToArray());
     }
 
     [Theory(
@@ -122,11 +144,33 @@ public sealed class TableRenamedQualifiedExpressionTests
         Assert.True(created.ExitCode == 0, $"DAO failed: {created.StdOut}\n{created.StdErr}");
         Assert.Contains("BEFORE=8", created.StdOut, StringComparison.Ordinal);
 
-        // Bracketed stale qualifiers remain refused without changing bytes;
+        // Bracketed stale qualifiers produce native Null cached values;
         // the bare forms bind to the current row and have separate writer coverage.
         if (returnsNull)
         {
-            await AssertWriterRefusesWithoutChangingImageAsync(await File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken));
+            byte[] writerImage = await AssertWriterRecalculatesNullAsync(await File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken));
+            string writerPath = session.CreateDatabasePath("writer_null");
+            await File.WriteAllBytesAsync(writerPath, writerImage, TestContext.Current.CancellationToken);
+            AccessRoundTripEnvironment.CompactResult writerRead = session.RunDaoDatabaseScript(
+                writerPath,
+                """
+                $db.Execute('INSERT INTO [Renamed T] ([Price]) VALUES (3)', 128)
+                $db.Execute('UPDATE [Renamed T] SET [Price]=6 WHERE [Price]=5', 128)
+                $rs = $db.OpenRecordset('SELECT [Price],[Calculated] FROM [Renamed T] ORDER BY [Price]')
+                try {
+                    while (!$rs.EOF) {
+                        $value = $rs.Fields('Calculated').Value
+                        if ($null -ne $value -and ![Convert]::IsDBNull($value)) { throw 'Expected native Null after writer recalculation.' }
+                        Write-Output ('WRITER_ROW=' + [string]$rs.Fields('Price').Value + ':NULL')
+                        $rs.MoveNext()
+                    }
+                } finally { $rs.Close() }
+                """,
+                TimeSpan.FromMinutes(1));
+            Assert.True(writerRead.ExitCode == 0, $"DAO failed: {writerRead.StdOut}\n{writerRead.StdErr}");
+            Assert.Contains("WRITER_ROW=2:NULL", writerRead.StdOut, StringComparison.Ordinal);
+            Assert.Contains("WRITER_ROW=3:NULL", writerRead.StdOut, StringComparison.Ordinal);
+            Assert.Contains("WRITER_ROW=6:NULL", writerRead.StdOut, StringComparison.Ordinal);
         }
 
         const string updateScript = """
@@ -293,18 +337,31 @@ public sealed class TableRenamedQualifiedExpressionTests
         Assert.Equal(12, values[6]);
     }
 
-    private static async Task AssertWriterRefusesWithoutChangingImageAsync(byte[] image)
+    private static async Task<byte[]> AssertWriterRecalculatesNullAsync(byte[] image)
     {
         await using var stream = new MemoryStream();
         await stream.WriteAsync(image, TestContext.Current.CancellationToken);
         stream.Position = 0;
-        await using AccessWriter writer = await AccessWriter.OpenAsync(
-            stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.InsertRowAsync(
-            "Renamed T", [2, DBNull.Value], TestContext.Current.CancellationToken));
-        Assert.Equal(image, stream.ToArray());
-        await Assert.ThrowsAsync<JetNotSupportedException>(async () => await writer.UpdateRowsAsync(
-            "Renamed T", "Price", 4, new Dictionary<string, object?> { ["Price"] = 5 }, TestContext.Current.CancellationToken));
-        Assert.Equal(image, stream.ToArray());
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
+        {
+            await writer.InsertRowAsync("Renamed T", [2, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.UpdateRowsAsync(
+                "Renamed T", "Price", 4, new Dictionary<string, object?> { ["Price"] = 5 }, TestContext.Current.CancellationToken);
+        }
+
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
+        int count = 0;
+        await foreach (object[] row in reader.Rows("Renamed T", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            Assert.True(Assert.IsType<int>(row[0]) is 2 or 5);
+            Assert.Same(DBNull.Value, row[1]);
+            count++;
+        }
+
+        Assert.Equal(2, count);
+        return stream.ToArray();
     }
 }

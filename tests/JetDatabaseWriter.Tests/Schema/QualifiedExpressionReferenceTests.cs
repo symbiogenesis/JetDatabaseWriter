@@ -115,17 +115,39 @@ public sealed class QualifiedExpressionReferenceTests
     }
 
     [Theory]
-    [InlineData("[Other].[Price]", "T")]
-    [InlineData("[Other]![Price]", "T")]
     [InlineData("[T].[Price]", null)]
     [InlineData("T.Price", null)]
-    public void CrossTableOrMissingContext_RefusesInsteadOfUsingCurrentRow(string expression, string? tableName)
+    public void MissingContext_RefusesInsteadOfUsingCurrentRow(string expression, string? tableName)
     {
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(expression);
         CalculatedExpressionEvaluationContext context = Context(tableName);
         Assert.Throws<JetNotSupportedException>(() => plan.Evaluate(context));
         Assert.False(ColumnDefaultValue.Compile(expression).TryEvaluate(typeof(double), () => context, out _));
         Assert.False(ColumnValidationRule.Compile(expression + " > 0", "Price").IsSupported);
+    }
+
+    [Theory]
+    [InlineData("[Other].[Price]")]
+    [InlineData("[Other]![Price]")]
+    [InlineData("[Other].Price")]
+    public void StaleBracketedQualifier_ReturnsNullInsteadOfUsingCurrentRow(string reference)
+    {
+        CalculatedExpressionEvaluationContext context = Context("T");
+        Assert.Same(DBNull.Value, CalculatedExpressionParser.Parse(reference + " * 2").Evaluate(context));
+        Assert.True(Assert.IsType<bool>(CalculatedExpressionParser.Parse("IsNull(" + reference + ")").Evaluate(context)));
+        Assert.Equal(12d, CalculatedExpressionParser.Parse("Nz(" + reference + ", 12)").Evaluate(context));
+        Assert.False(ColumnDefaultValue.Compile(reference).TryEvaluate(typeof(double), () => context, out _));
+        Assert.False(ColumnValidationRule.Compile(reference + " > 0", "Price").IsSupported);
+    }
+
+    [Theory]
+    [InlineData("[Other].[Missing]")]
+    [InlineData("[Other]![Missing]")]
+    public void StaleQualifierWithUnknownField_RefusesUnverifiedResolution(string reference)
+    {
+        CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(reference);
+        JetOperationException failure = Assert.Throws<JetOperationException>(() => plan.Evaluate(Context("T")));
+        Assert.Equal(JetErrorCode.InvalidExpression, failure.ErrorCode);
     }
 
     [Theory]

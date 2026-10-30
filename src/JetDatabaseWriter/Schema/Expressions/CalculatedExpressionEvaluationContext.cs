@@ -96,17 +96,20 @@ internal sealed class CalculatedExpressionEvaluationContext
     public object GetFieldValue(string name, string? qualifier = null, bool rowLocalQualifier = false)
     {
         // DAO binds a bare qualifier (even another existing table name) to this
-        // row. A bracketed qualifier still requires the matching table context.
-        if (qualifier is not null
-            && (this.tableName is null
-                || (!rowLocalQualifier && !string.Equals(qualifier, this.tableName, StringComparison.OrdinalIgnoreCase))))
+        // row. A stale bracketed qualifier yields Null after a table rename.
+        if (qualifier is not null && this.tableName is null)
         {
-            throw new JetNotSupportedException(JetErrorCode.UnsupportedExpression, $"Expression reference to table '{qualifier}' cannot be evaluated in the current row context.");
+            throw new JetNotSupportedException(JetErrorCode.UnsupportedExpression, $"Expression reference to table '{qualifier}' cannot be evaluated without the current table context.");
         }
 
         if (!this.columnIndexes.TryGetValue(name, out int index))
         {
             throw new JetOperationException(JetErrorCode.InvalidExpression, $"Calculated-column expression references unknown name '{name}'.");
+        }
+
+        if (qualifier is not null && !rowLocalQualifier && !string.Equals(qualifier, this.tableName, StringComparison.OrdinalIgnoreCase))
+        {
+            return DBNull.Value;
         }
 
         // Callers may pass "10" for an Integer field or 10 for a Text field;

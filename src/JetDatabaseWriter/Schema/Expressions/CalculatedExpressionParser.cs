@@ -32,10 +32,21 @@ internal sealed class CalculatedExpressionParser
         this.end = end;
     }
 
-    public static CalculatedExpressionNode Parse(string expression, bool isCalculatedColumn = true)
+    public static CalculatedExpressionNode Parse(string expression, bool isCalculatedColumn = true, string? declaredTableName = null)
     {
         ValidateExpressionShape(expression, MaxExpressionLength, "Calculated-column expression");
         List<Token> tokens = Tokenize(expression, isCalculatedColumn, skipLeadingEquals: true);
+        if (declaredTableName is not null)
+        {
+            foreach (Token token in tokens)
+            {
+                if (token.Node is CalculatedExpressionFieldNode field)
+                {
+                    field.ValidateDeclaredQualifier(declaredTableName);
+                }
+            }
+        }
+
         return Parse(expression, tokens, 0, tokens.Count, isCalculatedColumn);
     }
 

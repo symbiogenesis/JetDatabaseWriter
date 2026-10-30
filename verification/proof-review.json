@@ -5,9 +5,9 @@
   "reviews": [
     {
       "boundary": "implementation",
-      "obligations": "Reviewed generated null/budget admission and positive bounded payload consumption before each CopyPayloadAsync output effect, checked casts/counter headroom, release-before-next-acquisition and preserved malformed/single-page error priority. Reviewed lazy 16-slot visited-table allocation, half-occupancy doubling, bounded circular probing, duplicate refusal before growth and exact rehash membership manually. Reviewed the explicit caller-stream live I/O, failure/disposal and exclusive-access contract against direct FileStream classification and custom-stream rollback. Existing journal/replacement codecs, shared range/read and serialized writer-lifecycle mappings retain their separate payload, authority and returned-I/O contracts. Reviewed full calculated-envelope overhead before payload extraction; lookup-source refusal before schema effects, surviving-owner/type/duplicate handling and unreadable metadata; and bounded query template shape identity, deferred constant binding, synchronization, retention, eviction and direct-compilation fallback. These handwritten boundaries have regression/manual evidence rather than a new proof. Reviewed S9 display metadata against DAO3.6 column edits: removing the blanket Filter/OrderBy refusal delegates unchanged entry preservation to the existing property projector; table rules, lookup admission, malformed-property parsing and transactional preflight remain separate and unchanged. Opaque and repeated display entries are carried without interpretation or execution.",
-      "conformance": "LongValueTraversalTests independently checks collision/growth membership, cycles before reacquisition, no-progress refusal and wide slice/count boundaries; LongValueStreamingTests and LongValueStoreTests retain cancellation, partial output, release and existing format behavior. PageStoreTests, LeaveOpenTests, StatementSpillTests, JetTransactionTests and WriterLifecycleConformanceTests bind the live-stream contract. ReplacementCleanupConformanceTests and RecoverableWriterLockTests supplement the new multi-client model with removed-name, competing-handle, retry, stale-owner and exact-evidence controls. Exact build/test execution receipts and settled-main CI verdicts are reported separately. Calculated envelope regressions cover inline/single/chained public reads and unchanged write refusal with committed native framing controls. Schema lookup tests cover all three formats and write modes, unchanged refusal, usable transactions and allowed nondependent edits. Query tests cover independent/live captures, deferred calls, short circuiting, concurrency, eviction, failed compilation, checked arithmetic, lexical scopes, names, quoted/deep fallback and post-projection public reads. Exact settled-main CI is reported separately. NativeDisplayPropertyTests compares independently native-edited and writer-edited Jet3/Jet4 controls through exact column names, raw display entry metadata, native read/insert/update/delete and compact. SchemaRewritePropertyPreservationTests covers related/unrelated/case-only edits, opaque repeats and all three managed formats/write modes. DAO120 ACE cases remain guarded; exact execution and settled-main CI receipts are reported separately.",
-      "remainingAssumptions": "The traversal model bounds aggregate uint-array payload allocations and logical page-prefix acquisition work; CLR overhead/GC, locator/cache/pool and destination resources remain separate. Exact handwritten table membership/rehash is manual correspondence with independent tests, not an automatic C# proof. Returned I/O, immutable borrowed bytes, cryptographic identity, snapshot effects, canonical coordination, stale-I/O fencing, OS locks and physical persistence remain contracts. Non-FileStream callers retain live rollback only; stream disposal can itself persist buffered bytes. No complete public parser, arbitrary concurrent C# correctness or caller-stream persistent recovery claim is admitted. Native Numeric/error semantics, complete saved-query/lookup dependencies, Name AutoCorrect, whole translation plans and remaining query cache/projection/seek work stay open. No benchmark improvement is claimed. DAO3.6 display-property preservation does not establish Access UI Name AutoCorrect or ACE native acceptance; ACE controls require a DAO120-equipped host. No new verified production boundary is claimed.",
+      "obligations": "Reviewed generated null/budget admission and positive bounded payload consumption before each CopyPayloadAsync output effect, checked casts/counter headroom, release-before-next-acquisition and preserved malformed/single-page error priority. Reviewed lazy 16-slot visited-table allocation, half-occupancy doubling, bounded circular probing, duplicate refusal before growth and exact rehash membership manually. Reviewed the explicit caller-stream live I/O, failure/disposal and exclusive-access contract against direct FileStream classification and custom-stream rollback. Existing journal/replacement codecs, shared range/read and serialized writer-lifecycle mappings retain their separate payload, authority and returned-I/O contracts. Reviewed full calculated-envelope overhead before payload extraction; lookup-source refusal before schema effects, surviving-owner/type/duplicate handling and unreadable metadata; and bounded query template shape identity, deferred constant binding, synchronization, retention, eviction and direct-compilation fallback. These handwritten boundaries have regression/manual evidence rather than a new proof. Reviewed S9 display metadata against DAO3.6 column edits: removing the blanket Filter/OrderBy refusal delegates unchanged entry preservation to the existing property projector; table rules, lookup admission, malformed-property parsing and transactional preflight remain separate and unchanged. Opaque and repeated display entries are carried without interpretation or execution. Reviewed R4 stale bracketed qualification: an explicit table context and a known local field precede Null for a mismatched bracketed qualifier; bare qualifiers retain row-local binding, and missing context/unknown fields refuse. CreateTable/AddColumn declaration admission rejects newly declared bracketed foreign qualifiers while persisted schema rewrites retain original text. Qualified defaults/validation rules remain unsupported and no foreign lookup is performed.",
+      "conformance": "LongValueTraversalTests independently checks collision/growth membership, cycles before reacquisition, no-progress refusal and wide slice/count boundaries; LongValueStreamingTests and LongValueStoreTests retain cancellation, partial output, release and existing format behavior. PageStoreTests, LeaveOpenTests, StatementSpillTests, JetTransactionTests and WriterLifecycleConformanceTests bind the live-stream contract. ReplacementCleanupConformanceTests and RecoverableWriterLockTests supplement the new multi-client model with removed-name, competing-handle, retry, stale-owner and exact-evidence controls. Exact build/test execution receipts and settled-main CI verdicts are reported separately. Calculated envelope regressions cover inline/single/chained public reads and unchanged write refusal with committed native framing controls. Schema lookup tests cover all three formats and write modes, unchanged refusal, usable transactions and allowed nondependent edits. Query tests cover independent/live captures, deferred calls, short circuiting, concurrency, eviction, failed compilation, checked arithmetic, lexical scopes, names, quoted/deep fallback and post-projection public reads. Exact settled-main CI is reported separately. NativeDisplayPropertyTests compares independently native-edited and writer-edited Jet3/Jet4 controls through exact column names, raw display entry metadata, native read/insert/update/delete and compact. SchemaRewritePropertyPreservationTests covers related/unrelated/case-only edits, opaque repeats and all three managed formats/write modes. DAO120 ACE cases remain guarded; exact execution and settled-main CI receipts are reported separately. QualifiedExpressionReferenceTests and TableRenamedQualifiedExpressionTests cover Null/IsNull/Nz, bare binding, context/name refusal, cached Null insert/update and byte-identical declaration refusal. Previously recorded DAO controls establish native syntax-dependent behavior and compact error3790; extended writer-native confirmation remains guarded and was unavailable locally without DAO120.",
+      "remainingAssumptions": "The traversal model bounds aggregate uint-array payload allocations and logical page-prefix acquisition work; CLR overhead/GC, locator/cache/pool and destination resources remain separate. Exact handwritten table membership/rehash is manual correspondence with independent tests, not an automatic C# proof. Returned I/O, immutable borrowed bytes, cryptographic identity, snapshot effects, canonical coordination, stale-I/O fencing, OS locks and physical persistence remain contracts. Non-FileStream callers retain live rollback only; stream disposal can itself persist buffered bytes. No complete public parser, arbitrary concurrent C# correctness or caller-stream persistent recovery claim is admitted. Native Numeric/error semantics, complete saved-query/lookup dependencies, Name AutoCorrect, whole translation plans and remaining query cache/projection/seek work stay open. No benchmark improvement is claimed. DAO3.6 display-property preservation does not establish Access UI Name AutoCorrect or ACE native acceptance; ACE controls require a DAO120-equipped host. No new verified production boundary is claimed. Stale bracketed references whose local field is absent remain unverified and refuse; fresh DAO120 writer read/update/compact-refusal confirmation remains E2/R4 work. Expression evaluation and schema admission remain handwritten/tested rather than proved.",
       "evidence": [
         "docs/design/calculated-columns-format-notes.md",
         "docs/design/caller-stream-recovery.md",
@@ -26,6 +26,9 @@
         "src/JetDatabaseWriter/Queries/InMemoryTail.cs",
         "src/JetDatabaseWriter/Queries/OrderStage.cs",
         "src/JetDatabaseWriter/Queries/QueryLambdaCompiler.cs",
+        "src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluationContext.cs",
+        "src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionFieldNode.cs",
+        "src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionParser.cs",
         "src/JetDatabaseWriter/Tables/IndexRowReader.cs",
         "src/JetDatabaseWriter/Tables/TableRewritePlanner.cs",
         "src/JetDatabaseWriter/Tables/TableSchemaEditor.cs",
@@ -50,7 +53,9 @@
         "tests/JetDatabaseWriter.Tests/Reader/LeaveOpenTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnPayloadTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/NativeDisplayPropertyTests.cs",
+        "tests/JetDatabaseWriter.Tests/Schema/QualifiedExpressionReferenceTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/SchemaRewritePropertyPreservationTests.cs",
+        "tests/JetDatabaseWriter.Tests/Schema/TableRenamedQualifiedExpressionTests.cs",
         "tests/JetDatabaseWriter.Tests/Transactions/RecoverableWriterLockTests.cs",
         "tests/JetDatabaseWriter.Tests/ValueDecoding/CalculatedLongValueDecodePolicyTests.cs",
         "tests/JetDatabaseWriter.Tests/ValueDecoding/CalculatedNumericDecodePolicyTests.cs",
@@ -64,7 +69,7 @@
       "inputs": [
         {
           "path": "docs/design/calculated-columns-format-notes.md",
-          "sha256": "e508f4bf82ef91a834df51aa20bf6a2f06bb12f1e8ada49598221507aeae3005"
+          "sha256": "9a61b67238dec51d48f529663655a26662be3882672a170830c9c503a6fb4802"
         },
         {
           "path": "docs/design/caller-stream-recovery.md",
@@ -92,7 +97,7 @@
         },
         {
           "path": "docs/design/verification-evidence-map.md",
-          "sha256": "e94af94955a0ee86f5a0bdfd22487ba7666316c083da74240367e28f05180264"
+          "sha256": "31cd7eb56eccde5057af7870f5c3edd2887c3b9f99fc1d27ead0f5879c4a0da0"
         },
         {
           "path": "docs/design/verification-scope.md",
@@ -100,7 +105,7 @@
         },
         {
           "path": "docs/design/writer-disk-format-validation-matrix.md",
-          "sha256": "5b55eb7e42e30826328c28c02393db2cc61dfa71045c725c24cb8f06c5dc28c2"
+          "sha256": "1b85e79451fafe850a4e7bbffaec4a803b9e4577fbb8b5082d9420384acdbe84"
         },
         {
           "path": "docs/design/writer-lifecycle.md",
@@ -283,6 +288,18 @@
           "sha256": "8ac878bfa82d8aefcb72c04009e99d9d060d1b44cb9473069466202d66c30098"
         },
         {
+          "path": "src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluationContext.cs",
+          "sha256": "2816c1ea021be1540637b8f3cf7f582fd9cc81bdd3d99cb5e6c8afb6cb71176b"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionFieldNode.cs",
+          "sha256": "3bca9bcba0d156a8ca51bf2a493c08a2c6a793a4f7c469e3ebeaccfabb5c27dd"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionParser.cs",
+          "sha256": "37648ff806a3d77a2b4273cca1aedb2b7f98142bfbf2bb720244736562b8dcaa"
+        },
+        {
           "path": "src/JetDatabaseWriter/Tables/IndexRowReader.cs",
           "sha256": "cef3e390951603d09298c4fd6700253de31c0ac4e766bb0e759b31cf00162cd9"
         },
@@ -292,7 +309,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableSchemaEditor.cs",
-          "sha256": "9c2f6cc3c68a9130ff5d58264754ff3b947e7ee6147a82197d25f9d7ef371c7b"
+          "sha256": "5788aef37a70375a0de1750559a2592af101acb4b952b88cca4400bcba0aade7"
         },
         {
           "path": "src/JetDatabaseWriter/Transactions/LockFileCoordinator.cs",
@@ -411,8 +428,16 @@
           "sha256": "1871e74bc0a620517c4a136b0a62e608829934244c8e64ba983d35c54184890f"
         },
         {
+          "path": "tests/JetDatabaseWriter.Tests/Schema/QualifiedExpressionReferenceTests.cs",
+          "sha256": "2417df966e1c8a0a28954bf7337acf9cfe377ecd99c0d0f3374557c5c08b7c0f"
+        },
+        {
           "path": "tests/JetDatabaseWriter.Tests/Schema/SchemaRewritePropertyPreservationTests.cs",
           "sha256": "fc50f30c04cf187b2dcadd63640c6a4470e3adfc6feeb2d88b57b8399534e796"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Schema/TableRenamedQualifiedExpressionTests.cs",
+          "sha256": "0c57de7c582218a59ac708b91cb13cda1b9f0b63218026a49bd634265b443e2e"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Transactions/RecoverableWriterLockTests.cs",
@@ -494,7 +519,7 @@
         },
         {
           "path": "docs/design/calculated-columns-format-notes.md",
-          "sha256": "e508f4bf82ef91a834df51aa20bf6a2f06bb12f1e8ada49598221507aeae3005"
+          "sha256": "9a61b67238dec51d48f529663655a26662be3882672a170830c9c503a6fb4802"
         },
         {
           "path": "docs/design/caller-stream-recovery.md",
@@ -530,7 +555,7 @@
         },
         {
           "path": "docs/design/verification-evidence-map.md",
-          "sha256": "e94af94955a0ee86f5a0bdfd22487ba7666316c083da74240367e28f05180264"
+          "sha256": "31cd7eb56eccde5057af7870f5c3edd2887c3b9f99fc1d27ead0f5879c4a0da0"
         },
         {
           "path": "docs/design/verification-scope.md",

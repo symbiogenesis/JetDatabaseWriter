@@ -144,7 +144,7 @@ public interface IAccessSchema : IAccessBase
     /// layouts, multi-page variants and Access application-object dependencies is not established.
     /// Calculated expressions and stored column/table rules referring to the column are
     /// rewritten while retaining string literals. Bare calculated qualifiers bind to the current
-    /// row, including after a table rename; bracketed qualifiers require the current table name.
+    /// row, including after a table rename; stale bracketed qualifiers yield Null for known fields.
     /// Stored table <c>Filter</c> and <c>OrderBy</c> text is preserved unchanged, including
     /// references to the old name, as in native DAO edits. Lookup RowSource and saved-query
     /// dependencies are not fully handled; Access UI Name AutoCorrect is not applied.

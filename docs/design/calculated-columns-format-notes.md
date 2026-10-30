@@ -23,7 +23,8 @@ Calculated plans retain qualifier syntax separately from the column name.
 An adjacent bare qualifier binds to the current row, even when its name is
 another existing table: DAO120 evaluates `Other.Price` and `Other![Price]`
 from `T.Price`, leaving the separate `Other` table unchanged. A bracketed
-qualifier requires a matching current-table context. Plans require an explicit
+qualifier that differs from the explicit current table yields Null for a known
+local field. Missing table context and unknown fields refuse. Plans require an explicit
 row/table context; multi-segment object references are refused, and no
 embedded code or cross-table lookup is executed. Defaults and validation
 rules reject every qualified reference before mutation. Column rename and
@@ -46,9 +47,16 @@ updates, compacts and reads the resulting expressions and values.
 with a real separate table, and verifies that table's data is untouched.
 Bracketed qualifiers `[T].[Price]`, `[T]![Price]` and `[T].Price` instead
 return Null after native table rename, and compact refuses them with DAO
-error 3790. The writer still refuses these stale bracketed qualifiers before
-changing bytes. Their native Null semantics remain open; allowing arbitrary
-bracketed foreign qualifiers would erase the syntax distinction.
+error 3790. The writer preserves that expression text and stores Null when
+inserting or updating a row with a known local field and a stale bracketed
+qualifier. `CreateTableAsync` and `AddColumnAsync` reject new bracketed foreign
+qualifiers before mutation, following native declaration refusal; persisted
+schema rewrites do not apply that declaration check. Bare qualifiers retain
+their separate row-local semantics. The existing DAO controls establish the
+native syntax distinction. Extended checks of writer-produced Null caches
+through native read and update remain DAO120-guarded and were not executed on
+the current host; the native stale-expression compact refusal remains expected.
+Resolution when the local field is absent remains unverified and refuses.
 
 ## On-disk format
 
