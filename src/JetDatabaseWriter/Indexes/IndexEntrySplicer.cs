@@ -56,7 +56,7 @@ internal static class IndexEntrySplicer
             }
         }
 
-        if (IsSorted(working) && IsSorted(adds))
+        if (IsSorted(adds) && IsSorted(working))
         {
             int existingIndex = working.Count - 1;
             int addedIndex = adds.Count - 1;

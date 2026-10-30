@@ -343,7 +343,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexEntrySplicer.cs",
-          "sha256": "bf03f7b37a82f2c4189a9be6806f15b954a2b65cf7cdf927e1ae83b9cd56830d"
+          "sha256": "16484e88038b3360a9524560c4f6ccc148ec5961153da47654e850ff27041aed"
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexMaintainer.cs",
