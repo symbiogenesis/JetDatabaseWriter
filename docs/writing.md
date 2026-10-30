@@ -24,6 +24,8 @@ Keep other writers away from the file while your writer is open. For grouped cha
 >
 > Jet3 stores text and object names in the database's code page. New Jet3 files use Windows-1252, as Access 97 does. .NET would write a character outside the code page as its closest match or `?` (`Łódź` as `Lódz`, `中文` as `??`), so the writer refuses it before writing anything: a name throws `ArgumentException`, and a Text or Memo value in an insert or update throws `JetLimitationException`. Jet4 and ACE store text as UTF-16, which holds any character.
 
+Ordinary Jet4/ACE Memo text beginning with U+FEFF is writable at 6 through 2048 characters when the column enables `UnicodeCompression` and every following character is U+0001 through U+00FF. Other leading-marker Memo values of at most 2048 characters refuse before allocation; longer values use the existing plain UTF-16 chain representation. See [the native storage evidence](design/data-page-row-format-notes.md#memo-text-storage) for the encoding and remaining cases.
+
 Path-based `CreateDatabaseAsync` initializes and flushes an adjacent private staging file before publishing the complete database. Publication refuses an existing destination and retains the staging file's [private-file permissions](operations.md#encryption-options). A failure reopening the published file leaves the completed database in place; a crash before publication may leave an unused staging file. Caller-supplied streams keep their separate in-process failure contract.
 
 Strings supplied to Binary columns use the database's code page on every format. A character that cannot be represented exactly throws `EncoderFallbackException` before that row is written; supply a `byte[]` to store arbitrary bytes.

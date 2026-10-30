@@ -9,7 +9,7 @@ internal sealed partial class JetFormat
     /// <param name="value">The complete text.</param>
     /// <param name="compress">Whether the column permits Unicode compression.</param>
     /// <returns>The complete native Memo payload.</returns>
-    /// <exception cref="JetLimitationException">The leading U+FEFF value has no supported unambiguous single-row representation.</exception>
+    /// <exception cref="JetLimitationException">The short leading U+FEFF value has no supported representation for its column flags or character shape.</exception>
     internal byte[] EncodeMemoText(string value, bool compress)
     {
         if (this.IsJet3)
@@ -26,10 +26,41 @@ internal sealed partial class JetFormat
             return bytes;
         }
 
-        // FF FE is a marker in inline/single-row storage. Native escape behavior
-        // also depends on column flags; no writer representation is verified for
-        // every supported case. Refuse before allocating instead of losing FEFF.
-        throw new JetLimitationException(JetErrorCode.FeatureNotSupported, "Ordinary Memo values of at most 2048 characters beginning with U+FEFF are not supported for writing.");
+        // Native compact chooses ambiguous plain bytes when the escape saves no
+        // space. External escaped payloads also require the compression flag;
+        // an inline value can spill when the containing row is too large.
+        // The retained DAO120 controls use this exact escape for Latin-1 tails.
+        if (compress && value.Length >= 6)
+        {
+            bool latinTail = true;
+            for (int index = 1; index < value.Length; index++)
+            {
+                if (value[index] is '\0' or > '\u00FF')
+                {
+                    latinTail = false;
+                    break;
+                }
+            }
+
+            if (latinTail)
+            {
+                byte[] escaped = new byte[value.Length + 5];
+                escaped[0] = 0xFF;
+                escaped[1] = 0xFE;
+                escaped[2] = 0;
+                escaped[3] = 0xFF;
+                escaped[4] = 0xFE;
+                escaped[5] = 0;
+                for (int index = 1; index < value.Length; index++)
+                {
+                    escaped[index + 5] = (byte)value[index];
+                }
+
+                return escaped;
+            }
+        }
+
+        throw new JetLimitationException(JetErrorCode.FeatureNotSupported, "Short ordinary Memo values beginning with U+FEFF require Unicode compression and 6 through 2048 characters with a nonzero Latin-1 tail for verified writing.");
     }
 
     /// <summary>Decodes ordinary Memo using its descriptor's compression eligibility, or plain calculated Memo text.</summary>

@@ -18,6 +18,7 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.TestSupport;
 using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding;
@@ -25,7 +26,8 @@ using JetDatabaseWriter.ValueEncoding.Models;
 using Xunit;
 
 /// <summary>Native Memo compression boundaries must agree on encoding and every materialized read path.</summary>
-public sealed class NativeMemoCompressionTests
+/// <param name="output">Records native engine and stored Memo evidence.</param>
+public sealed class NativeMemoCompressionTests(ITestOutputHelper output)
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -194,47 +196,27 @@ public sealed class NativeMemoCompressionTests
     [InlineData(DatabaseFormat.AceAccdb, true)]
     [Trait("Category", "RequiresMicrosoftAccess")]
     public async Task WriterLiteralFeff_DaoReadsEveryValueAndCompactedCopy(DatabaseFormat kind, bool compress)
-    {
-        string[] values = ["\uFEFF" + new string('b', 2048), "\uFEFF" + new string('b', 4096), "\uFEFF\u0100\u0200\0" + new string('b', 4096)];
-        await using var native = AccessRoundTripSession.CreateEmpty(Path.Combine("compact-unblock-20261019-c3e2f074", "validation", "memo-feff"), databaseExtension: kind == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb");
-        await using MemoryStream stream = await CreateAsync(kind, values, compress);
-        await File.WriteAllBytesAsync(native.SourcePath, stream.ToArray(), Ct);
-        string expected = string.Join(',', values.Select(static value => AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(Convert.ToBase64String(Encoding.Unicode.GetBytes(value)))));
-        string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(native.SourcePath);
-        string compacted = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(native.CompactedPath);
-        string script = $$"""
-            $values=@({{expected}})
-            function Assert-Values([string]$path) {
-                $db=$engine.OpenDatabase($path,$false,$true)
-                try {
-                    $rs=$db.OpenRecordset('SELECT Id, Content FROM Items ORDER BY Id',2)
-                    try {
-                        $id=0
-                        while(!$rs.EOF) {
-                            $expected=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($values[$id]))
-                            if(![string]::Equals([string]$rs.Fields.Item('Content').Value,$expected,[StringComparison]::Ordinal)) { $actual=[string]$rs.Fields.Item('Content').Value; $head=($actual.ToCharArray() | Select-Object -First 12 | ForEach-Object { '{0:X4}' -f [int]$_ }) -join ','; throw "Native literal FEFF Memo mismatch at $id length=$($actual.Length) head=$head" }
-                            $id++
-                            $rs.MoveNext()
-                        }
-                        if($id -ne $values.Count) { throw 'Native literal FEFF Memo row count mismatch' }
-                    } finally { $rs.Close() }
-                } finally { $db.Close() }
-            }
-            Assert-Values {{source}}
-            $engine.CompactDatabase({{source}},{{compacted}})
-            Assert-Values {{compacted}}
-            """;
-        AccessRoundTripEnvironment.CompactResult result = native.RunDaoEngineScript(script, TimeSpan.FromMinutes(2));
-        Assert.True(result.ExitCode == 0, $"DAO literal FEFF Memo failed:\n{result.StdOut}\n{result.StdErr}");
-    }
+        => await this.AssertNativeLiteralFeffAsync(kind, compress, dao36: false);
+
+    [Theory(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(Jet3RoundTripEnvironment.IsAvailable),
+        SkipType = typeof(Jet3RoundTripEnvironment))]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "RequiresMicrosoftAccess")]
+    public async Task WriterLiteralFeff_Dao36ReadsEveryValueAndCompactedCopy(bool compress)
+        => await this.AssertNativeLiteralFeffAsync(DatabaseFormat.Jet4Mdb, compress, dao36: true);
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet4Mdb)]
-    [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task WriterLiteralFeff_EveryReadApiAndWriteBackPreserveExactValues(DatabaseFormat kind)
+    [InlineData(DatabaseFormat.Jet4Mdb, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true)]
+    [InlineData(DatabaseFormat.AceAccdb, false)]
+    [InlineData(DatabaseFormat.AceAccdb, true)]
+    public async Task WriterLiteralFeff_EveryReadApiAndWriteBackPreserveExactValues(DatabaseFormat kind, bool compress)
     {
-        string[] values = ["\uFEFF" + new string('b', 2048), "\uFEFF" + new string('b', 4096), "\uFEFF\u0100\u0200\0" + new string('b', 4096)];
-        await using MemoryStream stream = await CreateAsync(kind, values);
+        string[] values = LiteralFeffValues(compress);
+        await using MemoryStream stream = await CreateAsync(kind, values, compress);
         await AssertReadApisAsync(stream, values);
         await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
@@ -251,24 +233,71 @@ public sealed class NativeMemoCompressionTests
     }
 
     [Theory]
-    [InlineData("\uFEFF")]
-    [InlineData("\uFEFFbbbb")]
-    [InlineData("\uFEFF中")]
-    [InlineData("\uFEFFΩ")]
-    [InlineData("\uFEFF\u0100")]
-    [InlineData("\uFEFF\u0200")]
-    [InlineData("\uFEFF\0tail")]
-    public async Task WriterAmbiguousLiteralFeff_RefusesBeforeAllocating(string value)
+    [InlineData("\uFEFFbbbbb")]
+    [InlineData("\uFEFFtail!")]
+    [InlineData("\uFEFF\u0001\u00FF\u00FEéµ")]
+    public async Task WriterShortLiteralFeff_UsesNativeEscapeBeforeAndAfterUpdate(string value)
     {
-        await using MemoryStream stream = await CreateAsync(DatabaseFormat.AceAccdb, []);
+        await using MemoryStream stream = await CreateAsync(DatabaseFormat.AceAccdb, [value]);
+        await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
+        {
+            await writer.InsertRowAsync("Items", [1, "original"], Ct);
+            Assert.Equal(1, await writer.UpdateRowsAsync("Items", "Id", 1, new Dictionary<string, object?> { ["Content"] = value }, Ct));
+        }
+
+        await AssertReadApisAsync(stream, [value, value]);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
+        var descriptors = new List<byte[]>();
+        List<byte[]> payloads = await PayloadsAsync(reader, descriptors);
+        Assert.All(payloads, payload => Assert.Equal(value, JetFormat.DecodeJet4Text(payload, 0, payload.Length)));
+        Assert.All(descriptors, descriptor => Assert.NotEqual(0, descriptor[3] & 0xC0));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true)]
+    [InlineData(DatabaseFormat.AceAccdb, false)]
+    [InlineData(DatabaseFormat.AceAccdb, true)]
+    public async Task WriterUnverifiedLiteralFeff_RefusesInsertAndUpdateBeforeAllocating(DatabaseFormat kind, bool compress)
+    {
+        string[] values = ["\uFEFF", "\uFEFFbbbb", "\uFEFF中aaaa", "\uFEFFΩaaaa", "\uFEFF\u0100aaaa", "\uFEFF\u0200aaaa", "\uFEFF\0tail!", "\uFEFF😀tail", "\uFEFF" + new string('b', 2042) + "中", "\uFEFF" + new string('b', 2046) + "中"];
+        if (!compress)
+        {
+            values = [.. values, "\uFEFFbbbbb", "\uFEFF" + new string('b', 58), "\uFEFF" + new string('b', 59), "\uFEFF" + new string('b', 1024), "\uFEFF" + new string('b', 2047)];
+        }
+
+        await using MemoryStream stream = await CreateAsync(kind, ["original"], compress);
         byte[] before = stream.ToArray();
         await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
-            JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.InsertRowAsync("Items", [0, value], Ct));
-            Assert.Equal(JetErrorCode.FeatureNotSupported, error.ErrorCode);
+            foreach (string value in values)
+            {
+                JetLimitationException inserted = await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.InsertRowAsync("Items", [1, value], Ct));
+                Assert.Equal(JetErrorCode.FeatureNotSupported, inserted.ErrorCode);
+                JetLimitationException updated = await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync("Items", "Id", 0, new Dictionary<string, object?> { ["Content"] = value }, Ct));
+                Assert.Equal(JetErrorCode.FeatureNotSupported, updated.ErrorCode);
+            }
         }
 
         Assert.Equal(before, stream.ToArray());
+    }
+
+    [Theory]
+    [InlineData("native.mdb", DatabaseFormat.Jet4Mdb, "F1D9A911859401DB5CAD80D40F637CE0819DA273318F37A388890FD16A8A4FC2")]
+    [InlineData("native.accdb", DatabaseFormat.AceAccdb, "6CAC20346F956E10297D0D0EA994DA84BB28B4BDBAC2FC206689EBF4B6446C95")]
+    public async Task ShortLiteralFeff_EncodingMatchesFrozenNativeMemoPayloads(string file, DatabaseFormat kind, string hash)
+    {
+        byte[] bytes = await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "Databases", "NativeMemo", file), Ct);
+        Assert.Equal(hash, Convert.ToHexString(SHA256.HashData(bytes)));
+        await using var stream = new MemoryStream(bytes, writable: false);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
+        List<byte[]> payloads = await PayloadsAsync(reader);
+        foreach ((int id, int tailLength) in new[] { (28, 10), (29, 1024) })
+        {
+            string value = "\uFEFF" + new string('b', tailLength);
+            Assert.Throws<JetLimitationException>(() => JetFormat.ForNewDatabase(kind).EncodeMemoText(value, compress: false));
+            Assert.Equal(payloads[id], JetFormat.ForNewDatabase(kind).EncodeMemoText(value, compress: true));
+        }
     }
 
     [Theory]
@@ -309,6 +338,14 @@ public sealed class NativeMemoCompressionTests
         object[] prepared = encoder.PrepareLongValues(new TableDef { Columns = [column] }, ["\uFEFF" + value]);
         byte[] wrapped = Assert.IsType<PreEncodedLongValue>(prepared[0]).PendingPayload!;
         Assert.Equal(Encoding.Unicode.GetBytes("\uFEFF" + value), CalculatedColumnUtil.Unwrap(wrapped));
+    }
+
+    private static string[] LiteralFeffValues(bool compress)
+    {
+        string[] chained = ["\uFEFF" + new string('b', 2048), "\uFEFF" + new string('b', 4096), "\uFEFF\u0100\u0200\0" + new string('b', 4096)];
+        return compress
+            ? ["\uFEFFbbbbb", "\uFEFFbbbbbb", "\uFEFF\u0001\u00FF\u00FEéµ", "\uFEFF" + new string(Enumerable.Range(1, 255).Select(static code => (char)code).ToArray()), "\uFEFF" + new string('b', 10), "\uFEFF" + new string('b', 31), "\uFEFF" + new string('b', 32), "\uFEFF" + new string('b', 58), "\uFEFF" + new string('b', 59), "\uFEFF" + new string('b', 60), "\uFEFF" + new string('b', 1024), "\uFEFF" + new string('b', 2041), "\uFEFF" + new string('b', 2042), "\uFEFF" + new string('b', 2043), "\uFEFF" + new string('b', 2046), "\uFEFF" + new string('b', 2047), .. chained]
+            : chained;
     }
 
     private static async Task AssertReadApisAsync(MemoryStream stream, string[] values)
@@ -354,6 +391,69 @@ public sealed class NativeMemoCompressionTests
             Ct,
             requireCompleteRows: true);
         return payloads;
+    }
+
+    private async Task AssertNativeLiteralFeffAsync(DatabaseFormat kind, bool compress, bool dao36)
+    {
+        string[] values = LiteralFeffValues(compress);
+        await using var native = AccessRoundTripSession.CreateEmpty(Path.Combine("compact-unblock-20261019-c3e2f074", "validation", "memo-feff"), databaseExtension: kind == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb");
+        await using MemoryStream stream = await CreateAsync(kind, values, compress);
+        await File.WriteAllBytesAsync(native.SourcePath, stream.ToArray(), Ct);
+        await using (AccessWriter writer = await native.OpenWriterAsync(Ct))
+        {
+            Assert.Equal(1, await writer.UpdateRowsAsync("Items", "Id", 1, new Dictionary<string, object?> { ["Content"] = "replaced" }, Ct));
+            Assert.Equal(1, await writer.UpdateRowsAsync("Items", "Id", 1, new Dictionary<string, object?> { ["Content"] = values[1] }, Ct));
+            await writer.InsertRowAsync("Items", [100, compress ? "\uFEFFtemporary" : "\uFEFF" + new string('b', 2048)], Ct);
+            Assert.Equal(1, await writer.DeleteRowsAsync("Items", "Id", 100, Ct));
+            await writer.AddColumnAsync("Items", new("Spare", typeof(int)), Ct);
+            await writer.DropColumnAsync("Items", "Spare", Ct);
+        }
+
+        string expected = string.Join(',', values.Select(static value => AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(Convert.ToBase64String(Encoding.Unicode.GetBytes(value)))));
+        string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(native.SourcePath);
+        string compacted = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(native.CompactedPath);
+        string script = $$"""
+            Write-Output "ENGINE=$($engine.Version)"
+            Get-Process -Id $PID | ForEach-Object { $_.Modules } | Where-Object { $_.ModuleName -match '^(dao360|acedao)\.dll$' } | ForEach-Object {
+                Write-Output "DAO_DLL=$($_.FileName) VERSION=$([Diagnostics.FileVersionInfo]::GetVersionInfo($_.FileName).FileVersion)"
+            }
+            $values=@({{expected}})
+            function Assert-Values([string]$path) {
+                Write-Output "CHECK=$path"
+                $db=$engine.OpenDatabase($path,$false,$true)
+                try {
+                    $rs=$db.OpenRecordset('SELECT Id, Content FROM Items ORDER BY Id',2)
+                    try {
+                        $id=0
+                        while(!$rs.EOF) {
+                            $expected=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($values[$id]))
+                            if(![string]::Equals([string]$rs.Fields.Item('Content').Value,$expected,[StringComparison]::Ordinal)) { $actual=[string]$rs.Fields.Item('Content').Value; $head=($actual.ToCharArray() | Select-Object -First 12 | ForEach-Object { '{0:X4}' -f [int]$_ }) -join ','; throw "Native literal FEFF Memo mismatch at $id length=$($actual.Length) head=$head" }
+                            $id++
+                            $rs.MoveNext()
+                        }
+                        if($id -ne $values.Count) { throw 'Native literal FEFF Memo row count mismatch' }
+                    } finally { $rs.Close() }
+                } finally { $db.Close() }
+            }
+            Assert-Values {{source}}
+            $engine.CompactDatabase({{source}},{{compacted}})
+            Assert-Values {{compacted}}
+            """;
+        if (dao36)
+        {
+            PowerShellRunResult result = Jet3RoundTripEnvironment.RunEngineScript(script, native.WorkDir, TimeSpan.FromMinutes(2));
+            output.WriteLine(result.StandardOutput);
+            Assert.True(result.ExitCode == 0 && !result.TimedOut && result.OutputComplete, $"DAO36 literal FEFF Memo failed:\n{result.StandardOutput}\n{result.StandardError}");
+        }
+        else
+        {
+            AccessRoundTripEnvironment.CompactResult result = native.RunDaoEngineScript(script, TimeSpan.FromMinutes(2));
+            output.WriteLine(result.StdOut);
+            Assert.True(result.ExitCode == 0, $"DAO literal FEFF Memo failed:\n{result.StdOut}\n{result.StdErr}");
+        }
+
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(native.CompactedPath, cancellationToken: Ct);
+        Assert.Equal(values, (await reader.Rows("Items", cancellationToken: Ct).ToListAsync(Ct)).OrderBy(static row => (int)row[0]).Select(static row => Assert.IsType<string>(row[1])));
     }
 
 #pragma warning disable CA1812 // Public POCO row materialization constructs this projection.

@@ -117,12 +117,22 @@ allocation choices: independently native-authored controls include compressed
 1025- and 1500-character values and plain chained values below a page's raw
 payload capacity. Native storage context matters more than the marker alone.
 
-Ordinary Memo values of at most 2048 characters beginning with U+FEFF refuse before page
-allocation. Native marker escapes vary with compression/storage context and do
-not yet establish a safe general encoding. Native-authored escaped values remain
-readable, and large plain chained values retain a literal leading U+FEFF.
-The remaining writer coverage is tracked in F8; a safe refusal does not complete
-that compatibility requirement.
+For ordinary Memo beginning with U+FEFF, Unicode-compressed columns accept
+6 through 2048 characters when every following character is U+0001 through
+U+00FF. The payload is `FF FE 00 FF FE 00` followed by the one-byte Latin-1
+tail. It matches retained DAO120-authored Jet4/ACE payloads and survives DAO3.6
+Jet4 exact reads and compact at the inline/external and length boundaries.
+Native checks include updates, deletion, schema rewrites and all 255 nonzero
+Latin-1 characters. The local engine was DAO3.6, `dao360.dll` 10.0.26100.5074;
+fresh ACE DAO120 read/compact controls remain guarded.
+
+Shorter escapes can lose the marker during native compact. Without the column
+compression flag, native acceptance also depends on inline storage, which a
+wide row can force to spill. The writer therefore refuses every other leading
+U+FEFF ordinary Memo of at most 2048 characters before page allocation, including
+uncompressed columns, short values and non-Latin-1 or NUL tails. Large plain
+chained values retain their existing literal U+FEFF behavior. The remaining
+representations and fresh ACE checks stay open in F8/E2.
 
 ## Long-value integrity
 

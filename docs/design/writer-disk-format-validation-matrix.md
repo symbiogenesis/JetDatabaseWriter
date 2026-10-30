@@ -224,8 +224,11 @@ values, plain chains, escaped small literal U+FEFF and plain chained U+FEFF
 through typed, string, POCO and DataTable reads. Guarded controls compare writer
 Memo boundaries and large literal U+FEFF before and after native compact.
 Write-back, schema rewrite and calculated-envelope regressions separately check
-plain payload preservation. Small ordinary leading-U+FEFF writes refuse without
-changing bytes; their general native encoding remains open under F8. These
+plain payload preservation. Unicode-compressed ordinary Memo accepts leading
+U+FEFF at 6 through 2048 characters with a nonzero Latin-1 tail, matching frozen
+native bytes and DAO3.6 Jet4 read/compact checks. Other short marker forms refuse
+without changing bytes; their native encoding and fresh ACE checks remain open
+under F8/E2. These
 checks do not establish every native text variant or a complete managed compact.
 
 ## Validation Levels
@@ -687,3 +690,5 @@ physical power-loss durability or authorizes compact publication.
 NativeDisplayPropertyTests compares independently DAO3.6-edited controls with writer-edited Jet3/Jet4 subjects for related and unrelated column rename/drop and case-only rename. Stored Filter and OrderBy text and entry metadata survive reopen and native compact unchanged, including stale references; native insert/update/delete still succeeds. The local engine was DAO3.6 with dao360.dll 10.0.26100.5074. Managed regressions cover Jet3/Jet4/ACE and direct, automatic and explicit transactions, including opaque and repeated display entries. ACE DAO120 native checks remain guarded and unexecuted on the current host; Access UI Name AutoCorrect is a separate evidence gap.
 
 TableRenamedQualifiedExpressionTests and QualifiedExpressionReferenceTests cover writer insert/update of cached Null for persisted stale bracketed qualifiers with known local fields, unchanged bare-qualifier binding, explicit-context/unknown-field refusal and byte-identical CreateTable/AddColumn rejection of new bracketed foreign declarations. Existing DAO120 observations establish native syntax-dependent evaluation and stale-expression compact error 3790. Extended writer-native read/update confirmation remains guarded and unexecuted on the current host; these managed regressions do not close that native evidence gap or the remaining expression semantics in R4.
+
+NativeMemoCompressionTests compares the leading-U+FEFF escape byte-for-byte with pinned DAO120-authored Jet4/ACE payloads at 11 and 1025 characters. New writer insert/update/delete and schema-rewrite controls retain exact text through DAO3.6 Jet4 reads and native compact for Unicode-compressed values of 6 through 2048 characters with a nonzero Latin-1 tail, including all 255 permitted tail characters and inline/external boundaries. The local engine was DAO3.6 with dao360.dll 10.0.26100.5074. Refusal tests retain unchanged database bytes for unsupported short, NUL/non-Latin-1-tail and uncompressed-column cases. Existing longer plain chains remain covered. Fresh ACE native read/compact confirmation remains DAO120-guarded; frozen native byte parity is distinct evidence.
