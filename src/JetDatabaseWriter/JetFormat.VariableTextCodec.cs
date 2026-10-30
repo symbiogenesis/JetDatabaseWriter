@@ -21,7 +21,13 @@ internal sealed partial class JetFormat
             throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The leading U+FEFF Text value exceeds the column's declared character limit or the verified 255-character Text limit.", errorInfo);
         }
 
-        for (int index = 1; index < value.Length; index++)
+        int prefixLength = GetEscapedTextWidePrefixLength(value);
+        if (value.Length - prefixLength - 1 < (prefixLength > 0 ? 4 : 5))
+        {
+            throw UnsupportedEscapedVariableText(errorInfo);
+        }
+
+        for (int index = prefixLength + 1; index < value.Length; index++)
         {
             if (value[index] is '\0' or > '\u00FF')
             {
@@ -37,21 +43,42 @@ internal sealed partial class JetFormat
     internal static byte[] EncodeEscapedVariableText(string value, int maxBytes)
     {
         ValidateEscapedVariableText(value, maxBytes);
-        byte[] bytes = new byte[value.Length + 5];
+        int prefixLength = GetEscapedTextWidePrefixLength(value);
+        byte[] bytes = new byte[value.Length + prefixLength + 5];
         bytes[0] = 0xFF;
         bytes[1] = 0xFE;
         bytes[2] = 0;
         bytes[3] = 0xFF;
         bytes[4] = 0xFE;
-        bytes[5] = 0;
-        for (int index = 1; index < value.Length; index++)
+
+        // Keep the marker and contiguous wide prefix in native Unicode mode.
+        int offset = 5;
+        for (int index = 1; index <= prefixLength; index++)
         {
-            bytes[index + 5] = (byte)value[index];
+            bytes[offset++] = (byte)(value[index] & 0xFF);
+            bytes[offset++] = (byte)(value[index] >> 8);
+        }
+
+        bytes[offset++] = 0;
+        for (int index = prefixLength + 1; index < value.Length; index++)
+        {
+            bytes[offset++] = (byte)value[index];
         }
 
         return bytes;
     }
 
+    private static int GetEscapedTextWidePrefixLength(string value)
+    {
+        int index = 1;
+        while (index < value.Length && value[index] > '\u00FF' && (value[index] & 0xFF) != 0 && !char.IsSurrogate(value[index]))
+        {
+            index++;
+        }
+
+        return index - 1;
+    }
+
     private static JetLimitationException UnsupportedEscapedVariableText(JetErrorInfo? errorInfo)
-        => new(JetErrorCode.FeatureNotSupported, "Leading U+FEFF in compressed Text requires at least 6 characters and a nonzero Latin-1 tail for verified writing.", errorInfo);
+        => new(JetErrorCode.FeatureNotSupported, "Leading U+FEFF in compressed Text requires a nonzero Latin-1 tail of at least 5 characters, or at least 4 following a contiguous nonsurrogate wide prefix with nonzero low bytes, for verified writing.", errorInfo);
 }

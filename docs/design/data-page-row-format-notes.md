@@ -133,8 +133,12 @@ bounded by the field slice; the reader does not reproduce a native corrupt-slot
 overread into the following field.
 
 Ordinary compressed variable Text beginning with U+FEFF uses
-`FF FE 00 FF FE 00` followed by the one-byte Latin-1 tail. Writing is supported
-for 6 through 255 characters when every tail character is U+0001 through U+00FF.
+`FF FE 00 FF FE`, an optional contiguous UTF-16LE wide prefix, `00`, then
+the one-byte Latin-1 tail. Writing is supported for 6 through 255 UTF-16 units.
+The tail contains only U+0001 through U+00FF, with at least five units without
+a wide prefix or four with one. Prefix units exceed U+00FF, have nonzero low
+bytes and exclude surrogates. Wide characters after the Latin-1 tail remain
+unsupported. The complete encoding occupies at most the uncompressed byte width.
 The whole value must fit the descriptor's uncompressed character limit; an
 oversized value refuses rather than truncating the escape or its tail.
 Unsupported shapes refuse during whole-row preflight, before long-value
@@ -143,11 +147,15 @@ allocation, with table and column context.
 `NativeCompressedTextMarkerTests` pins source and compacted Jet4 specimens
 with writer-created schemas and DAO3.6-authored rows. The descriptor compression
 bit and complete field slices distinguish them from a DAO UnicodeCompression
-property that leaves the bit unset. Native writer read/update/compact checks
-cover all 255 nonzero Latin-1 tail characters. The local engine was DAO3.6,
+property that leaves the bit unset. Fresh native authoring before and after
+compact matches complete writer payloads, including U+4E2D/U+03A9 prefixes,
+250 wide units plus four Latin-1 units and one wide unit plus 253 Latin-1 units.
+Native writer read/update/compact checks cover all 255 nonzero Latin-1 tail
+characters. The local engine was DAO3.6,
 `dao360.dll` 10.0.26100.5074; fresh DAO120 Jet4/ACE controls remain guarded.
 A native short U+FEFF-plus-`a` assignment loses the marker on insertion.
-Short, NUL-tail, wide-tail and calculated Text forms retain separate gaps.
+Short values/tails, NUL, low-byte-zero wide units, surrogates, wide units after
+the Latin-1 tail and calculated Text retain separate gaps.
 
 ## Memo text storage
 

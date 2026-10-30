@@ -35,6 +35,7 @@ public sealed class NativeCompressedTextMarkerTests(ITestOutputHelper output)
         List<byte[]> payloads = await ReadRawTextAsync(reader);
         Assert.Contains(payloads, static payload => payload.AsSpan().SequenceEqual(new byte[] { 0xFF, 0xFE, 0, 0xFF, 0xFE, 0, 0x62, 0x62, 0x62, 0x62, 0x62 }));
         Assert.Contains(payloads, static payload => payload.AsSpan().SequenceEqual(new byte[] { 0xFF, 0xFE, 0, 0xFF, 0xFE, 0, 0x74, 0x61, 0x69, 0x6C, 0x21 }));
+        Assert.Contains(payloads, static payload => payload.AsSpan().SequenceEqual(new byte[] { 0xFF, 0xFE, 0, 0xFF, 0xFE, 0x2D, 0x4E, 0, 0x74, 0x61, 0x69, 0x6C }));
         Assert.Contains(payloads, static payload => payload.AsSpan().SequenceEqual(new byte[] { 0xFF, 0xFE, 0x61, 0 }));
         Assert.Equal(bytes, stream.ToArray());
     }
@@ -53,7 +54,7 @@ public sealed class NativeCompressedTextMarkerTests(ITestOutputHelper output)
             string nativePath = Path.Combine(AppContext.BaseDirectory, "Databases", "NativeTextMarkers", "native-compressed.mdb");
             await using AccessReader native = await TestDatabase.OpenReaderAsync(nativePath, cancellationToken: Ct);
             List<byte[]> nativePayloads = await ReadRawTextAsync(native);
-            foreach (byte[] payload in nativePayloads.Take(4))
+            foreach (byte[] payload in nativePayloads.Where(static payload => payload.Length > 2 && payload[2] == 0))
             {
                 Assert.Contains(actual, field => field.AsSpan().SequenceEqual(payload));
             }
@@ -61,12 +62,12 @@ public sealed class NativeCompressedTextMarkerTests(ITestOutputHelper output)
 
         await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
-            Assert.Equal(1, await writer.UpdateRowsAsync("Items", "Id", 0, new Dictionary<string, object?> { ["Content"] = "\uFEFFtail!" }, Ct));
+            Assert.Equal(1, await writer.UpdateRowsAsync("Items", "Id", 0, new Dictionary<string, object?> { ["Content"] = "\uFEFF\u4E2Dtail" }, Ct));
             await writer.RenameColumnAsync("Items", "Content", "Renamed", Ct);
             await writer.RenameColumnAsync("Items", "Renamed", "Content", Ct);
         }
 
-        expected[0] = "\uFEFFtail!";
+        expected[0] = "\uFEFF\u4E2Dtail";
         await AssertReadSurfacesAsync(stream, expected);
         await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         List<byte[]> payloads = await ReadRawTextAsync(reader);
@@ -77,11 +78,17 @@ public sealed class NativeCompressedTextMarkerTests(ITestOutputHelper output)
     [InlineData(DatabaseFormat.Jet4Mdb, "\uFEFF")]
     [InlineData(DatabaseFormat.Jet4Mdb, "\uFEFFtail")]
     [InlineData(DatabaseFormat.Jet4Mdb, "\uFEFF\0tail!")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "\uFEFF\u4E2Dtail")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "\uFEFF\u0100tail")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "\uFEFF\u4E2Dabc")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "\uFEFFtail\u4E2D")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "\uFEFF\uD83D\uDE00tail")]
     [InlineData(DatabaseFormat.AceAccdb, "\uFEFF")]
     [InlineData(DatabaseFormat.AceAccdb, "\uFEFFtail")]
     [InlineData(DatabaseFormat.AceAccdb, "\uFEFF\0tail!")]
-    [InlineData(DatabaseFormat.AceAccdb, "\uFEFF\u4E2Dtail")]
+    [InlineData(DatabaseFormat.AceAccdb, "\uFEFF\u0100tail")]
+    [InlineData(DatabaseFormat.AceAccdb, "\uFEFF\u4E2Dabc")]
+    [InlineData(DatabaseFormat.AceAccdb, "\uFEFFtail\u4E2D")]
+    [InlineData(DatabaseFormat.AceAccdb, "\uFEFF\uD83D\uDE00tail")]
     public async Task UnsupportedMarkerShape_RefusesBeforeOtherLongValuesAreAllocated(DatabaseFormat kind, string value)
         => await AssertRefusalUnchangedAsync(kind, value, 255, JetErrorCode.FeatureNotSupported);
 
@@ -95,6 +102,11 @@ public sealed class NativeCompressedTextMarkerTests(ITestOutputHelper output)
         await AssertRefusalUnchangedAsync(kind, "\uFEFFtail!!", 6, JetErrorCode.ValueTooLarge);
         await AssertRefusalUnchangedAsync(kind, "\uFEFFtail!", 5, JetErrorCode.ValueTooLarge);
         await AssertRefusalUnchangedAsync(kind, "\uFEFF" + new string('b', 255), 255, JetErrorCode.ValueTooLarge);
+        await using MemoryStream wide = await CreateAsync(kind, ["\uFEFF\u4E2Dtail"], 6);
+        await AssertReadSurfacesAsync(wide, ["\uFEFF\u4E2Dtail"]);
+        await AssertRefusalUnchangedAsync(kind, "\uFEFF\u4E2Dtail!", 6, JetErrorCode.ValueTooLarge);
+        await AssertRefusalUnchangedAsync(kind, "\uFEFF\u4E2Dtail", 5, JetErrorCode.ValueTooLarge);
+        await AssertRefusalUnchangedAsync(kind, "\uFEFF\u4E2D" + new string('b', 254), 255, JetErrorCode.ValueTooLarge);
     }
 
     [Fact(
@@ -116,7 +128,7 @@ public sealed class NativeCompressedTextMarkerTests(ITestOutputHelper output)
         => await this.AssertNativeWriterAsync(kind, dao36: false);
 
     private static string[] Values()
-        => ["\uFEFF" + new string('b', 5), "\uFEFF" + new string('b', 39), "\uFEFF" + new string('b', 254), "\uFEFFtail!", "\uFEFF" + new string(Enumerable.Range(1, 254).Select(static value => (char)value).ToArray()), "\uFEFF" + new string('\u00FF', 5)];
+        => ["\uFEFF" + new string('b', 5), "\uFEFF" + new string('b', 39), "\uFEFF" + new string('b', 254), "\uFEFFtail!", "\uFEFF" + new string(Enumerable.Range(1, 254).Select(static value => (char)value).ToArray()), "\uFEFF" + new string('\u00FF', 5), "\uFEFF\u4E2Dtail", "\uFEFF\u03A9tail", "\uFEFF\u4E2D\u03A9tail", "\uFEFF" + new string('\u4E2D', 250) + "tail", "\uFEFF\u4E2D" + new string('b', 253)];
 
     private static async Task<MemoryStream> CreateAsync(DatabaseFormat kind, string[] values, int maxLength = 255)
     {
@@ -197,8 +209,21 @@ public sealed class NativeCompressedTextMarkerTests(ITestOutputHelper output)
         await File.WriteAllBytesAsync(native.SourcePath, stream.ToArray(), Ct);
         string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(native.SourcePath);
         string compacted = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(native.CompactedPath);
+        string authoredPath = Path.Combine(native.WorkDir, "native-authored" + Path.GetExtension(native.SourcePath));
+        string authoredCompactedPath = Path.Combine(native.WorkDir, "native-authored-compacted" + Path.GetExtension(native.SourcePath));
+        await using (MemoryStream empty = await CreateAsync(kind, []))
+        {
+            await File.WriteAllBytesAsync(authoredPath, empty.ToArray(), Ct);
+        }
+
+        string authored = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(authoredPath);
+        string authoredCompacted = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(authoredCompactedPath);
         string encoded = string.Join(',', values.Select(static value => AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(Convert.ToBase64String(Encoding.Unicode.GetBytes(value)))));
         string script = $$"""
+            Write-Output "ENGINE=$($engine.Version)"
+            Get-Process -Id $PID | ForEach-Object { $_.Modules } | Where-Object { $_.ModuleName -match '^(dao360|acedao)\.dll$' } | ForEach-Object {
+                Write-Output "DAO_DLL=$($_.FileName) VERSION=$([Diagnostics.FileVersionInfo]::GetVersionInfo($_.FileName).FileVersion)"
+            }
             $values=@({{encoded}})
             function Assert-Values([string]$path) {
                 $db=$engine.OpenDatabase($path,$false,$true)
@@ -216,13 +241,28 @@ public sealed class NativeCompressedTextMarkerTests(ITestOutputHelper output)
                     } finally { $rs.Close() }
                 } finally { $db.Close() }
             }
+            $db=$engine.OpenDatabase({{authored}})
+            try {
+                $rs=$db.OpenRecordset('Items',2)
+                try {
+                    for($id=0;$id -lt $values.Count;$id++) {
+                        $rs.AddNew()
+                        $rs.Fields.Item('Id').Value=$id
+                        $rs.Fields.Item('Content').Value=[string][Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($values[$id]))
+                        $rs.Update()
+                    }
+                } finally { $rs.Close() }
+            } finally { $db.Close() }
+            Assert-Values {{authored}}
+            $engine.CompactDatabase({{authored}},{{authoredCompacted}})
+            Assert-Values {{authoredCompacted}}
             Assert-Values {{source}}
             $db=$engine.OpenDatabase({{source}})
             try {
                 $rs=$db.OpenRecordset('SELECT * FROM Items WHERE Id=0',2)
-                try { $rs.Edit(); $rs.Fields.Item('Content').Value=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($values[3])); $rs.Update() } finally { $rs.Close() }
+                try { $rs.Edit(); $rs.Fields.Item('Content').Value=[string][Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($values[6])); $rs.Update() } finally { $rs.Close() }
             } finally { $db.Close() }
-            $values[0]=$values[3]
+            $values[0]=$values[6]
             Assert-Values {{source}}
             $engine.CompactDatabase({{source}},{{compacted}})
             Assert-Values {{compacted}}
@@ -240,7 +280,16 @@ public sealed class NativeCompressedTextMarkerTests(ITestOutputHelper output)
             Assert.True(result.ExitCode == 0, result.StdOut + result.StdErr);
         }
 
-        values[0] = values[3];
+        string[] expectedPayloads = values.Select(static value => Convert.ToHexString(JetFormat.EncodeEscapedVariableText(value, 510))).Order(StringComparer.Ordinal).ToArray();
+        foreach (string path in new[] { authoredPath, authoredCompactedPath })
+        {
+            await using AccessReader nativeRows = await TestDatabase.OpenReaderAsync(path, cancellationToken: Ct);
+            List<byte[]> payloads = await ReadRawTextAsync(nativeRows);
+            Assert.Equal(values.Length, payloads.Count);
+            Assert.Equal(expectedPayloads, payloads.Select(static payload => Convert.ToHexString(payload)).Order(StringComparer.Ordinal));
+        }
+
+        values[0] = values[6];
         foreach (string path in new[] { native.SourcePath, native.CompactedPath })
         {
             await using var actual = new MemoryStream(await File.ReadAllBytesAsync(path, Ct), writable: false);
