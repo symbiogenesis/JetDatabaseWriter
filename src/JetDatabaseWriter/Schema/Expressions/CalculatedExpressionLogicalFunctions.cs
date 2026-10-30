@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
 using System.Collections.Generic;
+using JetDatabaseWriter.Models;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionFunctionRegistry;
@@ -48,7 +49,7 @@ internal static class CalculatedExpressionLogicalFunctions
     /// <param name="value">The argument.</param>
     /// <returns>Whether the argument is a date.</returns>
     private static bool IsDateValue(object value)
-        => value is DateTime || (value is string && TryConvertDateTime(value, out _));
+        => value is NativeDate or DateTime || (value is string && TryConvertDateTime(value, out _));
 
     private static object EvaluateLike(CalculatedFunctionInvocation function)
         => AccessLikeMatcher.Evaluate(function);
