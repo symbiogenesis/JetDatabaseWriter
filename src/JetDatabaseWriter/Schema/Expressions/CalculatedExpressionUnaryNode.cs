@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
+using JetDatabaseWriter.Models;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
@@ -9,6 +10,11 @@ internal sealed class CalculatedExpressionUnaryNode(bool negate, CalculatedExpre
     public override object Evaluate(CalculatedExpressionEvaluationContext context)
     {
         object value = operand.Evaluate(context);
+        if (value is CalculatedError)
+        {
+            return value;
+        }
+
         if (IsNull(value))
         {
             return DBNull.Value;

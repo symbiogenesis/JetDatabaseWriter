@@ -74,6 +74,11 @@ internal static class ValueCoercer
 
     private static object? ConvertValue(object value, Type target)
     {
+        if (target == typeof(string) && value is CalculatedError error)
+        {
+            return error.ToString();
+        }
+
         if (target == typeof(Hyperlink) && value is string hyperlinkText)
         {
             return Hyperlink.Parse(hyperlinkText);

@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
@@ -19,6 +20,7 @@ internal sealed class CalculatedExpressionEvaluationContext
     private readonly bool[] evaluating;
     private readonly bool[] evaluated;
     private double? lastRandomValue;
+    private int calculationDepth;
 
     public CalculatedExpressionEvaluationContext(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
     {
@@ -36,6 +38,8 @@ internal sealed class CalculatedExpressionEvaluationContext
     }
 
     internal JetDatabaseWriter.Indexes.Collation.JetTextCollation TextCollation { get; }
+
+    internal bool IsCalculatingColumn => this.calculationDepth != 0;
 
     public static CalculatedExpressionEvaluationContext FromCalculatedRow(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
     {
@@ -67,6 +71,7 @@ internal sealed class CalculatedExpressionEvaluationContext
         }
 
         this.evaluating[index] = true;
+        this.calculationDepth++;
         object? raw = null;
         bool storing = false;
         try
@@ -79,10 +84,22 @@ internal sealed class CalculatedExpressionEvaluationContext
             constraint.CalculatedExpressionPlan ??= CalculatedExpressionParser.Parse(constraint.CalculationExpression);
             raw = constraint.CalculatedExpressionPlan.Evaluate(this);
             storing = true;
-            object coerced = CoerceResult(raw, constraint.ClrType, isCalculatedColumn: true);
+            object coerced = raw is CalculatedError ? raw : CoerceResult(raw, constraint.ClrType, isCalculatedColumn: true);
+            if (constraint.CalculatedResultType == Enums.ColumnType.MoneyType && coerced is decimal currency)
+            {
+                coerced = decimal.FromOACurrency(decimal.ToOACurrency(currency));
+            }
+
             this.values[index] = coerced;
             this.evaluated[index] = true;
             return coerced;
+        }
+        catch (Exception ex) when (storing && ex is OverflowException or InvalidCastException or FormatException)
+        {
+            var error = new CalculatedError(ex is OverflowException ? 6 : 13);
+            this.values[index] = error;
+            this.evaluated[index] = true;
+            return error;
         }
         catch (Exception ex) when (CalculatedExpressionErrors.IsWrappable(ex) && !CalculatedExpressionErrors.NamesColumn(ex))
         {
@@ -93,6 +110,7 @@ internal sealed class CalculatedExpressionEvaluationContext
         finally
         {
             this.evaluating[index] = false;
+            this.calculationDepth--;
         }
     }
 
@@ -119,6 +137,11 @@ internal sealed class CalculatedExpressionEvaluationContext
         // the expression must see the value as the field holds it.
         ColumnConstraint referenced = this.constraints[index];
         object value = referenced.IsCalculated ? this.EvaluateColumn(index) : this.values[index];
+        if (value is CalculatedError)
+        {
+            return new CalculatedError(-3030);
+        }
+
         if (referenced.IsCalculated && referenced.CalculatedResultType == ColumnType.TextType && value is string text)
         {
             int size = referenced.PhysicalColumn?.Size ?? 0;

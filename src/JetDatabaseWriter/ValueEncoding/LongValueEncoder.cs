@@ -13,6 +13,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -145,6 +146,18 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
         // A calculated column stores its cached value by its result type,
         // so a Memo result in a Text descriptor is a long value too.
         ColumnType valueType = ResolveValueType(col);
+        if (value is CalculatedError error)
+        {
+            if (col.IsCalculated && valueType is MemoType or OleType)
+            {
+                data = CalculatedColumnUtil.EncodeError(error, isOle: valueType == OleType);
+                inlineCap = Constants.LongValue.MaxInlineBytes;
+                return true;
+            }
+
+            return false;
+        }
+
         if (col.IsFixed || (valueType != OleType && valueType != MemoType) || value is null or DBNull or PreEncodedLongValue)
         {
             return false;

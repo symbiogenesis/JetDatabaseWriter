@@ -399,28 +399,28 @@ Delivered:
     is -0.0417, which OLE reads as 1:00 AM on day 0.
 - Defaults and validation rules use OLE Automation conversion semantics:
   `CByte(True)` yields 255 and False yields 0. A Boolean calculated result
-  instead becomes -1 or 0 before coercion to Byte. True overflows; the writer
-  refuses that result before changing bytes, as it refuses other result
-  overflows. DAO120 caches an error for True and for numeric Byte results
+  instead becomes -1 or 0 before coercion to Byte. DAO120 and the writer cache
+  an error for True and numeric Byte results
   outside 0-255: a 39-byte envelope with first UInt32 6, zero payload length
   and all remaining bytes zero. Ordinary Null is a 23-byte zero envelope;
   valid Byte results carry a one-byte payload. DAO exposes errors as COM null,
   whereas ordinary Null is `DBNull`; `IsNull` and `IsError` also return COM null
-  for these errors. Public typed, string, POCO and DataTable reads refuse this
-  exact Byte error form with contextual `JetLimitationException`
-  (`NumericOverflow`), including with `StrictParsing = false`. Ordinary Null
-  and valid Byte 0/255 retain their values; malformed framing retains the
-  strict/lenient corruption policy. Unrelated updates refuse without changing
-  bytes. Other error forms, value-preserving error reads and native
-  error-envelope writes remain open under R4. The COM distinction is pinned by
-  `CalculatedConversionDaoTests`; the envelope layout was measured in native
-  byte probes, distinct from
-  the writer's byte-preserving refusal regressions.
+  for these errors. Public typed rows and object POCO properties retain a
+  `CalculatedError` with its signed `NativeCode`; string rows expose `#Error(code)`.
+  Scalar POCO properties refuse incompatible error values with column/property
+  context. Calculated DataTable columns use `object` to retain scalar values,
+  errors and ordinary Null. Malformed framing retains its strict/lenient policy.
+  `NativeCalculatedErrorTests` uses independently authored source/compacted
+  fixtures and fresh native read/update/compact controls for observed statuses
+  5, 6, 11, 13, 94, 440 and -3030. Dependencies propagate the measured -3030
+  status with IIf/And/Or masking; validation and Text/Memo error results refuse
+  statements as Access does. Native compact can turn a dependency error into
+  ordinary Null while retaining its source error; the fixtures distinguish both.
   `CalculatedByteErrorReadTests` constructs that independently described layout
   in a writer-created row; it is a native-layout regression control, not a
   Microsoft-authored fixture. Its controls retain ordinary Null, Byte values
-  and malformed-envelope classification. Fresh DAO120 public-read checks in
-  `CalculatedConversionDaoTests` remain guarded on hosts without that engine.
+  and malformed-envelope classification. `CalculatedConversionDaoTests`
+  confirms the native error/Null distinction and writer error emission.
   A number or Boolean is a date serial (days since 1899-12-30, so True is
   1899-12-29) in a Date result or the shared rule/default interpreter.
   `CByte(-1)` and `CByte(256)` overflow. `IsDate` is True only for a date or

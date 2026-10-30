@@ -844,6 +844,15 @@ internal sealed class RowDecodePlan
     {
         try
         {
+            if (JetTypeInfo.ResolveValueType(column) is not (MemoType or OleType))
+            {
+                RowValueDecodePolicy.ValidateCalculatedEnvelope(page.AsSpan(start, length));
+                if (CalculatedColumnUtil.ReadError(page.AsSpan(start, length)) is { } error)
+                {
+                    return error.ToString();
+                }
+            }
+
             // Access stores the cached value by the column's ResultType, which can
             // differ from the descriptor type (a Memo result in a Text descriptor
             // keeps a long-value header in the row), so the codec follows it.
@@ -863,12 +872,17 @@ internal sealed class RowDecodePlan
             {
                 byte[] raw = await longValueDecoder.ReadLongValueRawBytesAsync(page, start, length, cancellationToken).ConfigureAwait(false);
                 byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(raw);
+                if (CalculatedColumnUtil.ReadError(raw) is { } error)
+                {
+                    return error.ToString();
+                }
+
                 return longValueDecoder.DecodeLongValue(payload, 0, payload.Length, valueType == OleType, compressedStorage: false);
             }
 
             if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
             {
-                byte[] payload = RowValueDecodePolicy.UnwrapCalculatedScalarPayload(page.AsSpan(start, length), column);
+                byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
                 if (!RowValueDecodePolicy.HasCalculatedPayload(payload, valueType))
                 {
                     return string.Empty;
@@ -1034,6 +1048,15 @@ internal sealed class RowDecodePlan
     {
         try
         {
+            if (JetTypeInfo.ResolveValueType(column) is not (MemoType or OleType))
+            {
+                RowValueDecodePolicy.ValidateCalculatedEnvelope(page.AsSpan(start, length));
+                if (CalculatedColumnUtil.ReadError(page.AsSpan(start, length)) is { } error)
+                {
+                    return error;
+                }
+            }
+
             // The cached value is encoded by the ResultType, not the descriptor
             // type; see DecodeCalculatedStringVariableValueAsync.
             ColumnType valueType = JetTypeInfo.ResolveValueType(column);
@@ -1046,7 +1069,8 @@ internal sealed class RowDecodePlan
 
             if (valueType == BinaryType)
             {
-                return RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
+                byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
+                return payload.Length == 0 ? DBNull.Value : payload;
             }
 
             if (valueType is MemoType or OleType)
@@ -1057,7 +1081,7 @@ internal sealed class RowDecodePlan
 
             if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
             {
-                byte[] payload = RowValueDecodePolicy.UnwrapCalculatedScalarPayload(page.AsSpan(start, length), column);
+                byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
                 if (!RowValueDecodePolicy.HasCalculatedPayload(payload, valueType))
                 {
                     return DBNull.Value;

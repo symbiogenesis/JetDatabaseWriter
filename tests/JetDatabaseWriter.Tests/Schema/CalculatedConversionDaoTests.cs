@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -76,7 +75,7 @@ public sealed class CalculatedConversionDaoTests
         SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
     [Trait("Category", "RequiresMicrosoftAccess")]
-    public async Task DaoByteBoolean_OverflowIsDistinctFromNullAndWriterRefusesAtomically()
+    public async Task DaoByteBoolean_OverflowIsDistinctFromNullAndWriterPreservesErrors()
     {
         await using AccessRoundTripSession session = await AccessRoundTripSession.CreateDaoAccdbAsync(TestContext.Current.CancellationToken, "JetDatabaseWriter.Tests.CalculatedByte");
         const string authoringScript = """
@@ -104,25 +103,29 @@ public sealed class CalculatedConversionDaoTests
         foreach (bool strict in new[] { true, false })
         {
             await using AccessReader reader = await AccessReader.OpenAsync(session.SourcePath, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, TestContext.Current.CancellationToken);
-            JetLimitationException typed = await Assert.ThrowsAsync<JetLimitationException>(async () => await reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken));
-            JetLimitationException strings = await Assert.ThrowsAsync<JetLimitationException>(async () => await reader.RowsAsStrings("T", cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken));
-            Assert.Equal(JetErrorCode.NumericOverflow, typed.ErrorCode);
-            Assert.Equal("ByteFlag", typed.ErrorInfo.ColumnName);
-            Assert.Equal(typed.Message, strings.Message);
+            object[][] rows = await reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken);
+            object[] error = Assert.Single(rows, row => (int)row[0] == 1);
+            Assert.Equal(6, Assert.IsType<CalculatedError>(error[3]).NativeCode);
+            Assert.Equal(6, Assert.IsType<CalculatedError>(error[4]).NativeCode);
+            object[] control = Assert.Single(rows, row => (int)row[0] == 2);
+            Assert.Equal((byte)0, control[3]);
+            Assert.Equal(DBNull.Value, control[4]);
         }
 
-        byte[] before = await System.IO.File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken);
         await using (AccessWriter writer = await AccessWriter.OpenAsync(session.SourcePath, new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken))
         {
-            await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync(
-                "T", "Id", 1, new Dictionary<string, object?> { ["Id"] = 3 }, TestContext.Current.CancellationToken));
-            await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync(
-                "T", "Id", 2, new Dictionary<string, object?> { ["Flag"] = true }, TestContext.Current.CancellationToken));
-            await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.InsertRowAsync(
-                "T", [3, true, DBNull.Value, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken));
+            Assert.Equal(1, await writer.UpdateRowsAsync("T", "Id", 1, new Dictionary<string, object?> { ["Id"] = 3 }, TestContext.Current.CancellationToken));
+            Assert.Equal(1, await writer.UpdateRowsAsync("T", "Id", 2, new Dictionary<string, object?> { ["Flag"] = true }, TestContext.Current.CancellationToken));
+            await writer.InsertRowAsync("T", [4, true, DBNull.Value, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken);
         }
 
-        Assert.Equal(before, await System.IO.File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken));
+        AccessRoundTripEnvironment.CompactResult accepted = session.RunDaoDatabaseScriptThenCompact(
+            """
+            $rs=$db.OpenRecordset('SELECT * FROM [T]')
+            try {while(!$rs.EOF){if($null -ne $rs.Fields('ByteFlag').Value){throw 'Writer lost the Boolean Byte error'};$rs.MoveNext()}} finally {$rs.Close()}
+            """,
+            TimeSpan.FromMinutes(1));
+        Assert.True(accepted.ExitCode == 0, accepted.StdOut + accepted.StdErr);
     }
 
     private static async Task AssertAlternativeValuesAsync(string path, double numeric)

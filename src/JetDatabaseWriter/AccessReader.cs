@@ -359,14 +359,15 @@ public sealed class AccessReader : AccessBase, IAccessReader
         => this.Services.ComplexItems.GetMultiValueItemsAsync(tableName, columnName, cancellationToken);
 
     /// <summary>
-    /// Reads the entire table into a DataTable with properly typed columns asynchronously.
-    /// Each column uses its native CLR type (int, DateTime, decimal, etc.).
+    /// Reads the entire table into a DataTable asynchronously. Calculated columns
+    /// use object cells to retain scalar values, database Null and native calculation errors.
+    /// Other columns use their native CLR type (int, DateTime, decimal, etc.).
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
     /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited.</param>
     /// <param name="progress">Optional progress reporter - receives row count after each page.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
-    /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
+    /// <returns>A <see cref="DataTable"/> containing the table's data, including <see cref="Models.CalculatedError"/> values.</returns>
     public ValueTask<DataTable> ReadTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
         => this.Services.Tables.ReadTableAsync(tableName, maxRows, progress, cancellationToken);
 

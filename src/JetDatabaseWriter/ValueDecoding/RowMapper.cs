@@ -223,7 +223,17 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
                 // boxed→T unbox and the implicit T→Nullable<T> wrap.
                 assignBlock = Expression.Assign(
                     Expression.Property(itemLocal, prop),
-                    Expression.Convert(valueLocal, propType));
+                    Expression.Convert(
+                        Expression.Condition(
+                            Expression.TypeIs(valueLocal, typeof(CalculatedError)),
+                            Expression.Call(
+                                ValueCoercer.CoerceMethod,
+                                valueLocal,
+                                Expression.Constant(underlying, typeof(Type)),
+                                Expression.Constant(headers[i], typeof(string)),
+                                Expression.Constant(prop, typeof(PropertyInfo))),
+                            valueLocal),
+                        propType));
             }
             else
             {

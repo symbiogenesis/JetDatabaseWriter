@@ -65,9 +65,8 @@ internal static class CalculatedExpressionCoercion
         }
 
         // Access converts True to -1 in numeric calculated results. A Byte
-        // result then overflows; DAO stores an error envelope, not 255 or
-        // an ordinary Null. Until error-envelope writes are supported, refuse
-        // it just like other result overflows. Defaults keep the OLE Automation
+        // result then overflows; the calculated context stores a native error
+        // envelope, distinct from 255 and ordinary Null. Defaults keep the OLE Automation
         // Bool-to-Byte conversion used by CByte.
         if (value is bool boolean && targetType != typeof(bool) && targetType != typeof(string))
         {

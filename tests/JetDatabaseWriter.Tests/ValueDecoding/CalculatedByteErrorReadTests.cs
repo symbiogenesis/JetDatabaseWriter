@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.ValueDecoding;
 
 using System;
 using System.Buffers.Binary;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -27,32 +28,26 @@ public sealed class CalculatedByteErrorReadTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task NativeLayoutByteError_PublicReadsRefuseInsteadOfReturningNull(bool strict)
+    public async Task NativeLayoutByteError_PublicReadsPreserveErrorAndUpdateRepairsCache(bool strict)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] envelope = new byte[39];
         BinaryPrimitives.WriteInt32LittleEndian(envelope, 6);
         await using MemoryStream stream = await WithEnvelopeAsync(envelope, ct);
-        byte[] original = stream.ToArray();
         await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: ct))
         {
-            JetLimitationException typed = await Assert.ThrowsAsync<JetLimitationException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct));
-            JetLimitationException strings = await Assert.ThrowsAsync<JetLimitationException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct));
-            JetLimitationException poco = await Assert.ThrowsAsync<JetLimitationException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
-            JetLimitationException table = await Assert.ThrowsAsync<JetLimitationException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
-            foreach (JetLimitationException error in new[] { typed, strings, poco, table })
-            {
-                Assert.Equal(JetErrorCode.NumericOverflow, error.ErrorCode);
-                Assert.Equal("Value", error.ErrorInfo.ColumnName);
-                Assert.Contains("native calculation error", error.Message, StringComparison.Ordinal);
-                Assert.Equal(typed.Message, error.Message);
-            }
+            Assert.Equal(6, Assert.IsType<CalculatedError>(Assert.Single(await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct))[1]).NativeCode);
+            Assert.Equal("#Error(6)", Assert.Single(await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct))[1]);
+            InvalidCastException poco = await Assert.ThrowsAsync<InvalidCastException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
+            Assert.Contains("ValueRow.Value", poco.Message, StringComparison.Ordinal);
+            using DataTable table = await reader.ReadTableAsync("Values", cancellationToken: ct);
+            Assert.Equal(typeof(object), table.Columns[1].DataType);
+            Assert.Equal(6, Assert.IsType<CalculatedError>(table.Rows[0][1]).NativeCode);
         }
 
         stream.Position = 0;
         await using AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct);
-        await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync("Values", RowCriteria.All(), new RowValues { ["Id"] = 2 }, ct));
-        Assert.Equal(original, stream.ToArray());
+        Assert.Equal(1, await writer.UpdateRowsAsync("Values", RowCriteria.All(), new RowValues { ["Id"] = 2 }, ct));
     }
 
     [Theory]

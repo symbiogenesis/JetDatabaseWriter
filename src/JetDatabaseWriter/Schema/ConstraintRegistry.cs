@@ -345,6 +345,11 @@ internal sealed class ConstraintRegistry(
                     continue;
                 }
 
+                if (value is CalculatedError)
+                {
+                    throw new ArgumentException($"Column '{c.Name}' is not calculated and cannot store a calculation error.", nameof(values));
+                }
+
                 if (c.IsComplexReference)
                 {
                     // A null complex column gets the row's reference: the one
@@ -466,6 +471,11 @@ internal sealed class ConstraintRegistry(
 
             object? value = values[i];
             bool isNull = value is null or DBNull;
+
+            if (value is CalculatedError)
+            {
+                throw new ArgumentException($"Column '{c.Name}' is not calculated and cannot store a calculation error.", nameof(values));
+            }
 
             // Integer AutoNumbers cannot be null. GUID AutoNumbers use a default
             // only on omission; an explicit null follows Required and indexes.
@@ -743,6 +753,16 @@ internal sealed class ConstraintRegistry(
             }
 
             object? value = values[i];
+            if (value is CalculatedError error)
+            {
+                if (!c.IsNullable || c.ValidationRule != null || c.ValidationRuleExpression != null || c.CalculatedResultType is TextType or MemoType)
+                {
+                    throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Calculated column '{c.Name}' on table '{tableName}' contains {error} and cannot satisfy its storage or validation constraints.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
+                }
+
+                continue;
+            }
+
             bool isNull = value is null or DBNull;
             if (isNull && !c.IsNullable)
             {

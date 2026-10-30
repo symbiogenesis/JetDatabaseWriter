@@ -723,7 +723,7 @@ internal sealed class TableReader(
             dt = new DataTable(tableName);
             foreach (ColumnInfo col in td.Columns)
             {
-                _ = dt.Columns.Add(col.Name, ResolveClrType(col));
+                _ = dt.Columns.Add(col.Name, col.IsCalculated ? typeof(object) : ResolveClrType(col));
             }
 
             if (IsRowLimitReached(0, maxRows))

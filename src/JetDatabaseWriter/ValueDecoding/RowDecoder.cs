@@ -11,6 +11,7 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueDecoding.Models;
 
 /// <summary>
@@ -562,6 +563,16 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
         try
         {
             byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(raw);
+            if (CalculatedColumnUtil.ReadError(raw) is { } error)
+            {
+                return error;
+            }
+
+            if (payload.Length == 0)
+            {
+                return DBNull.Value;
+            }
+
             return reference.IsOle
                 ? payload
                 : longValues.DecodeLongValue(payload, 0, payload.Length, isOle: false, compressedStorage: false);

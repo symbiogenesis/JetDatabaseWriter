@@ -6,6 +6,7 @@ using System.Globalization;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Models;
 using static JetDatabaseWriter.Constants;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -17,8 +18,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// see <see href="docs/design/calculated-columns-format-notes.md" /> for the layout.
 /// </summary>
 /// <remarks>
-/// Per Jackcess: bytes 0..15 of the wrapper are reserved (Access uses them for
-/// version + CRC + scratch; we emit zeros and ignore them on read), bytes 16..19
+/// Bytes 0..3 carry the signed native status for the measured error forms;
+/// ordinary cached values use zero. The rest of bytes 0..15 are reserved. Bytes 16..19
 /// hold the little-endian uint32 payload length, and bytes 20.. carry the actual
 /// value encoded per the column's result type. The reserved region is part of
 /// the persisted format and the 23-byte total is invariant across all result
@@ -26,6 +27,37 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </remarks>
 internal static class CalculatedColumnUtil
 {
+    internal static CalculatedError? ReadError(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < Constants.CalculatedColumn.ExtraDataLen || Ri32(data, Constants.CalculatedColumn.DataLenOffset) != 0)
+        {
+            return null;
+        }
+
+        int code = Ri32(data, 0);
+        if (code is not (5 or 6 or 11 or 13 or 94 or 440 or -3030))
+        {
+            return null;
+        }
+
+        foreach (byte value in data[sizeof(int)..])
+        {
+            if (value != 0)
+            {
+                return null;
+            }
+        }
+
+        return new CalculatedError(code, data.Length);
+    }
+
+    internal static byte[] EncodeError(CalculatedError error, bool isOle = false)
+    {
+        byte[] data = new byte[isOle ? 27 : error.EnvelopeLength];
+        Wi32(data, 0, error.NativeCode);
+        return data;
+    }
+
     /// <summary>
     /// Returns a fresh byte array containing <paramref name="payload"/> wrapped
     /// in the 23-byte calculated-value envelope. <paramref name="payload"/>

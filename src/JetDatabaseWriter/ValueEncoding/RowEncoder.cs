@@ -10,6 +10,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -661,6 +662,12 @@ internal sealed class RowEncoder(JetFormat format)
 
     private byte[]? EncodeCalculatedValue(ColumnInfo column, object value)
     {
+        if (value is CalculatedError error)
+        {
+            byte[] envelope = CalculatedColumnUtil.EncodeError(error, JetTypeInfo.ResolveValueType(column) == OleType);
+            return JetTypeInfo.ResolveValueType(column) is MemoType or OleType ? LongValueStore.WrapInlineLongValue(envelope) : envelope;
+        }
+
         // Access encodes the cached value by the column's ResultType, which can
         // differ from the descriptor type: a Memo result in a Text descriptor
         // still stores a long-value header in the row. The row slot stays where
