@@ -1182,12 +1182,13 @@ public sealed class CalculatedColumnWriteTests
     }
 
     [Fact]
-    public async Task InsertRow_CircularCalculatedDependency_ThrowsInvalidOperationException()
+    public async Task CreateTable_CircularCalculatedDependency_RefusesBeforeMutation()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         await using AccessWriter writer = await OpenWriterAsync(stream);
-        await writer.CreateTableAsync(
+        byte[] before = stream.ToArray();
+        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.CreateTableAsync(
             "CalcCycle",
             [
                 new("A", typeof(int))
@@ -1201,13 +1202,8 @@ public sealed class CalculatedColumnWriteTests
                     CalculationExpression = "[A] + 1",
                 },
             ],
-            TestContext.Current.CancellationToken);
-
-        await Assert.ThrowsAsync<JetOperationException>(async () =>
-            await writer.InsertRowAsync(
-                "CalcCycle",
-                [DBNull.Value, DBNull.Value],
-                TestContext.Current.CancellationToken));
+            TestContext.Current.CancellationToken));
+        Assert.Equal(before, stream.ToArray());
     }
 
     /// <summary>
@@ -1503,7 +1499,7 @@ public sealed class CalculatedColumnWriteTests
 
     /// <summary>
     /// A Boolean expression in a Byte calculated column stores 0 for False and
-    /// refuses True before changing bytes, on inserts and updates.
+    /// caches native overflow for True on inserts and updates, and permits repair.
     /// </summary>
     /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit (UseTransactionalWrites) or WriteMode.ExplicitCommit (a committed transaction).</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
@@ -1511,7 +1507,7 @@ public sealed class CalculatedColumnWriteTests
     [InlineData(WriteMode.Direct)]
     [InlineData(WriteMode.AutoCommit)]
     [InlineData(WriteMode.ExplicitCommit)]
-    public async Task InsertAndUpdate_BooleanExpressionInByteColumn_RefusesTrueAtomically(WriteMode mode)
+    public async Task InsertAndUpdate_BooleanExpressionInByteColumn_CachesAndRepairsNativeError(WriteMode mode)
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -1529,37 +1525,33 @@ public sealed class CalculatedColumnWriteTests
         await WriteInModeAsync(stream, mode, async writer =>
         {
             await writer.InsertRowAsync("CalcByteFlag", [1, 0, DBNull.Value], TestContext.Current.CancellationToken);
-            byte[] before = stream.ToArray();
-            JetLimitationException insert = await Assert.ThrowsAsync<JetLimitationException>(async () =>
-                await writer.InsertRowAsync("CalcByteFlag", [2, 3, DBNull.Value], TestContext.Current.CancellationToken));
-            Assert.Contains("'Flag'", insert.Message, StringComparison.Ordinal);
-            Assert.Contains("'CalcByteFlag'", insert.Message, StringComparison.Ordinal);
-            Assert.Equal(before, stream.ToArray());
-            await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync(
+            await writer.InsertRowAsync("CalcByteFlag", [2, 3, DBNull.Value], TestContext.Current.CancellationToken);
+            Assert.Equal(1, await writer.UpdateRowsAsync(
                 "CalcByteFlag", "Id", 1, new Dictionary<string, object?> { ["Score"] = 9 }, TestContext.Current.CancellationToken));
-            Assert.Equal(before, stream.ToArray());
-            await writer.InsertRowAsync("CalcByteFlag", [2, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken);
-            int updated = await writer.UpdateRowsAsync("CalcByteFlag", "Id", 1, new Dictionary<string, object?> { ["Score"] = 1 }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcByteFlag", [3, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcByteFlag", [4, 3, DBNull.Value], TestContext.Current.CancellationToken);
+            int updated = await writer.UpdateRowsAsync("CalcByteFlag", "Id", 4, new Dictionary<string, object?> { ["Score"] = 1 }, TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
         });
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable table = await reader.ReadTableAsync("CalcByteFlag", cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal((byte)0, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1)["Flag"]);
-        Assert.Equal(DBNull.Value, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2)["Flag"]);
+        Assert.Equal(6, Assert.IsType<CalculatedError>(Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1)["Flag"]).NativeCode);
+        Assert.Equal(6, Assert.IsType<CalculatedError>(Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2)["Flag"]).NativeCode);
+        Assert.Equal(DBNull.Value, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 3)["Flag"]);
+        Assert.Equal((byte)0, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 4)["Flag"]);
     }
 
     /// <summary>
-    /// A calculated value the result type cannot hold throws an
-    /// <see cref="OverflowException"/> that names the table, column, expression
-    /// and value, and the row is not written.
+    /// A calculated value the result type cannot hold stores native overflow
+    /// separately from a valid cached value through direct and committed writes.
     /// </summary>
     /// <param name="explicitTransaction">Whether the insert runs in a transaction that is then committed.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task InsertRow_CalculatedResultOverflow_ThrowsOverflowNamingColumnAndLeavesTableUnchanged(bool explicitTransaction)
+    public async Task InsertRow_CalculatedResultOverflow_PreservesNativeErrorAndValidControl(bool explicitTransaction)
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -1577,18 +1569,16 @@ public sealed class CalculatedColumnWriteTests
 
         await WriteInModeAsync(stream, explicitTransaction ? WriteMode.ExplicitCommit : WriteMode.Direct, async writer =>
         {
-            JetLimitationException exception = await Assert.ThrowsAsync<JetLimitationException>(async () =>
-                await writer.InsertRowAsync("CalcOverflow", [2, 5, DBNull.Value], TestContext.Current.CancellationToken));
-            Assert.Contains("'Hundreds'", exception.Message, StringComparison.Ordinal);
-            Assert.Contains("'CalcOverflow'", exception.Message, StringComparison.Ordinal);
-            Assert.Contains("[A] * 100", exception.Message, StringComparison.Ordinal);
-            Assert.Contains("500", exception.Message, StringComparison.Ordinal);
-            Assert.Contains("Byte", exception.Message, StringComparison.Ordinal);
+            await writer.InsertRowAsync("CalcOverflow", [2, 5, DBNull.Value], TestContext.Current.CancellationToken);
         });
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcOverflow", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
-        Assert.Equal((byte)200, row["Hundreds"]);
+        using DataTable table = await reader.ReadTableAsync("CalcOverflow", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(2, table.Rows.Count);
+        Assert.Equal((byte)200, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1)["Hundreds"]);
+        DataRow error = Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2);
+        Assert.Equal(5, error["A"]);
+        Assert.Equal(6, Assert.IsType<CalculatedError>(error["Hundreds"]).NativeCode);
     }
 
     /// <summary>

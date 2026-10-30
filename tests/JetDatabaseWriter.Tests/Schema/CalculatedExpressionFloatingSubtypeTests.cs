@@ -170,6 +170,7 @@ public sealed class CalculatedExpressionFloatingSubtypeTests
                 ],
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("T", [1d, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", [2d, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken);
         }
 
         stream.Position = 0;
@@ -179,10 +180,8 @@ public sealed class CalculatedExpressionFloatingSubtypeTests
             int updated = await writer.UpdateRowsAsync(
                 "T", "Amount", 1d, new Dictionary<string, object?> { ["Amount"] = 1E100 }, TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
-            byte[] before = stream.ToArray();
-            await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync(
-                "T", "Amount", 1E100, new Dictionary<string, object?> { ["Amount"] = 1E308 }, TestContext.Current.CancellationToken));
-            Assert.Equal(before, stream.ToArray());
+            Assert.Equal(1, await writer.UpdateRowsAsync(
+                "T", "Amount", 2d, new Dictionary<string, object?> { ["Amount"] = 1E308 }, TestContext.Current.CancellationToken));
         }
 
         stream.Position = 0;
@@ -191,20 +190,29 @@ public sealed class CalculatedExpressionFloatingSubtypeTests
         int count = 0;
         await foreach (object[] row in reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken))
         {
-            Assert.Equal(1E100, row[0]);
-            Assert.Equal("3.33333333333333E+99", row[1]);
-            Assert.Equal(1E200, row[2]);
+            if ((double)row[0] == 1E100)
+            {
+                Assert.Equal("3.33333333333333E+99", row[1]);
+                Assert.Equal(1E200, row[2]);
+            }
+            else
+            {
+                Assert.Equal(1E308, row[0]);
+                Assert.Equal("3.33333333333333E+307", row[1]);
+                Assert.Equal(6, Assert.IsType<CalculatedError>(row[2]).NativeCode);
+            }
+
             count++;
         }
 
-        Assert.Equal(1, count);
+        Assert.Equal(2, count);
     }
 
     [Theory]
-    [InlineData("Infinity")]
-    [InlineData("-Infinity")]
-    [InlineData("1E999")]
-    public async Task CalculatedDivision_NonfiniteTextRefusesWithoutChangingImage(string divisor)
+    [InlineData("Infinity", 13)]
+    [InlineData("-Infinity", 13)]
+    [InlineData("1E999", 6)]
+    public async Task CalculatedDivision_NonfiniteTextCachesNativeError(string divisor, int nativeCode)
     {
         await using var stream = new MemoryStream();
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -218,10 +226,19 @@ public sealed class CalculatedExpressionFloatingSubtypeTests
             ],
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync("T", [1d, "2", DBNull.Value], TestContext.Current.CancellationToken);
-        byte[] before = stream.ToArray();
-        await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync(
+        Assert.Equal(1, await writer.UpdateRowsAsync(
             "T", "Amount", 1d, new Dictionary<string, object?> { ["Divisor"] = divisor }, TestContext.Current.CancellationToken));
-        Assert.Equal(before, stream.ToArray());
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
+        int count = 0;
+        await foreach (object[] row in reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            Assert.Equal(divisor, row[1]);
+            Assert.Equal(nativeCode, Assert.IsType<CalculatedError>(row[2]).NativeCode);
+            count++;
+        }
+
+        Assert.Equal(1, count);
     }
 
     [Fact(

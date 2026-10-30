@@ -114,10 +114,21 @@ public sealed class CalculatedExpressionDecimalPromotionTests
             int updated = await writer.UpdateRowsAsync(
                 "T", "N", 0m, new Dictionary<string, object?> { ["N"] = 1m }, TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
-            byte[] before = stream.ToArray();
-            await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync(
+            Assert.Equal(1, await writer.UpdateRowsAsync(
                 "T", "N", 1m, new Dictionary<string, object?> { ["D"] = double.PositiveInfinity }, TestContext.Current.CancellationToken));
-            Assert.Equal(before, stream.ToArray());
+            await using (AccessReader errors = await AccessReader.OpenAsync(
+                stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
+            {
+                await foreach (object[] row in errors.Rows("T", cancellationToken: TestContext.Current.CancellationToken))
+                {
+                    Assert.Equal(double.PositiveInfinity, row[1]);
+                    Assert.Equal(6, Assert.IsType<CalculatedError>(row[3]).NativeCode);
+                    Assert.Equal(boundary, row[4]);
+                }
+            }
+
+            Assert.Equal(1, await writer.UpdateRowsAsync(
+                "T", "N", 1m, new Dictionary<string, object?> { ["D"] = boundary }, TestContext.Current.CancellationToken));
         }
 
         stream.Position = 0;
