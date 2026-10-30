@@ -324,6 +324,16 @@ internal static class CalculatedExpressionCoercion
             return ToGeneralDateText(date);
         }
 
+        if (value is double doubleValue)
+        {
+            return ToFloatingText(doubleValue, 15);
+        }
+
+        if (value is float singleValue)
+        {
+            return ToFloatingText(singleValue, 7);
+        }
+
         return IsNull(value) ? string.Empty : Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
     }
 
@@ -580,6 +590,30 @@ internal static class CalculatedExpressionCoercion
 
         result = default;
         return false;
+    }
+
+    private static string ToFloatingText(double value, int precision)
+    {
+        if (value == 0d)
+        {
+            return "0";
+        }
+
+        string text = value.ToString("G" + precision.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+        int exponentPosition = text.IndexOf('E', StringComparison.Ordinal);
+        if (exponentPosition < 0)
+        {
+            int decimalPosition = text.IndexOf('.', StringComparison.Ordinal);
+            return decimalPosition >= 0 && text.Length - decimalPosition - 1 > precision
+                ? value.ToString("0." + new string('#', precision - 1) + "E+00", CultureInfo.InvariantCulture)
+                : text;
+        }
+
+        int exponent = int.Parse(text.AsSpan(exponentPosition + 1), NumberStyles.Integer, CultureInfo.InvariantCulture);
+        int digits = exponentPosition - (text[0] == '-' ? 1 : 0) - (text.Contains('.', StringComparison.Ordinal) ? 1 : 0);
+        return exponent < 0 && digits - 1 - exponent <= precision
+            ? value.ToString("0." + new string('#', precision), CultureInfo.InvariantCulture)
+            : text;
     }
 
     private static bool IsStoredScalarType(Type type)

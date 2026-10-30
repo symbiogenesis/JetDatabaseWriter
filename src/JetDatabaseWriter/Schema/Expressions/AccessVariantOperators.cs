@@ -9,11 +9,13 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 /// <summary>
 /// The Access (VBA) operators whose result depends on their operands' types, following
 /// the OLE Automation Variant rules VBA uses (<c>VarAdd</c>, <c>VarSub</c>,
-/// <c>VarIdiv</c>, <c>VarMod</c> and friends, measured with oleaut32 on Windows; Access
-/// itself was not checked). Null in any operand gives Null.
+/// <c>VarIdiv</c>, <c>VarMod</c> and friends, measured with oleaut32 on Windows.
+/// The floating arithmetic subset also has native DAO3.6 Jet4 query controls;
+/// those controls do not establish all date or bitwise behavior. Null in any operand gives Null.
 /// </summary>
 /// <remarks>
-/// Arithmetic on two non-date operands stays in <see cref="decimal"/>, as before. A date
+/// Floating arithmetic retains Single or Double operands, promotes overflowing Single
+/// results to Double, and keeps decimal operands in decimal arithmetic. A date
 /// operand switches to date-serial arithmetic: a date plus or minus a number, a Boolean,
 /// numeric text or another date is a date, a date minus a date is a <see cref="double"/>
 /// number of days, and <c>*</c>, <c>/</c> and <c>^</c> with a date give a
@@ -50,8 +52,13 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        return left is DateTime || right is DateTime
-            ? FromOleDate(ToDateSerial(left) + ToDateSerial(right))
+        if (left is DateTime || right is DateTime)
+        {
+            return FromOleDate(ToDateSerial(left) + ToDateSerial(right));
+        }
+
+        return UsesFloatingArithmetic(left, right)
+            ? FloatingResult(ToDouble(left) + ToDouble(right), left, right)
             : ToDecimal(left) + ToDecimal(right);
     }
 
@@ -71,8 +78,13 @@ internal static class AccessVariantOperators
             return ToDateSerial(left) - ToDateSerial(right);
         }
 
-        return left is DateTime || right is DateTime
-            ? FromOleDate(ToDateSerial(left) - ToDateSerial(right))
+        if (left is DateTime || right is DateTime)
+        {
+            return FromOleDate(ToDateSerial(left) - ToDateSerial(right));
+        }
+
+        return UsesFloatingArithmetic(left, right)
+            ? FloatingResult(ToDouble(left) - ToDouble(right), left, right)
             : ToDecimal(left) - ToDecimal(right);
     }
 
@@ -87,8 +99,13 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        return left is DateTime || right is DateTime
-            ? Finite(ToDateSerial(left) * ToDateSerial(right))
+        if (left is DateTime || right is DateTime)
+        {
+            return Finite(ToDateSerial(left) * ToDateSerial(right));
+        }
+
+        return UsesFloatingArithmetic(left, right)
+            ? FloatingResult(ToDouble(left) * ToDouble(right), left, right)
             : ToDecimal(left) * ToDecimal(right);
     }
 
@@ -106,13 +123,21 @@ internal static class AccessVariantOperators
 
         if (left is DateTime || right is DateTime)
         {
-            double divisor = ToDateSerial(right);
+            double divisor = Finite(ToDateSerial(right));
             return divisor == 0d
                 ? throw new DivideByZeroException()
-                : Finite(ToDateSerial(left) / divisor);
+                : Finite(Finite(ToDateSerial(left)) / divisor);
         }
 
-        return ToDecimal(left) / ToDecimal(right);
+        if (left is decimal || right is decimal)
+        {
+            return ToDecimal(left) / ToDecimal(right);
+        }
+
+        double floatingDivisor = Finite(ToDouble(right));
+        return floatingDivisor == 0d
+            ? throw new DivideByZeroException()
+            : FloatingResult(Finite(ToDouble(left)) / floatingDivisor, left, right);
     }
 
     /// <summary>Returns <c>left ^ right</c>.</summary>
@@ -147,6 +172,8 @@ internal static class AccessVariantOperators
             short number => -number,
             int number when number != int.MinValue => -number,
             int number => -(double)number,
+            float number => (float)Finite(-number),
+            double number => Finite(-number),
             DateTime => FromOleDate(-ToDateSerial(value)),
             _ => -ToDecimal(value),
         };
@@ -162,7 +189,13 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        return value is DateTime or short or int ? value : ToDecimal(value);
+        return value switch
+        {
+            float number => (float)Finite(number),
+            double number => Finite(number),
+            DateTime or short or int => value,
+            _ => ToDecimal(value),
+        };
     }
 
     /// <summary>
@@ -337,6 +370,15 @@ internal static class AccessVariantOperators
     internal static InvalidCastException TypeMismatch(object value)
         => new($"Type mismatch: {ToText(value)} ({value.GetType().Name}) is not a number or a date.");
 
+    /// <summary>Refuses a nonfinite floating value before it can enter a stored expression result.</summary>
+    /// <param name="value">The floating value.</param>
+    /// <returns>The finite value.</returns>
+    /// <exception cref="OverflowException">The value is infinite or not a number.</exception>
+    internal static double Finite(double value)
+        => double.IsInfinity(value) || double.IsNaN(value)
+            ? throw new OverflowException("The result is outside the range of a Double.")
+            : value;
+
     /// <summary>
     /// Returns the type of a bitwise result, as OLE Automation picks it: two Booleans
     /// give a Boolean, two Bytes a Byte, any mix of Boolean, Byte and Integer an
@@ -395,6 +437,25 @@ internal static class AccessVariantOperators
 
     private static bool IsZero(object value) => ToBitwiseOperand(value) == 0;
 
+    private static bool UsesFloatingArithmetic(object left, object right)
+        => left is not decimal && right is not decimal
+            && (left is float or double || right is float or double);
+
+#pragma warning disable CA1859 // Variant arithmetic deliberately boxes either Single or Double.
+    private static object FloatingResult(double result, object left, object right)
+    {
+        result = Finite(result);
+        if (left is bool or byte or short or float && right is bool or byte or short or float
+            && (left is float || right is float) && result is >= -float.MaxValue and <= float.MaxValue)
+        {
+            return (float)result;
+        }
+
+        return result;
+    }
+
+#pragma warning restore CA1859
+
     private static decimal RoundedDouble(double value)
     {
         double rounded = Math.Round(value, MidpointRounding.ToEven);
@@ -402,9 +463,4 @@ internal static class AccessVariantOperators
             ? throw new OverflowException($"{value.ToString("R", CultureInfo.InvariantCulture)} is outside the range of a Long.")
             : (decimal)rounded;
     }
-
-    private static double Finite(double value)
-        => double.IsInfinity(value) || double.IsNaN(value)
-            ? throw new OverflowException("The result is outside the range of a Double.")
-            : value;
 }

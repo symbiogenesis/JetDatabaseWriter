@@ -581,6 +581,32 @@ Persisted expressions may have one terminal NUL in their property encoding;
 runtime compilation removes that terminator while preserving the raw property
 bytes and any NUL inside a string literal.
 
+## Floating expression values
+
+The shared row-local interpreter retains Single/Double intermediates for
+addition, subtraction, multiplication, division, unary signs and Abs/Int/Fix.
+Single results promote to Double on overflow; Long or Double operands select
+Double, while verified narrow/Boolean operands can retain Single. Decimal
+operands retain their separate existing decimal path. Integral division selects
+Double in the measured DAO3.6 Jet4 query context; this evidence is distinct from
+the documented VBA Variant division matrix.
+
+Numeric text uses 15 significant digits for Double and 7 for Single, with the
+measured complete fractional-width rule for fixed versus scientific notation
+and a normalized negative zero. `CStr(1/3)` is `0.333333333333333`.
+Nonfinite numeric conversions, arithmetic results and division operands refuse;
+public mutation regressions retain identical database bytes on refusal. Native
+numeric-text overflow can return Null where the writer conservatively refuses;
+this does not establish native error-envelope parity.
+
+`CalculatedExpressionFloatingSubtypeTests` compares fixed native controls with
+the interpreter, public stored defaults and ACE calculated Double insert/update.
+Its guarded native query controls use x86 DAO3.6, `dao360.dll` 10.0.26100.5074,
+including formatting boundaries and invalid text divisors. These checks do not
+establish fresh ACE native behavior, all locale formats or calculated-field
+admissibility of every function. Integral literal/promotion rules,
+Currency-versus-Decimal identity, Round and other subtype-sensitive functions
+remain R4 work. Expression evaluation remains handwritten and tested.
 ## Literal Unicode markers in Text
 
 Ordinary variable Text with Unicode compression disabled stores plain UTF-16, including literal FF FE at the beginning. Row, string, POCO and write-back decoding use that column storage rule. Calculated Text still permits compressed Unicode inside its envelope. Its dedicated decoder accepts the verified terminal low-byte form; ordinary Text and Memo retain separate decoding rules pending their own native controls. Native controls preserve leading U+FEFF in a cached Latin-1 string using an escaped compressed payload; other controlled native cached values lose or reinterpret that marker. A source field's original text is not authority to invent a different cached result. Raw compact assembly preserves each observed envelope without recalculation. Writers still refuse calculated Text beginning with U+FEFF before allocation. Ordinary compressed variable Text supports the independently verified 6 through 255-character escape with a nonzero Latin-1 tail, subject to the complete declared character limit; short, NUL-tail and wide-tail forms remain refused. Native DAO3.6 Jet4 read/update/compact and frozen native-row fixtures establish that ordinary subset; fresh DAO120 confirmation remains separate.

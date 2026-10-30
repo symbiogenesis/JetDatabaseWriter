@@ -14,7 +14,7 @@ internal static class CalculatedExpressionNumericFunctions
         AddFunction(functions, "PARTITION", 4, 4, static function => EvaluatePartition(function));
         AddFunction(functions, "MOD", 2, 2, static function => AccessVariantOperators.Modulo(function.Arg(0), function.Arg(1)));
         AddFunction(functions, "INTDIV", 2, 2, static function => AccessVariantOperators.IntegerDivide(function.Arg(0), function.Arg(1)));
-        AddFunction(functions, "ABS", 1, 1, static function => Math.Abs(ToDecimal(function.Arg(0))));
+        AddFunction(functions, "ABS", 1, 1, static function => EvaluateAbsolute(function.Arg(0)));
         AddFunction(functions, "ATAN", 1, 1, static function => Math.Atan(ToDouble(function.Arg(0))), "ATN");
         AddFunction(functions, "COS", 1, 1, static function => Math.Cos(ToDouble(function.Arg(0))));
         AddFunction(functions, "EXP", 1, 1, static function => Math.Exp(ToDouble(function.Arg(0))));
@@ -25,12 +25,12 @@ internal static class CalculatedExpressionNumericFunctions
         AddFunction(functions, "SQR", 1, 1, static function => Math.Sqrt(ToDouble(function.Arg(0))), "SQRT");
         AddFunction(functions, "TAN", 1, 1, static function => Math.Tan(ToDouble(function.Arg(0))));
         AddFunction(functions, "ROUND", 1, 2, static function => Math.Round(ToDecimal(function.Arg(0)), function.Count > 1 ? checked((int)ToDecimal(function.Arg(1))) : 0, MidpointRounding.ToEven));
-        AddFunction(functions, "INT", 1, 1, static function => Math.Floor(ToDecimal(function.Arg(0))));
-        AddFunction(functions, "FIX", 1, 1, static function => EvaluateFix(function));
+        AddFunction(functions, "INT", 1, 1, static function => EvaluateIntegral(function.Arg(0), truncate: false));
+        AddFunction(functions, "FIX", 1, 1, static function => EvaluateIntegral(function.Arg(0), truncate: true));
         AddFunction(functions, "CINT", 1, 1, static function => Convert.ToInt16(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture));
         AddFunction(functions, "CLNG", 1, 1, static function => Convert.ToInt32(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture));
-        AddFunction(functions, "CDBL", 1, 1, static function => Convert.ToDouble(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture));
-        AddFunction(functions, "CSNG", 1, 1, static function => Convert.ToSingle(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture));
+        AddFunction(functions, "CDBL", 1, 1, static function => AccessVariantOperators.Finite(Convert.ToDouble(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture)));
+        AddFunction(functions, "CSNG", 1, 1, static function => (float)AccessVariantOperators.Finite(Convert.ToSingle(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture)));
         AddFunction(functions, "CDEC", 1, 1, static function => ToDecimal(function.Arg(0)), "CCUR");
         AddFunction(functions, "CBYTE", 1, 1, static function => ToByte(function.Arg(0)));
     }
@@ -82,9 +82,28 @@ internal static class CalculatedExpressionNumericFunctions
 
 #pragma warning restore CA1859
 
-    private static decimal EvaluateFix(CalculatedFunctionInvocation function)
+    private static object EvaluateAbsolute(object value) => value switch
     {
-        decimal fixValue = ToDecimal(function.Arg(0));
-        return fixValue < 0 ? Math.Ceiling(fixValue) : Math.Floor(fixValue);
+        float number => Math.Abs((float)AccessVariantOperators.Finite(number)),
+        double number => Math.Abs(AccessVariantOperators.Finite(number)),
+        _ => Math.Abs(ToDecimal(value)),
+    };
+
+    private static object EvaluateIntegral(object value, bool truncate)
+    {
+        if (value is double doubleValue)
+        {
+            doubleValue = AccessVariantOperators.Finite(doubleValue);
+            return truncate ? Math.Truncate(doubleValue) : Math.Floor(doubleValue);
+        }
+
+        if (value is float singleValue)
+        {
+            singleValue = (float)AccessVariantOperators.Finite(singleValue);
+            return (float)(truncate ? Math.Truncate(singleValue) : Math.Floor(singleValue));
+        }
+
+        decimal number = ToDecimal(value);
+        return truncate ? Math.Truncate(number) : Math.Floor(number);
     }
 }
