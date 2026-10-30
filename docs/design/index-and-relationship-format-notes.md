@@ -18,6 +18,8 @@
 
 `IndexMaintainer` owns key/metadata preparation and TDEF/usage-map finalization. Ordinary and catalog tree surgery belongs to `IndexBTreeEditor`; catalog insertion accepts an encoded entry after catalog policy has run. Staged leaf and cross-leaf plans validate append addresses and page ownership, and complete neighboring-page reads before the ordered append, neighbor, leaf and ancestor writes. The intermediate rewrite context owns deepest-first pending operations, collapse, replacement/max propagation and split-tail staging; root publication is a separate step. The incremental metadata state carries pending root changes across TDEF refreshes; its finalization links reservations through usage maps and TDEF writes inside the existing caller-owned transaction.
 
+`IndexEntrySplicer` retains a stable general-input contract: existing equal keys precede additions, each input's tie order is preserved, and input lists remain unchanged. After removal validation, sorted survivor and addition runs merge backward in the private result buffer. Unordered runs retain the stable full-sort fallback. Duplicate or absent removal targets retain their refusal behavior. These are tested managed semantics, not a verified native B-tree edit; the [proof survey](proof-survey.md#stable-sorting-and-splice-allocations) explains the allocation and measurement boundary.
+
 `CompactRawIndexBuilder` is a separate bounded staging path. It consumes ordered
 stored keys and relocated bookmarks without invoking collation encoders, packs
 one page group at a time, and alternates two caller-owned fence streams for
