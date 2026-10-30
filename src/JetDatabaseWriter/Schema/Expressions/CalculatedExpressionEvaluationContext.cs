@@ -8,12 +8,14 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueEncoding;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
 internal sealed class CalculatedExpressionEvaluationContext
 {
     private readonly IReadOnlyList<ColumnConstraint> constraints;
+    private readonly IReadOnlyList<ColumnInfo> columns;
     private readonly object[] values;
     private readonly string? tableName;
     private readonly Dictionary<string, int> columnIndexes;
@@ -27,6 +29,7 @@ internal sealed class CalculatedExpressionEvaluationContext
         this.tableName = tableName;
         this.TextCollation = textCollation ?? JetDatabaseWriter.Indexes.Collation.JetTextCollation.GeneralLegacy;
         this.constraints = constraints;
+        this.columns = tableDef.Columns;
         this.values = values;
         this.evaluating = new bool[constraints.Count];
         this.evaluated = new bool[constraints.Count];
@@ -163,6 +166,11 @@ internal sealed class CalculatedExpressionEvaluationContext
         }
 
         ColumnType storageType = referenced.IsCalculated ? referenced.CalculatedResultType : referenced.StorageType;
+        if (!referenced.IsCalculated && storageType == ColumnType.NumericType && !IsNull(coerced))
+        {
+            return NumericEncoder.NormalizeStoredValue(this.columns[index], ToDecimal(coerced));
+        }
+
         return storageType == ColumnType.MoneyType && !IsNull(coerced) ? ToCurrency(coerced) : coerced;
     }
 

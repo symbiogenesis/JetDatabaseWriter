@@ -167,21 +167,8 @@ internal sealed class RowEncoder(JetFormat format)
 
     private static void EncodeNumericValue(ColumnInfo column, decimal value, Span<byte> dest)
     {
-        byte precision = column.NumericPrecision == 0 ? (byte)18 : column.NumericPrecision;
-        byte declaredScale = column.NumericScale;
-        decimal rounded = decimal.Round(value, declaredScale, MidpointRounding.ToEven);
-
         Span<byte> magnitudeBe = stackalloc byte[16];
-        bool fits = NumericEncoder.TryEncodeFixedPointPayload(rounded, declaredScale, magnitudeBe, out FixedPointPayload payload);
-        if (payload.DigitCount > precision)
-        {
-            throw new JetLimitationException(JetErrorCode.NumericOverflow, $"Numeric value '{value}' exceeds NUMERIC({precision},{declaredScale}) precision after rounding.");
-        }
-
-        if (!fits)
-        {
-            throw new JetLimitationException(JetErrorCode.NumericOverflow, $"Numeric value '{value}' requires {payload.MagnitudeByteCount} bytes, exceeding the 16-byte NUMERIC mantissa.");
-        }
+        FixedPointPayload payload = NumericEncoder.EncodeColumnPayload(column, value, magnitudeBe);
 
         dest[0] = payload.Negative ? (byte)0x80 : (byte)0x00;
         JetTypeInfo.FixNumericByteOrder(magnitudeBe);

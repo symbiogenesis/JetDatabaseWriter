@@ -1,8 +1,11 @@
 namespace JetDatabaseWriter.ValueEncoding;
 
 using System;
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Numerics;
+using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -15,6 +18,53 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal static class NumericEncoder
 {
+    /// <summary>Projects a source value with the exact coefficient and scale its ordinary Numeric cell stores.</summary>
+    /// <param name="column">The physical Numeric column.</param>
+    /// <param name="value">The value before storage rounding.</param>
+    /// <returns>The fixed-scale stored Decimal.</returns>
+    /// <exception cref="JetLimitationException">The coefficient or declared column precision cannot hold the value.</exception>
+    internal static decimal NormalizeStoredValue(ColumnInfo column, decimal value)
+    {
+        Span<byte> magnitude = stackalloc byte[16];
+        FixedPointPayload payload = EncodeColumnPayload(column, value, magnitude);
+        if (BinaryPrimitives.ReadUInt32BigEndian(magnitude) != 0)
+        {
+            throw new JetLimitationException(JetErrorCode.NumericOverflow, "The stored Numeric coefficient exceeds the .NET Decimal range.");
+        }
+
+        return new decimal(
+            unchecked((int)BinaryPrimitives.ReadUInt32BigEndian(magnitude[12..])),
+            unchecked((int)BinaryPrimitives.ReadUInt32BigEndian(magnitude.Slice(8, 4))),
+            unchecked((int)BinaryPrimitives.ReadUInt32BigEndian(magnitude.Slice(4, 4))),
+            payload.Negative,
+            column.NumericScale);
+    }
+
+    /// <summary>Validates and encodes an ordinary Numeric column's target-scale magnitude.</summary>
+    /// <param name="column">The physical Numeric column.</param>
+    /// <param name="value">The value before storage rounding.</param>
+    /// <param name="magnitudeBe">The sixteen-byte big-endian magnitude destination.</param>
+    /// <returns>The magnitude metadata.</returns>
+    /// <exception cref="JetLimitationException">The value exceeds the declared precision or sixteen-byte magnitude.</exception>
+    internal static FixedPointPayload EncodeColumnPayload(ColumnInfo column, decimal value, Span<byte> magnitudeBe)
+    {
+        byte precision = column.NumericPrecision == 0 ? (byte)18 : column.NumericPrecision;
+        byte scale = column.NumericScale;
+        decimal rounded = decimal.Round(value, scale, MidpointRounding.ToEven);
+        bool fits = TryEncodeFixedPointPayload(rounded, scale, magnitudeBe, out FixedPointPayload payload);
+        if (payload.DigitCount > precision)
+        {
+            throw new JetLimitationException(JetErrorCode.NumericOverflow, $"Numeric value '{value}' exceeds NUMERIC({precision},{scale}) precision after rounding.");
+        }
+
+        if (!fits)
+        {
+            throw new JetLimitationException(JetErrorCode.NumericOverflow, $"Numeric value '{value}' requires {payload.MagnitudeByteCount} bytes, exceeding the 16-byte NUMERIC mantissa.");
+        }
+
+        return payload;
+    }
+
     /// <summary>
     /// Decomposes <paramref name="value"/> into sign, scale (0..28), and the
     /// unsigned 96-bit mantissa, writing the mantissa as 12 little-endian

@@ -755,6 +755,13 @@ contexts, additional locales and Currency identity remain separate R4/E2 gaps.
 
 ### Floating-to-Decimal expression coercion
 
+Numeric source references first project through the ordinary field encoder's
+precision/scale normalization, so calculated caches use the coefficient and scale
+actually stored on the row. Calculated Numeric results preserve their native
+coefficient/scale rather than applying the ordinary field descriptor's scale.
+Decimal division removes trailing quotient zeroes. `CalculatedNumericReferenceTests`
+compares source bytes, dependent results and native recalculation/compact.
+
 Expression `ToDecimal` and `TryConvertDecimal` use the measured OLE numeric
 policy: Single and Double retain 7 and 15 significant digits through binary
 scaling followed by half-even integer-mantissa rounding. Fixed literal powers

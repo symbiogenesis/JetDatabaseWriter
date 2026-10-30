@@ -149,7 +149,10 @@ internal static class AccessVariantOperators
 
         if ((left is decimal || right is decimal) && !UsesFloatingArithmetic(left, right))
         {
-            return ToDecimal(left) / ToDecimal(right);
+            // Native Decimal division removes redundant fractional zeros even
+            // when a fixed-scale source field supplies a value such as 1.20.
+            decimal quotient = ToDecimal(left) / ToDecimal(right);
+            return quotient / 1.0000000000000000000000000000m;
         }
 
         double floatingDivisor = Finite(ToDouble(right));
