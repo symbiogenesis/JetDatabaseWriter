@@ -683,3 +683,5 @@ readiness report. Focused Linux/macOS CI includes these checks on .NET 10/11.
 The [recovery contract](transaction-crash-recovery.md) records the concrete Windows
 managed directory-flush probe and its limits. None of this evidence establishes
 physical power-loss durability or authorizes compact publication.
+
+NativeDisplayPropertyTests compares independently DAO3.6-edited controls with writer-edited Jet3/Jet4 subjects for related and unrelated column rename/drop and case-only rename. Stored Filter and OrderBy text and entry metadata survive reopen and native compact unchanged, including stale references; native insert/update/delete still succeeds. The local engine was DAO3.6 with dao360.dll 10.0.26100.5074. Managed regressions cover Jet3/Jet4/ACE and direct, automatic and explicit transactions, including opaque and repeated display entries. ACE DAO120 native checks remain guarded and unexecuted on the current host; Access UI Name AutoCorrect is a separate evidence gap.

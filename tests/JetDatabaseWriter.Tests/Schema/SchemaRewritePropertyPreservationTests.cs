@@ -119,9 +119,9 @@ public sealed class SchemaRewritePropertyPreservationTests
         return data;
     }
 
-    /// <summary>Gets display-property refusals across formats, mutations and modes.</summary>
-    /// <returns>The focused refusal cases.</returns>
-    public static TheoryData<DatabaseFormat, Rewrite, WriteMode, string> DisplayPropertyRefusals()
+    /// <summary>Gets display-property preservation cases across formats, mutations and modes.</summary>
+    /// <returns>The focused preservation cases.</returns>
+    public static TheoryData<DatabaseFormat, Rewrite, WriteMode, string> DisplayPropertyCases()
     {
         var data = new TheoryData<DatabaseFormat, Rewrite, WriteMode, string>();
         foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
@@ -190,7 +190,7 @@ public sealed class SchemaRewritePropertyPreservationTests
 
     /// <summary>
     /// A renamed column's target takes the new name and keeps every entry, and
-    /// every other target and entry stays as stored. Tables with nonempty display properties refuse the edit.
+    /// every other target and entry stays as stored, including display properties.
     /// </summary>
     /// <param name="fixture">The fixture path.</param>
     /// <param name="table">The table.</param>
@@ -204,13 +204,6 @@ public sealed class SchemaRewritePropertyPreservationTests
         await using MemoryStream ms = await CopyFixtureAsync(fixture);
         List<TargetView> before = await ReadTargetsAsync(ms, table);
         Assert.Contains(before, t => t.Name == column);
-
-        if (table == "Strings")
-        {
-            await AssertDisplayPropertyRefusalAsync(ms, mode, writer => writer.RenameColumnAsync(table, column, "Renamed", Ct).AsTask());
-            AssertSameTargets(before, await ReadTargetsAsync(ms, table));
-            return;
-        }
 
         await RunRewriteAsync(ms, mode, writer => writer.RenameColumnAsync(table, column, "Renamed", Ct));
 
@@ -235,13 +228,6 @@ public sealed class SchemaRewritePropertyPreservationTests
         List<TargetView> before = await ReadTargetsAsync(ms, table);
         Assert.Contains(before, t => t.Name == column);
 
-        if (table == "Strings")
-        {
-            await AssertDisplayPropertyRefusalAsync(ms, mode, writer => writer.DropColumnAsync(table, column, Ct).AsTask());
-            AssertSameTargets(before, await ReadTargetsAsync(ms, table));
-            return;
-        }
-
         await RunRewriteAsync(ms, mode, writer => writer.DropColumnAsync(table, column, Ct));
 
         AssertSameTargets([.. WithoutNameMap(before).Where(t => t.Name != column)], await ReadTargetsAsync(ms, table));
@@ -265,13 +251,6 @@ public sealed class SchemaRewritePropertyPreservationTests
         await using MemoryStream ms = await CopyFixtureAsync(fixture);
         TargetView before = Assert.Single(await ReadTargetsAsync(ms, table), t => t.Name.Length == 0);
         Assert.Contains(before.Entries, e => e.StartsWith("GUID|", StringComparison.Ordinal));
-
-        if (table == "Strings" && rewrite != Rewrite.AddColumn)
-        {
-            await AssertDisplayPropertyRefusalAsync(ms, WriteMode.Direct, writer => RunAsync(writer, rewrite, table, column));
-            Assert.Equal(before, Assert.Single(await ReadTargetsAsync(ms, table), target => target.Name.Length == 0));
-            return;
-        }
 
         await RunRewriteAsync(ms, WriteMode.Direct, writer => rewrite switch
         {
@@ -562,39 +541,29 @@ public sealed class SchemaRewritePropertyPreservationTests
         AssertSameTargets(before, await ReadTargetsAsync(ms, "T"));
     }
 
-    /// <summary>Display dependencies refuse column removal or renaming before mutation.</summary>
+    /// <summary>Stored display text remains unchanged, including references to renamed or removed columns.</summary>
     /// <param name="format">The database format.</param>
     /// <param name="rewrite">The mutation.</param>
     /// <param name="mode">The write mode.</param>
     /// <param name="property">The stored property.</param>
-    /// <returns>The asynchronous check.</returns>
     [Theory]
-    [MemberData(nameof(DisplayPropertyRefusals))]
-    public async Task SchemaRewrite_DisplayProperty_RefusesWithoutChangingBytes(DatabaseFormat format, Rewrite rewrite, WriteMode mode, string property)
+    [MemberData(nameof(DisplayPropertyCases))]
+    public async Task SchemaRewrite_DisplayProperty_PreservesStoredText(DatabaseFormat format, Rewrite rewrite, WriteMode mode, string property)
     {
         await using MemoryStream ms = await CreateDatabaseAsync(format);
         await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
         {
             await initial.CreateTableAsync("T", [new("Id", typeof(int)), new("Note", typeof(int))], Ct);
+            await initial.InsertRowAsync("T", [1, 2], Ct);
         }
 
         await PlantPropertiesAsync(ms, "T", builder => builder.GetOrAddTableTarget().AddText(property, "[T].[Id] DESC, Note ASC", JetFormat.ForNewDatabase(format)));
-        byte[] before = ms.ToArray();
-        async Task CheckRefusalAsync(AccessWriter writer)
-        {
-            JetOperationException failure = await Assert.ThrowsAsync<JetOperationException>(() => RunAsync(writer, rewrite, "T", "Note"));
-            Assert.Equal(JetErrorCode.FeatureNotSupported, failure.ErrorCode);
-            Assert.Equal("T", failure.ErrorInfo.TableName);
-            Assert.Equal("Note", failure.ErrorInfo.ColumnName);
-            Assert.Contains(property, failure.Message, StringComparison.Ordinal);
-            Assert.DoesNotContain("DESC", failure.Message, StringComparison.Ordinal);
-            Assert.Equal(before, ms.ToArray());
-            await writer.InsertRowAsync("T", [1, 2], Ct);
-        }
-
-        await RunRewriteAsync(ms, mode, CheckRefusalAsync);
+        TargetView before = Assert.Single(await ReadTargetsAsync(ms, "T"), target => target.Name.Length == 0);
+        await RunRewriteAsync(ms, mode, writer => RunAsync(writer, rewrite, "T", "Note"));
+        Assert.Equal(before, Assert.Single(await ReadTargetsAsync(ms, "T"), target => target.Name.Length == 0));
         await using AccessReader reader = await OpenReaderAsync(ms);
         Assert.Equal(1, await reader.GetRealRowCountAsync("T", Ct));
+        Assert.Single(await reader.GetColumnMetadataAsync("T", Ct), column => column.Name == "Id");
     }
 
     /// <summary>Adding a column and editing tables with empty display properties remains allowed.</summary>
@@ -622,14 +591,14 @@ public sealed class SchemaRewritePropertyPreservationTests
         Assert.Equal(before, Assert.Single(await ReadTargetsAsync(ms, "T"), target => target.Name.Length == 0));
     }
 
-    /// <summary>Case-only renames obey the same conservative display-property refusal.</summary>
+    /// <summary>Case-only renames preserve the display property exactly as stored.</summary>
     /// <param name="mode">The write mode.</param>
     /// <returns>The asynchronous check.</returns>
     [Theory]
     [InlineData(WriteMode.Direct)]
     [InlineData(WriteMode.AutoCommit)]
     [InlineData(WriteMode.ExplicitCommit)]
-    public async Task RenameColumn_CaseOnlyWithDisplayProperty_RefusesWithoutChangingBytes(WriteMode mode)
+    public async Task RenameColumn_CaseOnlyWithDisplayProperty_PreservesStoredText(WriteMode mode)
     {
         await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet4Mdb);
         await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
@@ -638,7 +607,34 @@ public sealed class SchemaRewritePropertyPreservationTests
         }
 
         await PlantPropertiesAsync(ms, "T", builder => builder.GetOrAddTableTarget().AddText("Filter", "[Note] > 0", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
-        await AssertDisplayPropertyRefusalAsync(ms, mode, writer => writer.RenameColumnAsync("T", "Note", "note", Ct).AsTask());
+        TargetView before = Assert.Single(await ReadTargetsAsync(ms, "T"), target => target.Name.Length == 0);
+        await RunRewriteAsync(ms, mode, writer => writer.RenameColumnAsync("T", "Note", "note", Ct));
+        Assert.Equal(before, Assert.Single(await ReadTargetsAsync(ms, "T"), target => target.Name.Length == 0));
+    }
+
+    /// <summary>Opaque and repeated display entries retain their exact bytes through column edits.</summary>
+    /// <param name="rewrite">The schema edit.</param>
+    [Theory]
+    [InlineData(Rewrite.DropColumn)]
+    [InlineData(Rewrite.RenameColumn)]
+    public async Task SchemaRewrite_OpaqueRepeatedDisplayProperties_PreservesEntries(Rewrite rewrite)
+    {
+        await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet4Mdb);
+        await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await initial.CreateTableAsync("T", [new("Id", typeof(int)), new("Note", typeof(int))], Ct);
+        }
+
+        await PlantPropertiesAsync(ms, "T", builder =>
+        {
+            ColumnPropertyTargetBuilder target = builder.GetOrAddTableTarget();
+            target.AddText("Filter", "[Note] = 'opaque", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb));
+            target.AddText("Filter", "[Id] > 0", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb));
+            target.Entries.Add(new ColumnPropertyEntryBuilder { Name = "OrderBy", DataType = ColumnType.OleType, DdlFlag = 0xA5, Value = [0xFF, 0x00, 0x82] });
+        });
+        TargetView before = Assert.Single(await ReadTargetsAsync(ms, "T"), target => target.Name.Length == 0);
+        await RunRewriteAsync(ms, WriteMode.Direct, writer => RunAsync(writer, rewrite, "T", "Note"));
+        Assert.Equal(before, Assert.Single(await ReadTargetsAsync(ms, "T"), target => target.Name.Length == 0));
     }
 
     /// <summary>Dependent lookups in another table refuse name edits before any write.</summary>

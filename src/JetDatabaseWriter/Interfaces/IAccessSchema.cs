@@ -123,8 +123,8 @@ public interface IAccessSchema : IAccessBase
     /// expression may name it (change or drop that column first). A mention inside a string
     /// literal, or in the dropped column's own rule, does not count. The remaining columns
     /// retain supported data and schema as described for <see cref="RenameColumnAsync"/>;
-    /// the dropped column's properties go with it. Nonempty table Filter or OrderBy
-    /// properties block the drop because their dependencies cannot be safely rewritten.
+    /// the dropped column's properties go with it. Stored table <c>Filter</c> and <c>OrderBy</c>
+    /// text is preserved unchanged, including references to the removed column, as in native DAO edits.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="columnName">The column to drop (case-insensitive).</param>
@@ -145,13 +145,13 @@ public interface IAccessSchema : IAccessBase
     /// Calculated expressions and stored column/table rules referring to the column are
     /// rewritten while retaining string literals. Bare calculated qualifiers bind to the current
     /// row, including after a table rename; bracketed qualifiers require the current table name.
-    /// Nonempty table <c>Filter</c> or <c>OrderBy</c> properties refuse the rename
-    /// before writing because their dependencies cannot be safely rewritten. Lookup RowSource
-    /// and saved-query dependencies are not fully handled.
+    /// Stored table <c>Filter</c> and <c>OrderBy</c> text is preserved unchanged, including
+    /// references to the old name, as in native DAO edits. Lookup RowSource and saved-query
+    /// dependencies are not fully handled; Access UI Name AutoCorrect is not applied.
     /// A rename may change only the letter case of the name, and is then handled like any other
-    /// rename. A rename to the name the column already has, spelled as stored, changes nothing
-    /// and does not rewrite the table. Both follow what Microsoft Access is believed to do,
-    /// which has not been checked against Access.
+    /// rename, matching observed DAO3.6 edits on Jet3 and Jet4. A rename to the name the column
+    /// already has, spelled as stored, changes nothing and does not rewrite the table;
+    /// native behavior for that unchanged-name case has not been checked.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="oldColumnName">The current column name (case-insensitive).</param>

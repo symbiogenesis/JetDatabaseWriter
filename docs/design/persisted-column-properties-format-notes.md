@@ -205,13 +205,18 @@ The blob is the column's stored bytes, inline, on one LVAL row or in an LVAL cha
 
 ## 8. Through schema rewrites
 
-Column rename and drop refuse a table with a nonempty stored `Filter` or
-`OrderBy` before writing. Their dependencies are not verified well enough to
-rewrite them safely, so this refusal also applies when the changed column
-appears unrelated. Adding a column preserves these properties. Empty values
-and whitespace-only text do not block an edit. The refusal leaves database bytes and the caller's
-transaction unchanged; native Name AutoCorrect and dependency rewrite behavior
-remain unverified.
+Column add, rename and drop preserve stored `Filter` and `OrderBy` entries
+unchanged, including references to renamed or removed columns. These are
+display properties, not enforced table rules. DAO3.6 retains their exact text
+through related and unrelated column edits, reopen and compact in Jet3 and
+Jet4. The writer follows that behavior without parsing or executing the text;
+opaque and repeated entries also retain their raw values and metadata.
+`NativeDisplayPropertyTests` compares independently native-edited controls and
+writer-edited subjects, including native insert/update/delete after each edit.
+The local engine was DAO3.6, `dao360.dll` 10.0.26100.5074. ACE has managed
+preservation coverage and separate DAO120-guarded controls; those native checks
+remain an evidence gap when DAO120 is unavailable. Access UI Name AutoCorrect
+remains a separate requirement and is not applied by this API.
 
 Column rename/drop and table drop also inspect surviving user-table column lookups before mutation. A direct `RowSource` naming the changed table, or a conservative identifier match in a stored source expression, causes refusal. This identifier scan is not a complete SQL dependency parser and can refuse an unrelated SQL identifier with the same spelling. It skips string literals; it never rewrites or executes the stored source. An explicit `Value List` is exempt only when every declared source-type entry in that target agrees. A lookup removed with its owning column/table cannot leave a surviving dependency. Adding a column preserves raw lookup properties. Unreadable owner metadata refuses inspection rather than granting absence of dependencies.
 
