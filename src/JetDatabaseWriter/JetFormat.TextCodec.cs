@@ -36,6 +36,18 @@ internal sealed partial class JetFormat
         return Encoding.Unicode.GetString(bytes);
     }
 
+    /// <summary>Writes exact UTF-16 code units without replacing unpaired surrogates.</summary>
+    /// <param name="text">The source code units.</param>
+    /// <param name="bytes">The destination, containing two bytes per code unit.</param>
+    internal static void EncodeUtf16LE(ReadOnlySpan<char> text, Span<byte> bytes)
+    {
+        for (int index = 0; index < text.Length; index++)
+        {
+            bytes[index * 2] = (byte)(text[index] & 0xFF);
+            bytes[(index * 2) + 1] = (byte)(text[index] >> 8);
+        }
+    }
+
     // ── JET4 compressed-unicode text codec ──────────────────
     // Static encode/decode for Jet4/ACE Text and Memo columns.
 
@@ -95,7 +107,7 @@ internal sealed partial class JetFormat
         {
             int charCount = Math.Min(value.Length, maxBytes / 2);
             byte[] result = new byte[charCount * 2];
-            Encoding.Unicode.GetBytes(value.AsSpan(0, charCount), result);
+            EncodeUtf16LE(value.AsSpan(0, charCount), result);
             return result;
         }
 

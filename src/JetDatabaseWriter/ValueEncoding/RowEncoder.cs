@@ -738,6 +738,11 @@ internal sealed class RowEncoder(JetFormat format)
             return JetFormat.EncodeEscapedVariableText(value, maxSize);
         }
 
+        if (!format.IsJet3 && maxSize > 0 && value.Length > maxSize / 2)
+        {
+            value = value[..(maxSize / 2)];
+        }
+
         int limit = maxSize > 0 ? maxSize : int.MaxValue;
         byte[] bytes = format.EncodeText(value, limit, compress);
         if (maxSize > 0 && bytes.Length > maxSize)

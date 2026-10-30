@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -19,6 +18,15 @@ using Xunit;
 public sealed class CalculatedTextLeadingMarkerDaoTests(ITestOutputHelper output)
 {
     private const string NativeReportFunction = """
+        function Decode-Codes([string]$value) {
+            $bytes=[Convert]::FromBase64String($value)
+            $characters=[char[]]::new($bytes.Length/2)
+            for($i=0;$i -lt $characters.Length;$i++) { $characters[$i]=[char][BitConverter]::ToUInt16($bytes,$i*2) }
+            return [string]::new($characters)
+        }
+        function Encode-Codes([string]$value) {
+            return (($value.ToCharArray() | ForEach-Object { ([int]$_ -band 255).ToString('X2')+([int]$_ -shr 8).ToString('X2') }) -join '')
+        }
         function Report([string]$path) {
             $db=$engine.OpenDatabase($path,$false,$true)
             try {
@@ -29,7 +37,7 @@ public sealed class CalculatedTextLeadingMarkerDaoTests(ITestOutputHelper output
                         $lengthValue=$rs.Fields('CachedLength').Value
                         $cachedType=if($null -eq $cachedValue) { 'COMNULL' } else { $cachedValue.GetType().FullName }
                         $lengthType=if($null -eq $lengthValue) { 'COMNULL' } else { $lengthValue.GetType().FullName }
-                        Write-Output ("NATIVE="+$rs.Fields('Id').Value+":"+[BitConverter]::ToString([Text.Encoding]::Unicode.GetBytes([string]$cachedValue)).Replace('-','')+":LENGTH="+$lengthValue+":TYPE="+$cachedType+":"+$lengthType)
+                        Write-Output ("NATIVE="+$rs.Fields('Id').Value+":"+(Encode-Codes ([string]$cachedValue))+":LENGTH="+$lengthValue+":TYPE="+$cachedType+":"+$lengthType)
                         $rs.MoveNext()
                     }
                 } finally { $rs.Close() }
@@ -80,7 +88,7 @@ public sealed class CalculatedTextLeadingMarkerDaoTests(ITestOutputHelper output
         byte[] emptySchema = await File.ReadAllBytesAsync(native.SourcePath, Ct);
         string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(native.SourcePath);
         string compacted = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(native.CompactedPath);
-        string encoded = string.Join(',', values.Select(static value => AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(Convert.ToBase64String(Encoding.Unicode.GetBytes(value)))));
+        string encoded = string.Join(',', values.Select(static value => AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(Convert.ToBase64String(Utf16Bytes(value)))));
         AccessRoundTripEnvironment.CompactResult result = native.RunDaoEngineScript(
             $$"""
             {{NativeReportFunction}}
@@ -92,7 +100,7 @@ public sealed class CalculatedTextLeadingMarkerDaoTests(ITestOutputHelper output
                     for($id=0;$id -lt $values.Count;$id++) {
                         $rs.AddNew()
                         $rs.Fields.Item('Id').Value=$id
-                        $rs.Fields.Item('Content').Value=[string][Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($values[$id]))
+                        $rs.Fields.Item('Content').Value=[string](Decode-Codes $values[$id])
                         $rs.Update()
                     }
                 } finally { $rs.Close() }
@@ -145,7 +153,7 @@ public sealed class CalculatedTextLeadingMarkerDaoTests(ITestOutputHelper output
 
         values[0] = values[15];
         expected[0] = expected[15];
-        string replacement = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(Convert.ToBase64String(Encoding.Unicode.GetBytes(values[23])));
+        string replacement = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(Convert.ToBase64String(Utf16Bytes(values[23])));
         result = native.RunDaoEngineScript(
             $$"""
             {{NativeReportFunction}}
@@ -154,7 +162,7 @@ public sealed class CalculatedTextLeadingMarkerDaoTests(ITestOutputHelper output
                 $rs=$db.OpenRecordset('SELECT * FROM Items WHERE Id=1',2)
                 try {
                     $rs.Edit()
-                    $rs.Fields('Content').Value=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String({{replacement}}))
+                    $rs.Fields('Content').Value=[string](Decode-Codes {{replacement}})
                     $rs.Update()
                 } finally { $rs.Close() }
             } finally { $db.Close() }
@@ -183,7 +191,7 @@ public sealed class CalculatedTextLeadingMarkerDaoTests(ITestOutputHelper output
         return lines.Take(count).Select(static line =>
         {
             string[] parts = line.Split(':');
-            object cached = parts[3] == "TYPE=System.DBNull" ? DBNull.Value : Encoding.Unicode.GetString(Convert.FromHexString(parts[1]));
+            object cached = parts[3] == "TYPE=System.DBNull" ? DBNull.Value : JetFormat.DecodeUtf16LE(Convert.FromHexString(parts[1]));
             object length = parts[4] == "System.DBNull" ? DBNull.Value : int.Parse(parts[2][7..], System.Globalization.CultureInfo.InvariantCulture);
             return (cached, length);
         }).ToArray();
@@ -203,7 +211,14 @@ public sealed class CalculatedTextLeadingMarkerDaoTests(ITestOutputHelper output
     }
 
     private static string[] Values()
-        => [.. Enumerable.Range(0, 9).Select(static length => "\uFEFF" + new string('b', length)), "\uFEFF\u4E2D", "\uFEFF\u03A9", "\uFEFF\u0100", "\uFEFF\u0200", "\uFEFF\0", "\uFEFF\0tail", "\uFEFF\u4E2Dtail", "\uFEFF\u0100tail", "\uFEFF\u4E2D\0tail", "\uFEFFtail\u4E2D", "\uFEFF\uD83D\uDE00", "\uFEFF\uD83D\uDE00tail", "\uFEFF\uFEFF", "\uFEFF\uFEFFtail", "\uFEFFbbbbbbbb\u4E2D", "\uFEFFbbbbbbbb\u4E2Dbbbbbbbb", "\uFEFF\u4E2Dbbbbbbbb\u03A9bbbbbbbb", "\uFEFFb\u4E2Db\u03A9b\uFEFFbbbbbbbb", "\uFEFF\u0100" + new string('b', 100), "\uFEFF\0" + new string('b', 100), "\uFEFF\uD83D\uDE00" + new string('b', 100), "\uFEFF" + new string('\u4E2D', 5) + new string('b', 4), "\uFEFF" + new string('\u4E2D', 5) + new string('b', 3), "\uFEFF" + new string('b', 242), "\uFEFF" + new string('\u4E2D', 238) + "tail"];
+        => [.. Enumerable.Range(0, 9).Select(static length => "\uFEFF" + new string('b', length)), "\uFEFF\u4E2D", "\uFEFF\u03A9", "\uFEFF\u0100", "\uFEFF\u0200", "\uFEFF\0", "\uFEFF\0tail", "\uFEFF\u4E2Dtail", "\uFEFF\u0100tail", "\uFEFF\u4E2D\0tail", "\uFEFFtail\u4E2D", "\uFEFF\uD83D\uDE00", "\uFEFF\uD83D\uDE00tail", "\uFEFF\uFEFF", "\uFEFF\uFEFFtail", "\uFEFFbbbbbbbb\u4E2D", "\uFEFFbbbbbbbb\u4E2Dbbbbbbbb", "\uFEFF\u4E2Dbbbbbbbb\u03A9bbbbbbbb", "\uFEFFb\u4E2Db\u03A9b\uFEFFbbbbbbbb", "\uFEFF\u0100" + new string('b', 100), "\uFEFF\0" + new string('b', 100), "\uFEFF\uD83D\uDE00" + new string('b', 100), "\uFEFF" + new string('\u4E2D', 5) + new string('b', 4), "\uFEFF" + new string('\u4E2D', 5) + new string('b', 3), "\uFEFF" + new string('b', 242), "\uFEFF" + new string('\u4E2D', 238) + "tail", "\uD800", "\uDC00", "\uD83D", "\uDE01", "\uD83D\uDE00", "\uD83D\uDE01", "\uFEFF\uD800bbbb", "\uFEFF\uD83Dbbbb", "\uFEFF\uDC00bbbb", "\uFEFF\uDE01bbbb", "\uFEFF\uD83D\uDE00bbbb", "\uFEFF\uD83D\uDE01bbbb"];
+
+    private static byte[] Utf16Bytes(string value)
+    {
+        byte[] bytes = new byte[value.Length * 2];
+        JetFormat.EncodeUtf16LE(value, bytes);
+        return bytes;
+    }
 
     private static async Task<List<byte[]>> ReadPayloadsAsync(AccessReader reader)
     {

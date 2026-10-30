@@ -603,6 +603,11 @@ compacted controls, compares exact original payloads with writer output, checks
 dependent lengths, and exercises writer/native updates and native compact.
 `NativeTextMarkerTests` keeps the corresponding frozen native read expectations.
 These calculated conversions are separate from ordinary Text/Memo preservation.
+Calculated references first apply the physical character limit, so dependent
+values agree with the encoded source and cached columns. Ordinary compressed
+Text also counts UTF-16 units before compression. Plain UTF-16 storage preserves
+unpaired code units without encoding replacement; fresh native surrogate
+controls qualify both source and calculated values.
 
 ## Floating expression values
 

@@ -142,14 +142,21 @@ internal sealed class CalculatedExpressionEvaluationContext
             return new CalculatedError(-3030);
         }
 
-        if (referenced.IsCalculated && referenced.CalculatedResultType == ColumnType.TextType && value is string text)
+        object coerced = CoerceInput(value, referenced.ClrType);
+        if (referenced.IsCalculated && referenced.CalculatedResultType == ColumnType.TextType && coerced is string text)
         {
             int size = referenced.PhysicalColumn?.Size ?? 0;
             int payloadLimit = size > Constants.CalculatedColumn.ExtraDataLen ? size - Constants.CalculatedColumn.ExtraDataLen : Constants.CalculatedColumn.MaxTextResultBytes;
             return JetFormat.NormalizeCalculatedTextReference(text, payloadLimit);
         }
 
-        object coerced = CoerceInput(value, referenced.ClrType);
+        if (!referenced.IsCalculated && referenced.StorageType == ColumnType.TextType && coerced is string source
+            && referenced.PhysicalColumn is { Size: > 0 } column && this.IsCalculatingColumn)
+        {
+            int limit = column.Size / 2;
+            return source.Length > limit ? source[..limit] : source;
+        }
+
         ColumnType storageType = referenced.IsCalculated ? referenced.CalculatedResultType : referenced.StorageType;
         return storageType == ColumnType.MoneyType && !IsNull(coerced) ? ToCurrency(coerced) : coerced;
     }

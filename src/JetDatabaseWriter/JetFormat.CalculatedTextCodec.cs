@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter;
 
 using System;
-using System.Text;
 
 internal sealed partial class JetFormat
 {
@@ -78,7 +77,7 @@ internal sealed partial class JetFormat
 
         if (value[0] != '\uFEFF')
         {
-            return value;
+            return maxBytes > 0 && value.Length > maxBytes / 2 ? value[..(maxBytes / 2)] : value;
         }
 
         byte[] payload = EncodeCalculatedText(value, maxBytes);
@@ -89,7 +88,7 @@ internal sealed partial class JetFormat
     private static byte[] EncodeCalculatedPlainText(ReadOnlySpan<char> text)
     {
         byte[] payload = new byte[text.Length * 2];
-        Encoding.Unicode.GetBytes(text, payload);
+        EncodeUtf16LE(text, payload);
         return payload;
     }
 }
