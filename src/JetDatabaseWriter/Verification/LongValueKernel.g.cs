@@ -118,6 +118,73 @@ namespace JetDatabaseWriter.Verification {
         return (slot) + (1U);
       }
     }
+    public static bool ContainsVisited(uint[] entries, uint pointer)
+    {
+      bool found = false;
+      found = false;
+      if ((pointer) == (0U)) {
+        return found;
+      }
+      uint _0_capacity;
+      _0_capacity = (uint)(entries).LongLength;
+      uint _1_start;
+      _1_start = JetDatabaseWriter.Verification.LongValueKernel.VisitedSlot(pointer, _0_capacity);
+      uint _2_slot;
+      _2_slot = _1_start;
+      uint _3_step;
+      _3_step = 0U;
+      while ((_3_step) < (_0_capacity)) {
+        uint _4_candidate;
+        _4_candidate = (entries)[(int)(_2_slot)];
+        if ((_4_candidate) == (0U)) {
+          return found;
+        }
+        if ((_4_candidate) == (pointer)) {
+          found = true;
+          return found;
+        }
+        _2_slot = JetDatabaseWriter.Verification.LongValueKernel.NextVisitedSlot(_2_slot, _0_capacity);
+        _3_step = (_3_step) + (1U);
+      }
+      return found;
+    }
+    public static bool InsertVisited(uint[] entries, uint pointer)
+    {
+      bool inserted = false;
+      inserted = false;
+      uint _0_capacity;
+      _0_capacity = (uint)(entries).LongLength;
+      uint _1_start;
+      _1_start = JetDatabaseWriter.Verification.LongValueKernel.VisitedSlot(pointer, _0_capacity);
+      uint _2_slot;
+      _2_slot = _1_start;
+      uint _3_step;
+      _3_step = 0U;
+      while ((_3_step) < (_0_capacity)) {
+        if (((entries)[(int)(_2_slot)]) == (0U)) {
+          (entries)[(int)((_2_slot))] = pointer;
+          inserted = true;
+          return inserted;
+        }
+        _2_slot = JetDatabaseWriter.Verification.LongValueKernel.NextVisitedSlot(_2_slot, _0_capacity);
+        _3_step = (_3_step) + (1U);
+      }
+      return inserted;
+    }
+    public static void RehashVisited(uint[] source, uint[] destination)
+    {
+      uint _0_index;
+      _0_index = 0U;
+      while ((_0_index) < ((uint)(source).LongLength)) {
+        if (((source)[(int)(_0_index)]) != (0U)) {
+          bool _1_inserted;
+          bool _out0;
+          _out0 = JetDatabaseWriter.Verification.LongValueKernel.InsertVisited(destination, (source)[(int)(_0_index)]);
+          _1_inserted = _out0;
+        }
+        _0_index = (_0_index) + (1U);
+      }
+    }
     public static void DecodeFields(byte b0, byte b1, byte b2, byte b3, byte b4, byte b5, byte b6, byte b7, byte b8, byte b9, byte b10, byte b11, out uint length, out byte mode, out uint firstDp, out uint token)
     {
       length = 0;

@@ -15,7 +15,7 @@ internal struct LongValueVisitedSet
     /// <exception cref="JetLimitationException">The bounded tracking capacity is exhausted.</exception>
     internal bool Add(uint pointer)
     {
-        if (pointer == 0 || (this.entries is not null && Contains(this.entries, pointer)))
+        if (pointer == 0 || (this.entries is not null && LongValueKernel.ContainsVisited(this.entries, pointer)))
         {
             return false;
         }
@@ -31,61 +31,18 @@ internal struct LongValueVisitedSet
             uint[] next = new uint[checked((int)capacity)];
             if (this.entries is not null)
             {
-                foreach (uint previous in this.entries)
-                {
-                    if (previous != 0)
-                    {
-                        Insert(next, previous);
-                    }
-                }
+                LongValueKernel.RehashVisited(this.entries, next);
             }
 
             this.entries = next;
         }
 
-        Insert(this.entries, pointer);
+        if (!LongValueKernel.InsertVisited(this.entries, pointer))
+        {
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "The long-value row-identity table is unexpectedly full.");
+        }
+
         this.count++;
         return true;
-    }
-
-    private static bool Contains(uint[] entries, uint pointer)
-    {
-        uint capacity = checked((uint)entries.Length);
-        uint slot = LongValueKernel.VisitedSlot(pointer, capacity);
-        for (int remaining = entries.Length; remaining > 0; remaining--)
-        {
-            uint candidate = entries[checked((int)slot)];
-            if (candidate == 0)
-            {
-                return false;
-            }
-
-            if (candidate == pointer)
-            {
-                return true;
-            }
-
-            slot = LongValueKernel.NextVisitedSlot(slot, capacity);
-        }
-
-        return false;
-    }
-
-    private static void Insert(uint[] entries, uint pointer)
-    {
-        uint capacity = checked((uint)entries.Length);
-        uint slot = LongValueKernel.VisitedSlot(pointer, capacity);
-        for (int remaining = entries.Length; remaining > 0; remaining--)
-        {
-            if (entries[checked((int)slot)] == 0)
-            {
-                entries[checked((int)slot)] = pointer;
-                return;
-            }
-
-            slot = LongValueKernel.NextVisitedSlot(slot, capacity);
-        }
-
-        throw new JetOperationException(JetErrorCode.InvalidOperationState, "The long-value row-identity table is unexpectedly full.");
     }
 }

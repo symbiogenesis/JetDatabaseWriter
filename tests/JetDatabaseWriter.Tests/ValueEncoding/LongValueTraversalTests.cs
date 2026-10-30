@@ -111,6 +111,59 @@ public sealed class LongValueTraversalTests
     }
 
     [Fact]
+    public void GeneratedVisitedSet_PreservesWrappedClustersAndRehashMembership()
+    {
+        uint[] source = new uint[16];
+        var expected = new HashSet<uint>();
+        for (uint pointer = 1; expected.Count < source.Length; pointer++)
+        {
+            ulong hash = ((ulong)pointer * 2654435761) + (pointer / 256) + (pointer / 65536);
+            if (hash % (ulong)source.Length != 15)
+            {
+                continue;
+            }
+
+            Assert.True(LongValueKernel.InsertVisited(source, pointer));
+            expected.Add(pointer);
+            foreach (uint member in expected)
+            {
+                Assert.True(LongValueKernel.ContainsVisited(source, member));
+            }
+        }
+
+        uint[] before = (uint[])source.Clone();
+        Assert.False(LongValueKernel.InsertVisited(source, uint.MaxValue));
+        Assert.Equal(before, source);
+        uint[] destination = new uint[33];
+        LongValueKernel.RehashVisited(source, destination);
+        Assert.Equal(before, source);
+        for (uint pointer = 0; pointer < 1024; pointer++)
+        {
+            Assert.Equal(expected.Contains(pointer), LongValueKernel.ContainsVisited(destination, pointer));
+        }
+
+        Assert.False(LongValueKernel.ContainsVisited(destination, uint.MaxValue));
+        Assert.True(LongValueKernel.InsertVisited(destination, uint.MaxValue));
+        Assert.True(LongValueKernel.ContainsVisited(destination, uint.MaxValue));
+    }
+
+    [Fact]
+    public void GeneratedVisitedSet_HandlesSingletonProbeAndEmptyRehash()
+    {
+        uint[] singleton = new uint[1];
+        Assert.False(LongValueKernel.ContainsVisited(singleton, 0));
+        Assert.False(LongValueKernel.ContainsVisited(singleton, 1));
+        Assert.True(LongValueKernel.InsertVisited(singleton, uint.MaxValue));
+        Assert.True(LongValueKernel.ContainsVisited(singleton, uint.MaxValue));
+        Assert.False(LongValueKernel.InsertVisited(singleton, 1));
+        Assert.Equal(uint.MaxValue, singleton[0]);
+        uint[] empty = new uint[16];
+        uint[] destination = new uint[32];
+        LongValueKernel.RehashVisited(empty, destination);
+        Assert.All(destination, value => Assert.Equal(0u, value));
+    }
+
+    [Fact]
     public void GeneratedRowCount_RefusesEveryInvalidSliceAndBoundsWideInputs()
     {
         for (int total = 0; total <= 11; total++)
