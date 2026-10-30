@@ -69,6 +69,21 @@ values, query permission rows and lookup properties through every writer mode
 on hosted CI. Saved definitions are never executed. Fresh ACE DAO120 checks,
 remaining native query/application forms and Access UI Name AutoCorrect remain
 separate S9/E2 evidence gaps.
+
+`NativeSqlSpecificQueryPreservationTests` adds pinned DAO3.6-authored Jet3/Jet4
+stored data-definition (Type 96), row-returning pass-through (112) and action
+pass-through (144) specimens. All write modes retain complete query/catalog
+values and every query's permission rows through column rename, case-only
+rename, column drop and referenced-table deletion. Native edits and both native
+and writer-output compact/reopen retain exact SQL, Connect, ReturnsRecords,
+ODBCTimeout, MaxRecords and long Description properties. A deliberate DSN-byte
+change proves that the snapshot detects changed connection metadata. Targeted
+DAO3.6 controls ran successfully with `dao360.dll` 10.0.26100.5074. The inert
+connections are never opened and the stored definitions are never executed;
+these checks do not establish pass-through execution, ACE variants or UI
+behavior. [Fixture provenance and hashes](../../tests/JetDatabaseWriter.Tests/Databases/SqlSpecificQueries/README.md)
+retain the exact native specimen scope.
+
 ## Microsoft interoperability evidence
 
 `NativeFixedNullScalarTests` independently compares DAO3.6-authored Jet3/Jet4

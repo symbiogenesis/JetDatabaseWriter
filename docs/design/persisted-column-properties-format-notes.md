@@ -242,6 +242,19 @@ The native engine is DAO3.6 for Jet3/Jet4; fresh ACE DAO120 confirmation,
 remaining query/application forms and Access UI Name AutoCorrect remain separate
 evidence gaps.
 
+`NativeSqlSpecificQueryPreservationTests` extends the Jet3/Jet4 controls to
+stored data-definition queries (native Type 96), row-returning pass-through
+queries (112) and action pass-through queries (144). Pinned DAO3.6-authored
+specimens preserve complete query/catalog values and each query's permissions
+through rename, case-only rename, column drop and referenced-table deletion in
+every write mode. Independent native edits, native compact and writer-output
+compact retain exact SQL, Connect, ReturnsRecords, ODBCTimeout, MaxRecords and
+long Description properties. A deliberate stored DSN change must alter the
+metadata snapshot. The inert connection names are never opened and stored
+definitions are never executed. Provenance and hashes are in
+`Databases/SqlSpecificQueries/README.md` under the test project. These controls
+do not establish pass-through execution or ACE/UI behavior.
+
 AddColumn, DropColumn and RenameColumn rebuild a table and write its blob again. [`PersistedPropertyProjector`](../../src/JetDatabaseWriter/Schema/PersistedPropertyProjector.cs) builds the new blob from the stored one and changes only what the rewrite changes:
 
 - The table-level block keeps its position and every entry except `NameMap`, which is dropped.
