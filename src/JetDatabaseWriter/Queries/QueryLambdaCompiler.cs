@@ -3,31 +3,18 @@ namespace JetDatabaseWriter.Queries;
 using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
+using JetDatabaseWriter.Infrastructure;
 
 /// <summary>Reuses bounded compiled templates while binding each execution's original constants.</summary>
 /// <param name="capacity">The maximum number of retained templates.</param>
 internal sealed class QueryLambdaCompiler(int capacity)
 {
-#if NET9_0_OR_GREATER
-    private readonly System.Threading.Lock gate = new();
-#else
-    private readonly object gate = new();
-#endif
-    private readonly Dictionary<Shape, LinkedListNode<Entry>> entries = [];
-    private readonly LinkedList<Entry> recent = new();
+    private readonly bool cacheEnabled = capacity > 0;
+    private readonly BoundedCache<Shape, Func<object?[], Delegate>> templates = new(capacity);
 
     internal static QueryLambdaCompiler Shared { get; } = new(64);
 
-    internal int Count
-    {
-        get
-        {
-            lock (this.gate)
-            {
-                return this.entries.Count;
-            }
-        }
-    }
+    internal int Count => this.templates.Count;
 
     /// <summary>Binds a typed delegate without evaluating any captured members.</summary>
     /// <typeparam name="TDelegate">The lambda's delegate type.</typeparam>
@@ -43,43 +30,23 @@ internal sealed class QueryLambdaCompiler(int capacity)
     {
         var visitor = new TemplateVisitor();
         var template = (LambdaExpression)visitor.Visit(expression)!;
-        if (!visitor.Supported || capacity <= 0)
+        if (!visitor.Supported || !this.cacheEnabled)
         {
             return expression.Compile();
         }
 
         var shape = new Shape(visitor.Tokens.ToArray());
-        Func<object?[], Delegate> factory;
-        lock (this.gate)
-        {
-            if (this.entries.TryGetValue(shape, out LinkedListNode<Entry>? existing))
-            {
-                this.recent.Remove(existing);
-                this.recent.AddFirst(existing);
-                factory = existing.Value.Factory;
-            }
-            else
-            {
-                // Only constants become parameters: fields, getters, conversions and user
-                // calls stay in their original evaluation and short-circuit positions.
-                factory = Expression.Lambda<Func<object?[], Delegate>>(
-                    Expression.Convert(template, typeof(Delegate)), visitor.Values).Compile();
-                LinkedListNode<Entry> added = this.recent.AddFirst(new Entry(shape, factory));
-                this.entries.Add(shape, added);
-                if (this.entries.Count > capacity && this.recent.Last is { } oldest)
-                {
-                    this.entries.Remove(oldest.Value.Shape);
-                    this.recent.RemoveLast();
-                }
-            }
-        }
+
+        // Only constants become parameters: fields, getters, conversions and user
+        // calls stay in their original evaluation and short-circuit positions.
+        Func<object?[], Delegate> factory = this.templates.GetOrCreate(shape, _ =>
+            Expression.Lambda<Func<object?[], Delegate>>(
+                Expression.Convert(template, typeof(Delegate)), visitor.Values).Compile());
 
         // The cache retains metadata and parameterized code, never the original constants,
         // query root or closure. Every returned delegate owns its independent binding array.
         return factory(visitor.Constants.ToArray());
     }
-
-    private sealed record Entry(Shape Shape, Func<object?[], Delegate> Factory);
 
     private sealed class Shape(object?[] tokens) : IEquatable<Shape>
     {

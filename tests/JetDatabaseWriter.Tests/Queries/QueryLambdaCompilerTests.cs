@@ -10,6 +10,21 @@ using Xunit;
 /// <summary>Cached lambda templates bind live values without retaining another execution's captures.</summary>
 public sealed class QueryLambdaCompilerTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void NonpositiveCapacity_CompilesWithoutRetainingTemplates(int capacity)
+    {
+        var cache = new QueryLambdaCompiler(capacity);
+        Func<int, int> first = cache.Compile<Func<int, int>>(value => value + 1);
+        Func<int, int> second = cache.Compile<Func<int, int>>(value => value + 7);
+
+        Assert.Equal(0, cache.Count);
+        Assert.NotEqual(first.Method, second.Method);
+        Assert.Equal(5, first(4));
+        Assert.Equal(11, second(4));
+    }
+
     [Fact]
     public void SameShape_UsesEachClosureAndReadsLaterChanges()
     {

@@ -27,7 +27,7 @@ using JetDatabaseWriter.Schema;
 internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>
     where T : new()
 {
-    private static readonly MaterializerCache<Materializers> Cache = new();
+    private static readonly BoundedCache<RowShape, Materializers> Cache = new(64);
     private static readonly Lazy<Dictionary<string, Accessor>> PropertyMapCache = new(BuildPropertyMap, LazyThreadSafetyMode.PublicationOnly);
 
     /// <summary>
@@ -100,7 +100,7 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     /// <param name="td">The table definition.</param>
     internal static Func<object?[], T> Build(TableDef td)
     {
-        Materializers entry = Cache.Get(td.Shape, static () => new Materializers());
+        Materializers entry = Cache.GetOrCreate(td.Shape, static _ => new Materializers());
         if (entry.Read is { } read)
         {
             return read;
@@ -119,7 +119,7 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     internal static TDelegate? GetDirect<TDelegate>(RowShape shape, Func<TDelegate?> create)
         where TDelegate : class
     {
-        Materializers entry = Cache.Get(shape, static () => new Materializers());
+        Materializers entry = Cache.GetOrCreate(shape, static _ => new Materializers());
         if (entry.DirectInitialized)
         {
             return (TDelegate?)entry.Direct;
@@ -142,7 +142,7 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     /// <param name="create">The decoder factory.</param>
     internal static HybridRowDecodePlan<T>? GetHybrid(RowShape shape, Func<HybridRowDecodePlan<T>?> create)
     {
-        Materializers entry = Cache.Get(shape, static () => new Materializers());
+        Materializers entry = Cache.GetOrCreate(shape, static _ => new Materializers());
         if (entry.HybridInitialized)
         {
             return entry.Hybrid;
@@ -162,7 +162,7 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
 
     private static Func<object?[], T> GetRead(RowShape shape, IReadOnlyList<string> headers, IReadOnlyList<Type>? types)
     {
-        Materializers entry = Cache.Get(shape, static () => new Materializers());
+        Materializers entry = Cache.GetOrCreate(shape, static _ => new Materializers());
         if (entry.Read is { } read)
         {
             return read;
@@ -293,7 +293,7 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     public static object[] ToRow(TableDef td, T item)
     {
         Guard.NotNull(td, nameof(td));
-        Materializers entry = Cache.Get(td.Shape, static () => new Materializers());
+        Materializers entry = Cache.GetOrCreate(td.Shape, static _ => new Materializers());
         Func<T, object[]>? writer = entry.Write;
         if (writer is null)
         {

@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
@@ -111,15 +112,15 @@ public sealed class MaterializerCacheTests
     [Fact]
     public void Cache_EvictsOldestShape()
     {
-        var cache = new MaterializerCache<object>();
+        var cache = new BoundedCache<RowShape, object>(64);
         RowShape original = Definition("First", 0).Shape;
-        object first = cache.Get(original, static () => new object());
+        object first = cache.GetOrCreate(original, static _ => new object());
         for (int i = 0; i < 64; i++)
         {
-            _ = cache.Get(Definition("Column" + i, 0).Shape, static () => new object());
+            _ = cache.GetOrCreate(Definition("Column" + i, 0).Shape, static _ => new object());
         }
 
-        Assert.NotSame(first, cache.Get(original, static () => new object()));
+        Assert.NotSame(first, cache.GetOrCreate(original, static _ => new object()));
     }
 
     /// <summary>Verifies materializer reuse, identity or bounded cache behavior.</summary>

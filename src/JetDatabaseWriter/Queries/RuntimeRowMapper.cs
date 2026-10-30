@@ -2,12 +2,12 @@ namespace JetDatabaseWriter.Queries;
 
 using System;
 using System.Collections;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.ValueDecoding;
 
@@ -22,7 +22,7 @@ using JetDatabaseWriter.ValueDecoding;
 [RequiresDynamicCode("LINQ queries and Include construct generic types at runtime. Use typed row readers for NativeAOT applications.")]
 internal static class RuntimeRowMapper
 {
-    private static readonly ConcurrentDictionary<Type, Func<IList>> ListFactories = new();
+    private static readonly BoundedCache<Type, Func<IList>> ListFactories = new(64);
 
     private delegate Func<object?[], object> MapperFactory(IReadOnlyList<string> headers, IReadOnlyList<Type>? sourceTypes);
 
@@ -48,7 +48,7 @@ internal static class RuntimeRowMapper
     }
 
     internal static IList CreateList(Type elementType) =>
-        ListFactories.GetOrAdd(elementType, static et =>
+        ListFactories.GetOrCreate(elementType, static et =>
         {
             Type listType = typeof(List<>).MakeGenericType(et);
             return Expression.Lambda<Func<IList>>(Expression.Convert(Expression.New(listType), typeof(IList))).Compile();

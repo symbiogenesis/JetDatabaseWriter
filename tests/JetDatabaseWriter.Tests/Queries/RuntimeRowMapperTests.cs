@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Queries;
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
 using JetDatabaseWriter.Exceptions;
@@ -11,6 +12,26 @@ using Xunit;
 /// <summary>Include materialization keeps row order, defaults and user exceptions.</summary>
 public sealed class RuntimeRowMapperTests
 {
+    [Fact]
+    public void CreateList_AfterFactoryEviction_ReturnsFreshTypedLists()
+    {
+        IList original = RuntimeRowMapper.CreateList(typeof(int));
+        _ = original.Add(7);
+        Type elementType = typeof(int);
+        for (int index = 0; index < 65; index++)
+        {
+            elementType = elementType.MakeArrayType();
+            IList list = RuntimeRowMapper.CreateList(elementType);
+            Assert.Empty(list);
+            Assert.Equal(elementType, list.GetType().GenericTypeArguments[0]);
+        }
+
+        List<int> replacement = Assert.IsType<List<int>>(RuntimeRowMapper.CreateList(typeof(int)));
+        Assert.Empty(replacement);
+        Assert.NotSame(original, replacement);
+        Assert.Equal(7, Assert.Single(Assert.IsType<List<int>>(original)));
+    }
+
     [Fact]
     public void Build_NullsAndMissingCells_KeepDefaultsAndSetterOrder()
     {
