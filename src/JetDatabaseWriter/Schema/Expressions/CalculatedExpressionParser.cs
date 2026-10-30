@@ -191,6 +191,11 @@ internal sealed class CalculatedExpressionParser
                     break;
                 }
 
+                if (this.isCalculatedColumn)
+                {
+                    CalculatedColumnExpressionPolicy.ValidateOperator(info.Value.Name);
+                }
+
                 this.Read();
                 left = info.Value.Name switch
                 {
@@ -265,16 +270,15 @@ internal sealed class CalculatedExpressionParser
 
     private CalculatedExpressionFunctionNode ParseFunctionCall(string name)
     {
+        string calledName = name;
+        if (this.isCalculatedColumn)
+        {
+            CalculatedColumnExpressionPolicy.ValidateFunction(name);
+        }
+
         if (name.EndsWith('$'))
         {
             name = name[..^1];
-        }
-
-        if (this.isCalculatedColumn && name.ToUpperInvariant() is
-            "PARTITION" or "SWITCH" or "DLOOKUP" or "DCOUNT" or "DSUM" or "DAVG" or "DMIN" or "DMAX" or
-            "CBOOL" or "CBYTE" or "CINT" or "CLNG" or "CSNG" or "CCUR" or "CDEC" or "CSTR" or "CDATE" or "TIMEVALUE" or "DATEVALUE")
-        {
-            throw new JetNotSupportedException(JetErrorCode.UnsupportedExpression, $"Access table calculated columns do not accept the {name} function.");
         }
 
         this.Expect(TokenKind.OpenParen, "(");
@@ -290,7 +294,12 @@ internal sealed class CalculatedExpressionParser
         }
 
         this.Expect(TokenKind.CloseParen, ")");
-        return new CalculatedExpressionFunctionNode(name, arguments);
+        if (this.isCalculatedColumn)
+        {
+            CalculatedExpressionFunctionRegistry.ValidateDeclaration(name, arguments.Count);
+        }
+
+        return new CalculatedExpressionFunctionNode(calledName, arguments);
     }
 
     private CalculatedExpressionNode ParseIs(CalculatedExpressionNode left)
@@ -324,6 +333,11 @@ internal sealed class CalculatedExpressionParser
 
     private CalculatedExpressionNode ParseBetween(CalculatedExpressionNode left, bool negate)
     {
+        if (this.isCalculatedColumn)
+        {
+            CalculatedColumnExpressionPolicy.ValidateOperator("BETWEEN");
+        }
+
         bool previousStop = this.stopAtBetweenAnd;
         this.stopAtBetweenAnd = true;
         CalculatedExpressionNode lower;
@@ -408,6 +422,11 @@ internal sealed class CalculatedExpressionParser
             int index = SkipWhiteSpace(expression, 0);
             if (skipLeadingEquals && index < expression.Length && expression[index] == '=')
             {
+                if (isCalculatedColumn)
+                {
+                    throw this.SyntaxError("a table calculation cannot begin with '='");
+                }
+
                 index++;
             }
 
@@ -450,6 +469,11 @@ internal sealed class CalculatedExpressionParser
                 }
                 else if (current == '&' && IsOperandPosition(result) && this.TryReadRadixLiteral(ref index, out object? value))
                 {
+                    if (isCalculatedColumn)
+                    {
+                        throw this.SyntaxError("radix literals are not accepted in table calculations");
+                    }
+
                     result.Add(new Token(TokenKind.Value, expression[start..index], new CalculatedExpressionValueNode(value)));
                 }
                 else

@@ -41,7 +41,6 @@ public sealed class CalculatedConversionContextTests
     [InlineData("DateSerial(2020,1,31)")]
     [InlineData("TimeSerial(18,0,0)")]
     [InlineData("[CInt] & \"CDate(1)\" & 'CByte(2)'")]
-    [InlineData("&H10")]
     public void CalculatedField_AdmitsAlternativesAndLiteralText(string expression)
         => Assert.NotNull(CalculatedExpressionParser.Parse(expression));
 

@@ -34,6 +34,24 @@ internal static class CalculatedExpressionFunctionRegistry
         return descriptor.Evaluator(new CalculatedFunctionInvocation(name, args, context));
     }
 
+    internal static void ValidateDeclaration(string name, int argumentCount)
+    {
+        string normalizedName = NormalizeFunctionName(name);
+        if (!FunctionDescriptors.TryGetValue(normalizedName, out CalculatedFunctionDescriptor? descriptor))
+        {
+            throw new JetNotSupportedException(JetErrorCode.UnsupportedExpression, $"Calculated-column function '{name}' is not supported.");
+        }
+
+        // Native table calculations require explicit InStr start and Mid length arguments.
+        if (normalizedName is "INSTR" or "MID" && argumentCount < 3)
+        {
+            string arity = normalizedName == "INSTR" ? "3..4" : "3";
+            throw new System.ArgumentException($"Calculated-column function '{name}' expects {arity} argument(s), got {argumentCount}.");
+        }
+
+        descriptor.ValidateArgumentCount(normalizedName, argumentCount);
+    }
+
     internal static void AddFunction(
         Dictionary<string, CalculatedFunctionDescriptor> descriptors,
         string name,

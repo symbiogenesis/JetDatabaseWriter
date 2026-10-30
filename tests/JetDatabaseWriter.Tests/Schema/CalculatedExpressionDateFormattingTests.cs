@@ -69,7 +69,7 @@ public sealed class CalculatedExpressionDateFormattingTests
         var table = new TableDef { Columns = [new ColumnInfo { Name = "Calc" }] };
         var constraints = new List<ColumnConstraint>
         {
-            new() { Name = "Calc", ClrType = typeof(string), IsCalculated = true, CalculationExpression = expression },
+            new() { Name = "Calc", ClrType = typeof(string), IsCalculated = true, CalculationExpression = expression, CalculatedExpressionPlan = CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false) },
         };
         object[] values = [DBNull.Value];
         CalculatedExpressionEvaluator.Apply(table, constraints, values);

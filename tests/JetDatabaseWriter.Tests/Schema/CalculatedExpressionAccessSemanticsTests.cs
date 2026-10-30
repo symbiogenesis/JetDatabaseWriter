@@ -211,7 +211,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("IsNull([A]) = TRUE%")]
     public void Parse_PercentOperator_ThrowsArgumentExceptionNamingExpression(string expression)
     {
-        ArgumentException exception = Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse(expression));
+        ArgumentException exception = Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false));
 
         Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
         Assert.Contains("'%'", exception.Message, StringComparison.Ordinal);

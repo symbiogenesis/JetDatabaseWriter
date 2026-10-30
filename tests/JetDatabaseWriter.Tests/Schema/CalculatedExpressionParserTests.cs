@@ -67,7 +67,7 @@ public sealed class CalculatedExpressionParserTests
     [Fact]
     public void UnknownFunction_IsRejectedWhenEvaluated()
     {
-        CalculatedExpressionNode plan = CalculatedExpressionParser.Parse("UnknownAccessFunction(1)");
+        CalculatedExpressionNode plan = CalculatedExpressionParser.Parse("UnknownAccessFunction(1)", isCalculatedColumn: false);
 
         Assert.Throws<JetNotSupportedException>(() => plan.Evaluate(Context()));
     }
@@ -101,6 +101,7 @@ public sealed class CalculatedExpressionParserTests
                 ClrType = typeof(string),
                 IsCalculated = true,
                 CalculationExpression = expression,
+                CalculatedExpressionPlan = CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false),
             },
         ];
         object[] values = [DBNull.Value];
@@ -164,7 +165,7 @@ public sealed class CalculatedExpressionParserTests
 
     private static object Evaluate(string expression, string columnName = "Value")
     {
-        CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(expression);
+        CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false);
         return plan.Evaluate(Context(columnName));
     }
 

@@ -298,7 +298,8 @@ Delivered:
   appears later in the schema. A blank or unsupported stored expression refuses
   the mutation atomically. Validation consumes the completed row, including Null
   and volatile calculated results, without evaluating them a second time.
-- The parser accepts common Access syntax: leading `=` is ignored,
+- The shared parser accepts common Access syntax: leading `=` is ignored
+  outside table calculated fields,
   bracketed column references such as `[Column Name]` resolve against the
   in-flight row, and `#date literal#` uses the CDate evaluator to preserve its time,
   while DateValue removes the time. DateSerial rounds each argument half to even
@@ -496,23 +497,24 @@ Supported subset:
   `IPmt`, `PPmt`, `DDB`, `SLN`, `SYD`, `Rate`), `Choose` and `Switch`. `Partition` is supported for stored rules and defaults; table calculated columns refuse it before mutation, matching DAO120.
 
 The list above describes the shared row-local interpreter for defaults and
-validation rules. Native table calculated columns additionally refuse `Switch`
-and the domain aggregates `DLookup`, `DCount`, `DSum`, `DAvg`, `DMin` and `DMax`, plus
-`CBool`, `CByte`, `CInt`, `CLng`, `CSng`, `CCur`, `CDec`, `CStr`, `CDate`,
-`TimeValue` and `DateValue`, including nested calls and normalized `$` aliases.
-`CalculatedExpressionParser` applies this restriction only in calculated-column
-context, before create/add/recalculation changes bytes. Function names are
-case-insensitive; nested calls and normalized `$` aliases have the same
-restriction. Field names and literal text containing these names remain valid.
-`CalculatedFunctionContextTests` checks that refused create/add operations retain
-the complete database image. Shared defaults and validation plans retain their
-separate interpretation; domain/query evaluation remains unsupported there.
-Existing cached values
-remain readable. `CalculatedConversionContextTests` separates those refusals
-from supported defaults/rules and literal text. `CalculatedConversionDaoTests`
-checks DAO120's refusal set and accepted `CDbl`, `DateSerial`, `TimeSerial`
-and date literals, then verifies writer updates and native compact/readback.
-This evidence does not establish all other functions' native admissibility.
+validation rules. Table calculated fields use the smaller native ACE language
+enforced by `CalculatedColumnExpressionPolicy`. Fresh Access Runtime
+16.0.20527.20112 declarations establish the positive/refusal controls in
+`CalculatedNativeAdmissionTests`, including nested functions, exact `$` aliases,
+operators, literals and argument counts. Native table fields reject `Nz`,
+`Switch`, domain aggregates, formatting/clock functions, most explicit conversions
+and the interpreter's spreadsheet/VBA aliases. Mid and InStr require their
+explicit third argument. String-returning intrinsic `$` spellings retain their
+native runtime distinction; MonthName/WeekdayName do not have `$` aliases.
+Table expressions reject a leading `=`, radix literals, Between, Mod, integer
+division, Xor, Eqv and Imp. Shared defaults/rules retain their separate language.
+
+Declaration checks run before create/add/recalculation changes bytes. Function
+names are case-insensitive; field names and literal text containing function
+names remain valid. `CalculatedFunctionContextTests` checks complete-image
+preservation on refused declarations. Existing cached values remain readable.
+The conversion DAO controls additionally verify accepted CDbl, DateSerial,
+TimeSerial and date literals through writer updates and native compact/readback.
 
 Still intentionally out of scope: domain aggregate functions (`DLookup`,
 `DCount`, `DSum`, `DAvg`, `DMin`, `DMax`) because DAO/Access rejects them in
@@ -672,7 +674,7 @@ extreme Currency-to-text rounding differs and remains separate engine evidence.
 Abs, Sgn, Int and Fix preserve ordinary Null. Sgn returns a signed Integer and
 accepts finite Double values outside Decimal range and Date serials. Abs, Int
 and Fix preserve Date results, applying their operations to the OLE serial.
-`CalculatedExpressionNumericNullTests` compares fresh ACE queries and calculated
+`CalculatedExpressionNumericFunctionTests` compares fresh ACE queries and calculated
 cached values through writer updates, native reads and compact. Other numeric
 functions have distinct native Null/error behavior and do not inherit this rule.
 
