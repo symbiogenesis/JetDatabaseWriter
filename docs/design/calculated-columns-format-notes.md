@@ -886,9 +886,9 @@ widths, little-endian floating/date bits, scaled Currency, UTF-16 text and GUID
 identity. Decimal results use their native text conversion. Empty bytes are Null;
 GUID literals and references retain their 16-byte tag for Binary serialization,
 but use native string semantics in addition and string metadata. Their text form
-uses uppercase hexadecimal within braces. `CalculatedGuidExpressionTests`
+uses uppercase hexadecimal within braces. `CalculatedGuidReferenceTests`
 compares native expression and Binary results without discarding this identity.
-calculated errors use the independently measured 27-byte error envelope inside
+Calculated errors use the independently measured 27-byte error envelope inside
 the long value, including status 11 for division by zero.
 
 The shared storage decision covers decoding, snapshots, row encoding, allocation,
@@ -899,3 +899,24 @@ reads/writes. The measured ACE version itself loses large chained calculated
 Binary/OLE caches during native CompactDatabase, reproduced without any library
 writes; shorter external controls survive. Native compaction is not authority to
 replace such independently readable source caches with Null in managed storage.
+
+## Native LIKE patterns
+
+LIKE uses a bounded native matcher with pinned character mappings. ANSI-89
+wildcards and their measured fullwidth forms are active; percent and underscore
+are literal characters. Ranges compare native lowercase UTF-16 units, separate
+from linguistic index order. The measured digraphs ae/oe/ss/th expand from their
+single-character forms. A question mark consumes an original UTF-16 boundary,
+while literals and classes may consume expansion parts.
+
+Invalid patterns retain native status 93. Evaluation preserves native lazy
+validation before a reached star and validates the remaining pattern thereafter.
+Both operands evaluate before Null propagation: Null beside an invalid pattern
+string yields Null, while a calculated-error operand still propagates its error.
+The matcher permits 1,048,576 combined UTF-16 units and 16,777,216 matching or
+validation steps; exceeding either limit refuses with ValueTooLarge.
+
+`CalculatedLikeTests` freezes 355 independent General Legacy/General cases with
+source and native compacted fixtures and repeats writer/native recalculation and
+compact. Their hashes and reproducible manifest are retained in
+`Databases/CalculatedLike/README.md`.

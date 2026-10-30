@@ -11,7 +11,6 @@ internal static class CalculatedExpressionLimits
     internal const int MaxFunctionArguments = 256;
     internal const int MaxGeneratedTextLength = 32768;
     internal const int MaxFormatDecimalDigits = 28;
-    internal static readonly TimeSpan LikeRegexTimeout = TimeSpan.FromMilliseconds(100);
 
     internal static void ValidateExpressionShape(string expression, int maxLength, string description)
     {

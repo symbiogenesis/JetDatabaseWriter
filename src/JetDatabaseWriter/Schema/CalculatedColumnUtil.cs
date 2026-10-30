@@ -35,7 +35,7 @@ internal static class CalculatedColumnUtil
         }
 
         int code = Ri32(data, 0);
-        if (code is not (5 or 6 or 11 or 13 or 94 or 440 or -3030))
+        if (code is not (5 or 6 or 11 or 13 or 93 or 94 or 440 or -3030))
         {
             return null;
         }

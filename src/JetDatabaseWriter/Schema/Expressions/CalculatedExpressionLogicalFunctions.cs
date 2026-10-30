@@ -2,12 +2,9 @@ namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
 using System.Collections.Generic;
-using System.Text;
-using System.Text.RegularExpressions;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionFunctionRegistry;
-using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionLimits;
 
 internal static class CalculatedExpressionLogicalFunctions
 {
@@ -54,16 +51,7 @@ internal static class CalculatedExpressionLogicalFunctions
         => value is DateTime || (value is string && TryConvertDateTime(value, out _));
 
     private static object EvaluateLike(CalculatedFunctionInvocation function)
-    {
-        object value = function.Arg(0);
-        if (IsNull(value))
-        {
-            return DBNull.Value;
-        }
-
-        object pattern = function.Arg(1);
-        return IsNull(pattern) ? DBNull.Value : AccessLike(ToText(value), ToText(pattern));
-    }
+        => AccessLikeMatcher.Evaluate(function);
 
     private static object EvaluateBetween(CalculatedFunctionInvocation function)
     {
@@ -148,69 +136,5 @@ internal static class CalculatedExpressionLogicalFunctions
         }
 
         return function.Count > 1 ? function.Arg(1) : string.Empty;
-    }
-
-    private static bool AccessLike(string text, string pattern)
-    {
-        var builder = new StringBuilder(pattern.Length * 2);
-        builder.Append('^');
-        for (int patternIndex = 0; patternIndex < pattern.Length; patternIndex++)
-        {
-            char current = pattern[patternIndex];
-            switch (current)
-            {
-                case '*':
-                    builder.Append(".*");
-                    break;
-                case '?':
-                    builder.Append('.');
-                    break;
-                case '#':
-                    builder.Append("\\d");
-                    break;
-                case '[':
-                    int endBracket = pattern.IndexOf(']', patternIndex + 1);
-                    if (endBracket < 0)
-                    {
-                        return false;
-                    }
-
-                    string charClass = pattern.Substring(patternIndex + 1, endBracket - patternIndex - 1);
-                    builder.Append('[');
-                    if (charClass.StartsWith('!'))
-                    {
-                        builder.Append('^').Append(charClass, 1, charClass.Length - 1);
-                    }
-                    else
-                    {
-                        builder.Append(charClass);
-                    }
-
-                    builder.Append(']');
-                    patternIndex = endBracket;
-                    break;
-                default:
-                    builder.Append(Regex.Escape(current.ToString()));
-                    break;
-            }
-        }
-
-        builder.Append('$');
-        try
-        {
-            return Regex.IsMatch(
-                text,
-                builder.ToString(),
-                RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant,
-                LikeRegexTimeout);
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-        catch (RegexMatchTimeoutException)
-        {
-            return false;
-        }
     }
 }

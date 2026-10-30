@@ -1,0 +1,2132 @@
+[
+  {
+    "Id": 0,
+    "Source": "abc",
+    "Pattern": "a*",
+    "Expected": "true"
+  },
+  {
+    "Id": 1,
+    "Source": "a\nb",
+    "Pattern": "a?b",
+    "Expected": "true"
+  },
+  {
+    "Id": 2,
+    "Source": "",
+    "Pattern": "*",
+    "Expected": "true"
+  },
+  {
+    "Id": 3,
+    "Source": "",
+    "Pattern": "?",
+    "Expected": "false"
+  },
+  {
+    "Id": 4,
+    "Source": "",
+    "Pattern": "[]",
+    "Expected": "true"
+  },
+  {
+    "Id": 5,
+    "Source": "",
+    "Pattern": "[ ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 6,
+    "Source": " ",
+    "Pattern": "[ ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 7,
+    "Source": "abc",
+    "Pattern": "a[]bc",
+    "Expected": "true"
+  },
+  {
+    "Id": 8,
+    "Source": "a",
+    "Pattern": "[!]",
+    "Expected": "false"
+  },
+  {
+    "Id": 9,
+    "Source": "!",
+    "Pattern": "[!]",
+    "Expected": "true"
+  },
+  {
+    "Id": 10,
+    "Source": "",
+    "Pattern": "[!]",
+    "Expected": "false"
+  },
+  {
+    "Id": 11,
+    "Source": "a",
+    "Pattern": "[",
+    "Expected": "error"
+  },
+  {
+    "Id": 12,
+    "Source": "abc",
+    "Pattern": "a[b",
+    "Expected": "error"
+  },
+  {
+    "Id": 13,
+    "Source": "a",
+    "Pattern": "[z-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 14,
+    "Source": "a",
+    "Pattern": "[A-a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 15,
+    "Source": "a",
+    "Pattern": "[a-A]",
+    "Expected": "true"
+  },
+  {
+    "Id": 16,
+    "Source": "A",
+    "Pattern": "[a-a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 17,
+    "Source": "[",
+    "Pattern": "[[]",
+    "Expected": "true"
+  },
+  {
+    "Id": 18,
+    "Source": "]",
+    "Pattern": "[]]",
+    "Expected": "true"
+  },
+  {
+    "Id": 19,
+    "Source": "]",
+    "Pattern": "[[]]",
+    "Expected": "false"
+  },
+  {
+    "Id": 20,
+    "Source": "]",
+    "Pattern": "[!]",
+    "Expected": "false"
+  },
+  {
+    "Id": 21,
+    "Source": "]",
+    "Pattern": "[!]]",
+    "Expected": "false"
+  },
+  {
+    "Id": 22,
+    "Source": "[",
+    "Pattern": "[![]",
+    "Expected": "false"
+  },
+  {
+    "Id": 23,
+    "Source": "-",
+    "Pattern": "[-]",
+    "Expected": "true"
+  },
+  {
+    "Id": 24,
+    "Source": "-",
+    "Pattern": "[a-]",
+    "Expected": "true"
+  },
+  {
+    "Id": 25,
+    "Source": "-",
+    "Pattern": "[-a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 26,
+    "Source": "b",
+    "Pattern": "[a-c-e]",
+    "Expected": "true"
+  },
+  {
+    "Id": 27,
+    "Source": "-",
+    "Pattern": "[a-c-e]",
+    "Expected": "true"
+  },
+  {
+    "Id": 28,
+    "Source": "d",
+    "Pattern": "[a-c-e]",
+    "Expected": "false"
+  },
+  {
+    "Id": 29,
+    "Source": "a",
+    "Pattern": "[a--]",
+    "Expected": "error"
+  },
+  {
+    "Id": 30,
+    "Source": "^",
+    "Pattern": "[^a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 31,
+    "Source": "a",
+    "Pattern": "[^a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 32,
+    "Source": "b",
+    "Pattern": "[^a]",
+    "Expected": "false"
+  },
+  {
+    "Id": 33,
+    "Source": "4",
+    "Pattern": "#",
+    "Expected": "true"
+  },
+  {
+    "Id": 34,
+    "Source": "٤",
+    "Pattern": "#",
+    "Expected": "false"
+  },
+  {
+    "Id": 35,
+    "Source": "４",
+    "Pattern": "#",
+    "Expected": "true"
+  },
+  {
+    "Id": 36,
+    "Source": "abc",
+    "Pattern": "a%",
+    "Expected": "false"
+  },
+  {
+    "Id": 37,
+    "Source": "a_c",
+    "Pattern": "a_c",
+    "Expected": "true"
+  },
+  {
+    "Id": 38,
+    "Source": "abc",
+    "Pattern": "a_c",
+    "Expected": "false"
+  },
+  {
+    "Id": 39,
+    "Source": "ABC",
+    "Pattern": "abc",
+    "Expected": "true"
+  },
+  {
+    "Id": 40,
+    "Source": "é",
+    "Pattern": "e",
+    "Expected": "false"
+  },
+  {
+    "Id": 41,
+    "Source": "é",
+    "Pattern": "[e]",
+    "Expected": "false"
+  },
+  {
+    "Id": 42,
+    "Source": "é",
+    "Pattern": "[a-z]",
+    "Expected": "false"
+  },
+  {
+    "Id": 43,
+    "Source": "è",
+    "Pattern": "[e-f]",
+    "Expected": "false"
+  },
+  {
+    "Id": 44,
+    "Source": "É",
+    "Pattern": "[A-Z]",
+    "Expected": "false"
+  },
+  {
+    "Id": 45,
+    "Source": "æ",
+    "Pattern": "ae",
+    "Expected": "true"
+  },
+  {
+    "Id": 46,
+    "Source": "ae",
+    "Pattern": "æ",
+    "Expected": "true"
+  },
+  {
+    "Id": 47,
+    "Source": "ae",
+    "Pattern": "[æ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 48,
+    "Source": "æ",
+    "Pattern": "[a-e]",
+    "Expected": "false"
+  },
+  {
+    "Id": 49,
+    "Source": "ss",
+    "Pattern": "ß",
+    "Expected": "true"
+  },
+  {
+    "Id": 50,
+    "Source": "ß",
+    "Pattern": "ss",
+    "Expected": "true"
+  },
+  {
+    "Id": 51,
+    "Source": "œ",
+    "Pattern": "oe",
+    "Expected": "true"
+  },
+  {
+    "Id": 52,
+    "Source": "oe",
+    "Pattern": "[œ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 53,
+    "Source": "æ",
+    "Pattern": "a?",
+    "Expected": "true"
+  },
+  {
+    "Id": 54,
+    "Source": "ae",
+    "Pattern": "?",
+    "Expected": "false"
+  },
+  {
+    "Id": 55,
+    "Source": "æ",
+    "Pattern": "??",
+    "Expected": "false"
+  },
+  {
+    "Id": 56,
+    "Source": "ae",
+    "Pattern": "[a-e]",
+    "Expected": "false"
+  },
+  {
+    "Id": 57,
+    "Source": "a\u0000",
+    "Pattern": "a",
+    "Expected": "false"
+  },
+  {
+    "Id": 58,
+    "Source": "a\u0000",
+    "Pattern": "a?",
+    "Expected": "true"
+  },
+  {
+    "Id": 59,
+    "Source": "a",
+    "Pattern": "a ",
+    "Expected": "false"
+  },
+  {
+    "Id": 60,
+    "Source": "a ",
+    "Pattern": "a",
+    "Expected": "false"
+  },
+  {
+    "Id": 61,
+    "Source": "a ",
+    "Pattern": "a?",
+    "Expected": "true"
+  },
+  {
+    "Id": 62,
+    "Source": "abc",
+    "Pattern": "*[",
+    "Expected": "error"
+  },
+  {
+    "Id": 63,
+    "Source": "zzz",
+    "Pattern": "a[",
+    "Expected": "false"
+  },
+  {
+    "Id": 64,
+    "Source": "abc",
+    "Pattern": "*[]*",
+    "Expected": "true"
+  },
+  {
+    "Id": 65,
+    "Source": "abc",
+    "Pattern": "*[!]*",
+    "Expected": "false"
+  },
+  {
+    "Id": 66,
+    "Source": "a",
+    "Pattern": "[z-a]*",
+    "Expected": "error"
+  },
+  {
+    "Id": 67,
+    "Source": "z",
+    "Pattern": "[z-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 68,
+    "Source": "0",
+    "Pattern": "[9-0]",
+    "Expected": "error"
+  },
+  {
+    "Id": 69,
+    "Source": "",
+    "Pattern": "[",
+    "Expected": "false"
+  },
+  {
+    "Id": 70,
+    "Source": null,
+    "Pattern": "[",
+    "Expected": "null"
+  },
+  {
+    "Id": 71,
+    "Source": "a",
+    "Pattern": null,
+    "Expected": "null"
+  },
+  {
+    "Id": 72,
+    "Source": null,
+    "Pattern": null,
+    "Expected": "null"
+  },
+  {
+    "Id": 73,
+    "Source": "\u0000",
+    "Pattern": "?",
+    "Expected": "true"
+  },
+  {
+    "Id": 74,
+    "Source": "😀",
+    "Pattern": "?",
+    "Expected": "false"
+  },
+  {
+    "Id": 75,
+    "Source": "😀",
+    "Pattern": "??",
+    "Expected": "true"
+  },
+  {
+    "Id": 76,
+    "Source": "",
+    "Pattern": "*[",
+    "Expected": "false"
+  },
+  {
+    "Id": 77,
+    "Source": "x",
+    "Pattern": "a[z-a]",
+    "Expected": "false"
+  },
+  {
+    "Id": 78,
+    "Source": "a",
+    "Pattern": "a[z-a]",
+    "Expected": "false"
+  },
+  {
+    "Id": 79,
+    "Source": "ab",
+    "Pattern": "a[z-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 80,
+    "Source": "abc",
+    "Pattern": "a*[",
+    "Expected": "error"
+  },
+  {
+    "Id": 81,
+    "Source": "a",
+    "Pattern": "a[]",
+    "Expected": "true"
+  },
+  {
+    "Id": 82,
+    "Source": "",
+    "Pattern": "[z-a]",
+    "Expected": "false"
+  },
+  {
+    "Id": 83,
+    "Source": "abc",
+    "Pattern": "*a[z-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 84,
+    "Source": "ab",
+    "Pattern": "[!a][",
+    "Expected": "false"
+  },
+  {
+    "Id": 85,
+    "Source": "a",
+    "Pattern": "[!]a",
+    "Expected": "false"
+  },
+  {
+    "Id": 86,
+    "Source": "a",
+    "Pattern": "[!a]",
+    "Expected": "false"
+  },
+  {
+    "Id": 87,
+    "Source": "b",
+    "Pattern": "[!a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 88,
+    "Source": "!",
+    "Pattern": "[!!]",
+    "Expected": "false"
+  },
+  {
+    "Id": 89,
+    "Source": "b",
+    "Pattern": "[!!]",
+    "Expected": "true"
+  },
+  {
+    "Id": 90,
+    "Source": "]",
+    "Pattern": "[!]",
+    "Expected": "false"
+  },
+  {
+    "Id": 91,
+    "Source": "!",
+    "Pattern": "[!]]",
+    "Expected": "false"
+  },
+  {
+    "Id": 92,
+    "Source": "!]",
+    "Pattern": "[!]]",
+    "Expected": "true"
+  },
+  {
+    "Id": 93,
+    "Source": "x]",
+    "Pattern": "[!a]]",
+    "Expected": "true"
+  },
+  {
+    "Id": 94,
+    "Source": "]",
+    "Pattern": "[!]",
+    "Expected": "false"
+  },
+  {
+    "Id": 95,
+    "Source": "",
+    "Pattern": "[!a]",
+    "Expected": "false"
+  },
+  {
+    "Id": 96,
+    "Source": "é",
+    "Pattern": "[é-é]",
+    "Expected": "true"
+  },
+  {
+    "Id": 97,
+    "Source": "É",
+    "Pattern": "[é-é]",
+    "Expected": "true"
+  },
+  {
+    "Id": 98,
+    "Source": "è",
+    "Pattern": "[é-f]",
+    "Expected": "error"
+  },
+  {
+    "Id": 99,
+    "Source": "é",
+    "Pattern": "[e-é]",
+    "Expected": "true"
+  },
+  {
+    "Id": 100,
+    "Source": "z",
+    "Pattern": "[e-é]",
+    "Expected": "true"
+  },
+  {
+    "Id": 101,
+    "Source": "è",
+    "Pattern": "[è-é]",
+    "Expected": "true"
+  },
+  {
+    "Id": 102,
+    "Source": "ä",
+    "Pattern": "[a-z]",
+    "Expected": "false"
+  },
+  {
+    "Id": 103,
+    "Source": "Æ",
+    "Pattern": "[a-z]",
+    "Expected": "false"
+  },
+  {
+    "Id": 104,
+    "Source": "Ａ",
+    "Pattern": "[a-z]",
+    "Expected": "false"
+  },
+  {
+    "Id": 105,
+    "Source": "ａ",
+    "Pattern": "[A-Z]",
+    "Expected": "false"
+  },
+  {
+    "Id": 106,
+    "Source": "４",
+    "Pattern": "[0-9]",
+    "Expected": "false"
+  },
+  {
+    "Id": 107,
+    "Source": "²",
+    "Pattern": "#",
+    "Expected": "false"
+  },
+  {
+    "Id": 108,
+    "Source": "ſ",
+    "Pattern": "s",
+    "Expected": "false"
+  },
+  {
+    "Id": 109,
+    "Source": "K",
+    "Pattern": "k",
+    "Expected": "false"
+  },
+  {
+    "Id": 110,
+    "Source": "İ",
+    "Pattern": "i",
+    "Expected": "false"
+  },
+  {
+    "Id": 111,
+    "Source": "ı",
+    "Pattern": "i",
+    "Expected": "false"
+  },
+  {
+    "Id": 112,
+    "Source": "σ",
+    "Pattern": "ς",
+    "Expected": "false"
+  },
+  {
+    "Id": 113,
+    "Source": "ς",
+    "Pattern": "[σ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 114,
+    "Source": "Σ",
+    "Pattern": "[α-ω]",
+    "Expected": "true"
+  },
+  {
+    "Id": 115,
+    "Source": "ς",
+    "Pattern": "[α-ω]",
+    "Expected": "true"
+  },
+  {
+    "Id": 116,
+    "Source": "æ",
+    "Pattern": "a*",
+    "Expected": "true"
+  },
+  {
+    "Id": 117,
+    "Source": "æ",
+    "Pattern": "?e",
+    "Expected": "false"
+  },
+  {
+    "Id": 118,
+    "Source": "æ",
+    "Pattern": "?a",
+    "Expected": "false"
+  },
+  {
+    "Id": 119,
+    "Source": "æ",
+    "Pattern": "a[]e",
+    "Expected": "true"
+  },
+  {
+    "Id": 120,
+    "Source": "æ",
+    "Pattern": "[a]e",
+    "Expected": "true"
+  },
+  {
+    "Id": 121,
+    "Source": "æ",
+    "Pattern": "a[e]",
+    "Expected": "true"
+  },
+  {
+    "Id": 122,
+    "Source": "ae",
+    "Pattern": "[æ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 123,
+    "Source": "ae",
+    "Pattern": "[!æ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 124,
+    "Source": "a",
+    "Pattern": "[!æ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 125,
+    "Source": "æ",
+    "Pattern": "[!a]",
+    "Expected": "false"
+  },
+  {
+    "Id": 126,
+    "Source": "æ",
+    "Pattern": "[a]",
+    "Expected": "false"
+  },
+  {
+    "Id": 127,
+    "Source": "æ",
+    "Pattern": "[a-z]",
+    "Expected": "false"
+  },
+  {
+    "Id": 128,
+    "Source": "ae",
+    "Pattern": "[a-æ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 129,
+    "Source": "æ",
+    "Pattern": "[æ-æ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 130,
+    "Source": "ae",
+    "Pattern": "[æ-æ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 131,
+    "Source": "ß",
+    "Pattern": "s?",
+    "Expected": "true"
+  },
+  {
+    "Id": 132,
+    "Source": "ß",
+    "Pattern": "?s",
+    "Expected": "false"
+  },
+  {
+    "Id": 133,
+    "Source": "straße",
+    "Pattern": "stra?e",
+    "Expected": "true"
+  },
+  {
+    "Id": 134,
+    "Source": "straße",
+    "Pattern": "stras?e",
+    "Expected": "true"
+  },
+  {
+    "Id": 135,
+    "Source": "strasse",
+    "Pattern": "stra?e",
+    "Expected": "false"
+  },
+  {
+    "Id": 136,
+    "Source": "é",
+    "Pattern": "é",
+    "Expected": "false"
+  },
+  {
+    "Id": 137,
+    "Source": "é",
+    "Pattern": "?",
+    "Expected": "false"
+  },
+  {
+    "Id": 138,
+    "Source": "é",
+    "Pattern": "e?",
+    "Expected": "true"
+  },
+  {
+    "Id": 139,
+    "Source": "a",
+    "Pattern": "a\u0000",
+    "Expected": "false"
+  },
+  {
+    "Id": 140,
+    "Source": "a\u0000",
+    "Pattern": "a*",
+    "Expected": "true"
+  },
+  {
+    "Id": 141,
+    "Source": "a\u0000",
+    "Pattern": "a#",
+    "Expected": "false"
+  },
+  {
+    "Id": 142,
+    "Source": "\u0000",
+    "Pattern": "[]",
+    "Expected": "false"
+  },
+  {
+    "Id": 143,
+    "Source": "\u0000",
+    "Pattern": "*",
+    "Expected": "true"
+  },
+  {
+    "Id": 144,
+    "Source": "c",
+    "Pattern": "[a-c-e]",
+    "Expected": "true"
+  },
+  {
+    "Id": 145,
+    "Source": "e",
+    "Pattern": "[a-c-e]",
+    "Expected": "true"
+  },
+  {
+    "Id": 146,
+    "Source": "e",
+    "Pattern": "[a-b-c-d-e]",
+    "Expected": "true"
+  },
+  {
+    "Id": 147,
+    "Source": "b",
+    "Pattern": "[a-b-c-d-e]",
+    "Expected": "true"
+  },
+  {
+    "Id": 148,
+    "Source": "-",
+    "Pattern": "[a-b-c-d-e]",
+    "Expected": "true"
+  },
+  {
+    "Id": 149,
+    "Source": "a",
+    "Pattern": "[--a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 150,
+    "Source": "b",
+    "Pattern": "[--a]",
+    "Expected": "false"
+  },
+  {
+    "Id": 151,
+    "Source": "-",
+    "Pattern": "[--a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 152,
+    "Source": "a",
+    "Pattern": "[a-b-c]",
+    "Expected": "true"
+  },
+  {
+    "Id": 153,
+    "Source": "Ł",
+    "Pattern": "[a-ÿ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 154,
+    "Source": "ł",
+    "Pattern": "[a-ÿ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 155,
+    "Source": "Ÿ",
+    "Pattern": "[a-ÿ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 156,
+    "Source": "Ā",
+    "Pattern": "[a-ÿ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 157,
+    "Source": "ſ",
+    "Pattern": "[a-ÿ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 158,
+    "Source": "ß",
+    "Pattern": "[A-Z]",
+    "Expected": "false"
+  },
+  {
+    "Id": 159,
+    "Source": "ss",
+    "Pattern": "[s-t]",
+    "Expected": "false"
+  },
+  {
+    "Id": 160,
+    "Source": "AE",
+    "Pattern": "[æ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 161,
+    "Source": "æ",
+    "Pattern": "[a-e]",
+    "Expected": "false"
+  },
+  {
+    "Id": 162,
+    "Source": "４",
+    "Pattern": "4",
+    "Expected": "false"
+  },
+  {
+    "Id": 163,
+    "Source": "Ａ",
+    "Pattern": "a",
+    "Expected": "false"
+  },
+  {
+    "Id": 164,
+    "Source": "ａ",
+    "Pattern": "a",
+    "Expected": "false"
+  },
+  {
+    "Id": 165,
+    "Source": "ａｂ",
+    "Pattern": "ab",
+    "Expected": "false"
+  },
+  {
+    "Id": 166,
+    "Source": "K",
+    "Pattern": "K",
+    "Expected": "false"
+  },
+  {
+    "Id": 167,
+    "Source": "ς",
+    "Pattern": "Σ",
+    "Expected": "false"
+  },
+  {
+    "Id": 168,
+    "Source": "ϐ",
+    "Pattern": "β",
+    "Expected": "false"
+  },
+  {
+    "Id": 169,
+    "Source": "µ",
+    "Pattern": "Μ",
+    "Expected": "false"
+  },
+  {
+    "Id": 170,
+    "Source": "Å",
+    "Pattern": "å",
+    "Expected": "true"
+  },
+  {
+    "Id": 171,
+    "Source": "å",
+    "Pattern": "[A-Z]",
+    "Expected": "false"
+  },
+  {
+    "Id": 172,
+    "Source": "ĳ",
+    "Pattern": "ij",
+    "Expected": "false"
+  },
+  {
+    "Id": 173,
+    "Source": "ij",
+    "Pattern": "ĳ",
+    "Expected": "false"
+  },
+  {
+    "Id": 174,
+    "Source": "ij",
+    "Pattern": "[ĳ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 175,
+    "Source": "ﬁ",
+    "Pattern": "fi",
+    "Expected": "false"
+  },
+  {
+    "Id": 176,
+    "Source": "fi",
+    "Pattern": "ﬁ",
+    "Expected": "false"
+  },
+  {
+    "Id": 177,
+    "Source": "fi",
+    "Pattern": "[ﬁ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 178,
+    "Source": "ﬂ",
+    "Pattern": "fl",
+    "Expected": "false"
+  },
+  {
+    "Id": 179,
+    "Source": "fl",
+    "Pattern": "ﬂ",
+    "Expected": "false"
+  },
+  {
+    "Id": 180,
+    "Source": "fl",
+    "Pattern": "[ﬂ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 181,
+    "Source": "ﬀ",
+    "Pattern": "ff",
+    "Expected": "false"
+  },
+  {
+    "Id": 182,
+    "Source": "ff",
+    "Pattern": "ﬀ",
+    "Expected": "false"
+  },
+  {
+    "Id": 183,
+    "Source": "ff",
+    "Pattern": "[ﬀ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 184,
+    "Source": "ﬃ",
+    "Pattern": "ffi",
+    "Expected": "false"
+  },
+  {
+    "Id": 185,
+    "Source": "ffi",
+    "Pattern": "ﬃ",
+    "Expected": "false"
+  },
+  {
+    "Id": 186,
+    "Source": "ffi",
+    "Pattern": "[ﬃ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 187,
+    "Source": "ﬄ",
+    "Pattern": "ffl",
+    "Expected": "false"
+  },
+  {
+    "Id": 188,
+    "Source": "ffl",
+    "Pattern": "ﬄ",
+    "Expected": "false"
+  },
+  {
+    "Id": 189,
+    "Source": "ffl",
+    "Pattern": "[ﬄ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 190,
+    "Source": "ﬅ",
+    "Pattern": "st",
+    "Expected": "false"
+  },
+  {
+    "Id": 191,
+    "Source": "st",
+    "Pattern": "ﬅ",
+    "Expected": "false"
+  },
+  {
+    "Id": 192,
+    "Source": "st",
+    "Pattern": "[ﬅ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 193,
+    "Source": "ﬆ",
+    "Pattern": "st",
+    "Expected": "false"
+  },
+  {
+    "Id": 194,
+    "Source": "st",
+    "Pattern": "ﬆ",
+    "Expected": "false"
+  },
+  {
+    "Id": 195,
+    "Source": "st",
+    "Pattern": "[ﬆ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 196,
+    "Source": "ǆ",
+    "Pattern": "dz",
+    "Expected": "false"
+  },
+  {
+    "Id": 197,
+    "Source": "dz",
+    "Pattern": "ǆ",
+    "Expected": "false"
+  },
+  {
+    "Id": 198,
+    "Source": "dz",
+    "Pattern": "[ǆ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 199,
+    "Source": "ǉ",
+    "Pattern": "lj",
+    "Expected": "false"
+  },
+  {
+    "Id": 200,
+    "Source": "lj",
+    "Pattern": "ǉ",
+    "Expected": "false"
+  },
+  {
+    "Id": 201,
+    "Source": "lj",
+    "Pattern": "[ǉ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 202,
+    "Source": "ǌ",
+    "Pattern": "nj",
+    "Expected": "false"
+  },
+  {
+    "Id": 203,
+    "Source": "nj",
+    "Pattern": "ǌ",
+    "Expected": "false"
+  },
+  {
+    "Id": 204,
+    "Source": "nj",
+    "Pattern": "[ǌ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 205,
+    "Source": "ǳ",
+    "Pattern": "dz",
+    "Expected": "false"
+  },
+  {
+    "Id": 206,
+    "Source": "dz",
+    "Pattern": "ǳ",
+    "Expected": "false"
+  },
+  {
+    "Id": 207,
+    "Source": "dz",
+    "Pattern": "[ǳ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 208,
+    "Source": "þ",
+    "Pattern": "th",
+    "Expected": "true"
+  },
+  {
+    "Id": 209,
+    "Source": "th",
+    "Pattern": "þ",
+    "Expected": "true"
+  },
+  {
+    "Id": 210,
+    "Source": "th",
+    "Pattern": "[þ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 211,
+    "Source": "ð",
+    "Pattern": "d",
+    "Expected": "false"
+  },
+  {
+    "Id": 212,
+    "Source": "d",
+    "Pattern": "ð",
+    "Expected": "false"
+  },
+  {
+    "Id": 213,
+    "Source": "d",
+    "Pattern": "[ð]",
+    "Expected": "false"
+  },
+  {
+    "Id": 214,
+    "Source": "ø",
+    "Pattern": "o",
+    "Expected": "false"
+  },
+  {
+    "Id": 215,
+    "Source": "o",
+    "Pattern": "ø",
+    "Expected": "false"
+  },
+  {
+    "Id": 216,
+    "Source": "o",
+    "Pattern": "[ø]",
+    "Expected": "false"
+  },
+  {
+    "Id": 217,
+    "Source": "ł",
+    "Pattern": "l",
+    "Expected": "false"
+  },
+  {
+    "Id": 218,
+    "Source": "l",
+    "Pattern": "ł",
+    "Expected": "false"
+  },
+  {
+    "Id": 219,
+    "Source": "l",
+    "Pattern": "[ł]",
+    "Expected": "false"
+  },
+  {
+    "Id": 220,
+    "Source": "đ",
+    "Pattern": "d",
+    "Expected": "false"
+  },
+  {
+    "Id": 221,
+    "Source": "d",
+    "Pattern": "đ",
+    "Expected": "false"
+  },
+  {
+    "Id": 222,
+    "Source": "d",
+    "Pattern": "[đ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 223,
+    "Source": "æ",
+    "Pattern": "AE",
+    "Expected": "true"
+  },
+  {
+    "Id": 224,
+    "Source": "AE",
+    "Pattern": "æ",
+    "Expected": "true"
+  },
+  {
+    "Id": 225,
+    "Source": "AE",
+    "Pattern": "[æ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 226,
+    "Source": "œ",
+    "Pattern": "OE",
+    "Expected": "true"
+  },
+  {
+    "Id": 227,
+    "Source": "OE",
+    "Pattern": "œ",
+    "Expected": "true"
+  },
+  {
+    "Id": 228,
+    "Source": "OE",
+    "Pattern": "[œ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 229,
+    "Source": "ß",
+    "Pattern": "SS",
+    "Expected": "true"
+  },
+  {
+    "Id": 230,
+    "Source": "SS",
+    "Pattern": "ß",
+    "Expected": "true"
+  },
+  {
+    "Id": 231,
+    "Source": "SS",
+    "Pattern": "[ß]",
+    "Expected": "true"
+  },
+  {
+    "Id": 232,
+    "Source": "ae",
+    "Pattern": "[aæ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 233,
+    "Source": "ae",
+    "Pattern": "[æa]",
+    "Expected": "true"
+  },
+  {
+    "Id": 234,
+    "Source": "æ",
+    "Pattern": "[aæ]",
+    "Expected": "false"
+  },
+  {
+    "Id": 235,
+    "Source": "æ",
+    "Pattern": "[æa]",
+    "Expected": "true"
+  },
+  {
+    "Id": 236,
+    "Source": "æ",
+    "Pattern": "[a-z]e",
+    "Expected": "true"
+  },
+  {
+    "Id": 237,
+    "Source": "æ",
+    "Pattern": "[!b]",
+    "Expected": "false"
+  },
+  {
+    "Id": 238,
+    "Source": "æ",
+    "Pattern": "[!b]e",
+    "Expected": "true"
+  },
+  {
+    "Id": 239,
+    "Source": "æ",
+    "Pattern": "[!b]?",
+    "Expected": "true"
+  },
+  {
+    "Id": 240,
+    "Source": "ae",
+    "Pattern": "[!b]",
+    "Expected": "false"
+  },
+  {
+    "Id": 241,
+    "Source": "ae",
+    "Pattern": "[!b]e",
+    "Expected": "true"
+  },
+  {
+    "Id": 242,
+    "Source": "æ",
+    "Pattern": "[!ae]",
+    "Expected": "false"
+  },
+  {
+    "Id": 243,
+    "Source": "æ",
+    "Pattern": "[!a]e",
+    "Expected": "false"
+  },
+  {
+    "Id": 244,
+    "Source": "æ",
+    "Pattern": "[a]e",
+    "Expected": "true"
+  },
+  {
+    "Id": 245,
+    "Source": "æ",
+    "Pattern": "[a-e]e",
+    "Expected": "true"
+  },
+  {
+    "Id": 246,
+    "Source": "æ",
+    "Pattern": "[æ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 247,
+    "Source": "æ",
+    "Pattern": "[æ]e",
+    "Expected": "false"
+  },
+  {
+    "Id": 248,
+    "Source": "ae",
+    "Pattern": "[a-æ]e",
+    "Expected": "false"
+  },
+  {
+    "Id": 249,
+    "Source": "ae",
+    "Pattern": "[æ-a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 250,
+    "Source": "æ",
+    "Pattern": "[e-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 251,
+    "Source": "A",
+    "Pattern": "[a-b-a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 252,
+    "Source": "a",
+    "Pattern": "[a-a-z]",
+    "Expected": "true"
+  },
+  {
+    "Id": 253,
+    "Source": "z",
+    "Pattern": "[a-a-z]",
+    "Expected": "true"
+  },
+  {
+    "Id": 254,
+    "Source": "b",
+    "Pattern": "[a-a-z]",
+    "Expected": "false"
+  },
+  {
+    "Id": 255,
+    "Source": "a",
+    "Pattern": "[a-a-]",
+    "Expected": "true"
+  },
+  {
+    "Id": 256,
+    "Source": "z",
+    "Pattern": "[a-z-a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 257,
+    "Source": "a",
+    "Pattern": "[a-z-a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 258,
+    "Source": "b",
+    "Pattern": "[a-z-a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 259,
+    "Source": "a",
+    "Pattern": "[b-a-z]",
+    "Expected": "error"
+  },
+  {
+    "Id": 260,
+    "Source": "a",
+    "Pattern": "*a[b-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 261,
+    "Source": "ab",
+    "Pattern": "*a[b-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 262,
+    "Source": "aaa",
+    "Pattern": "*a[b-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 263,
+    "Source": "a",
+    "Pattern": "[a-z-a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 264,
+    "Source": "t",
+    "Pattern": "þ",
+    "Expected": "false"
+  },
+  {
+    "Id": 265,
+    "Source": "þ",
+    "Pattern": "t?",
+    "Expected": "true"
+  },
+  {
+    "Id": 266,
+    "Source": "th",
+    "Pattern": "?",
+    "Expected": "false"
+  },
+  {
+    "Id": 267,
+    "Source": "ð",
+    "Pattern": "dh",
+    "Expected": "false"
+  },
+  {
+    "Id": 268,
+    "Source": "dh",
+    "Pattern": "ð",
+    "Expected": "false"
+  },
+  {
+    "Id": 269,
+    "Source": "Þ",
+    "Pattern": "TH",
+    "Expected": "true"
+  },
+  {
+    "Id": 270,
+    "Source": "a",
+    "Pattern": "[!",
+    "Expected": "error"
+  },
+  {
+    "Id": 271,
+    "Source": "a",
+    "Pattern": "*[!",
+    "Expected": "error"
+  },
+  {
+    "Id": 272,
+    "Source": "a",
+    "Pattern": "*a[",
+    "Expected": "error"
+  },
+  {
+    "Id": 273,
+    "Source": "a",
+    "Pattern": "a*[",
+    "Expected": "false"
+  },
+  {
+    "Id": 274,
+    "Source": "a",
+    "Pattern": "*a[!",
+    "Expected": "error"
+  },
+  {
+    "Id": 275,
+    "Source": "ae",
+    "Pattern": "*[æ-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 276,
+    "Source": "ae",
+    "Pattern": "[æ-a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 277,
+    "Source": "a",
+    "Pattern": "[a-æ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 278,
+    "Source": "b",
+    "Pattern": "[a-æ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 279,
+    "Source": "ae",
+    "Pattern": "[a-æ]",
+    "Expected": "true"
+  },
+  {
+    "Id": 280,
+    "Source": "æ",
+    "Pattern": "*e",
+    "Expected": "true"
+  },
+  {
+    "Id": 281,
+    "Source": "æ",
+    "Pattern": "*?",
+    "Expected": "true"
+  },
+  {
+    "Id": 282,
+    "Source": "æ",
+    "Pattern": "*e*",
+    "Expected": "true"
+  },
+  {
+    "Id": 283,
+    "Source": "æ",
+    "Pattern": "?*e",
+    "Expected": "false"
+  },
+  {
+    "Id": 284,
+    "Source": "æ",
+    "Pattern": "*?e",
+    "Expected": "false"
+  },
+  {
+    "Id": 285,
+    "Source": "æ",
+    "Pattern": "*a?",
+    "Expected": "true"
+  },
+  {
+    "Id": 286,
+    "Source": "æ",
+    "Pattern": "a*?",
+    "Expected": "true"
+  },
+  {
+    "Id": 287,
+    "Source": "abc",
+    "Pattern": "＊",
+    "Expected": "true"
+  },
+  {
+    "Id": 288,
+    "Source": "a",
+    "Pattern": "？",
+    "Expected": "true"
+  },
+  {
+    "Id": 289,
+    "Source": "4",
+    "Pattern": "＃",
+    "Expected": "true"
+  },
+  {
+    "Id": 290,
+    "Source": "A",
+    "Pattern": "［a］",
+    "Expected": "true"
+  },
+  {
+    "Id": 291,
+    "Source": "!",
+    "Pattern": "[！]",
+    "Expected": "false"
+  },
+  {
+    "Id": 292,
+    "Source": "z",
+    "Pattern": "[a－z]",
+    "Expected": "true"
+  },
+  {
+    "Id": 293,
+    "Source": "b",
+    "Pattern": "［！a］",
+    "Expected": "true"
+  },
+  {
+    "Id": 294,
+    "Source": "a",
+    "Pattern": "*[][",
+    "Expected": "error"
+  },
+  {
+    "Id": 295,
+    "Source": "a",
+    "Pattern": "[][",
+    "Expected": "error"
+  },
+  {
+    "Id": 296,
+    "Source": "a",
+    "Pattern": "*[a-a-z]",
+    "Expected": "error"
+  },
+  {
+    "Id": 297,
+    "Source": "z",
+    "Pattern": "*[a-a-z]",
+    "Expected": "error"
+  },
+  {
+    "Id": 298,
+    "Source": "a",
+    "Pattern": "*[a-c-e]",
+    "Expected": "true"
+  },
+  {
+    "Id": 299,
+    "Source": "-",
+    "Pattern": "*[a-c-e]",
+    "Expected": "true"
+  },
+  {
+    "Id": 300,
+    "Source": "z",
+    "Pattern": "*[a-c-e]",
+    "Expected": "false"
+  },
+  {
+    "Id": 301,
+    "Source": "a",
+    "Pattern": "*[a-z-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 302,
+    "Source": "-",
+    "Pattern": "*[a-z-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 303,
+    "Source": "z",
+    "Pattern": "*[a-z-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 304,
+    "Source": "a",
+    "Pattern": "*[a-b-c-d-e]",
+    "Expected": "true"
+  },
+  {
+    "Id": 305,
+    "Source": "-",
+    "Pattern": "*[a-b-c-d-e]",
+    "Expected": "true"
+  },
+  {
+    "Id": 306,
+    "Source": "z",
+    "Pattern": "*[a-b-c-d-e]",
+    "Expected": "false"
+  },
+  {
+    "Id": 307,
+    "Source": "a",
+    "Pattern": "*[-a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 308,
+    "Source": "-",
+    "Pattern": "*[-a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 309,
+    "Source": "z",
+    "Pattern": "*[-a]",
+    "Expected": "false"
+  },
+  {
+    "Id": 310,
+    "Source": "a",
+    "Pattern": "*[a-]",
+    "Expected": "true"
+  },
+  {
+    "Id": 311,
+    "Source": "-",
+    "Pattern": "*[a-]",
+    "Expected": "true"
+  },
+  {
+    "Id": 312,
+    "Source": "z",
+    "Pattern": "*[a-]",
+    "Expected": "false"
+  },
+  {
+    "Id": 313,
+    "Source": "a",
+    "Pattern": "*[--a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 314,
+    "Source": "-",
+    "Pattern": "*[--a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 315,
+    "Source": "z",
+    "Pattern": "*[--a]",
+    "Expected": "false"
+  },
+  {
+    "Id": 316,
+    "Source": "a",
+    "Pattern": "*[a--]",
+    "Expected": "error"
+  },
+  {
+    "Id": 317,
+    "Source": "-",
+    "Pattern": "*[a--]",
+    "Expected": "error"
+  },
+  {
+    "Id": 318,
+    "Source": "z",
+    "Pattern": "*[a--]",
+    "Expected": "error"
+  },
+  {
+    "Id": 319,
+    "Source": "a",
+    "Pattern": "*[a-b-c]",
+    "Expected": "true"
+  },
+  {
+    "Id": 320,
+    "Source": "-",
+    "Pattern": "*[a-b-c]",
+    "Expected": "true"
+  },
+  {
+    "Id": 321,
+    "Source": "z",
+    "Pattern": "*[a-b-c]",
+    "Expected": "false"
+  },
+  {
+    "Id": 322,
+    "Source": "a",
+    "Pattern": "*[a-zA-Z0-9]",
+    "Expected": "true"
+  },
+  {
+    "Id": 323,
+    "Source": "-",
+    "Pattern": "*[a-zA-Z0-9]",
+    "Expected": "false"
+  },
+  {
+    "Id": 324,
+    "Source": "z",
+    "Pattern": "*[a-zA-Z0-9]",
+    "Expected": "true"
+  },
+  {
+    "Id": 325,
+    "Source": "a",
+    "Pattern": "*[z-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 326,
+    "Source": "-",
+    "Pattern": "*[z-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 327,
+    "Source": "z",
+    "Pattern": "*[z-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 328,
+    "Source": "a",
+    "Pattern": "*[a-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 329,
+    "Source": "-",
+    "Pattern": "*[a-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 330,
+    "Source": "z",
+    "Pattern": "*[a-a]",
+    "Expected": "error"
+  },
+  {
+    "Id": 331,
+    "Source": "a",
+    "Pattern": "*[a-bc-d]",
+    "Expected": "true"
+  },
+  {
+    "Id": 332,
+    "Source": "-",
+    "Pattern": "*[a-bc-d]",
+    "Expected": "false"
+  },
+  {
+    "Id": 333,
+    "Source": "z",
+    "Pattern": "*[a-bc-d]",
+    "Expected": "false"
+  },
+  {
+    "Id": 334,
+    "Source": "a",
+    "Pattern": "*[a-c-e-g]",
+    "Expected": "true"
+  },
+  {
+    "Id": 335,
+    "Source": "-",
+    "Pattern": "*[a-c-e-g]",
+    "Expected": "true"
+  },
+  {
+    "Id": 336,
+    "Source": "z",
+    "Pattern": "*[a-c-e-g]",
+    "Expected": "false"
+  },
+  {
+    "Id": 337,
+    "Source": "a",
+    "Pattern": "*[a-c-]",
+    "Expected": "true"
+  },
+  {
+    "Id": 338,
+    "Source": "-",
+    "Pattern": "*[a-c-]",
+    "Expected": "true"
+  },
+  {
+    "Id": 339,
+    "Source": "z",
+    "Pattern": "*[a-c-]",
+    "Expected": "false"
+  },
+  {
+    "Id": 340,
+    "Source": "a",
+    "Pattern": "*[!]",
+    "Expected": "false"
+  },
+  {
+    "Id": 341,
+    "Source": "-",
+    "Pattern": "*[!]",
+    "Expected": "false"
+  },
+  {
+    "Id": 342,
+    "Source": "z",
+    "Pattern": "*[!]",
+    "Expected": "false"
+  },
+  {
+    "Id": 343,
+    "Source": "a",
+    "Pattern": "*[]",
+    "Expected": "true"
+  },
+  {
+    "Id": 344,
+    "Source": "-",
+    "Pattern": "*[]",
+    "Expected": "true"
+  },
+  {
+    "Id": 345,
+    "Source": "z",
+    "Pattern": "*[]",
+    "Expected": "true"
+  },
+  {
+    "Id": 346,
+    "Source": "a",
+    "Pattern": "*[!a]",
+    "Expected": "false"
+  },
+  {
+    "Id": 347,
+    "Source": "-",
+    "Pattern": "*[!a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 348,
+    "Source": "z",
+    "Pattern": "*[!a]",
+    "Expected": "true"
+  },
+  {
+    "Id": 349,
+    "Source": "a",
+    "Pattern": "*[a-z!]",
+    "Expected": "true"
+  },
+  {
+    "Id": 350,
+    "Source": "-",
+    "Pattern": "*[a-z!]",
+    "Expected": "false"
+  },
+  {
+    "Id": 351,
+    "Source": "z",
+    "Pattern": "*[a-z!]",
+    "Expected": "true"
+  },
+  {
+    "Id": 352,
+    "Source": "a",
+    "Pattern": "*[!a-z]",
+    "Expected": "false"
+  },
+  {
+    "Id": 353,
+    "Source": "-",
+    "Pattern": "*[!a-z]",
+    "Expected": "true"
+  },
+  {
+    "Id": 354,
+    "Source": "z",
+    "Pattern": "*[!a-z]",
+    "Expected": "false"
+  }
+]
