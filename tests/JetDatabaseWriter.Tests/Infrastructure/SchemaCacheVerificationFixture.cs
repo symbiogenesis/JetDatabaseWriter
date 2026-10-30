@@ -6,11 +6,15 @@ using System;
 using JetDatabaseWriter.Schema;
 
 #pragma warning disable CA1812 // xUnit constructs this assembly fixture through reflection.
-/// <summary>Enables structural cache verification for every reader constructed by the suite.</summary>
+/// <summary>Verifies each partition's runtime and library asset, then enables structural cache verification.</summary>
 internal sealed class SchemaCacheVerificationFixture : IDisposable
 {
     /// <summary>Initializes a new instance of the <see cref="SchemaCacheVerificationFixture"/> class.</summary>
-    public SchemaCacheVerificationFixture() => TableDefReader.VerifyCacheHits = true;
+    public SchemaCacheVerificationFixture()
+    {
+        LibraryTarget.AssertExpectedTarget();
+        TableDefReader.VerifyCacheHits = true;
+    }
 
     /// <inheritdoc/>
     public void Dispose() => TableDefReader.VerifyCacheHits = false;

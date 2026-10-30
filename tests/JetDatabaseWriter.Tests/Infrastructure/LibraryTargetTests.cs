@@ -1,6 +1,5 @@
 namespace JetDatabaseWriter.Tests.Infrastructure;
 
-using System;
 using Xunit;
 
 /// <summary>
@@ -10,19 +9,9 @@ public sealed class LibraryTargetTests
 {
     [Fact]
     public void ExpectedLibraryAssetIsLoaded() =>
-#if TEST_NETSTANDARD
-        Assert.True(LibraryTarget.IsNetStandard);
-#else
-        Assert.False(LibraryTarget.IsNetStandard);
-#endif
+        LibraryTarget.AssertExpectedLibraryAsset();
 
     [Fact]
-    public void ExpectedRuntimeIsLoaded()
-    {
-        string? expected = Environment.GetEnvironmentVariable("JDW_EXPECTED_RUNTIME_MAJOR");
-        if (expected is not null)
-        {
-            Assert.Equal(expected, Environment.Version.Major.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        }
-    }
+    public void ExpectedRuntimeIsLoaded() =>
+        LibraryTarget.AssertExpectedRuntime();
 }

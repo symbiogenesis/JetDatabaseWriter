@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Infrastructure;
 using System;
 using System.Reflection;
 using System.Runtime.Versioning;
+using Xunit;
 
 /// <summary>
 /// Reports which build of the library the running tests loaded. The ordinary runtime
@@ -17,4 +18,29 @@ internal static class LibraryTarget
     public static bool IsNetStandard { get; } =
         typeof(AccessReader).Assembly.GetCustomAttribute<TargetFrameworkAttribute>()?.FrameworkName
             .StartsWith(".NETStandard", StringComparison.Ordinal) == true;
+
+    /// <summary>Verifies the runtime and library asset in every independently executed test partition.</summary>
+    public static void AssertExpectedTarget()
+    {
+        AssertExpectedLibraryAsset();
+        AssertExpectedRuntime();
+    }
+
+    /// <summary>Verifies that the loaded library matches the compiled test lane.</summary>
+    public static void AssertExpectedLibraryAsset() =>
+#if TEST_NETSTANDARD
+        Assert.True(IsNetStandard);
+#else
+        Assert.False(IsNetStandard);
+#endif
+
+    /// <summary>Verifies that the executing runtime matches the hosted lane when specified.</summary>
+    public static void AssertExpectedRuntime()
+    {
+        string? expected = Environment.GetEnvironmentVariable("JDW_EXPECTED_RUNTIME_MAJOR");
+        if (expected is not null)
+        {
+            Assert.Equal(expected, Environment.Version.Major.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+    }
 }

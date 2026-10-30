@@ -32,8 +32,8 @@ env:
 
 # The full suite runs on Windows: it uses Windows paths and byte-range locks, and the
 # DAO round-trip tests skip themselves when Access is not installed. The jobs run in
-# parallel. The analyzers take most of a Release build, so five jobs share them, and the
-# test legs execute their own analyzed Release binaries immediately in the same job.
+# parallel. Every test partition retains strict Release analysis and executes its own
+# analyzed binaries immediately. Format fault sweeps run beside the remaining suite.
 jobs:
   changes:
     name: Select CI lanes
@@ -136,24 +136,118 @@ jobs:
           - name: tools
             project: .github/ci-tools.slnf
             options: '"-p:AnalyzeExcept=JetDatabaseWriter JetDatabaseWriter.Tests"'
-          # The test project once per target framework; the projects it references build
-          # without analyzers here.
-          - name: tests net10.0
+          # Every runtime/library pair runs the complete suite across five disjoint partitions.
+          # Each partition executes its own strict Release build without a cross-lane barrier.
+          - name: tests net10.0 ordinary
             project: tests/JetDatabaseWriter.Tests
             options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
             tf: net10.0
             runner: true
-          - name: tests net10.0 netstandard
+            partition: ordinary
+            test-options: --filter-not-namespace JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer
+          - name: tests net10.0 schema-writer
+            project: tests/JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
+            tf: net10.0
+            runner: true
+            partition: schema-writer
+            test-options: --filter-namespace JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer --filter-not-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests JetDatabaseWriter.Tests.Writer.StatementAtomicityAceTests
+          - name: tests net10.0 jet3
+            project: tests/JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
+            tf: net10.0
+            runner: true
+            partition: jet3
+            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests
+          - name: tests net10.0 jet4
+            project: tests/JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
+            tf: net10.0
+            runner: true
+            partition: jet4
+            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests
+          - name: tests net10.0 ace
+            project: tests/JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
+            tf: net10.0
+            runner: true
+            partition: ace
+            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityAceTests
+          - name: tests net10.0 netstandard ordinary
             project: tests/JetDatabaseWriter.Tests
             options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true
             restore-options: -p:TestNetStandard=true
             tf: net10.0-netstandard
             runner: true
-          - name: tests net11.0
+            partition: ordinary
+            test-options: --filter-not-namespace JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer
+          - name: tests net10.0 netstandard schema-writer
+            project: tests/JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true
+            restore-options: -p:TestNetStandard=true
+            tf: net10.0-netstandard
+            runner: true
+            partition: schema-writer
+            test-options: --filter-namespace JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer --filter-not-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests JetDatabaseWriter.Tests.Writer.StatementAtomicityAceTests
+          - name: tests net10.0 netstandard jet3
+            project: tests/JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true
+            restore-options: -p:TestNetStandard=true
+            tf: net10.0-netstandard
+            runner: true
+            partition: jet3
+            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests
+          - name: tests net10.0 netstandard jet4
+            project: tests/JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true
+            restore-options: -p:TestNetStandard=true
+            tf: net10.0-netstandard
+            runner: true
+            partition: jet4
+            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests
+          - name: tests net10.0 netstandard ace
+            project: tests/JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true
+            restore-options: -p:TestNetStandard=true
+            tf: net10.0-netstandard
+            runner: true
+            partition: ace
+            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityAceTests
+          - name: tests net11.0 ordinary
             project: tests/JetDatabaseWriter.Tests
             options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
             tf: net11.0
             runner: true
+            partition: ordinary
+            test-options: --filter-not-namespace JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer
+          - name: tests net11.0 schema-writer
+            project: tests/JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
+            tf: net11.0
+            runner: true
+            partition: schema-writer
+            test-options: --filter-namespace JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer --filter-not-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests JetDatabaseWriter.Tests.Writer.StatementAtomicityAceTests
+          - name: tests net11.0 jet3
+            project: tests/JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
+            tf: net11.0
+            runner: true
+            partition: jet3
+            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests
+          - name: tests net11.0 jet4
+            project: tests/JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
+            tf: net11.0
+            runner: true
+            partition: jet4
+            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests
+          - name: tests net11.0 ace
+            project: tests/JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
+            tf: net11.0
+            runner: true
+            partition: ace
+            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityAceTests
 
     steps:
       # MinVer computes the package version from the tags, so fetch the full history.
@@ -185,7 +279,7 @@ jobs:
 
       # Tests and Access hosts execute these exact analyzed binaries.
       - name: Upload DAO test runner
-        if: matrix.runner
+        if: matrix.runner && matrix.partition == 'ordinary'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dao-test-runner-${{ matrix.tf }}
@@ -193,29 +287,29 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-      # Each framework starts its full suite as soon as its own analyzer build passes,
-      # without waiting for other lanes or rebuilding on a second runner.
+      # The five partitions cover every test once per runtime/library pair. Each starts
+      # after its own analyzer build, without waiting for other lanes or rebuilding.
       - name: Test
         if: matrix.runner
         env:
           JDW_EXPECTED_RUNTIME_MAJOR: ${{ matrix.tf == 'net11.0' && '11' || '10' }}
           DOTNET_ROLL_FORWARD: ${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}
           DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
-          JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}
+          JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}-${{ matrix.partition }}
         run: >-
           dotnet test --test-modules JetDatabaseWriter.Tests.dll
           --root-directory tests/JetDatabaseWriter.Tests/bin/Release/net10.0
-          --minimum-expected-tests 1
+          --minimum-expected-tests 48 ${{ matrix.test-options }}
           --long-running 60 --xunit-diagnostics on --no-ansi --output Detailed --timeout 80m
           --report-xunit-xml --report-xunit-xml-filename tests.xml
-          --results-directory artifacts/test-results/${{ matrix.tf }}
+          --results-directory artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}
 
       - name: Upload test results
         if: ${{ !cancelled() && matrix.runner }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: test-results-${{ matrix.tf }}
-          path: artifacts/test-results/${{ matrix.tf }}/
+          name: test-results-${{ matrix.tf }}-${{ matrix.partition }}
+          path: artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}/
           if-no-files-found: warn
           retention-days: 7
 
@@ -223,8 +317,8 @@ jobs:
         if: ${{ !cancelled() && matrix.runner }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: golden-bytes-${{ matrix.tf }}
-          path: artifacts/golden/${{ matrix.tf }}/
+          name: golden-bytes-${{ matrix.tf }}-${{ matrix.partition }}
+          path: artifacts/golden/${{ matrix.tf }}-${{ matrix.partition }}/
           if-no-files-found: warn
           retention-days: 7
 

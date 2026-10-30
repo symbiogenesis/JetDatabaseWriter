@@ -33,9 +33,12 @@ function Get-CiLanes([string[]] $Paths) {
 function Get-CiLaneJobs([ValidateSet('dotnet', 'formal')][string] $Lane) {
     if ($Lane -eq 'formal') { return @('Verify recovery models (Dafny)') }
     return @(
-        'Analyze (library)', 'Analyze (tools)',
-        'Analyze and test (tests net10.0)', 'Analyze and test (tests net10.0 netstandard)', 'Analyze and test (tests net11.0)',
-        'Trimmed and NativeAOT consumers',
+        'Analyze (library)'
+        'Analyze (tools)'
+        foreach ($runtime in 'net10.0', 'net10.0 netstandard', 'net11.0') {
+            foreach ($partition in 'ordinary', 'schema-writer', 'jet3', 'jet4', 'ace') { "Analyze and test (tests $runtime $partition)" }
+        }
+        'Trimmed and NativeAOT consumers'
         'Encryption replacement (ubuntu-latest, net10.0)', 'Encryption replacement (ubuntu-latest, net11.0)',
         'Encryption replacement (macos-latest, net10.0)', 'Encryption replacement (macos-latest, net11.0)'
     )

@@ -111,9 +111,12 @@ $partial.id = 2
 $partial.head_sha = '3' * 40
 $script:runs = @($partial, (New-Run))
 $dotnetNames = @(
-    'Analyze (library)', 'Analyze (tools)',
-    'Analyze and test (tests net10.0)', 'Analyze and test (tests net10.0 netstandard)', 'Analyze and test (tests net11.0)',
-    'Trimmed and NativeAOT consumers',
+    'Analyze (library)'
+    'Analyze (tools)'
+    foreach ($runtime in 'net10.0', 'net10.0 netstandard', 'net11.0') {
+        foreach ($partition in 'ordinary', 'schema-writer', 'jet3', 'jet4', 'ace') { "Analyze and test (tests $runtime $partition)" }
+    }
+    'Trimmed and NativeAOT consumers'
     'Encryption replacement (ubuntu-latest, net10.0)', 'Encryption replacement (ubuntu-latest, net11.0)',
     'Encryption replacement (macos-latest, net10.0)', 'Encryption replacement (macos-latest, net11.0)'
 )
@@ -121,6 +124,20 @@ $script:jobs = @(@('Select CI lanes', 'Script, security and proof review checks'
 $script:jobs += @{ name = 'Verify recovery models (Dafny)'; status = 'completed'; conclusion = 'failure' }
 $script:jobs += @{ name = 'CI gate'; status = 'completed'; conclusion = 'failure' }
 Assert-Baseline 'complete dotnet success survives independent proof failure' $partial.head_sha
+foreach ($runtime in 'net10.0', 'net10.0 netstandard', 'net11.0') {
+    foreach ($partition in 'ordinary', 'schema-writer', 'jet3', 'jet4', 'ace') {
+        $name = "Analyze and test (tests $runtime $partition)"
+        $selectedJob = $script:jobs | Where-Object name -CEQ $name
+        foreach ($verdict in 'failure', 'skipped', 'cancelled') {
+            $selectedJob.conclusion = $verdict
+            Assert-Baseline "$name cannot inherit '$verdict'" $base
+        }
+        $selectedJob.conclusion = 'success'
+        $script:jobs = @($script:jobs | Where-Object name -CNE $name)
+        Assert-Baseline "$name cannot inherit missing partition" $base
+        $script:jobs += $selectedJob
+    }
+}
 Assert-Baseline 'failed proof still needs an older verified ancestor' $base -Lane 'formal'
 ($script:jobs | Where-Object name -EQ 'Verify recovery models (Dafny)').status = 'queued'
 Assert-Baseline 'rerun racing with metadata cannot certify a pending lane' $base
@@ -130,10 +147,10 @@ Assert-Baseline 'duplicate opposite or aggregate job names cannot mask new oblig
 $script:jobs = @($script:jobs | Where-Object name -NE 'CI gate')
 $script:jobs += @{ name = 'CI gate'; status = 'completed'; conclusion = 'failure' }
 ($script:jobs | Where-Object name -EQ 'Verify recovery models (Dafny)').conclusion = 'success'
-($script:jobs | Where-Object name -EQ 'Analyze and test (tests net11.0)').conclusion = 'failure'
+($script:jobs | Where-Object name -EQ 'Analyze and test (tests net11.0 ordinary)').conclusion = 'failure'
 Assert-Baseline 'proof success survives independent dotnet failure' $partial.head_sha -Lane 'formal'
 Assert-Baseline 'one failed runtime prevents dotnet inheritance' $base
-($script:jobs | Where-Object name -EQ 'Analyze and test (tests net11.0)').conclusion = 'success'
+($script:jobs | Where-Object name -EQ 'Analyze and test (tests net11.0 ordinary)').conclusion = 'success'
 foreach ($verdict in 'failure', 'skipped', 'cancelled', '') {
     ($script:jobs | Where-Object name -EQ 'Analyze (library)').conclusion = $verdict
     Assert-Baseline "dotnet requires every library gate: '$verdict'" $base
