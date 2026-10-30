@@ -94,7 +94,9 @@ internal static class CalculatedExpressionCoercion
 
         if (targetType == typeof(string))
         {
-            return ToText(value);
+            // Final Text storage uses -1/0 for Boolean Variants, unlike their
+            // implicit True/False conversion inside a native table expression.
+            return isCalculatedColumn && value is not bool ? ToCalculatedText(value) : ToText(value);
         }
 
         if (targetType == typeof(bool))
@@ -199,6 +201,17 @@ internal static class CalculatedExpressionCoercion
         }
 
         return CompareNonNullValues(left, right, predicate, textCollation);
+    }
+
+    internal static object CompareValues(object left, object right, Func<int, bool> predicate, CalculatedExpressionEvaluationContext context)
+    {
+        if (context.IsCalculatingColumn && !IsNull(left) && !IsNull(right) && (left is string || right is string)
+            && left is not (NativeDate or DateTime) && right is not (NativeDate or DateTime))
+        {
+            return CompareValues(ToCalculatedText(left), ToCalculatedText(right), predicate, context.TextCollation);
+        }
+
+        return CompareValues(left, right, predicate, context.TextCollation);
     }
 
     internal static bool CompareNonNullValues(object left, object right, Func<int, bool> predicate, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
@@ -404,6 +417,18 @@ internal static class CalculatedExpressionCoercion
 
         return IsNull(value) ? string.Empty : Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
     }
+
+    internal static string ToText(object? value, CalculatedExpressionEvaluationContext context)
+        => context.IsCalculatingColumn ? ToCalculatedText(value) : ToText(value);
+
+    internal static string ToCalculatedText(object? value)
+        => value switch
+        {
+            bool boolean => boolean ? "True" : "False",
+            double number when number == 0d && BitConverter.DoubleToInt64Bits(number) < 0 => "-0",
+            float number when number == 0f && BitConverter.SingleToInt32Bits(number) < 0 => "-0",
+            _ => ToText(value),
+        };
 
     /// <summary>
     /// Converts a date to text in VBA's General Date form for the en-US locale, as OLE

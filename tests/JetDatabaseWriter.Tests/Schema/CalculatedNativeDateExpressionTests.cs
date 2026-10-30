@@ -38,7 +38,7 @@ public sealed class CalculatedNativeDateExpressionTests
     [InlineData("[D] < #1899-12-29 6:00#")]
     [InlineData("#1899-12-29 12:00# < #1899-12-29 6:00#")]
     public void NegativeDates_CompareRawSerials(string expression)
-        => Assert.True(Assert.IsType<bool>(Evaluate(expression, -1.5d)));
+        => Assert.Equal((short)-1, Assert.IsType<short>(Evaluate(expression, -1.5d)));
 
     [Theory]
     [InlineData(0.4999d / 86400d, 0)]

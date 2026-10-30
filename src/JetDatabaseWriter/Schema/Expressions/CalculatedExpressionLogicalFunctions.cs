@@ -18,7 +18,7 @@ internal static class CalculatedExpressionLogicalFunctions
         // three-valued with Null, as in VBA (AccessVariantOperators).
         AddFunction(functions, "AND", 2, 2, static function => AccessVariantOperators.And(function.Arg(0), function.Arg(1)));
         AddFunction(functions, "OR", 2, 2, static function => AccessVariantOperators.Or(function.Arg(0), function.Arg(1)));
-        AddFunction(functions, "NOT", 1, 1, static function => AccessVariantOperators.Not(function.Context.IsCalculatingColumn ? CalculatedExpressionLogicalOperand.Normalize(function.Arg(0)) : function.Arg(0)));
+        AddFunction(functions, "NOT", 1, 1, EvaluateNot);
         AddFunction(functions, "XOR", 2, 2, static function => AccessVariantOperators.Xor(function.Arg(0), function.Arg(1)));
         AddFunction(functions, "EQV", 2, 2, static function => AccessVariantOperators.Eqv(function.Arg(0), function.Arg(1)));
         AddFunction(functions, "IMP", 2, 2, static function => AccessVariantOperators.Imp(function.Arg(0), function.Arg(1)));
@@ -89,13 +89,21 @@ internal static class CalculatedExpressionLogicalFunctions
         for (int argIndex = 1; argIndex < function.Count; argIndex++)
         {
             object candidateValue = function.Arg(argIndex);
-            if (!IsNull(candidateValue) && CompareNonNullValues(inValue, candidateValue, static comparison => comparison == 0, function.Context.TextCollation))
+            if (!IsNull(candidateValue) && CompareValues(inValue, candidateValue, static comparison => comparison == 0, function.Context) is true)
             {
-                return true;
+                return function.Context.IsCalculatingColumn ? (short)-1 : true;
             }
         }
 
-        return false;
+        return function.Context.IsCalculatingColumn ? (short)0 : false;
+    }
+
+    private static object EvaluateNot(CalculatedFunctionInvocation function)
+    {
+        object value = function.Arg(0);
+        return function.Context.IsCalculatingColumn
+            ? CalculatedExpressionLogicalOperand.IntegerResult(AccessVariantOperators.Not(CalculatedExpressionLogicalOperand.Normalize(value)))
+            : AccessVariantOperators.Not(value);
     }
 
     private static object EvaluateChoose(CalculatedFunctionInvocation function)

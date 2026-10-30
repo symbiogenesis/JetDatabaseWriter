@@ -54,22 +54,25 @@ internal sealed class CalculatedExpressionBinaryNode(string operation, Calculate
                 }
             }
 
-            return operation switch
+            object result = operation switch
             {
-                "&" => CalculatedExpressionTextFunctions.ConcatText(leftValue, rightValue),
+                "&" => context.IsCalculatingColumn
+                    ? CalculatedExpressionTextFunctions.ConcatText(ToCalculatedText(leftValue), ToCalculatedText(rightValue))
+                    : CalculatedExpressionTextFunctions.ConcatText(leftValue, rightValue),
                 "+" => AccessVariantOperators.Add(leftValue, rightValue),
                 "-" => AccessVariantOperators.Subtract(leftValue, rightValue),
                 "*" => AccessVariantOperators.Multiply(leftValue, rightValue),
                 "/" => AccessVariantOperators.Divide(leftValue, rightValue),
                 "^" => AccessVariantOperators.Power(leftValue, rightValue),
-                "=" => CompareValues(leftValue, rightValue, static c => c == 0, context.TextCollation),
-                "<>" => CompareValues(leftValue, rightValue, static c => c != 0, context.TextCollation),
-                ">" => CompareValues(leftValue, rightValue, static c => c > 0, context.TextCollation),
-                ">=" => CompareValues(leftValue, rightValue, static c => c >= 0, context.TextCollation),
-                "<" => CompareValues(leftValue, rightValue, static c => c < 0, context.TextCollation),
-                "<=" => CompareValues(leftValue, rightValue, static c => c <= 0, context.TextCollation),
+                "=" => CompareValues(leftValue, rightValue, static c => c == 0, context),
+                "<>" => CompareValues(leftValue, rightValue, static c => c != 0, context),
+                ">" => CompareValues(leftValue, rightValue, static c => c > 0, context),
+                ">=" => CompareValues(leftValue, rightValue, static c => c >= 0, context),
+                "<" => CompareValues(leftValue, rightValue, static c => c < 0, context),
+                "<=" => CompareValues(leftValue, rightValue, static c => c <= 0, context),
                 _ => throw new JetOperationException(JetErrorCode.InvalidExpression, $"Unexpected calculated-column binary operation '{operation}'."),
             };
+            return context.IsCalculatingColumn ? CalculatedExpressionLogicalOperand.IntegerResult(result) : result;
         }
         catch (OverflowException) when (context.IsCalculatingColumn)
         {

@@ -7,6 +7,8 @@ using JetDatabaseWriter.Models;
 /// <summary>Table expressions coerce logical operands to Boolean before AND, OR and NOT.</summary>
 internal static class CalculatedExpressionLogicalOperand
 {
+    internal static object IntegerResult(object value) => value is bool boolean ? (short)(boolean ? -1 : 0) : value;
+
     internal static object Normalize(object value) => value switch
     {
         DBNull or CalculatedError or bool => value,

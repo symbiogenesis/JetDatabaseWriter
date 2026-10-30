@@ -150,7 +150,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("[Flag] & \"\"", "-1")]
     public void Booleans_AreMinusOneAndZeroAsText(string expression, string expected)
     {
-        object result = Evaluate(expression, typeof(string), ("Flag", true));
+        object result = EvaluateShared(expression, typeof(string), ("Flag", typeof(bool), true));
 
         Assert.Equal(expected, result);
     }
@@ -272,7 +272,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("CByte(\"12\")", 12)]
     public void CByte_FollowsOleAutomationConversion(string expression, int expected)
     {
-        object result = Evaluate(expression, typeof(int));
+        object result = EvaluateShared(expression, typeof(int));
 
         Assert.Equal(expected, Assert.IsType<int>(result));
     }

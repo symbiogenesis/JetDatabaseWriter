@@ -30,8 +30,8 @@ internal static class AccessLikeMatcher
             return DBNull.Value;
         }
 
-        string sourceText = ToText(source);
-        string patternText = ToText(pattern);
+        string sourceText = ToText(source, function.Context);
+        string patternText = ToText(pattern, function.Context);
         try
         {
             return Match(sourceText, patternText);

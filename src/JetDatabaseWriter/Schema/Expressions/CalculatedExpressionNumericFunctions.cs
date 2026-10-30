@@ -71,7 +71,7 @@ internal static class CalculatedExpressionNumericFunctions
             return DBNull.Value;
         }
 
-        return value switch
+        object result = value switch
         {
             AccessCurrency currency => digits >= 4 ? currency : AccessCurrency.FromDecimal(Math.Round(currency.Value, digits, MidpointRounding.ToEven)),
             bool boolean => (short)(boolean ? -1 : 0),
@@ -83,6 +83,20 @@ internal static class CalculatedExpressionNumericFunctions
             DateTime date => FromOleDate(RoundFloating(date.ToOADate(), digits)),
             decimal number => digits >= 28 ? number : Math.Round(number, digits, MidpointRounding.ToEven),
             _ => RoundFloating(ToDouble(value), digits),
+        };
+
+        // ACE table Round clears a floating zero's sign; other math intrinsics
+        // and the shared query/default context retain their own Variant result.
+        if (!function.Context.IsCalculatingColumn)
+        {
+            return result;
+        }
+
+        return result switch
+        {
+            float number when number == 0f => 0f,
+            double number when number == 0d => 0d,
+            _ => result,
         };
     }
 

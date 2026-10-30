@@ -428,7 +428,9 @@ the documented VBA Variant division matrix.
 
 Numeric text uses 15 significant digits for Double and 7 for Single, with the
 measured complete fractional-width rule for fixed versus scientific notation
-and a normalized negative zero. `CStr(1/3)` is `0.333333333333333`.
+and normalized negative zero in the shared formatting profile. `CStr(1/3)` is
+`0.333333333333333`. Table calculations retain their separately measured
+negative-zero and nonfinite text forms described below.
 Calculated arithmetic retains its native status/error-value rules described below;
 valid financial nonfinite values remain distinct from arithmetic errors. Shared
 default/rule conversion failures retain their independently qualified refusals.
@@ -436,11 +438,38 @@ default/rule conversion failures retain their independently qualified refusals.
 `CalculatedExpressionFloatingSubtypeTests` compares fixed native controls with
 the interpreter, public stored defaults and ACE calculated Double insert/update.
 Its guarded native query controls use x86 DAO3.6, `dao360.dll` 10.0.26100.5074,
-including formatting boundaries and invalid text divisors. These checks do not
-establish fresh ACE native behavior, all locale formats or calculated-field
-admissibility of every function. Remaining division, Mod, bitwise and missing-result rules,
-mixed Date/Decimal arithmetic and other subtype-sensitive functions
+including formatting boundaries and invalid text divisors. Fresh ACE table
+controls separately qualify the admitted arithmetic and notation cases below.
+Narrow Variant division, Mod, bitwise and missing-result boundaries in the broader
+shared language, additional subtype/function combinations and locale contexts
 remain R4 work. Expression evaluation remains handwritten and tested.
+
+### Fresh ACE numeric and Variant contexts
+
+`CalculatedNativeNumericQualificationTests` independently authors table caches
+with DAO120 version 16.0, Access Runtime `16.0.20527.20112`, on an en-US Windows
+profile. The controls cover admitted literal selection, integral/source subtypes,
+Single/Double arithmetic and notation, exact Round field-bit boundaries,
+floating-to-Decimal coercion, signed overflow promotion and Date/Decimal arithmetic.
+Table-forbidden conversion constructors from the older query matrices become
+typed ordinary source fields; Byte storage therefore has the native Long field
+projection rather than an otherwise unavailable Byte Variant constructor.
+
+Native source readback checks runtime types, exact floating bits and Decimal
+coefficient/scale before interpreting results. Independent Binary, Double,
+concatenated Text and direct Text caches are compared with writer inserts,
+recomputation and changed-source updates, then native recalculation and compaction
+of both images. `CalculatedNativeNumericValueTests` retains ordinary public
+regressions for the measured subtype and text distinctions. Ordinary Numeric
+precision rejects the 29-digit Decimal maximum with native 3761 and no row;
+the same value remains a valid calculated Decimal literal.
+
+Date mixed with Decimal retains Decimal for addition, subtraction, multiplication
+and division in both operand orders, including Null propagation and values outside
+the Date range. Exponentiation returns Double. Fresh ACE query TypeName controls
+independently establish the same promotion for the shared arithmetic helpers.
+This evidence does not qualify every caller-field conversion, shared expression
+function or foreign user regional profile.
 
 ### Numeric literals and Decimal-to-floating expression coercion
 
@@ -459,8 +488,9 @@ Unary signs convert Byte and Boolean to Integer. Abs, Int and Fix retain
 Integer; Abs of Int16.MinValue promotes to Long. `CalculatedExpressionIntegralSubtypeTests`
 freezes independently measured DAO3.6 Jet4 values, subtypes and mixed Single
 result bits, repeats the native controls, and checks public calculated
-insert/update/reopen. These controls do not establish every missing-result
-boundary or fresh ACE behavior.
+insert/update/reopen. The fresh ACE table controls above cover admitted literals
+and typed field equivalents; remaining shared missing-result boundaries retain
+their separate qualification requirement.
 Decimal expression text uses full fixed decimal digits without trailing zeros.
 
 Field references carry native expression subtypes rather than CLR storage types:
@@ -484,9 +514,10 @@ bits, including range, precision, underflow, signed-minimum and scale controls.
 Fresh DAO3.6 Jet4 query and stored-default controls use `dao360.dll`
 10.0.26100.5074, then accept writer default insertion, native read/update/compact
 and managed compacted readback. Independent Decimal-field controls preserve
-source scale and compare native CDbl/CSng result bits. Public ACE cached
-insert/update/reopen remains library evidence; fresh ACE-native contexts,
-additional locales and remaining subtype-sensitive functions
+source scale and compare native CDbl/CSng result bits. Fresh ACE table controls
+separately compare admitted literal CDbl and stored Decimal-field conversion,
+including source scale, with writer/native recalculation and compact.
+Additional shared function, caller/storage, representation and locale contexts
 remain R4/E2 work. The OLE-derived routines retain their MIT notice and add no
 shipping dependency or formal expression proof.
 
@@ -517,8 +548,9 @@ functions have distinct native Null/error behavior and do not inherit this rule.
 ### Round
 
 `Round` retains the measured native Single/Double/Integer/Long/Date subtype;
-Byte and Boolean produce Integer, numeric text produces Double, and Decimal
-fields retain Decimal. Precision is coerced half-even to Long. Negative precision
+shared Byte/Boolean Variants produce Integer, while a table Byte field already
+projects Long. Numeric text produces Double, and Decimal fields retain Decimal.
+Precision is coerced half-even to Long. Negative precision
 refuses, including a Null input; Null and integral values otherwise retain their
 value for positive precision. Floating/date precision accepts 0 through 22;
 Decimal precision of 28 or more retains the input without a narrower .NET limit.
@@ -534,10 +566,12 @@ from literal conversion, separately covered by
 `CDbl(99.99999999999999)` already yields `100` before rounding; exact field bits
 avoid treating that literal conversion as a Round result. Decimal controls use
 native TypeName/CStr before DAO marshals a computed numeric result as Double.
-Public ACE calculated
-insert/update/reopen and byte-preserving invalid-precision refusal supply library
-regressions. These controls use `dao360.dll` 10.0.26100.5074; fresh ACE native
-contexts, additional locales and Currency identity remain separate R4/E2 gaps.
+Those query controls use `dao360.dll` 10.0.26100.5074. Fresh ACE table controls
+also use the exact floating boundary fields, admitted precision cases and Decimal
+sources through writer/native recalculation and compact; Currency and Date
+identity have their separate native controls. Table Round clears the sign of a
+floating zero, while Int and Fix preserve it. Remaining shared function/context
+and locale qualification stays in R4/E2.
 
 ### Floating-to-Decimal expression coercion
 
@@ -569,16 +603,19 @@ try-conversion reports false. Mixed Decimal/Single/Double addition, subtraction,
 multiplication and division instead use Double when the finite floating operand
 cannot convert to Decimal. Promotion precedes arithmetic, including a zero
 product; it preserves signed zero. Convertible operands retain Decimal
-arithmetic, whose result overflow still refuses rather than promoting.
+arithmetic, whose overflow does not authorize floating promotion. Table calculations
+retain the measured calculated error status; shared contexts retain their own
+qualified failure behavior.
 
 `CalculatedExpressionDecimalPromotionTests` compares both operand orders and
 positive/negative Single/Double 2^96 with native DAO3.6 Jet4 TypeName and exact
-result bits. Decimal 0/1 controls and public ACE calculated insert/update/reopen
-exercise the shared interpreter; nonfinite update refusal preserves bytes.
-Native calculated Decimal overflow retains its measured calculated status.
-Additional shared expression and locale contexts remain R4/E2 work. Caller-field normalization and storage retain
-their shared conversion contract; remaining native/runtime qualification and
-caller-field/storage conversions and broader native context/representation qualification remain separate obligations; the expression reverse conversion policy and measured scope are described above.
+result bits. Fresh ACE table controls repeat both operand orders with Decimal 0/1,
+positive and negative Single/Double boundary fields, and signed-zero results through
+writer/native recomputation, changed-source updates and compact. Native calculated
+Decimal overflow retains its measured calculated status; valid financial nonfinite
+values and operation-specific failures remain distinct. Additional shared
+expression, coefficient/scale representation, caller-field/storage and locale
+contexts remain R4/E2 work.
 
 ## Literal Unicode markers in Text
 
@@ -609,9 +646,15 @@ Boolean result conversion instead rounds numeric input half to even to a signed
 16-bit Integer before testing zero. Long/Double overflow caches status 6, while
 Decimal overflow caches status 13. Ordinary Null remains Null.
 
-`Choose` evaluates all arguments before selecting a branch and truncates its
-one-based index. A Null index caches status 13; an error in an unselected argument
-still propagates. `IsEmpty` evaluates its argument and returns false for the
+`Choose` evaluates all arguments before selecting a branch, converts its index to
+Single and truncates toward zero. A finite out-of-range index returns ordinary
+Null before any narrow integer cast; conversion overflow, infinity and NaN cache
+status 6. A Null index caches status 13; an error in an unselected argument
+still propagates. `CalculatedChooseTests` checks the Single rounding thresholds,
+large finite indices, selected branch widths and Null/error states against pinned
+native source/compacted fixtures and fresh writer/native recalculation controls.
+Provenance and exact observations are in `Databases/CalculatedChoose/README.md`.
+`IsEmpty` evaluates its argument and returns false for the
 available row values, including Null. Table calculated And/Or/Not coerce operands to Boolean rather than applying
 VBA bitwise operations. Numeric magnitudes at or below one half are false; larger
 magnitudes, Infinity and NaN are true. Nonnumeric strings, including empty strings,
@@ -619,6 +662,14 @@ are true; numeric strings follow the same Boolean conversion. Null/error masking
 retains native three-valued behavior. `CalculatedLogicalOperandTests` compares
 independent native controls and writer/native recomputation. These rules are specific to table calculations; shared rule/default
 contexts retain their independently qualified behavior.
+
+Table literals True/False, comparisons and And/Or/Not/In produce signed Integer
+results. Like, IsNull and IsEmpty instead retain Boolean intrinsic results:
+implicit text conversion produces `True` or `False`, while a direct Text result
+stores `-1` or `0`. IIf and Choose preserve their selected branch's subtype.
+A reference to a stored calculated Boolean projects Integer, so its concatenation
+also uses `-1`/`0`. The fresh numeric controls compare inline and stored-reference
+forms through native source readback, Binary widths and both text conversions.
 
 `CalculatedNativeLogicalTests` compares independent ACE-authored source and native
 compacted fixtures with writer-produced caches, native recalculation and compact.
@@ -633,7 +684,9 @@ native invalid-Null status. Trim removes U+0020 only. Asc and numeric String
 characters use the measured CP1252 mapping. `String$` distinguishes a Null
 count (status 13) from a Null character (status 94); `Str$` Null is status 94.
 Str omits the leading zero before a
-fraction and prefixes nonnegative values with a space.
+fraction and prefixes nonnegative values with a space. Its numeric text arguments
+convert through Double, preserving native exponent range and notation rather than
+introducing a Decimal limit. Asc returns a signed Integer; Len and InStr return Long.
 
 Space/Space$ round counts half to even and retain the generated-text budget.
 Negative, Null and invalid counts refuse the statement, matching native error
@@ -741,3 +794,16 @@ retain that variation rather than interpreting it as ordinary Null.
 
 `CalculatedMathDomainTests` compares independent native domains, exact floating
 results and error statuses through writer/native recalculation and compact.
+
+Calculated numeric text preserves floating `-0` and uses native `inf`/`-inf` forms.
+Quiet NaNs render `nan` or `-nan`, except the exact negative indefinite payload
+`FFF8000000000000`, which renders `-nan(ind)`. Signaling Double payloads render
+`nan(snan)` or `-nan(snan)`. Single first widens for text, quieting its signaling
+payload without changing the stored source or Binary cache. Str adds a leading
+space to positive special values and retains negative signs. Direct Text,
+concatenation and Str accept these valid financial/source values; cached arithmetic
+errors still follow their separate status/constraint rules. The fresh numeric
+controls verify canonical, noncanonical and signaling payloads and financial,
+unary, Abs and Round contexts through native recalculation and compact. These
+table-specific forms do not change the shared formatting profile or complete
+foreign regional-profile qualification.

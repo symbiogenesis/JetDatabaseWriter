@@ -21,7 +21,8 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 /// operand switches to date-serial arithmetic: a date plus or minus a number, a Boolean,
 /// numeric text or another date is a date, a date minus a date is a <see cref="double"/>
 /// number of days, and <c>*</c>, <c>/</c> and <c>^</c> with a date give a
-/// <see cref="double"/>. Currency retains its distinct fixed-point Variant identity;
+/// <see cref="double"/>. A Decimal operand instead retains Decimal arithmetic
+/// for addition, subtraction, multiplication and division. Currency retains its distinct fixed-point Variant identity;
 /// addition/subtraction and integral products retain Currency, while products with
 /// floating or text operands and non-Decimal division produce Double.
 /// </remarks>
@@ -54,7 +55,7 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        if (IsDate(left) || IsDate(right))
+        if ((IsDate(left) || IsDate(right)) && left is not decimal && right is not decimal)
         {
             return DateResult(ToDateSerial(left) + ToDateSerial(right), left, right);
         }
@@ -85,7 +86,7 @@ internal static class AccessVariantOperators
             return ToDateSerial(left) - ToDateSerial(right);
         }
 
-        if (IsDate(left) || IsDate(right))
+        if ((IsDate(left) || IsDate(right)) && left is not decimal && right is not decimal)
         {
             return DateResult(ToDateSerial(left) - ToDateSerial(right), left, right);
         }
@@ -111,7 +112,7 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        if (IsDate(left) || IsDate(right))
+        if ((IsDate(left) || IsDate(right)) && left is not decimal && right is not decimal)
         {
             return Finite(ToDateSerial(left) * ToDateSerial(right));
         }
@@ -140,7 +141,7 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        if (IsDate(left) || IsDate(right))
+        if ((IsDate(left) || IsDate(right)) && left is not decimal && right is not decimal)
         {
             double divisor = Finite(ToDateSerial(right));
             return divisor == 0d

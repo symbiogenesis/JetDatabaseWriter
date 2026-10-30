@@ -41,15 +41,16 @@ internal sealed class CalculatedExpressionFunctionNode(string name, IReadOnlyLis
                         : AccessVariantOperators.Or(left is CalculatedError ? System.DBNull.Value : left, right is CalculatedError ? System.DBNull.Value : right);
                     if (result is not System.DBNull)
                     {
-                        return result;
+                        return context.IsCalculatingColumn ? CalculatedExpressionLogicalOperand.IntegerResult(result) : result;
                     }
 
                     return left is CalculatedError ? left : right;
                 }
 
-                return name.Equals("AND", System.StringComparison.OrdinalIgnoreCase)
+                object logicalResult = name.Equals("AND", System.StringComparison.OrdinalIgnoreCase)
                     ? AccessVariantOperators.And(left, right)
                     : AccessVariantOperators.Or(left, right);
+                return context.IsCalculatingColumn ? CalculatedExpressionLogicalOperand.IntegerResult(logicalResult) : logicalResult;
             }
 
             return CalculatedExpressionFunctionRegistry.Evaluate(name, args, context);

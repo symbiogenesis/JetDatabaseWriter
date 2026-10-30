@@ -8,5 +8,18 @@ internal sealed class CalculatedExpressionValueNode(object? value) : CalculatedE
     internal override bool HasUntypedNullResult { get; } = value is null or DBNull;
 
     public override object Evaluate(CalculatedExpressionEvaluationContext context)
-        => context.IsCalculatingColumn && value is DateTime date ? NativeDate.FromDateTime(date) : value ?? DBNull.Value;
+    {
+        object result = value ?? DBNull.Value;
+        if (!context.IsCalculatingColumn)
+        {
+            return result;
+        }
+
+        return result switch
+        {
+            DateTime date => NativeDate.FromDateTime(date),
+            bool boolean => (short)(boolean ? -1 : 0),
+            _ => result,
+        };
+    }
 }

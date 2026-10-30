@@ -30,7 +30,7 @@ internal static partial class CalculatedExpressionTextFunctions
 
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
-        AddFunction(functions, "LEN", 1, 1, static function => Length(function.Arg(0)));
+        AddFunction(functions, "LEN", 1, 1, static function => Length(function.Arg(0), function.Context));
         AddFunction(functions, "LEFT", 2, 2, static function => EvaluateSlice(function, fromRight: false));
         AddFunction(functions, "RIGHT", 2, 2, static function => EvaluateSlice(function, fromRight: true));
         AddFunction(functions, "MID", 2, 3, static function => EvaluateMid(function));
@@ -43,8 +43,8 @@ internal static partial class CalculatedExpressionTextFunctions
         AddFunction(functions, "HEX", 1, 1, static function => Convert.ToInt64(function.Arg(0), CultureInfo.InvariantCulture).ToString("X", CultureInfo.InvariantCulture));
         AddFunction(functions, "OCT", 1, 1, static function => Convert.ToString(Convert.ToInt64(function.Arg(0), CultureInfo.InvariantCulture), 8) ?? string.Empty);
         AddFunction(functions, "VAL", 1, 1, static function => Val(ToText(function.Arg(0))));
-        AddFunction(functions, "ASC", 1, 1, static function => Asc(function.Arg(0), asciiOnly: true));
-        AddFunction(functions, "ASCW", 1, 1, static function => Asc(function.Arg(0), asciiOnly: false));
+        AddFunction(functions, "ASC", 1, 1, static function => EvaluateAsc(function, asciiOnly: true));
+        AddFunction(functions, "ASCW", 1, 1, static function => EvaluateAsc(function, asciiOnly: false));
         AddFunction(functions, "CHR", 1, 1, static function => char.ConvertFromUtf32(checked((int)ToDecimal(function.Arg(0)))), "CHRW");
         AddFunction(functions, "STR", 1, 1, static function => EvaluateStr(function));
         AddFunction(functions, "INSTR", 2, 4, static function => EvaluateInStr(function));
@@ -65,7 +65,7 @@ internal static partial class CalculatedExpressionTextFunctions
         return leftText + rightText;
     }
 
-    private static object Length(object value) => IsNull(value) ? DBNull.Value : ToText(value).Length;
+    private static object Length(object value, CalculatedExpressionEvaluationContext context) => IsNull(value) ? DBNull.Value : ToText(value, context).Length;
 
     internal static string ChangeCase(string text, bool upper)
         => string.Create(text.Length, (Text: text, Upper: upper), static (characters, state) =>
@@ -97,7 +97,7 @@ internal static partial class CalculatedExpressionTextFunctions
         }
 
         ValidateTextCount(count);
-        string text = ToText(value);
+        string text = ToText(value, function.Context);
         count = Math.Min(count, text.Length);
         return fromRight ? text.Substring(text.Length - count, count) : text[..count];
     }
@@ -118,7 +118,7 @@ internal static partial class CalculatedExpressionTextFunctions
         }
 
         ValidateTextCount(count);
-        string text = ToText(value);
+        string text = ToText(value, function.Context);
         int zeroBasedStart = Math.Min(start - 1, text.Length);
         return text.Substring(zeroBasedStart, Math.Min(count, text.Length - zeroBasedStart));
     }
@@ -126,7 +126,7 @@ internal static partial class CalculatedExpressionTextFunctions
     private static object EvaluateCase(CalculatedFunctionInvocation function, bool upper)
     {
         object value = function.Arg(0);
-        return NullTextArgument(function, value) ? DBNull.Value : ChangeCase(ToText(value), upper);
+        return NullTextArgument(function, value) ? DBNull.Value : ChangeCase(ToText(value, function.Context), upper);
     }
 
     private static object EvaluateTrim(CalculatedFunctionInvocation function, bool trimStart, bool trimEnd)
@@ -137,7 +137,7 @@ internal static partial class CalculatedExpressionTextFunctions
             return DBNull.Value;
         }
 
-        string text = ToText(value);
+        string text = ToText(value, function.Context);
         if (trimStart && trimEnd)
         {
             return text.Trim(' ');
@@ -154,8 +154,13 @@ internal static partial class CalculatedExpressionTextFunctions
             return DBNull.Value;
         }
 
-        object number = value is double or float ? value : ToDecimal(value);
-        string text = ToText(number);
+        object number = value switch
+        {
+            double or float => value,
+            string when function.Context.IsCalculatingColumn => ToDouble(value),
+            _ => ToDecimal(value),
+        };
+        string text = ToText(number, function.Context);
         bool negative = text.StartsWith('-');
         int start = negative ? 1 : 0;
         if (text.Length > start + 1 && text[start] == '0' && text[start + 1] == '.')
@@ -165,6 +170,19 @@ internal static partial class CalculatedExpressionTextFunctions
 
         return negative ? text : " " + text;
     }
+
+#pragma warning disable CA1859 // Native table Asc boxes Integer; the shared interpreter boxes Long.
+    private static object EvaluateAsc(CalculatedFunctionInvocation function, bool asciiOnly)
+    {
+        int value = Asc(function.Arg(0), asciiOnly, function.Context);
+        if (function.Context.IsCalculatingColumn)
+        {
+            return checked((short)value);
+        }
+
+        return value;
+    }
+#pragma warning restore CA1859
 
     private static object EvaluateInStr(CalculatedFunctionInvocation function)
     {
@@ -194,8 +212,8 @@ internal static partial class CalculatedExpressionTextFunctions
             return DBNull.Value;
         }
 
-        string text = ToText(textValue);
-        string search = ToText(searchValue);
+        string text = ToText(textValue, function.Context);
+        string search = ToText(searchValue, function.Context);
         if (search.Length == 0)
         {
             return start;
@@ -386,14 +404,14 @@ internal static partial class CalculatedExpressionTextFunctions
         builder.Append(value, startIndex, count);
     }
 
-    private static int Asc(object value, bool asciiOnly)
+    private static int Asc(object value, bool asciiOnly, CalculatedExpressionEvaluationContext context)
     {
         if (IsNull(value))
         {
             throw new InvalidCastException("Asc cannot accept Null.");
         }
 
-        string text = ToText(value);
+        string text = ToText(value, context);
         if (string.IsNullOrEmpty(text))
         {
             throw new ArgumentException("Calculated-column Asc/AscW requires a non-empty string.");

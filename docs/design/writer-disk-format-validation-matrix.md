@@ -740,16 +740,23 @@ NativeMemoCompressionTests compares the leading-U+FEFF escape byte-for-byte with
 
 `NativeCompressedTextMarkerTests` pins Jet4 source/compacted files whose schemas were writer-created and whose rows were native-authored by DAO3.6. Descriptor-bit and exact raw payload checks establish the leading-U+FEFF escape for ordinary compressed Text, distinct from an inert UnicodeCompression property. Writer insert/update and schema rewrite retain complete values of 6 through 255 UTF-16 units with nonzero Latin-1 tails and optional contiguous nonsurrogate wide prefixes whose low bytes are nonzero. A wide prefix requires at least four tail units; otherwise five are required. Fresh DAO3.6 native authoring produces exact payload parity before and after compact, including both extreme prefix/tail lengths at 255 units; native reads and updates accept writer values and all 255 permitted tail characters. Declared-size overflow and unsupported short/NUL/low-byte-zero/surrogate or later-wide forms refuse before allocation with unchanged database bytes. Native U+FEFF-plus-a loses its marker on insertion and is retained as negative evidence. Producing engine/module details and hashes are beside Databases/NativeTextMarkers. Fresh DAO120 Jet4/ACE confirmation and calculated Text remain open.
 
-`CalculatedExpressionFloatingSubtypeTests` compares floating arithmetic, unary signs, Abs/Int/Fix and 15/7-digit numeric text with native x86 DAO3.6 Jet4 query controls (dao360.dll 10.0.26100.5074). Public stored defaults across Jet3/Jet4/ACE and ACE calculated Double insert/update exercise the shared interpreter; nonfinite inputs/results and overflowing updates refuse without changing database bytes. Native formatting controls include fixed/scientific boundaries and negative zero; native Infinity text divisors refuse. This SQL-context evidence does not settle the distinct documented VBA Variant division matrix, integral promotion, Currency/Decimal identity, database-locale behavior or fresh ACE-native semantics. Native numeric-text overflow can yield Null while the writer conservatively refuses; calculation-error envelopes remain separate R4 work.
+`CalculatedExpressionFloatingSubtypeTests` retains native x86 DAO3.6 Jet4 query
+controls (`dao360.dll` 10.0.26100.5074) for floating arithmetic, unary signs,
+Abs/Int/Fix and 15/7-digit notation. Public stored defaults remain separate from
+the fresh ACE table controls described below. Shared Variant division, missing
+results, additional function/subtype combinations and locale contexts remain R4
+work; these query controls do not expand table-calculated function admission.
 
 `CalculatedExpressionRoundTests` compares native DAO3.6 Jet4 Round subtypes,
 precision coercion, Null and large values. Exact Double-field source/stored/result
 bit controls isolate scaling boundaries from literal conversion;
 native Decimal-field controls retain values above the .NET rounding precision
-limit. Public ACE calculated updates/reopen and byte-identical invalid-precision
-refusal exercise the shared interpreter. Currency identity, additional locales
-and fresh ACE native contexts remain R4/E2 work. The native engine module is
-`dao360.dll` 10.0.26100.5074; no Access desktop/UI execution is inferred.
+limit. The older native engine module is `dao360.dll` 10.0.26100.5074. Fresh ACE
+table controls independently repeat the exact floating boundary fields and
+admitted Decimal/precision cases through writer/native recalculation and compact;
+Currency and Date retain their separate native identity controls. Table Round
+clears floating zero sign, while Int/Fix retain it. Additional shared function
+and regional contexts remain R4/E2 work; no Access desktop/UI execution is inferred.
 
 `CalculatedExpressionDecimalCoercionTests` compares exact Single/Double source
 bits with native Jet4 mixed-Decimal field results, including scaled midpoints,
@@ -759,10 +766,13 @@ operand-conversion overflow: mixed Decimal arithmetic uses Double for both
 signs of Single/Double 2^96, including signed-zero products and quotients. Fresh
 DAO3.6 Jet4 TypeName and exact-bit controls cover both operand orders with
 Decimal 0/1; public ACE calculated insert/update/reopen retains those results.
-Convertible operands still use Decimal arithmetic. Native Decimal-result
-overflow and nonfinite fields can expose missing results; the writer retains
-conservative refusal. Fresh ACE/locale contexts remain separate R4/E2 gaps.
-Caller-field/storage and fresh ACE/locale conversion qualification remain R4 work.
+Convertible operands still use Decimal arithmetic. Fresh ACE table controls also
+compare both signed Single/Double boundaries and Decimal 0/1, including exact
+source and result bits through changed-source updates and compact. Calculated
+Decimal overflow retains its measured status; valid financial nonfinite values
+remain distinct. Shared missing-result behavior, additional coefficient/scale
+representations, caller-field/storage conversions and locale contexts retain
+their separate R4/E2 qualification requirements.
 
 `CalculatedExpressionNumericLiteralTests` pins native Long/Decimal/Double literal
 selection, exact Decimal admission, scale normalization, signed-minimum grammar,
@@ -772,10 +782,41 @@ query and stored-default controls ran through writer insertion, native
 read/update/compact and managed compacted readback; Decimal-field controls
 separately retain source scale. Literal `CDbl(99.99999999999999)` returns `100`,
 while equivalent field values can retain a different scale and result bits.
-Public ACE cached insert/update/reopen is library evidence. Narrow-integral and
-Currency identity, remaining functions, caller/storage conversions, additional
-locales and fresh ACE-native contexts remain R4/E2 work. The native module is
-`dao360.dll` 10.0.26100.5074; ordinary CI independently checks both shipped
-library assets and the .NET 10/.NET 11 runtime combinations.
+Fresh ACE table controls independently qualify admitted literals and stored
+Decimal-field conversions, while shared constructors and broader function,
+representation, caller/storage and locale contexts remain R4/E2 work. Ordinary
+CI checks both shipped library assets and the .NET 10/.NET 11 runtime combinations.
+
+`CalculatedNativeNumericQualificationTests` authors independent original table
+caches with DAO120 16.0 / Access Runtime `16.0.20527.20112` on an en-US Windows
+profile. Native source readback checks exact runtime types, floating bits and
+Decimal coefficient/scale before comparing results. The admitted literal,
+integral, floating/notation, Round and Decimal matrices use typed source fields
+in place of table-forbidden conversion constructors; Byte fields project Long.
+Binary, Double, concatenated Text and direct Text are independently compared with
+writer inserts, recomputation and changed-source updates, native recalculation
+and native compact of both images. `CalculatedNativeNumericValueTests` freezes
+ordinary public regressions for the measured distinctions.
+
+These controls establish Date/Decimal promotion to Decimal for both orders of
+addition, subtraction, multiplication and division, including Null and values
+outside Date range; exponentiation remains Double. Fresh ACE query TypeName
+independently qualifies the shared promotion. They also distinguish Integer
+literal/comparison/And/Or/Not/In results from Boolean Like/IsNull/IsEmpty results:
+intrinsic Boolean text is `True`/`False`, final Text is `-1`/`0`, and stored
+calculated Boolean references project Integer. Asc returns Integer, while Len
+and InStr return Long. Str converts numeric text through Double.
+
+Calculated Text preserves `-0`, uses `inf`/`-inf`, distinguishes signed quiet and
+signaling Double NaNs, and retains the exact negative indefinite `-nan(ind)`
+payload. Single widens for text without changing its stored or Binary bits.
+Direct Text, concatenation and Str have independent financial and raw-payload
+controls; positive Str results retain their leading space. The shared formatting
+profile remains separate. `CalculatedChooseTests` adds pinned native
+source/compacted fixtures and fresh controls for Single index rounding,
+out-of-range Null, overflow/Null statuses and selected branch widths; provenance
+is in `Databases/CalculatedChoose/README.md`. These controls do not complete the
+foreign user regional-profile gate or the remaining shared-language and
+caller/storage requirements in R4.
 
 `PublicTextCollationTests` and `TextSortOrderFixtureTests` cover public General97/General Legacy/General choices, raw stored ID/version metadata, null header-default selection, unknown-ID reporting, no-mutation invalid-choice refusal, Text/Memo/calculated Text and schema preservation. `PublicTextCollationDaoTests` independently checks writer-created columns through schema edits and row updates, native case-equivalent seek, duplicate refusal, insert/update and compact/readback. Current x86 DAO3.6 (`dao360.dll` 10.0.26100.5074) controls passed for Jet3 General97 and Jet4 General Legacy. Four fresh DAO120 Jet4/ACE cases remain guarded and skipped on this host. Existing encoders and text code pages are unchanged; broader locale, long-key and native mixed-column coverage remains F9/E2 work.
