@@ -802,7 +802,17 @@ module RecoveryKernel {
       position, tag, position, remainingPages);
     OriginalPageSliceIsExact(pageSize, |original| as U64, offset);
     var count := OriginalPageLength(pageSize, |original| as U64, offset) as int;
-    assert forall i | 0 <= i < count :: pages[index].page.pageBytes[i] == original[offset as int + i];
+    var payload := pages[index].page.pageBytes[..count];
+    var expected := original[offset as int..offset as int + count];
+    assert |payload| == count && |expected| == count;
+    forall i | 0 <= i < count
+      ensures payload[i] == expected[i]
+    {
+      assert pages[index].page.pageBytes[i] == original[offset as int + i];
+      assert payload[i] == pages[index].page.pageBytes[i];
+      assert expected[i] == original[offset as int + i];
+    }
+    assert payload == expected;
   }
 
   function OriginalOrZeroByte(recovering: bool, offset: U64,
