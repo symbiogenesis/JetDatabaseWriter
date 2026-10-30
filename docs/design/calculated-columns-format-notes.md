@@ -622,7 +622,7 @@ the interpreter, public stored defaults and ACE calculated Double insert/update.
 Its guarded native query controls use x86 DAO3.6, `dao360.dll` 10.0.26100.5074,
 including formatting boundaries and invalid text divisors. These checks do not
 establish fresh ACE native behavior, all locale formats or calculated-field
-admissibility of every function. Remaining narrow-integral promotion rules,
+admissibility of every function. Remaining division, Mod, bitwise and missing-result rules,
 Currency-versus-Decimal identity and other subtype-sensitive functions
 remain R4 work. Expression evaluation remains handwritten and tested.
 
@@ -637,6 +637,14 @@ Long; `-(2147483648)` remains Decimal. Exponentiation and other unary grouping
 retain their grammar. Measured Long addition/subtraction/multiplication with
 integral operands retain Long in range and promote to Double on overflow.
 Abs/Int/Fix preserve the measured Long behavior; Abs of Int32.MinValue is Double.
+Byte, Boolean and Integer arithmetic uses signed Integer results, promotes to
+Long when needed, and retains an explicit Long operand's wider subtype.
+Unary signs convert Byte and Boolean to Integer. Abs, Int and Fix retain
+Integer; Abs of Int16.MinValue promotes to Long. `CalculatedExpressionIntegralSubtypeTests`
+freezes independently measured DAO3.6 Jet4 values, subtypes and mixed Single
+result bits, repeats the native controls, and checks public calculated
+insert/update/reopen. These controls do not establish every missing-result
+boundary or fresh ACE behavior.
 Decimal expression text uses full fixed decimal digits without trailing zeros.
 
 Decimal-to-Double conversion explicitly follows OLE's low-64/high-32 limb
@@ -656,7 +664,7 @@ Fresh DAO3.6 Jet4 query and stored-default controls use `dao360.dll`
 and managed compacted readback. Independent Decimal-field controls preserve
 source scale and compare native CDbl/CSng result bits. Public ACE cached
 insert/update/reopen remains library evidence; fresh ACE-native contexts,
-additional locales, narrow-integral/Currency identity and remaining functions
+additional locales, Currency identity and remaining subtype-sensitive functions
 remain R4/E2 work. The OLE-derived routines retain their MIT notice and add no
 shipping dependency or formal expression proof.
 

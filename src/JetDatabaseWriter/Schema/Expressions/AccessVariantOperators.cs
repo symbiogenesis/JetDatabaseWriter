@@ -169,6 +169,8 @@ internal static class AccessVariantOperators
 
         return value switch
         {
+            bool boolean => (short)(boolean ? 1 : 0),
+            byte number => (short)-number,
             short number when number != short.MinValue => (short)-number,
             short number => -number,
             int number when number != int.MinValue => -number,
@@ -192,6 +194,8 @@ internal static class AccessVariantOperators
 
         return value switch
         {
+            bool boolean => (short)(boolean ? -1 : 0),
+            byte number => (short)number,
             float number => (float)Finite(number),
             double number => Finite(number),
             DateTime or short or int => value,
@@ -438,11 +442,18 @@ internal static class AccessVariantOperators
 
     private static bool IsZero(object value) => ToBitwiseOperand(value) == 0;
 
-#pragma warning disable CA1859 // Native arithmetic deliberately boxes Long, Double or Decimal.
+#pragma warning disable CA1859 // Native arithmetic deliberately boxes Integer, Long, Double or Decimal.
     private static object DecimalArithmeticResult(decimal result, object left, object right)
     {
-        if ((left is int || right is int) && left is bool or byte or short or int && right is bool or byte or short or int)
+        if (left is bool or byte or short or int && right is bool or byte or short or int)
         {
+            // Byte and Boolean operands participate as signed VBA Integers.
+            // Keep an explicit Long operand wide even when its result fits Integer.
+            if (left is not int && right is not int && result is >= short.MinValue and <= short.MaxValue)
+            {
+                return (short)result;
+            }
+
             return result is >= int.MinValue and <= int.MaxValue ? (object)(int)result : (double)result;
         }
 

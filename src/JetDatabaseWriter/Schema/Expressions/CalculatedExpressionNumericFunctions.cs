@@ -135,6 +135,10 @@ internal static class CalculatedExpressionNumericFunctions
 
     private static object EvaluateAbsolute(object value) => value switch
     {
+        bool boolean => (short)(boolean ? 1 : 0),
+        byte number => (short)number,
+        short number when number != short.MinValue => Math.Abs(number),
+        short number => -number,
         int number when number != int.MinValue => Math.Abs(number),
         int number => -(double)number,
         float number => Math.Abs((float)AccessVariantOperators.Finite(number)),
@@ -144,7 +148,17 @@ internal static class CalculatedExpressionNumericFunctions
 
     private static object EvaluateIntegral(object value, bool truncate)
     {
-        if (value is int)
+        if (value is bool boolean)
+        {
+            return (short)(boolean ? -1 : 0);
+        }
+
+        if (value is byte byteValue)
+        {
+            return (short)byteValue;
+        }
+
+        if (value is short or int)
         {
             return value;
         }
