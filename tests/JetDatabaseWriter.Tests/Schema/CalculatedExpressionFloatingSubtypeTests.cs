@@ -67,12 +67,18 @@ public sealed class CalculatedExpressionFloatingSubtypeTests
         => Assert.Equal(expected, Assert.IsType<string>(Evaluate(expression)));
 
     [Theory]
-    [InlineData("CDbl(1)/\"Infinity\"")]
-    [InlineData("CDbl(1)/\"-Infinity\"")]
     [InlineData("CDbl(1)/\"1E999\"")]
     [InlineData("#2020-01-01#/\"Infinity\"")]
     public void NonfiniteDivisor_RefusesInsteadOfCollapsingToZero(string expression)
         => Assert.Throws<OverflowException>(() => Evaluate(expression));
+
+    [Theory]
+    [InlineData("CDbl(1)/\"Infinity\"")]
+    [InlineData("CDbl(1)/\"-Infinity\"")]
+    [InlineData("CDbl(\"Infinity\")")]
+    [InlineData("CDbl(\"NaN\")")]
+    public void NonfiniteNames_RefuseAsNativeTypeMismatch(string expression)
+        => Assert.Throws<InvalidCastException>(() => Evaluate(expression));
 
     [Theory]
     [InlineData("CDbl(1E100)*CDbl(1E100)", 1E200)]
@@ -102,8 +108,6 @@ public sealed class CalculatedExpressionFloatingSubtypeTests
     [InlineData("Abs(CSng(1E100))")]
     [InlineData("Int(CSng(1E100))")]
     [InlineData("Fix(CSng(1E100))")]
-    [InlineData("CDbl(\"NaN\")")]
-    [InlineData("CDbl(\"Infinity\")")]
     public void NonfiniteConversion_RefusesBeforeSubtypePreservation(string expression)
         => Assert.Throws<OverflowException>(() => Evaluate(expression));
 
