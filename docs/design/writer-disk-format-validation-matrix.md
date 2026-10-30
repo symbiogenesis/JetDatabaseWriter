@@ -59,6 +59,16 @@ metadata identities and descending FK keys across schema edits. Synthetic marker
 and native-accepted layout variants remain separate from Microsoft-authored fixtures.
 `NativeSchemaPreservationTests` and `NativeSchemaDaoTests` additionally retain
 Microsoft-authored Table4 column identities and multi-page attachment table metadata.
+
+`NativeLookupPropertyTests` covers direct and chained lookup sources plus
+parameterized SELECT, UNION, crosstab and stored append/update/delete/make-table
+QueryDefs. DAO3.6 Jet3/Jet4 controls compare native type and SQL through native
+and managed column rename/drop, referenced-table deletion, reopen and compact.
+Pinned DAO3.6-authored query specimens retain all query rows, query catalog
+values, query permission rows and lookup properties through every writer mode
+on hosted CI. Saved definitions are never executed. Fresh ACE DAO120 checks,
+remaining native query/application forms and Access UI Name AutoCorrect remain
+separate S9/E2 evidence gaps.
 ## Microsoft interoperability evidence
 
 Validation on 2026-10-06 used revision

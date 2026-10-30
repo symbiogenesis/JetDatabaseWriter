@@ -5,6 +5,7 @@ using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -16,7 +17,69 @@ using Xunit;
 /// <summary>Lookup sources and saved-query text follow native DAO metadata preservation.</summary>
 public sealed class NativeLookupPropertyTests
 {
+    private static readonly string[] QueryNames =
+    [
+        "BaseLookup", "SavedLookup", "ParameterLookup", "UnionLookup", "CrossTabLookup",
+        "UpdateDefinition", "AppendDefinition", "DeleteDefinition", "MakeTableDefinition",
+    ];
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    /// <summary>Gets frozen native schemas, write modes and dependency-changing edits.</summary>
+    public static TheoryData<DatabaseFormat, WriteMode, string> FrozenCases()
+    {
+        var cases = new TheoryData<DatabaseFormat, WriteMode, string>();
+        foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb })
+        {
+            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+            {
+                foreach (string operation in new[] { "rename", "drop", "table" })
+                {
+                    cases.Add(format, mode, operation);
+                }
+            }
+        }
+
+        return cases;
+    }
+
+    [Theory]
+    [MemberData(nameof(FrozenCases))]
+    public async Task FrozenNativeQueryDefinitions_SchemaEditPreservesRawMetadata(DatabaseFormat format, WriteMode mode, string operation)
+    {
+        await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.FrozenQueries", databaseExtension: ".mdb");
+        string version = format == DatabaseFormat.Jet3Mdb ? "V1997" : "V2000";
+        string hash = format == DatabaseFormat.Jet3Mdb
+            ? "562B9826FF109EE92D062D6E38AA0134A9E8DA49432AC29D0FFE810252623AF2"
+            : "08EF602CDB30A80C01E73068E646FB8EB39B641FEEDA82A375E6ABFADDD071BC";
+        byte[] bytes = await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "Databases", "QueryDependencies", $"NativeQueryDependencies{version}.mdb"), Ct);
+        Assert.Equal(hash, Convert.ToHexString(SHA256.HashData(bytes)));
+        await File.WriteAllBytesAsync(session.SourcePath, bytes, Ct);
+        string[] properties = await ReadLookupPropertiesAsync(session.SourcePath);
+        string[] queries = await ReadQueryRowsAsync(session.SourcePath);
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(session.SourcePath, WriteModes.WriterOptions(mode), Ct))
+        {
+            await WriteModes.RunAsync(writer, mode, () => ApplyEditAsync(writer, operation), Ct);
+        }
+
+        Assert.Equal(properties, await ReadLookupPropertiesAsync(session.SourcePath));
+        Assert.Equal(queries, await ReadQueryRowsAsync(session.SourcePath));
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(session.SourcePath, cancellationToken: Ct);
+        Assert.DoesNotContain(await reader.ListTablesAsync(Ct), name => name == "NeverCreated");
+        using DataTable lookup = await reader.ReadTableAsync("Lookup", cancellationToken: Ct);
+        Assert.Equal(1, Assert.Single(lookup.AsEnumerable())["Direct"]);
+        if (operation != "table")
+        {
+            using DataTable target = await reader.ReadTableAsync("T", cancellationToken: Ct);
+            DataRow row = Assert.Single(target.AsEnumerable());
+            Assert.Equal(1, row["Id"]);
+            Assert.Equal(9, row["Keep"]);
+            if (operation == "rename")
+            {
+                Assert.Equal(2, row["Renamed"]);
+            }
+        }
+    }
 
     [Theory(
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
@@ -64,14 +127,27 @@ public sealed class NativeLookupPropertyTests
             try {
                 $db.Execute('CREATE TABLE [T] ([Id] LONG, [Note] LONG, [Keep] LONG)', 128)
                 $db.Execute('INSERT INTO [T] ([Id],[Note],[Keep]) VALUES (1,2,9)', 128)
-                $db.Execute('CREATE TABLE [Lookup] ([Direct] LONG, [Sql] LONG, [Saved] LONG, [Chain] LONG)', 128)
-                $db.Execute('INSERT INTO [Lookup] ([Direct],[Sql],[Saved],[Chain]) VALUES (1,1,1,1)', 128)
+                $db.Execute('CREATE TABLE [Lookup] ([Direct] LONG, [Sql] LONG, [Saved] LONG, [Chain] LONG, [Parameters] LONG, [Union] LONG, [CrossTab] LONG)', 128)
+                $db.Execute('INSERT INTO [Lookup] ([Direct],[Sql],[Saved],[Chain],[Parameters],[Union],[CrossTab]) VALUES (1,1,1,1,1,1,1)', 128)
                 $query = $db.CreateQueryDef('BaseLookup', 'SELECT X.Id, X.Note FROM T AS X')
                 $query.Close()
                 $query = $db.CreateQueryDef('SavedLookup', 'SELECT B.Id, B.Note FROM BaseLookup AS B')
                 $query.Close()
-                $sources = @('T', 'SELECT X.Id, X.Note FROM T AS X', 'BaseLookup', 'SavedLookup')
-                $names = @('Direct', 'Sql', 'Saved', 'Chain')
+                $definitions = [ordered]@{
+                    ParameterLookup = 'PARAMETERS [Minimum] Long; SELECT T.Id, T.Note FROM T WHERE T.Note > [Minimum]'
+                    UnionLookup = 'SELECT Id, Note FROM T UNION ALL SELECT Id, Note FROM T'
+                    CrossTabLookup = 'TRANSFORM Count(T.Id) AS Total SELECT T.Keep FROM T GROUP BY T.Keep PIVOT T.Note'
+                    UpdateDefinition = 'UPDATE [T] SET [Note]=[Note]+1 WHERE [Id]=1'
+                    AppendDefinition = 'INSERT INTO [T] ([Id],[Note],[Keep]) SELECT [Id]+100,[Note],[Keep] FROM [T]'
+                    DeleteDefinition = 'DELETE FROM [T] WHERE [Note]<0'
+                    MakeTableDefinition = 'SELECT [Id],[Note] INTO [NeverCreated] FROM [T]'
+                }
+                foreach ($definition in $definitions.GetEnumerator()) {
+                    $query = $db.CreateQueryDef($definition.Key, $definition.Value)
+                    $query.Close()
+                }
+                $sources = @('T', 'SELECT X.Id, X.Note FROM T AS X', 'BaseLookup', 'SavedLookup', 'ParameterLookup', 'UnionLookup', 'CrossTabLookup')
+                $names = @('Direct', 'Sql', 'Saved', 'Chain', 'Parameters', 'Union', 'CrossTab')
                 for ($i = 0; $i -lt $names.Length; $i++) {
                     $field = $db.TableDefs('Lookup').Fields($names[$i])
                     $field.Properties.Append($field.CreateProperty('RowSourceType', 10, 'Table/Query'))
@@ -107,21 +183,7 @@ public sealed class NativeLookupPropertyTests
 
         await using (AccessWriter writer = await session.OpenWriterAsync(Ct))
         {
-            switch (operation)
-            {
-                case "rename":
-                    await writer.RenameColumnAsync("T", "Note", "Renamed", Ct);
-                    break;
-                case "case":
-                    await writer.RenameColumnAsync("T", "Note", "note", Ct);
-                    break;
-                case "drop":
-                    await writer.DropColumnAsync("T", "Note", Ct);
-                    break;
-                default:
-                    await writer.DropTableAsync("T", Ct);
-                    break;
-            }
+            await ApplyEditAsync(writer, operation);
         }
 
         Assert.Equal(original, await ReadLookupPropertiesAsync(session.SourcePath));
@@ -131,6 +193,15 @@ public sealed class NativeLookupPropertyTests
         Assert.Equal(original, await ReadLookupPropertiesAsync(session.CompactedPath));
         Assert.Equal(originalQueries, RunEngine(ReadQueriesScript(session.CompactedPath), session.WorkDir, useDao36));
     }
+
+    private static Task ApplyEditAsync(AccessWriter writer, string operation) => operation switch
+    {
+        "rename" => writer.RenameColumnAsync("T", "Note", "Renamed", Ct).AsTask(),
+        "case" => writer.RenameColumnAsync("T", "Note", "note", Ct).AsTask(),
+        "drop" => writer.DropColumnAsync("T", "Note", Ct).AsTask(),
+        "table" => writer.DropTableAsync("T", Ct).AsTask(),
+        _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+    };
 
     private static string ValidateAndCompactScript(string source, string compacted, int version, string operation)
     {
@@ -160,8 +231,11 @@ public sealed class NativeLookupPropertyTests
     private static string ReadQueriesScript(string path) => $$"""
         $db = $engine.OpenDatabase({{Literal(path)}})
         try {
-            foreach ($name in @('BaseLookup', 'SavedLookup')) {
-                Write-Output ($name + '=' + $db.QueryDefs($name).SQL)
+            $types = [ordered]@{ BaseLookup=0; SavedLookup=0; ParameterLookup=0; UnionLookup=128; CrossTabLookup=16; UpdateDefinition=48; AppendDefinition=64; DeleteDefinition=32; MakeTableDefinition=80 }
+            foreach ($entry in $types.GetEnumerator()) {
+                $query = $db.QueryDefs($entry.Key)
+                if ($query.Type -ne $entry.Value) { throw ('Wrong query type: ' + $entry.Key + '=' + $query.Type) }
+                Write-Output ($entry.Key + '=' + $query.SQL)
             }
         } finally { $db.Close() }
         """;
@@ -196,16 +270,22 @@ public sealed class NativeLookupPropertyTests
         await using AccessReader reader = await TestDatabase.OpenReaderAsync(path, cancellationToken: Ct);
         using DataTable rows = await reader.ReadTableAsync("MSysQueries", cancellationToken: Ct);
         using DataTable catalog = await reader.ReadTableAsync("MSysObjects", cancellationToken: Ct);
+        DataRow[] queries = catalog.AsEnumerable().Where(row => QueryNames.Contains((string)row["Name"], StringComparer.Ordinal)).ToArray();
+        Assert.Equal(QueryNames.Length, queries.Length);
+        int[] identities = queries.Select(row => (int)row["Id"]).ToArray();
+        using DataTable permissions = await reader.ReadTableAsync("MSysACEs", cancellationToken: Ct);
         return rows.AsEnumerable().Select(row => "definition:" + EncodeRow(row))
-            .Concat(catalog.AsEnumerable().Where(row => row["Name"] is "BaseLookup" or "SavedLookup").Select(row => "catalog:" + EncodeRow(row)))
+            .Concat(queries.Select(row => "catalog:" + EncodeRow(row)))
+            .Concat(permissions.AsEnumerable().Where(row => identities.Contains((int)row["ObjectId"])).Select(row => "permission:" + EncodeRow(row)))
             .Order(StringComparer.Ordinal).ToArray();
     }
 
     private static string EncodeRow(DataRow row) => string.Join("|", row.ItemArray.Select(value => value switch
     {
         null or DBNull => "null",
-        byte[] bytes => Convert.ToHexString(bytes),
-        _ => Convert.ToString(value, CultureInfo.InvariantCulture),
+        byte[] bytes => "bytes:" + Convert.ToHexString(bytes),
+        DateTime date => "date:" + date.ToBinary().ToString(CultureInfo.InvariantCulture),
+        _ => value.GetType().Name + ":" + Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty)),
     }));
 
     private static async Task<string[]> ReadLookupPropertiesAsync(string path)
@@ -216,7 +296,7 @@ public sealed class NativeLookupPropertyTests
         string[] result = properties.Targets.SelectMany(target => target.Entries
             .Where(entry => entry.Name is "RowSource" or "RowSourceType")
             .Select(entry => $"{target.Name}|{entry.Name}|{entry.DataType}|{entry.DdlFlag}|{Convert.ToHexString(entry.Value)}")).ToArray();
-        Assert.Equal(8, result.Length);
+        Assert.Equal(14, result.Length);
         return result;
     }
 }

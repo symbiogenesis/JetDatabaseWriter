@@ -230,8 +230,16 @@ rules and calculated expressions retain their separate dependency checks.
 across Jet3/Jet4/ACE and direct/automatic/explicit modes, including repeated and
 opaque entries. `NativeLookupPropertyTests` compares native and writer edits
 for direct sources, SQL and saved-query indirection through reopen and compact.
+The native controls also cover parameterized SELECTs, UNION, crosstab and stored
+append/update/delete/make-table definitions. They compare each native QueryDef's
+type and SQL after both native and managed dependency edits and compact, without
+executing a saved definition. Frozen DAO3.6-authored Jet3/Jet4 specimens extend
+hosted coverage to every write mode: complete query rows, catalog field values,
+query permissions and lookup properties remain unchanged through column
+rename/drop and referenced-table deletion. Fixture hashes and production details
+are in `Databases/QueryDependencies/README.md` under the test project.
 The native engine is DAO3.6 for Jet3/Jet4; fresh ACE DAO120 confirmation,
-broader query/application forms and Access UI Name AutoCorrect remain separate
+remaining query/application forms and Access UI Name AutoCorrect remain separate
 evidence gaps.
 
 AddColumn, DropColumn and RenameColumn rebuild a table and write its blob again. [`PersistedPropertyProjector`](../../src/JetDatabaseWriter/Schema/PersistedPropertyProjector.cs) builds the new blob from the stored one and changes only what the rewrite changes:
