@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Aggregate private allocation and I/O limits for composing one raw table and its native maps.</summary>
-internal sealed class CompactRawTableBuilderBudget
+internal sealed record CompactRawTableBuilderBudget
 {
     /// <summary>Gets the maximum packed original rows.</summary>
     public long MaxDataRows { get; init; } = 8_388_608;

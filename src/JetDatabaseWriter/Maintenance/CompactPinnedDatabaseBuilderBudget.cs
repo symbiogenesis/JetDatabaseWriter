@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Cumulative private construction admission with separately bounded independent reopened validation.</summary>
-internal sealed class CompactPinnedDatabaseBuilderBudget
+internal sealed record CompactPinnedDatabaseBuilderBudget
 {
     /// <summary>Gets the maximum complete source and destination pages, including pinned and global-map storage.</summary>
     public long MaxPages { get; init; } = 0x1000000;

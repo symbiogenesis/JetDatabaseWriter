@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Aggregate limits for one private pinned-definition installation or independent comparison.</summary>
-internal sealed class CompactTDefChainBudget
+internal sealed record CompactTDefChainBudget
 {
     /// <summary>Gets the maximum total retained physical definition pages across every requested chain.</summary>
     public long MaxPages { get; init; } = 16_384;

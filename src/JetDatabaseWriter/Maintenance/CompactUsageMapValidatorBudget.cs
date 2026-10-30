@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Aggregate admission for independently checking one private native allocation map.</summary>
-internal sealed class CompactUsageMapValidatorBudget
+internal sealed record CompactUsageMapValidatorBudget
 {
     /// <summary>Gets the maximum expected allocation runs.</summary>
     public long MaxRuns { get; init; } = 8_388_608;

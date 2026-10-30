@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Hard limits for one read-only raw index-tree observation.</summary>
-internal sealed class CompactIndexBudget
+internal sealed record CompactIndexBudget
 {
     /// <summary>Gets the optional whole-session accounting shared by all discovery scans.</summary>
     internal CompactDiscoveryAccounting? Accounting { get; init; }

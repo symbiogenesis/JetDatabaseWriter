@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Limits for private all-pinned native global-map installation or independent comparison.</summary>
-internal sealed class CompactGlobalMapBudget
+internal sealed record CompactGlobalMapBudget
 {
     /// <summary>Gets the maximum complete destination pages, including appended map storage.</summary>
     public long MaxPages { get; init; } = 0x1000000;

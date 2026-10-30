@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Hard limits retained across declared roots and known incoming index references.</summary>
-internal sealed class CompactIndexOwnershipBudget
+internal sealed record CompactIndexOwnershipBudget
 {
     /// <summary>Gets the optional accounting shared with the surrounding discovery session.</summary>
     internal CompactDiscoveryAccounting? Accounting { get; init; }

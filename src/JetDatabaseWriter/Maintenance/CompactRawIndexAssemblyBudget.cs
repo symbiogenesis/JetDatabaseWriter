@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Bounds one private stored-index tree and its exact ownership map.</summary>
-internal sealed class CompactRawIndexAssemblyBudget
+internal sealed record CompactRawIndexAssemblyBudget
 {
     /// <summary>Gets the maximum appended tree and ownership-map pages together.</summary>
     public long MaxPages { get; init; } = 1_048_576;

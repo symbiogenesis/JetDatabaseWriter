@@ -2,7 +2,7 @@ namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Whole-session limits shared by inventory, raw table, index and long-value discovery.</summary>
 /// <remarks>Working storage is conservative admission accounting. Runtime overhead, shared-pool retention and caller-owned buffers, streams and retained observations are separate.</remarks>
-internal sealed class CompactDiscoveryBudget
+internal sealed record CompactDiscoveryBudget
 {
     /// <summary>Gets the maximum source physical page count.</summary>
     public long MaxPages { get; init; } = 1_048_576;

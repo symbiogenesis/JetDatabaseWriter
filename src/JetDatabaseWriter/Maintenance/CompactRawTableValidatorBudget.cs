@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Aggregate admission for comparing a private raw table and every native map.</summary>
-internal sealed class CompactRawTableValidatorBudget
+internal sealed record CompactRawTableValidatorBudget
 {
     /// <summary>Gets the independent raw row, field and LVAL comparison limits.</summary>
     public CompactRawDataLongValueValidatorBudget RawValues { get; init; } = new();

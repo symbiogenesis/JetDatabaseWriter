@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Limits for one private raw-key index build, including repeated fence I/O.</summary>
-internal sealed class CompactRawIndexBuilderBudget
+internal sealed record CompactRawIndexBuilderBudget
 {
     /// <summary>Gets the maximum input leaf entries.</summary>
     public long MaxEntries { get; init; } = 4_194_304;

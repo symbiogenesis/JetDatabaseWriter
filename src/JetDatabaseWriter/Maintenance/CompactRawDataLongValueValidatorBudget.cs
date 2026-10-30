@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Aggregate limits for independently validating one private packed table and its copied raw LVAL storage.</summary>
-internal sealed class CompactRawDataLongValueValidatorBudget
+internal sealed record CompactRawDataLongValueValidatorBudget
 {
     /// <summary>Gets the maximum compared original data rows.</summary>
     public long MaxDataRows { get; init; } = 8_388_608;

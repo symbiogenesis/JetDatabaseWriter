@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Bounds independent active catalog comparison and retained exact bookmark membership.</summary>
-internal sealed class CompactActiveCatalogBudget
+internal sealed record CompactActiveCatalogBudget
 {
     /// <summary>Gets the maximum original live catalog rows retained in both bookmark sets.</summary>
     public long MaxRows { get; init; } = 1_048_576;

@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Cumulative bounds for one private global allocation ledger construction or comparison.</summary>
-internal sealed class CompactGlobalAllocationBudget
+internal sealed record CompactGlobalAllocationBudget
 {
     /// <summary>Gets the maximum records, including the single synthesized pinned-source record.</summary>
     public long MaxRecords { get; init; } = 1_048_576;

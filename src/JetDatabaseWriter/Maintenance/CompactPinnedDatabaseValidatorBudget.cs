@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>One-shot cumulative private database comparison admission and active-component limits.</summary>
-internal sealed class CompactPinnedDatabaseValidatorBudget
+internal sealed record CompactPinnedDatabaseValidatorBudget
 {
     /// <summary>Gets the maximum complete source and private destination pages.</summary>
     public long MaxPages { get; init; } = 0x1000000;

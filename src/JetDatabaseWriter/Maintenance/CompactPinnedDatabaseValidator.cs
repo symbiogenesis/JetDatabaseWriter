@@ -157,7 +157,7 @@ internal static class CompactPinnedDatabaseValidator
                                         table.Owner,
                                         table.Definition,
                                         ordinal,
-                                        new() { Work = activeBudget.Work, Accounting = session.Discovery.Accounting, MaxActiveRows = activeBudget.MaxActiveRows, MaxKeyBytes = activeBudget.MaxKeyBytes },
+                                        activeBudget with { Accounting = session.Discovery.Accounting },
                                         observeUnassignedRow!,
                                         tableToken).ConfigureAwait(false);
                                     _ = await active.ValidateIndexesAsync(tableToken).ConfigureAwait(false);
@@ -251,13 +251,7 @@ internal static class CompactPinnedDatabaseValidator
                         admittedValues,
                         table.Allocation.Table,
                         references[index].Indexes,
-                        new()
-                        {
-                            MaxRows = catalogBudget.MaxRows,
-                            MaxReadBytes = catalogBudget.MaxReadBytes,
-                            MaxWorkingBytes = Math.Min(catalogBudget.MaxWorkingBytes, working),
-                            TableValidator = catalogBudget.TableValidator,
-                        },
+                        catalogBudget with { MaxWorkingBytes = Math.Min(catalogBudget.MaxWorkingBytes, working) },
                         token).ConfigureAwait(false);
                     CompactTraversalBudget inventory = budget.Inventory;
                     return await CompactPinnedDestinationInventory.ValidateAsync(
@@ -323,21 +317,7 @@ internal static class CompactPinnedDatabaseValidator
     }
 
     private static CompactPinnedTableAssemblyBudget TableBudget(CompactPinnedTableAssemblyBudget budget, long working)
-        => new()
-        {
-            MaxPages = budget.MaxPages,
-            MaxOutputBytes = budget.MaxOutputBytes,
-            MaxReadBytes = budget.MaxReadBytes,
-            MaxWriteBytes = budget.MaxWriteBytes,
-            MaxObservedEntries = budget.MaxObservedEntries,
-            MaxObservedKeyBytes = budget.MaxObservedKeyBytes,
-            MaxWorkingBytes = Math.Min(budget.MaxWorkingBytes, working),
-            Discovery = budget.Discovery,
-            TableBuilder = budget.TableBuilder,
-            TableValidator = budget.TableValidator,
-            Index = budget.Index,
-            Definition = budget.Definition,
-        };
+        => budget with { MaxWorkingBytes = Math.Min(budget.MaxWorkingBytes, working) };
 
     private static CompactGlobalMapBudget MapBudget(CompactGlobalMapBudget first, CompactGlobalMapBudget second, long working)
         => new()
@@ -350,24 +330,10 @@ internal static class CompactPinnedDatabaseValidator
         };
 
     private static CompactPinnedPrefixValidatorBudget PrefixBudget(CompactPinnedPrefixValidatorBudget budget, long working)
-        => new()
-        {
-            MaxPages = budget.MaxPages,
-            MaxDefinitions = budget.MaxDefinitions,
-            MaxDefinitionPages = budget.MaxDefinitionPages,
-            MaxReadBytes = budget.MaxReadBytes,
-            MaxWorkingBytes = Math.Min(working, budget.MaxWorkingBytes),
-        };
+        => budget with { MaxWorkingBytes = Math.Min(working, budget.MaxWorkingBytes) };
 
     private static CompactGlobalAllocationBudget AllocationBudget(CompactGlobalAllocationBudget budget, long working)
-        => new()
-        {
-            MaxPages = budget.MaxPages,
-            MaxRecords = budget.MaxRecords,
-            MaxLedgerBytes = budget.MaxLedgerBytes,
-            MaxReadBytes = budget.MaxReadBytes,
-            MaxWorkingBytes = Math.Min(working, budget.MaxWorkingBytes),
-        };
+        => budget with { MaxWorkingBytes = Math.Min(working, budget.MaxWorkingBytes) };
 
     private static void ValidateStreams(params Stream[] streams)
     {

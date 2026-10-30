@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Limits independent raw-row key derivation and retained bookmark evidence for one stored index.</summary>
-internal sealed class CompactIndexRowBudget
+internal sealed record CompactIndexRowBudget
 {
     /// <summary>Gets optional whole-session admission shared with the separately bounded row and index scans.</summary>
     internal CompactDiscoveryAccounting? Accounting { get; init; }

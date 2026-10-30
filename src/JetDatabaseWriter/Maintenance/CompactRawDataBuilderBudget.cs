@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Limits for packing one table's raw rows into private data pages.</summary>
-internal sealed class CompactRawDataBuilderBudget
+internal sealed record CompactRawDataBuilderBudget
 {
     /// <summary>Gets the maximum staged live rows.</summary>
     public long MaxRows { get; init; } = 8_388_608;

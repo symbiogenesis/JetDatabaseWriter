@@ -219,7 +219,7 @@ internal static class CompactPinnedDatabaseBuilder
             table.Owner,
             table.Definition,
             ordinal,
-            new() { Work = budget.Work, Accounting = assembly.Discovery.Accounting, MaxActiveRows = budget.MaxActiveRows, MaxKeyBytes = budget.MaxKeyBytes },
+            budget with { Accounting = assembly.Discovery.Accounting },
             workspace.ObserveUnassignedRow!,
             token).ConfigureAwait(false);
         _ = await active.ValidateIndexesAsync(token).ConfigureAwait(false);
@@ -300,56 +300,20 @@ internal static class CompactPinnedDatabaseBuilder
     }
 
     private static CompactPinnedTableAssemblyBudget TableBudget(CompactPinnedTableAssemblyBudget budget, long working)
-        => new()
-        {
-            MaxPages = budget.MaxPages,
-            MaxOutputBytes = budget.MaxOutputBytes,
-            MaxReadBytes = budget.MaxReadBytes,
-            MaxWriteBytes = budget.MaxWriteBytes,
-            MaxObservedEntries = budget.MaxObservedEntries,
-            MaxObservedKeyBytes = budget.MaxObservedKeyBytes,
-            MaxWorkingBytes = Math.Min(budget.MaxWorkingBytes, working),
-            Discovery = budget.Discovery,
-            TableBuilder = budget.TableBuilder,
-            TableValidator = budget.TableValidator,
-            Index = budget.Index,
-            Definition = budget.Definition,
-        };
+        => budget with { MaxWorkingBytes = Math.Min(budget.MaxWorkingBytes, working) };
 
     private static CompactGlobalMapBudget MapBudget(CompactGlobalMapBudget budget, long working)
-        => new()
-        {
-            MaxPages = budget.MaxPages,
-            MaxBitmapPages = budget.MaxBitmapPages,
-            MaxReadBytes = budget.MaxReadBytes,
-            MaxWriteBytes = budget.MaxWriteBytes,
-            MaxWorkingBytes = Math.Min(budget.MaxWorkingBytes, working),
-        };
+        => budget with { MaxWorkingBytes = Math.Min(budget.MaxWorkingBytes, working) };
 
     private static CompactGlobalAllocationBudget AllocationBudget(CompactGlobalAllocationBudget budget, long working)
-        => new()
-        {
-            MaxPages = budget.MaxPages,
-            MaxRecords = budget.MaxRecords,
-            MaxLedgerBytes = budget.MaxLedgerBytes,
-            MaxReadBytes = budget.MaxReadBytes,
-            MaxWorkingBytes = Math.Min(budget.MaxWorkingBytes, working),
-        };
+        => budget with { MaxWorkingBytes = Math.Min(budget.MaxWorkingBytes, working) };
 
     private static CompactPinnedDatabaseValidatorBudget ValidationBudget(CompactPinnedDatabaseValidatorBudget budget, long working, long pages, int tables)
-        => new()
+        => budget with
         {
             MaxPages = Math.Min(budget.MaxPages, pages),
             MaxTables = Math.Min(budget.MaxTables, tables),
-            MaxReadBytes = budget.MaxReadBytes,
             MaxWorkingBytes = Math.Min(budget.MaxWorkingBytes, working),
-            Tables = budget.Tables,
-            GlobalMap = budget.GlobalMap,
-            Prefix = budget.Prefix,
-            Allocation = budget.Allocation,
-            Inventory = budget.Inventory,
-            ActiveCatalog = budget.ActiveCatalog,
-            ActiveTables = budget.ActiveTables,
         };
 
     private static async IAsyncEnumerable<CompactGlobalAllocationRecord> AllocationsAsync(IReadOnlyList<CompactPinnedDatabaseTable> tables, CompactGlobalMapResult global, [EnumeratorCancellation] CancellationToken token)

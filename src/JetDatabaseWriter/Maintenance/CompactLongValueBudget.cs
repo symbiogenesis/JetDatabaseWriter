@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Bounds one raw long-value audit, including storage beyond the descriptor's declared payload.</summary>
-internal sealed class CompactLongValueBudget
+internal sealed record CompactLongValueBudget
 {
     /// <summary>Gets the maximum source size in physical pages.</summary>
     public long MaxPages { get; init; } = 1_048_576;

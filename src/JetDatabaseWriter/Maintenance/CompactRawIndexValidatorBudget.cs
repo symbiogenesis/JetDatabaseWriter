@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Limits independent validation of one private stored-key allocation.</summary>
-internal sealed class CompactRawIndexValidatorBudget
+internal sealed record CompactRawIndexValidatorBudget
 {
     /// <summary>Gets the maximum private allocation pages.</summary>
     public int MaxTreePages { get; init; } = 1_048_576;

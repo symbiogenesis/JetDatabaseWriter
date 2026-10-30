@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Hard limits for the physical, catalog, definition and map inventory phase.</summary>
-internal sealed class CompactTraversalBudget
+internal sealed record CompactTraversalBudget
 {
     /// <summary>Gets optional whole-session counters and simultaneous storage admission.</summary>
     internal CompactDiscoveryAccounting? Accounting { get; init; }

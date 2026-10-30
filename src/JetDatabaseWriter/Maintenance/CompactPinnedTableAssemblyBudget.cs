@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Bounds the complete private table session, with cumulative source and separate active-component allowances.</summary>
-internal sealed class CompactPinnedTableAssemblyBudget
+internal sealed record CompactPinnedTableAssemblyBudget
 {
     /// <summary>Gets the cumulative appended or independently compared table, index and map page allowance.</summary>
     public long MaxPages { get; init; } = 1_048_576;

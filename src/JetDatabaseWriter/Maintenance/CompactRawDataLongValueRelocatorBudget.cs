@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Aggregate limits for retargeting one packed table's assigned raw long values.</summary>
-internal sealed class CompactRawDataLongValueRelocatorBudget
+internal sealed record CompactRawDataLongValueRelocatorBudget
 {
     /// <summary>Gets the maximum original data rows compared with their packed destinations.</summary>
     public long MaxDataRows { get; init; } = 8_388_608;

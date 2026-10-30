@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Cumulative admission for native encoding and independently reopened decrypted comparison.</summary>
-internal sealed class CompactEncodedDatabaseBudget
+internal sealed record CompactEncodedDatabaseBudget
 {
     /// <summary>Gets maximum complete staging and encoded pages.</summary>
     public long MaxPages { get; init; } = 0x1000000;

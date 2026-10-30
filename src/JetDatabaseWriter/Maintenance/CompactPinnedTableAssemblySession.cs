@@ -102,37 +102,7 @@ internal sealed class CompactPinnedTableAssemblySession
     /// <param name="budget">The whole-session limits.</param>
     /// <returns>The shared discovery limits.</returns>
     private static CompactDiscoveryBudget SourceBudget(CompactPinnedTableAssemblyBudget budget)
-    {
-        CompactDiscoveryBudget source = budget.Discovery;
-        return new()
-        {
-            MaxPages = source.MaxPages,
-            MaxPageReads = source.MaxPageReads,
-            MaxObjects = source.MaxObjects,
-            MaxCatalogObjects = source.MaxCatalogObjects,
-            MaxSchemaBytes = source.MaxSchemaBytes,
-            MaxDefinitionBytes = source.MaxDefinitionBytes,
-            MaxMapSteps = source.MaxMapSteps,
-            MaxDiagnostics = source.MaxDiagnostics,
-            MaxRows = source.MaxRows,
-            MaxFields = source.MaxFields,
-            MaxDirectorySlots = source.MaxDirectorySlots,
-            MaxOverflowTargets = source.MaxOverflowTargets,
-            MaxLongValues = source.MaxLongValues,
-            MaxLongValueBytes = source.MaxLongValueBytes,
-            MaxLongValuePayloadBytes = source.MaxLongValuePayloadBytes,
-            MaxLongValueRows = source.MaxLongValueRows,
-            MaxIndexPages = source.MaxIndexPages,
-            MaxIndexEntries = source.MaxIndexEntries,
-            MaxIndexCanonicalBytes = source.MaxIndexCanonicalBytes,
-            MaxReferences = source.MaxReferences,
-            MaxGraphSteps = source.MaxGraphSteps,
-            MaxRecords = source.MaxRecords,
-            MaxWorkingBytes = Math.Min(source.MaxWorkingBytes, budget.MaxWorkingBytes),
-            MaxValueBytes = source.MaxValueBytes,
-            MaxChainRows = source.MaxChainRows,
-        };
-    }
+        => budget.Discovery with { MaxWorkingBytes = Math.Min(budget.Discovery.MaxWorkingBytes, budget.MaxWorkingBytes) };
 
     private static JetLimitationException Limit(string reason) => new(JetErrorCode.ValueTooLarge, reason);
 

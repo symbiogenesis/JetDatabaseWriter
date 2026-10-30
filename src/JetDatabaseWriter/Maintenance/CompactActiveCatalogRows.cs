@@ -151,10 +151,8 @@ internal sealed class CompactActiveCatalogRows : IDisposable
                 comparedAllocations,
                 allocation,
                 indexes,
-                new()
+                table with
                 {
-                    RawValues = table.RawValues,
-                    Maps = table.Maps,
                     MaxReadBytes = Math.Min(table.MaxReadBytes, budget.MaxReadBytes),
                     MaxWorkingBytes = Math.Min(table.MaxWorkingBytes, budget.MaxWorkingBytes - retained),
                 },

@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Hard limits for one root's repeated bookmark-target inspections, separate from its index-tree limits.</summary>
-internal sealed class CompactIndexBookmarkBudget
+internal sealed record CompactIndexBookmarkBudget
 {
     /// <summary>Gets the optional whole-session accounting shared with the index scan and page source.</summary>
     internal CompactDiscoveryAccounting? Accounting { get; init; }

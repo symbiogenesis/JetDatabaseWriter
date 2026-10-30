@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Lifetime limits for one source-bound active-table observation, including repeated consumption.</summary>
-internal sealed class CompactActiveTableBudget
+internal sealed record CompactActiveTableBudget
 {
     /// <summary>Gets optional surrounding discovery admission; child attempts are admitted before parent work.</summary>
     internal CompactDiscoveryAccounting? Accounting { get; init; }

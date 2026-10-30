@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Limits for staging one complete raw long value into private LVAL pages.</summary>
-internal sealed class CompactRawLongValueBuilderBudget
+internal sealed record CompactRawLongValueBuilderBudget
 {
     /// <summary>Gets the maximum copied external rows, including rows beyond the declared payload.</summary>
     public long MaxRows { get; init; } = 65_536;

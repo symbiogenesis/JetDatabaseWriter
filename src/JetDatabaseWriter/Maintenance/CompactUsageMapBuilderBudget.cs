@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Limits for constructing one private native usage-map row.</summary>
-internal sealed class CompactUsageMapBuilderBudget
+internal sealed record CompactUsageMapBuilderBudget
 {
     /// <summary>Gets the maximum input allocation runs, including adjacent runs.</summary>
     public long MaxRuns { get; init; } = 1_048_576;

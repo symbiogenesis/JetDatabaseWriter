@@ -282,51 +282,16 @@ internal static class CompactPinnedTableAssembly
             + (1024L * Math.Min(Constants.TableDefinition.MaxColumns, definition.LogicalByteLength / 10));
 
     private static CompactRawTableBuilderBudget TableBuilderBudget(CompactRawTableBuilderBudget supplied, long workingBytes)
-        => new()
-        {
-            MaxDataRows = supplied.MaxDataRows,
-            MaxValues = supplied.MaxValues,
-            MaxLongValueRows = supplied.MaxLongValueRows,
-            MaxPages = supplied.MaxPages,
-            MaxOutputBytes = supplied.MaxOutputBytes,
-            MaxRowLedgerBytes = supplied.MaxRowLedgerBytes,
-            MaxAllocationLedgerBytes = supplied.MaxAllocationLedgerBytes,
-            MaxRawBytes = supplied.MaxRawBytes,
-            MaxReadBytes = supplied.MaxReadBytes,
-            MaxWorkingBytes = Math.Min(supplied.MaxWorkingBytes, workingBytes),
-        };
+        => supplied with { MaxWorkingBytes = Math.Min(supplied.MaxWorkingBytes, workingBytes) };
 
     private static CompactRawTableValidatorBudget TableValidatorBudget(CompactRawTableValidatorBudget supplied, long workingBytes)
-        => new()
-        {
-            RawValues = supplied.RawValues,
-            Maps = supplied.Maps,
-            MaxReadBytes = supplied.MaxReadBytes,
-            MaxWorkingBytes = Math.Min(supplied.MaxWorkingBytes, workingBytes),
-        };
+        => supplied with { MaxWorkingBytes = Math.Min(supplied.MaxWorkingBytes, workingBytes) };
 
     private static CompactRawIndexAssemblyBudget IndexBudget(CompactRawIndexAssemblyBudget supplied, long workingBytes)
-        => new()
-        {
-            MaxPages = supplied.MaxPages,
-            MaxOutputBytes = supplied.MaxOutputBytes,
-            MaxEntries = supplied.MaxEntries,
-            MaxCanonicalBytes = supplied.MaxCanonicalBytes,
-            MaxFenceBytes = supplied.MaxFenceBytes,
-            MaxReadBytes = supplied.MaxReadBytes,
-            MaxLevels = supplied.MaxLevels,
-            MaxWorkingBytes = Math.Min(supplied.MaxWorkingBytes, workingBytes),
-            IndexAudit = supplied.IndexAudit,
-        };
+        => supplied with { MaxWorkingBytes = Math.Min(supplied.MaxWorkingBytes, workingBytes) };
 
     private static CompactTDefChainBudget ChainBudget(CompactTDefChainBudget supplied, long workingBytes)
-        => new()
-        {
-            MaxPages = supplied.MaxPages,
-            MaxReadBytes = supplied.MaxReadBytes,
-            MaxWriteBytes = supplied.MaxWriteBytes,
-            MaxWorkingBytes = Math.Min(supplied.MaxWorkingBytes, workingBytes),
-        };
+        => supplied with { MaxWorkingBytes = Math.Min(supplied.MaxWorkingBytes, workingBytes) };
 
     private static CompactTDefIndexReferences[] OriginalReferences(IReadOnlyList<CompactPinnedTableIndexSource> indexes)
     {

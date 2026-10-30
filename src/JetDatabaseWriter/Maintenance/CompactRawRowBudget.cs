@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Admission and traversal limits for one table's raw physical row scan.</summary>
-internal sealed class CompactRawRowBudget
+internal sealed record CompactRawRowBudget
 {
     /// <summary>Gets optional whole-session accounting shared with other discovery primitives.</summary>
     internal CompactDiscoveryAccounting? Accounting { get; init; }

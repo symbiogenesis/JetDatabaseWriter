@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 /// <summary>Aggregate admission for exact original-prefix preservation and reconstructed known definition patches.</summary>
-internal sealed class CompactPinnedPrefixValidatorBudget
+internal sealed record CompactPinnedPrefixValidatorBudget
 {
     /// <summary>Gets the maximum number of original physical pages, including opaque storage and the header.</summary>
     public long MaxPages { get; init; } = 1_000_000;
