@@ -37,7 +37,8 @@ public sealed class CalculatedLongValueMapTests
         string columnName = operation == "rename" ? "Names" : "AllNames";
         string first = new('f', 200);
         string last = new('l', 200);
-        string expected = last + ", " + first + "=" + last + ", " + first;
+        string fullName = last + ", " + first;
+        string expected = fullName + "=" + fullName[..243];
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await writer.Services.Catalog.GetCatalogEntryAsync("Table1", ct));

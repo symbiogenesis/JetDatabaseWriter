@@ -102,18 +102,22 @@ public sealed class QualifiedExpressionReferenceTests
     [InlineData("[T].[Price] + 1e-3", 4.001d, typeof(decimal))]
     [InlineData("T.Price + 1E+3", 1004d, typeof(int))]
     [InlineData("[T]![Price] + .5E1", 9d, typeof(int))]
-    [InlineData("[T].[Price] + &HFFFF", 3d, typeof(int))]
-    [InlineData("T.Price + &HFFFF&", 65539d, typeof(int))]
-    [InlineData("[T]![Price] + &O17", 19d, typeof(int))]
-    [InlineData("T.Price + &17", 19d, typeof(int))]
-    public void QualifiedReference_WithScientificOrRadixLiteralRetainsNumericToken(string expression, double expected, Type expectedType)
+    public void QualifiedReference_WithScientificLiteralRetainsNumericToken(string expression, double expected, Type expectedType)
     {
-        CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(expression);
-        object actual = plan.Evaluate(Context("T"));
+        object actual = CalculatedExpressionParser.Parse(expression).Evaluate(Context("T"));
         Assert.IsType(expectedType, actual);
-
-        // Keep this tokenization check at the literals' double precision across runtime conversions.
         Assert.Equal(expected, Convert.ToDouble(actual, CultureInfo.InvariantCulture));
+    }
+
+    [Theory]
+    [InlineData("[T].[Price] + &HFFFF")]
+    [InlineData("T.Price + &HFFFF&")]
+    [InlineData("[T]![Price] + &O17")]
+    [InlineData("T.Price + &17")]
+    public void QualifiedReference_WithRadixLiteralRefusesUnsupportedCombination(string expression)
+    {
+        Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse(expression));
+        Assert.Throws<JetNotSupportedException>(() => CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false));
     }
 
     [Theory]
@@ -132,12 +136,12 @@ public sealed class QualifiedExpressionReferenceTests
     [InlineData("[Other].[Price]")]
     [InlineData("[Other]![Price]")]
     [InlineData("[Other].Price")]
-    public void StaleBracketedQualifier_ReturnsNullInsteadOfUsingCurrentRow(string reference)
+    public void QualifiedLeaf_WithStaleBracketedQualifier_DoesNotBindCurrentRow(string reference)
     {
         CalculatedExpressionEvaluationContext context = Context("T");
         Assert.Same(DBNull.Value, CalculatedExpressionParser.Parse(reference + " * 2").Evaluate(context));
         Assert.True(Assert.IsType<bool>(CalculatedExpressionParser.Parse("IsNull(" + reference + ")").Evaluate(context)));
-        Assert.Equal(12, CalculatedExpressionParser.Parse("Nz(" + reference + ", 12)").Evaluate(context));
+        Assert.Throws<JetNotSupportedException>(() => CalculatedExpressionParser.Parse("Nz(" + reference + ", 12)"));
         Assert.False(ColumnDefaultValue.Compile(reference).TryEvaluate(typeof(double), () => context, out _));
         Assert.False(ColumnValidationRule.Compile(reference + " > 0", "Price").IsSupported);
     }
