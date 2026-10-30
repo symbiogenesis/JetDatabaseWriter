@@ -184,27 +184,13 @@ internal static class CalculatedColumnUtil
             return DBNull.Value;
         }
 
-        short storedLen = Ri16(payload, 0);
-        int mantissaLen = AlignToFour((storedLen > 0 ? storedLen : payload.Length - 2) - 2);
-        if (mantissaLen > payload.Length - 4)
-        {
-            throw new ArgumentException(
-                $"Calculated Numeric payload declares a {mantissaLen}-byte mantissa, but only {payload.Length - 4} bytes are available.",
-                nameof(payload));
-        }
-
-        if (mantissaLen <= 0)
-        {
-            return DBNull.Value;
-        }
-
-        if (mantissaLen > 12)
+        if (payload.Length > 16)
         {
             if (strict)
             {
                 throw new JetLimitationException(
                     JetErrorCode.NumericOverflow,
-                    $"Calculated Numeric mantissa is {mantissaLen} bytes, which exceeds the .NET decimal limit of 12 bytes.");
+                    $"Calculated Numeric payload is {payload.Length} bytes, which exceeds the native sixteen-byte Decimal layout.");
             }
 
             return DBNull.Value;
@@ -223,50 +209,17 @@ internal static class CalculatedColumnUtil
             return DBNull.Value;
         }
 
-        Span<byte> padded = stackalloc byte[12];
+        // Native ACE ignores the reserved ushort, which is commonly 0 or 14.
+        // It is not a length. Partial caches retain the fixed DECIMAL offsets
+        // and zero-fill missing trailing bytes, including individual word bytes.
+        Span<byte> padded = stackalloc byte[16];
         padded.Clear();
-        Span<byte> mantissa = padded[(12 - mantissaLen)..];
-        payload.Slice(4, mantissaLen).CopyTo(mantissa);
-        FixCalculatedNumericByteOrder(mantissa);
+        payload.CopyTo(padded);
 
-        uint hi = BinaryPrimitives.ReadUInt32BigEndian(padded[..4]);
-        uint mid = BinaryPrimitives.ReadUInt32BigEndian(padded.Slice(4, 4));
-        uint lo = BinaryPrimitives.ReadUInt32BigEndian(padded.Slice(8, 4));
+        uint hi = BinaryPrimitives.ReadUInt32LittleEndian(padded.Slice(4, 4));
+        uint lo = BinaryPrimitives.ReadUInt32LittleEndian(padded.Slice(8, 4));
+        uint mid = BinaryPrimitives.ReadUInt32LittleEndian(padded.Slice(12, 4));
         bool negative = payload[3] != 0;
-
-        try
-        {
-            return new decimal(unchecked((int)lo), unchecked((int)mid), unchecked((int)hi), negative, scale);
-        }
-        catch (OverflowException ex)
-        {
-            if (strict)
-            {
-                throw new JetLimitationException(
-                    JetErrorCode.NumericOverflow,
-                    $"Calculated Numeric value overflow (hi=0x{hi:X8}, mid=0x{mid:X8}, lo=0x{lo:X8}, scale={scale})",
-                    innerException: ex);
-            }
-
-            return DBNull.Value;
-        }
-    }
-
-    private static int AlignToFour(int value)
-        => value <= 0 ? 0 : (value + 3) / 4 * 4;
-
-    private static void FixCalculatedNumericByteOrder(Span<byte> bytes)
-    {
-        int pos = 0;
-        if (bytes.Length % 8 != 0 && bytes.Length >= 4)
-        {
-            bytes[..4].Reverse();
-            pos = 4;
-        }
-
-        for (; pos + 8 <= bytes.Length; pos += 8)
-        {
-            bytes.Slice(pos, 8).Reverse();
-        }
+        return new decimal(unchecked((int)lo), unchecked((int)mid), unchecked((int)hi), negative, scale);
     }
 }

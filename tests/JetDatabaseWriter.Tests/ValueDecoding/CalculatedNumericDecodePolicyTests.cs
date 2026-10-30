@@ -24,28 +24,24 @@ using Xunit;
 
 #pragma warning disable CA1812 // Public row materialization constructs the projection targets.
 
-/// <summary>Calculated Decimal mantissa bounds follow the public decode-fault policy.</summary>
+/// <summary>Calculated Decimal payload bounds follow the public decode-fault policy.</summary>
 public sealed class CalculatedNumericDecodePolicyTests
 {
     [Theory]
-    [InlineData((short)14, 4, true)]
-    [InlineData((short)14, 4, false)]
-    [InlineData((short)14, 5, true)]
-    [InlineData((short)14, 5, false)]
-    [InlineData((short)14, 7, true)]
-    [InlineData((short)14, 7, false)]
-    [InlineData((short)18, 16, true)]
-    [InlineData((short)18, 16, false)]
-    [InlineData((short)10, 8, true)]
-    [InlineData((short)10, 8, false)]
-    [InlineData((short)6, 7, true)]
-    [InlineData((short)6, 7, false)]
-    public async Task MalformedMantissaLength_PublicReadsAgree(short storedLength, int payloadLength, bool strict)
+    [InlineData((short)14, 1, true)]
+    [InlineData((short)14, 1, false)]
+    [InlineData((short)14, 2, true)]
+    [InlineData((short)14, 2, false)]
+    [InlineData((short)14, 3, true)]
+    [InlineData((short)14, 3, false)]
+    [InlineData((short)18, 17, true)]
+    [InlineData((short)18, 17, false)]
+    public async Task MalformedPayloadLength_PublicReadsAgree(short reservedPrefix, int payloadLength, bool strict)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream original = await CreateDatabaseAsync(42m, ct);
         byte[] bytes = original.ToArray();
-        await RewriteNumericPayloadAsync(original, bytes, storedLength, payloadLength, ct);
+        await RewriteNumericPayloadAsync(original, bytes, reservedPrefix, payloadLength, ct);
 
         await using var traceOutput = new StringWriter(CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(traceOutput);
@@ -63,7 +59,6 @@ public sealed class CalculatedNumericDecodePolicyTests
                 JetCorruptDataException table = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
                 Assert.Equal(JetErrorCode.MalformedValue, strings.ErrorCode);
                 Assert.Equal("Value", strings.ErrorInfo.ColumnName);
-                Assert.IsType<ArgumentException>(strings.InnerException, exactMatch: false);
                 Assert.Contains("Value", strings.Message, StringComparison.Ordinal);
                 Assert.Equal(strings.Message, typed.Message);
                 Assert.Equal(typed.Message, poco.Message);
@@ -101,22 +96,28 @@ public sealed class CalculatedNumericDecodePolicyTests
     }
 
     [Theory]
-    [InlineData(4, true)]
-    [InlineData(4, false)]
     [InlineData(8, true)]
     [InlineData(8, false)]
-    public void AcceptedShortMantissa_ZeroExtendsToDecimal(int mantissaLength, bool strict)
+    [InlineData(12, true)]
+    [InlineData(12, false)]
+    public void PartialPayload_PreservesFixedDecimalWordOffsets(int payloadLength, bool strict)
     {
-        byte[] payload = new byte[mantissaLength + 4];
-        BinaryPrimitives.WriteInt16LittleEndian(payload, checked((short)(mantissaLength + 2)));
+        byte[] payload = new byte[payloadLength];
+        BinaryPrimitives.WriteInt16LittleEndian(payload, 14);
         Assert.Equal(0m, CalculatedColumnUtil.ReadPayloadTyped(payload, ColumnType.NumericType, strict));
         Assert.Equal("0", CalculatedColumnUtil.ReadPayloadString(payload, ColumnType.NumericType, strict));
 
         payload[2] = 2;
         payload[3] = 0x80;
-        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(4, 4), 42);
-        Assert.Equal(-0.42m, CalculatedColumnUtil.ReadPayloadTyped(payload, ColumnType.NumericType, strict));
-        Assert.Equal("-0.42", CalculatedColumnUtil.ReadPayloadString(payload, ColumnType.NumericType, strict));
+        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(4, 4), 1);
+        if (payloadLength == 12)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(8, 4), 42);
+        }
+
+        decimal expected = payloadLength == 8 ? -184467440737095516.16m : -184467440737095516.58m;
+        Assert.Equal(expected, CalculatedColumnUtil.ReadPayloadTyped(payload, ColumnType.NumericType, strict));
+        Assert.Equal(expected.ToString(CultureInfo.InvariantCulture), CalculatedColumnUtil.ReadPayloadString(payload, ColumnType.NumericType, strict));
     }
 
     [Theory]

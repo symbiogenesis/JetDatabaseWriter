@@ -205,25 +205,19 @@ Two result types have Access-specific payload encodings inside the wrapper:
 
 - `Boolean`: one byte, `0xFF` for true and `0x00` for false. Calculated booleans
   are not stored in the row null mask.
-- `Numeric`: 16 bytes: a 2-byte payload-length prefix, scale byte, sign byte
-  (`0x80` for negative), then the 96-bit decimal mantissa in Access's calculated
-  numeric byte order. This is not the normal 17-byte `Numeric` fixed slot.
+- `Numeric`: normally 16 bytes: a reserved two-byte word, scale byte, sign byte
+  (`0x80` for negative), then little-endian Hi32, Lo32 and Mid32 coefficient
+  words. This differs from the ordinary 17-byte Numeric fixed slot.
 
-The committed Access fixture `calcFieldTestV2010.accdb`, `Table1.WeeklySalary`,
-uses a 16-byte Numeric payload with stored length 14. Its zero payload is
-`0E000000000000000000000000000000`: scale/sign zero and a full twelve-byte
-zero mantissa. `CalculatedNumericDecodePolicyTests` checks these native cached
-values and preserves both zero and an empty-envelope null result.
-
-A claimed, four-byte-aligned mantissa length cannot exceed the bytes available
-after the four-byte Numeric header. Contradictions raise a contextual
-`MalformedValue` failure on strict reads; lenient reads return their documented
-missing values with a diagnostic. An unrelated-column update refuses the same
-unreadable value without changing database bytes. The decoder zero-extends
-accepted shorter mantissas into its decimal buffer. Four/eight-byte controls
-pin existing decoder behavior only; native compact-width, nonpositive-prefix
-and empty-mantissa semantics remain unverified.
-
+Independent native source and compacted controls establish that the leading
+word is not a payload length: native direct references use zero and arithmetic
+results commonly use 14. Decoding ignores that reserved word, validates scale
+and sign, and reads coefficient words at fixed offsets. Payload widths from
+four through sixteen bytes zero-fill omitted trailing bytes; a four-byte header
+is Decimal zero. An empty calculated envelope is ordinary Null. Short headers,
+invalid scale/sign and oversized payloads report contextual corruption.
+`CalculatedNumericNativeLayoutTests` checks native ordinary/reference/arithmetic
+payloads, native compaction and public writer/native recalculation.
 Helpers in this codebase: `CalculatedColumnUtil.Wrap` / `.Unwrap` (round-trip
 verified by `CalculatedColumnUtilTests`).
 
