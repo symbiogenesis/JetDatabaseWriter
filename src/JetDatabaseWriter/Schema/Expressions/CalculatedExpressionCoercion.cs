@@ -29,6 +29,13 @@ internal static class CalculatedExpressionCoercion
         "MM/dd/yyyy",
     ];
 
+    private static ReadOnlySpan<double> DecimalPowersOfTen =>
+    [
+        1d, 1E1, 1E2, 1E3, 1E4, 1E5, 1E6, 1E7, 1E8, 1E9,
+        1E10, 1E11, 1E12, 1E13, 1E14, 1E15, 1E16, 1E17, 1E18, 1E19,
+        1E20, 1E21, 1E22, 1E23, 1E24, 1E25, 1E26, 1E27, 1E28,
+    ];
+
     internal static object CoerceResult(object? value, Type targetType, bool isCalculatedColumn = false)
     {
         if (IsNull(value))
@@ -390,11 +397,19 @@ internal static class CalculatedExpressionCoercion
     /// </summary>
     /// <param name="value">The value to convert.</param>
     /// <returns>The numeric value.</returns>
+    /// <exception cref="OverflowException">A floating value is nonfinite or outside the Access Decimal range.</exception>
     internal static decimal ToDecimal(object? value)
     {
         if (value is bool boolean)
         {
             return boolean ? -1m : 0m;
+        }
+
+        if (value is float or double)
+        {
+            return TryConvertFloatingDecimal(ToDouble(value), value is float, out decimal result)
+                ? result
+                : throw new OverflowException("The value is outside the range of an Access Decimal.");
         }
 
         return Convert.ToDecimal(value, CultureInfo.InvariantCulture);
@@ -546,6 +561,11 @@ internal static class CalculatedExpressionCoercion
             return true;
         }
 
+        if (value is float or double)
+        {
+            return TryConvertFloatingDecimal(ToDouble(value), value is float, out result);
+        }
+
         if (ScalarConversion.TryConvert(value, typeof(decimal), out object? converted))
         {
             result = (decimal)converted!;
@@ -590,6 +610,76 @@ internal static class CalculatedExpressionCoercion
 
         result = default;
         return false;
+    }
+
+    private static bool TryConvertFloatingDecimal(double number, bool single, out decimal result)
+    {
+        // Adapted from dotnet/runtime v10.0.0 Decimal.DecCalc VarDecFromR4/R8;
+        // see THIRD-PARTY-NOTICES.md. Native Jet4 field controls pin this OLE
+        // conversion policy independently of the executing .NET runtime.
+        result = 0m;
+        int exponent = (int)((BitConverter.DoubleToInt64Bits(number) >> 52) & 0x7FF) - 1022;
+        if (exponent > 96)
+        {
+            return false;
+        }
+
+        if (exponent < -94)
+        {
+            return true;
+        }
+
+        bool negative = number < 0d;
+        number = Math.Abs(number);
+        int scale = Math.Min(28, (single ? 6 : 14) - ((exponent * 19728) >> 16));
+        double lower = single ? 1E6 : 1E14;
+        if (scale >= 0)
+        {
+            number *= DecimalPowersOfTen[scale];
+        }
+        else if (scale != -1 || number >= lower * 10d)
+        {
+            number /= DecimalPowersOfTen[-scale];
+        }
+        else
+        {
+            scale = 0;
+        }
+
+        if (number < lower && scale < 28)
+        {
+            number *= 10d;
+            scale++;
+        }
+
+        ulong mantissa = (ulong)Math.Round(number, MidpointRounding.ToEven);
+        if (mantissa == 0)
+        {
+            return true;
+        }
+
+        if (scale < 0)
+        {
+            result = mantissa;
+            for (; scale < 0; scale++)
+            {
+                result *= 10m;
+            }
+
+            result = negative ? -result : result;
+        }
+        else
+        {
+            while (scale > 0 && mantissa % 10 == 0)
+            {
+                mantissa /= 10;
+                scale--;
+            }
+
+            result = new decimal(unchecked((int)(uint)mantissa), (int)(mantissa >> 32), 0, negative, (byte)scale);
+        }
+
+        return true;
     }
 
     private static string ToFloatingText(double value, int precision)

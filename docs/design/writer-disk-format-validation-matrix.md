@@ -729,4 +729,12 @@ refusal exercise the shared interpreter. Currency identity, additional locales
 and fresh ACE native contexts remain R4/E2 work. The native engine module is
 `dao360.dll` 10.0.26100.5074; no Access desktop/UI execution is inferred.
 
+`CalculatedExpressionDecimalCoercionTests` compares exact Single/Double source
+bits with native Jet4 mixed-Decimal field results, including scaled midpoints,
+underflow and range boundaries. The interpreter uses explicit binary scaling
+and integer Decimal construction across runtimes. Native finite overflow can
+promote to Double and nonfinite fields can expose missing results; matching
+those results remains separate from the current conservative refusal policy.
+Caller-field/storage and reverse conversion qualification remain R4 work.
+
 `PublicTextCollationTests` and `TextSortOrderFixtureTests` cover public General97/General Legacy/General choices, raw stored ID/version metadata, null header-default selection, unknown-ID reporting, no-mutation invalid-choice refusal, Text/Memo/calculated Text and schema preservation. `PublicTextCollationDaoTests` independently checks writer-created columns through schema edits and row updates, native case-equivalent seek, duplicate refusal, insert/update and compact/readback. Current x86 DAO3.6 (`dao360.dll` 10.0.26100.5074) controls passed for Jet3 General97 and Jet4 General Legacy. Four fresh DAO120 Jet4/ACE cases remain guarded and skipped on this host. Existing encoders and text code pages are unchanged; broader locale, long-key and native mixed-column coverage remains F9/E2 work.
