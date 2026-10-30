@@ -1,0 +1,126 @@
+[
+    {
+        "Expression":  "0.1",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "0.5",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "0.6",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "1.5",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "-0.1",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "-0.5",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "-0.6",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "255",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "256",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "32767",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "32768",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "2147483647",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "2147483648",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "1e100",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "1e-100",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "\"true\"",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "\"false\"",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "\"0\"",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "\"1\"",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "\"abc\"",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "\"\"",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "#12:00 AM#",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "#1:00 AM#",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "IIf(\"0\",1,2)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "IIf(\"false\",1,2)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "IIf(0.1,1,2)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "IIf(1e-100,1,2)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "\"abc\" And 3",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "\"0\" Or 0",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "\"\" Or 0",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "\"false\" And 1",
+        "ResultType":  1
+    }
+]

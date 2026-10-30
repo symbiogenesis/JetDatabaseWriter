@@ -11,6 +11,12 @@ internal sealed class CalculatedExpressionFunctionNode(string name, IReadOnlyLis
         {
             object left = args[0].Evaluate(context);
             object right = args[1].Evaluate(context);
+            if (context.IsCalculatingColumn)
+            {
+                left = CalculatedExpressionCoercion.ToCalculatedBitwiseOperand(left);
+                right = CalculatedExpressionCoercion.ToCalculatedBitwiseOperand(right);
+            }
+
             if (left is CalculatedError || right is CalculatedError)
             {
                 object result = name.Equals("AND", System.StringComparison.OrdinalIgnoreCase)
@@ -52,5 +58,5 @@ internal sealed class CalculatedExpressionFunctionNode(string name, IReadOnlyLis
     }
 
     private static bool MapsArgumentErrors(string functionName)
-        => functionName.TrimEnd('$').ToUpperInvariant() is "INSTR" or "ASC" or "LEN" or "LEFT" or "RIGHT" or "MID" or "UCASE" or "LCASE" or "TRIM" or "STR" or "STRING" or "FV" or "PV" or "PMT" or "NPER" or "IPMT" or "PPMT" or "DDB" or "SLN" or "SYD" or "RATE";
+        => functionName.TrimEnd('$').ToUpperInvariant() is "INSTR" or "ASC" or "LEN" or "LEFT" or "RIGHT" or "MID" or "UCASE" or "LCASE" or "TRIM" or "STR" or "STRING" or "CHOOSE" or "NOT" or "FV" or "PV" or "PMT" or "NPER" or "IPMT" or "PPMT" or "DDB" or "SLN" or "SYD" or "RATE";
 }

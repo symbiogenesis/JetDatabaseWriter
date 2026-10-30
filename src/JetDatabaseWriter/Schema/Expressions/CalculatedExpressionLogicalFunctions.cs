@@ -20,7 +20,7 @@ internal static class CalculatedExpressionLogicalFunctions
         // three-valued with Null, as in VBA (AccessVariantOperators).
         AddFunction(functions, "AND", 2, 2, static function => AccessVariantOperators.And(function.Arg(0), function.Arg(1)));
         AddFunction(functions, "OR", 2, 2, static function => AccessVariantOperators.Or(function.Arg(0), function.Arg(1)));
-        AddFunction(functions, "NOT", 1, 1, static function => AccessVariantOperators.Not(function.Arg(0)));
+        AddFunction(functions, "NOT", 1, 1, static function => AccessVariantOperators.Not(function.Context.IsCalculatingColumn ? ToCalculatedBitwiseOperand(function.Arg(0)) : function.Arg(0)));
         AddFunction(functions, "XOR", 2, 2, static function => AccessVariantOperators.Xor(function.Arg(0), function.Arg(1)));
         AddFunction(functions, "EQV", 2, 2, static function => AccessVariantOperators.Eqv(function.Arg(0), function.Arg(1)));
         AddFunction(functions, "IMP", 2, 2, static function => AccessVariantOperators.Imp(function.Arg(0), function.Arg(1)));
@@ -31,13 +31,18 @@ internal static class CalculatedExpressionLogicalFunctions
         AddFunction(functions, "SWITCH", 2, int.MaxValue, EvaluateSwitch);
         AddFunction(functions, "NZ", 1, 2, EvaluateNz);
         AddFunction(functions, "ISNULL", 1, 1, static function => IsNull(function.Arg(0)), "ISBLANK");
+        AddFunction(functions, "ISEMPTY", 1, 1, static function =>
+        {
+            _ = function.Arg(0);
+            return false;
+        });
         AddFunction(functions, "ISNUMERIC", 1, 1, static function => TryConvertDecimal(function.Arg(0), out _), "ISNUMBER");
         AddFunction(functions, "ISDATE", 1, 1, static function => IsDateValue(function.Arg(0)));
         AddFunction(functions, "CBOOL", 1, 1, static function => ToBoolean(function.Arg(0)));
     }
 
     private static object EvaluateIIf(CalculatedFunctionInvocation function)
-        => ToBoolean(function.Arg(0)) ? function.Arg(1) : function.Arg(2);
+        => (function.Context.IsCalculatingColumn ? ToCalculatedCondition(function.Arg(0)) : ToBoolean(function.Arg(0))) ? function.Arg(1) : function.Arg(2);
 
     /// <summary>
     /// VBA's <c>IsDate</c>: True for a date, or for text that parses as one. A number is
@@ -106,8 +111,14 @@ internal static class CalculatedExpressionLogicalFunctions
 
     private static object EvaluateChoose(CalculatedFunctionInvocation function)
     {
-        int choiceIndex = checked((int)ToDecimal(function.Arg(0)));
-        return choiceIndex >= 1 && choiceIndex < function.Count ? function.Arg(choiceIndex) : DBNull.Value;
+        object[] values = new object[function.Count];
+        for (int index = 0; index < values.Length; index++)
+        {
+            values[index] = function.Arg(index);
+        }
+
+        int choiceIndex = checked((int)ToDecimal(values[0]));
+        return choiceIndex >= 1 && choiceIndex < values.Length ? values[choiceIndex] : DBNull.Value;
     }
 
     private static object EvaluateSwitch(CalculatedFunctionInvocation function)

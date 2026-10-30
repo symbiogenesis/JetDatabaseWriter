@@ -792,3 +792,25 @@ and verifies native calculated caches through writer recomputation, native
 updates and compact. The bounded Rate algorithm adapts the MIT-licensed .NET
 implementation named in THIRD-PARTY-NOTICES.md; other operations preserve the
 independently measured Access order where it differs from .NET.
+
+## Native calculated conditions and Boolean results
+
+Table calculated fields distinguish condition truth from Boolean result conversion.
+`IIf` treats every non-null string, including `""`, `"0"` and `"false"`, as true;
+floating conditions retain every nonzero value. Its unused branch is not evaluated.
+Boolean result conversion instead rounds numeric input half to even to a signed
+16-bit Integer before testing zero. Long/Double overflow caches status 6, while
+Decimal overflow caches status 13. Ordinary Null remains Null.
+
+`Choose` evaluates all arguments before selecting a branch and truncates its
+one-based index. A Null index caches status 13; an error in an unselected argument
+still propagates. `IsEmpty` evaluates its argument and returns false for the
+available row values, including Null. Native bitwise operators treat nonnumeric
+strings, including an empty string, as true; numeric strings follow integer
+conversion. These rules are specific to table calculations; shared rule/default
+contexts retain their independently qualified behavior.
+
+`CalculatedNativeLogicalTests` compares independent ACE-authored source and native
+compacted fixtures with writer-produced caches, native recalculation and compact.
+The provenance, exact input manifests and hashes are retained in
+`Databases/NativeCalculatedLogic/README.md`.

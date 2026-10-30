@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Schema.Expressions;
 using System;
 using System.Globalization;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Models;
 
 internal static class CalculatedExpressionCoercion
 {
@@ -85,7 +86,7 @@ internal static class CalculatedExpressionCoercion
 
         if (targetType == typeof(bool))
         {
-            return ToBoolean(value);
+            return isCalculatedColumn ? ToCalculatedBooleanResult(value!) : ToBoolean(value);
         }
 
         if (targetType == typeof(byte))
@@ -540,6 +541,42 @@ internal static class CalculatedExpressionCoercion
 
         string text = ToText(value);
         return bool.TryParse(text, out bool parsed) ? parsed : !string.IsNullOrEmpty(text);
+    }
+
+    internal static bool ToCalculatedCondition(object value) => value switch
+    {
+        DBNull => false,
+        string or Guid => true,
+        float number => number != 0f,
+        double number => number != 0d,
+        NativeDate date => date.Serial != 0d,
+        DateTime date => date.ToOADate() != 0d,
+        _ => ToBoolean(value),
+    };
+
+    /// <summary>Maps nonnumeric strings, including empty strings, to native True operands.</summary>
+    /// <param name="value">The operand.</param>
+    /// <returns>The native bitwise operand; numeric strings retain integer conversion.</returns>
+    internal static object ToCalculatedBitwiseOperand(object value)
+        => value is string text && !double.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out _) ? true : value;
+
+    private static bool ToCalculatedBooleanResult(object value)
+    {
+        if (value is bool boolean)
+        {
+            return boolean;
+        }
+
+        try
+        {
+            return checked((short)AccessVariantOperators.ToRoundedLong(value)) != 0;
+        }
+        catch (OverflowException exception) when (value is decimal)
+        {
+            // Native Decimal-to-Boolean overflow reports type mismatch; Long
+            // and Double sources instead retain numeric overflow status.
+            throw new InvalidCastException("The Decimal result cannot be converted to a calculated Boolean.", exception);
+        }
     }
 
     /// <summary>

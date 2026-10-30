@@ -1,0 +1,130 @@
+[
+    {
+        "Expression":  "Choose(1.5,10,20,30)",
+        "ResultType":  7
+    },
+    {
+        "Expression":  "Choose(2.5,10,20,30)",
+        "ResultType":  7
+    },
+    {
+        "Expression":  "Choose(0.5,10,20,30)",
+        "ResultType":  7
+    },
+    {
+        "Expression":  "Choose(Null,10,20)",
+        "ResultType":  7
+    },
+    {
+        "Expression":  "IIf(Null,1,2)",
+        "ResultType":  7
+    },
+    {
+        "Expression":  "IIf(\"abc\",1,2)",
+        "ResultType":  7
+    },
+    {
+        "Expression":  "IIf(\"\",1,2)",
+        "ResultType":  7
+    },
+    {
+        "Expression":  "IIf(\"true\",1,2)",
+        "ResultType":  7
+    },
+    {
+        "Expression":  "\"abc\"",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "\"\"",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "\"yes\"",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "1 In (Null,2)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "1 Not In (Null,2)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "1 In (Null,1)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "Null Like \"a\"",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "\"abc\" Like \"[\"",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "IIf(False,1/0,2)",
+        "ResultType":  7
+    },
+    {
+        "Expression":  "Choose(1,42,1/0)",
+        "ResultType":  7
+    },
+    {
+        "Expression":  "False And \"abc\"",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "False And (1/0)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "Not \"abc\"",
+        "ResultType":  7
+    },
+    {
+        "Expression":  "Null And \"abc\"",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "IsEmpty(Null)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "IsEmpty(\"\")",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "IsEmpty(1/0)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "IsEmpty(0)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "IsObject(1)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "IsArray(1)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "IsMissing(1)",
+        "ResultType":  1
+    },
+    {
+        "Expression":  "Npm(1)",
+        "ResultType":  7
+    },
+    {
+        "Expression":  "NPV(.1,1)",
+        "ResultType":  7
+    },
+    {
+        "Expression":  "#1899-12-29 12:00# \u003c #1899-12-29 6:00#",
+        "ResultType":  1
+    }
+]

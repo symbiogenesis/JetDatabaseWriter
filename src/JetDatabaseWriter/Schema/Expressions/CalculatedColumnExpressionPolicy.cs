@@ -11,7 +11,7 @@ internal static class CalculatedColumnExpressionPolicy
         // have native $ aliases. Shared interpreter aliases remain separate.
         if (name.ToUpperInvariant() is not (
             "ABS" or "ASC" or "ATN" or "CDBL" or "CHOOSE" or "COS" or "DATESERIAL" or "DAY" or "DDB" or
-            "EXP" or "FIX" or "FV" or "HOUR" or "IIF" or "INSTR" or "INT" or "IPMT" or "ISNULL" or
+            "EXP" or "FIX" or "FV" or "HOUR" or "IIF" or "INSTR" or "INT" or "IPMT" or "ISNULL" or "ISEMPTY" or
             "LCASE" or "LCASE$" or "LEFT" or "LEFT$" or "LEN" or "LOG" or "MID" or "MID$" or "MINUTE" or
             "MONTH" or "MONTHNAME" or "NPER" or "PMT" or "PPMT" or "PV" or "RATE" or "RIGHT" or "RIGHT$" or
             "ROUND" or "SECOND" or "SGN" or "SIN" or "SLN" or "SPACE" or "SPACE$" or "SQR" or "STR" or "STR$" or
