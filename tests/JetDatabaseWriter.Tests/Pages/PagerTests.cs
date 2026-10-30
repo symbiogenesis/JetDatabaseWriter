@@ -18,8 +18,8 @@ using Xunit;
 /// (on an encrypted file too), counts its appended pages in
 /// <see cref="Pager.PageCount"/>, keeps positional reads off while the
 /// journal is attached, and returns to the file's bytes on rollback; and a
-/// page cache over the writer's file must not cache. That the reader's graph
-/// holds no pager is checked in <see cref="Architecture.ServiceGraphTests"/>.
+/// reader wrapper shares the pager's frames without retaining duplicate images.
+/// That the reader's graph holds no pager is checked in <see cref="Architecture.ServiceGraphTests"/>.
 /// Each case runs on writer-created Jet3, Jet4 and ACCDB databases.
 /// </summary>
 public sealed class PagerTests
@@ -237,21 +237,68 @@ public sealed class PagerTests
         Assert.Equal(pager.PageSize, page.Length);
     }
 
-    [Fact]
-    public async Task ReaderPageCache_OverPager_RejectsPositiveCapacity()
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, 0, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, 0, true)]
+    [InlineData(DatabaseFormat.Jet3Mdb, 1, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, 1, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, 0, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, 0, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, 1, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, 1, true)]
+    [InlineData(DatabaseFormat.AceAccdb, 0, false)]
+    [InlineData(DatabaseFormat.AceAccdb, 0, true)]
+    [InlineData(DatabaseFormat.AceAccdb, 1, false)]
+    [InlineData(DatabaseFormat.AceAccdb, 1, true)]
+    public async Task ReaderPageCache_OverPager_SharesFramesAndTracksTransactionVisibility(DatabaseFormat format, int capacity, bool commit)
     {
-        await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
+        await using MemoryStream stream = await CreateDatabaseAsync(format);
         await using AccessWriter writer = await OpenAsync(stream, encrypted: false);
+        using var cached = new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity);
+        byte[] fileBefore = stream.ToArray();
+        const long pageNumber = 2;
 
-        ArgumentException ex = Assert.Throws<ArgumentException>(() => new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity: 1));
-        Assert.Equal("capacity", ex.ParamName);
+        using (PageLease original = await cached.ReadPageAsync(pageNumber, Ct))
+        {
+            byte[] before = original.Memory.ToArray();
+            byte[] changed = (byte[])before.Clone();
+            changed[^1] ^= 0x5A;
+            using (PageLease shared = await cached.ReadPageAsync(pageNumber, Ct))
+            {
+                Assert.Same(original.Buffer, shared.Buffer);
+                Assert.Equal(2, cached.OutstandingLeases);
+            }
 
-        using var uncached = new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity: 0);
-        Assert.Equal(0, uncached.Hits);
+            Assert.Equal(1, cached.OutstandingLeases);
+            await using JetTransaction transaction = await writer.Services.Transactions.BeginTransactionAsync(Ct);
+            await writer.Pager.WritePageAsync(pageNumber, changed, Ct);
+            using PageLease pending = await cached.ReadPageAsync(pageNumber, Ct);
+            Assert.Equal(changed, pending.Memory.ToArray());
+            Assert.Equal(before, original.Memory.ToArray());
+            Assert.NotSame(original.Buffer, pending.Buffer);
+            Assert.Equal(fileBefore, stream.ToArray());
 
-        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
-        using var cached = new ReaderPageCache(reader.Database.Format, reader.Database.Pages, capacity: 8);
-        Assert.Equal(0, cached.Misses);
+            if (commit)
+            {
+                await transaction.CommitAsync(Ct);
+            }
+            else
+            {
+                await transaction.RollbackAsync(Ct);
+            }
+
+            using PageLease current = await cached.ReadPageAsync(pageNumber, Ct);
+            Assert.Equal(commit ? changed : before, current.Memory.ToArray());
+            Assert.Equal(3, cached.OutstandingLeases);
+            Assert.Equal(0, cached.Hits);
+            Assert.Equal(0, cached.Misses);
+            cached.Dispose();
+            Assert.Equal(before, original.Memory.ToArray());
+            Assert.Equal(changed, pending.Memory.ToArray());
+            Assert.Equal(commit ? changed : before, current.Memory.ToArray());
+        }
+
+        Assert.Equal(0, cached.OutstandingLeases);
     }
 
     private static byte[] FilledPage(int pageSize, byte value)
