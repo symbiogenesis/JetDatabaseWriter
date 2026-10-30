@@ -11,7 +11,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Maintenance;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -49,6 +51,8 @@ public sealed class NativeApplicationObjectPreservationTests
         Assert.Contains(original.Catalog, row => row.Contains(Hex("EvidenceReport"), StringComparison.Ordinal));
         Assert.True(original.Pages.Count > 0);
         Assert.True(original.Tables["MSysAccessStorage"].Length > 0);
+        Assert.NotEmpty(original.Permissions);
+        Assert.NotEmpty(original.LongValueRows);
         if (codeObjects)
         {
             Assert.Contains(original.Catalog, row => row.Contains(Hex("EvidenceMacro"), StringComparison.Ordinal));
@@ -69,6 +73,10 @@ public sealed class NativeApplicationObjectPreservationTests
         {
             Assert.Equal(page.Value, actual.Pages[page.Key]);
         }
+
+        Assert.Equal(original.Permissions, actual.Permissions);
+        Assert.Equal(original.LongValueDescriptors, actual.LongValueDescriptors);
+        Assert.Equal(original.LongValueRows, actual.LongValueRows);
 
         await AssertItemsAsync(session.SourcePath, operation);
     }
@@ -193,6 +201,12 @@ public sealed class NativeApplicationObjectPreservationTests
             .Select(EncodeRow).Order(StringComparer.Ordinal).ToArray();
         var tables = new SortedDictionary<string, string[]>(StringComparer.Ordinal);
         var owners = new HashSet<int>();
+        var longValues = new SortedDictionary<uint, string>();
+        var descriptors = new List<string>();
+        byte[] bytes = await File.ReadAllBytesAsync(path, Ct);
+        int itemId = (int)Assert.Single(catalog.AsEnumerable(), row => (string)row["Name"] == "Items")["Id"];
+        using DataTable permissions = await reader.ReadTableAsync("MSysACEs", cancellationToken: Ct);
+        string[] retainedPermissions = permissions.AsEnumerable().Select(EncodeRow).Order(StringComparer.Ordinal).ToArray();
         foreach (DataRow row in catalog.AsEnumerable().Where(row => (short)row["Type"] == Constants.SystemObjects.UserTableType))
         {
             string name = (string)row["Name"];
@@ -206,10 +220,14 @@ public sealed class NativeApplicationObjectPreservationTests
             tables.Add(name, data.AsEnumerable().Select(EncodeRow).Order(StringComparer.Ordinal).ToArray());
         }
 
-        // LVAL pages use their own header rather than this owner field. Their complete
-        // payloads are covered by the table values above, while this comparison pins
-        // the selected TDEF/data/index pages, including unused bytes and row framing.
-        byte[] bytes = await File.ReadAllBytesAsync(path, Ct);
+        // Catalog rows can move while the edited table's properties change. Select
+        // retained objects by Id, then pin each external LVAL bookmark and full row,
+        // including the native token, directory entry, chain pointer and padding.
+        foreach (int owner in owners.Append(2))
+        {
+            await SnapshotLongValuesAsync(reader, bytes, owner, owner == 2 ? itemId : null, descriptors, longValues);
+        }
+
         int pageSize = reader.Database.Format.PageSize;
         int ownerOffset = reader.Database.Format.DataPage.TDefOff;
         var pages = new SortedDictionary<long, byte[]>();
@@ -224,7 +242,107 @@ public sealed class NativeApplicationObjectPreservationTests
             }
         }
 
-        return new(identities, tables, pages);
+        return new(identities, tables, pages, retainedPermissions, descriptors.Order(StringComparer.Ordinal).ToArray(), longValues);
+    }
+
+    private static async Task SnapshotLongValuesAsync(AccessReader reader, byte[] bytes, int owner, int? excludedId, List<string> descriptors, SortedDictionary<uint, string> rows)
+    {
+        TDefImage definition = Assert.IsType<TDefImage>(await reader.Database.TableDefs.ReadImageAsync(owner, Ct));
+        await reader.Database.OwnedPages.ForEachLiveTableRowAsync(
+            owner,
+            async (row, token) =>
+            {
+                var fields = new List<CompactRawField>();
+                await CompactRawFieldReader.ScanAsync(
+                    reader.Database.Format,
+                    definition,
+                    row.Location,
+                    row.Page.AsMemory(row.Location.RowStart, row.Location.RowSize),
+                    (field, _) =>
+                    {
+                        fields.Add(field);
+                        return ValueTask.CompletedTask;
+                    },
+                    token);
+                int? catalogId = excludedId.HasValue
+                    ? BinaryPrimitives.ReadInt32LittleEndian(Assert.Single(fields, field => field.Column.Name == "Id").RawBytes.Span)
+                    : null;
+                if (catalogId == excludedId && excludedId.HasValue)
+                {
+                    return true;
+                }
+
+                foreach (CompactRawField field in fields.Where(field => field.Kind == CompactRawFieldKind.Stored && field.IsLongValue))
+                {
+                    string identity = catalogId.HasValue ? $"id:{catalogId}" : $"row:{row.Location.PageNumber}:{row.Location.RowIndex}";
+                    descriptors.Add($"{owner}|{identity}|{field.Column.Name}|{Convert.ToHexString(field.RawBytes.Span)}");
+                    SnapshotLongValueRows(bytes, reader.Database.Format, field.RawBytes.Span, rows);
+                }
+
+                return true;
+            },
+            Ct,
+            requireCompleteRows: true);
+    }
+
+    private static void SnapshotLongValueRows(byte[] bytes, JetFormat format, ReadOnlySpan<byte> descriptor, SortedDictionary<uint, string> rows)
+    {
+        Assert.True(descriptor.Length >= Constants.LongValue.HeaderSize);
+        uint lengthAndMode = BinaryPrimitives.ReadUInt32LittleEndian(descriptor);
+        uint mode = lengthAndMode >> 30;
+        if (mode == 2)
+        {
+            return;
+        }
+
+        Assert.True(mode is 0 or 1);
+        int remaining = checked((int)(lengthAndMode & 0x3FFFFFFFu));
+        uint pointer = BinaryPrimitives.ReadUInt32LittleEndian(descriptor[4..]);
+        var visited = new HashSet<uint>();
+        while (remaining > 0)
+        {
+            Ct.ThrowIfCancellationRequested();
+            Assert.True(pointer != 0 && visited.Add(pointer), "Native LVAL chain must have unique nonzero bookmarks.");
+            int number = checked((int)(pointer >> 8));
+            int index = checked((int)(pointer & 0xFFu));
+            ReadOnlySpan<byte> page = bytes.AsSpan(checked(number * format.PageSize), format.PageSize);
+            Assert.Equal(Constants.PageTypes.Data, page[0]);
+            Assert.Equal("4C56414C", Convert.ToHexString(page.Slice(4, 4)));
+            int count = BinaryPrimitives.ReadUInt16LittleEndian(page[format.DataPage.NumRows..]);
+            Assert.InRange(index, 0, count - 1);
+            int position = format.DataPage.RowsStart + (index * sizeof(ushort));
+            ushort slot = BinaryPrimitives.ReadUInt16LittleEndian(page[position..]);
+            Assert.Equal(0, slot & Constants.DataPage.NonLiveRowFlags);
+            int start = slot & Constants.DataPage.RowOffsetMask;
+            Assert.InRange(start, format.DataPage.RowsStart + (count * sizeof(ushort)), format.PageSize - 1);
+            int end = format.PageSize;
+            for (int neighbor = 0; neighbor < count; neighbor++)
+            {
+                int candidate = BinaryPrimitives.ReadUInt16LittleEndian(page[(format.DataPage.RowsStart + (neighbor * sizeof(ushort)))..]) & Constants.DataPage.RowOffsetMask;
+                if (candidate > start && candidate < end)
+                {
+                    end = candidate;
+                }
+            }
+
+            ReadOnlySpan<byte> payload = page[start..end];
+            string snapshot = $"{Convert.ToHexString(page.Slice(8, 4))}|{slot}|{Convert.ToHexString(payload)}";
+            if (rows.TryGetValue(pointer, out string? previous))
+            {
+                Assert.Equal(previous, snapshot);
+            }
+            else
+            {
+                rows.Add(pointer, snapshot);
+            }
+
+            int prefix = mode == 0 ? sizeof(uint) : 0;
+            Assert.True(payload.Length > prefix);
+            remaining -= Math.Min(remaining, payload.Length - prefix);
+            pointer = prefix == 0 ? 0 : BinaryPrimitives.ReadUInt32LittleEndian(payload);
+        }
+
+        Assert.Equal(0u, pointer);
     }
 
     private static string EncodeRow(DataRow row) => string.Join("|", row.ItemArray.Select(value => value switch
@@ -239,5 +357,11 @@ public sealed class NativeApplicationObjectPreservationTests
 
     private static string Literal(string path) => AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(path);
 
-    private sealed record Snapshot(string[] Catalog, SortedDictionary<string, string[]> Tables, SortedDictionary<long, byte[]> Pages);
+    private sealed record Snapshot(
+        string[] Catalog,
+        SortedDictionary<string, string[]> Tables,
+        SortedDictionary<long, byte[]> Pages,
+        string[] Permissions,
+        string[] LongValueDescriptors,
+        SortedDictionary<uint, string> LongValueRows);
 }
