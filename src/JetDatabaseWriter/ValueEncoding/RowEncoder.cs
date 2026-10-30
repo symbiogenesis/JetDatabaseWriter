@@ -413,7 +413,8 @@ internal sealed class RowEncoder(JetFormat format)
         Span<byte> nullMask = nullMaskLen <= 32 ? stackalloc byte[nullMaskLen] : new byte[nullMaskLen];
         nullMask.Clear();
 
-        int fixedAreaSize = 0;
+        // Access reserves every declared fixed slot, including trailing Null scalars.
+        int fixedAreaSize = maxFixedEnd;
         byte[][] varEntries = varLen > 0 ? new byte[varLen][] : [];
         int varPayloadSize = 0;
 

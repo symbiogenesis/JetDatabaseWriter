@@ -71,6 +71,15 @@ remaining native query/application forms and Access UI Name AutoCorrect remain
 separate S9/E2 evidence gaps.
 ## Microsoft interoperability evidence
 
+`NativeFixedNullScalarTests` independently compares DAO3.6-authored Jet3/Jet4
+Byte/Integer/Long/Currency/Single/Double/DateTime/GUID Null-slot geometry with
+writer insert/update and native update/compact. `FixedNullScalarTests` covers
+all declared scalar widths and no-allocation oversized-row refusal. The writer
+reserves complete fixed storage before variable data even for Null values.
+Fresh DAO120 Jet4/ACE confirmation, native Numeric/Large Number/DateTime Extended
+and dropped-slot variants, and broader record-limit acceptance remain F8/E2
+gaps. Existing approved golden specimens are unchanged.
+
 Validation on 2026-10-06 used revision
 `4b347f95886abdd72aadcfa59a997652e46badea`:
 
@@ -678,8 +687,8 @@ offset jumps across 256/512 and first-refused fixed-binary schema shapes.
 Exact raw rows and field slices survive the complete private assembly; DAO
 compact/reopen retains every controlled visible value. The fixture directory
 records hashes, producer versions and shape-specific accepted/refused sizes.
-Other row shapes, trailing Null fixed slots and remaining F8 LVAL/text variants
-still need independent evidence.
+Other native row shapes, unverified trailing-Null slot variants and remaining
+F8 LVAL/text forms still need independent evidence.
 
 `RecoveryReplayCrashTests` covers repeated actual process interruptions through
 raw restoration, tail re-extension, final decisions and lock/journal cleanup,

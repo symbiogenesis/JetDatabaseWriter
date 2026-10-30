@@ -60,6 +60,26 @@ synthetic corruption behavior using writer-created storage with a complete
 complex catalog. Native fixtures use fixed references; these mutations add no
 native acceptance evidence for variable Complex storage.
 
+## Null fixed scalar storage
+
+Row encoding reserves every declared fixed slot even when its value is Null.
+Boolean values occupy null-mask bits and add no fixed payload. Variable data
+starts after the complete fixed area; row-capacity preflight includes those
+reserved bytes before allocating long-value storage. New Null slots are zeroed;
+native bytes beneath Null fields can be opaque and are not evidence of a value.
+
+`FixedNullScalarTests` covers declared scalar widths in Jet3/Jet4/ACE and
+byte-identical refusal when reserved Null slots make a row too large.
+`NativeFixedNullScalarTests` independently authors Byte, Integer, Long, Currency,
+Single, Double, Date/Time and GUID fields using DAO3.6, then compares Jet3/Jet4
+fixed-area geometry through writer insert/update, native update and compact.
+Mixed variable rows begin their text after all 55 fixed bytes. Native fixed-only
+rows are 58/59 bytes; the writer's existing unused variable trailer makes the
+corresponding rows 60/63 bytes, accepted by the native read/update/compact checks.
+These controls use `dao360.dll` 10.0.26100.5074. Fresh DAO120 Jet4/ACE checks and
+native Numeric, Large Number, Date/Time Extended and dropped-slot variants
+remain F8/E2 work; synthetic width tests do not establish those native forms.
+
 ## Fixed-length Text
 
 Native fixed Text occupies the descriptor's full byte width. Jet3 uses the
