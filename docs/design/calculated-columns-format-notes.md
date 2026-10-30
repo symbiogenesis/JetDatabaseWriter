@@ -625,6 +625,11 @@ count (status 13) from a Null character (status 94); `Str$` Null is status 94.
 Str omits the leading zero before a
 fraction and prefixes nonnegative values with a space.
 
+Space/Space$ round counts half to even and retain the generated-text budget.
+Negative, Null and invalid counts refuse the statement, matching native error
+3802; they do not fabricate cached numeric errors. `CalculatedSpaceFunctionTests`
+compares independent constant/dynamic native controls and public writer behavior.
+
 UCase/LCase use pinned native mappings, independent of the host runtime's Unicode
 version. Independent source and compacted fixtures cover every BMP code unit,
 all supplementary scalars and unpaired surrogates; supplementary case changes

@@ -50,7 +50,7 @@ internal static partial class CalculatedExpressionTextFunctions
         AddFunction(functions, "INSTR", 2, 4, static function => EvaluateInStr(function));
         AddFunction(functions, "INSTRREV", 2, 4, static function => EvaluateInStrRev(function));
         AddFunction(functions, "REPLACE", 3, 6, static function => EvaluateReplaceText(function));
-        AddFunction(functions, "SPACE", 1, 1, static function => RepeatChar(checked((int)ToDecimal(function.Arg(0))), " "));
+        AddFunction(functions, "SPACE", 1, 1, static function => EvaluateSpace(function));
         AddFunction(functions, "STRCOMP", 2, 3, static function => Math.Sign(string.Compare(ToText(function.Arg(0)), ToText(function.Arg(1)), CompareOptions(function.Count > 2 ? function.Arg(2) : null))));
         AddFunction(functions, "STRING", 2, 2, static function => EvaluateString(function));
         AddFunction(functions, "STRREVERSE", 1, 1, static function => EvaluateStrReverse(function));
@@ -429,15 +429,12 @@ internal static partial class CalculatedExpressionTextFunctions
         return checked((int)ToDecimal(value)) == 0 ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
     }
 
-    private static string RepeatChar(int count, string value)
+    private static string EvaluateSpace(CalculatedFunctionInvocation function)
     {
-        if (count <= 0)
-        {
-            return string.Empty;
-        }
-
+        int count = TextInteger(function.Arg(0));
+        ValidateTextCount(count);
         EnsureGeneratedTextLength(count);
-        return new string(string.IsNullOrEmpty(value) ? '\0' : value[0], count);
+        return new string(' ', count);
     }
 
     private static string StrConv(string text, int conversion)
