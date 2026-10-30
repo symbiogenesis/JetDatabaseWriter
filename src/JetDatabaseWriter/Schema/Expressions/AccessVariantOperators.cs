@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Schema.Expressions;
 using System;
 using System.Globalization;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Models;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
@@ -53,9 +54,9 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        if (left is DateTime || right is DateTime)
+        if (IsDate(left) || IsDate(right))
         {
-            return FromOleDate(ToDateSerial(left) + ToDateSerial(right));
+            return DateResult(ToDateSerial(left) + ToDateSerial(right), left, right);
         }
 
         if ((left is AccessCurrency || right is AccessCurrency) && left is not decimal && right is not decimal)
@@ -79,14 +80,14 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        if (left is DateTime && right is DateTime)
+        if (IsDate(left) && IsDate(right))
         {
             return ToDateSerial(left) - ToDateSerial(right);
         }
 
-        if (left is DateTime || right is DateTime)
+        if (IsDate(left) || IsDate(right))
         {
-            return FromOleDate(ToDateSerial(left) - ToDateSerial(right));
+            return DateResult(ToDateSerial(left) - ToDateSerial(right), left, right);
         }
 
         if ((left is AccessCurrency || right is AccessCurrency) && left is not decimal && right is not decimal)
@@ -110,7 +111,7 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        if (left is DateTime || right is DateTime)
+        if (IsDate(left) || IsDate(right))
         {
             return Finite(ToDateSerial(left) * ToDateSerial(right));
         }
@@ -139,7 +140,7 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        if (left is DateTime || right is DateTime)
+        if (IsDate(left) || IsDate(right))
         {
             double divisor = Finite(ToDateSerial(right));
             return divisor == 0d
@@ -172,7 +173,7 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        return left is DateTime || right is DateTime
+        return IsDate(left) || IsDate(right)
             ? Finite(Math.Pow(ToDateSerial(left), ToDateSerial(right)))
             : Math.Pow(ToDouble(left), ToDouble(right));
     }
@@ -198,6 +199,7 @@ internal static class AccessVariantOperators
             int number => -(double)number,
             float number => (float)Finite(-number),
             double number => Finite(-number),
+            NativeDate native => NativeDate.FromSerial(-native.Serial),
             DateTime => FromOleDate(-ToDateSerial(value)),
             _ => -ToDecimal(value),
         };
@@ -220,7 +222,7 @@ internal static class AccessVariantOperators
             byte number => (short)number,
             float number => (float)Finite(number),
             double number => Finite(number),
-            DateTime or short or int => value,
+            NativeDate or DateTime or short or int => value,
             _ => ToDecimal(value),
         };
     }
@@ -358,6 +360,7 @@ internal static class AccessVariantOperators
     /// <exception cref="InvalidCastException">The operand is not a date or a number.</exception>
     internal static double ToDateSerial(object value) => value switch
     {
+        NativeDate native => native.Serial,
         AccessCurrency currency => currency.ToDouble(),
         DateTime date => date.ToOADate(),
         bool boolean => boolean ? -1d : 0d,
@@ -382,6 +385,7 @@ internal static class AccessVariantOperators
             bool boolean => boolean ? -1m : 0m,
             byte or short or int or long or decimal => Convert.ToDecimal(value, CultureInfo.InvariantCulture),
             float or double => RoundedDouble(Convert.ToDouble(value, CultureInfo.InvariantCulture)),
+            NativeDate native => RoundedDouble(native.Serial),
             DateTime date => RoundedDouble(date.ToOADate()),
             string text when decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out decimal parsed) => parsed,
             _ => throw TypeMismatch(value),
@@ -465,6 +469,14 @@ internal static class AccessVariantOperators
     };
 
     private static bool IsZero(object value) => ToBitwiseOperand(value) == 0;
+
+    private static bool IsDate(object value) => value is NativeDate or DateTime;
+
+    private static object DateResult(double serial, object left, object right)
+    {
+        _ = FromOleDate(serial);
+        return left is NativeDate || right is NativeDate ? NativeDate.FromSerial(serial) : FromOleDate(serial);
+    }
 
     private static AccessCurrency CurrencyAdditiveResult(object left, object right, bool subtract)
     {

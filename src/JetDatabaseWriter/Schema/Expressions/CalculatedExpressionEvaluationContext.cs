@@ -93,7 +93,16 @@ internal sealed class CalculatedExpressionEvaluationContext
 
             raw = constraint.CalculatedExpressionPlan.Evaluate(this);
             storing = true;
-            object coerced = raw is CalculatedError ? raw : CoerceResult(raw, constraint.ClrType, isCalculatedColumn: true);
+            object coerced;
+            if (raw is not CalculatedError && !IsNull(raw) && constraint.CalculatedResultType == ColumnType.DateTimeType)
+            {
+                coerced = ToNativeDate(raw);
+            }
+            else
+            {
+                coerced = raw is CalculatedError ? raw : CoerceResult(raw, constraint.ClrType, isCalculatedColumn: true);
+            }
+
             if (constraint.CalculatedResultType == Enums.ColumnType.MoneyType && coerced is decimal currency)
             {
                 coerced = decimal.FromOACurrency(decimal.ToOACurrency(currency));
@@ -180,6 +189,11 @@ internal sealed class CalculatedExpressionEvaluationContext
         if (!referenced.IsCalculated && storageType == ColumnType.NumericType && !IsNull(coerced))
         {
             return NumericEncoder.NormalizeStoredValue(this.columns[index], ToDecimal(coerced));
+        }
+
+        if (this.IsCalculatingColumn && storageType == ColumnType.DateTimeType && !IsNull(coerced))
+        {
+            return ToNativeDate(coerced);
         }
 
         return storageType == ColumnType.MoneyType && !IsNull(coerced) ? ToCurrency(coerced) : coerced;

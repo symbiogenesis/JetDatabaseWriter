@@ -162,6 +162,11 @@ internal static class CalculatedExpressionCoercion
             return DBNull.Value;
         }
 
+        if (value is NativeDate && declaredType == typeof(DateTime))
+        {
+            return value;
+        }
+
         if (declaredType.IsInstanceOfType(value))
         {
             return value!;
@@ -195,6 +200,10 @@ internal static class CalculatedExpressionCoercion
         {
             // Two strings compare as text in Access, even when both look numeric ("10" < "9").
             comparison = (textCollation ?? JetDatabaseWriter.Indexes.Collation.JetTextCollation.GeneralLegacy).Compare(ToText(left), ToText(right));
+        }
+        else if (left is NativeDate || right is NativeDate)
+        {
+            comparison = ComparableDateSerial(left).CompareTo(ComparableDateSerial(right));
         }
         else if ((left is DateTime || right is DateTime)
             && TryConvertDateTime(left, out DateTime leftDateValue)
@@ -335,7 +344,7 @@ internal static class CalculatedExpressionCoercion
     /// Converts a value to text the way the Access expression service does:
     /// True is <c>"-1"</c> and False is <c>"0"</c>, so <c>"x" &amp; (1 &lt; 2)</c>
     /// is <c>"x-1"</c> (<see cref="Convert"/> gives <c>"True"</c>), and a date is
-    /// General Date text (<see cref="ToGeneralDateText"/>).
+    /// General Date text (<see cref="ToGeneralDateText(DateTime)"/>).
     /// </summary>
     /// <param name="value">The value to convert.</param>
     /// <returns>The text value; empty for Null.</returns>
@@ -344,6 +353,11 @@ internal static class CalculatedExpressionCoercion
         if (value is Guid guid)
         {
             return guid.ToString("B").ToUpperInvariant();
+        }
+
+        if (value is NativeDate native)
+        {
+            return ToGeneralDateText(native);
         }
 
         if (value is AccessCurrency currency)
@@ -415,6 +429,25 @@ internal static class CalculatedExpressionCoercion
         return rounded.TimeOfDay == TimeSpan.Zero ? date : date + " " + rounded.ToString("h:mm:ss tt", CultureInfo.InvariantCulture);
     }
 
+    private static string ToGeneralDateText(NativeDate value)
+    {
+        double day = Math.Truncate(value.Serial);
+        double seconds = Math.Abs(value.Serial - day) * 86400d;
+        double wholeSeconds = Math.Truncate(seconds);
+        if (seconds - wholeSeconds >= 0.5d)
+        {
+            wholeSeconds++;
+        }
+
+        DateTime date = FromOleDate(day);
+        if (date.Date == DateTime.MaxValue.Date && wholeSeconds >= 86400d)
+        {
+            wholeSeconds = 86399d;
+        }
+
+        return ToGeneralDateText(date.AddSeconds(wholeSeconds));
+    }
+
     /// <summary>
     /// Maps a Boolean argument to Access's -1 / 0 before a <see cref="Convert"/>
     /// call, which would otherwise turn True into 1 (<c>CInt(True)</c> is -1).
@@ -423,6 +456,16 @@ internal static class CalculatedExpressionCoercion
     /// <returns>The argument, with a Boolean replaced by -1 or 0.</returns>
     internal static object? AsAccessNumber(object? value)
     {
+        if (value is NativeDate native)
+        {
+            return native.Serial;
+        }
+
+        if (value is DateTime date)
+        {
+            return date.ToOADate();
+        }
+
         if (value is AccessCurrency currency)
         {
             return currency.Value;
@@ -445,6 +488,16 @@ internal static class CalculatedExpressionCoercion
     /// <exception cref="OverflowException">A floating value is nonfinite or outside the Access Decimal range.</exception>
     internal static decimal ToDecimal(object? value)
     {
+        if (value is NativeDate native)
+        {
+            return ToDecimal(native.Serial);
+        }
+
+        if (value is DateTime date)
+        {
+            return ToDecimal(date.ToOADate());
+        }
+
         if (value is AccessCurrency currency)
         {
             return currency.Value;
@@ -489,6 +542,16 @@ internal static class CalculatedExpressionCoercion
 
     internal static double ToDouble(object? value)
     {
+        if (value is NativeDate native)
+        {
+            return native.Serial;
+        }
+
+        if (value is DateTime date)
+        {
+            return date.ToOADate();
+        }
+
         if (value is AccessCurrency currency)
         {
             return currency.ToDouble();
@@ -600,6 +663,11 @@ internal static class CalculatedExpressionCoercion
     /// <exception cref="OverflowException">The serial is outside the dates Access can hold (years 100 to 9999).</exception>
     internal static DateTime ToDateTime(object? value)
     {
+        if (value is NativeDate native)
+        {
+            return native.Value;
+        }
+
         if (value is DateTime dateTime)
         {
             return dateTime;
@@ -612,6 +680,32 @@ internal static class CalculatedExpressionCoercion
 
         return ParseDate(ToText(value));
     }
+
+    internal static NativeDate ToNativeDate(object? value)
+    {
+        if (value is NativeDate native)
+        {
+            return native;
+        }
+
+        double serial = value switch
+        {
+            DateTime date => date.ToOADate(),
+            bool or byte or short or int or long or float or double or decimal or AccessCurrency => ToDouble(value),
+            _ => ParseDate(ToText(value)).ToOADate(),
+        };
+        _ = FromOleDate(serial);
+        return NativeDate.FromSerial(serial);
+    }
+
+    private static double ComparableDateSerial(object value) => value switch
+    {
+        NativeDate native => native.Serial,
+        DateTime date => date.ToOADate(),
+        string text when double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double number) => number,
+        string text => ParseDate(text).ToOADate(),
+        _ => ToDouble(value),
+    };
 
     /// <summary>
     /// Converts an OLE Automation date serial to a date, rejecting a serial
@@ -660,7 +754,7 @@ internal static class CalculatedExpressionCoercion
     /// <summary>
     /// Parses date text. Text with a time and no date is a time on day 0, 1899-12-30,
     /// as in VBA (<c>CDate("6:00:00 AM")</c> is 0.25). So the General Date text of a
-    /// day-0 date (<see cref="ToGeneralDateText"/>) reads back as the same date, and a
+    /// day-0 date (<see cref="ToGeneralDateText(DateTime)"/>) reads back as the same date, and a
     /// <c>#6:00#</c> literal is day 0 too.
     /// </summary>
     /// <param name="text">The text to parse.</param>

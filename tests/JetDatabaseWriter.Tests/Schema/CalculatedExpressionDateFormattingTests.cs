@@ -1,10 +1,8 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
-using System.Collections.Generic;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Schema.Expressions;
-using JetDatabaseWriter.Schema.Models;
 using Xunit;
 
 /// <summary>Checks VBA custom date and time formatting.</summary>
@@ -66,13 +64,7 @@ public sealed class CalculatedExpressionDateFormattingTests
 
     private static string Evaluate(string expression)
     {
-        var table = new TableDef { Columns = [new ColumnInfo { Name = "Calc" }] };
-        var constraints = new List<ColumnConstraint>
-        {
-            new() { Name = "Calc", ClrType = typeof(string), IsCalculated = true, CalculationExpression = expression, CalculatedExpressionPlan = CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false) },
-        };
-        object[] values = [DBNull.Value];
-        CalculatedExpressionEvaluator.Apply(table, constraints, values);
-        return Assert.IsType<string>(values[0]);
+        var context = new CalculatedExpressionEvaluationContext(new TableDef(), [], []);
+        return Assert.IsType<string>(CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false).Evaluate(context));
     }
 }

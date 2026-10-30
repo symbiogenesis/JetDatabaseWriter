@@ -869,6 +869,15 @@ inputs remain Null. DateSerial and TimeSerial round arguments to native Integer
 ranges and preserve their raw native serial results, including negative time-only
 values. Native argument/domain failures retain statuses 5, 6 and 13.
 
+Evaluation retains the raw native Date Variant through references, dependent
+calculated Date caches, unary signs, addition/subtraction, Abs/Int/Fix/Round,
+numeric conversion and Binary serialization. Date comparisons use the raw serial,
+including the reversed fractional ordering of negative OLE dates. Native General
+Date text rounds the raw fractional serial to whole seconds, avoiding intermediate
+DateTime millisecond loss. `CalculatedNativeDateExpressionTests` and its DAO
+pipeline compare exact native source bits, dependencies and expression results
+through writer updates, native recalculation and both compactions.
+
 Two-digit DateSerial years follow the operating system Gregorian calendar window;
 the measured host uses 2049 as its upper endpoint. The independently measured
 English General profile uses Sunday for system-default week starts and English

@@ -32,7 +32,7 @@ internal static class CalculatedExpressionDateTimeFunctions
         AddFunction(functions, "MONTHNAME", 1, 2, static function => EvaluateDateFunction(function, DateFunction.MonthName));
         AddFunction(functions, "WEEKDAY", 1, 2, static function => EvaluateDateFunction(function, DateFunction.Weekday));
         AddFunction(functions, "WEEKDAYNAME", 1, 3, static function => EvaluateDateFunction(function, DateFunction.WeekdayName));
-        AddFunction(functions, "CDATE", 1, 1, static function => ToDateTime(function.Arg(0)), "CVDATE");
+        AddFunction(functions, "CDATE", 1, 1, static function => function.Context.IsCalculatingColumn ? ToNativeDate(function.Arg(0)) : ToDateTime(function.Arg(0)), "CVDATE");
     }
 
 #pragma warning disable RS0030 // Access DATE/NOW/TIME/TIMER evaluate against the host local clock.

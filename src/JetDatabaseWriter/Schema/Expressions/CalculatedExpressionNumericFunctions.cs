@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Schema.Expressions;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using JetDatabaseWriter.Models;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionFunctionRegistry;
@@ -59,6 +60,7 @@ internal static class CalculatedExpressionNumericFunctions
             short or int or long => value,
             float number => (float)RoundFloating(number, digits),
             double number => RoundFloating(number, digits),
+            NativeDate native => NativeDate.FromSerial(RoundFloating(native.Serial, digits)),
             DateTime date => FromOleDate(RoundFloating(date.ToOADate(), digits)),
             decimal number => digits >= 28 ? number : Math.Round(number, digits, MidpointRounding.ToEven),
             _ => RoundFloating(ToDouble(value), digits),
@@ -138,6 +140,7 @@ internal static class CalculatedExpressionNumericFunctions
     private static object EvaluateAbsolute(object value) => value switch
     {
         DBNull or null => DBNull.Value,
+        NativeDate native => NativeDate.FromSerial(Math.Abs(native.Serial)),
         DateTime date => FromOleDate(Math.Abs(date.ToOADate())),
         AccessCurrency currency => AccessCurrency.FromDecimal(Math.Abs(currency.Value)),
         bool boolean => (short)(boolean ? 1 : 0),
@@ -156,6 +159,11 @@ internal static class CalculatedExpressionNumericFunctions
         if (IsNull(value))
         {
             return DBNull.Value;
+        }
+
+        if (value is NativeDate native)
+        {
+            return NativeDate.FromSerial(truncate ? Math.Truncate(native.Serial) : Math.Floor(native.Serial));
         }
 
         if (value is DateTime date)
