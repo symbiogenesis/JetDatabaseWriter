@@ -52,6 +52,7 @@ public sealed partial class CalculatedNativeNumericQualificationTests
     [InlineData("DateDecimal")]
     [InlineData("SignedZero")]
     [InlineData("BooleanText")]
+    [InlineData("NonfiniteText")]
     [Trait("Category", "RequiresMicrosoftAccess")]
     public async Task Dao120_NumericCachesMatchIndependentAuthoringRecalculationUpdateAndCompact(string group)
     {
@@ -314,6 +315,22 @@ public sealed partial class CalculatedNativeNumericQualificationTests
                 foreach (string expression in new[] { "True", "False", "True And True", "1 And 2", "2 Or 4", "Not 1", "[D]=0", "[D] Like \"-0\"", "IsNull([D])", "IsNull(Null)", "IsEmpty([D])", "[D] In(\"-0\")", "[D] In(\"0\")", "[D] Not In(\"-0\")", "\"-0\" In([D])", "[D] In(Null,\"-0\")", "[D] In(Null,\"0\")", "IIf(1=1,True,False)", "IIf(True,IsNull(Null),False)", "Choose(1,True,False)", "Choose(1,IsNull(Null),False)", "Len(True)", "Left(True,5)", "Asc(True)", "UCase(True)", "Len(IsNull(Null))", "Left(IsNull(Null),4)" })
                 {
                     yield return new(expression, [new("D", BitConverter.Int64BitsToDouble(long.MinValue), 0d)]);
+                }
+
+                break;
+            case "NonfiniteText":
+                foreach (string expression in new[] { "PV(-1,10,-100,1000)", "PMT(-1,10,1000,0,1)", "SYD(1E308,0,1000,1)", "-(PMT(-1,10,1000,0,1))", "Abs(PMT(-1,10,1000,0,1))", "Round(PMT(-1,10,1000,0,1),2)" })
+                {
+                    yield return new(expression, []);
+                    yield return new("Str(" + expression + ")", []);
+                }
+
+                foreach (TheoryDataRow<bool, long, string> row in CalculatedNativeNumericValueTests.NativeNaNTextCases)
+                {
+                    object value = row.Data.Item1 ? BitConverter.Int32BitsToSingle(checked((int)row.Data.Item2)) : (object)BitConverter.Int64BitsToDouble(row.Data.Item2);
+                    object updated = row.Data.Item1 ? BitConverter.Int32BitsToSingle(checked((int)row.Data.Item2) ^ int.MinValue) : (object)BitConverter.Int64BitsToDouble(row.Data.Item2 ^ long.MinValue);
+                    yield return new("[D]", [new("D", value, updated)]);
+                    yield return new("Str([D])", [new("D", value, updated)]);
                 }
 
                 break;

@@ -425,10 +425,50 @@ internal static class CalculatedExpressionCoercion
         => value switch
         {
             bool boolean => boolean ? "True" : "False",
-            double number when number == 0d && BitConverter.DoubleToInt64Bits(number) < 0 => "-0",
-            float number when number == 0f && BitConverter.SingleToInt32Bits(number) < 0 => "-0",
+            double number => ToCalculatedSpecialFloatingText(number) ?? ToText(number),
+            float number => ToCalculatedSpecialFloatingText(number) ?? ToText(number),
             _ => ToText(value),
         };
+
+    private static string? ToCalculatedSpecialFloatingText(double value)
+    {
+        long bits = BitConverter.DoubleToInt64Bits(value);
+        long magnitude = bits & long.MaxValue;
+        bool negative = bits < 0;
+        if (magnitude == 0)
+        {
+            return negative ? "-0" : null;
+        }
+
+        const long infinity = 0x7FF0000000000000;
+        if (magnitude < infinity)
+        {
+            return null;
+        }
+
+        if (magnitude == infinity)
+        {
+            return negative ? "-inf" : "inf";
+        }
+
+        // The native formatter distinguishes a signaling Double and the exact
+        // negative indefinite payload. A Single first widens, quieting sNaN.
+        string text;
+        if ((magnitude & 0x0008000000000000) == 0)
+        {
+            text = "nan(snan)";
+        }
+        else if (negative && magnitude == 0x7FF8000000000000)
+        {
+            text = "nan(ind)";
+        }
+        else
+        {
+            text = "nan";
+        }
+
+        return negative ? "-" + text : text;
+    }
 
     /// <summary>
     /// Converts a date to text in VBA's General Date form for the en-US locale, as OLE

@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -13,6 +14,23 @@ using Xunit;
 /// <summary>Freezes independent DAO120 table observations for numeric context differences.</summary>
 public sealed class CalculatedNativeNumericValueTests
 {
+    /// <summary>Gets native source bits and text, including noncanonical and signaling NaNs.</summary>
+    public static TheoryData<bool, long, string> NativeNaNTextCases { get; } = new()
+    {
+        { false, 9221120237041090560L, "nan" },
+        { false, -2251799813685248L, "-nan(ind)" },
+        { false, 9221120237041090561L, "nan" },
+        { false, -2251799813685247L, "-nan" },
+        { false, 9218868437227405313L, "nan(snan)" },
+        { false, -4503599627370495L, "-nan(snan)" },
+        { true, 2143289344L, "nan" },
+        { true, -4194304L, "-nan(ind)" },
+        { true, 2143289345L, "nan" },
+        { true, -4194303L, "-nan" },
+        { true, 2139095041L, "nan" },
+        { true, -8388607L, "-nan" },
+    };
+
     [Fact]
     public async Task CalculatedNegativeZero_TextFunctionsAndRoundRetainNativeContext()
     {
@@ -111,5 +129,63 @@ public sealed class CalculatedNativeNumericValueTests
         Assert.Equal(0.75m, Assert.IsType<decimal>(AccessVariantOperators.Divide(date, 2m)));
         Assert.Same(DBNull.Value, AccessVariantOperators.Add(date, DBNull.Value));
         Assert.Same(DBNull.Value, AccessVariantOperators.Subtract(DBNull.Value, 2m));
+    }
+
+    [Theory]
+    [InlineData("PV(-1,10,-100,1000)", "-inf", -4503599627370496L)]
+    [InlineData("PMT(-1,10,1000,0,1)", "-nan(ind)", -2251799813685248L)]
+    [InlineData("SYD(1E308,0,1000,1)", "inf", 9218868437227405312L)]
+    [InlineData("-(PMT(-1,10,1000,0,1))", "nan", 9221120237041090560L)]
+    [InlineData("Abs(PMT(-1,10,1000,0,1))", "nan", 9221120237041090560L)]
+    [InlineData("Round(PMT(-1,10,1000,0,1),2)", "-nan(ind)", -2251799813685248L)]
+    public async Task CalculatedFinancialNonfiniteText_PreservesNativeSpellingAndVariantBits(string expression, string expected, long bits)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        await AssertNonfiniteTextAsync(expression, expected, BitConverter.Int64BitsToDouble(bits), calculatedSource: true);
+    }
+
+    [Theory]
+    [MemberData(nameof(NativeNaNTextCases))]
+    public async Task CalculatedNonfiniteSourceText_PreservesNativeNaNPayloadAndSign(bool narrow, long bits, string expected)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        object value = narrow ? BitConverter.Int32BitsToSingle(checked((int)bits)) : (object)BitConverter.Int64BitsToDouble(bits);
+        await AssertNonfiniteTextAsync("[D]", expected, value, calculatedSource: false);
+    }
+
+    private static async Task AssertNonfiniteTextAsync(string expression, string expected, object source, bool calculatedSource)
+    {
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
+        {
+            ColumnDefinition sourceColumn = calculatedSource
+                ? new("D", typeof(double)) { IsCalculated = true, CalculationExpression = expression }
+                : new("D", source.GetType());
+            await writer.CreateTableAsync("T", [sourceColumn, new("B", typeof(byte[]), 255) { IsCalculated = true, CalculatedResultType = (byte)ColumnType.BinaryType, CalculationExpression = "[D]" }, new("Direct", typeof(string)) { IsCalculated = true, CalculationExpression = "[D]" }, new("Concat", typeof(string)) { IsCalculated = true, CalculationExpression = "[D] & \"\"" }, new("StrText", typeof(string)) { IsCalculated = true, CalculationExpression = "Str([D])" }], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", [calculatedSource ? null : source, null, null, null, null], TestContext.Current.CancellationToken);
+        }
+
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
+        object[] row = Assert.Single(await reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken));
+        byte[] bytes;
+        if (source is float number)
+        {
+            Assert.Equal(BitConverter.SingleToInt32Bits(number), BitConverter.SingleToInt32Bits(Assert.IsType<float>(row[0])));
+            bytes = new byte[sizeof(float)];
+            BinaryPrimitives.WriteInt32LittleEndian(bytes, BitConverter.SingleToInt32Bits(number));
+        }
+        else
+        {
+            double value = Assert.IsType<double>(source);
+            Assert.Equal(BitConverter.DoubleToInt64Bits(value), BitConverter.DoubleToInt64Bits(Assert.IsType<double>(row[0])));
+            bytes = new byte[sizeof(double)];
+            BinaryPrimitives.WriteInt64LittleEndian(bytes, BitConverter.DoubleToInt64Bits(value));
+        }
+
+        Assert.Equal(bytes, Assert.IsType<byte[]>(row[1]));
+        Assert.Equal(expected, row[2]);
+        Assert.Equal(expected, row[3]);
+        Assert.Equal(expected.StartsWith('-') ? expected : " " + expected, row[4]);
     }
 }
