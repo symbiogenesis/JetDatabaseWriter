@@ -6,7 +6,6 @@ using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -184,8 +183,7 @@ public sealed class CalculatedExpressionFloatingSubtypeTests
             int updated = await writer.UpdateRowsAsync(
                 "T", "Amount", 1d, new Dictionary<string, object?> { ["Amount"] = 1E100 }, TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
-            Assert.Equal(1, await writer.UpdateRowsAsync(
-                "T", "Amount", 2d, new Dictionary<string, object?> { ["Amount"] = 1E308 }, TestContext.Current.CancellationToken));
+            Assert.Equal(1, await writer.UpdateRowsAsync("T", "Amount", 2d, new Dictionary<string, object?> { ["Amount"] = 1E308 }, TestContext.Current.CancellationToken));
         }
 
         stream.Position = 0;
@@ -230,8 +228,7 @@ public sealed class CalculatedExpressionFloatingSubtypeTests
             ],
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync("T", [1d, "2", DBNull.Value], TestContext.Current.CancellationToken);
-        Assert.Equal(1, await writer.UpdateRowsAsync(
-            "T", "Amount", 1d, new Dictionary<string, object?> { ["Divisor"] = divisor }, TestContext.Current.CancellationToken));
+        Assert.Equal(1, await writer.UpdateRowsAsync("T", "Amount", 1d, new Dictionary<string, object?> { ["Divisor"] = divisor }, TestContext.Current.CancellationToken));
         await using AccessReader reader = await AccessReader.OpenAsync(
             stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
         int count = 0;

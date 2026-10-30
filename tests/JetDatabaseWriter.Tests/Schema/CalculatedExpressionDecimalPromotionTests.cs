@@ -7,7 +7,6 @@ using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -114,8 +113,7 @@ public sealed class CalculatedExpressionDecimalPromotionTests
             int updated = await writer.UpdateRowsAsync(
                 "T", "N", 0m, new Dictionary<string, object?> { ["N"] = 1m }, TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
-            Assert.Equal(1, await writer.UpdateRowsAsync(
-                "T", "N", 1m, new Dictionary<string, object?> { ["D"] = double.PositiveInfinity }, TestContext.Current.CancellationToken));
+            Assert.Equal(1, await writer.UpdateRowsAsync("T", "N", 1m, new Dictionary<string, object?> { ["D"] = double.PositiveInfinity }, TestContext.Current.CancellationToken));
             await using (AccessReader errors = await AccessReader.OpenAsync(
                 stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
             {
@@ -127,8 +125,7 @@ public sealed class CalculatedExpressionDecimalPromotionTests
                 }
             }
 
-            Assert.Equal(1, await writer.UpdateRowsAsync(
-                "T", "N", 1m, new Dictionary<string, object?> { ["D"] = boundary }, TestContext.Current.CancellationToken));
+            Assert.Equal(1, await writer.UpdateRowsAsync("T", "N", 1m, new Dictionary<string, object?> { ["D"] = boundary }, TestContext.Current.CancellationToken));
         }
 
         stream.Position = 0;

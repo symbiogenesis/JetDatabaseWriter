@@ -1526,8 +1526,7 @@ public sealed class CalculatedColumnWriteTests
         {
             await writer.InsertRowAsync("CalcByteFlag", [1, 0, DBNull.Value], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("CalcByteFlag", [2, 3, DBNull.Value], TestContext.Current.CancellationToken);
-            Assert.Equal(1, await writer.UpdateRowsAsync(
-                "CalcByteFlag", "Id", 1, new Dictionary<string, object?> { ["Score"] = 9 }, TestContext.Current.CancellationToken));
+            Assert.Equal(1, await writer.UpdateRowsAsync("CalcByteFlag", "Id", 1, new Dictionary<string, object?> { ["Score"] = 9 }, TestContext.Current.CancellationToken));
             await writer.InsertRowAsync("CalcByteFlag", [3, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("CalcByteFlag", [4, 3, DBNull.Value], TestContext.Current.CancellationToken);
             int updated = await writer.UpdateRowsAsync("CalcByteFlag", "Id", 4, new Dictionary<string, object?> { ["Score"] = 1 }, TestContext.Current.CancellationToken);
@@ -1568,9 +1567,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await WriteInModeAsync(stream, explicitTransaction ? WriteMode.ExplicitCommit : WriteMode.Direct, async writer =>
-        {
-            await writer.InsertRowAsync("CalcOverflow", [2, 5, DBNull.Value], TestContext.Current.CancellationToken);
-        });
+            await writer.InsertRowAsync("CalcOverflow", [2, 5, DBNull.Value], TestContext.Current.CancellationToken));
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         using DataTable table = await reader.ReadTableAsync("CalcOverflow", cancellationToken: TestContext.Current.CancellationToken);
