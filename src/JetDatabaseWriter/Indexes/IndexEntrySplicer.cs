@@ -56,10 +56,45 @@ internal static class IndexEntrySplicer
             }
         }
 
+        if (IsSorted(working) && IsSorted(adds))
+        {
+            int existingIndex = working.Count - 1;
+            int addedIndex = adds.Count - 1;
+            working.AddRange(adds);
+            int destination = working.Count - 1;
+            while (addedIndex >= 0)
+            {
+                // Merging backward places additions after existing equal keys.
+                if (existingIndex >= 0 && IndexPageCodec.CompareKeyBytes(working[existingIndex].Key, adds[addedIndex].Key) > 0)
+                {
+                    working[destination--] = working[existingIndex--];
+                }
+                else
+                {
+                    working[destination--] = adds[addedIndex--];
+                }
+            }
+
+            return working;
+        }
+
         working.AddRange(adds);
 
         // OrderBy is stable: existing equal keys precede additions, whose input order is retained.
         return working.OrderBy(static entry => entry.Key, KeyComparer).ToList();
+    }
+
+    private static bool IsSorted(IReadOnlyList<IndexEntry> entries)
+    {
+        for (int i = 1; i < entries.Count; i++)
+        {
+            if (IndexPageCodec.CompareKeyBytes(entries[i - 1].Key, entries[i].Key) > 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static long EncodePointer(long page, byte row) => (page << 8) | row;

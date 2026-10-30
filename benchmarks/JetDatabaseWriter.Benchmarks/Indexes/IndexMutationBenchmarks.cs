@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Benchmarks.Indexes;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
@@ -17,6 +18,9 @@ public class IndexMutationBenchmarks : IAsyncDisposable
 {
     private readonly List<IndexEntry> leafEntries = [];
     private readonly List<DecodedIntermediateEntry> intermediateEntries = [];
+    private readonly List<IndexEntry> spliceEntries = [];
+    private readonly List<IndexEntry> spliceAdditions = [];
+    private readonly List<IndexEntry> unorderedSpliceAdditions = [];
     private readonly object?[][] sameLeafRows = CreateRows(1);
     private readonly object?[][] crossLeafRows = [.. CreateRows(1), .. CreateRows(80_001)];
     private byte[] baseline = [];
@@ -38,11 +42,22 @@ public class IndexMutationBenchmarks : IAsyncDisposable
             key[^1] = checked((byte)(i % 100));
             var entry = new IndexEntry(key, 100 + i, 0);
             this.intermediateEntries.Add(new(entry, 1000 + i));
+            this.spliceEntries.Add(entry);
+            if (i % 10 == 0)
+            {
+                this.spliceAdditions.Add(new(key, 100 + i, 1));
+            }
+
             if (i < 40)
             {
                 this.leafEntries.Add(entry);
             }
         }
+
+        this.unorderedSpliceAdditions.AddRange(this.spliceAdditions);
+        this.unorderedSpliceAdditions.Reverse();
+        this.ValidateSplice(this.spliceEntries, this.spliceAdditions);
+        this.ValidateSplice(this.spliceEntries, this.unorderedSpliceAdditions);
 
         byte[] leaf = IndexPageCodec.BuildLeafPage(IndexPageLayout.Jet4, 4096, 7, this.leafEntries, true);
         if (IndexPageCodec.DecodeLeafEntries(IndexPageLayout.Jet4, leaf, 4096).Count != this.leafEntries.Count)
@@ -82,6 +97,22 @@ public class IndexMutationBenchmarks : IAsyncDisposable
     public int SplitIntermediate()
         => IndexHelpers.TryGreedySplitIntermediateInN(IndexPageLayout.Jet4, 4096, 7, this.intermediateEntries)?.Count
             ?? throw new InvalidOperationException("The intermediate fixture did not split.");
+
+    /// <summary>Splices sorted shared-prefix entries with duplicate-key additions.</summary>
+    /// <returns>The resulting entry count.</returns>
+    /// <exception cref="InvalidOperationException">The valid splice fixture was refused.</exception>
+    [Benchmark]
+    public int SpliceSortedEntries()
+        => IndexEntrySplicer.Splice(this.spliceEntries, this.spliceAdditions, [])?.Count
+            ?? throw new InvalidOperationException("The sorted splice fixture was refused.");
+
+    /// <summary>Splices sorted entries with reversed additions through the general fallback.</summary>
+    /// <returns>The resulting entry count.</returns>
+    /// <exception cref="InvalidOperationException">The valid splice fixture was refused.</exception>
+    [Benchmark]
+    public int SpliceUnorderedEntries()
+        => IndexEntrySplicer.Splice(this.spliceEntries, this.unorderedSpliceAdditions, [])?.Count
+            ?? throw new InvalidOperationException("The unordered splice fixture was refused.");
 
     /// <summary>Inserts a batch whose keys share one target leaf.</summary>
     /// <returns>The inserted row count.</returns>
@@ -135,6 +166,29 @@ public class IndexMutationBenchmarks : IAsyncDisposable
         }
 
         return rows;
+    }
+
+    private void ValidateSplice(List<IndexEntry> existing, List<IndexEntry> additions)
+    {
+        IndexEntry[] original = [.. existing];
+        IndexEntry[] added = [.. additions];
+        List<IndexEntry> result = IndexEntrySplicer.Splice(existing, additions, [])
+            ?? throw new InvalidOperationException("The splice fixture was refused.");
+        if (result.Count != this.spliceEntries.Count + this.spliceAdditions.Count
+            || !original.SequenceEqual(existing) || !added.SequenceEqual(additions))
+        {
+            throw new InvalidOperationException("The splice fixture changed its inputs or entry count.");
+        }
+
+        int offset = 0;
+        for (int i = 0; i < this.spliceEntries.Count; i++)
+        {
+            if (result[offset++] != this.spliceEntries[i]
+                || (i % 10 == 0 && result[offset++] != this.spliceAdditions[i / 10]))
+            {
+                throw new InvalidOperationException("The splice fixture changed key or tie ordering.");
+            }
+        }
     }
 
     private async Task PrepareIterationAsync()
