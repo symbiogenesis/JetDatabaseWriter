@@ -81,7 +81,12 @@ internal sealed class CalculatedExpressionEvaluationContext
                 throw new JetOperationException(JetErrorCode.InvalidExpression, "The calculated column has no calculation expression.");
             }
 
-            constraint.CalculatedExpressionPlan ??= CalculatedExpressionParser.Parse(constraint.CalculationExpression);
+            if (constraint.CalculatedExpressionPlan is null)
+            {
+                CalculatedExpressionBindings.ValidatePlan(this.constraints, index);
+                constraint.CalculatedExpressionPlan = CalculatedExpressionParser.Parse(constraint.CalculationExpression);
+            }
+
             raw = constraint.CalculatedExpressionPlan.Evaluate(this);
             storing = true;
             object coerced = raw is CalculatedError ? raw : CoerceResult(raw, constraint.ClrType, isCalculatedColumn: true);

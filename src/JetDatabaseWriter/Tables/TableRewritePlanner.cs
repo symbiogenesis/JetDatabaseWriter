@@ -396,7 +396,7 @@ internal sealed class TableRewritePlanner(
             {
                 foreach (ColumnDefinition survivor in newDefs)
                 {
-                    ThrowIfNamesDroppedColumn(tableName, existing.Name, survivor, "calculated expression", survivor.CalculationExpression);
+                    ThrowIfNamesDroppedColumn(tableName, existing.Name, survivor, "calculated expression", survivor.CalculationExpression, isCalculatedColumn: true);
                     ThrowIfNamesDroppedColumn(tableName, existing.Name, survivor, "validation rule", survivor.ValidationRuleExpression);
                     ThrowIfNamesDroppedColumn(tableName, existing.Name, survivor, "default value", survivor.DefaultValueExpression);
                 }
@@ -412,7 +412,7 @@ internal sealed class TableRewritePlanner(
             for (int i = 0; i < newDefs.Count; i++)
             {
                 ColumnDefinition column = newDefs[i];
-                string? calculation = RenameReference(tableName, column, "calculated expression", column.CalculationExpression, existing.Name, mapped);
+                string? calculation = RenameReference(tableName, column, "calculated expression", column.CalculationExpression, existing.Name, mapped, isCalculatedColumn: true);
                 string? rule = RenameReference(tableName, column, "validation rule", column.ValidationRuleExpression, existing.Name, mapped);
                 string? defaultValue = RenameReference(tableName, column, "default value", column.DefaultValueExpression, existing.Name, mapped);
                 if (!ReferenceEquals(calculation, column.CalculationExpression)
@@ -440,11 +440,12 @@ internal sealed class TableRewritePlanner(
     /// <param name="expression">The expression text, or <see langword="null"/>.</param>
     /// <param name="oldColumnName">The renamed column's current name.</param>
     /// <param name="newColumnName">The renamed column's new name.</param>
+    /// <param name="isCalculatedColumn">Whether bare constant spellings bind to fields.</param>
     /// <returns>The rewritten text, or <paramref name="expression"/> itself when it does not name the column.</returns>
     /// <exception cref="ArgumentException">The rewritten text breaks a limit the original met.</exception>
-    private static string? RenameReference(string tableName, ColumnDefinition column, string property, string? expression, string oldColumnName, string newColumnName)
+    private static string? RenameReference(string tableName, ColumnDefinition column, string property, string? expression, string oldColumnName, string newColumnName, bool isCalculatedColumn = false)
     {
-        if (expression is null || !ExpressionFieldReferences.References(expression, oldColumnName, tableName))
+        if (expression is null || !ExpressionFieldReferences.References(expression, oldColumnName, tableName, isCalculatedColumn))
         {
             return expression;
         }
@@ -454,7 +455,7 @@ internal sealed class TableRewritePlanner(
         // bare reference gains brackets and the new name may be longer. An
         // expression past the limits stops evaluating (a rule or default
         // silently), so refuse a rename that would push one over them.
-        string renamed = ExpressionFieldReferences.Rename(expression, oldColumnName, newColumnName, tableName)!;
+        string renamed = ExpressionFieldReferences.Rename(expression, oldColumnName, newColumnName, tableName, isCalculatedColumn)!;
         if (!FitsExpressionLimits(renamed) && FitsExpressionLimits(expression))
         {
             throw new ArgumentException(
@@ -465,9 +466,9 @@ internal sealed class TableRewritePlanner(
         return renamed;
     }
 
-    private static void ThrowIfNamesDroppedColumn(string tableName, string droppedColumn, ColumnDefinition survivor, string property, string? expression)
+    private static void ThrowIfNamesDroppedColumn(string tableName, string droppedColumn, ColumnDefinition survivor, string property, string? expression, bool isCalculatedColumn = false)
     {
-        if (ExpressionFieldReferences.References(expression, droppedColumn, tableName))
+        if (ExpressionFieldReferences.References(expression, droppedColumn, tableName, isCalculatedColumn))
         {
             throw new JetOperationException(JetErrorCode.ColumnReferencedByExpression, $"Cannot drop column '{droppedColumn}' from table '{tableName}': the {property} of column '{survivor.Name}' ('{expression}') names it. Change or drop that column first.", errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = droppedColumn });
         }

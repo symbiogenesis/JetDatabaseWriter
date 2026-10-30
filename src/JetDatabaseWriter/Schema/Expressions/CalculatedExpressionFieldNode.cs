@@ -8,6 +8,8 @@ using System;
 /// <param name="rowLocalQualifier">Whether a bare qualifier binds to the current row regardless of its spelling.</param>
 internal sealed class CalculatedExpressionFieldNode(string name, string? qualifier = null, bool rowLocalQualifier = false) : CalculatedExpressionNode
 {
+    internal string Name => name;
+
     public void ValidateDeclaredQualifier(string tableName)
     {
         if (qualifier is not null && !rowLocalQualifier && !string.Equals(qualifier, tableName, StringComparison.OrdinalIgnoreCase))

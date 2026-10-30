@@ -33,7 +33,7 @@ using static JetDatabaseWriter.Schema.Expressions.AccessExpressionText;
 /// <para>
 /// A bracketed candidate is a field reference, as the evaluator reads it. An
 /// unqualified bare candidate is not when it is a keyword (<see cref="AccessExpressionKeywords"/>)
-/// or a built-in constant such as <c>vbTrue</c>. A qualified second segment names
+/// or, outside calculated columns, a built-in constant such as <c>vbTrue</c>. A qualified second segment names
 /// the actual field even when it spells a keyword or constant. Bare function
 /// calls (followed by <c>(</c>) and names with a <c>$</c> suffix remain excluded.
 /// Names compare without regard to
@@ -50,9 +50,10 @@ internal static class ExpressionFieldReferences
     /// <param name="expression">The expression text, or <see langword="null"/>.</param>
     /// <param name="fieldName">The field name.</param>
     /// <param name="tableName">The name of the table the expression belongs to, which may qualify a reference.</param>
+    /// <param name="isCalculatedColumn">Whether bare constant spellings bind to fields.</param>
     /// <returns><see langword="true"/> when the expression names the field.</returns>
-    internal static bool References(string? expression, string fieldName, string tableName)
-        => !string.IsNullOrEmpty(expression) && FindReferences(expression, fieldName, tableName).Count > 0;
+    internal static bool References(string? expression, string fieldName, string tableName, bool isCalculatedColumn = false)
+        => !string.IsNullOrEmpty(expression) && FindReferences(expression, fieldName, tableName, isCalculatedColumn).Count > 0;
 
     /// <summary>
     /// Rewrites every reference to the field <paramref name="oldName"/> of
@@ -65,16 +66,17 @@ internal static class ExpressionFieldReferences
     /// <param name="oldName">The field's current name.</param>
     /// <param name="newName">The field's new name.</param>
     /// <param name="tableName">The name of the table the expression belongs to, which may qualify a reference.</param>
+    /// <param name="isCalculatedColumn">Whether bare constant spellings bind to fields.</param>
     /// <returns>The rewritten text, or the same instance when nothing refers to the field.</returns>
     /// <exception cref="ArgumentException">The expression refers to the field and <paramref name="newName"/> contains <c>]</c>, which a <c>[field]</c> reference cannot hold.</exception>
-    internal static string? Rename(string? expression, string oldName, string newName, string tableName)
+    internal static string? Rename(string? expression, string oldName, string newName, string tableName, bool isCalculatedColumn = false)
     {
         if (string.IsNullOrEmpty(expression))
         {
             return expression;
         }
 
-        List<(int Start, int End)> references = FindReferences(expression, oldName, tableName);
+        List<(int Start, int End)> references = FindReferences(expression, oldName, tableName, isCalculatedColumn);
         if (references.Count == 0)
         {
             return expression;
@@ -98,7 +100,7 @@ internal static class ExpressionFieldReferences
         return builder.Append(expression, copied, expression.Length - copied).ToString();
     }
 
-    private static List<(int Start, int End)> FindReferences(string text, string fieldName, string tableName)
+    private static List<(int Start, int End)> FindReferences(string text, string fieldName, string tableName, bool isCalculatedColumn)
     {
         var found = new List<(int Start, int End)>();
         var segments = new List<Segment>(2);
@@ -167,7 +169,7 @@ internal static class ExpressionFieldReferences
                 }
 
                 if (TryGetCandidate(segments, tableName, out Segment candidate)
-                    && IsReferenceTo(candidate, fieldName, isCall: NextNonSpace(text, index) == '(', isQualified: segments.Count == 2))
+                    && IsReferenceTo(candidate, fieldName, isCall: NextNonSpace(text, index) == '(', isQualified: segments.Count == 2, isCalculatedColumn))
                 {
                     found.Add((candidate.Start, candidate.End));
                 }
@@ -252,7 +254,7 @@ internal static class ExpressionFieldReferences
         return false;
     }
 
-    private static bool IsReferenceTo(Segment candidate, string fieldName, bool isCall, bool isQualified)
+    private static bool IsReferenceTo(Segment candidate, string fieldName, bool isCall, bool isQualified, bool isCalculatedColumn)
     {
         if (!string.Equals(candidate.Name, fieldName, StringComparison.OrdinalIgnoreCase))
         {
@@ -267,7 +269,7 @@ internal static class ExpressionFieldReferences
                 && !isCall
                 && (isQualified
                     || (!AccessExpressionKeywords.IsKeyword(candidate.Name)
-                        && !CalculatedExpressionCoercion.TryGetBuiltinConstant(candidate.Name, out _))));
+                        && (isCalculatedColumn || !CalculatedExpressionCoercion.TryGetBuiltinConstant(candidate.Name, out _)))));
     }
 
     /// <summary>Returns the index after the brace group opening at <paramref name="index"/>, or -1 when it is not closed.</summary>

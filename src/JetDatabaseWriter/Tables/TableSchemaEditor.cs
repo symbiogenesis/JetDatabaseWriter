@@ -168,6 +168,7 @@ internal sealed class TableSchemaEditor(
             ValidateDeclaredDefault(columns[i], nameof(columns));
         }
 
+        CalculatedExpressionBindings.ValidateDeclarations(columns, nameof(columns));
         _ = JetExpressionConverter.BuildLvPropBlob(columns, format);
 
         return this.CreateTableAsync(tableName, columns, indexes, cancellationToken);
@@ -346,7 +347,13 @@ internal sealed class TableSchemaEditor(
                     throw new JetObjectExistsException(JetErrorCode.ColumnExists, $"Column '{column.Name}' already exists in table '{tableName}'.", errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = column.Name });
                 }
 
-                return [.. existing, column];
+                List<ColumnDefinition> projected = [.. existing, column];
+                if (column.IsCalculated)
+                {
+                    CalculatedExpressionBindings.ValidateDeclarations(projected, nameof(column), projected.Count - 1);
+                }
+
+                return projected;
             },
             (oldRow, _) =>
             {

@@ -31,7 +31,8 @@ rules reject every qualified reference before mutation. Column rename and
 drop dependency checks recognize row-local bare aliases while preserving
 the original qualifier spelling. A qualified second segment is a field even
 when it spells a builtin constant or keyword (such as `vbTrue`, `Null` or
-`And`); unqualified builtin constants keep their usual meanings.
+`And`). In a table calculation, bare `vb` constant spellings also bind to fields;
+defaults and validation rules retain their builtin constants.
 `QualifiedReservedFieldTests` checks dependency refusal, rename and native
 recalculation/compact for these names. DAO120 rejects all nine tested whitespace
 variants of `[T].[Price]`, `T.Price` and `[T]![Price]`; the evaluator rejects
@@ -285,6 +286,14 @@ Delivered:
   declaration refusals on Access-equipped hosts).
 
 ### Row-local expression evaluation
+
+Declarations bind every syntactic source, including unselected branches, before
+mutation. Missing fields, self/circular dependencies and Binary/OLE/complex source
+fields are refused, matching native errors 3799, 3866 and 3885. Forward references
+to other declared calculated fields are valid. Persisted write plans validate the
+reachable dependency graph before evaluation. `CalculatedExpressionBindingTests`
+compares native declarations and verifies atomic create/add refusals, rename/drop
+binding and native update/compact behavior.
 
 Goal: on `INSERT` / `UPDATE`, recompute the value ourselves so callers do not
 have to supply it, and so updates to dependent columns refresh the persisted

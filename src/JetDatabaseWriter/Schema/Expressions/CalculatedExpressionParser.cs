@@ -241,9 +241,12 @@ internal sealed class CalculatedExpressionParser
         switch (token.Kind)
         {
             case TokenKind.Identifier:
-                return this.Peek().Kind == TokenKind.OpenParen
-                    ? this.ParseFunctionCall(token.Text)
-                    : new CalculatedExpressionNameNode(token.Text);
+                if (this.Peek().Kind == TokenKind.OpenParen)
+                {
+                    return this.ParseFunctionCall(token.Text);
+                }
+
+                return this.isCalculatedColumn ? new CalculatedExpressionFieldNode(token.Text) : new CalculatedExpressionNameNode(token.Text);
             case TokenKind.Word:
                 return token.Text.ToUpperInvariant() switch
                 {
