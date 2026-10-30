@@ -119,6 +119,11 @@ internal static class IndexKeyEncoder
 
         if (columnType is DateTimeType or DateTimeExtendedType)
         {
+            if (value is NativeDate nativeDate)
+            {
+                return EncodeEntry(columnType, columnType == DateTimeType ? value : nativeDate.Value, ascending);
+            }
+
             if (columnType == DateTimeExtendedType && value is byte[] bytes)
             {
                 return bytes.Length == 42 ? EncodeEntry(columnType, value, ascending) : null;
@@ -440,9 +445,8 @@ internal static class IndexKeyEncoder
 
             case DateTimeType:
             {
-                DateTime dt = ToDateTime(value);
                 byte[] r = new byte[8];
-                BinaryPrimitives.WriteInt64BigEndian(r, BitConverter.DoubleToInt64Bits(dt.ToOADate()));
+                BinaryPrimitives.WriteInt64BigEndian(r, BitConverter.DoubleToInt64Bits(value is NativeDate date ? date.Serial : ToDateTime(value).ToOADate()));
                 TwiddleIeeeBigEndianInPlace(r);
                 return r;
             }

@@ -462,7 +462,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
         {
             if (buffer[i] is LongValueRef lvr)
             {
-                if (decodePlan.PreservesLongValueBytes)
+                if (decodePlan.PreservesStoredValues)
                 {
                     buffer[i] = await this.ReadLongValueForWriteBackAsync(page, lvr.Start, lvr.Len, lvr.IsOle, decodePlan.GetColumnName(i), cancellationToken).ConfigureAwait(false);
                 }
@@ -537,7 +537,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
     private async ValueTask<object> ResolveCalculatedLongValueRefAsync(byte[] page, CalculatedLongValueRef reference, RowDecodePlan decodePlan, int columnIndex, CancellationToken cancellationToken)
     {
         byte[] raw;
-        if (decodePlan.PreservesLongValueBytes)
+        if (decodePlan.PreservesStoredValues)
         {
             try
             {

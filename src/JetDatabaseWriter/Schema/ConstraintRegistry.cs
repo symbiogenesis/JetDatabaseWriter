@@ -401,7 +401,7 @@ internal sealed class ConstraintRegistry(
                     throw new JetConstraintException(JetErrorCode.NotNullViolation, takeDefault ? $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and no value was supplied." : $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and cannot be set to null.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
                 }
 
-                if (!isNull && c.ValidationRule != null && !c.ValidationRule(value))
+                if (!isNull && c.ValidationRule != null && !c.ValidationRule(value is NativeDate nativeDate ? nativeDate.Value : value))
                 {
                     throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Validation rule for column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
                 }
@@ -484,7 +484,7 @@ internal sealed class ConstraintRegistry(
                 throw new JetConstraintException(JetErrorCode.NotNullViolation, $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and cannot be set to null.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
             }
 
-            if (!isNull && c.ValidationRule != null && !c.ValidationRule(value))
+            if (!isNull && c.ValidationRule != null && !c.ValidationRule(value is NativeDate nativeDate ? nativeDate.Value : value))
             {
                 throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Validation rule for column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
             }
@@ -769,7 +769,7 @@ internal sealed class ConstraintRegistry(
                 throw new JetConstraintException(JetErrorCode.NotNullViolation, $"Calculated column '{c.Name}' on table '{tableName}' evaluated to NULL but is marked NOT NULL.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
             }
 
-            if (!isNull && c.ValidationRule != null && !c.ValidationRule(value))
+            if (!isNull && c.ValidationRule != null && !c.ValidationRule(value is NativeDate nativeDate ? nativeDate.Value : value))
             {
                 throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Validation rule for calculated column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
             }

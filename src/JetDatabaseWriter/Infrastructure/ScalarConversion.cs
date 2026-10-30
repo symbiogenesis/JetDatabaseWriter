@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Infrastructure;
 
 using System;
 using System.Globalization;
+using JetDatabaseWriter.Models;
 
 /// <summary>Probes built-in scalar conversions without throwing for ordinary incompatible values.</summary>
 internal static class ScalarConversion
@@ -18,6 +19,43 @@ internal static class ScalarConversion
         {
             result = value;
             return true;
+        }
+
+        if (target == typeof(NativeDate))
+        {
+            if (value is DateTime dateTime)
+            {
+                if (dateTime.Ticks >= TimeSpan.TicksPerDay && dateTime.Year < 100)
+                {
+                    return false;
+                }
+
+                result = NativeDate.FromDateTime(dateTime);
+                return true;
+            }
+
+            if (value is string dateText && DateTime.TryParse(dateText, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsedDate))
+            {
+                if (parsedDate.Ticks >= TimeSpan.TicksPerDay && parsedDate.Year < 100)
+                {
+                    return false;
+                }
+
+                result = NativeDate.FromDateTime(parsedDate);
+                return true;
+            }
+
+            return false;
+        }
+
+        if (value is NativeDate nativeDate)
+        {
+            value = nativeDate.Value;
+            if (target == typeof(DateTime))
+            {
+                result = value;
+                return true;
+            }
         }
 
         if (target.IsEnum)

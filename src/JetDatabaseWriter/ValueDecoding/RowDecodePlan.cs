@@ -10,6 +10,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.LongValues.Models;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
@@ -27,7 +28,7 @@ internal sealed class RowDecodePlan
     private readonly bool hasVarColumns;
     private readonly bool hasBigBinaryColumns;
 
-    private RowDecodePlan(TableDef tableDef, bool[]? wantedColumns, int[]? columnOrdinals, bool strictParsing, bool preserveLongValueBytes = false)
+    private RowDecodePlan(TableDef tableDef, bool[]? wantedColumns, int[]? columnOrdinals, bool strictParsing, bool preserveStoredValues = false)
     {
         Guard.NotNull(tableDef, nameof(tableDef));
 
@@ -63,19 +64,20 @@ internal sealed class RowDecodePlan
             }
         }
 
-        this.PreservesLongValueBytes = preserveLongValueBytes;
+        this.PreservesStoredValues = preserveStoredValues;
     }
 
     internal int ColumnCount => this.columns.Count;
 
     /// <summary>
-    /// Gets a value indicating whether MEMO / OLE values are decoded for a
-    /// write-back: a value whose stored bytes cannot be read decodes to an
+    /// Gets a value indicating whether values retain their storage identity for
+    /// a write-back. Dates retain their original OLE serial. A MEMO / OLE value
+    /// whose stored bytes cannot be read decodes to an
     /// <see cref="UnreadableLongValue"/>, which the writer refuses to store,
     /// instead of a placeholder such as <c>"(memo)"</c>, an empty array or
     /// <see cref="DBNull"/>. OLE cells hold their stored bytes in every plan.
     /// </summary>
-    internal bool PreservesLongValueBytes { get; }
+    internal bool PreservesStoredValues { get; }
 
     internal static RowDecodePlan CreateTyped(TableDef tableDef, bool[]? wantedColumns, bool strictParsing)
         => new(tableDef, wantedColumns, columnOrdinals: null, strictParsing);
@@ -83,13 +85,13 @@ internal sealed class RowDecodePlan
     /// <summary>
     /// Creates a typed plan for the writer's row snapshots, whose values are
     /// re-inserted by updates, cascades and schema rewrites. See
-    /// <see cref="PreservesLongValueBytes"/>.
+    /// <see cref="PreservesStoredValues"/>.
     /// </summary>
     /// <param name="tableDef">The table definition.</param>
     /// <param name="strictParsing">Whether malformed values throw instead of decoding to a fallback.</param>
     /// <param name="wantedColumns">The selected columns, or all columns when null.</param>
     internal static RowDecodePlan CreateTypedForWriteBack(TableDef tableDef, bool strictParsing, bool[]? wantedColumns = null)
-        => new(tableDef, wantedColumns, columnOrdinals: null, strictParsing, preserveLongValueBytes: true);
+        => new(tableDef, wantedColumns, columnOrdinals: null, strictParsing, preserveStoredValues: true);
 
     /// <summary>
     /// Creates a plan that decodes rows as strings. With
@@ -353,6 +355,11 @@ internal sealed class RowDecodePlan
     private static string FormatDatePayload(DateTime date, ColumnType type)
         => date.ToString(type == DateTimeType ? "yyyy-MM-dd HH:mm:ss" : "yyyy-MM-dd HH:mm:ss.fffffff", System.Globalization.CultureInfo.InvariantCulture);
 
+    private object ReadTypedDatePayload(ReadOnlySpan<byte> payload, ColumnType type)
+        => this.PreservesStoredValues && type == DateTimeType
+            ? NativeDate.FromSerial(JetTypeInfo.ReadDoubleLittleEndian(payload[..8]))
+            : ReadDatePayload(payload, type);
+
     /// <summary>Gets the name of the column at <paramref name="columnIndex"/>, for error messages.</summary>
     /// <param name="columnIndex">The column index.</param>
     internal string GetColumnName(int columnIndex) => this.columns[columnIndex].Name;
@@ -361,7 +368,7 @@ internal sealed class RowDecodePlan
         => this.MalformedVariableValue(this.columns[columnIndex], exception);
 
     private object MalformedFixedDate(ColumnInfo column, Exception exception)
-        => RowValueDecodePolicy.MalformedFixedDate(column, exception, this.strictParsing || this.PreservesLongValueBytes);
+        => RowValueDecodePolicy.MalformedFixedDate(column, exception, this.strictParsing || this.PreservesStoredValues);
 
     internal bool TryReadDate(byte[] page, int start, ColumnInfo column, out DateTime value)
     {
@@ -379,7 +386,16 @@ internal sealed class RowDecodePlan
     }
 
     private object DecodeFixedDate(byte[] page, int start, ColumnInfo column)
-        => this.TryReadDate(page, start, column, out DateTime value) ? value : DBNull.Value;
+    {
+        if (!this.TryReadDate(page, start, column, out DateTime value))
+        {
+            return DBNull.Value;
+        }
+
+        return this.PreservesStoredValues && column.Type == DateTimeType
+            ? NativeDate.FromSerial(JetTypeInfo.ReadDoubleLittleEndian(page.AsSpan(start, 8)))
+            : value;
+    }
 
     private string DecodeFixedDateString(byte[] page, int start, ColumnInfo column)
     {
@@ -396,7 +412,7 @@ internal sealed class RowDecodePlan
         }
         catch (Exception exception) when (RowValueDecodePolicy.IsMalformedValueException(exception))
         {
-            return RowValueDecodePolicy.MalformedFixedValue(column, exception, this.strictParsing || this.PreservesLongValueBytes);
+            return RowValueDecodePolicy.MalformedFixedValue(column, exception, this.strictParsing || this.PreservesStoredValues);
         }
     }
 
@@ -417,7 +433,7 @@ internal sealed class RowDecodePlan
             _ = RowValueDecodePolicy.MalformedFixedValue(
                 column,
                 new ArgumentException("The assigned fixed slot extends outside the row's fixed payload."),
-                this.strictParsing || this.PreservesLongValueBytes);
+                this.strictParsing || this.PreservesStoredValues);
             return;
         }
 
@@ -427,7 +443,7 @@ internal sealed class RowDecodePlan
             _ = LongValueReadPolicy.MissingValue(
                 column.Name,
                 new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "The assigned long-value slot has missing or invalid row offsets."),
-                this.strictParsing || this.PreservesLongValueBytes);
+                this.strictParsing || this.PreservesStoredValues);
             return;
         }
 
@@ -896,7 +912,7 @@ internal sealed class RowDecodePlan
                 return CalculatedColumnUtil.ReadPayloadString(
                     payload,
                     valueType,
-                    this.strictParsing || this.PreservesLongValueBytes);
+                    this.strictParsing || this.PreservesStoredValues);
             }
 
             throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");
@@ -927,7 +943,7 @@ internal sealed class RowDecodePlan
         ref bool needsLongValue) => slice.Kind switch
         {
             ColumnSliceKind.Bool => BoxCache.Bool(slice.BoolValue),
-            ColumnSliceKind.Empty when this.PreservesLongValueBytes && column.Type == BigBinaryType => throw new JetCorruptDataException(
+            ColumnSliceKind.Empty when this.PreservesStoredValues && column.Type == BigBinaryType => throw new JetCorruptDataException(
                 JetErrorCode.MalformedValue,
                 $"Column '{column.Name}' has an unreadable BIGBINARY payload and cannot be written back.",
                 new JetErrorInfo
@@ -971,15 +987,15 @@ internal sealed class RowDecodePlan
 
             if (column.Type is DateTimeType or DateTimeExtendedType)
             {
-                return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing || this.PreservesLongValueBytes)
-                    ? ReadDatePayload(page.AsSpan(start, length), column.Type)
+                return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing || this.PreservesStoredValues)
+                    ? this.ReadTypedDatePayload(page.AsSpan(start, length), column.Type)
                     : DBNull.Value;
             }
 
             if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
             {
-                return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing || this.PreservesLongValueBytes)
-                    ? JetTypeInfo.ReadFixedTyped(page, start, column, required, this.strictParsing || this.PreservesLongValueBytes)
+                return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing || this.PreservesStoredValues)
+                    ? JetTypeInfo.ReadFixedTyped(page, start, column, required, this.strictParsing || this.PreservesStoredValues)
                     : DBNull.Value;
             }
 
@@ -1022,7 +1038,7 @@ internal sealed class RowDecodePlan
             return this.MalformedVariableValue(column, new ArgumentException("Calculated value envelope is truncated."));
         }
 
-        _ = RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing || this.PreservesLongValueBytes);
+        _ = RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing || this.PreservesStoredValues);
         return RowValueDecodePolicy.EmptyVariableValue(column);
     }
 
@@ -1030,12 +1046,12 @@ internal sealed class RowDecodePlan
     {
         // A write-back snapshot must not turn an unreadable MEMO / OLE value
         // into DBNull, which an update or schema rewrite would then store.
-        if (this.PreservesLongValueBytes && JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
+        if (this.PreservesStoredValues && JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
         {
             return new UnreadableLongValue(column.Name, exception.Message);
         }
 
-        return RowValueDecodePolicy.MalformedVariableValue(column, exception, this.strictParsing || this.PreservesLongValueBytes);
+        return RowValueDecodePolicy.MalformedVariableValue(column, exception, this.strictParsing || this.PreservesStoredValues);
     }
 
     private object? DecodeCalculatedTypedVariableValue(
@@ -1089,13 +1105,13 @@ internal sealed class RowDecodePlan
 
                 if (valueType is DateTimeType or DateTimeExtendedType)
                 {
-                    return ReadDatePayload(payload, valueType);
+                    return this.ReadTypedDatePayload(payload, valueType);
                 }
 
                 return CalculatedColumnUtil.ReadPayloadTyped(
                     payload,
                     valueType,
-                    this.strictParsing || this.PreservesLongValueBytes);
+                    this.strictParsing || this.PreservesStoredValues);
             }
 
             throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");

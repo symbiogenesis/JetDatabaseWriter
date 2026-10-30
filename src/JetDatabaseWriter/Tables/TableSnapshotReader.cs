@@ -108,10 +108,10 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
             {
                 foreach (ColumnInfo column in resolved.Definition.Columns)
                 {
-                    // Complex columns hold raw references, and MEMO / OLE cells
-                    // (including a calculated column whose result type is MEMO or
-                    // OLE) may hold an UnreadableLongValue, so those columns are untyped.
-                    Type clrType = column.IsCalculated || column.Type is ComplexType || ResolveValueType(column) is MemoType or OleType
+                    // These cells can carry raw Complex references, exact date
+                    // serials, calculation errors or unreadable long values.
+                    // Their storage representations require object columns.
+                    Type clrType = column.IsCalculated || column.Type is ComplexType || ResolveValueType(column) is MemoType or OleType or DateTimeType
                         ? typeof(object)
                         : ResolveClrType(column);
                     _ = table.Columns.Add(column.Name, clrType);

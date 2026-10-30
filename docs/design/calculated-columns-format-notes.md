@@ -606,6 +606,17 @@ These calculated conversions are separate from ordinary Text/Memo preservation.
 
 ## Floating expression values
 
+### Stored date identity
+
+Writer snapshots retain the exact OLE date serial separately from the public
+`DateTime` projection. Native -1/24 and +1/24 both display as 01:00 on day zero,
+but compare differently; submillisecond serial bits can also share one public
+DateTime value. Updates, schema rewrites and index encoding preserve those stored
+serials, and validation callbacks still receive DateTime values.
+`NativeDateSerialTests` uses independently authored source/compacted fixtures,
+exact raw serials, index reads, criteria and fresh DAO update/compact controls.
+
+
 The shared row-local interpreter retains Single/Double intermediates for
 addition, subtraction, multiplication, division, unary signs and Abs/Int/Fix.
 Single results promote to Double on overflow; Long or Double operands select

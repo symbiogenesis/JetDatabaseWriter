@@ -95,7 +95,7 @@ internal sealed class RowEncoder(JetFormat format)
             case DateTimeType:
                 BinaryPrimitives.WriteInt64LittleEndian(
                     dest,
-                    BitConverter.DoubleToInt64Bits(Convert.ToDateTime(value, CultureInfo.InvariantCulture).ToOADate()));
+                    BitConverter.DoubleToInt64Bits(value is NativeDate date ? date.Serial : Convert.ToDateTime(value, CultureInfo.InvariantCulture).ToOADate()));
                 return 8;
 
             case MoneyType:
