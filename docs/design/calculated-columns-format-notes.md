@@ -859,3 +859,20 @@ units and refuses excessive work rather than reporting a false absence.
 `CalculatedTextFunctionTests`, `CalculatedTextFunctionDaoTests` and
 `CalculatedTextCaseTests` cover Null/error ordering, native source and compacted
 fixtures, and writer caches through native recalculation/compact.
+
+## Native calculated date functions
+
+Date components round the exact stored OLE serial to the nearest whole second,
+including day carry, before returning a signed Integer. This preserves boundaries
+that a preliminary millisecond DateTime conversion would change. Null component
+inputs remain Null. DateSerial and TimeSerial round arguments to native Integer
+ranges and preserve their raw native serial results, including negative time-only
+values. Native argument/domain failures retain statuses 5, 6 and 13.
+
+Two-digit DateSerial years follow the operating system Gregorian calendar window;
+the measured host uses 2049 as its upper endpoint. The independently measured
+English General profile uses Sunday for system-default week starts and English
+month/day names. `CalculatedNativeDateFunctionTests` and its DAO controls retain
+native subtypes through Binary payloads and verify writer/native recalculation
+and compact. Database/thread locale probes are separate from changing operating
+system regional settings; they did not alter the measured naming profile.

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
 using Xunit;
@@ -35,8 +36,8 @@ public sealed class CalculatedExpressionDatePrecisionTests
     [Theory]
     [InlineData("DateSerial(2020, 32768, 1)")]
     [InlineData("DateSerial(2020, 1, -32769)")]
-    public void DateSerial_ArgumentsOutsideIntegerRangeOverflow(string expression)
-        => Assert.Throws<JetLimitationException>(() => Evaluate<DateTime>(expression));
+    public void SharedDateSerial_ArgumentsOutsideIntegerRangeOverflow(string expression)
+        => Assert.Throws<OverflowException>(() => CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false).Evaluate(new CalculatedExpressionEvaluationContext(new TableDef(), [], [])));
 
     [Theory]
     [InlineData("Now()")]
@@ -106,6 +107,11 @@ public sealed class CalculatedExpressionDatePrecisionTests
         };
         object[] values = [DBNull.Value];
         CalculatedExpressionEvaluator.Apply(table, constraints, values);
+        if (values[0] is NativeDate native && typeof(T) == typeof(DateTime))
+        {
+            return Assert.IsType<T>(native.Value);
+        }
+
         return Assert.IsType<T>(values[0]);
     }
 }

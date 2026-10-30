@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Schema.Expressions;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using JetDatabaseWriter.Models;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionFunctionRegistry;
@@ -15,22 +16,22 @@ internal static class CalculatedExpressionDateTimeFunctions
         AddFunction(functions, "NOW", 0, 0, static _ => CurrentAccessLocalDateTime());
         AddFunction(functions, "TIME", 0, 0, static _ => TimeOnDayZero(CurrentAccessLocalDateTime()));
         AddFunction(functions, "DATEVALUE", 1, 1, static function => (function.Arg(0) is DateTime date ? date : ParseDate(ToText(function.Arg(0)))).Date);
-        AddFunction(functions, "DATESERIAL", 3, 3, static function => DateSerial(ToVbaInteger(function.Arg(0)), ToVbaInteger(function.Arg(1)), ToVbaInteger(function.Arg(2))));
+        AddFunction(functions, "DATESERIAL", 3, 3, static function => EvaluateDateFunction(function, DateFunction.DateSerial));
         AddFunction(functions, "DATEADD", 3, 3, static function => DateAdd(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1))), ToDateTime(function.Arg(2))));
         AddFunction(functions, "DATEDIFF", 3, 5, static function => DateDiff(ToText(function.Arg(0)), ToDateTime(function.Arg(1)), ToDateTime(function.Arg(2))));
         AddFunction(functions, "DATEPART", 2, 4, static function => DatePart(ToText(function.Arg(0)), ToDateTime(function.Arg(1))));
-        AddFunction(functions, "YEAR", 1, 1, static function => ToDateTime(function.Arg(0)).Year);
-        AddFunction(functions, "MONTH", 1, 1, static function => ToDateTime(function.Arg(0)).Month);
-        AddFunction(functions, "DAY", 1, 1, static function => ToDateTime(function.Arg(0)).Day);
-        AddFunction(functions, "HOUR", 1, 1, static function => ToDateTime(function.Arg(0)).Hour);
-        AddFunction(functions, "MINUTE", 1, 1, static function => ToDateTime(function.Arg(0)).Minute);
-        AddFunction(functions, "SECOND", 1, 1, static function => ToDateTime(function.Arg(0)).Second);
+        AddFunction(functions, "YEAR", 1, 1, static function => EvaluateDateFunction(function, DateFunction.Year));
+        AddFunction(functions, "MONTH", 1, 1, static function => EvaluateDateFunction(function, DateFunction.Month));
+        AddFunction(functions, "DAY", 1, 1, static function => EvaluateDateFunction(function, DateFunction.Day));
+        AddFunction(functions, "HOUR", 1, 1, static function => EvaluateDateFunction(function, DateFunction.Hour));
+        AddFunction(functions, "MINUTE", 1, 1, static function => EvaluateDateFunction(function, DateFunction.Minute));
+        AddFunction(functions, "SECOND", 1, 1, static function => EvaluateDateFunction(function, DateFunction.Second));
         AddFunction(functions, "TIMEVALUE", 1, 1, static function => TimeOnDayZero(ToDateTime(function.Arg(0))));
-        AddFunction(functions, "TIMESERIAL", 3, 3, static function => EvaluateTimeSerial(function));
+        AddFunction(functions, "TIMESERIAL", 3, 3, static function => EvaluateDateFunction(function, DateFunction.TimeSerial));
         AddFunction(functions, "TIMER", 0, 0, static _ => TimerSeconds(CurrentLocalDateTime()));
-        AddFunction(functions, "MONTHNAME", 1, 2, static function => CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(checked((int)ToDecimal(function.Arg(0)))));
-        AddFunction(functions, "WEEKDAY", 1, 2, static function => Weekday(ToDateTime(function.Arg(0)), function.Count > 1 ? checked((int)ToDecimal(function.Arg(1))) : 1));
-        AddFunction(functions, "WEEKDAYNAME", 1, 3, static function => WeekdayName(checked((int)ToDecimal(function.Arg(0))), function.Count > 1 && ToBoolean(function.Arg(1)), function.Count > 2 ? checked((int)ToDecimal(function.Arg(2))) : 1));
+        AddFunction(functions, "MONTHNAME", 1, 2, static function => EvaluateDateFunction(function, DateFunction.MonthName));
+        AddFunction(functions, "WEEKDAY", 1, 2, static function => EvaluateDateFunction(function, DateFunction.Weekday));
+        AddFunction(functions, "WEEKDAYNAME", 1, 3, static function => EvaluateDateFunction(function, DateFunction.WeekdayName));
         AddFunction(functions, "CDATE", 1, 1, static function => ToDateTime(function.Arg(0)), "CVDATE");
     }
 
@@ -60,10 +61,116 @@ internal static class CalculatedExpressionDateTimeFunctions
     /// <param name="function">The call, with the hours, minutes and seconds.</param>
     /// <returns>The time.</returns>
     /// <exception cref="OverflowException">An argument is outside the Integer range.</exception>
-    private static DateTime EvaluateTimeSerial(CalculatedFunctionInvocation function)
+    private static object EvaluateTimeSerial(CalculatedFunctionInvocation function)
     {
-        int seconds = (ToVbaInteger(function.Arg(0)) * 3600) + (ToVbaInteger(function.Arg(1)) * 60) + ToVbaInteger(function.Arg(2));
-        return FromOleDate(seconds / 86400d);
+        int seconds = (ToVbaInteger(DateArgument(function, 0)) * 3600) + (ToVbaInteger(DateArgument(function, 1)) * 60) + ToVbaInteger(DateArgument(function, 2));
+        double serial = seconds / 86400d;
+        return function.Context.IsCalculatingColumn ? NativeDate.FromSerial(serial) : FromOleDate(serial);
+    }
+
+    private static object EvaluateDateFunction(CalculatedFunctionInvocation function, DateFunction operation)
+    {
+        try
+        {
+            return operation switch
+            {
+                DateFunction.DateSerial => EvaluateDateSerial(function),
+                DateFunction.TimeSerial => EvaluateTimeSerial(function),
+                DateFunction.MonthName => EvaluateMonthName(function),
+                DateFunction.WeekdayName => EvaluateWeekdayName(function),
+                DateFunction.Year or DateFunction.Month or DateFunction.Day or DateFunction.Hour or DateFunction.Minute or DateFunction.Second or DateFunction.Weekday => EvaluateDatePart(function, operation),
+                _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+            };
+        }
+        catch (Exception exception) when (function.Context.IsCalculatingColumn && exception is ArgumentException or OverflowException or InvalidCastException or FormatException)
+        {
+            return new CalculatedError(exception switch { OverflowException => 6, ArgumentException => 5, _ => 13 });
+        }
+    }
+
+    private static object EvaluateDateSerial(CalculatedFunctionInvocation function)
+    {
+        DateTime date = DateSerial(ToVbaInteger(DateArgument(function, 0)), ToVbaInteger(DateArgument(function, 1)), ToVbaInteger(DateArgument(function, 2)));
+        return function.Context.IsCalculatingColumn ? NativeDate.FromDateTime(date) : date;
+    }
+
+    private static object EvaluateDatePart(CalculatedFunctionInvocation function, DateFunction operation)
+    {
+        object value = function.Arg(0);
+        int firstDay = operation == DateFunction.Weekday && function.Count > 1 ? DateIntegerArgument(function, 1) : 1;
+        if (IsNull(value))
+        {
+            return DBNull.Value;
+        }
+
+        DateTime date;
+        try
+        {
+            double serial = value switch
+            {
+                NativeDate native => native.Serial,
+                DateTime dateTime => dateTime.ToOADate(),
+                string text => ParseDate(text).ToOADate(),
+                _ => ToDouble(value),
+            };
+            _ = FromOleDate(serial);
+            double day = Math.Truncate(serial);
+            double seconds = Math.Floor((Math.Abs(serial - day) * 86400d) + 0.5d);
+            date = FromOleDate(day).AddSeconds(seconds);
+        }
+        catch (Exception exception) when (exception is ArgumentException or OverflowException or FormatException)
+        {
+            throw new InvalidCastException("The date function argument is not a valid date.", exception);
+        }
+
+        int result = operation switch
+        {
+            DateFunction.Year => date.Year,
+            DateFunction.Month => date.Month,
+            DateFunction.Day => date.Day,
+            DateFunction.Hour => date.Hour,
+            DateFunction.Minute => date.Minute,
+            DateFunction.Second => date.Second,
+            DateFunction.Weekday => Weekday(date, firstDay),
+            DateFunction.DateSerial or DateFunction.TimeSerial or DateFunction.MonthName or DateFunction.WeekdayName => throw new ArgumentOutOfRangeException(nameof(operation)),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+        };
+        return function.Context.IsCalculatingColumn ? (object)checked((short)result) : result;
+    }
+
+    private static string EvaluateMonthName(CalculatedFunctionInvocation function)
+    {
+        int month = DateIntegerArgument(function, 0);
+        bool abbreviate = function.Count > 1 && DateBooleanArgument(function, 1);
+        if (month is < 1 or > 12)
+        {
+            throw new ArgumentOutOfRangeException(nameof(function), "The month must be between 1 and 12.");
+        }
+
+        return abbreviate ? CultureInfo.InvariantCulture.DateTimeFormat.GetAbbreviatedMonthName(month) : CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(month);
+    }
+
+    private static string EvaluateWeekdayName(CalculatedFunctionInvocation function)
+    {
+        int day = DateIntegerArgument(function, 0);
+        bool abbreviate = function.Count > 1 && DateBooleanArgument(function, 1);
+        int firstDay = function.Count > 2 ? DateIntegerArgument(function, 2) : 0;
+        return WeekdayName(day, abbreviate, firstDay);
+    }
+
+    private static int DateIntegerArgument(CalculatedFunctionInvocation function, int index)
+        => AccessVariantOperators.ToRoundedLong(DateArgument(function, index));
+
+    private static bool DateBooleanArgument(CalculatedFunctionInvocation function, int index)
+    {
+        object value = DateArgument(function, index);
+        return value is string text && bool.TryParse(text, out bool boolean) ? boolean : ToDouble(value) != 0d;
+    }
+
+    private static object DateArgument(CalculatedFunctionInvocation function, int index)
+    {
+        object value = function.Arg(index);
+        return IsNull(value) ? throw new InvalidCastException("The date function argument cannot be Null.") : value;
     }
 
     /// <summary>
@@ -83,12 +190,15 @@ internal static class CalculatedExpressionDateTimeFunctions
 
     private static DateTime DateSerial(int year, int month, int day)
     {
-        if (year is >= 0 and < 100)
+        if (year < 100)
         {
-            year += year <= 29 ? 2000 : 1900;
+            int maximum = new GregorianCalendar().TwoDigitYearMax;
+            int century = maximum - (maximum % 100);
+            year += century - (year > maximum % 100 ? 100 : 0);
         }
 
-        return new DateTime(year, 1, 1).AddMonths(month - 1).AddDays(day - 1);
+        DateTime result = new DateTime(year, 1, 1).AddMonths(month - 1).AddDays(day - 1);
+        return result.Year < 100 ? throw new ArgumentOutOfRangeException(nameof(year), "The date must be in year 100 or later.") : result;
     }
 
     private static DateTime DateAdd(string interval, int value, DateTime dateTime) => interval.Trim().ToUpperInvariant() switch
@@ -142,16 +252,48 @@ internal static class CalculatedExpressionDateTimeFunctions
 
     private static int Weekday(DateTime dateTime, int firstDay)
     {
+        firstDay = FirstDay(firstDay);
         int sundayBased = ((int)dateTime.DayOfWeek) + 1;
         return ((sundayBased - 1 - (firstDay - 1) + 7) % 7) + 1;
     }
 
     private static string WeekdayName(int weekday, bool abbreviate, int firstDay)
     {
+        firstDay = FirstDay(firstDay);
+        if (weekday is < 1 or > 7)
+        {
+            throw new ArgumentOutOfRangeException(nameof(weekday), "The weekday must be between 1 and 7.");
+        }
+
         int sundayBased = (firstDay - 1 + (weekday - 1)) % 7;
         string[] names = abbreviate
             ? CultureInfo.InvariantCulture.DateTimeFormat.AbbreviatedDayNames
             : CultureInfo.InvariantCulture.DateTimeFormat.DayNames;
         return names[sundayBased];
+    }
+
+    private static int FirstDay(int value)
+    {
+        if (value is < 0 or > 7)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), "The first day must be between 0 and 7.");
+        }
+
+        return value == 0 ? 1 : value;
+    }
+
+    private enum DateFunction
+    {
+        Year = 0,
+        Month = 1,
+        Day = 2,
+        Hour = 3,
+        Minute = 4,
+        Second = 5,
+        Weekday = 6,
+        DateSerial = 7,
+        TimeSerial = 8,
+        MonthName = 9,
+        WeekdayName = 10,
     }
 }
