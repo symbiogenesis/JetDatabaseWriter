@@ -394,7 +394,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
     {
         await AssertTableAndUniqueIndexMatchAsync(db, ChildTable, PrimaryKeyName, IdColumn, [.. expectedParentIds.Keys], cancellationToken);
 
-        using var services = new ReaderServices(db, UncachedReaderOptions);
+        using var services = new ReaderServices(db, ReaderOpenContext.CreateRoot(UncachedReaderOptions));
         CatalogEntry? entry = await services.TableCatalog.GetCatalogEntryAsync(ChildTable, cancellationToken);
         Assert.NotNull(entry);
         TableDef? tableDef = await db.TableDefs.ReadTableDefAsync(entry.TDefPage, cancellationToken);
@@ -437,7 +437,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
         CancellationToken cancellationToken)
     {
         int[] expected = [.. expectedKeys.Order()];
-        using var services = new ReaderServices(db, UncachedReaderOptions);
+        using var services = new ReaderServices(db, ReaderOpenContext.CreateRoot(UncachedReaderOptions));
 
         CatalogEntry? entry = await services.TableCatalog.GetCatalogEntryAsync(tableName, cancellationToken);
         Assert.NotNull(entry);

@@ -13,16 +13,23 @@ using Xunit;
 public sealed class LinkedSourceSecurityTests
 {
     [Fact]
-    public void LinkedOptions_DoNotForwardHostPassword()
+    public void LinkedContext_DoNotForwardHostPassword()
     {
         var options = new AccessReaderOptions("host secret")
         {
             UseLockFile = false,
             LinkedSourceResolver = static (_, _, _) => throw new UnauthorizedAccessException(),
         };
-        AccessReaderOptions linked = LinkedTableManager.CreateLinkedSourceOpenOptions(options);
+        var root = ReaderOpenContext.CreateRoot(options);
+        ReaderOpenContext linked = root.ForLinkedSource("source.accdb", new LinkedSourceTraversal(1, []));
         Assert.True(linked.Password.IsEmpty);
-        Assert.Same(options.LinkedSourceResolver, linked.LinkedSourceResolver);
+        Assert.Same(options, linked.Options);
+        Assert.Same(options.LinkedSourceResolver, linked.Options.LinkedSourceResolver);
+        Assert.Equal("host secret", root.Password.ToString());
+        ReaderOpenContext authenticated = root.ForLinkedSource("protected.accdb", new LinkedSourceTraversal(1, []), "source secret".AsMemory());
+        ReaderOpenContext nested = authenticated.ForLinkedSource("nested.accdb", new LinkedSourceTraversal(2, []));
+        Assert.Equal("source secret", authenticated.Password.ToString());
+        Assert.True(nested.Password.IsEmpty);
     }
 
     [Theory]
@@ -41,7 +48,7 @@ public sealed class LinkedSourceSecurityTests
                 throw new InvalidOperationException("Unsafe hints must not reach the resolver.");
             },
         };
-        var policy = new LinkedSourcePolicy(options, Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "host.accdb"));
+        var policy = new LinkedSourcePolicy(ReaderOpenContext.CreateRoot(options), Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "host.accdb"));
         var link = new LinkedTableInfo { Name = "Hostile", Kind = LinkedTableKind.Access, SourcePath = sourcePath, SourceObjectName = "Data" };
         _ = await Assert.ThrowsAsync<JetAccessDeniedException>(async () => await LinkedTableManager.OpenLinkedSourceAsync(policy, link, TestContext.Current.CancellationToken));
         Assert.Equal(0, calls);
@@ -61,7 +68,7 @@ public sealed class LinkedSourceSecurityTests
                 return "source secret".AsMemory();
             },
         };
-        var policy = new LinkedSourcePolicy(options, Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "host.accdb"));
+        var policy = new LinkedSourcePolicy(ReaderOpenContext.CreateRoot(options), Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "host.accdb"));
         var link = new LinkedTableInfo { Name = "Denied", Kind = LinkedTableKind.Access, SourcePath = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "denied.accdb"), SourceObjectName = "Data" };
         Assert.Same(denied, await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await LinkedTableManager.OpenLinkedSourceAsync(policy, link, TestContext.Current.CancellationToken)));
         Assert.Equal(0, passwordRequests);
@@ -73,7 +80,7 @@ public sealed class LinkedSourceSecurityTests
     [InlineData("COM³.accdb")]
     public async Task LinkedSource_SuperscriptDeviceNames_CannotOpenWithoutCapability(string fileName)
     {
-        var policy = new LinkedSourcePolicy(new AccessReaderOptions(), Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "host.accdb"));
+        var policy = new LinkedSourcePolicy(ReaderOpenContext.CreateRoot(new AccessReaderOptions()), Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "host.accdb"));
         var link = new LinkedTableInfo { Name = "Device", Kind = LinkedTableKind.Access, SourcePath = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), fileName), SourceObjectName = "Data" };
         _ = await Assert.ThrowsAsync<JetAccessDeniedException>(async () => await LinkedTableManager.OpenLinkedSourceAsync(policy, link, TestContext.Current.CancellationToken));
     }

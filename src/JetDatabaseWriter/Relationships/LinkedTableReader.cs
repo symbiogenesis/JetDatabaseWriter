@@ -49,7 +49,7 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
             throw new JetNotSupportedException(JetErrorCode.OdbcRowsNotAvailable, $"Linked ODBC table '{tableName}' exposes cached schema only; ODBC execution is unavailable.", new JetErrorInfo { TableName = tableName });
         }
 
-        if (link is not null && policy.OpenOptions.LinkedSourceResolver is null)
+        if (link is not null && policy.Options.LinkedSourceResolver is null)
         {
             throw new JetAccessDeniedException(JetErrorCode.LinkedSourceNotPermitted, $"Linked table '{tableName}' requires AccessReaderOptions.LinkedSourceResolver to supply an authorized source stream.", new JetErrorInfo { TableName = tableName });
         }

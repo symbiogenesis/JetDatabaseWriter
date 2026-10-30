@@ -26,44 +26,20 @@ internal sealed class ReaderServices : IDisposable
     /// Initializes a new instance of the <see cref="ReaderServices"/> class.
     /// </summary>
     /// <param name="db">The open database file.</param>
-    /// <param name="options">The reader options.</param>
-    internal ReaderServices(DatabaseFile db, AccessReaderOptions options)
+    /// <param name="context">Reader configuration and its explicit opening context.</param>
+    internal ReaderServices(DatabaseFile db, ReaderOpenContext context)
     {
-        Guard.NotNull(options, nameof(options));
-
-        if (options.MaxLongValueBytes is <= 0 or > LongValueDescriptor.MaxLength)
-        {
-            throw new ArgumentOutOfRangeException(nameof(options), "MaxLongValueBytes must be between 1 and 1,073,741,823.");
-        }
-
-        if (options.MaxAttachmentContentBytes <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(options), "MaxAttachmentContentBytes must be positive.");
-        }
-
-        if (options.MaxAttachmentContentBytesPerOperation <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(options), "MaxAttachmentContentBytesPerOperation must be positive.");
-        }
-
-        if (options.MaxComplexDiscoveryEntries <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(options), "MaxComplexDiscoveryEntries must be positive.");
-        }
-
-        if (options.MaxAttachmentDecodeWorkBytesPerOperation <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(options), "MaxAttachmentDecodeWorkBytesPerOperation must be positive.");
-        }
+        AccessReaderOptions options = context.Options;
+        ValidateOptions(options);
 
         db.OwnedPages.DiagnosticsEnabled = options.DiagnosticsEnabled;
         db.OwnedPages.StrictParsing = options.StrictParsing;
 
         var linkedSources = new LinkedSourcePolicy(
-            LinkedTableManager.CreateLinkedSourceOpenOptions(options),
+            context,
             db.DatabasePath);
 
-        this.Operations = new AsyncReentrantOperationGate(typeof(AccessReader), options.AttachmentReadContext);
+        this.Operations = new AsyncReentrantOperationGate(typeof(AccessReader), context.AttachmentReadContext);
         JetFormat format = db.Format;
         TableDefReader tableDefs = db.TableDefs;
         this.PageCache = new ReaderPageCache(format, db.Pages, options.PageCacheSize);
@@ -74,7 +50,7 @@ internal sealed class ReaderServices : IDisposable
         this.TableCatalog = new TableCatalog(db.Pages, tableDefs, catalogRows, columnProperties);
         this.Catalog = new CatalogReader(format, tableDefs, this.TableCatalog, catalogRows, rows);
 
-        var complexColumns = new ComplexColumnReader(format, tableDefs, this.Catalog, rows, options.DiagnosticsEnabled, options.MaxAttachmentContentBytes, options.MaxComplexDiscoveryEntries, options.MaxAttachmentContentBytesPerOperation, options.MaxAttachmentDecodeWorkBytesPerOperation, options.AttachmentReadContext);
+        var complexColumns = new ComplexColumnReader(format, tableDefs, this.Catalog, rows, options.DiagnosticsEnabled, options.MaxAttachmentContentBytes, options.MaxComplexDiscoveryEntries, options.MaxAttachmentContentBytesPerOperation, options.MaxAttachmentDecodeWorkBytesPerOperation, context.AttachmentReadContext);
         this.LinkedTables = new LinkedTableReader(this.Catalog, linkedSources);
         this.Tables = new TableReader(db.Format, db.Pages, tableDefs, db.OwnedPages, this.PageCache, rows, this.Catalog, complexColumns, this.LinkedTables, this.Operations, options);
         this.Indexes = new IndexRowReader(format, tableDefs, this.PageCache, rows, this.Catalog, complexColumns, this.Tables, this.LinkedTables, this.Operations);
@@ -115,5 +91,40 @@ internal sealed class ReaderServices : IDisposable
         this.PageCache.Dispose();
         this.TableCatalog.Invalidate();
         this.LinkedTables.ClearCache();
+    }
+
+    private static void ValidateOptions(AccessReaderOptions options)
+    {
+        Guard.NotNull(options, nameof(options));
+
+        if (options.MaxLongValueBytes is <= 0 or > LongValueDescriptor.MaxLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxLongValueBytes must be between 1 and 1,073,741,823.");
+        }
+
+        if (options.MaxAttachmentContentBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxAttachmentContentBytes must be positive.");
+        }
+
+        if (options.MaxAttachmentContentBytesPerOperation <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxAttachmentContentBytesPerOperation must be positive.");
+        }
+
+        if (options.MaxComplexDiscoveryEntries <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxComplexDiscoveryEntries must be positive.");
+        }
+
+        if (options.MaxAttachmentDecodeWorkBytesPerOperation <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxAttachmentDecodeWorkBytesPerOperation must be positive.");
+        }
+
+        if (options.LinkedSourceMaxDepth < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Linked-source depth cannot be negative.");
+        }
     }
 }

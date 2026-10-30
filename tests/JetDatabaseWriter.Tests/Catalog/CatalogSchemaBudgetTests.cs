@@ -162,11 +162,11 @@ public sealed class CatalogSchemaBudgetTests
     }
 
     [Fact]
-    public void LinkedOptions_PreserveSchemaTraversalBudget()
+    public void LinkedContext_PreservesSchemaTraversalBudget()
     {
         var options = new AccessReaderOptions { MaxSchemaTraversalBytes = 12345 };
 
-        Assert.Equal(options.MaxSchemaTraversalBytes, LinkedTableManager.CreateLinkedSourceOpenOptions(options).MaxSchemaTraversalBytes);
+        Assert.Equal(options.MaxSchemaTraversalBytes, ReaderOpenContext.CreateRoot(options).ForLinkedSource("source.accdb", new LinkedSourceTraversal(1, [])).Options.MaxSchemaTraversalBytes);
     }
 
     [Theory]

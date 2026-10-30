@@ -117,7 +117,7 @@ internal static class StorageAuditProbe
                 MaxTableDefinitionBytes = Math.Min(16 * 1024 * 1024, budget.MaxSchemaBytes),
                 MaxSchemaTraversalBytes = budget.MaxSchemaBytes,
             };
-            await using var database = DatabaseFile.ForReader(source, header, password, sourcePath, leaveOpen: true, options, cancellationToken);
+            await using var database = DatabaseFile.ForReader(source, header, password, sourcePath, leaveOpen: true, options, cancellationToken: cancellationToken);
             if (source.Length % database.Format.PageSize != 0)
             {
                 throw new JetCorruptDataException(JetErrorCode.MalformedValue, "The source ends with an incomplete database page.");

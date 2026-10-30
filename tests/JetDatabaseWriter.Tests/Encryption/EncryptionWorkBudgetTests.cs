@@ -50,6 +50,22 @@ public sealed class EncryptionWorkBudgetTests
         Assert.Throws<JetLimitationException>(() => budget.Charge(1));
     }
 
+    /// <summary>Root-context admission failures retain the opener's stream ownership contract.</summary>
+    /// <param name="leaveOpen">Whether the caller retains ownership of the rejected input stream.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Reader_InvalidBudget_RespectsStreamOwnership(bool leaveOpen)
+    {
+        await using var stream = new MemoryStream();
+        var options = new AccessReaderOptions { MaxTotalEncryptionSpinCount = -1 };
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
+        {
+            await using AccessReader reader = await AccessReader.OpenAsync(stream, options, leaveOpen, TestContext.Current.CancellationToken);
+        });
+        Assert.Equal(leaveOpen, stream.CanRead);
+    }
+
     /// <summary>The native password derivation is refused before encrypted pages are consumed.</summary>
     [Fact]
     public async Task Reader_TotalBudgetStopsAtPageZero()
@@ -73,25 +89,30 @@ public sealed class EncryptionWorkBudgetTests
         var options = new AccessReaderOptions("Native123") { UseLockFile = false, MaxTotalEncryptionSpinCount = 100_000 };
         await using AccessReader first = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken);
         await using AccessReader second = await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken);
-        Assert.Null(options.EncryptionWorkBudget);
+        Assert.Equal(1, await first.GetRealRowCountAsync("T", TestContext.Current.CancellationToken));
+        Assert.Equal(1, await second.GetRealRowCountAsync("T", TestContext.Current.CancellationToken));
     }
 
-    /// <summary>Linked options share one budget even across sibling and transitive opens.</summary>
+    /// <summary>Linked contexts share one budget even across sibling and transitive opens.</summary>
     [Fact]
-    public void LinkedOptions_ShareAggregateBudget()
+    public void LinkedContexts_ShareAggregateBudget()
     {
         var original = new AccessReaderOptions { MaxTotalEncryptionSpinCount = 100_000 };
-        AccessReaderOptions root = original.WithEncryptionWorkBudget();
-        AccessReaderOptions first = LinkedTableManager.CreateLinkedSourceOpenOptions(root);
-        AccessReaderOptions sibling = LinkedTableManager.CreateLinkedSourceOpenOptions(root);
-        AccessReaderOptions nested = LinkedTableManager.CreateLinkedSourceOpenOptions(first);
+        var root = ReaderOpenContext.CreateRoot(original);
+        var independent = ReaderOpenContext.CreateRoot(original);
+        ReaderOpenContext first = root.ForLinkedSource("first.accdb", new LinkedSourceTraversal(1, []));
+        ReaderOpenContext sibling = root.ForLinkedSource("sibling.accdb", new LinkedSourceTraversal(1, []));
+        ReaderOpenContext nested = first.ForLinkedSource("nested.accdb", new LinkedSourceTraversal(2, []));
+        Assert.Same(original, nested.Options);
         Assert.Same(root.EncryptionWorkBudget, first.EncryptionWorkBudget);
         Assert.Same(first.EncryptionWorkBudget, nested.EncryptionWorkBudget);
-        first.EncryptionWorkBudget!.Charge(60_000);
-        Assert.Throws<JetLimitationException>(() => sibling.EncryptionWorkBudget!.Charge(60_000));
-        nested.EncryptionWorkBudget!.Charge(40_000);
-        Assert.Null(original.EncryptionWorkBudget);
-        Assert.Equal(100_000, sibling.MaxTotalEncryptionSpinCount);
+        Assert.NotSame(root.AttachmentReadContext, independent.AttachmentReadContext);
+        Assert.Same(root.AttachmentReadContext, nested.AttachmentReadContext);
+        first.EncryptionWorkBudget.Charge(60_000);
+        Assert.Throws<JetLimitationException>(() => sibling.EncryptionWorkBudget.Charge(60_000));
+        nested.EncryptionWorkBudget.Charge(40_000);
+        independent.EncryptionWorkBudget.Charge(100_000);
+        Assert.Equal(100_000, sibling.Options.MaxTotalEncryptionSpinCount);
     }
 
     /// <summary>A negative aggregate budget is invalid even for an unencrypted source.</summary>
@@ -99,6 +120,6 @@ public sealed class EncryptionWorkBudgetTests
     public void ReaderOptions_NegativeBudgetIsRejected()
     {
         var options = new AccessReaderOptions { MaxTotalEncryptionSpinCount = -1 };
-        Assert.Throws<ArgumentOutOfRangeException>(options.WithEncryptionWorkBudget);
+        Assert.Throws<ArgumentOutOfRangeException>(() => ReaderOpenContext.CreateRoot(options));
     }
 }

@@ -555,7 +555,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         {
             await using JetTransaction tx = await writer.BeginTransactionAsync(this.ct);
             await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, Parent, ParentKey, Child, "ParentId"), this.ct);
-            using (var services = new ReaderServices(writer.Database, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0 }))
+            using (var services = new ReaderServices(writer.Database, ReaderOpenContext.CreateRoot(new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0 })))
             {
                 Assert.Single(await services.Indexes.ListIndexesAsync(Child, this.ct), i => i.Kind == IndexKind.ForeignKey);
             }
@@ -891,7 +891,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     private async Task AssertIndexesCoverRowsAsync(AccessWriter writer, params string[] tables)
     {
         DatabaseFile db = writer.Database;
-        using var services = new ReaderServices(db, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0 });
+        using var services = new ReaderServices(db, ReaderOpenContext.CreateRoot(new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0 }));
         foreach (string table in tables)
         {
             CatalogEntry entry = (await services.TableCatalog.GetCatalogEntryAsync(table, this.ct))!;

@@ -60,29 +60,27 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// Opens <paramref name="path"/> and detects the JET version.
     /// </summary>
     /// <param name="path">The path to the Access database file. May be empty when opened from a stream.</param>
-    /// <param name="options">Options for configuring the AccessReader.</param>
+    /// <param name="context">Configuration, source provenance and aggregate budgets for this reader.</param>
     /// <param name="stream">An open, seekable stream for the database file.</param>
     /// <param name="header">Header bytes read from page 0.</param>
     /// <param name="snapshotLease">The read-only file handle that excludes writers during the reader lifetime.</param>
     /// <param name="leaveOpen">Whether the caller retains ownership of the stream. If false, the stream is disposed when the reader is disposed.</param>
-    /// <param name="linkedSource">Whether the stream is a resolver capability whose path is only a hint.</param>
     /// <param name="cancellationToken">Cancels password derivation during open.</param>
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "AccessBase takes ownership of the database file; DisposeAsync disposes it after the reader's services.")]
     private AccessReader(
         string path,
-        AccessReaderOptions options,
+        ReaderOpenContext context,
         Stream stream,
         byte[] header,
         FileStream? snapshotLease,
         bool leaveOpen = false,
-        bool linkedSource = false,
         CancellationToken cancellationToken = default)
-        : base(DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen, options, cancellationToken))
+        : base(DatabaseFile.ForReader(stream, header, context.Password, path, leaveOpen, context.Options, context.EncryptionWorkBudget, cancellationToken))
     {
-        Guard.NotNull(options, nameof(options));
+        AccessReaderOptions options = context.Options;
         this.snapshotLease = snapshotLease;
 
-        this.lockFile = LockFileCoordinator.ForReader(linkedSource ? string.Empty : path, options);
+        this.lockFile = LockFileCoordinator.ForReader(context.SourceHint is not null ? string.Empty : path, options);
         this.DiagnosticsEnabled = options.DiagnosticsEnabled;
         this.PageCacheSize = options.PageCacheSize;
         this.PageReadOptimizationMode = options.PageReadOptimizationMode;
@@ -91,7 +89,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         bool constructionComplete = false;
         try
         {
-            services = new ReaderServices(this.Database, options);
+            services = new ReaderServices(this.Database, context);
             this.Services = services;
 
             if (options.ValidateOnOpen)
@@ -187,16 +185,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public static ValueTask<AccessReader> OpenAsync(Stream stream, AccessReaderOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
         => OpenCoreAsync(stream, options, leaveOpen, acquireLease: true, cancellationToken);
 
-    /// <summary>Consumes an authorized linked source without filename-derived filesystem access.</summary>
-    /// <param name="stream">The resolver-owned source stream.</param>
-    /// <param name="sourceHint">The logical path used only to resolve nested catalog path hints.</param>
-    /// <param name="options">The inherited reader options.</param>
+    /// <summary>Opens an internal source with explicit credentials, aggregate budgets and source provenance.</summary>
+    /// <param name="stream">The exact source stream.</param>
+    /// <param name="context">The explicit root or linked opening context.</param>
+    /// <param name="leaveOpen">Whether the caller retains ownership of the stream.</param>
     /// <param name="cancellationToken">Cancels the open operation.</param>
-    /// <returns>The reader that owns the exact supplied stream.</returns>
-    internal static ValueTask<AccessReader> OpenLinkedSourceAsync(Stream stream, string sourceHint, AccessReaderOptions options, CancellationToken cancellationToken)
-        => OpenCoreAsync(stream, options, leaveOpen: false, acquireLease: false, cancellationToken, sourceHint);
+    /// <returns>The reader over the supplied stream.</returns>
+    internal static ValueTask<AccessReader> OpenWithContextAsync(Stream stream, ReaderOpenContext context, bool leaveOpen, CancellationToken cancellationToken)
+        => OpenCoreAsync(stream, context.Options, leaveOpen, acquireLease: context.SourceHint is null, cancellationToken, context);
 
-    private static async ValueTask<AccessReader> OpenCoreAsync(Stream stream, AccessReaderOptions? options, bool leaveOpen, bool acquireLease, CancellationToken cancellationToken, string? linkedSourceHint = null)
+    private static async ValueTask<AccessReader> OpenCoreAsync(Stream stream, AccessReaderOptions? options, bool leaveOpen, bool acquireLease, CancellationToken cancellationToken, ReaderOpenContext? context = null)
     {
         DiagnosticTrace.ThrowIfReentrant();
         Guard.NotNull(stream, nameof(stream));
@@ -206,7 +204,8 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             Guard.RequireReadableSeekableStream(stream, nameof(stream));
             cancellationToken.ThrowIfCancellationRequested();
-            options = (options ?? new AccessReaderOptions()).WithEncryptionWorkBudget();
+            context ??= ReaderOpenContext.CreateRoot(options ?? new AccessReaderOptions());
+            string? linkedSourceHint = context.SourceHint;
             string path = linkedSourceHint ?? (stream is FileStream fileStream ? fileStream.Name : string.Empty);
             if (linkedSourceHint is null && stream is FileStream recoveryFile)
             {
@@ -221,7 +220,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             byte[] header = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
 
-            return new AccessReader(path, options, stream, header, snapshotLease, leaveOpen, linkedSource: linkedSourceHint is not null, cancellationToken);
+            return new AccessReader(path, context, stream, header, snapshotLease, leaveOpen, cancellationToken);
         }
         catch
         {

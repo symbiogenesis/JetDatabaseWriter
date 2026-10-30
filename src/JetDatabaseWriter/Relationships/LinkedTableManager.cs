@@ -36,64 +36,6 @@ internal static class LinkedTableManager
     private static readonly string[] LinkedTableCatalogColumns = ["Name", "Type", "Flags", "Database", "ForeignName", "Connect"];
 
     /// <summary>
-    /// Builds a derivative <see cref="AccessReaderOptions"/> instance suitable for
-    /// opening an explicitly authorized linked stream. The resolver is forwarded
-    /// so transitively linked databases inherit the same authorization policy.
-    /// </summary>
-    /// <param name="options">The options.</param>
-    /// <param name="traversal">The ancestry of a linked read.</param>
-    /// <param name="password">The explicitly resolved linked-source password.</param>
-    /// <exception cref="ArgumentOutOfRangeException">The depth limit is negative.</exception>
-    internal static AccessReaderOptions CreateLinkedSourceOpenOptions(
-        AccessReaderOptions options,
-        LinkedSourceTraversal? traversal = null,
-        ReadOnlyMemory<char> password = default)
-    {
-        if (options.LinkedSourceMaxDepth < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(options), "Linked-source depth cannot be negative.");
-        }
-
-        return new()
-        {
-            PageCacheSize = options.PageCacheSize,
-            DiagnosticsEnabled = options.DiagnosticsEnabled,
-            PageReadOptimizationMode = options.PageReadOptimizationMode,
-            ValidateOnOpen = options.ValidateOnOpen,
-            StrictParsing = options.StrictParsing,
-            MaxEncryptionSpinCount = options.MaxEncryptionSpinCount,
-            MaxEncryptionInfoBytes = options.MaxEncryptionInfoBytes,
-            MaxTotalEncryptionSpinCount = options.MaxTotalEncryptionSpinCount,
-            EncryptionWorkBudget = options.EncryptionWorkBudget,
-            MaxTableDefinitionBytes = options.MaxTableDefinitionBytes,
-            MaxSchemaTraversalBytes = options.MaxSchemaTraversalBytes,
-            MaxLongValueBytes = options.MaxLongValueBytes,
-            MaxAttachmentContentBytes = options.MaxAttachmentContentBytes,
-            MaxAttachmentContentBytesPerOperation = options.MaxAttachmentContentBytesPerOperation,
-            MaxAttachmentDecodeWorkBytesPerOperation = options.MaxAttachmentDecodeWorkBytesPerOperation,
-            AttachmentReadContext = options.AttachmentReadContext,
-            MaxComplexDiscoveryEntries = options.MaxComplexDiscoveryEntries,
-            FileAccess = options.FileAccess,
-            FileShare = options.FileShare,
-            Password = password,
-            UseLockFile = false,
-            LockFileUserName = options.LockFileUserName,
-            LockFileMachineName = options.LockFileMachineName,
-            UseByteRangeLocks = options.UseByteRangeLocks,
-            LockTimeoutMilliseconds = options.LockTimeoutMilliseconds,
-            LinkedSourceResolver = options.LinkedSourceResolver,
-            LinkedSourceMaxDepth = options.LinkedSourceMaxDepth,
-            LinkedSourcePasswordResolver = options.LinkedSourcePasswordResolver,
-            LinkedSourceTraversal = traversal ?? options.LinkedSourceTraversal,
-            LinkedTextMaxRecordLength = options.LinkedTextMaxRecordLength,
-            LinkedTextMaxFieldLength = options.LinkedTextMaxFieldLength,
-            LinkedTextMaxColumnCount = options.LinkedTextMaxColumnCount,
-            LinkedTextMaxSourceFileBytes = options.LinkedTextMaxSourceFileBytes,
-            LinkedTextMaxMaterializedRows = options.LinkedTextMaxMaterializedRows,
-        };
-    }
-
-    /// <summary>
     /// Enumerates every linked table (Access-file, ODBC, or text) defined in
     /// MSysObjects.
     /// </summary>
@@ -196,7 +138,7 @@ internal static class LinkedTableManager
     /// <summary>
     /// Opens the source database referenced by <paramref name="link"/> as a
     /// separate reader, applying the host's stream resolver and its
-    /// linked-source open options.
+    /// explicit linked-source credentials and shared runtime context.
     /// </summary>
     /// <param name="policy">The host's linked-source policy.</param>
     /// <param name="link">The linked-table metadata.</param>
@@ -213,11 +155,11 @@ internal static class LinkedTableManager
         string resolvedPath = ResolveLinkedSourcePath(policy, link);
         LinkedSourceTraversal traversal = ExtendLinkedTraversal(policy, link, resolvedPath);
         Stream source = await OpenSourceStreamAsync(policy, link, resolvedPath, cancellationToken).ConfigureAwait(false);
-        AccessReaderOptions linkedOptions;
+        ReaderOpenContext context;
         try
         {
-            ReadOnlyMemory<char> password = policy.OpenOptions.LinkedSourcePasswordResolver?.Invoke(link with { }, resolvedPath) ?? default;
-            linkedOptions = CreateLinkedSourceOpenOptions(policy.OpenOptions, traversal, password);
+            ReadOnlyMemory<char> password = policy.Options.LinkedSourcePasswordResolver?.Invoke(link with { }, resolvedPath) ?? default;
+            context = policy.Context.ForLinkedSource(resolvedPath, traversal, password);
         }
         catch
         {
@@ -225,7 +167,7 @@ internal static class LinkedTableManager
             throw;
         }
 
-        return await AccessReader.OpenLinkedSourceAsync(source, resolvedPath, linkedOptions, cancellationToken).ConfigureAwait(false);
+        return await AccessReader.OpenWithContextAsync(source, context, leaveOpen: false, cancellationToken).ConfigureAwait(false);
     }
 
     internal static async ValueTask<long> CountLinkedTextRowsAsync(
@@ -555,11 +497,11 @@ internal static class LinkedTableManager
     /// <exception cref="JetLimitationException">The read exceeds its depth limit.</exception>
     private static LinkedSourceTraversal ExtendLinkedTraversal(LinkedSourcePolicy policy, LinkedTableInfo link, string resolvedPath)
     {
-        LinkedSourceTraversal? previous = policy.OpenOptions.LinkedSourceTraversal;
+        LinkedSourceTraversal? previous = policy.Context.Traversal;
         int depth = previous?.Depth ?? 0;
-        if (depth >= policy.OpenOptions.LinkedSourceMaxDepth)
+        if (depth >= policy.Options.LinkedSourceMaxDepth)
         {
-            throw new JetLimitationException(JetErrorCode.LinkedSourceBudgetExceeded, $"Linked table '{link.Name}' exceeds the linked-source depth limit ({policy.OpenOptions.LinkedSourceMaxDepth}).", new JetErrorInfo { TableName = link.Name });
+            throw new JetLimitationException(JetErrorCode.LinkedSourceBudgetExceeded, $"Linked table '{link.Name}' exceeds the linked-source depth limit ({policy.Options.LinkedSourceMaxDepth}).", new JetErrorInfo { TableName = link.Name });
         }
 
         List<KeyValuePair<string, string>> ancestors = previous is null ? [] : [.. previous.Ancestors];
@@ -718,7 +660,7 @@ internal static class LinkedTableManager
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        Func<LinkedTableInfo, string, CancellationToken, ValueTask<Stream>> resolver = policy.OpenOptions.LinkedSourceResolver
+        Func<LinkedTableInfo, string, CancellationToken, ValueTask<Stream>> resolver = policy.Options.LinkedSourceResolver
             ?? throw new JetAccessDeniedException(JetErrorCode.LinkedSourceNotPermitted, $"Linked table '{link.Name}' requires AccessReaderOptions.LinkedSourceResolver to provide an authorized source stream.", new JetErrorInfo { TableName = link.Name });
         Stream source = await resolver(link with { }, resolvedPath, cancellationToken).ConfigureAwait(false)
             ?? throw new JetAccessDeniedException(JetErrorCode.LinkedSourceNotPermitted, $"Linked table '{link.Name}' source was not authorized by AccessReaderOptions.LinkedSourceResolver.", new JetErrorInfo { TableName = link.Name });
@@ -755,7 +697,7 @@ internal static class LinkedTableManager
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
-        LinkedTextLimits limits = CreateLinkedTextLimits(policy.OpenOptions);
+        LinkedTextLimits limits = CreateLinkedTextLimits(policy.Options);
         string resolvedPath = ResolveLinkedTextSourceFilePath(policy, link);
         DelimitedTextFormat format = ParseTextLinkFormat(link.ConnectString);
         Stream source = await OpenSourceStreamAsync(policy, link, resolvedPath, cancellationToken).ConfigureAwait(false);

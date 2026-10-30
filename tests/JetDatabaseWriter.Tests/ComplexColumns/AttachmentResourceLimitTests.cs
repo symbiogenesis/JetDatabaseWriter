@@ -306,24 +306,24 @@ public sealed class AttachmentResourceLimitTests
     [Fact]
     public void AttachmentBudget_LinkedReadersShareNestedScopeAndResetAfterExit()
     {
-        AccessReaderOptions root = new AccessReaderOptions { MaxAttachmentContentBytesPerOperation = 23 }.WithEncryptionWorkBudget();
-        AccessReaderOptions linked = JetDatabaseWriter.Relationships.LinkedTableManager.CreateLinkedSourceOpenOptions(root);
+        var root = ReaderOpenContext.CreateRoot(new AccessReaderOptions { MaxAttachmentContentBytesPerOperation = 23 });
+        ReaderOpenContext linked = root.ForLinkedSource("source.accdb", new JetDatabaseWriter.Relationships.LinkedSourceTraversal(1, []));
         var rootGate = new AsyncReentrantOperationGate(typeof(AccessReader), root.AttachmentReadContext);
         var linkedGate = new AsyncReentrantOperationGate(typeof(AccessReader), linked.AttachmentReadContext);
         byte[] wrapped = AttachmentWrapper.Encode("txt", [1, 2, 3]);
 
         using (rootGate.Enter())
         {
-            Assert.True(AttachmentWrapper.TryDecode(wrapped, out _, out _, contentBudget: root.AttachmentReadContext!.Budget, cancellationToken: Ct));
+            Assert.True(AttachmentWrapper.TryDecode(wrapped, out _, out _, contentBudget: root.AttachmentReadContext.Budget, cancellationToken: Ct));
             using (linkedGate.Enter())
             {
-                Assert.Throws<JetLimitationException>(() => AttachmentWrapper.TryDecode(wrapped, out _, out _, contentBudget: linked.AttachmentReadContext!.Budget, cancellationToken: Ct));
+                Assert.Throws<JetLimitationException>(() => AttachmentWrapper.TryDecode(wrapped, out _, out _, contentBudget: linked.AttachmentReadContext.Budget, cancellationToken: Ct));
             }
         }
 
         using (linkedGate.Enter())
         {
-            Assert.True(AttachmentWrapper.TryDecode(wrapped, out _, out _, contentBudget: linked.AttachmentReadContext!.Budget, cancellationToken: Ct));
+            Assert.True(AttachmentWrapper.TryDecode(wrapped, out _, out _, contentBudget: linked.AttachmentReadContext.Budget, cancellationToken: Ct));
         }
     }
 

@@ -120,10 +120,11 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="path">Path to the database file, or empty when opened from a stream.</param>
     /// <param name="leaveOpen">When <see langword="true"/>, the caller retains ownership of <paramref name="stream"/> and it will not be disposed.</param>
     /// <param name="options">The configured encryption resource budgets.</param>
+    /// <param name="workBudget">Explicit password work shared by a root reader and its linked sources.</param>
     /// <param name="cancellationToken">Cancels password derivation during open.</param>
     /// <returns>The read-only file.</returns>
-    internal static DatabaseFile ForReader(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, AccessOptions? options = null, CancellationToken cancellationToken = default)
-        => new(stream, header, password, path, leaveOpen, writable: false, maxEncryptionSpinCount: options?.MaxEncryptionSpinCount ?? 1_000_000, maxEncryptionInfoBytes: options?.MaxEncryptionInfoBytes ?? (1024 * 1024), maxTableDefinitionBytes: options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024), maxSchemaTraversalBytes: options?.MaxSchemaTraversalBytes ?? (64 * 1024 * 1024), workBudget: (options as AccessReaderOptions)?.EncryptionWorkBudget, cancellationToken: cancellationToken);
+    internal static DatabaseFile ForReader(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, AccessOptions? options = null, EncryptionWorkBudget? workBudget = null, CancellationToken cancellationToken = default)
+        => new(stream, header, password, path, leaveOpen, writable: false, maxEncryptionSpinCount: options?.MaxEncryptionSpinCount ?? 1_000_000, maxEncryptionInfoBytes: options?.MaxEncryptionInfoBytes ?? (1024 * 1024), maxTableDefinitionBytes: options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024), maxSchemaTraversalBytes: options?.MaxSchemaTraversalBytes ?? (64 * 1024 * 1024), workBudget: workBudget, cancellationToken: cancellationToken);
 
     /// <summary>
     /// Opens the writer's file over a <see cref="Pager"/>, which writes and

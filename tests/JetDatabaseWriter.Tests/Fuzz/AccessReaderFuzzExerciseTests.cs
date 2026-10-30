@@ -6,7 +6,6 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
@@ -108,7 +107,7 @@ public sealed class AccessReaderFuzzExerciseTests
             }
 
             var messages = new List<string>();
-            AccessReaderOptions options = AccessReaderFuzzExercise.CreateOptions([], ReadOnlyMemory<char>.Empty, new EncryptionWorkBudget(300_000), messages.Add);
+            AccessReaderOptions options = AccessReaderFuzzExercise.CreateOptions([], ReadOnlyMemory<char>.Empty, messages.Add);
             stream.Position = 0;
             await using AccessReader reader = await AccessReader.OpenAsync(stream, options, leaveOpen: true, cancellationToken: ct);
             await using var protectedSource = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);

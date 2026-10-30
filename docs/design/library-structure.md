@@ -45,6 +45,7 @@ src/JetDatabaseWriter/
 ├── AccessWriter.cs                        (public write API — facade; every operation forwards to one writer service)
 ├── DatabaseFile.cs                        (one open database: composes its JetFormat, PageFile or Pager, TableDefReader and OwnedDataPages and owns their lifetime; hands the writer's Pager to the writer alone)
 ├── JetFormat.cs                           (immutable per-file format profile: format, page size, code page, byte layouts, text and name codecs, capability flags)
+├── ReaderOpenContext.cs                   (per-open credentials and source provenance, with shared linked-reader budgets)
 ├── ReaderServices.cs                      (reader composition root: builds and wires the reader's collaborators)
 ├── WriterServices.cs                      (writer composition root: builds and wires the writer's collaborators)
 ├── AccessReaderOptions.cs
@@ -370,7 +371,7 @@ src/JetDatabaseWriter/
 │   ├── LinkedTableManager.cs              (linked-table catalog scan, source-stream capability resolution, delimited-text read-through, link creation)
 │   ├── LinkedTableReader.cs               (reader-side link cache and read-through; opens a separate reader for Access-file links)
 │   ├── LinkedTextSourceStream.cs          (opened text-source ownership and byte-consumption limits)
-│   └── LinkedSourcePolicy.cs              (linked-source stream resolver options plus the logical host path for nested hints)
+│   └── LinkedSourcePolicy.cs              (reader opening context plus the logical host path for nested hints)
 │
 ├── ComplexColumns/                        (multi-value fields, attachments, versioned columns)
 │   ├── ComplexColumnReader.cs             (complex-column metadata, subtypes, flat-table decode, and the row-read cells)
@@ -497,6 +498,8 @@ A contiguous allocation reserves logical page numbers with readable zero images,
 
 - the `JetFormat`, `IPageSource`, `TableDefReader` and `OwnedDataPages` it needs, and in the writer the `Pager` to each service that writes pages and the `TDefWriter` to the index services that write TDEF fields back in place; and
 - the specific sibling services it calls, such as `TableCatalog`, `ReaderPageCache`, `RowDecoder`, `TableRowStore`, `IndexMaintainer`, or `ConstraintRegistry`.
+
+`AccessReaderOptions` holds caller configuration. `ReaderOpenContext` reuses that init-only configuration and explicitly carries each source's password, logical path hint, linked ancestry and shared budget references. Every public root open creates fresh encryption and attachment contexts even when options are reused. A linked open inherits those budgets and authorization policy, receives only explicitly resolved credentials, and uses its path solely as a hint rather than opening filename-derived journals, locks or snapshot leases. Root context creation remains inside the stream-ownership failure path, preserving `leaveOpen` behavior. Bounded internal fuzz password attempts can explicitly reuse their work budget without adding runtime state to public options.
 
 `TableCatalog`, the cached user-table catalog, is shared in shape by both graphs: both facades resolve table names through the same `MSysObjects` scan (`CatalogRowReader`), and system tables by name through its one lookup, `FindSystemTableTdefPageAsync`, which resolves `MSysObjects` itself to TDEF page 2 when no catalog row names it. The reader's operation gate (`AsyncReentrantOperationGate`) is created by `ReaderServices` and entered by each reader service's public operations, so the LINQ provider and index-query handles, which call services directly, are drained on disposal the same way facade calls are.
 

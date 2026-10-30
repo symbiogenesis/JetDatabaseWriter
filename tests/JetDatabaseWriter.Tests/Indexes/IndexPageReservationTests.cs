@@ -581,7 +581,7 @@ public sealed class IndexPageReservationTests
 
     private static async Task<IReadOnlyList<IndexMetadata>> ListIndexesAsync(DatabaseFile db, CancellationToken cancellationToken)
     {
-        using var services = new ReaderServices(db, UncachedReaderOptions);
+        using var services = new ReaderServices(db, ReaderOpenContext.CreateRoot(UncachedReaderOptions));
         return await services.Indexes.ListIndexesAsync(TableName, cancellationToken);
     }
 

@@ -4,11 +4,8 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Relationships;
 
 /// <summary>
 /// Configuration options for opening a JET database with <see cref="AccessReader"/>.
@@ -191,30 +188,6 @@ public sealed class AccessReaderOptions : AccessOptions
     /// Streaming row APIs and row-count scans are not capped by this option.
     /// </summary>
     public uint? LinkedTextMaxMaterializedRows { get; init; }
-
-    /// <summary>Gets the immutable ancestry inherited by an internal linked reader.</summary>
-    internal LinkedSourceTraversal? LinkedSourceTraversal { get; init; }
-
-    /// <summary>Gets or sets the budget inherited by linked readers.</summary>
-    internal EncryptionWorkBudget? EncryptionWorkBudget { get; set; }
-
-    /// <summary>Gets or sets the operation budget context inherited by linked readers.</summary>
-    internal AttachmentReadContext? AttachmentReadContext { get; set; }
-
-    /// <summary>Creates private options with fresh root work budgets, or preserves inherited budgets.</summary>
-    /// <returns>The private options used for this reader.</returns>
-    internal AccessReaderOptions WithEncryptionWorkBudget()
-    {
-        if (this.EncryptionWorkBudget is not null && this.AttachmentReadContext is not null)
-        {
-            return this;
-        }
-
-        var options = (AccessReaderOptions)this.MemberwiseClone();
-        options.EncryptionWorkBudget ??= new EncryptionWorkBudget(this.MaxTotalEncryptionSpinCount);
-        options.AttachmentReadContext ??= new(this.MaxAttachmentContentBytesPerOperation, this.MaxAttachmentDecodeWorkBytesPerOperation);
-        return options;
-    }
 
     /// <summary>
     /// Returns whether a reader opened with these options reads its pages

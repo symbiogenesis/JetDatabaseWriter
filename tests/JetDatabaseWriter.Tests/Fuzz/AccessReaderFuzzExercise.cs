@@ -36,9 +36,9 @@ internal static class AccessReaderFuzzExercise
             try
             {
                 await using var stream = new MemoryStream(bytes, writable: false);
-                AccessReaderOptions options = CreateOptions(bytes, password.AsMemory(), encryptionBudget, log);
+                AccessReaderOptions options = CreateOptions(bytes, password.AsMemory(), log);
                 log("[FuzzCoverage] reader:open");
-                await using AccessReader reader = await AccessReader.OpenAsync(stream, options, cancellationToken: cancellationToken);
+                await using AccessReader reader = await AccessReader.OpenWithContextAsync(stream, ReaderOpenContext.CreateRoot(options, encryptionBudget), leaveOpen: false, cancellationToken);
                 log("[FuzzCoverage] reader:open:completed");
                 if (password.Length > 0)
                 {
@@ -58,10 +58,9 @@ internal static class AccessReaderFuzzExercise
     /// <summary>Creates bounded options with a mandatory deny policy for every linked source.</summary>
     /// <param name="bytes">The input used to choose deterministic option variations.</param>
     /// <param name="password">The bounded password attempt.</param>
-    /// <param name="encryptionBudget">The budget shared across all password attempts.</param>
     /// <param name="log">The operation logger.</param>
     /// <returns>The bounded options.</returns>
-    internal static AccessReaderOptions CreateOptions(byte[] bytes, ReadOnlyMemory<char> password, EncryptionWorkBudget encryptionBudget, Action<string> log)
+    internal static AccessReaderOptions CreateOptions(byte[] bytes, ReadOnlyMemory<char> password, Action<string> log)
     {
         // Hash the whole input so a common database header does not freeze option selection.
         var random = FuzzRandom.Create(SHA256.HashData(bytes));
@@ -81,7 +80,6 @@ internal static class AccessReaderFuzzExercise
             MaxEncryptionInfoBytes = 64 * 1024,
             MaxEncryptionSpinCount = 100_000,
             MaxTotalEncryptionSpinCount = MaxEncryptionIterations,
-            EncryptionWorkBudget = encryptionBudget,
             LinkedSourceMaxDepth = 0,
             LinkedSourceResolver = (_, _, _) =>
             {
