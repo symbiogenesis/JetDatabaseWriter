@@ -47,7 +47,13 @@ internal sealed class CalculatedExpressionParser
             }
         }
 
-        return Parse(expression, tokens, 0, tokens.Count, isCalculatedColumn);
+        CalculatedExpressionNode root = Parse(expression, tokens, 0, tokens.Count, isCalculatedColumn);
+        if (isCalculatedColumn && root.HasUntypedNullResult)
+        {
+            throw new ArgumentException($"Calculated-column expression '{expression}' has an untyped Null result, which Access cannot declare.", nameof(expression));
+        }
+
+        return root;
     }
 
     internal static CalculatedExpressionNode Parse(string expression, List<Token> tokens, int start, int end, bool isCalculatedColumn, CalculatedExpressionNode? left = null)
@@ -285,12 +291,19 @@ internal sealed class CalculatedExpressionParser
         }
 
         this.Expect(TokenKind.OpenParen, "(");
+        int firstArgumentStart = this.position;
+        int firstArgumentEnd = firstArgumentStart;
         var arguments = new List<CalculatedExpressionNode>();
         if (this.Peek().Kind != TokenKind.CloseParen)
         {
             do
             {
                 arguments.Add(this.ParseExpression(0));
+                if (arguments.Count == 1)
+                {
+                    firstArgumentEnd = this.position;
+                }
+
                 ValidateFunctionArgumentCount(name, arguments.Count);
             }
             while (this.ReadComma());
@@ -300,6 +313,10 @@ internal sealed class CalculatedExpressionParser
         if (this.isCalculatedColumn)
         {
             CalculatedExpressionFunctionRegistry.ValidateDeclaration(name, arguments.Count);
+            if (name.Equals("DATESERIAL", StringComparison.OrdinalIgnoreCase))
+            {
+                CalculatedDateSerialAdmission.ValidateYear(this.tokens, firstArgumentStart, firstArgumentEnd);
+            }
         }
 
         return new CalculatedExpressionFunctionNode(calledName, arguments);

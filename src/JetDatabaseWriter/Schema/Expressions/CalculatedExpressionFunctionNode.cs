@@ -5,6 +5,8 @@ using JetDatabaseWriter.Models;
 
 internal sealed class CalculatedExpressionFunctionNode(string name, IReadOnlyList<CalculatedExpressionNode> args) : CalculatedExpressionNode
 {
+    internal override bool HasUntypedNullResult { get; } = ReturnsUntypedNull(name, args);
+
     public override object Evaluate(CalculatedExpressionEvaluationContext context)
     {
         if (args.Count == 2 && name.ToUpperInvariant() is "AND" or "OR")
@@ -55,6 +57,27 @@ internal sealed class CalculatedExpressionFunctionNode(string name, IReadOnlyLis
         {
             return new CalculatedError(13);
         }
+    }
+
+    private static bool ReturnsUntypedNull(string functionName, IReadOnlyList<CalculatedExpressionNode> arguments)
+    {
+        if (functionName.Equals("IIF", System.StringComparison.OrdinalIgnoreCase))
+        {
+            return arguments.Count == 3 && arguments[1].HasUntypedNullResult && arguments[2].HasUntypedNullResult;
+        }
+
+        if (functionName.Equals("CHOOSE", System.StringComparison.OrdinalIgnoreCase))
+        {
+            for (int index = 1; index < arguments.Count; index++)
+            {
+                if (arguments[index].HasUntypedNullResult)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static bool MapsArgumentErrors(string functionName)

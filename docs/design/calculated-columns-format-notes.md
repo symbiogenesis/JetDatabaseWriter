@@ -289,6 +289,15 @@ reachable dependency graph before evaluation. `CalculatedExpressionBindingTests`
 compares native declarations and verifies atomic create/add refusals, rename/drop
 binding and native update/compact behavior.
 
+Untyped Null result declarations are refused with the native static-type rule:
+literal/unary/arithmetic Null, two Null IIf branches and Null Choose alternatives
+do not declare a result type. Typed nullable expressions remain valid. DateSerial
+also has a native source-token admission rule for a bare year literal, separate
+from its runtime Integer conversion; parenthesized, unary-plus and computed year
+expressions follow runtime conversion. `CalculatedDeclarationAdmissionTests`
+compares all native result types and the independent source-token control matrix,
+including decimal/scientific literal coefficients, before accepting a declaration.
+
 Goal: on `INSERT` / `UPDATE`, recompute the value ourselves so callers do not
 have to supply it, and so updates to dependent columns refresh the persisted
 value the same way Access does.
