@@ -116,8 +116,10 @@ public sealed class CalculatedExpressionDecimalCoercionTests
             stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
         {
             byte[] before = stream.ToArray();
-            await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync(
+            JetValidationRuleException refusal = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.UpdateRowsAsync(
                 "T", "D", 1.225d, new Dictionary<string, object?> { ["D"] = double.PositiveInfinity }, TestContext.Current.CancellationToken));
+            Assert.Equal("DR", refusal.ErrorInfo.ColumnName);
+            Assert.Contains("#Error(6)", refusal.Message, StringComparison.Ordinal);
             Assert.Equal(before, stream.ToArray());
         }
 

@@ -160,7 +160,8 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
         Assert.Contains("Test", firstNames);
 
         DataColumn lastFirstColumn = Assert.Single(dt.Columns.Cast<DataColumn>(), c => c.ColumnName == "LastFirst");
-        Assert.Equal(typeof(string), lastFirstColumn.DataType);
+        Assert.Equal(typeof(object), lastFirstColumn.DataType);
+        Assert.All(dt.AsEnumerable(), row => Assert.IsType<string>(row["LastFirst"]));
 
         var lastFirstValues = dt.AsEnumerable()
             .Select(r => r["LastFirst"]?.ToString())
@@ -197,7 +198,8 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
             cancellationToken: TestContext.Current.CancellationToken);
 
         DataColumn isRichColumn = Assert.Single(dt.Columns.Cast<DataColumn>(), c => c.ColumnName == "IsRich");
-        Assert.Equal(isRich.ClrType, isRichColumn.DataType);
+        Assert.Equal(typeof(bool), isRich.ClrType);
+        Assert.Equal(typeof(object), isRichColumn.DataType);
         Assert.NotEqual(typeof(byte[]), isRichColumn.DataType);
         Assert.All(
             dt.AsEnumerable(),
