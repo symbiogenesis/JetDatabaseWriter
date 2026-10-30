@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using JetDatabaseWriter.Exceptions;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionFunctionRegistry;
@@ -18,6 +19,9 @@ internal static partial class CalculatedExpressionTextFunctions
 {
     private const string ValNumberPrefixPattern = "^[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?";
     private const string WhitespacePattern = "\\s+";
+    private const long MaxTextSearchWork = 16 * 1024 * 1024;
+
+    private static readonly Encoding AnsiEncoding = CodePagesEncodingProvider.Instance.GetEncoding(1252) ?? throw new InvalidOperationException("Windows-1252 encoding is unavailable.");
 
 #if NETSTANDARD2_1
     private static readonly Lazy<Regex> ValNumberPrefixRegexInstance = new(static () => new Regex(ValNumberPrefixPattern, RegexOptions.CultureInvariant));
@@ -27,20 +31,20 @@ internal static partial class CalculatedExpressionTextFunctions
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
         AddFunction(functions, "LEN", 1, 1, static function => Length(function.Arg(0)));
-        AddFunction(functions, "LEFT", 2, 2, static function => Left(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1)))));
-        AddFunction(functions, "RIGHT", 2, 2, static function => Right(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1)))));
-        AddFunction(functions, "MID", 2, 3, static function => Mid(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1))), function.Count > 2 ? checked((int)ToDecimal(function.Arg(2))) : int.MaxValue));
-        AddFunction(functions, "UCASE", 1, 1, static function => ToText(function.Arg(0)).ToUpperInvariant(), "UPPER");
-        AddFunction(functions, "LCASE", 1, 1, static function => CultureInfo.InvariantCulture.TextInfo.ToLower(ToText(function.Arg(0))), "LOWER");
-        AddFunction(functions, "TRIM", 1, 1, static function => ToText(function.Arg(0)).Trim());
-        AddFunction(functions, "LTRIM", 1, 1, static function => ToText(function.Arg(0)).TrimStart());
-        AddFunction(functions, "RTRIM", 1, 1, static function => ToText(function.Arg(0)).TrimEnd());
+        AddFunction(functions, "LEFT", 2, 2, static function => EvaluateSlice(function, fromRight: false));
+        AddFunction(functions, "RIGHT", 2, 2, static function => EvaluateSlice(function, fromRight: true));
+        AddFunction(functions, "MID", 2, 3, static function => EvaluateMid(function));
+        AddFunction(functions, "UCASE", 1, 1, static function => EvaluateCase(function, upper: true), "UPPER");
+        AddFunction(functions, "LCASE", 1, 1, static function => EvaluateCase(function, upper: false), "LOWER");
+        AddFunction(functions, "TRIM", 1, 1, static function => EvaluateTrim(function, trimStart: true, trimEnd: true));
+        AddFunction(functions, "LTRIM", 1, 1, static function => EvaluateTrim(function, trimStart: true, trimEnd: false));
+        AddFunction(functions, "RTRIM", 1, 1, static function => EvaluateTrim(function, trimStart: false, trimEnd: true));
         AddFunction(functions, "CSTR", 1, 1, static function => ToText(function.Arg(0)));
         AddFunction(functions, "HEX", 1, 1, static function => Convert.ToInt64(function.Arg(0), CultureInfo.InvariantCulture).ToString("X", CultureInfo.InvariantCulture));
         AddFunction(functions, "OCT", 1, 1, static function => Convert.ToString(Convert.ToInt64(function.Arg(0), CultureInfo.InvariantCulture), 8) ?? string.Empty);
         AddFunction(functions, "VAL", 1, 1, static function => Val(ToText(function.Arg(0))));
-        AddFunction(functions, "ASC", 1, 1, static function => Asc(ToText(function.Arg(0)), asciiOnly: true));
-        AddFunction(functions, "ASCW", 1, 1, static function => Asc(ToText(function.Arg(0)), asciiOnly: false));
+        AddFunction(functions, "ASC", 1, 1, static function => Asc(function.Arg(0), asciiOnly: true));
+        AddFunction(functions, "ASCW", 1, 1, static function => Asc(function.Arg(0), asciiOnly: false));
         AddFunction(functions, "CHR", 1, 1, static function => char.ConvertFromUtf32(checked((int)ToDecimal(function.Arg(0)))), "CHRW");
         AddFunction(functions, "STR", 1, 1, static function => EvaluateStr(function));
         AddFunction(functions, "INSTR", 2, 4, static function => EvaluateInStr(function));
@@ -48,7 +52,7 @@ internal static partial class CalculatedExpressionTextFunctions
         AddFunction(functions, "REPLACE", 3, 6, static function => EvaluateReplaceText(function));
         AddFunction(functions, "SPACE", 1, 1, static function => RepeatChar(checked((int)ToDecimal(function.Arg(0))), " "));
         AddFunction(functions, "STRCOMP", 2, 3, static function => Math.Sign(string.Compare(ToText(function.Arg(0)), ToText(function.Arg(1)), CompareOptions(function.Count > 2 ? function.Arg(2) : null))));
-        AddFunction(functions, "STRING", 2, 2, static function => RepeatChar(checked((int)ToDecimal(function.Arg(0))), ToText(function.Arg(1))));
+        AddFunction(functions, "STRING", 2, 2, static function => EvaluateString(function));
         AddFunction(functions, "STRREVERSE", 1, 1, static function => EvaluateStrReverse(function));
         AddFunction(functions, "STRCONV", 2, 3, static function => IsNull(function.Arg(0)) ? DBNull.Value : StrConv(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1)))));
     }
@@ -63,52 +67,249 @@ internal static partial class CalculatedExpressionTextFunctions
 
     private static object Length(object value) => IsNull(value) ? DBNull.Value : ToText(value).Length;
 
-    private static string Left(string text, int count)
+    internal static string ChangeCase(string text, bool upper)
+        => string.Create(text.Length, (Text: text, Upper: upper), static (characters, state) =>
+        {
+            for (int index = 0; index < characters.Length; index++)
+            {
+                char character = state.Text[index];
+                if (char.IsHighSurrogate(character) && index + 1 < state.Text.Length && char.IsLowSurrogate(state.Text[index + 1]))
+                {
+                    int scalar = char.ConvertToUtf32(character, state.Text[index + 1]);
+                    int mapped = CalculatedTextCasing.Change(scalar, state.Upper) - 0x10000;
+                    characters[index] = checked((char)(0xD800 + (mapped >> 10)));
+                    characters[++index] = checked((char)(0xDC00 + (mapped & 0x3FF)));
+                }
+                else
+                {
+                    characters[index] = checked((char)CalculatedTextCasing.Change(character, state.Upper));
+                }
+            }
+        });
+
+    private static object EvaluateSlice(CalculatedFunctionInvocation function, bool fromRight)
     {
-        count = Math.Clamp(count, 0, text.Length);
-        return text[..count];
+        int count = TextInteger(function.Arg(1));
+        object value = function.Arg(0);
+        if (NullTextArgument(function, value))
+        {
+            return DBNull.Value;
+        }
+
+        ValidateTextCount(count);
+        string text = ToText(value);
+        count = Math.Min(count, text.Length);
+        return fromRight ? text.Substring(text.Length - count, count) : text[..count];
     }
 
-    private static string Right(string text, int count)
+    private static object EvaluateMid(CalculatedFunctionInvocation function)
     {
-        count = Math.Clamp(count, 0, text.Length);
-        return text.Substring(text.Length - count, count);
+        int start = TextInteger(function.Arg(1));
+        int count = function.Count > 2 ? TextInteger(function.Arg(2)) : int.MaxValue / 2;
+        object value = function.Arg(0);
+        if (NullTextArgument(function, value))
+        {
+            return DBNull.Value;
+        }
+
+        if (start < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(function), "Mid requires a positive starting position.");
+        }
+
+        ValidateTextCount(count);
+        string text = ToText(value);
+        int zeroBasedStart = Math.Min(start - 1, text.Length);
+        return text.Substring(zeroBasedStart, Math.Min(count, text.Length - zeroBasedStart));
     }
 
-    private static string Mid(string text, int start, int count)
+    private static object EvaluateCase(CalculatedFunctionInvocation function, bool upper)
     {
-        int zeroBasedStart = Math.Clamp(start - 1, 0, text.Length);
-        count = Math.Clamp(count, 0, text.Length - zeroBasedStart);
-        return text.Substring(zeroBasedStart, count);
+        object value = function.Arg(0);
+        return NullTextArgument(function, value) ? DBNull.Value : ChangeCase(ToText(value), upper);
     }
 
-    private static string EvaluateStr(CalculatedFunctionInvocation function)
+    private static object EvaluateTrim(CalculatedFunctionInvocation function, bool trimStart, bool trimEnd)
     {
-        decimal strValue = ToDecimal(function.Arg(0));
-        string strText = strValue.ToString(CultureInfo.InvariantCulture);
-        return strValue >= 0 ? " " + strText : strText;
+        object value = function.Arg(0);
+        if (NullTextArgument(function, value))
+        {
+            return DBNull.Value;
+        }
+
+        string text = ToText(value);
+        if (trimStart && trimEnd)
+        {
+            return text.Trim(' ');
+        }
+
+        return trimStart ? text.TrimStart(' ') : text.TrimEnd(' ');
     }
 
-    private static int EvaluateInStr(CalculatedFunctionInvocation function)
+    private static object EvaluateStr(CalculatedFunctionInvocation function)
+    {
+        object value = function.Arg(0);
+        if (NullTextArgument(function, value))
+        {
+            return DBNull.Value;
+        }
+
+        object number = value is double or float ? value : ToDecimal(value);
+        string text = ToText(number);
+        bool negative = text.StartsWith('-');
+        int start = negative ? 1 : 0;
+        if (text.Length > start + 1 && text[start] == '0' && text[start + 1] == '.')
+        {
+            text = text.Remove(start, 1);
+        }
+
+        return negative ? text : " " + text;
+    }
+
+    private static object EvaluateInStr(CalculatedFunctionInvocation function)
     {
         int start = 1;
         int textIndex = 0;
         if (function.Count > 2)
         {
-            start = checked((int)ToDecimal(function.Arg(0)));
+            start = TextInteger(function.Arg(0));
             textIndex = 1;
         }
 
-        string text = ToText(function.Arg(textIndex));
-        string search = ToText(function.Arg(textIndex + 1));
-        if (search.Length == 0)
+        if (start < 1)
         {
-            return Math.Clamp(start, 1, text.Length + 1);
+            throw new ArgumentOutOfRangeException(nameof(function), "InStr requires a positive starting position.");
         }
 
-        int zeroBasedStart = Math.Clamp(start - 1, 0, text.Length);
-        int found = text.IndexOf(search, zeroBasedStart, function.Count > 3 ? CompareOptions(function.Arg(3)) : StringComparison.OrdinalIgnoreCase);
+        int comparison = function.Count > 3 ? TextInteger(function.Arg(3)) : 1;
+        if (comparison is not (0 or 1))
+        {
+            throw new ArgumentOutOfRangeException(nameof(function), "InStr comparison must be binary (0) or text (1).");
+        }
+
+        object textValue = function.Arg(textIndex);
+        object searchValue = function.Arg(textIndex + 1);
+        if (IsNull(textValue) || IsNull(searchValue))
+        {
+            return DBNull.Value;
+        }
+
+        string text = ToText(textValue);
+        string search = ToText(searchValue);
+        if (search.Length == 0)
+        {
+            return start;
+        }
+
+        int zeroBasedStart = Math.Min(start - 1, text.Length);
+        int found = comparison == 0
+            ? text.IndexOf(search, zeroBasedStart, StringComparison.Ordinal)
+            : FindCollatedText(function, text, search, zeroBasedStart);
         return found < 0 ? 0 : found + 1;
+    }
+
+    private static int FindCollatedText(CalculatedFunctionInvocation function, string text, string search, int start)
+    {
+        if (IsSimpleLatinText(text) && IsSimpleLatinText(search))
+        {
+            return text.IndexOf(search, start, StringComparison.OrdinalIgnoreCase);
+        }
+
+        byte[] searchKey = function.Context.TextCollation.EncodeComparisonKey(search);
+        long work = 0;
+        for (int position = start; position < text.Length; position++)
+        {
+            for (int length = 1; length <= text.Length - position; length++)
+            {
+                work += length;
+                if (work > MaxTextSearchWork)
+                {
+                    throw new JetLimitationException(JetErrorCode.ValueTooLarge, "InStr text comparison exceeds its bounded comparison-work budget.");
+                }
+
+                byte[] candidateKey = function.Context.TextCollation.EncodeComparisonKey(text.Substring(position, length));
+                if (candidateKey.AsSpan().SequenceEqual(searchKey))
+                {
+                    return position;
+                }
+
+                if (!function.Context.TextCollation.CanExtendComparisonKey(candidateKey, searchKey))
+                {
+                    break;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool IsSimpleLatinText(string text)
+    {
+        foreach (char character in text)
+        {
+            if (character is not (>= 'A' and <= 'Z') and not (>= 'a' and <= 'z') and not (>= '0' and <= '9') and not ' ')
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static object EvaluateString(CalculatedFunctionInvocation function)
+    {
+        int count = TextInteger(function.Arg(0));
+        object value = function.Arg(1);
+        if (NullTextArgument(function, value))
+        {
+            return DBNull.Value;
+        }
+
+        ValidateTextCount(count);
+        EnsureGeneratedTextLength(count);
+        char character;
+        if (value is string text)
+        {
+            if (text.Length == 0)
+            {
+                throw new ArgumentException("String requires a non-empty character argument.", nameof(function));
+            }
+
+            character = text[0];
+        }
+        else
+        {
+            Span<byte> bytes = [(byte)(AccessVariantOperators.ToRoundedLong(value) & 0xFF)];
+            character = AnsiEncoding.GetString(bytes)[0];
+        }
+
+        return new string(character, count);
+    }
+
+    private static bool NullTextArgument(CalculatedFunctionInvocation function, object value)
+    {
+        if (!IsNull(value))
+        {
+            return false;
+        }
+
+        if (function.Name.EndsWith('$'))
+        {
+            throw new InvalidCastException("A string-returning dollar function cannot accept Null.");
+        }
+
+        return true;
+    }
+
+    private static int TextInteger(object value)
+        => IsNull(value) ? throw new InvalidCastException("A Text function numeric argument cannot be Null.") : AccessVariantOperators.ToRoundedLong(value);
+
+    private static void ValidateTextCount(int count)
+    {
+        if (count is < 0 or > 0x3FFF_FFFF)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), "The Text function length is outside the native UTF-16 length range.");
+        }
     }
 
     private static int EvaluateInStrRev(CalculatedFunctionInvocation function)
@@ -185,17 +386,25 @@ internal static partial class CalculatedExpressionTextFunctions
         builder.Append(value, startIndex, count);
     }
 
-    private static int Asc(string text, bool asciiOnly)
+    private static int Asc(object value, bool asciiOnly)
     {
+        if (IsNull(value))
+        {
+            throw new InvalidCastException("Asc cannot accept Null.");
+        }
+
+        string text = ToText(value);
         if (string.IsNullOrEmpty(text))
         {
             throw new ArgumentException("Calculated-column Asc/AscW requires a non-empty string.");
         }
 
         int codePoint = text[0];
-        if (asciiOnly && codePoint > 255)
+        if (asciiOnly)
         {
-            throw new ArgumentException($"Calculated-column Asc character code '{codePoint}' is outside the ANSI byte range.");
+            Span<byte> bytes = stackalloc byte[1];
+            AnsiEncoding.GetBytes(text.AsSpan(0, 1), bytes);
+            return bytes[0];
         }
 
         return codePoint;

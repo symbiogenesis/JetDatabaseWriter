@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Indexes.Collation;
 
+using System;
 using JetDatabaseWriter.Exceptions;
 
 /// <summary>Compares expression text with the database's Access sort order.</summary>
@@ -15,6 +16,29 @@ internal sealed class JetTextCollation(TextSortOrder sortOrder)
     /// <returns>The relative order.</returns>
     internal int Compare(string left, string right)
         => IndexPageCodec.CompareKeyBytes(this.EncodeComparisonKey(left, trimTrailingSpaces: true), this.EncodeComparisonKey(right, trimTrailingSpaces: true));
+
+    /// <summary>Checks whether appending Text can still complete the requested primary-weight stream.</summary>
+    /// <param name="prefix">The complete comparison key of the candidate prefix.</param>
+    /// <param name="target">The requested complete comparison key.</param>
+    /// <returns>Whether the candidate can still match after adding code units.</returns>
+    internal bool CanExtendComparisonKey(ReadOnlySpan<byte> prefix, ReadOnlySpan<byte> target)
+    {
+        if (sortOrder.Value != 0 && !sortOrder.HasVersion)
+        {
+            return true;
+        }
+
+        int prefixEnd = prefix.IndexOf(GeneralLegacyTextIndexEncoder.EndText);
+        int targetEnd = target.IndexOf(GeneralLegacyTextIndexEncoder.EndText);
+        if (prefixEnd < 1 || targetEnd < 1)
+        {
+            return true;
+        }
+
+        ReadOnlySpan<byte> primaryPrefix = prefix[1..prefixEnd];
+        ReadOnlySpan<byte> primaryTarget = target[1..targetEnd];
+        return primaryPrefix.Length <= primaryTarget.Length && primaryTarget.StartsWith(primaryPrefix);
+    }
 
     /// <summary>Encodes a complete comparison key without stored-index limits.</summary>
     /// <param name="text">The text.</param>

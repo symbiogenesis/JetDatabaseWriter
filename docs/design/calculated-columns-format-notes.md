@@ -836,3 +836,24 @@ contexts retain their independently qualified behavior.
 compacted fixtures with writer-produced caches, native recalculation and compact.
 The provenance, exact input manifests and hashes are retained in
 `Databases/NativeCalculatedLogic/README.md`.
+
+## Native calculated text functions
+
+Slice lengths and positions use native rounded integer conversion with checked
+ranges. Plain string functions preserve Null; their dollar aliases retain the
+native invalid-Null status. Trim removes U+0020 only. Asc and numeric String
+characters use the measured CP1252 mapping. Str omits the leading zero before a
+fraction and prefixes nonnegative values with a space.
+
+UCase/LCase use pinned native mappings, independent of the host runtime's Unicode
+version. Independent source and compacted fixtures cover every BMP code unit,
+all supplementary scalars and unpaired surrogates; supplementary case changes
+are the measured Deseret ranges. Full enumeration and fixture provenance are
+recorded in `Databases/CalculatedTextCase/README.md`.
+
+InStr uses the supported database collation for textual comparison, including
+native ligature behavior. Its bounded search permits 16,777,216 comparison-work
+units and refuses excessive work rather than reporting a false absence.
+`CalculatedTextFunctionTests`, `CalculatedTextFunctionDaoTests` and
+`CalculatedTextCaseTests` cover Null/error ordering, native source and compacted
+fixtures, and writer caches through native recalculation/compact.
