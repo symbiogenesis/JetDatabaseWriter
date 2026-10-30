@@ -290,6 +290,6 @@ public sealed class CalculatedExpressionFloatingSubtypeTests
     private static object Evaluate(string expression)
     {
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false);
-        return plan.Evaluate(new CalculatedExpressionEvaluationContext(new TableDef(), [], [], force: false));
+        return plan.Evaluate(new CalculatedExpressionEvaluationContext(new TableDef(), [], []));
     }
 }

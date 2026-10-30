@@ -360,7 +360,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
         ];
         object[] values = [DBNull.Value, DBNull.Value];
 
-        JetLimitationException exception = Assert.Throws<JetLimitationException>(() => CalculatedExpressionEvaluator.Apply(tableDef, constraints, values, force: false, "T"));
+        JetLimitationException exception = Assert.Throws<JetLimitationException>(() => CalculatedExpressionEvaluator.Apply(tableDef, constraints, values, "T"));
 
         Assert.Contains("'Inner'", exception.Message, StringComparison.Ordinal);
         Assert.Contains("'T'", exception.Message, StringComparison.Ordinal);
@@ -910,7 +910,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
         });
         values[^1] = DBNull.Value;
 
-        CalculatedExpressionEvaluator.Apply(tableDef, constraints, values, force: false);
+        CalculatedExpressionEvaluator.Apply(tableDef, constraints, values);
         return values[^1] is IFormattable formattable && resultType == typeof(string)
             ? formattable.ToString(null, CultureInfo.InvariantCulture)
             : values[^1];

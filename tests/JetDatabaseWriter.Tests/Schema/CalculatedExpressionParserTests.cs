@@ -105,7 +105,7 @@ public sealed class CalculatedExpressionParserTests
         ];
         object[] values = [DBNull.Value];
 
-        CalculatedExpressionEvaluator.Apply(table, constraints, values, force: false);
+        CalculatedExpressionEvaluator.Apply(table, constraints, values);
 
         Assert.Equal("it's [A1] #literal#", Assert.IsType<string>(values[0]));
         Assert.Equal(expression, constraints[0].CalculationExpression);
@@ -172,6 +172,5 @@ public sealed class CalculatedExpressionParserTests
         => new(
             new TableDef { Columns = [new ColumnInfo { Name = columnName }] },
             [new ColumnConstraint { Name = columnName, ClrType = typeof(int) }],
-            [7],
-            force: false);
+            [7]);
 }

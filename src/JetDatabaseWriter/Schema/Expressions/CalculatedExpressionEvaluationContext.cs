@@ -13,20 +13,18 @@ internal sealed class CalculatedExpressionEvaluationContext
 {
     private readonly IReadOnlyList<ColumnConstraint> constraints;
     private readonly object[] values;
-    private readonly bool force;
     private readonly string? tableName;
     private readonly Dictionary<string, int> columnIndexes;
     private readonly bool[] evaluating;
     private readonly bool[] evaluated;
     private double? lastRandomValue;
 
-    public CalculatedExpressionEvaluationContext(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, bool force, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
+    public CalculatedExpressionEvaluationContext(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
     {
         this.tableName = tableName;
         this.TextCollation = textCollation ?? JetDatabaseWriter.Indexes.Collation.JetTextCollation.GeneralLegacy;
         this.constraints = constraints;
         this.values = values;
-        this.force = force;
         this.evaluating = new bool[constraints.Count];
         this.evaluated = new bool[constraints.Count];
         this.columnIndexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -37,6 +35,16 @@ internal sealed class CalculatedExpressionEvaluationContext
     }
 
     internal JetDatabaseWriter.Indexes.Collation.JetTextCollation TextCollation { get; }
+
+    public static CalculatedExpressionEvaluationContext FromCalculatedRow(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
+    {
+        var context = new CalculatedExpressionEvaluationContext(tableDef, constraints, values, tableName, textCollation);
+
+        // Validation consumes the finished row, including calculated Nulls and
+        // volatile results, without running those expressions a second time.
+        Array.Fill(context.evaluated, true);
+        return context;
+    }
 
     public object EvaluateColumn(int index)
     {
@@ -52,20 +60,9 @@ internal sealed class CalculatedExpressionEvaluationContext
             return this.values[index] ?? DBNull.Value;
         }
 
-        if (!this.force && !IsNull(current))
-        {
-            this.evaluated[index] = true;
-            return current;
-        }
-
         if (this.evaluating[index])
         {
             throw new JetOperationException(JetErrorCode.InvalidExpression, $"Calculated column '{constraint.Name}' participates in a circular expression dependency.");
-        }
-
-        if (string.IsNullOrWhiteSpace(constraint.CalculationExpression))
-        {
-            return current ?? DBNull.Value;
         }
 
         this.evaluating[index] = true;
@@ -73,6 +70,11 @@ internal sealed class CalculatedExpressionEvaluationContext
         bool storing = false;
         try
         {
+            if (string.IsNullOrWhiteSpace(constraint.CalculationExpression))
+            {
+                throw new JetOperationException(JetErrorCode.InvalidExpression, "The calculated column has no calculation expression.");
+            }
+
             constraint.CalculatedExpressionPlan ??= CalculatedExpressionParser.Parse(constraint.CalculationExpression);
             raw = constraint.CalculatedExpressionPlan.Evaluate(this);
             storing = true;

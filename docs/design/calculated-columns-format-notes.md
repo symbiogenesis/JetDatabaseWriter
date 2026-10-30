@@ -1,8 +1,8 @@
-# Calculated columns — format notes & implementation gameplan
+# Calculated columns — storage and evaluation
 
 This document captures everything we know about Access 2010+ calculated columns
-(also called "expression columns") and the multi-phase plan for full read/write
-support in `JetDatabaseWriter`. The reference implementation throughout is
+(also called "expression columns") and their read/write evaluation in
+`JetDatabaseWriter`. The reference implementation throughout is
 [Jackcess](https://github.com/jahlborn/jackcess) (Java, Apache 2.0). Specific
 files we translate from:
 
@@ -220,9 +220,9 @@ and empty-mantissa semantics remain unverified.
 Helpers in this codebase: `CalculatedColumnUtil.Wrap` / `.Unwrap` (round-trip
 verified by `CalculatedColumnUtilTests`).
 
-## Phased implementation plan
+## Implementation
 
-### Phase 1A — Read-side metadata + foundation **(DONE)**
+### Metadata
 
 Goal: surface calc-column metadata to clients and recognise the format on disk.
 
@@ -241,12 +241,10 @@ Delivered:
 - Tests: `tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnUtilTests.cs`,
   expanded metadata fixture coverage.
 
-### Phase 1B — Write & round-trip the persisted value **(DONE)**
+### Cached value storage
 
-Goal: be able to create a calc column, store an evaluated value, and have both
-ourselves and Access read it back correctly. Still **no client-side
-evaluation**: the caller supplies the literal value to persist, plus the
-expression text; Access will recompute on next open.
+The writer creates calculated columns, computes their expressions and stores
+the resulting cached values for both the library and Access to read.
 
 Jackcess sources to translate:
 
@@ -280,7 +278,7 @@ Delivered:
   DAO-authored `IIf` calculated fields and native `Switch`/domain-aggregate
   declaration refusals on Access-equipped hosts).
 
-### Phase 2 — Subset expression evaluator **(DONE)**
+### Row-local expression evaluation
 
 Goal: on `INSERT` / `UPDATE`, recompute the value ourselves so callers do not
 have to supply it, and so updates to dependent columns refresh the persisted
@@ -294,12 +292,12 @@ Delivered:
   Parsing never generates or reparses an intermediate formula.
   Column validation rules reuse bounded ranges of the same token stream and
   implicit field nodes, with separate short-circuit, three-valued Boolean logic.
-- `ConstraintRegistry` evaluates calculated columns during inserts when the row
-  omits the cached value or supplies `NULL`, `DBNull` or `DbDefault.Value`, and
-  recomputes calculated columns during updates after source values are applied.
-- Caller-supplied cached values still work on insert. This preserves Phase 1B
-  behavior and lets unsupported expressions be persisted when the caller has
-  already computed the value.
+- `ConstraintRegistry` recomputes calculated columns for every insert and update
+  after source values are applied. Supplied calculated values never override
+  expressions, including after reopen and when a dependent calculated column
+  appears later in the schema. A blank or unsupported stored expression refuses
+  the mutation atomically. Validation consumes the completed row, including Null
+  and volatile calculated results, without evaluating them a second time.
 - The parser accepts common Access syntax: leading `=` is ignored,
   bracketed column references such as `[Column Name]` resolve against the
   in-flight row, and `#date literal#` uses the CDate evaluator to preserve its time,
@@ -350,10 +348,9 @@ Delivered:
   calculated column cannot have (`ArgumentException`). The "already
   exists" check comes last. Columns carried over by a table rewrite are not
   re-checked, so schema edits such as adding a plain column still work on a
-  table that already stores such an expression. Its rows still read, and
-  an insert that supplies the calculated value keeps it, but an insert that
-  leaves the column Null and every `UpdateRowsAsync` (which re-evaluates all
-  calculated columns) throw `JetOperationException` with `InvalidExpression`
+  table that already stores such an expression. Its rows still read; every
+  insert and `UpdateRowsAsync` (which re-evaluates all calculated columns)
+  throws `JetOperationException` with `InvalidExpression`
   and table/column context. A stored expression that calls an unsupported
   function throws `JetNotSupportedException` with `UnsupportedExpression`.
 - Each referenced field's value is converted to that field's declared type
@@ -531,10 +528,10 @@ Tests: focused insert/update/POCO coverage in
 `tests/JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`, precedence and
 value-semantics cases in
 `tests/JetDatabaseWriter.Tests/Schema/CalculatedExpressionAccessSemanticsTests.cs`,
-plus the Phase 1B Access-authored fixture coverage, which also re-evaluates
+plus the Access-authored cached-value fixture coverage, which also re-evaluates
 every Access-authored fixture expression against the values Access cached.
 
-### Phase 3 — Non-row-local expression contexts **(DONE)**
+### Expression contexts
 
 - Domain aggregate functions (`DLookup`, `DCount`, `DSum`, `DAvg`, `DMin`,
   `DMax`) remain intentionally rejected for table calculated columns; DAO/Access
@@ -556,19 +553,6 @@ every Access-authored fixture expression against the values Access cached.
   for recalculating a synthetically persisted expression, preserving bytes.
   Field names and string literals containing `Partition` remain valid.
   Specialized functions remain separate work.
-
-## Why phased
-
-Each phase is independently shippable and independently testable against a
-real Microsoft Access oracle:
-
-1. **1A** lets clients *detect* calc columns and decide whether to error.
-2. **1B** unblocks anyone who computes the value themselves (e.g. ETL tools).
-3. **2** covers the >95% of real-world Access expressions.
-4. **3** is for parity with the long tail.
-
-This avoids a multi-week mega-PR and keeps the scope of each Jackcess
-translation bounded.
 
 ## Native row counts and schema preservation
 

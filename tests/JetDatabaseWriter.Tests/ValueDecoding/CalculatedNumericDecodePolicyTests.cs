@@ -201,7 +201,7 @@ public sealed class CalculatedNumericDecodePolicyTests
         try
         {
             await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct);
-            await writer.CreateTableAsync("Values", [new ColumnDefinition("Value", typeof(decimal)) { IsCalculated = true, CalculationExpression = value.HasValue ? "42" : "Null" }, new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Payload", typeof(byte[]))], ct);
+            await writer.CreateTableAsync("Values", [new ColumnDefinition("Value", typeof(decimal)) { IsCalculated = true, CalculationExpression = value?.ToString(CultureInfo.InvariantCulture) ?? "Null" }, new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Payload", typeof(byte[]))], ct);
             await writer.InsertRowAsync("Values", [value, 1, new byte[] { 1, 2, 3 }], ct);
             stream.Position = 0;
             return stream;

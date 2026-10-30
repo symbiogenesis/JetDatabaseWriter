@@ -438,6 +438,5 @@ public sealed class QualifiedExpressionReferenceTests
             new TableDef { Columns = [new ColumnInfo { Name = column }] },
             [new ColumnConstraint { Name = column, ClrType = typeof(int) }],
             [4],
-            force: false,
             tableName);
 }

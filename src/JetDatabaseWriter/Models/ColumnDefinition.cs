@@ -501,10 +501,10 @@ public sealed record ColumnDefinition
     /// calculated-value wrapper.
     /// </para>
     /// <para>
-    /// The writer can create ACCDB calculated columns, stores caller-supplied
-    /// row values as persisted cached results, fills missing values on insert
-    /// when <see cref="CalculationExpression"/> is in the supported row-local
-    /// subset, and recomputes values on update. Expression syntax, coercion and
+    /// The writer can create ACCDB calculated columns and recomputes their
+    /// cached results on insert and update, ignoring supplied calculated values.
+    /// <see cref="CalculationExpression"/> must be in the supported row-local
+    /// subset. Expression syntax, coercion and
     /// function admissibility have incomplete native coverage; successful library
     /// evaluation or round-trip does not establish Microsoft Access acceptance.
     /// See <see href="docs/design/calculated-columns-format-notes.md" />.

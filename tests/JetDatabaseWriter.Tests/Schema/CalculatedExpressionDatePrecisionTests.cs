@@ -105,7 +105,7 @@ public sealed class CalculatedExpressionDatePrecisionTests
             new() { Name = "Calc", ClrType = typeof(T), IsCalculated = true, CalculationExpression = expression, CalculatedExpressionPlan = CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false) },
         };
         object[] values = [DBNull.Value];
-        CalculatedExpressionEvaluator.Apply(table, constraints, values, force: false);
+        CalculatedExpressionEvaluator.Apply(table, constraints, values);
         return Assert.IsType<T>(values[0]);
     }
 }

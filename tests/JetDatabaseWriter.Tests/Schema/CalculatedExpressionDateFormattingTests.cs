@@ -72,7 +72,7 @@ public sealed class CalculatedExpressionDateFormattingTests
             new() { Name = "Calc", ClrType = typeof(string), IsCalculated = true, CalculationExpression = expression },
         };
         object[] values = [DBNull.Value];
-        CalculatedExpressionEvaluator.Apply(table, constraints, values, force: false);
+        CalculatedExpressionEvaluator.Apply(table, constraints, values);
         return Assert.IsType<string>(values[0]);
     }
 }

@@ -284,7 +284,7 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
                 values[i] = meta[i].IsCalculated ? DBNull.Value : row[meta[i].Name];
             }
 
-            CalculatedExpressionEvaluator.Apply(tableDef, constraints, values, force: false);
+            CalculatedExpressionEvaluator.Apply(tableDef, constraints, values);
 
             for (int i = 0; i < meta.Count; i++)
             {

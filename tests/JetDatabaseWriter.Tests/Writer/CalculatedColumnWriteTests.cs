@@ -7,6 +7,7 @@ using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
@@ -104,7 +105,7 @@ public sealed class CalculatedColumnWriteTests
                     new("EventDate", typeof(DateTime))
                     {
                         IsCalculated = true,
-                        CalculationExpression = "Date()",
+                        CalculationExpression = "#2025-02-03 04:05:06#",
                     },
                 ],
                 TestContext.Current.CancellationToken);
@@ -164,7 +165,7 @@ public sealed class CalculatedColumnWriteTests
                     new("ComputedMemo", typeof(string))
                     {
                         IsCalculated = true,
-                        CalculationExpression = "[Id] & \" memo\"",
+                        CalculationExpression = "String(1200, \"A\")",
                     },
                 ],
                 TestContext.Current.CancellationToken);
@@ -239,6 +240,42 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal(13, Convert.ToInt32(row["NextScore"], CultureInfo.InvariantCulture));
         Assert.Equal(15.00m, Convert.ToDecimal(row["Weighted"], CultureInfo.InvariantCulture));
         Assert.Equal("Al5", row["LabelCode"]);
+    }
+
+    [Theory]
+    [InlineData(WriteMode.Direct)]
+    [InlineData(WriteMode.AutoCommit)]
+    [InlineData(WriteMode.ExplicitCommit)]
+    public async Task InsertRow_CalculatedColumns_RecomputesSuppliedCaches(WriteMode mode)
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await WriteInModeAsync(stream, mode, async writer =>
+        {
+            await writer.CreateTableAsync(
+                "CalcSupplied",
+                [
+                    new("Source", typeof(int)),
+                    new("Dependent", typeof(int)) { IsCalculated = true, CalculationExpression = "[Computed] + 1" },
+                    new("Computed", typeof(int)) { IsCalculated = true, CalculationExpression = "[Source] * 2" },
+                    new("Missing", typeof(int)) { IsCalculated = true, CalculationExpression = "Null" },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcSupplied", [5, 999, "invalid cache", 111], TestContext.Current.CancellationToken);
+        });
+
+        await WriteInModeAsync(stream, mode, async writer =>
+            await writer.InsertRowAsync("CalcSupplied", [7, -999, "invalid cache", 222], TestContext.Current.CancellationToken));
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable table = await reader.ReadTableAsync("CalcSupplied", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(2, table.Rows.Count);
+        foreach (DataRow row in table.Rows)
+        {
+            int source = (int)row["Source"];
+            Assert.Equal((source * 2) + 1, row["Dependent"]);
+            Assert.Equal(source * 2, row["Computed"]);
+            Assert.Equal(DBNull.Value, row["Missing"]);
+        }
     }
 
     [Fact]
@@ -652,29 +689,26 @@ public sealed class CalculatedColumnWriteTests
     [InlineData("DAvg(\"Score\", \"People\")")]
     [InlineData("DMin(\"Score\", \"People\")")]
     [InlineData("DMax(\"Score\", \"People\")")]
-    public async Task InsertRow_AccessRejectedDomainAggregateCalculatedExpression_ThrowsNotSupportedException(string expression)
+    public async Task CreateTable_AccessRejectedDomainAggregateCalculatedExpression_ThrowsNotSupportedException(string expression)
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         await using AccessWriter writer = await OpenWriterAsync(stream);
-        await writer.CreateTableAsync(
-            "CalcDomain",
-            [
-                new("LookupValue", typeof(string), maxLength: 40)
-                {
-                    IsCalculated = true,
-                    CalculationExpression = expression,
-                },
-            ],
-            TestContext.Current.CancellationToken);
-
+        byte[] before = stream.ToArray();
         JetNotSupportedException exception = await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
-            await writer.InsertRowAsync(
+            await writer.CreateTableAsync(
                 "CalcDomain",
-                [DBNull.Value],
+                [
+                    new("LookupValue", typeof(string), maxLength: 40)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = expression,
+                    },
+                ],
                 TestContext.Current.CancellationToken));
 
-        Assert.Contains("Access table calculated columns reject domain aggregate function", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("calculated columns", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(before, stream.ToArray());
     }
 
     [Theory]
@@ -987,31 +1021,29 @@ public sealed class CalculatedColumnWriteTests
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        // Plant an unsupported stored expression through the internal schema
-        // service, which skips the definition check.
-        stream.Position = 0;
-        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await harness.Services.Schema.CreateTableAsync(
+            await writer.CreateTableAsync(
                 "CalcUnsupportedPercent",
                 [
                     new("Id", typeof(int)),
                     new("R", typeof(int)),
-                    new("C", typeof(double)) { IsCalculated = true, CalculationExpression = "[R]%" },
+                    new("C", typeof(double)) { IsCalculated = true, CalculationExpression = "[R]/100" },
                 ],
-                [],
                 TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcUnsupportedPercent", [1, 50, DBNull.Value], TestContext.Current.CancellationToken);
         }
 
+        await ReplaceStoredExpressionAsync(stream, "[R]/100", "[R]%   ");
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await writer.InsertRowAsync("CalcUnsupportedPercent", [1, 50, 0.5d], TestContext.Current.CancellationToken);
-
+            byte[] before = stream.ToArray();
             JetOperationException insert = await StructuredFormatAssert.ThrowsAsync<JetOperationException>(JetErrorCode.InvalidExpression, async () =>
-                await writer.InsertRowAsync("CalcUnsupportedPercent", [2, 60, DBNull.Value], TestContext.Current.CancellationToken));
+                await writer.InsertRowAsync("CalcUnsupportedPercent", [2, 60, 0.6d], TestContext.Current.CancellationToken));
             Assert.Contains("[R]%", insert.Message, StringComparison.Ordinal);
             Assert.Equal("CalcUnsupportedPercent", insert.ErrorInfo.TableName);
             Assert.Equal("C", insert.ErrorInfo.ColumnName);
+            Assert.Equal(before, stream.ToArray());
 
             JetOperationException update = await StructuredFormatAssert.ThrowsAsync<JetOperationException>(JetErrorCode.InvalidExpression, async () =>
                 await writer.UpdateRowsAsync(
@@ -1023,6 +1055,7 @@ public sealed class CalculatedColumnWriteTests
             Assert.Contains("[R]%", update.Message, StringComparison.Ordinal);
             Assert.Equal("CalcUnsupportedPercent", update.ErrorInfo.TableName);
             Assert.Equal("C", update.ErrorInfo.ColumnName);
+            Assert.Equal(before, stream.ToArray());
 
             await writer.AddColumnAsync("CalcUnsupportedPercent", new("Note", typeof(string), maxLength: 10), TestContext.Current.CancellationToken);
         }
@@ -1057,35 +1090,33 @@ public sealed class CalculatedColumnWriteTests
     }
 
     [Fact]
-    public async Task StoredCalculatedExpressionTheEngineCannotParse_StillReadsAndAcceptsSuppliedValues()
+    public async Task StoredCalculatedExpressionTheEngineCannotParse_StillReadsAndRefusesSuppliedValues()
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        // The public CreateTableAsync now refuses this expression, so plant it
-        // through the internal schema service to exercise a stored expression
-        // using Access syntax this engine cannot evaluate.
-        stream.Position = 0;
-        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
+        const string placeholder = "42       ";
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await harness.Services.Schema.CreateTableAsync(
+            await writer.CreateTableAsync(
                 "CalcUnparsed",
                 [
                     new("Score", typeof(int)),
-                    new("Calc", typeof(int)) { IsCalculated = true, CalculationExpression = "[Score] 2" },
+                    new("Calc", typeof(int)) { IsCalculated = true, CalculationExpression = placeholder },
                 ],
-                [],
                 TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcUnparsed", [1, DBNull.Value], TestContext.Current.CancellationToken);
         }
 
+        await ReplaceStoredExpressionAsync(stream, placeholder, "[Score] 2");
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await writer.InsertRowAsync("CalcUnparsed", [1, 42], TestContext.Current.CancellationToken);
-
+            byte[] before = stream.ToArray();
             JetOperationException exception = await StructuredFormatAssert.ThrowsAsync<JetOperationException>(JetErrorCode.InvalidExpression, async () =>
-                await writer.InsertRowAsync("CalcUnparsed", [2, DBNull.Value], TestContext.Current.CancellationToken));
+                await writer.InsertRowAsync("CalcUnparsed", [2, 42], TestContext.Current.CancellationToken));
             Assert.Contains("[Score] 2", exception.Message, StringComparison.Ordinal);
             Assert.Equal("CalcUnparsed", exception.ErrorInfo.TableName);
             Assert.Equal("Calc", exception.ErrorInfo.ColumnName);
+            Assert.Equal(before, stream.ToArray());
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
@@ -1093,6 +1124,29 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal("[Score] 2", calc.CalculationExpression);
         DataRow row = Assert.Single((await reader.ReadTableAsync("CalcUnparsed", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
         Assert.Equal(42, Convert.ToInt32(row["Calc"], CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task StoredBlankCalculatedExpression_RefusesSuppliedCacheWithoutChangingImage()
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcBlank",
+                [new("Id", typeof(int)), new("Calc", typeof(int)) { IsCalculated = true, CalculationExpression = "123456789" }],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcBlank", [1, DBNull.Value], TestContext.Current.CancellationToken);
+        }
+
+        await ReplaceStoredExpressionAsync(stream, "123456789", "         ");
+        byte[] before = stream.ToArray();
+        await using AccessWriter reopened = await OpenWriterAsync(stream);
+        JetOperationException exception = await StructuredFormatAssert.ThrowsAsync<JetOperationException>(JetErrorCode.InvalidExpression, async () =>
+            await reopened.InsertRowAsync("CalcBlank", [2, 42], TestContext.Current.CancellationToken));
+        Assert.Equal("CalcBlank", exception.ErrorInfo.TableName);
+        Assert.Equal("Calc", exception.ErrorInfo.ColumnName);
+        Assert.Equal(before, stream.ToArray());
     }
 
     [Fact]
@@ -1766,7 +1820,7 @@ public sealed class CalculatedColumnWriteTests
                 values[i] = meta[i].IsCalculated ? DBNull.Value : row[meta[i].Name];
             }
 
-            CalculatedExpressionEvaluator.Apply(tableDef, constraints, values, force: false);
+            CalculatedExpressionEvaluator.Apply(tableDef, constraints, values);
             for (int i = 0; i < meta.Count; i++)
             {
                 if (!meta[i].IsCalculated)
@@ -1877,6 +1931,20 @@ public sealed class CalculatedColumnWriteTests
             },
             TestContext.Current.CancellationToken);
         return pointers;
+    }
+
+    private static async Task ReplaceStoredExpressionAsync(MemoryStream stream, string original, string replacement)
+    {
+        Assert.Equal(original.Length, replacement.Length);
+        byte[] image = stream.ToArray();
+        byte[] source = Encoding.Unicode.GetBytes(original);
+        int offset = image.AsSpan().IndexOf(source);
+        Assert.True(offset >= 0, "The original expression must be present in the fixture.");
+        Assert.Equal(-1, image.AsSpan(offset + source.Length).IndexOf(source));
+        Encoding.Unicode.GetBytes(replacement).CopyTo(image, offset);
+        stream.Position = 0;
+        await stream.WriteAsync(image, TestContext.Current.CancellationToken);
+        stream.Position = 0;
     }
 
     private static async ValueTask<MemoryStream> CopyFixtureAsync(string path)

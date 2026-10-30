@@ -219,7 +219,7 @@ public sealed class CalculatedExpressionDecimalCoercionTests
         Assert.True(CalculatedExpressionCoercion.TryConvertDecimal(value, out decimal converted));
         Assert.Equal(native, converted);
         var function = new CalculatedExpressionFunctionNode("CDec", [new CalculatedExpressionValueNode(value)]);
-        Assert.Equal(native, Assert.IsType<decimal>(function.Evaluate(new CalculatedExpressionEvaluationContext(new TableDef(), [], [], force: false))));
+        Assert.Equal(native, Assert.IsType<decimal>(function.Evaluate(new CalculatedExpressionEvaluationContext(new TableDef(), [], []))));
     }
 
     private static void AssertRefusal(object value)

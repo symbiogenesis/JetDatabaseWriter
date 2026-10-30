@@ -69,7 +69,7 @@ public sealed class CalculatedExpressionRoundTests
     {
         var function = new CalculatedExpressionFunctionNode(
             "Round", [new CalculatedExpressionValueNode(BitConverter.Int64BitsToDouble(inputBits)), new CalculatedExpressionValueNode(digits)]);
-        object result = function.Evaluate(new CalculatedExpressionEvaluationContext(new TableDef(), [], [], force: false));
+        object result = function.Evaluate(new CalculatedExpressionEvaluationContext(new TableDef(), [], []));
         Assert.Equal(expectedBits, BitConverter.DoubleToInt64Bits(Assert.IsType<double>(result)));
     }
 
@@ -292,6 +292,6 @@ public sealed class CalculatedExpressionRoundTests
     private static object Evaluate(string expression)
     {
         CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false);
-        return plan.Evaluate(new CalculatedExpressionEvaluationContext(new TableDef(), [], [], force: false));
+        return plan.Evaluate(new CalculatedExpressionEvaluationContext(new TableDef(), [], []));
     }
 }

@@ -128,7 +128,7 @@ public sealed class RowSizeLimitTests
                 [
                     new("Id", typeof(int)),
                     .. Enumerable.Range(0, binaryColumns).Select(i => new ColumnDefinition($"Bin{i}", typeof(byte[]), maxLength: 250)),
-                    new("Calc", typeof(string)) { IsCalculated = true, CalculationExpression = "[Id] & \" memo\"" },
+                    new("Calc", typeof(string)) { IsCalculated = true, CalculationExpression = "String(490, \"c\")" },
                 ],
                 ct);
         }

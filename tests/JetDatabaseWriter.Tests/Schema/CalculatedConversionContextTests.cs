@@ -72,7 +72,7 @@ public sealed class CalculatedConversionContextTests
     [Fact]
     public async Task StoredRefusedConversion_CachedReadSurvivesAndRecalculationRefusesAtomically()
     {
-        const string placeholder = "XByte(1)";
+        const string placeholder = "\"1\"     ";
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
@@ -84,7 +84,7 @@ public sealed class CalculatedConversionContextTests
         byte[] image = stream.ToArray();
         int offset = image.AsSpan().IndexOf(Encoding.Unicode.GetBytes(placeholder));
         Assert.True(offset >= 0);
-        image[offset] = (byte)'C';
+        Encoding.Unicode.GetBytes("CByte(1)").CopyTo(image, offset);
         stream.Position = 0;
         await stream.WriteAsync(image, TestContext.Current.CancellationToken);
         stream.Position = 0;

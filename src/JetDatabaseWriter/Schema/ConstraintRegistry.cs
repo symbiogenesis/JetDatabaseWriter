@@ -370,7 +370,7 @@ internal sealed class ConstraintRegistry(
                     ColumnDefaultValue defaultValue = c.DefaultValuePlan ??= ColumnDefaultValue.Compile(c.DefaultValueExpression);
                     if (defaultValue.TryEvaluate(
                         c.ClrType,
-                        () => defaultContext ??= new CalculatedExpressionEvaluationContext(tableDef, list, values, force: false, tableName, textCollation),
+                        () => defaultContext ??= new CalculatedExpressionEvaluationContext(tableDef, list, values, tableName, textCollation),
                         out object evaluated))
                     {
                         value = evaluated;
@@ -404,7 +404,7 @@ internal sealed class ConstraintRegistry(
                 values[i] = value ?? DBNull.Value;
             }
 
-            CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: false, tableName, textCollation);
+            CalculatedExpressionEvaluator.Apply(tableDef, list, values, tableName, textCollation);
             ValidateCalculatedResults(tableName, list, values);
             CheckValidationRuleExpressions(tableName, tableDef, list, values, assignedColumns: null, textCollation);
             await this.CheckTableValidationRuleAsync(tableName, tableDef, list, values, cancellationToken).ConfigureAwait(false);
@@ -480,7 +480,7 @@ internal sealed class ConstraintRegistry(
             }
         }
 
-        CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: true, tableName, textCollation);
+        CalculatedExpressionEvaluator.Apply(tableDef, list, values, tableName, textCollation);
         ValidateCalculatedResults(tableName, list, values);
         CheckValidationRuleExpressions(tableName, tableDef, list, values, assigned, textCollation);
         await this.CheckTableValidationRuleAsync(tableName, tableDef, list, values, cancellationToken).ConfigureAwait(false);
@@ -577,7 +577,7 @@ internal sealed class ConstraintRegistry(
 
         string expression = JetExpressionConverter.ToJetExpression(value)!;
         Type targetType = def.ClrType == typeof(Hyperlink) ? typeof(string) : def.ClrType;
-        return ColumnDefaultValue.Compile(expression).TryEvaluate(targetType, static () => new CalculatedExpressionEvaluationContext(new TableDef(), [], [], force: false), out object evaluated)
+        return ColumnDefaultValue.Compile(expression).TryEvaluate(targetType, static () => new CalculatedExpressionEvaluationContext(new TableDef(), [], []), out object evaluated)
             ? evaluated
             : null;
     }
@@ -712,7 +712,7 @@ internal sealed class ConstraintRegistry(
             }
 
             ColumnValidationRule rule = c.ValidationRulePlan ??= ColumnValidationRule.Compile(c.ValidationRuleExpression, c.Name);
-            context ??= new CalculatedExpressionEvaluationContext(tableDef, constraints, values, force: false, tableName, textCollation);
+            context ??= CalculatedExpressionEvaluationContext.FromCalculatedRow(tableDef, constraints, values, tableName, textCollation);
             try
             {
                 if (rule.Accepts(context))
@@ -833,7 +833,7 @@ internal sealed class ConstraintRegistry(
         try
         {
             rule.Plan ??= CalculatedExpressionParser.Parse(rule.Expression, isCalculatedColumn: false);
-            var context = new CalculatedExpressionEvaluationContext(tableDef, columns, values, force: false, tableName, textCollation);
+            var context = CalculatedExpressionEvaluationContext.FromCalculatedRow(tableDef, columns, values, tableName, textCollation);
             object result = rule.Plan.Evaluate(context);
             if (CalculatedExpressionCoercion.IsNull(result) || CalculatedExpressionCoercion.ToBoolean(result))
             {

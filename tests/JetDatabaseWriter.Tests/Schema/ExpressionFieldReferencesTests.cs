@@ -162,8 +162,8 @@ public sealed class ExpressionFieldReferencesTests(DatabaseCache db) : IClassFix
         {
             object[] before = [.. meta.Select(c => c.IsCalculated ? DBNull.Value : row[c.Name])];
             object[] after = [.. before];
-            CalculatedExpressionEvaluator.Apply(originalDef, original, before, force: false);
-            CalculatedExpressionEvaluator.Apply(renamedDef, renamed, after, force: false);
+            CalculatedExpressionEvaluator.Apply(originalDef, original, before);
+            CalculatedExpressionEvaluator.Apply(renamedDef, renamed, after);
             Assert.Equal(before, after);
         }
     }

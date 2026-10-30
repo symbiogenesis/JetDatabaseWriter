@@ -335,5 +335,5 @@ public sealed class CalculatedExpressionNumericLiteralTests
 
     private static object Evaluate(string expression)
         => CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false).Evaluate(
-            new CalculatedExpressionEvaluationContext(new TableDef(), [], [], force: false));
+            new CalculatedExpressionEvaluationContext(new TableDef(), [], []));
 }

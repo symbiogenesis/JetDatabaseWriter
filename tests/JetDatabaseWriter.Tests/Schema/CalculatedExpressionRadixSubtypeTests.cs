@@ -16,8 +16,7 @@ public sealed class CalculatedExpressionRadixSubtypeTests
         var context = new CalculatedExpressionEvaluationContext(
             new TableDef { Columns = [new ColumnInfo { Name = "&H10" }] },
             [new ColumnConstraint { Name = "&H10", ClrType = typeof(string) }],
-            ["field"],
-            force: false);
+            ["field"]);
 
         Assert.Equal("field&O17", Assert.IsType<string>(plan.Evaluate(context)));
     }
@@ -67,7 +66,7 @@ public sealed class CalculatedExpressionRadixSubtypeTests
         ];
         object[] values = [DBNull.Value];
 
-        CalculatedExpressionEvaluator.Apply(table, constraints, values, force: false);
+        CalculatedExpressionEvaluator.Apply(table, constraints, values);
 
         Assert.Equal(expected, Assert.IsType<string>(values[0]));
     }

@@ -219,5 +219,5 @@ public sealed class CalculatedExpressionDecimalPromotionTests
 
     private static object Evaluate(string operation, object left, object right)
         => new CalculatedExpressionBinaryNode(operation, new CalculatedExpressionValueNode(left), new CalculatedExpressionValueNode(right))
-            .Evaluate(new CalculatedExpressionEvaluationContext(new TableDef(), [], [], force: false));
+            .Evaluate(new CalculatedExpressionEvaluationContext(new TableDef(), [], []));
 }

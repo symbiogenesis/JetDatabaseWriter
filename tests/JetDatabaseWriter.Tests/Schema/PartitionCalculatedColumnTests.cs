@@ -41,7 +41,7 @@ public sealed class PartitionCalculatedColumnTests
     [Fact]
     public async Task PersistedPartitionCalculation_InsertAndUpdateRefuseWithoutChangingImage()
     {
-        const string placeholderExpression = "Xartition([Id],0,10,2)";
+        string placeholderExpression = "\" 0: 1\"".PadRight("Partition([Id],0,10,2)".Length);
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
@@ -54,7 +54,7 @@ public sealed class PartitionCalculatedColumnTests
         byte[] image = stream.ToArray();
         int expressionOffset = image.AsSpan().IndexOf(Encoding.Unicode.GetBytes(placeholderExpression));
         Assert.True(expressionOffset >= 0, "The persisted expression must be present in the fixture.");
-        image[expressionOffset] = (byte)'P';
+        Encoding.Unicode.GetBytes("Partition([Id],0,10,2)").CopyTo(image, expressionOffset);
         stream.Position = 0;
         await stream.WriteAsync(image, TestContext.Current.CancellationToken);
         stream.Position = 0;
