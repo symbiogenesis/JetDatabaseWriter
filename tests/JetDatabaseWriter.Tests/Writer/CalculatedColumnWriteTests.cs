@@ -257,7 +257,7 @@ public sealed class CalculatedColumnWriteTests
                     new("Source", typeof(int)),
                     new("Dependent", typeof(int)) { IsCalculated = true, CalculationExpression = "[Computed] + 1" },
                     new("Computed", typeof(int)) { IsCalculated = true, CalculationExpression = "[Source] * 2" },
-                    new("Missing", typeof(int)) { IsCalculated = true, CalculationExpression = "Null" },
+                    new("Missing", typeof(int)) { IsCalculated = true, CalculationExpression = "IIf(False,0,Null)" },
                 ],
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("CalcSupplied", [5, 999, "invalid cache", 111], TestContext.Current.CancellationToken);
@@ -1737,14 +1737,18 @@ public sealed class CalculatedColumnWriteTests
         {
             Name = column.Name,
             ClrType = column.ClrType,
-            IsCalculated = column.IsCalculated,
             CalculationExpression = column.CalculationExpression,
             CalculatedExpressionPlan = column.CalculationExpression is { } expression ? CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false) : null,
         }).ToArray();
-        CalculatedExpressionEvaluator.Apply(table, constraints, values);
+        var context = new CalculatedExpressionEvaluationContext(table, constraints, values);
         var result = new Dictionary<string, object>(columns.Length, StringComparer.OrdinalIgnoreCase);
         for (int index = 0; index < columns.Length; index++)
         {
+            if (constraints[index].CalculatedExpressionPlan is { } plan)
+            {
+                values[index] = CalculatedExpressionCoercion.CoerceResult(plan.Evaluate(context), columns[index].ClrType);
+            }
+
             result.Add(columns[index].Name, values[index]);
         }
 

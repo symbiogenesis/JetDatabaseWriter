@@ -1,6 +1,5 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
-using System;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
@@ -52,22 +51,8 @@ public sealed class CalculatedExpressionRadixSubtypeTests
     [InlineData("'&O17'", "&O17")]
     public void RadixLiteral_PreservesValueAndSubtype(string expression, string expected)
     {
-        var table = new TableDef { Columns = [new ColumnInfo { Name = "Calc" }] };
-        ColumnConstraint[] constraints =
-        [
-            new ColumnConstraint
-            {
-                Name = "Calc",
-                ClrType = typeof(string),
-                IsCalculated = true,
-                CalculationExpression = expression,
-                CalculatedExpressionPlan = CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false),
-            },
-        ];
-        object[] values = [DBNull.Value];
-
-        CalculatedExpressionEvaluator.Apply(table, constraints, values);
-
-        Assert.Equal(expected, Assert.IsType<string>(values[0]));
+        var context = new CalculatedExpressionEvaluationContext(new TableDef(), [], []);
+        object value = CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false).Evaluate(context);
+        Assert.Equal(expected, Assert.IsType<string>(value));
     }
 }
