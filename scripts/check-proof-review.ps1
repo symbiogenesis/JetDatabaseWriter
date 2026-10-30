@@ -37,6 +37,7 @@ function Get-ProofReviewFixedInputs([string] $Boundary) {
                 'src/JetDatabaseWriter/JetDatabaseWriter.csproj'
                 '.github/workflows/ci.yml'
                 '.github/ci-tools.slnf'
+                'scripts/ci-matrix.ps1'
                 'scripts/select-ci-lanes.ps1'
                 'scripts/tests/select-ci-lanes.tests.ps1'
                 'scripts/tests/ci-tools.tests.ps1'

@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $errors = $null
 if (-not $HelperPath) { $HelperPath = Join-Path $repoRoot 'scripts/select-ci-lanes.ps1' }
+. (Join-Path (Split-Path $HelperPath -Parent) 'ci-matrix.ps1')
 $ast = [Management.Automation.Language.Parser]::ParseFile($HelperPath, [ref]$null, [ref]$errors)
 if ($errors.Count -gt 0) { throw ($errors.Message -join '; ') }
 foreach ($definition in $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
@@ -30,6 +31,7 @@ Assert-Lanes 'native fixture edit' @('Databases/Golden/Jet4.bin') $true $false
 Assert-Lanes 'build configuration affects both' @('Directory.Build.props') $true $true
 Assert-Lanes 'SDK pin affects both' @('global.json') $true $true
 Assert-Lanes 'workflow routing affects both' @('.github/workflows/ci.yml') $true $true
+Assert-Lanes 'shared matrix affects execution and inherited evidence' @('scripts/ci-matrix.ps1') $true $true
 Assert-Lanes 'new unclassified file fails closed' @('future/build-input.txt') $true $true
 Assert-Lanes 'rename includes removed source path' @('src/JetDatabaseWriter/Old.cs', 'docs/Old.md') $true $false
 Assert-Lanes 'quoted unusual path fails closed' @('"docs/line\nname.md"') $true $true
@@ -57,6 +59,7 @@ function git {
     $script:gitCalls.Add(($args -join ' '))
     $global:LASTEXITCODE = 0
     if ($script:gitFails) { $global:LASTEXITCODE = 128; return }
+    if (($args -join ' ') -eq "-c core.quotepath=true diff --no-renames --name-only $base $sha") { return 'README.md' }
     if (($args -join ' ') -notmatch "^merge-base --is-ancestor [0-9a-f]{40} $sha`$") { throw "Unexpected Git call: $args" }
     if (-not $script:ancestor) { $global:LASTEXITCODE = 1 }
 }
@@ -120,6 +123,7 @@ $dotnetNames = @(
     'Encryption replacement (ubuntu-latest, net10.0)', 'Encryption replacement (ubuntu-latest, net11.0)',
     'Encryption replacement (macos-latest, net10.0)', 'Encryption replacement (macos-latest, net11.0)'
 )
+if (@(Compare-Object $dotnetNames @(Get-CiLaneJobs 'dotnet')).Count -ne 0) { throw 'The shared analyzer matrix changed the independently reviewed ancestor inventory.' }
 $script:jobs = @(@('Select CI lanes', 'Script, security and proof review checks') + $dotnetNames | ForEach-Object { @{ name = $_; status = 'completed'; conclusion = 'success' } })
 $script:jobs += @{ name = 'Verify recovery models (Dafny)'; status = 'completed'; conclusion = 'failure' }
 $script:jobs += @{ name = 'CI gate'; status = 'completed'; conclusion = 'failure' }
@@ -181,3 +185,62 @@ foreach ($bad in 'failure', 'cancelled', 'skipped', '') {
     if (-not $caught) { throw "Aggregate gate accepted required analyzer verdict '$bad'." }
 }
 'PASS: aggregate gate requires all selected lanes'
+
+# Exercise real output serialization and receipt generation without GitHub or Git.
+$temporary = Join-Path ([IO.Path]::GetTempPath()) ('jdw-ci-matrix-' + [guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($temporary)
+$variables = @('GITHUB_EVENT_NAME', 'GITHUB_REF', 'GITHUB_SHA', 'GITHUB_REPOSITORY', 'GITHUB_TOKEN', 'JDW_CI_FORCE_FULL', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY', 'RUNNER_TEMP', 'JDW_CI_NEEDS')
+$saved = @{}
+foreach ($name in $variables) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
+try {
+    $env:GITHUB_REF = 'refs/heads/main'
+    $env:GITHUB_SHA = $sha
+    $env:GITHUB_REPOSITORY = 'example/repo'
+    $env:GITHUB_TOKEN = 'fixture-token'
+    $env:GITHUB_OUTPUT = Join-Path $temporary 'outputs.txt'
+    $env:GITHUB_STEP_SUMMARY = Join-Path $temporary 'summary.md'
+    $env:RUNNER_TEMP = $temporary
+    $script:runs = @(New-Run)
+    foreach ($event in 'workflow_dispatch', 'workflow_call', 'push') {
+        $env:GITHUB_EVENT_NAME = $event
+        $env:JDW_CI_FORCE_FULL = ($event -eq 'workflow_call').ToString().ToLowerInvariant()
+        [IO.File]::WriteAllText($env:GITHUB_OUTPUT, '')
+        . $HelperPath | Out-Null
+        $outputs = @{}
+        foreach ($line in [IO.File]::ReadAllLines($env:GITHUB_OUTPUT)) {
+            $field = $line.Split('=', 2)
+            $outputs[$field[0]] = $field[1]
+        }
+        $expanded = $outputs.matrix | ConvertFrom-Json -AsHashtable
+        if (@($expanded.include).Count -ne 17 -or @($expanded.include | Where-Object runner -EQ $true).Count -ne 15) { throw 'Serialized matrix lost analyzer partitions.' }
+        $receipt = [IO.File]::ReadAllText((Join-Path $temporary 'ci-selection.json')) | ConvertFrom-Json -AsHashtable
+        $selected = $event -ne 'push'
+        if ($outputs.dotnet -ne $selected.ToString().ToLowerInvariant() -or $outputs.formal -ne $outputs.dotnet -or $receipt.revision -ne $sha -or $receipt.dotnet -ne $selected -or $receipt.formal -ne $selected) { throw "Incorrect selection output or receipt for ${event}: $($receipt | ConvertTo-Json -Depth 4 -Compress)." }
+        if (-not $selected -and ($receipt.baselines.dotnet.sha -ne $base -or $receipt.baselines.formal.sha -ne $base)) { throw 'Skipped lanes lost validated ancestor evidence.' }
+        "PASS: $event emits the complete matrix and exact selection receipt"
+    }
+    $env:JDW_CI_NEEDS = @{
+        changes = @{ result = 'success'; outputs = @{ dotnet = 'false'; formal = 'true' } }
+        checks = @{ result = 'success' }
+        formal = @{ result = 'success' }
+        analyze = @{ result = 'skipped' }
+        aot = @{ result = 'skipped' }
+        'encryption-replacement' = @{ result = 'skipped' }
+    } | ConvertTo-Json -Depth 4
+    . $HelperPath -CheckResults | Out-Null
+    'PASS: aggregate entry point accepts only the selected lanes'
+
+    $failing = Join-Path $temporary 'failing'
+    [void][IO.Directory]::CreateDirectory($failing)
+    Copy-Item -LiteralPath $HelperPath -Destination (Join-Path $failing 'select-ci-lanes.ps1')
+    [IO.File]::WriteAllText((Join-Path $failing 'ci-matrix.ps1'), "function Get-CiAnalyzerMatrix { throw 'matrix generation failed' }")
+    $env:GITHUB_EVENT_NAME = 'workflow_dispatch'
+    $caught = $null
+    try { . (Join-Path $failing 'select-ci-lanes.ps1') | Out-Null } catch { $caught = $_.Exception.Message }
+    if ($caught -ne 'matrix generation failed') { throw 'A generator failure must fail selection rather than authorize an empty analyzer matrix.' }
+    'PASS: matrix generation failure fails selection'
+}
+finally {
+    foreach ($name in $variables) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+    [IO.Directory]::Delete($temporary, $true)
+}

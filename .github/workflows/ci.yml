@@ -42,6 +42,7 @@ jobs:
     outputs:
       dotnet: ${{ steps.select.outputs.dotnet }}
       formal: ${{ steps.select.outputs.formal }}
+      matrix: ${{ steps.select.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -126,128 +127,8 @@ jobs:
     timeout-minutes: ${{ matrix.runner && 90 || 30 }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          # Both target frameworks of the library, then the package.
-          - name: library
-            project: src/JetDatabaseWriter
-            pack: true
-          # Every other project but the tests; the library builds without analyzers here.
-          - name: tools
-            project: .github/ci-tools.slnf
-            options: '"-p:AnalyzeExcept=JetDatabaseWriter JetDatabaseWriter.Tests"'
-          # Every runtime/library pair runs the complete suite across five disjoint partitions.
-          # Each partition executes its own strict Release build without a cross-lane barrier.
-          - name: tests net10.0 ordinary
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
-            tf: net10.0
-            runner: true
-            partition: ordinary
-            test-options: --filter-not-namespace JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer
-          - name: tests net10.0 schema-writer
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
-            tf: net10.0
-            runner: true
-            partition: schema-writer
-            test-options: --filter-namespace JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer --filter-not-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests JetDatabaseWriter.Tests.Writer.StatementAtomicityAceTests
-          - name: tests net10.0 jet3
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
-            tf: net10.0
-            runner: true
-            partition: jet3
-            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests
-          - name: tests net10.0 jet4
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
-            tf: net10.0
-            runner: true
-            partition: jet4
-            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests
-          - name: tests net10.0 ace
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
-            tf: net10.0
-            runner: true
-            partition: ace
-            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityAceTests
-          - name: tests net10.0 netstandard ordinary
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true
-            restore-options: -p:TestNetStandard=true
-            tf: net10.0-netstandard
-            runner: true
-            partition: ordinary
-            test-options: --filter-not-namespace JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer
-          - name: tests net10.0 netstandard schema-writer
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true
-            restore-options: -p:TestNetStandard=true
-            tf: net10.0-netstandard
-            runner: true
-            partition: schema-writer
-            test-options: --filter-namespace JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer --filter-not-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests JetDatabaseWriter.Tests.Writer.StatementAtomicityAceTests
-          - name: tests net10.0 netstandard jet3
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true
-            restore-options: -p:TestNetStandard=true
-            tf: net10.0-netstandard
-            runner: true
-            partition: jet3
-            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests
-          - name: tests net10.0 netstandard jet4
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true
-            restore-options: -p:TestNetStandard=true
-            tf: net10.0-netstandard
-            runner: true
-            partition: jet4
-            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests
-          - name: tests net10.0 netstandard ace
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true
-            restore-options: -p:TestNetStandard=true
-            tf: net10.0-netstandard
-            runner: true
-            partition: ace
-            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityAceTests
-          - name: tests net11.0 ordinary
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
-            tf: net11.0
-            runner: true
-            partition: ordinary
-            test-options: --filter-not-namespace JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer
-          - name: tests net11.0 schema-writer
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
-            tf: net11.0
-            runner: true
-            partition: schema-writer
-            test-options: --filter-namespace JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer --filter-not-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests JetDatabaseWriter.Tests.Writer.StatementAtomicityAceTests
-          - name: tests net11.0 jet3
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
-            tf: net11.0
-            runner: true
-            partition: jet3
-            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests
-          - name: tests net11.0 jet4
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
-            tf: net11.0
-            runner: true
-            partition: jet4
-            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests
-          - name: tests net11.0 ace
-            project: tests/JetDatabaseWriter.Tests
-            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
-            tf: net11.0
-            runner: true
-            partition: ace
-            test-options: --filter-class JetDatabaseWriter.Tests.Writer.StatementAtomicityAceTests
+      # Library/tools plus every runtime and partition, from the shared definition.
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
 
     steps:
       # MinVer computes the package version from the tags, so fetch the full history.

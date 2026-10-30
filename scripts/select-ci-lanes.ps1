@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param([switch] $CheckResults)
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/ci-matrix.ps1"
 
 function Get-CiLanes([string[]] $Paths) {
     $dotnet = $false
@@ -33,10 +34,8 @@ function Get-CiLanes([string[]] $Paths) {
 function Get-CiLaneJobs([ValidateSet('dotnet', 'formal')][string] $Lane) {
     if ($Lane -eq 'formal') { return @('Verify recovery models (Dafny)') }
     return @(
-        'Analyze (library)'
-        'Analyze (tools)'
-        foreach ($runtime in 'net10.0', 'net10.0 netstandard', 'net11.0') {
-            foreach ($partition in 'ordinary', 'schema-writer', 'jet3', 'jet4', 'ace') { "Analyze and test (tests $runtime $partition)" }
+        foreach ($entry in (Get-CiAnalyzerMatrix).include) {
+            if ($entry.runner) { "Analyze and test ($($entry.name))" } else { "Analyze ($($entry.name))" }
         }
         'Trimmed and NativeAOT consumers'
         'Encryption replacement (ubuntu-latest, net10.0)', 'Encryption replacement (ubuntu-latest, net11.0)',
@@ -147,6 +146,7 @@ $json = $selection | ConvertTo-Json -Depth 4
 Write-Output $json
 if ($env:GITHUB_OUTPUT) {
     foreach ($lane in 'dotnet', 'formal') { "$lane=$($lanes[$lane].ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8NoBOM }
+    "matrix=$(Get-CiAnalyzerMatrix | ConvertTo-Json -Depth 4 -Compress)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8NoBOM
 }
 if ($env:GITHUB_STEP_SUMMARY) {
     $summary = "### CI lane selection`n`nRevision: ``$($env:GITHUB_SHA)```n`n.NET ancestor: ``$($baselines.dotnet.sha)`` $($baselines.dotnet.url)`n`nDafny ancestor: ``$($baselines.formal.sha)`` $($baselines.formal.url)`n`n.NET: $($lanes.dotnet); Dafny: $($lanes.formal). Review, script and security checks always run.`n"

@@ -31,6 +31,7 @@ foreach ($path in @(Get-ProofReviewFixedInputs 'implementation') + @(Get-ProofRe
 Write-Fixture 'verification/Example.dfy' 'lemma Example() ensures true {}' | Out-Null
 Write-Fixture 'src/JetDatabaseWriter/Verification/RecoveryKernel.g.cs' 'class RecoveryKernel {}' | Out-Null
 Write-Fixture 'src/JetDatabaseWriter/Unmapped.cs' 'class Unmapped {}' | Out-Null
+Write-Fixture 'scripts/ci-matrix.ps1' 'function Get-CiAnalyzerMatrix {}' | Out-Null
 function New-Receipt {
     $reviews = foreach ($boundary in 'implementation', 'proof-trust') {
         $inputs = foreach ($path in Get-ProofReviewInputs $fixture $boundary) {
@@ -61,6 +62,12 @@ Assert-Scenario 'pin update requires trust review' {
     $path = Join-Path $fixture 'verification/dafny-toolchain.json'
     $original = [IO.File]::ReadAllText($path)
     try { [IO.File]::WriteAllText($path, 'changed verifier pin'); Assert-ProofReview $fixture $reviewPath }
+    finally { [IO.File]::WriteAllText($path, $original) }
+} 'Stale proof review'
+Assert-Scenario 'CI matrix update requires trust review' {
+    $path = Join-Path $fixture 'scripts/ci-matrix.ps1'
+    $original = [IO.File]::ReadAllText($path)
+    try { [IO.File]::WriteAllText($path, 'function Get-CiAnalyzerMatrix { @() }'); Assert-ProofReview $fixture $reviewPath }
     finally { [IO.File]::WriteAllText($path, $original) }
 } 'Stale proof review'
 Assert-Scenario 'proof edit requires review' {
