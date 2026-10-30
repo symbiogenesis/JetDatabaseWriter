@@ -590,6 +590,14 @@ through DAO without changing its rewritten descriptors or other row fields.
 
 ### Native text comparisons
 
+Numeric comparisons retain the native Variant operation: Double values compare
+without first rounding through Decimal, Single mixtures apply native Single
+precision, Currency mixtures round to four places and Decimal mixtures use their
+measured OLE conversion policy. NaN has the measured native comparison result
+of equality. Text against numbers compares their native text forms. Date Variants
+retain their separate raw-serial comparison. `CalculatedNumericComparisonTests`
+compares all six operators against independent native mixed-subtype controls.
+
 Expression comparisons use the database collation and ignore trailing U+0020
 spaces, as the native DAO field-rule oracle demonstrates for both directions
 of `a` versus `a `. Stored strings and concatenation retain those spaces.

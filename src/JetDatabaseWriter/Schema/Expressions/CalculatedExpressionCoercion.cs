@@ -214,9 +214,13 @@ internal static class CalculatedExpressionCoercion
             // in order, where a negative serial's fraction counts forward.
             comparison = leftDateValue.CompareTo(rightDateValue);
         }
-        else if (TryConvertDecimal(left, out decimal leftDecimal) && TryConvertDecimal(right, out decimal rightDecimal))
+        else if (left is string or Guid || right is string or Guid)
         {
-            comparison = leftDecimal.CompareTo(rightDecimal);
+            comparison = (textCollation ?? JetDatabaseWriter.Indexes.Collation.JetTextCollation.GeneralLegacy).Compare(ToText(left), ToText(right));
+        }
+        else if (CalculatedExpressionNumericComparison.IsNumber(left) && CalculatedExpressionNumericComparison.IsNumber(right))
+        {
+            comparison = CalculatedExpressionNumericComparison.Compare(left, right);
         }
         else if (TryConvertDateTime(left, out DateTime leftDate) && TryConvertDateTime(right, out DateTime rightDate))
         {
@@ -350,11 +354,6 @@ internal static class CalculatedExpressionCoercion
     /// <returns>The text value; empty for Null.</returns>
     internal static string ToText(object? value)
     {
-        if (value is Guid guid)
-        {
-            return guid.ToString("B").ToUpperInvariant();
-        }
-
         if (value is NativeDate native)
         {
             return ToGeneralDateText(native);
