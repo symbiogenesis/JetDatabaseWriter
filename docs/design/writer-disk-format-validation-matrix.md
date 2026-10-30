@@ -732,9 +732,14 @@ and fresh ACE native contexts remain R4/E2 work. The native engine module is
 `CalculatedExpressionDecimalCoercionTests` compares exact Single/Double source
 bits with native Jet4 mixed-Decimal field results, including scaled midpoints,
 underflow and range boundaries. The interpreter uses explicit binary scaling
-and integer Decimal construction across runtimes. Native finite overflow can
-promote to Double and nonfinite fields can expose missing results; matching
-those results remains separate from the current conservative refusal policy.
+and integer Decimal construction across runtimes. `CalculatedExpressionDecimalPromotionTests` separately verifies finite floating
+operand-conversion overflow: mixed Decimal arithmetic uses Double for both
+signs of Single/Double 2^96, including signed-zero products and quotients. Fresh
+DAO3.6 Jet4 TypeName and exact-bit controls cover both operand orders with
+Decimal 0/1; public ACE calculated insert/update/reopen retains those results.
+Convertible operands still use Decimal arithmetic. Native Decimal-result
+overflow and nonfinite fields can expose missing results; the writer retains
+conservative refusal. Fresh ACE/locale contexts remain separate R4/E2 gaps.
 Caller-field/storage and reverse conversion qualification remain R4 work.
 
 `PublicTextCollationTests` and `TextSortOrderFixtureTests` cover public General97/General Legacy/General choices, raw stored ID/version metadata, null header-default selection, unknown-ID reporting, no-mutation invalid-choice refusal, Text/Memo/calculated Text and schema preservation. `PublicTextCollationDaoTests` independently checks writer-created columns through schema edits and row updates, native case-equivalent seek, duplicate refusal, insert/update and compact/readback. Current x86 DAO3.6 (`dao360.dll` 10.0.26100.5074) controls passed for Jet3 General97 and Jet4 General Legacy. Four fresh DAO120 Jet4/ACE cases remain guarded and skipped on this host. Existing encoders and text code pages are unchanged; broader locale, long-key and native mixed-column coverage remains F9/E2 work.

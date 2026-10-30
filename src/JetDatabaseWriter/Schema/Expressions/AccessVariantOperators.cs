@@ -15,7 +15,8 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 /// </summary>
 /// <remarks>
 /// Floating arithmetic retains Single or Double operands, promotes overflowing Single
-/// results to Double, and keeps decimal operands in decimal arithmetic. A date
+/// results to Double, and keeps decimal operands in decimal arithmetic when their
+/// floating partner fits Decimal; otherwise the mixed operation uses Double. A date
 /// operand switches to date-serial arithmetic: a date plus or minus a number, a Boolean,
 /// numeric text or another date is a date, a date minus a date is a <see cref="double"/>
 /// number of days, and <c>*</c>, <c>/</c> and <c>^</c> with a date give a
@@ -129,7 +130,7 @@ internal static class AccessVariantOperators
                 : Finite(Finite(ToDateSerial(left)) / divisor);
         }
 
-        if (left is decimal || right is decimal)
+        if ((left is decimal || right is decimal) && !UsesFloatingArithmetic(left, right))
         {
             return ToDecimal(left) / ToDecimal(right);
         }
@@ -438,8 +439,24 @@ internal static class AccessVariantOperators
     private static bool IsZero(object value) => ToBitwiseOperand(value) == 0;
 
     private static bool UsesFloatingArithmetic(object left, object right)
-        => left is not decimal && right is not decimal
-            && (left is float or double || right is float or double);
+    {
+        if (left is not float and not double && right is not float and not double)
+        {
+            return false;
+        }
+
+        if (left is not decimal && right is not decimal)
+        {
+            return true;
+        }
+
+        // Native mixed arithmetic promotes when the floating operand cannot be
+        // converted, even for a zero product. Overflow of Decimal arithmetic with
+        // two convertible operands does not authorize the same promotion.
+        object floating = left is float or double ? left : right;
+        _ = Finite(ToDouble(floating));
+        return !TryConvertDecimal(floating, out _);
+    }
 
 #pragma warning disable CA1859 // Variant arithmetic deliberately boxes either Single or Double.
     private static object FloatingResult(double result, object left, object right)

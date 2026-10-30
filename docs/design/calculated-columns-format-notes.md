@@ -659,12 +659,21 @@ The scaling policy adapts the .NET 10 OLE-derived implementation; its MIT notice
 is retained in the packaged third-party notices.
 
 The expression coercion refuses nonfinite values and magnitudes at 2^96; its
-try-conversion reports false. Native mixed Decimal/floating arithmetic can
-instead promote an out-of-range finite result to Double or expose missing
-nonfinite results. Those promotion/error semantics remain R4 work. Caller-field
-normalization and storage retain their shared conversion contract; their
-remaining native/runtime qualification and reverse Decimal-to-floating
-conversions remain separate obligations.
+try-conversion reports false. Mixed Decimal/Single/Double addition, subtraction,
+multiplication and division instead use Double when the finite floating operand
+cannot convert to Decimal. Promotion precedes arithmetic, including a zero
+product; it preserves signed zero. Convertible operands retain Decimal
+arithmetic, whose result overflow still refuses rather than promoting.
+
+`CalculatedExpressionDecimalPromotionTests` compares both operand orders and
+positive/negative Single/Double 2^96 with native DAO3.6 Jet4 TypeName and exact
+result bits. Decimal 0/1 controls and public ACE calculated insert/update/reopen
+exercise the shared interpreter; nonfinite update refusal preserves bytes.
+Native in-range Decimal product overflow exposes a missing result, while the
+writer conservatively refuses. Native missing/nonfinite mapping, fresh ACE and
+locale contexts remain R4/E2 work. Caller-field normalization and storage retain
+their shared conversion contract; remaining native/runtime qualification and
+general reverse Decimal-to-floating conversions remain separate obligations.
 
 ## Literal Unicode markers in Text
 
