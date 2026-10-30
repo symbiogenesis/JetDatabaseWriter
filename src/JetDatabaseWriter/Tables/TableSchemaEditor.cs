@@ -169,6 +169,7 @@ internal sealed class TableSchemaEditor(
         }
 
         CalculatedExpressionBindings.ValidateDeclarations(columns, nameof(columns));
+        IndexHelpers.ValidateCalculatedIndexDeclarations(columns, indexes, tableName);
         _ = JetExpressionConverter.BuildLvPropBlob(columns, format);
 
         return this.CreateTableAsync(tableName, columns, indexes, cancellationToken);
@@ -336,6 +337,7 @@ internal sealed class TableSchemaEditor(
         ValidateDeclaredAutoIncrement(column, nameof(column));
         ValidateDeclaredCalculatedExpression(column, nameof(column), tableName);
         ValidateDeclaredDefault(column, nameof(column));
+        IndexHelpers.ValidateCalculatedIndexDeclarations([column], [], tableName);
         _ = JetExpressionConverter.BuildLvPropBlob([column], format);
 
         return this.RewriteTableAsync(

@@ -108,7 +108,7 @@ last evaluated result** on the row, with 23 bytes of envelope overhead:
 | `CALC_DATA_OFFSET` | `20` | Offset within the header where the payload begins. |
 | `CALC_FIXED_FIELD_LEN` | `39` | The fixed-portion column length used for *all* fixed-width calc columns (largest fixed payload `16` + the `23`-byte envelope overhead). |
 
-Calculated-value validation requires the complete 23-byte envelope overhead: a 20-byte prefix followed by the declared payload and three trailing bytes. A truncated envelope or a payload length that consumes those trailing bytes is corruption. Strict public reads report contextual corruption; lenient reads diagnose a missing value, and writes refuse to erase unreadable calculated content. A complete zero-length envelope remains valid framing, but an empty payload alone does not establish ordinary Null. The measured calculated Byte error form below refuses before value conversion.
+Calculated-value validation requires the complete 23-byte envelope overhead: a 20-byte prefix followed by the declared payload and three trailing bytes. A truncated envelope or a payload length that consumes those trailing bytes is corruption. Strict public reads report contextual corruption; lenient reads diagnose a missing value, and writes refuse to erase unreadable calculated content. A complete zero-length envelope can hold ordinary Null or a measured calculated-error status; the status is recognized before value conversion.
 
 For variable-width source types the on-disk `col_len` becomes
 `originalLen + CALC_EXTRA_DATA_LEN`. For fixed-width source types it is forced
@@ -221,361 +221,114 @@ payloads, native compaction and public writer/native recalculation.
 Helpers in this codebase: `CalculatedColumnUtil.Wrap` / `.Unwrap` (round-trip
 verified by `CalculatedColumnUtilTests`).
 
-## Implementation
+## Declaration, evaluation and public values
 
-### Metadata
+ACCDB calculated fields retain their original expression, physical descriptor and
+hydrated result type. New declarations accept the native scalar, Text, Memo,
+Binary and OLE result types; AutoNumber, defaults, attachments, multi-value,
+Hyperlink, Large Number and DateTime Extended combinations refuse before mutation.
+MDB formats refuse calculated declarations before parsing their expression.
 
-Goal: surface calc-column metadata to clients and recognise the format on disk.
+Native calculated fields cannot be index, primary-key or relationship keys.
+DAO can append index metadata to an empty table, but subsequent inserts and
+populated-index creation refuse with 3251; relationship declarations refuse with
+3888. The writer refuses new calculated-key declarations and actual row mutations
+through existing calculated indexes before effects. Empty metadata remains
+readable and survives metadata-only schema rewrites; no-op updates/deletes retain
+their native zero-row result. `CalculatedKeyRestrictionTests` qualifies these
+boundaries independently, including ordinary/unique/composite/primary declarations.
 
-Delivered:
+Declarations bind every syntactic source, including unused branches, before
+mutation. Unknown fields, self/circular dependencies and Binary/OLE/complex source
+fields refuse, matching native errors 3799, 3866 and 3885. Forward references to
+other calculated fields are valid. Persisted write plans validate their reachable
+dependency graph. `CalculatedExpressionBindingTests` compares native declarations,
+atomic create/add refusals, rename/drop binding and native update/compact.
 
-- `Constants.CalculatedColumn` constants (mask, header layout, fixed length).
-- `Constants.ColumnPropertyNames.Expression` / `.ResultType`.
-- `CalculatedColumnUtil.Wrap` / `.Unwrap` (round-trip + truncation tests).
-- `ColumnInfo.ExtraFlags` + `ColumnInfo.IsCalculated`.
-- `TableDefReader.ReadTableDefAsync` reads byte at descriptor offset 16 (ACE only;
-  Jet3 hard-coded to `0`).
-- `ColumnDefinition` / `ColumnMetadata` `IsCalculated`, `CalculationExpression`,
-  `CalculatedResultType` properties.
-- `AccessReader.GetColumnMetadataAsync` extracts `Expression` / `ResultType`
-  from LvProp.
-- Tests: `tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnUtilTests.cs`,
-  expanded metadata fixture coverage.
+Untyped Null result declarations follow the native static-type rule: literal,
+unary and arithmetic Null, two Null IIf branches and Null Choose alternatives do
+not declare a result type. Typed nullable expressions remain valid. DateSerial
+also has a native source-token rule for a bare year literal, separate from runtime
+Integer conversion; parenthesized, unary-plus and computed year expressions use
+runtime conversion. `CalculatedDeclarationAdmissionTests` compares every native
+result type and independent decimal/scientific year-token controls.
 
-### Cached value storage
+Every insert and update computes its calculated caches from the stored source
+values. Caller-supplied caches do not override expressions. Dependencies evaluate
+once per statement in dependency order; constraints consume the completed row,
+including calculated Null, without evaluating expressions again. Source and cached
+Text limits, Numeric coefficient/scale, Currency and Date identity participate in
+that projection. Blank or unsupported persisted expressions refuse atomically.
+`CalculatedColumnWriteTests` covers direct, auto-committed and explicit transaction
+writes, reopen, schema edits and original Access-authored result-type variants.
 
-The writer creates calculated columns, computes their expressions and stores
-the resulting cached values for both the library and Access to read.
+Typed rows and object POCO properties retain immutable `CalculatedError` values
+with signed native status codes. String rows render `#Error(code)`. Calculated
+DataTable columns use object so valid scalars, errors and ordinary Null survive.
+Incompatible scalar POCO projections fail with property/column context. Error
+operands propagate the measured dependency status -3030, with native branch and
+logical masking. Required/rule constraints and calculated Text/Memo error results
+refuse statements as Access does. Native compaction can clear a dependency cache
+while retaining the source error; independent fixtures preserve that distinction.
+`NativeCalculatedErrorTests` and `CalculatedByteErrorReadTests` also retain ordinary
+Null/value controls, exact native error widths and malformed-frame diagnostics.
 
-Jackcess sources to translate:
+An ordinary Null uses a complete 23-byte zero envelope. Measured scalar errors
+normally use 39 bytes and calculated Binary/OLE errors use 27 bytes inside LVAL
+storage; the first signed Int32 is the status and the remaining bytes are zero.
+Known error values are recognized only after complete framing validation. Corrupt
+framing retains strict contextual failure and documented lenient diagnostics;
+write-back refuses to erase unreadable assigned content. These are handwritten,
+native-tested parser contracts, without a whole-expression formal proof.
 
-- `CalculatedColumnUtil.create*Handler` factory methods — they wrap an existing
-  `ColumnImpl` to override `read` / `write` / `getType` / `isVariableLength`.
-- The `ColumnImpl` constructor branch that detects `extraFlags & 0xC0`,
-  rewrites `_columnLength`, and forces the column into the variable-length
-  bucket so it can store the wrapper.
-- `ColumnImpl.writeRealCodecHandler` calls into the wrapper helpers.
+### Native table expression language
 
-Delivered:
+`CalculatedExpressionParser` builds a bounded row-local tree directly from Access
+syntax. Source text is retained. Limits are 4,096 source units, 128 nested levels,
+256 function arguments and 32,768 generated text units. Flat operator chains do
+not consume parser nesting depth. References bind the in-flight row; no VBA,
+macro, saved query, external command or arbitrary CLR code is executed.
 
-- `Schema/TDefPageBuilder` emits the `0xC0` extra-flags byte, adjusts `col_len`,
-  and treats every calculated column as variable-area storage.
-- `Schema/JetExpressionConverter.ApplyColumn` emits `Expression` as Memo and
-  `ResultType` as Byte in `MSysObjects.LvProp`.
-- `AccessWriter.CreateTableAsync` accepts calculated columns for ACCDB, validates
-  expression/result-type constraints, and rejects unsupported Jet3/Jet4 MDB
-  targets.
-- `ValueEncoding/RowEncoder` wraps cached values by result type, including
-  calculated booleans, calculated numeric payloads, and calculated MEMO values
-  whose wrapped payload spills to LVAL pages.
-- `AccessReader` unwraps calculated cached values on the string, typed
-  `DataTable`, and POCO paths; the compiled direct POCO decoder falls back to
-  the unwrap-aware path for any bound calculated column.
-- Tests: `tests/JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`,
-  updated Access-authored fixture coverage in
-  `tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnFixtureTests.cs`, and
-  byte-level cached-payload assertions in
-  `tests/JetDatabaseWriter.Tests/Schema/CalculatedColumnPayloadTests.cs` (including
-  DAO-authored `IIf` calculated fields and native `Switch`/domain-aggregate
-  declaration refusals on Access-equipped hosts).
+The table language includes numeric/text/date/GUID/Boolean/Null literals,
+arithmetic +, -, *, / and ^, concatenation &, comparisons, And/Or/Not,
+Is [Not] Null, [Not] Like and [Not] In. Precedence is Access precedence; power is
+left-associative and binds more tightly than unary signs. Native And/Or/Not use
+Boolean operand conversion, described below.
 
-### Row-local expression evaluation
+The native intrinsic functions are Abs, Asc, Atn, CDbl, Choose, Cos, DateSerial,
+Day, DDB, Exp, Fix, FV, Hour, IIf, InStr, Int, IPmt, IsEmpty, IsNull, LCase,
+Left, Len, Log, Mid, Minute, Month, MonthName, NPer, Pmt, PPmt, PV, Rate,
+Right, Round, Second, Sgn, Sin, SLN, Space, Sqr, Str, String, SYD, Tan,
+TimeSerial, Trim, UCase, Weekday, WeekdayName and Year. Intrinsic dollar aliases
+are Left$, Right$, Mid$, LCase$, UCase$, Trim$, Space$, Str$ and String$.
+Mid and InStr require an explicit third argument. Function names ignore case;
+field names and quoted text retain their own binding and spelling.
 
-Declarations bind every syntactic source, including unselected branches, before
-mutation. Missing fields, self/circular dependencies and Binary/OLE/complex source
-fields are refused, matching native errors 3799, 3866 and 3885. Forward references
-to other declared calculated fields are valid. Persisted write plans validate the
-reachable dependency graph before evaluation. `CalculatedExpressionBindingTests`
-compares native declarations and verifies atomic create/add refusals, rename/drop
-binding and native update/compact behavior.
+`CalculatedColumnExpressionPolicy` rejects native-prohibited declarations,
+including a leading equals sign, radix literals, Between, Mod, integer division,
+Xor/Eqv/Imp, Nz, Switch, domain aggregates, formatting/clock functions, most
+explicit conversions and spreadsheet/VBA aliases. Field names or string literals
+containing those spellings remain valid. `CalculatedNativeAdmissionTests` and
+`CalculatedFunctionContextTests` retain independent positive/refusal controls and
+whole-image preservation on refusal. `PartitionCalculatedColumnTests` separately
+qualifies native Partition refusal even when nested, and persisted-write refusal.
 
-Untyped Null result declarations are refused with the native static-type rule:
-literal/unary/arithmetic Null, two Null IIf branches and Null Choose alternatives
-do not declare a result type. Typed nullable expressions remain valid. DateSerial
-also has a native source-token admission rule for a bare year literal, separate
-from its runtime Integer conversion; parenthesized, unary-plus and computed year
-expressions follow runtime conversion. `CalculatedDeclarationAdmissionTests`
-compares all native result types and the independent source-token control matrix,
-including decimal/scientific literal coefficients, before accepting a declaration.
+### Shared defaults and validation expressions
 
-Goal: on `INSERT` / `UPDATE`, recompute the value ourselves so callers do not
-have to supply it, and so updates to dependent columns refresh the persisted
-value the same way Access does.
+Defaults and validation rules use their separate, broader interpreter language.
+It includes VBA Variant bitwise operators, radix Integer/Long literals, formatting
+and clock functions, explicit conversions, date helpers and Partition. Radix
+literals retain signed 16/32-bit identity and optional Long suffixes; a wider or
+empty radix literal refuses. An ampersand after an operand concatenates text.
 
-Delivered:
-
-- `CalculatedExpressionParser` parses Access syntax directly into the
-  row-local evaluator's expression tree. Field nodes carry their original
-  names and qualifiers; bare names such as `A1` are ordinary field names.
-  Parsing never generates or reparses an intermediate formula.
-  Column validation rules reuse bounded ranges of the same token stream and
-  implicit field nodes, with separate short-circuit, three-valued Boolean logic.
-- `ConstraintRegistry` recomputes calculated columns for every insert and update
-  after source values are applied. Supplied calculated values never override
-  expressions, including after reopen and when a dependent calculated column
-  appears later in the schema. A blank or unsupported stored expression refuses
-  the mutation atomically. Validation consumes the completed row, including Null
-  and volatile calculated results, without evaluating them a second time.
-- The shared parser accepts common Access syntax: leading `=` is ignored
-  outside table calculated fields,
-  bracketed column references such as `[Column Name]` resolve against the
-  in-flight row, and `#date literal#` uses the CDate evaluator to preserve its time,
-  while DateValue removes the time. DateSerial rounds each argument half to even
-  to a VBA Integer; Now and Time use whole seconds, while Timer retains fractional seconds.
-  Single- and double-quoted text becomes literal nodes, doubled quotes are
-  unescaped, and `&H`/`&O` radix literals become typed Integer/Long values.
-  Access word operators produce evaluator function nodes. The expression
-  text persisted in the file is never rewritten.
-- Radix literals follow VBA: `&H` takes hex digits, `&O` (or a bare `&`
-  before an octal digit, which OLE Automation also accepts) octal digits, up
-  to 32 bits. A value up to `&HFFFF` is a signed Integer, so `&HFFFF` is -1
-  and `&H8000` is -32768; a larger value is a signed Long (`&HFFFFFFFF` is
-  -1); a trailing `&` makes it a Long (`&HFFFF&` is 65535). `&` starts a
-  literal only where an operand is expected; after an operand it joins text,
-  so `[A]&10` is concatenation. A literal wider than 32 bits, or `&H`/`&O`
-  without digits, throws `ArgumentException` naming the expression.
-  The typed literal nodes preserve `TypeName`/`VarType` and bitwise operand
-  subtypes. Unary plus keeps Integer/Long; negating the minimum Integer promotes
-  to Long, and negating the minimum Long promotes to Double, as measured with
-  native `oleaut32!VarNeg`. Literal typing follows Microsoft's
-  [MS-VBAL number tokens](https://learn.microsoft.com/en-us/openspecs/microsoft_general_purpose_programming_languages/ms-vbal/685ad840-accb-4bdb-8bfd-f3d88498547a).
-  Access Eval refused `TypeName(&H10)` syntax in the local probe; native Access
-  acceptance of these literals remains unverified. Binary arithmetic and
-  subtype-sensitive functions still have separate Variant subtype gaps.
-- Every expression is parsed with Access (VBA) operator precedence by
-  `CalculatedExpressionParser`. From
-  tightest to loosest: `^` (left-associative, and tighter than unary minus,
-  so `-2^2` is -4), unary `-`/`+`, `*` `/`, `\`, `Mod`, `+` `-`, `&`,
-  comparisons and `Like`/`Is`/`Between`/`In`, `Not`, `And`, `Or`, `Xor`,
-  `Eqv`, `Imp`. Syntax the Access grammar rejects throws `ArgumentException`
-  naming the expression. The 4,096-character source limit, 128-level nesting
-  limit and 256-argument limit apply before evaluation; recursive unary
-  expressions are also bounded, while flat left-associative chains do not
-  consume parser nesting depth. An `In` list counts its compared operand
-  toward the argument limit.
-- Excel's postfix `%` is not an Access operator. `CreateTableAsync` and
-  `AddColumnAsync` reject a calculated column whose expression uses it
-  (outside string literals and `[field]` names), or whose expression the
-  parser cannot read, with an `ArgumentException` naming the column and the
-  expression; its `ParamName` is `columns` for `CreateTableAsync` and `column`
-  for `AddColumnAsync`. The checks run in this order, all before any catalog
-  I/O: the table name, then whether the format can hold each column (ACCDB
-  only, a result type and no AutoNumber, Attachment, multi-value or Hyperlink
-  flag; `JetNotSupportedException` with `FeatureNotSupported`), then the
-  expression syntax, then that the
-  column declares no `DefaultValue` or `DefaultValueExpression`, which a
-  calculated column cannot have (`ArgumentException`). The "already
-  exists" check comes last. Columns carried over by a table rewrite are not
-  re-checked, so schema edits such as adding a plain column still work on a
-  table that already stores such an expression. Its rows still read; every
-  insert and `UpdateRowsAsync` (which re-evaluates all calculated columns)
-  throws `JetOperationException` with `InvalidExpression`
-  and table/column context. A stored expression that calls an unsupported
-  function throws `JetNotSupportedException` with `UnsupportedExpression`.
-- Each referenced field's value is converted to that field's declared type
-  before evaluation, with the same `Convert` call the row encoder stores it
-  with. The writer accepts `"10"` for an Integer field and `10` for a Text
-  field, so without this the text rules below would follow the CLR type the
-  caller passed instead of the field type.
-- Values follow Access rather than Excel: `True` is -1 and `False` is 0 in
-  arithmetic, comparisons, numeric result columns and the `CInt`, `CLng`,
-  `CDbl`, `CSng`, `CCur` and `CDec` conversions, and `"-1"` / `"0"` as text
-  (`&`, `CStr` and Text result columns); `+` concatenates when both operands
-  are text; and two text operands compare as text even when they look
-  numeric (`"10" < "9"`).
-- A date becomes text (`&`, `CStr`, `Like`, `Len`, `Format` with no format or
-  `"General Date"`, `FormatDateTime(d, vbGeneralDate)`, a Text result column
-  or a Text column's default) in VBA's General Date form for en-US, as OLE
-  Automation's `VarBstrFromDate` gives it (measured with oleaut32 on Windows,
-  LCID 1033), whatever the current culture: `1/31/2020 6:00:00 AM`, with no
-  zero padding and a 12-hour clock. A date at midnight has no time part
-  (`1/31/2020`), and a time on day 0 (1899-12-30) has no date part
-  (`6:00:00 AM`; day 0 at midnight is `12:00:00 AM`). More than half a second
-  rounds up to the next second. Access itself formats with the Windows
-  locale, so a non-US Access installation writes other text; this library
-  always uses the en-US form. The other named formats (`Short Date`,
-  `Long Time` and so on) still use .NET's invariant patterns.
-- Custom `Format` date strings use VBA's Gregorian tokens: `m`/`mm` are
-  months unless the preceding date/time token is `h`/`hh`; `n`/`nn` are
-  minutes. Quoted and backslash-escaped text stays literal. `w`, `ww`, `q`,
-  `y`, `AM/PM`, `A/P`, `ddddd`, `dddddd` and `ttttt` have VBA meanings;
-  optional first-day and first-week arguments control weekday/week numbers.
-  Custom short/long date and time tokens use en-US patterns, consistent with
-  General Date. These cases were checked against Windows `oleaut32!VarFormat`;
-  in particular `mm:ss` is month and seconds, not minutes and seconds.
-  See Microsoft's [VBA Format reference](https://learn.microsoft.com/en-us/office/vba/language/reference/user-interface-help/format-function-visual-basic-for-applications)
-  and [VarFormat API](https://learn.microsoft.com/en-us/windows/win32/api/oleauto/nf-oleauto-varformat).
-- A time with no date is on day 0 (1899-12-30), as in VBA. This was measured
-  with VBScript, whose date conversions are VBA's, under LCID 1033. It covers
-  time-only text (`CDate("6:00 PM")`), `#6:00#` literals, `Time()`,
-  `TimeValue` and `TimeSerial`. So a day-0 date turned into General Date text
-  reads back as day 0, and a `=Time()` default stores no date.
-  - `TimeSerial` rounds each argument half to even to an Integer. An argument
-    outside -32,768 to 32,767 throws `OverflowException`.
-  - It then adds the arguments up as an OLE date serial. So
-    `TimeSerial(25, 0, 0)` is 12/31/1899 1:00 AM, and `TimeSerial(-1, 0, 0)`
-    is -0.0417, which OLE reads as 1:00 AM on day 0.
-- Defaults and validation rules use OLE Automation conversion semantics:
-  `CByte(True)` yields 255 and False yields 0. A Boolean calculated result
-  instead becomes -1 or 0 before coercion to Byte. DAO120 and the writer cache
-  an error for True and numeric Byte results
-  outside 0-255: a 39-byte envelope with first UInt32 6, zero payload length
-  and all remaining bytes zero. Ordinary Null is a 23-byte zero envelope;
-  valid Byte results carry a one-byte payload. DAO exposes errors as COM null,
-  whereas ordinary Null is `DBNull`; `IsNull` and `IsError` also return COM null
-  for these errors. Public typed rows and object POCO properties retain a
-  `CalculatedError` with its signed `NativeCode`; string rows expose `#Error(code)`.
-  Scalar POCO properties refuse incompatible error values with column/property
-  context. Calculated DataTable columns use `object` to retain scalar values,
-  errors and ordinary Null. Malformed framing retains its strict/lenient policy.
-  `NativeCalculatedErrorTests` uses independently authored source/compacted
-  fixtures and fresh native read/update/compact controls for observed statuses
-  5, 6, 11, 13, 94, 440 and -3030. Dependencies propagate the measured -3030
-  status with IIf/And/Or masking; validation and Text/Memo error results refuse
-  statements as Access does. Native compact can turn a dependency error into
-  ordinary Null while retaining its source error; the fixtures distinguish both.
-  `CalculatedByteErrorReadTests` constructs that independently described layout
-  in a writer-created row; it is a native-layout regression control, not a
-  Microsoft-authored fixture. Its controls retain ordinary Null, Byte values
-  and malformed-envelope classification. `CalculatedConversionDaoTests`
-  confirms the native error/Null distinction and writer error emission.
-  A number or Boolean is a date serial (days since 1899-12-30, so True is
-  1899-12-29) in a Date result or the shared rule/default interpreter.
-  `CByte(-1)` and `CByte(256)` overflow. `IsDate` is True only for a date or
-  text that parses as one, so `IsDate(5)` is False as in VBA.
-- Arithmetic follows the OLE Automation Variant rules (`VarAdd`, `VarSub`,
-  `VarIdiv`, `VarMod`; `AccessVariantOperators`). A date plus or minus a
-  number, a Boolean, numeric text or another date is a date (`#2020-01-31# + 1`
-  is 2020-02-01, `[D] + 0.5` adds twelve hours, `-[D]` is a date); a date minus
-  a date is a `Double` number of days; `*`, `/` and `^` with a date give a
-  `Double`. A date plus or minus a Decimal is also a date, because the engine
-  holds Currency and Decimal fields alike as `decimal` and VBA gives a date for
-  Currency (OLE Automation gives Decimal for a true Decimal). A result outside
-  years 100-9999 throws `OverflowException`, and non-numeric text throws
-  `InvalidCastException` ("Type mismatch"). A date compared with a number or
-  date text compares as dates. `\` and `Mod` round both operands half to even
-  to a Long before dividing (`7.6 \ 2` is 4, `7 Mod 2.5` is 1), throw
-  `DivideByZeroException` for a zero divisor after rounding, and return a Long.
-  These rules apply to persisted `DefaultValue` and `ValidationRule`
-  expressions too, so `=Date()+7` and `>=Date()-30` are applied instead of
-  being skipped as unsupported.
-- `And`, `Or`, `Not`, `Xor`, `Eqv` and `Imp` follow VBA (OLE Automation
-  `VarAnd` and friends; `AccessVariantOperators`): logical on two Booleans and
-  bitwise on numbers (`12 And 10` is 8, `Not 5` is -6, `True And 12` is 12).
-  Two Bytes give a Byte, any mix of Boolean, Byte and Integer an Integer, and
-  other numbers, dates and numeric text are rounded half to even to a Long
-  (`2.5 And 3` is 2); a value beyond the Long range throws
-  `OverflowException` and non-numeric text throws `InvalidCastException`.
-  Null is three-valued: `Null And False` is False, `Null And 0` is 0,
-  `Null Or True` is True, `Null Or 12` is 12, and every other combination
-  with Null, including `Not Null`, is Null; `Eqv` is `Not (a Xor b)` and
-  `Imp` is `(Not a) Or b`, so `False Imp Null` is True. A calculated Boolean
-  or numeric column can therefore store Null. Jackcess keeps these operators
-  logical; this follows OLE Automation, measured on Windows, and Access itself
-  was not checked. `ValidationRule` terms are still joined by the rule's own
-  `And`/`Or` logic, which only combines Boolean terms.
-- An evaluation failure carries a structured code: result overflow uses
-  `JetLimitationException` with `NumericOverflow`, a generated text result
-  exceeding its safety limit uses `JetLimitationException` with `ValueTooLarge`,
-  unsupported evaluation uses
-  `JetNotSupportedException` with `UnsupportedExpression`, and other evaluation
-  failures use `JetOperationException` with `InvalidExpression`. Its context
-  names the table and calculated column, and its message
-  names the table, the calculated column and its expression, plus the value
-  and result type when the result could not be stored (`[A] * 100` in a Byte
-  column with `A = 5` "evaluated to 500, which a Byte result cannot hold").
-  The original exception is the `InnerException`. A column whose expression
-  references another calculated column reports the inner column's failure
-  once.
-- Calculated columns may reference earlier or later calculated columns in the
-  same row; dependency evaluation is lazy and circular references are rejected.
-
-Supported subset:
-
-- Operators: arithmetic (`+`, `-`, `*`, `/`, `\`, `^`, `Mod`, including date arithmetic), string
-  concatenation (`&`), comparisons (`=`, `<>`, `>`, `>=`, `<`, `<=`), logical
-  and bitwise word operators (`Not`, `And`, `Or`, `Xor`, `Eqv`, `Imp`), and Access special
-  comparisons (`Is [Not] Null`, `[Not] Like`, `[Not] Between`, `[Not] In`).
-- Literals: numbers, double- and single-quoted text, `#date#`, and `&H`/`&O`
-  radix literals in the shared interpreter; native `{guid {...}}` literals retain
-  Guid identity in table and shared contexts. A Guid converted to calculated Text
-  uses uppercase hexadecimal with braces. `CalculatedGuidLiteralTests` verifies
-  typed/text caches, writer updates and fresh DAO read/update/compact.
-- Constants and nulls: `True`/`False`, `Yes`/`No`, `On`/`Off`, common `vb*`
-  constants, blank/null nodes, and `DBNull` values from the in-flight row.
-- Built-ins: `IIf`/`IF`, `Nz`, `IsNull`/`IsBlank`, `IsNumeric`/`IsNumber`,
-  `IsDate`, `Len`, `Left`, `Right`, `Mid`, `UCase`/`Upper`, `LCase`/`Lower`,
-  `Trim`, `LTrim`, `RTrim`, `Replace`, `InStr`, `InStrRev`, `Space`,
-  `StrComp`, `StrConv`, `String`, `StrReverse`, `Asc`/`AscW`, `Chr`/`ChrW`,
-  `Str`, string-returning `$` aliases such as `Left$`/`UCase$`, `Format*`
-  helpers, `Abs`, `Round`, `Int`, `Fix`, `Rnd`, `Sgn`, `Sqr`, `Sin`, `Cos`,
-  `Tan`, `Atn`/`Atan`, `Exp`, `Log`, `Date`/`Today`, `Now`, `Time`, `DateValue`,
-  `DateSerial`, `DateAdd`, `DateDiff`, `DatePart`, `Year`, `Month`, `Day`,
-  `Hour`, `Minute`, `Second`, `TimeValue`, `TimeSerial`, `Timer`, `MonthName`,
-  `Weekday`, `WeekdayName`, `CInt`, `CLng`, `CDbl`, `CSng`, `CCur`/`CDec`,
-  `CStr`, `CDate`/`CVDate`, `CBool`, `CByte`, `CVar`, `VarType`, `TypeName`,
-  `Hex`, `Oct`, `Val`, common financial helpers (`FV`, `PV`, `Pmt`, `NPer`,
-  `IPmt`, `PPmt`, `DDB`, `SLN`, `SYD`, `Rate`), `Choose` and `Switch`. `Partition` is supported for stored rules and defaults; table calculated columns refuse it before mutation, matching DAO120.
-
-The list above describes the shared row-local interpreter for defaults and
-validation rules. Table calculated fields use the smaller native ACE language
-enforced by `CalculatedColumnExpressionPolicy`. Fresh Access Runtime
-16.0.20527.20112 declarations establish the positive/refusal controls in
-`CalculatedNativeAdmissionTests`, including nested functions, exact `$` aliases,
-operators, literals and argument counts. Native table fields reject `Nz`,
-`Switch`, domain aggregates, formatting/clock functions, most explicit conversions
-and the interpreter's spreadsheet/VBA aliases. Mid and InStr require their
-explicit third argument. String-returning intrinsic `$` spellings retain their
-native runtime distinction; MonthName/WeekdayName do not have `$` aliases.
-Table expressions reject a leading `=`, radix literals, Between, Mod, integer
-division, Xor, Eqv and Imp. Shared defaults/rules retain their separate language.
-
-Declaration checks run before create/add/recalculation changes bytes. Function
-names are case-insensitive; field names and literal text containing function
-names remain valid. `CalculatedFunctionContextTests` checks complete-image
-preservation on refused declarations. Existing cached values remain readable.
-The conversion DAO controls additionally verify accepted CDbl, DateSerial,
-TimeSerial and date literals through writer updates and native compact/readback.
-
-Still intentionally out of scope: domain aggregate functions (`DLookup`,
-`DCount`, `DSum`, `DAvg`, `DMin`, `DMax`) because DAO/Access rejects them in
-table calculated columns with "cannot be used in a calculated column" even
-though they are valid in other Access expression contexts; SQL/query evaluation,
-cross-record or cross-table lookups; and spreadsheet-only parser constructs such
-as sheet, external workbook, array, range, and structured references. Names
-that resemble spreadsheet cells resolve as Access field names;
-`CalculatedExpressionParserDaoTests` covers native authoring, writer
-recalculation and DAO compact for the bare `A1` field name.
-
-Tests: focused insert/update/POCO coverage in
-`tests/JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`, precedence and
-value-semantics cases in
-`tests/JetDatabaseWriter.Tests/Schema/CalculatedExpressionAccessSemanticsTests.cs`,
-plus the Access-authored cached-value fixture coverage, which also re-evaluates
-every Access-authored fixture expression against the values Access cached.
-
-### Expression contexts
-
-- Domain aggregate functions (`DLookup`, `DCount`, `DSum`, `DAvg`, `DMin`,
-  `DMax`) remain intentionally rejected for table calculated columns; DAO/Access
-  rejects each with "cannot be used in a calculated column". SQL/query
-  evaluation and cross-record / cross-table lookup context remain outside the
-  row-local evaluator.
-- `Partition(number, start, stop, interval)` is interpreted with bounded Long
-  coercion and constant work. It propagates Null, rounds numeric arguments half
-  to even, rejects invalid ranges/intervals, clips the final interval at `stop`,
-  and pads each side to the width of `stop + 1` and `start - 1`. Below/above-range
-  labels have one blank side, including when the interval is one. The guarded
-  `DaoTextCollationTests` case verifies a native table validation rule, selected
-  formatting boundaries and DAO write/compact after a writer update. Library
-  regressions cover persisted rules on Jet3/Jet4/ACE, int32 bounds, coercion and
-  byte-preserving rejected writes. DAO120 refuses direct, case-insensitive and
-  nested `Partition` calls when appending a table calculated field, with error
-  3859 and no added field; an adjacent supported calculation still succeeds.
-  `PartitionCalculatedColumnTests` matches that refusal for create/add and
-  for recalculating a synthetically persisted expression, preserving bytes.
-  Field names and string literals containing `Partition` remain valid.
-  Specialized functions remain separate work.
+The shared formatting profile is invariant/en-US: General Date omits midnight
+time or day-zero date, custom date tokens follow the measured Gregorian VBA
+semantics, and numeric text preserves the qualified native notation boundaries.
+DateSerial uses rounded Integer arguments; TimeSerial retains day-zero OLE date
+behavior. These contexts retain their own Variant subtype, error and native-version
+qualification in R4. Their larger function set does not expand table calculated
+field admission. Domain aggregates and Eval remain open work outside table fields;
+no embedded code or cross-table expression execution is enabled.
 
 ## Native row counts and schema preservation
 
@@ -659,10 +412,9 @@ the documented VBA Variant division matrix.
 Numeric text uses 15 significant digits for Double and 7 for Single, with the
 measured complete fractional-width rule for fixed versus scientific notation
 and a normalized negative zero. `CStr(1/3)` is `0.333333333333333`.
-Nonfinite numeric conversions, arithmetic results and division operands refuse;
-public mutation regressions retain identical database bytes on refusal. Native
-numeric-text overflow can return Null where the writer conservatively refuses;
-this does not establish native error-envelope parity.
+Calculated arithmetic retains its native status/error-value rules described below;
+valid financial nonfinite values remain distinct from arithmetic errors. Shared
+default/rule conversion failures retain their independently qualified refusals.
 
 `CalculatedExpressionFloatingSubtypeTests` compares fixed native controls with
 the interpreter, public stored defaults and ACE calculated Double insert/update.
@@ -806,9 +558,8 @@ arithmetic, whose result overflow still refuses rather than promoting.
 positive/negative Single/Double 2^96 with native DAO3.6 Jet4 TypeName and exact
 result bits. Decimal 0/1 controls and public ACE calculated insert/update/reopen
 exercise the shared interpreter; nonfinite update refusal preserves bytes.
-Native in-range Decimal product overflow exposes a missing result, while the
-writer conservatively refuses. Native missing/nonfinite mapping, fresh ACE and
-locale contexts remain R4/E2 work. Caller-field normalization and storage retain
+Native calculated Decimal overflow retains its measured calculated status.
+Additional shared expression and locale contexts remain R4/E2 work. Caller-field normalization and storage retain
 their shared conversion contract; remaining native/runtime qualification and
 caller-field/storage conversions and broader native context/representation qualification remain separate obligations; the expression reverse conversion policy and measured scope are described above.
 

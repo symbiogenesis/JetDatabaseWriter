@@ -309,7 +309,14 @@ internal sealed class TableDataWriter(
 
         // An index the writer cannot maintain would fail the index rebuild
         // after the rows below had been rewritten; refuse the update first.
-        await indexes.ThrowIfIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        if (pendingUpdates.Count == 0)
+        {
+            await indexes.ThrowIfIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await indexes.ThrowIfRowIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        }
 
         if (pendingUpdates.Count == 0)
         {
@@ -425,7 +432,14 @@ internal sealed class TableDataWriter(
         // An index the writer cannot maintain would fail the index rebuild
         // after the rows, and any cascaded rows, had been deleted; refuse the
         // delete first.
-        await indexes.ThrowIfIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        if (matchingRows.Count == 0)
+        {
+            await indexes.ThrowIfIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await indexes.ThrowIfRowIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        }
 
         IReadOnlyList<FkRelationship> rels = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         if (matchingRows.Count == 0)
@@ -501,7 +515,7 @@ internal sealed class TableDataWriter(
         // the writer cannot maintain would fail the index maintenance after
         // the rows were written, and the incremental path would already have
         // added them to the indexes before it.
-        await indexes.ThrowIfIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        await indexes.ThrowIfRowIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
 
         IReadOnlyList<FkRelationship> relationships = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         FkContext? fkContext = relationships.Count > 0 ? new FkContext(relationships) : null;

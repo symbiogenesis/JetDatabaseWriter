@@ -22,6 +22,43 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal static class IndexHelpers
 {
+    /// <summary>Refuses newly declared indexes and primary keys on calculated fields.</summary>
+    /// <param name="columns">The columns being declared.</param>
+    /// <param name="indexes">The explicit index declarations.</param>
+    /// <param name="tableName">The table being declared or extended.</param>
+    /// <exception cref="JetNotSupportedException">A new index uses a calculated field.</exception>
+    internal static void ValidateCalculatedIndexDeclarations(IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, string tableName)
+    {
+        foreach (ColumnDefinition column in columns)
+        {
+            if (!column.IsCalculated)
+            {
+                continue;
+            }
+
+            string? indexName = column.IsPrimaryKey ? "PrimaryKey" : null;
+            for (int index = 0; index < indexes.Count && indexName is null; index++)
+            {
+                foreach (string key in indexes[index].Columns)
+                {
+                    if (string.Equals(key, column.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        indexName = indexes[index].Name;
+                        break;
+                    }
+                }
+            }
+
+            if (indexName is not null)
+            {
+                throw new JetNotSupportedException(
+                    JetErrorCode.FeatureNotSupported,
+                    $"Index '{indexName}' cannot use calculated column '{column.Name}'; Microsoft Access cannot maintain calculated-field indexes.",
+                    new JetErrorInfo { TableName = tableName, ColumnName = column.Name, IndexName = indexName });
+            }
+        }
+    }
+
     /// <summary>Counts Null values in the indexed columns of a decoded row.</summary>
     /// <param name="columns">The resolved key columns.</param>
     /// <param name="row">The decoded row.</param>

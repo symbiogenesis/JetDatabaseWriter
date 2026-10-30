@@ -707,14 +707,17 @@ internal sealed class IndexMaintainer(
     /// <returns>A task that completes when the check has passed.</returns>
     /// <exception cref="JetLimitationException">The index section cannot be parsed or runs past the end of the table definition, or an index names a column the table does not have; the message names the table, and the index when its name can be read.</exception>
     /// <exception cref="JetCorruptDataException">A catalog index page is malformed; the error identifies the catalog and page.</exception>
-    internal async ValueTask ThrowIfIndexesUnmaintainableAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
-    {
-        (TdefPreamble preamble, IndexCatalogReader.ResolvedIndexCatalog? catalog) = await this.ResolveMaintainableIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
-        if (tdefPage == 2 && catalog is not null)
-        {
-            await this.ValidateCatalogIndexPagesAsync(tdefPage, preamble, catalog, cancellationToken).ConfigureAwait(false);
-        }
-    }
+    internal ValueTask ThrowIfIndexesUnmaintainableAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
+        => this.ValidateIndexMaintenanceAsync(tdefPage, tableDef, tableName, forRowMutation: false, cancellationToken);
+
+    /// <summary>Checks row-key maintenance, including native refusal of calculated-field indexes.</summary>
+    /// <param name="tdefPage">The table's first TDEF page.</param>
+    /// <param name="tableDef">The table's definition.</param>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The completed row-mutation preflight.</returns>
+    internal ValueTask ThrowIfRowIndexesUnmaintainableAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
+        => this.ValidateIndexMaintenanceAsync(tdefPage, tableDef, tableName, forRowMutation: true, cancellationToken);
 
     private static List<IndexEntry> DecodeRequiredCatalogLeaf(long pageNumber, byte[] page, JetFormat profile)
     {
@@ -776,6 +779,33 @@ internal sealed class IndexMaintainer(
         }
 
         return true;
+    }
+
+    private async ValueTask ValidateIndexMaintenanceAsync(long tdefPage, TableDef tableDef, string tableName, bool forRowMutation, CancellationToken cancellationToken)
+    {
+        (TdefPreamble preamble, IndexCatalogReader.ResolvedIndexCatalog? catalog) = await this.ResolveMaintainableIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        if (forRowMutation && catalog is not null)
+        {
+            foreach (KeyValuePair<int, List<KeyColumnInfo>> index in catalog.KeyColumnInfosByRealIdx)
+            {
+                foreach (KeyColumnInfo key in index.Value)
+                {
+                    if (key.Col.IsCalculated)
+                    {
+                        string name = catalog.Catalog.GetNameOrFallback(index.Key);
+                        throw new JetNotSupportedException(
+                            JetErrorCode.FeatureNotSupported,
+                            $"Index '{name}' on calculated column '{key.Col.Name}' of table '{tableName}' cannot be maintained; Microsoft Access refuses row changes with calculated-field indexes.",
+                            new JetErrorInfo { TableName = tableName, ColumnName = key.Col.Name, IndexName = name });
+                    }
+                }
+            }
+        }
+
+        if (tdefPage == 2 && catalog is not null)
+        {
+            await this.ValidateCatalogIndexPagesAsync(tdefPage, preamble, catalog, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async ValueTask ValidateCatalogIndexPagesAsync(long tdefPage, TdefPreamble preamble, IndexCatalogReader.ResolvedIndexCatalog catalog, CancellationToken cancellationToken)

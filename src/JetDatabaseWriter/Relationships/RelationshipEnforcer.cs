@@ -346,7 +346,7 @@ internal sealed class RelationshipEnforcer(
 
         foreach ((string tableName, ResolvedTable table, List<RowLocation> locations, ComplexChildDeletes flatRows) in cascades)
         {
-            await indexes.ThrowIfIndexesUnmaintainableAsync(table.Entry.TDefPage, table.Definition, tableName, cancellationToken).ConfigureAwait(false);
+            await indexes.ThrowIfRowIndexesUnmaintainableAsync(table.Entry.TDefPage, table.Definition, tableName, cancellationToken).ConfigureAwait(false);
             await complexColumns.PlanComplexChildDeletesAsync(table.Definition, locations, flatRows, cancellationToken).ConfigureAwait(false);
         }
 
@@ -657,7 +657,7 @@ internal sealed class RelationshipEnforcer(
             string tableName = cascade.TableName;
             ResolvedTable table = cascade.Table;
             List<(RowLocation Location, object[] OldRow, object[] NewRow)> rewrites = cascade.Rows;
-            await indexes.ThrowIfIndexesUnmaintainableAsync(table.Entry.TDefPage, table.Definition, tableName, cancellationToken).ConfigureAwait(false);
+            await indexes.ThrowIfRowIndexesUnmaintainableAsync(table.Entry.TDefPage, table.Definition, tableName, cancellationToken).ConfigureAwait(false);
             List<LocatedRow> existingRows = await snapshots.ReadRowsAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
             var replacements = new Dictionary<(long PageNumber, int RowIndex), object[]>();
             foreach ((RowLocation location, _, object[] newRow) in rewrites)
