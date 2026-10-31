@@ -102,6 +102,46 @@ public sealed class PagerFrameCacheTests
         Assert.Equal(2, store.Reads);
     }
 
+    /// <summary>An invalidated in-flight lease load remains readable without retaining the stale image.</summary>
+    [Fact]
+    public async Task DelayedLeaseLoad_AfterInvalidation_IsNotRetainedAndSurvivesDisposal()
+    {
+#pragma warning disable CA2000 // The awaited pager owns this store and codec and disposes them on every exit.
+        var store = new ControlledStore(32) { HoldRead = true };
+        await using var pager = new Pager(store, 16, new NoPageCodec(), typeof(AccessWriter), cacheSize: 2);
+#pragma warning restore CA2000
+        byte[] original = new byte[16];
+        Array.Fill(original, (byte)17);
+        await store.WriteAsync(16, original, Ct);
+        Task<PageLease> pending = pager.ReadPageLeaseAsync(1, Ct).AsTask();
+        await store.ReadCaptured.Task;
+        pager.InvalidateAll();
+        byte[] replacement = new byte[16];
+        Array.Fill(replacement, (byte)37);
+        await store.WriteAsync(16, replacement, Ct);
+        store.ReleaseRead.SetResult();
+
+        using PageLease stale = await pending;
+        Assert.Equal(original, stale.Memory.ToArray());
+        Assert.Equal(0, pager.Statistics.CachedFrames);
+        Assert.Equal(1, pager.Statistics.StoreReads);
+
+        using PageLease current = await pager.ReadPageLeaseAsync(1, Ct);
+        Assert.Equal(replacement, current.Memory.ToArray());
+        Assert.NotSame(stale.Buffer, current.Buffer);
+        Assert.Equal(original, stale.Memory.ToArray());
+        Assert.Equal(1, pager.Statistics.CachedFrames);
+        Assert.Equal(2, pager.Statistics.StoreReads);
+        using PageLease shared = await pager.ReadPageLeaseAsync(1, Ct);
+        Assert.Same(current.Buffer, shared.Buffer);
+        Assert.Equal(2, pager.Statistics.StoreReads);
+
+        await pager.DisposeAsync();
+        Assert.Equal(original, stale.Memory.ToArray());
+        Assert.Equal(replacement, current.Memory.ToArray());
+        Assert.Equal(replacement, shared.Memory.ToArray());
+    }
+
     /// <summary>Concurrent misses share one load and return independently owned buffers.</summary>
     [Fact]
     public async Task ConcurrentReads_AreSingleFlight()
