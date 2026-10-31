@@ -147,6 +147,41 @@ $tables['RegionalBooleanResults'] = @(
     @('NumericOne', '"1"', 1),
     @('InvalidText', '"bad"', 1)
 )
+$tables['RegionalMembership'] = @(
+    @('LiteralMismatch', '1 In ("1")', 7),
+    @('DoubleFunction', 'CDbl(1) In ("1")', 7),
+    @('FieldNumber', '[Id] In ("1")', 7),
+    @('NumberField', '"1" In ([Id])', 7),
+    @('FieldDot', '[N] In ("1234.5")', 7),
+    @('FieldComma', '[N] In ("1234,5")', 7),
+    @('DotField', '"1234.5" In ([N])', 7),
+    @('CommaField', '"1234,5" In ([N])', 7),
+    @('FieldExpression', '([Id]+0) In ("1")', 7),
+    @('EarlyField', '[Id] In (1,"bad")', 7),
+    @('LaterField', '[Id] In ("bad",1)', 7),
+    @('TextField', '1 In ([S])', 7),
+    @('FieldBeforeLiteral', '"1" In ([Id],1)', 7),
+    @('FieldFunction', 'Abs([Id]) In ("1")', 7),
+    @('FormattedField', '[N] In ([N]&"")', 7),
+    @('SelectedLiteral', 'IIf(True,1,[Id]) In ("1")', 7),
+    @('SelectedField', 'IIf(False,1,[Id]) In ("1")', 7),
+    @('ParenthesizedNegation', '-(1) In ("-1")', 7),
+    @('IntrinsicBoolean', 'IsNull(Null) In ("-1")', 7)
+)
+$tables['RegionalBooleanComparisons'] = @(
+    @('TrueName', 'IsNull(Null)="True"', 7),
+    @('TrueNumber', 'IsNull(Null)="-1"', 7),
+    @('ReverseTrueNumber', '"-1"=IsNull(Null)', 7),
+    @('FalseName', 'IsEmpty(1)="False"', 7),
+    @('FalseNumber', 'IsEmpty(1)="0"', 7),
+    @('LikeName', 'IsNull(Null) Like "True"', 7),
+    @('LikeNumber', 'IsNull(Null) Like "-1"', 7),
+    @('Slice', 'Left(IsNull(Null),1)', 10),
+    @('Length', 'Len(IsNull(Null))', 7),
+    @('AscTrue', 'Asc(IsNull(Null))', 7),
+    @('StrTrue', 'Str(IsNull(Null))', 10),
+    @('StrFalse', 'Str(IsEmpty(1))', 10)
+)
 $engine = New-Object -ComObject DAO.DBEngine.120
 $observations = $null
 $extended = [Collections.Generic.List[object]]::new()

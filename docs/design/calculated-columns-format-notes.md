@@ -845,11 +845,20 @@ subtype independently of numeric readback. `CalculatedOperatorStatusTests`
 compares pinned source/compacted native controls and fresh DAO authoring.
 
 `IN` stops at the first match and skips later errors; a Null needle skips its
-candidate list. Finite numeric/Text pairs cache status 13 even for numeric-looking
-text. Date/Text and nonfinite numeric/Text pairs compare native formatted text;
+candidate list. A numeric/Text pair of literal results caches status 13 even for
+numeric-looking text. Fields and computed results instead compare formatted
+text. `IIf` retains its selected branch's literal discriminator; functions,
+arithmetic and unary plus clear it. A directly adjacent signed numeric literal
+retains it, while parenthesized or space-separated negation clears it.
 Date/number pairs compare the raw serial. GUIDs retain their text identity.
 The [membership controls](../../tests/JetDatabaseWriter.Tests/Databases/CalculatedMembership/README.md)
 pin both operand orders, Nulls, errors, subtype boundaries and native compaction.
+
+Relational and membership comparisons project intrinsic Boolean results to
+signed Integer text (`-1`/`0`). Concatenation, LIKE, Len and string slicing retain
+the regional Boolean word. Asc uses numeric Boolean text, while Str and Str$
+retain the intrinsic word without numeric padding. Stored Boolean references
+already project Integer and retain their separate numeric behavior.
 
 ## Adding fields to populated tables
 
