@@ -152,18 +152,22 @@ module DataPageKernel {
     var index: U32 := 0;
     while index < rows
       invariant index <= rows
-      invariant page[..rowsStart as int] == before[..rowsStart as int]
-      invariant page[rowsStart as int + index as int * 2..] == before[rowsStart as int + index as int * 2..]
+      invariant forall position | 0 <= position < rowsStart as int :: page[position] == before[position]
+      invariant forall position | rowsStart as int + index as int * 2 <= position < page.Length ::
+        page[position] == before[position]
       invariant forall i | 0 <= i < index as int ::
         Word(page[..], rowsStart as int + i * 2) ==
           ReclaimedWord(Word(before, rowsStart as int + i * 2), i == rowIndex as int, first, start, end)
       decreases rows - index
     {
       var position := rowsStart + index * 2;
+      ghost var iteration := page[..];
       var raw := ReadWord(page, position);
       var updated := ReclaimedWord(raw, index == rowIndex, first, start, end);
       page[position] := (updated % 256) as Byte;
       page[position + 1] := (updated / 256) as Byte;
+      assert forall untouched | 0 <= untouched < page.Length &&
+        untouched != position as int && untouched != position as int + 1 :: page[untouched] == iteration[untouched];
       index := index + 1;
     }
     var free := first + end - start - rowsStart - rows * 2;
