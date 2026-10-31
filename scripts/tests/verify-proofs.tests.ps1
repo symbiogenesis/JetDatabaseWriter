@@ -87,8 +87,8 @@ Assert-Scenario 'generated qualified self reference follows type packaging' {
     if (-not $projected.Contains('return JetDatabaseWriter.Verification.RecoveryKernel.Accept(value);')) { throw 'Qualified self reference was changed incorrectly.' }
 }
 Assert-Scenario 'runtime-dependent kernel rejected' { ConvertFrom-NativeKernelTranslation 'RecoveryKernel' ($translation.Replace('return (value) == ((byte)(0));', 'return Dafny.Helpers.Value(value);')) } 'runtime support'
-$usageDeclaration = '    public static void NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, uint cursor, out uint next, out byte members, out byte state)'
-$usageMethod = $usageDeclaration + "`n    {`n      next = cursor;`n      members = 0;`n      state = 1;`n    }`n"
+$usageDeclaration = '    public static void NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, uint cursor, out uint next, out byte members, out byte state, out long firstPage)'
+$usageMethod = $usageDeclaration + "`n    {`n      next = cursor;`n      members = 0;`n      state = 1;`n      firstPage = basePage;`n    }`n"
 foreach ($kernel in @(
     @{ Name = 'DataPageKernel'; Source = 'Pages/DataPageKernel' },
     @{ Name = 'IndexMutationKernel'; Source = 'Indexes/IndexMutationKernel' },
@@ -135,6 +135,8 @@ foreach ($case in @(
     @{ Name = 'cursor output modifier'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('out uint next', 'ref uint next')) },
     @{ Name = 'mask output type'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('out byte members', 'out uint members')) },
     @{ Name = 'status output modifier'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('out byte state', 'ref byte state')) },
+    @{ Name = 'page output type'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('out long firstPage', 'out ulong firstPage')) },
+    @{ Name = 'old three-output signature'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace(', out long firstPage', '')) },
     @{ Name = 'old packed signature'; Text = $usageTranslation.Replace($usageDeclaration, '    public static ulong NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, ulong continuation)') },
     @{ Name = 'indentation'; Text = $usageTranslation.Replace($usageDeclaration, '  ' + $usageDeclaration) }
 )) {

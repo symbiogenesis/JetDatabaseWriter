@@ -5,7 +5,7 @@
   "reviews": [
     {
       "boundary": "implementation",
-      "obligations": "Reviewed complete pre-mutation row-compaction admission, minimum/next-distinct boundary selection, conditional selected/relocated directory writes, hoisted-width native flag updates, free-header accounting and composition with modeled overlapping copy/clear. Preserve surviving slot flags, alias policy, surviving byte intervals, secure erase and untouched pooled suffix; actual CLR bulk effects remain contracts. Reviewed maximal index prefix scanning, bounded entry capacity/progress, direct fixed-position header/prefix/bookmark/child/boundary byte extraction under the unchanged ghost byte law, finite payload composition and sentinel/free-space finalization. Pointer widths/layouts are unchanged; stable list acquisition, metadata preflight and exact key-suffix copy remain premises. Reviewed exact ordered usage-bitmap selection, direct cursor/member-mask/status outputs, exact byte-mask selection and byte-index zero skipping, decreasing rank, tolerant invalid-member skipping and strict first-failure prefix retention. Production establishes range admission once, retains an admitted byte-aligned cursor and immutable array, and appends selected bits in order before terminal refusal handling; list effects and reference-page cancellation/return remain contracts. The shared index-entry scan must bind a found non-sentinel boundary to the negated exhaustion statement under its original bounded-array contract. Existing recovery/replacement/descriptor/visited/frame/lifecycle boundaries remain documented in formal-verification.md and their model sources; no additional recovery or page-release authority follows.",
+      "obligations": "Reviewed complete pre-mutation row-compaction admission, minimum/next-distinct boundary selection, conditional selected/relocated directory writes, hoisted-width native flag updates, free-header accounting and composition with modeled overlapping copy/clear. Preserve surviving slot flags, alias policy, surviving byte intervals, secure erase and untouched pooled suffix; actual CLR bulk effects remain contracts. Reviewed maximal index prefix scanning, bounded entry capacity/progress, direct fixed-position header/prefix/bookmark/child/boundary byte extraction under the unchanged ghost byte law, finite payload composition and sentinel/free-space finalization. Pointer widths/layouts are unchanged; stable list acquisition, metadata preflight and exact key-suffix copy remain premises. Reviewed exact ordered usage-bitmap selection, direct cursor/member-mask/status/computed-page-base outputs, exact byte-mask selection and byte-index zero skipping, decreasing rank, tolerant invalid-member skipping and strict first-failure prefix retention. Production establishes range admission once, retains an admitted byte-aligned cursor and immutable array, and appends selected bits in order through a compact partial-mask loop or full-mask straight appends before terminal refusal handling; list effects and reference-page cancellation/return remain contracts. The shared index-entry scan must bind a found non-sentinel boundary to the negated exhaustion statement under its original bounded-array contract. Existing recovery/replacement/descriptor/visited/frame/lifecycle boundaries remain documented in formal-verification.md and their model sources; no additional recovery or page-release authority follows.",
       "conformance": "Independent complete-page row-compaction oracles cover Jet3/Jet4/ACE slots, aliases/flags, erase policies, malformed bounds, native widths, short images and untouched bytes. Index byte vectors cover leaf/intermediate headers, compressed payloads, extreme pointers, bitmap boundaries, empty keys/full pages and refusal; existing structural/native controls retain their evidence level. Bitmap tests compare every byte pattern and signed bounds against independent expansion, strict retained prefixes, reference-page return and cancellation. Focused local checks provide development feedback; settled-main CI, target/analyzer/package/trimming/NativeAOT and hosted measurements remain required. Original-algorithm microbenchmark controls and paired existing workloads retain performance evidence without treating generated code as a timing theorem. Existing cited recovery, lifecycle, parser, native and fault-injection evidence remains applicable within its stated scope. Independent stable key buckets cover every three-existing/two-added splice run over four mixed-length keys and every removal subset, including tie order and unchanged inputs. Independent visited-set traces compare exact membership/count and production adapter decisions through repeated collisions, duplicates, zero inputs and growth; exact-budget colliding chains preserve payloads and lease handoff. Concurrent lease disposal/acquisition checks exactly-once accounting and retained reader/producer ownership; delayed lease loads refuse stale cache publication while live images survive invalidation/disposal.",
       "remainingAssumptions": "Stable exclusive page/array identity, retained admitted byte cursor and faithful ordered mask emission, correct supplied native layouts, exact CLR bulk copy/clear, list append and stable entry acquisition remain adapter contracts. Reference reads, cancellation/pool effects, complete public parser resources, ordered trees/separators, allocator ownership and containing mutation/rollback require composition. Membership and row-space compaction grant no page-release authority. Existing I/O/hash/path/snapshot/coordinator/OS and compiler/runtime contracts remain. Physical persistence, directory durability, stale-I/O fencing and fresh native-engine gaps retain E4/F6/I15/V7 and their feature requirements. No whole-library proof, new native form or unconditional performance/durability guarantee is inferred.",
       "evidence": [
@@ -304,7 +304,7 @@
         },
         {
           "path": "benchmarks/JetDatabaseWriter.Benchmarks/Reader/UsageMapEnumerationBenchmarks.cs",
-          "sha256": "26b9e061dab2ac24b872eee58237232d64b0227aca03d3345a2f25c981a21e30"
+          "sha256": "3cbae54c75e8118d153b7b86a69bfc08c800dfcdfd2d419a2b757ebbb843a138"
         },
         {
           "path": "benchmarks/JetDatabaseWriter.Benchmarks/Writer/AccessWriterPageIoBenchmarks.cs",
@@ -344,7 +344,7 @@
         },
         {
           "path": "docs/design/formal-verification.md",
-          "sha256": "b4a899341583541f0238f0bcc65795aca38877a0d03cebabd7abc666e1648b59"
+          "sha256": "068e7a8827bdb7e56104e6730d5e3a02b51d89776f15b1c4c4d7c72f9d7e846f"
         },
         {
           "path": "docs/design/index-and-relationship-format-notes.md",
@@ -376,7 +376,7 @@
         },
         {
           "path": "docs/design/usage-map-maintenance.md",
-          "sha256": "6d1477f27acfb98b182975f3312895fa0a6273262e76437d5b6398a723f6cde0"
+          "sha256": "9bc7cfceb7695c19b65fee632f8a8324d2d78be89da7bbb6e5f5e0c498aa5a2d"
         },
         {
           "path": "docs/design/verification-evidence-map.md",
@@ -712,7 +712,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Pages/UsageMap.cs",
-          "sha256": "9b0ce04159000a5f5c97838ac7922a0c06b2bd55dad33ce1aae0e97965d4162d"
+          "sha256": "9e6ae8f15aba8cd314f6c647f821bd747b2a1bff307e97552474c18f6570d2c3"
         },
         {
           "path": "src/JetDatabaseWriter/Queries/AccessQueryTranslator.cs",
@@ -992,7 +992,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Verification/UsageMapKernel.g.cs",
-          "sha256": "b0f9002173c3c7c82371394c65baf68275908cf246c357f521522c6715e35703"
+          "sha256": "662097472aa7c42e769a0c7c7d5b221a521a67aecb335a7d2f69338df2b600ed"
         },
         {
           "path": "src/JetDatabaseWriter/WriterServices.cs",
@@ -1256,7 +1256,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Pages/UsageMapEnumerationKernelTests.cs",
-          "sha256": "65a499a43e6ede442410f0f2622a7d8a01a5ad171a7fa193a3d93c7169f5ab98"
+          "sha256": "6483d019ef11e4ce70358a2d5bf70ee8ff39509326661f1be46e64d61798a3a6"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Queries/QueryLambdaCompilerTests.cs",
@@ -1634,7 +1634,7 @@
         },
         {
           "path": "benchmarks/JetDatabaseWriter.Benchmarks/Reader/UsageMapEnumerationBenchmarks.cs",
-          "sha256": "26b9e061dab2ac24b872eee58237232d64b0227aca03d3345a2f25c981a21e30"
+          "sha256": "3cbae54c75e8118d153b7b86a69bfc08c800dfcdfd2d419a2b757ebbb843a138"
         },
         {
           "path": "benchmarks/JetDatabaseWriter.Benchmarks/Writer/AccessWriterPageIoBenchmarks.cs",
@@ -1674,7 +1674,7 @@
         },
         {
           "path": "docs/design/formal-verification.md",
-          "sha256": "b4a899341583541f0238f0bcc65795aca38877a0d03cebabd7abc666e1648b59"
+          "sha256": "068e7a8827bdb7e56104e6730d5e3a02b51d89776f15b1c4c4d7c72f9d7e846f"
         },
         {
           "path": "docs/design/index-and-relationship-format-notes.md",
@@ -1718,7 +1718,7 @@
         },
         {
           "path": "docs/design/usage-map-maintenance.md",
-          "sha256": "6d1477f27acfb98b182975f3312895fa0a6273262e76437d5b6398a723f6cde0"
+          "sha256": "9bc7cfceb7695c19b65fee632f8a8324d2d78be89da7bbb6e5f5e0c498aa5a2d"
         },
         {
           "path": "docs/design/verification-evidence-map.md",
@@ -1782,11 +1782,11 @@
         },
         {
           "path": "scripts/tests/verify-proofs.tests.ps1",
-          "sha256": "fca343d987c073e52560b49e10e919a18d700aa6b8577b0605feb66a2508429b"
+          "sha256": "c0e46e1f6493363be559b8215143fe7bce7212319e43275d5183027a4a2888f3"
         },
         {
           "path": "scripts/verify-proofs.ps1",
-          "sha256": "8211c9c5b58bcbcd2be28d6117bb01f4ce02c76e9f8f2b353ec0468c5738d3cb"
+          "sha256": "18f470616d085c8444bac56ded4554803216c8b1b8f7c6a1c3d6fb8890abccda"
         },
         {
           "path": "src/JetDatabaseWriter/Constants.cs",
@@ -1818,7 +1818,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Pages/UsageMap.cs",
-          "sha256": "9b0ce04159000a5f5c97838ac7922a0c06b2bd55dad33ce1aae0e97965d4162d"
+          "sha256": "9e6ae8f15aba8cd314f6c647f821bd747b2a1bff307e97552474c18f6570d2c3"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexEntryBoundaryKernelTests.cs",
@@ -1866,7 +1866,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Pages/UsageMapEnumerationKernelTests.cs",
-          "sha256": "65a499a43e6ede442410f0f2622a7d8a01a5ad171a7fa193a3d93c7169f5ab98"
+          "sha256": "6483d019ef11e4ce70358a2d5bf70ee8ff39509326661f1be46e64d61798a3a6"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/TestProgram.cs",
@@ -1942,11 +1942,11 @@
         },
         {
           "path": "verification/Pages/UsageMapKernel.dfy",
-          "sha256": "ee9c2d1061c3d2ef58ac97a5b6f3b03265a5926e6fadae8970fcfb2ff46a9740"
+          "sha256": "be906fe6f29b0e2c7b9357c800886d3f613ee82214ad46a242560dad42b35c78"
         },
         {
           "path": "verification/README.md",
-          "sha256": "528c19a0d75891ab3106e742a6836c72d73a77bb457f01dab0ca129c950acf90"
+          "sha256": "2799b9be87fbd7d5e222202d8a6d3815eb350ed91817319569a9d2b41de22f95"
         },
         {
           "path": "verification/Transactions/GenerationOwnership.dfy",

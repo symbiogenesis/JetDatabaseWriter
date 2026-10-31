@@ -232,7 +232,7 @@ own composition; an encoded page is not an ownership proof.
 `UsageMapKernel` admits the complete array range once, then scans the actual
 acquired bitmap using a native byte-mask result shared by INLINE and
 REFERENCE enumeration. Zero-byte scanning advances a byte index; each nonempty
-result admits up to eight ordered members. The adapter appends the selected
+result admits up to eight ordered members and returns their computed byte base. The adapter appends the selected
 mask bits before handling terminal status, including valid members before a
 strict failure within that byte. The cursor makes bounded progress; tolerant
 enumeration skips out-of-range members. Signed 64-bit page controls preserve the

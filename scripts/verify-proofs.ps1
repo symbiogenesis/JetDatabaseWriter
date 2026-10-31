@@ -119,7 +119,7 @@ function ConvertFrom-NativeKernelTranslation([string] $KernelName, [string] $Tra
                 @{ Name = 'CompleteVisitedGrowth'; Declaration = '    public static uint CompleteVisitedGrowth(uint[] source, uint[] destination, uint count, uint pointer)' }
             )
         } else {
-            @(@{ Name = 'NextBitmapPage'; Declaration = '    public static void NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, uint cursor, out uint next, out byte members, out byte state)' })
+            @(@{ Name = 'NextBitmapPage'; Declaration = '    public static void NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, uint cursor, out uint next, out byte members, out byte state, out long firstPage)' })
         }
         foreach ($controller in $controllers) {
             $declarationPattern = '(?m)^[ \t]*(?:public|private|protected|internal|static)\b[^;{}]*?\b' + [regex]::Escape($controller.Name) + '\s*(?:<[^;{}]*>)?\s*\('

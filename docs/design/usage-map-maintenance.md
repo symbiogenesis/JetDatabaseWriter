@@ -29,7 +29,7 @@ refusal preserves the complete buffer. Negative inline base pages refuse for
 both reads and writes. These properties cover bitmap representation and access.
 INLINE and REFERENCE enumeration also share the generated `UsageMapKernel`
 ordered bitmap scanner. It returns an exact mask of up to eight members with
-bounded byte progress. The adapter appends selected bits in order before
+bounded byte progress and their computed page base. The adapter appends selected bits in order before
 handling strict refusal, retaining the valid prefix within the refusing byte;
 tolerant scans skip invalid members. List append and reference-page acquisition, cancellation and pooled
 return remain adapter effects. Whole-row emission, page identity, containing map traversal, alias isolation and reclamation authority still
