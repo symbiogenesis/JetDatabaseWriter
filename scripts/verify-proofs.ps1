@@ -6,7 +6,12 @@ param(
     [ValidateRange(10, 3600)][int] $TimeoutSeconds = 300,
     [switch] $UpdateGeneratedSource,
     [switch] $AnalyzeProofCoverage,
-    [ValidateNotNullOrEmpty()][string[]] $ProofCoverageSources
+    [ValidateNotNullOrEmpty()][string[]] $ProofCoverageSources,
+    [switch] $SuggestProofRefactoring,
+    [switch] $MeasureProofComplexity,
+    [ValidateNotNullOrEmpty()][string[]] $ProofComplexitySources,
+    [ValidateRange(2, 20)][int] $ProofComplexityMutations = 3,
+    [string] $ProofDiagnosticPosition
 )
 $ErrorActionPreference = 'Stop'
 
@@ -99,7 +104,7 @@ function Sync-NativeKernel([string] $KernelName, [string] $RepositoryRoot, [stri
     Assert-NativeKernelName $KernelName
     $source = Join-Path $RepositoryRoot "verification/$KernelName.dfy"
     $translated = Join-Path $OutputDirectory "$KernelName.cs"
-    $arguments = @('translate', 'cs') + $Dependencies + @($source, '--output', $translated, '--outer-module', 'JetDatabaseWriter.Verification', '--use-basename-for-filename') + $Options
+    $arguments = @('translate', 'cs') + $Dependencies + @($source, '--output', $translated, '--outer-module', 'JetDatabaseWriter.Verification', '--use-basename-for-filename', '--enforce-determinism') + $Options
     $result = Invoke-ProofProcess $DafnyPath $arguments $OutputDirectory "$KernelName.translate" $TimeoutSeconds
     Assert-ProofResult $result "$KernelName translation"
     $projected = ConvertFrom-NativeKernelTranslation $KernelName ([IO.File]::ReadAllText($translated))
@@ -156,13 +161,16 @@ function Assert-ProofSource([string] $Path, [string] $Source) {
     $code = Get-DafnyPolicyText $Source
     if ($code -match '\b(include|assume|expect|extern|replaceable)\b|\bdecreases\s*\*|@') { throw "Disallowed proof construct in $Path" }
     foreach ($attribute in [regex]::Matches($code, '\{\s*:\s*([A-Za-z_][A-Za-z0-9_]*)')) {
-        if ($attribute.Groups[1].Value -notin 'trigger', 'induction', 'nativeType') { throw "Disallowed proof construct in ${Path}: $($attribute.Value)" }
+        if ($attribute.Groups[1].Value -cnotin 'trigger', 'induction', 'nativeType', 'isolate') { throw "Disallowed proof construct in ${Path}: $($attribute.Value)" }
     }
     # These native representations affect compilation, not proof trust. Keep the
     # reviewed set exact; never accept nativeType overrides or arbitrary attributes.
     $withStrings = Get-DafnyPolicyText $Source -PreserveStrings
     foreach ($attribute in [regex]::Matches($withStrings, '\{\s*:\s*nativeType\b(?<value>[^}]*)\}')) {
         if ($attribute.Groups['value'].Value.Trim() -cnotmatch '^"(?:ulong|uint|byte)"$') { throw "Disallowed proof construct in ${Path}: unreviewed nativeType" }
+    }
+    foreach ($attribute in [regex]::Matches($withStrings, '\{\s*:\s*isolate\b(?<value>[^}]*)\}')) {
+        if ($attribute.Groups['value'].Value.Trim() -cnotmatch '^(?:"paths")?$') { throw "Disallowed proof construct in ${Path}: unreviewed isolate argument" }
     }
 }
 
@@ -241,8 +249,10 @@ function Invoke-ProofInventory([string] $RepositoryRoot, [string] $DafnyPath, [s
     # This checks shared dependencies once rather than re-proving their bodies
     # separately for every importing module. Translation still verifies each
     # native kernel and its declared normal-source dependencies independently.
-    $result = Invoke-ProofProcess $DafnyPath (@('verify') + $Files + $Options) $OutputDirectory 'inventory.verify' $TimeoutSeconds
+    $resourceLog = Join-Path $OutputDirectory 'inventory.resources.csv'
+    $result = Invoke-ProofProcess $DafnyPath (@('verify') + $Files + $Options + @('--log-format', "csv;LogFileName=$resourceLog")) $OutputDirectory 'inventory.verify' $TimeoutSeconds
     Assert-ProofResult $result 'complete inventory'
+    if (-not [IO.File]::Exists($resourceLog) -or (Get-Item -LiteralPath $resourceLog).Length -eq 0) { throw 'Missing inventory resource log.' }
     $report = Join-Path $OutputDirectory 'inventory.audit.txt'
     $audit = Invoke-ProofProcess $DafnyPath (@('audit') + $Files + @('--report-file', $report, '--report-format', 'txt')) $OutputDirectory 'inventory.audit' $TimeoutSeconds
     Assert-ProofAudit $audit $report 'complete inventory'
@@ -252,6 +262,7 @@ function Invoke-ProofInventory([string] $RepositoryRoot, [string] $DafnyPath, [s
             sha256 = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
             verification = $result.Stdout.Trim()
             verificationLog = 'inventory.verify.stdout.log'
+            resourceLog = 'inventory.resources.csv'
             auditFindings = 0
         }
     }
@@ -282,7 +293,91 @@ function Get-ProofCoverageFiles([string] $RepositoryRoot, [string[]] $Files, $De
     return @($Files | Where-Object { $closure.Contains($_) })
 }
 
-function Invoke-ProofCoverage([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [string[]] $Files, [string[]] $Options, [int] $TimeoutSeconds, [object[]] $Proofs, [string] $DafnyVersion, [string] $SolverVersion, [string[]] $RequestedSources = $null) {
+function Get-ProofDiagnosticPosition([string] $RepositoryRoot, [string[]] $RequestedSources, [string] $Position) {
+    if ([string]::IsNullOrEmpty($Position)) { return $null }
+    if ($RequestedSources.Count -ne 1) { throw 'A diagnostic position requires one explicitly selected source.' }
+    $match = [regex]::Match($Position, '^(?:(?<start>[1-9][0-9]*)(?:-(?<end>[1-9][0-9]*)?)?|-(?<end>[1-9][0-9]*))$')
+    $start = 0
+    $end = 0
+    if (-not $match.Success -or
+        ($match.Groups['start'].Success -and -not [int]::TryParse($match.Groups['start'].Value, [ref]$start)) -or
+        ($match.Groups['end'].Success -and -not [int]::TryParse($match.Groups['end'].Value, [ref]$end)) -or
+        ($start -gt 0 -and $end -gt 0 -and $end -lt $start)) { throw "Invalid diagnostic position: $Position" }
+    # Dafny matches normalized source paths even when the input uses Windows paths.
+    return (Join-Path $RepositoryRoot $RequestedSources[0]).Replace('\', '/') + ':' + $Position
+}
+
+function Assert-ProofInputsUnchanged([string] $RepositoryRoot, [object[]] $Proofs) {
+    foreach ($proof in $Proofs) {
+        if ((Get-FileHash -LiteralPath (Join-Path $RepositoryRoot $proof.file) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $proof.sha256) {
+            throw "Proof source changed during verification or diagnostics: $($proof.file)"
+        }
+    }
+}
+
+function Assert-ProofComplexityResult($Result, [string] $ResourceLog, [int] $Mutations) {
+    if ($Result.ExitCode -ne 0 -or -not [IO.File]::Exists($ResourceLog)) { throw 'Complexity measurement failed or did not retain its resource log.' }
+    $starts = [regex]::Matches($Result.Stdout, '(?m)^Starting verification of mutation (?<index>[0-9]+)/(?<count>[0-9]+) with seed (?<seed>[0-9]+)\r?$')
+    if ($starts.Count -ne $Mutations) { throw 'Complexity measurement did not execute every requested mutation.' }
+    $seeds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    for ($index = 0; $index -lt $starts.Count; $index++) {
+        if ([int]$starts[$index].Groups['index'].Value -ne $index + 1 -or
+            [int]$starts[$index].Groups['count'].Value -ne $Mutations -or
+            -not $seeds.Add($starts[$index].Groups['seed'].Value)) { throw 'Complexity mutation inventory is invalid.' }
+    }
+    $rows = @(Import-Csv -LiteralPath $ResourceLog)
+    if ($rows.Count -eq 0) { throw 'Complexity measurement selected no proof obligations.' }
+    $bySeed = @{}
+    $maximum = [ulong]0
+    foreach ($row in $rows) {
+        $resources = [ulong]0
+        $duration = [TimeSpan]::Zero
+        if ([string]::IsNullOrWhiteSpace($row.'TestResult.DisplayName') -or $row.'TestResult.Outcome' -cne 'Passed' -or
+            -not $seeds.Contains($row.RandomSeed) -or
+            -not [ulong]::TryParse($row.'TestResult.ResourceCount', [Globalization.NumberStyles]::None, [Globalization.CultureInfo]::InvariantCulture, [ref]$resources) -or
+            -not [TimeSpan]::TryParse($row.'TestResult.Duration', [Globalization.CultureInfo]::InvariantCulture, [ref]$duration) -or $duration -lt [TimeSpan]::Zero) {
+            throw 'Complexity resource log contains failed or malformed proof evidence.'
+        }
+        if (-not $bySeed.ContainsKey($row.RandomSeed)) { $bySeed[$row.RandomSeed] = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal) }
+        if (-not $bySeed[$row.RandomSeed].Add($row.'TestResult.DisplayName')) { throw 'Complexity resource log contains duplicate obligations.' }
+        $maximum = [Math]::Max($maximum, $resources)
+    }
+    $baseline = $bySeed[$starts[0].Groups['seed'].Value]
+    foreach ($seed in $seeds) {
+        if (-not $bySeed.ContainsKey($seed) -or -not $bySeed[$seed].SetEquals($baseline)) { throw 'Complexity resource log has incomplete mutation coverage.' }
+    }
+    return [ordered]@{ seeds = @($starts | ForEach-Object { $_.Groups['seed'].Value }); obligationsPerSeed = $baseline.Count; maximumResources = $maximum }
+}
+
+function Invoke-ProofComplexity([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [string[]] $Files, [string[]] $Options, [int] $TimeoutSeconds, [object[]] $Proofs, [string] $DafnyVersion, [string] $SolverVersion, [hashtable] $Diagnostics) {
+    $closure = @($Files | ForEach-Object { [IO.Path]::GetRelativePath($RepositoryRoot, $_).Replace('\', '/') })
+    $resourceLog = Join-Path $OutputDirectory 'proof-complexity.resources.csv'
+    $receipt = [ordered]@{
+        schemaVersion = 1; status = 'failed'; acceptanceEvidence = $false
+        dafny = $DafnyVersion; solver = $SolverVersion
+        requestedSources = @($Diagnostics.complexitySources); dependencyClosure = $closure
+        position = $Diagnostics.position; mutations = $Diagnostics.mutations
+        proofs = @($Proofs | Where-Object { $_.file -cin $closure } | ForEach-Object { [ordered]@{ file = $_.file; sha256 = $_.sha256 } })
+        resourceLog = 'proof-complexity.resources.csv'; process = 'proof-complexity.process.json'
+        stdoutLog = 'proof-complexity.stdout.log'; stderrLog = 'proof-complexity.stderr.log'
+        statistics = $null; failure = $null
+    }
+    try {
+        if ($receipt.proofs.Count -ne $Files.Count) { throw 'Complexity source hashes do not match the selected dependency closure.' }
+        $arguments = @('measure-complexity') + $Files + $Options + @('--mutations', $Diagnostics.mutations.ToString([Globalization.CultureInfo]::InvariantCulture),
+            '--isolate-assertions', '--log-format', "csv;LogFileName=$resourceLog")
+        $position = Get-ProofDiagnosticPosition $RepositoryRoot $Diagnostics.complexitySources $Diagnostics.position
+        if ($position) { $arguments += @('--filter-position', $position) }
+        $result = Invoke-ProofProcess $DafnyPath $arguments $OutputDirectory 'proof-complexity' $TimeoutSeconds
+        $receipt.statistics = Assert-ProofComplexityResult $result $resourceLog $Diagnostics.mutations
+        Assert-ProofInputsUnchanged $RepositoryRoot $Proofs
+        $receipt.status = 'complete'
+        Write-Output "Supplemental proof complexity: $($receipt.statistics.obligationsPerSeed) obligations across $($Diagnostics.mutations) seeds. Results do not establish specification adequacy."
+    } catch { $receipt.failure = $_.Exception.Message; throw }
+    finally { [IO.File]::WriteAllText((Join-Path $OutputDirectory 'proof-complexity.json'), ($receipt | ConvertTo-Json -Depth 6)) }
+}
+
+function Invoke-ProofCoverage([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [string[]] $Files, [string[]] $Options, [int] $TimeoutSeconds, [object[]] $Proofs, [string] $DafnyVersion, [string] $SolverVersion, [string[]] $RequestedSources = $null, [hashtable] $Diagnostics = @{}) {
     $dependencyLog = Join-Path $OutputDirectory 'proof-coverage.dependencies.log'
     $coverageDirectory = Join-Path $OutputDirectory 'proof-coverage'
     $requested = @()
@@ -306,6 +401,8 @@ function Invoke-ProofCoverage([string] $RepositoryRoot, [string] $DafnyPath, [st
         exitCode = $null
         warnings = @()
         failure = $null
+        suggestProofRefactoring = [bool]$Diagnostics.suggestRefactoring
+        position = $Diagnostics.position
     }
     try {
         if ($receipt.proofs.Count -ne $Files.Count) { throw 'Coverage source hashes do not match the selected dependency closure.' }
@@ -314,11 +411,14 @@ function Invoke-ProofCoverage([string] $RepositoryRoot, [string] $DafnyPath, [st
         $analysisOptions = @('--isolate-assertions', '--warn-contradictory-assumptions', '--warn-redundant-assumptions',
             '--log-format', "text;LogFileName=$dependencyLog", '--verification-coverage-report', $coverageDirectory,
             '--no-timestamp-for-coverage-report')
+        if ($Diagnostics.suggestRefactoring) { $analysisOptions += @('--suggest-proof-refactoring', '--show-hints') }
+        $position = Get-ProofDiagnosticPosition $RepositoryRoot $RequestedSources $Diagnostics.position
+        if ($position) { $analysisOptions += @('--filter-position', $position) }
         $result = Invoke-ProofProcess $DafnyPath (@('verify') + $Files + $Options + $analysisOptions) $OutputDirectory 'proof-coverage.verify' $TimeoutSeconds
         $receipt.exitCode = $result.ExitCode
         $messages = $result.Stdout + "`n" + $result.Stderr
         $receipt.warnings = @([regex]::Matches($messages, '(?m)^(?:[^\r\n]*\(\d+,\d+\):\s*)?Warning:\s*[^\r\n]*') | ForEach-Object Value)
-        $complete = [regex]::Matches($result.Stdout, '(?m)^Dafny program verifier finished with [1-9][0-9]* verified, 0 errors\r?$').Count -eq 1
+        $complete = [regex]::Matches($result.Stdout, '(?m)^Dafny program verifier finished with [1-9][0-9]* (?:assertions )?verified, 0 errors\r?$').Count -eq 1
         $errors = $messages -match '(?m)^(?:[^\r\n]*\(\d+,\d+\):\s*)?Error:'
         $warningExit = $result.ExitCode -eq 2 -and $receipt.warnings.Count -gt 0
         if (-not $complete -or $errors -or ($result.ExitCode -ne 0 -and -not $warningExit)) {
@@ -330,11 +430,7 @@ function Invoke-ProofCoverage([string] $RepositoryRoot, [string] $DafnyPath, [st
         }
         # The final mandatory receipt covers every admitted source, including
         # files outside a selected diagnostic scope. None may drift afterward.
-        foreach ($proof in $Proofs) {
-            if ((Get-FileHash -LiteralPath (Join-Path $RepositoryRoot $proof.file) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $proof.sha256) {
-                throw "Proof source changed during verification or coverage analysis: $($proof.file)"
-            }
-        }
+        Assert-ProofInputsUnchanged $RepositoryRoot $Proofs
         $receipt.status = if ($receipt.warnings.Count -gt 0) { 'warnings' } else { 'complete' }
         Write-Output "Supplemental proof coverage: $($receipt.status), $($receipt.warnings.Count) warnings. Reports diagnose dependencies; they do not establish specification adequacy."
     } catch {
@@ -345,7 +441,7 @@ function Invoke-ProofCoverage([string] $RepositoryRoot, [string] $DafnyPath, [st
     }
 }
 
-function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update, [bool] $AnalyzeCoverage = $false, [string[]] $CoverageSources = $null) {
+function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update, [bool] $AnalyzeCoverage = $false, [string[]] $CoverageSources = $null, [hashtable] $Diagnostics = @{}) {
     if ($null -ne $CoverageSources -and -not $AnalyzeCoverage) { throw 'ProofCoverageSources requires AnalyzeProofCoverage.' }
     $output = $OutputDirectory
     if (-not [IO.Path]::IsPathFullyQualified($DafnyPath)) { throw 'DafnyPath must be absolute.' }
@@ -361,6 +457,12 @@ function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyP
     $dependenciesByFile = Get-ProofDependencies $RepositoryRoot (Join-Path $RepositoryRoot 'verification/proofs.json') $files
     $coverageFiles = @()
     if ($AnalyzeCoverage) { $coverageFiles = @(Get-ProofCoverageFiles $RepositoryRoot $files $dependenciesByFile $CoverageSources) }
+    $complexityFiles = @()
+    if ($Diagnostics.measureComplexity) { $complexityFiles = @(Get-ProofCoverageFiles $RepositoryRoot $files $dependenciesByFile $Diagnostics.complexitySources) }
+    if ($Diagnostics.position) {
+        if ($AnalyzeCoverage) { $null = Get-ProofDiagnosticPosition $RepositoryRoot $CoverageSources $Diagnostics.position }
+        if ($Diagnostics.measureComplexity) { $null = Get-ProofDiagnosticPosition $RepositoryRoot $Diagnostics.complexitySources $Diagnostics.position }
+    }
     foreach ($file in $files) { Assert-ProofSource $file ([IO.File]::ReadAllText($file)) }
     $cores = [Math]::Max(1, [Math]::Min(4, [Environment]::ProcessorCount))
     $options = @('--cores', $cores.ToString([Globalization.CultureInfo]::InvariantCulture), '--verification-time-limit', '60', '--solver-path', $solver, '--verify-included-files')
@@ -391,7 +493,8 @@ function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyP
         if ($kernelSource -cnotin $files) { throw "Native kernel is missing from the proof inventory: $kernelName" }
         Sync-NativeKernel $kernelName $RepositoryRoot $executable $output $dependenciesByFile[$kernelSource] $options $TimeoutSeconds $Update
     }
-    if ($AnalyzeCoverage) { Invoke-ProofCoverage $RepositoryRoot $executable $output $coverageFiles $options $TimeoutSeconds $summary ($version.Stdout.Trim()) ($solverVersion.Stdout.Trim()) $CoverageSources }
+    if ($AnalyzeCoverage) { Invoke-ProofCoverage $RepositoryRoot $executable $output $coverageFiles $options $TimeoutSeconds $summary ($version.Stdout.Trim()) ($solverVersion.Stdout.Trim()) $CoverageSources $Diagnostics }
+    if ($Diagnostics.measureComplexity) { Invoke-ProofComplexity $RepositoryRoot $executable $output $complexityFiles $options $TimeoutSeconds $summary ($version.Stdout.Trim()) ($solverVersion.Stdout.Trim()) $Diagnostics }
     $receipt = [ordered]@{ schemaVersion = 2; dafny = $version.Stdout.Trim(); solver = $solverVersion.Stdout.Trim(); negativeControls = 'false theorem rejected; assumption audit detected'; proofs = $summary; executableKernels = @($kernels) }
     [IO.File]::WriteAllText((Join-Path $output 'summary.json'), ($receipt | ConvertTo-Json -Depth 6))
     Write-Output "Proofs and generated native kernels verified; handwritten code and storage assumptions remain separate obligations. Results: $output"
@@ -459,12 +562,18 @@ function Write-ProofFailureReceipt([string] $RepositoryRoot, [string] $OutputDir
     [IO.File]::WriteAllText((Join-Path $OutputDirectory 'failure.json'), ($receipt | ConvertTo-Json -Depth 6))
 }
 
-function Invoke-ProofVerification([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update, [bool] $AnalyzeCoverage = $false, [string[]] $CoverageSources = $null) {
+function Invoke-ProofVerification([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update, [bool] $AnalyzeCoverage = $false, [string[]] $CoverageSources = $null, [hashtable] $Diagnostics = @{}) {
     if ($null -ne $CoverageSources -and -not $AnalyzeCoverage) { throw 'ProofCoverageSources requires AnalyzeProofCoverage.' }
+    if ($Diagnostics.suggestRefactoring -and -not $AnalyzeCoverage) { throw 'SuggestProofRefactoring requires AnalyzeProofCoverage.' }
+    if ($Diagnostics.measureComplexity) {
+        if (@($Diagnostics.complexitySources).Count -eq 0 -or $null -eq $Diagnostics.complexitySources -or
+            $Diagnostics.mutations -lt 2 -or $Diagnostics.mutations -gt 20) { throw 'MeasureProofComplexity requires explicit ProofComplexitySources and between 2 and 20 mutations.' }
+    } elseif ($null -ne $Diagnostics.complexitySources) { throw 'ProofComplexitySources requires MeasureProofComplexity.' }
+    if ($Diagnostics.position -and -not ($AnalyzeCoverage -or $Diagnostics.measureComplexity)) { throw 'ProofDiagnosticPosition requires an explicit diagnostic mode.' }
     $output = Assert-ProofOutputDirectory $OutputDirectory $RepositoryRoot
     if (Test-Path -LiteralPath $output) { throw 'Proof output directory must not already exist; retain each run separately.' }
     [void][IO.Directory]::CreateDirectory($output)
-    try { Invoke-ProofVerificationCore $RepositoryRoot $DafnyPath $output $TimeoutSeconds $Update $AnalyzeCoverage $CoverageSources }
+    try { Invoke-ProofVerificationCore $RepositoryRoot $DafnyPath $output $TimeoutSeconds $Update $AnalyzeCoverage $CoverageSources $Diagnostics }
     catch {
         $originalFailure = $_
         try { Write-ProofFailureReceipt $RepositoryRoot $output $originalFailure.Exception.Message }
@@ -477,4 +586,7 @@ function Invoke-ProofVerification([string] $RepositoryRoot, [string] $DafnyPath,
     }
 }
 
-Invoke-ProofVerification (Split-Path $PSScriptRoot -Parent) $DafnyPath $OutputDirectory $TimeoutSeconds $UpdateGeneratedSource.IsPresent $AnalyzeProofCoverage.IsPresent $ProofCoverageSources
+Invoke-ProofVerification (Split-Path $PSScriptRoot -Parent) $DafnyPath $OutputDirectory $TimeoutSeconds $UpdateGeneratedSource.IsPresent $AnalyzeProofCoverage.IsPresent $ProofCoverageSources @{
+    suggestRefactoring = $SuggestProofRefactoring.IsPresent; measureComplexity = $MeasureProofComplexity.IsPresent
+    complexitySources = $ProofComplexitySources; mutations = $ProofComplexityMutations; position = $ProofDiagnosticPosition
+}

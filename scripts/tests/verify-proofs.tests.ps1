@@ -99,12 +99,18 @@ Assert-Scenario 'wrong kernel namespace rejected' { ConvertFrom-NativeKernelTran
 Assert-Scenario 'second kernel refuses runtime-dependent translation' { ConvertFrom-NativeKernelTranslation 'LongValueKernel' ($longValueTranslation.Replace('return (value) == ((byte)(0));', 'return LongValueNativeTypes.Value(value);')) } 'runtime support'
 $originalProofProcess = ${function:Invoke-ProofProcess}
 $inventoryCalls = [Collections.Generic.List[object]]::new()
+$inventoryWriteResources = $true
 function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [string] $WorkingDirectory, [string] $Name, [int] $TimeoutSeconds) {
     $inventoryCalls.Add([pscustomobject]@{ Arguments = $Arguments; Name = $Name })
     if ($Arguments[0] -eq 'audit') {
         $reportIndex = [Array]::IndexOf($Arguments, '--report-file') + 1
         [IO.File]::WriteAllText($Arguments[$reportIndex], '')
         return [pscustomobject]@{ ExitCode = 0; Stdout = 'Dafny auditor completed with 0 findings'; Stderr = '' }
+    }
+    if ($Name -eq 'inventory.verify' -and $inventoryWriteResources) {
+        $logIndex = [Array]::IndexOf($Arguments, '--log-format') + 1
+        if ($logIndex -eq 0) { throw 'Inventory resource logging is required.' }
+        [IO.File]::WriteAllText($Arguments[$logIndex].Substring('csv;LogFileName='.Length), 'TestResult.DisplayName,TestResult.ResourceCount' + "`nGood,42")
     }
     return [pscustomobject]@{ ExitCode = 0; Stdout = 'Dafny program verifier finished with 3 verified, 0 errors'; Stderr = '' }
 }
@@ -126,10 +132,20 @@ try {
             $summaries[0].verificationLog -cne 'inventory.verify.stdout.log' -or
             $summaries[1].verificationLog -cne 'inventory.verify.stdout.log' -or
             $summaries[0].auditFindings -ne 0 -or $summaries[1].auditFindings -ne 0) { throw 'Exact per-file evidence was not retained.' }
+        if ($summaries[0].resourceLog -cne 'inventory.resources.csv' -or
+            -not [IO.File]::Exists((Join-Path $fixture 'inventory.resources.csv'))) { throw 'Inventory resource evidence was not retained.' }
     }
+    Assert-Scenario 'missing inventory resource evidence refuses' {
+        [IO.File]::Delete((Join-Path $fixture 'inventory.resources.csv'))
+        $inventoryWriteResources = $false
+        try { Invoke-ProofInventory $fixture 'mock' $fixture @($source, $dependent) @() 10 }
+        finally { $inventoryWriteResources = $true }
+    } 'Missing inventory resource log'
     $inventoryFailure = 'verify'
     function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [string] $WorkingDirectory, [string] $Name, [int] $TimeoutSeconds) {
         if ($Arguments[0] -eq 'verify') {
+            $logIndex = [Array]::IndexOf($Arguments, '--log-format') + 1
+            [IO.File]::WriteAllText($Arguments[$logIndex].Substring('csv;LogFileName='.Length), 'resource evidence')
             return [pscustomobject]@{ ExitCode = $(if ($inventoryFailure -eq 'verify') { 4 } else { 0 }); Stdout = 'Dafny program verifier finished with 3 verified, 0 errors'; Stderr = '' }
         }
         $reportIndex = [Array]::IndexOf($Arguments, '--report-file') + 1
@@ -143,6 +159,7 @@ try {
 function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [string] $WorkingDirectory, [string] $Name, [int] $TimeoutSeconds) {
     if ($Arguments -contains '--no-verify' -or $Arguments -contains '--include-runtime' -or
         $Arguments -contains '--library' -or $Arguments -notcontains $source) { throw 'Generation must verify with its declared source dependencies and omit the runtime.' }
+    if ($Arguments -notcontains '--enforce-determinism') { throw 'Executable kernel generation must enforce determinism.' }
     $outputIndex = [Array]::IndexOf($Arguments, '--output') + 1
     [IO.File]::WriteAllText($Arguments[$outputIndex], $(if ($Name -eq 'LongValueKernel.translate') { $longValueTranslation } else { $translation }))
     return [pscustomobject]@{ ExitCode = 0; Stdout = 'Dafny program verifier finished with 2 verified, 0 errors'; Stderr = '' }
@@ -176,6 +193,11 @@ foreach ($sourceText in 'lemma X() { assume false; }', 'include "other.dfy"', 'l
     Assert-Scenario "reject source bypass $sourceText" { Assert-ProofSource 'control.dfy' $sourceText } 'Disallowed proof construct'
 }
 Assert-Scenario 'trigger and induction proof hints allowed' { Assert-ProofSource 'hints.dfy' 'lemma {:induction false} X() { assert forall i: int {:trigger F(i)} :: F(i) == F(i); }' }
+Assert-Scenario 'reviewed local assertion isolation allowed' { Assert-ProofSource 'isolation.dfy' 'method X() { assert {:isolate} true; return {:isolate "paths"}; }' }
+Assert-Scenario 'isolation attribute names must retain reviewed casing' { Assert-ProofSource 'isolation.dfy' 'method X() { assert {:Isolate "unreviewed"} true; }' } 'Disallowed proof construct'
+foreach ($isolation in 'false', '"unknown"', '"paths" false', '"paths", "paths"', 'F()') {
+    Assert-Scenario "unreviewed isolation argument rejected $isolation" { Assert-ProofSource 'isolation.dfy' "method X() { assert {:isolate $isolation} true; }" } 'Disallowed proof construct'
+}
 Assert-Scenario 'reviewed native integer representations allowed' { Assert-ProofSource 'native.dfy' 'newtype {:nativeType "ulong"} U64 = x: int | 0 <= x < 18446744073709551616 newtype {:nativeType "uint"} U32 = x: int | 0 <= x < 4294967296 newtype {:nativeType "byte"} U8 = x: int | 0 <= x < 256' }
 foreach ($nativeType in '"int"', '"number"', 'false', '"ulong" false') {
     Assert-Scenario "unreviewed native representation rejected $nativeType" { Assert-ProofSource 'native.dfy' "newtype {:nativeType $nativeType} Native = x: int | 0 <= x < 256" } 'Disallowed proof construct'
@@ -237,6 +259,20 @@ function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [strin
     if ($Name -eq 'version') { return [pscustomobject]@{ ExitCode = 0; Stdout = $(if ($coverageCase -eq 'pin-mismatch') { 'unreviewed verifier' } else { $coverageToolchain.versionOutput }); Stderr = '' } }
     if ($Name -eq 'solver-version') { return [pscustomobject]@{ ExitCode = 0; Stdout = $coverageToolchain.solver.versionOutput; Stderr = '' } }
     if ($Name -eq 'negative-false') { return [pscustomobject]@{ ExitCode = $(if ($coverageCase -eq 'negative-control') { 0 } else { 4 }); Stdout = 'Dafny program verifier finished with 0 verified, 1 error'; Stderr = '' } }
+    if ($Name -eq 'inventory.verify') {
+        $logIndex = [Array]::IndexOf($Arguments, '--log-format') + 1
+        [IO.File]::WriteAllText($Arguments[$logIndex].Substring('csv;LogFileName='.Length), 'resource evidence')
+    }
+    if ($Name -eq 'proof-complexity') {
+        if ($coverageCase -eq 'timeout') { throw 'Complexity process timed out.' }
+        $logIndex = [Array]::IndexOf($Arguments, '--log-format') + 1
+        $log = $Arguments[$logIndex].Substring('csv;LogFileName='.Length)
+        $csv = "TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed`nGood,Passed,00:00:00.01,42,0`nGood,Passed,00:00:00.02,58,1559595546"
+        if ($coverageCase -eq 'empty') { $csv = ($csv -split "`n")[0] }
+        [IO.File]::WriteAllText($log, $csv)
+        if ($coverageCase -eq 'source-change') { [IO.File]::AppendAllText($coverageFiles[0], '// changed during complexity') }
+        return [pscustomobject]@{ ExitCode = $(if ($coverageCase -eq 'errors') { 4 } else { 0 }); Stdout = "Starting verification of mutation 1/2 with seed 0`nStarting verification of mutation 2/2 with seed 1559595546"; Stderr = '' }
+    }
     if ($Arguments[0] -eq 'audit') {
         $reportIndex = [Array]::IndexOf($Arguments, '--report-file') + 1
         $finding = $Name -eq 'negative-assume' -or ($Name -eq 'inventory.audit' -and $coverageCase -eq 'audit-finding')
@@ -256,10 +292,14 @@ function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [strin
         if ($coverageCase -eq 'warnings') { return [pscustomobject]@{ ExitCode = 2; Stdout = "Good.dfy(1,1): Warning: unnecessary requires clause`nDafny program verifier finished with 3 verified, 0 errors"; Stderr = '' } }
         if ($coverageCase -eq 'errors') { return [pscustomobject]@{ ExitCode = 4; Stdout = 'Dafny program verifier finished with 2 verified, 1 error'; Stderr = '' } }
         if ($coverageCase -eq 'empty') { return [pscustomobject]@{ ExitCode = 0; Stdout = 'Dafny program verifier finished with 0 verified, 0 errors'; Stderr = '' } }
+        if ($coverageCase -eq 'empty-assertions') { return [pscustomobject]@{ ExitCode = 0; Stdout = 'Dafny program verifier finished with 0 assertions verified, 0 errors'; Stderr = '' } }
         if ($coverageCase -eq 'missing-summary') { return [pscustomobject]@{ ExitCode = 2; Stdout = 'Good.dfy(1,1): Warning: unnecessary requires clause'; Stderr = '' } }
         if ($coverageCase -eq 'unexplained-exit') { return [pscustomobject]@{ ExitCode = 2; Stdout = 'Dafny program verifier finished with 3 verified, 0 errors'; Stderr = '' } }
         if ($coverageCase -eq 'error-diagnostic') { return [pscustomobject]@{ ExitCode = 2; Stdout = "Good.dfy(1,1): Warning: unnecessary requires clause`nGood.dfy(1,1): Error: unexpected failure`nDafny program verifier finished with 3 verified, 0 errors"; Stderr = '' } }
         if ($coverageCase -eq 'source-change') { [IO.File]::AppendAllText($coverageFiles[0], '// changed during analysis') }
+        if ($coverageCase -eq 'clean' -and $Arguments -contains '--filter-position') {
+            return [pscustomobject]@{ ExitCode = 0; Stdout = 'Dafny program verifier finished with 77 assertions verified, 0 errors'; Stderr = '' }
+        }
     }
     return [pscustomobject]@{ ExitCode = 0; Stdout = 'Dafny program verifier finished with 3 verified, 0 errors'; Stderr = '' }
 }
@@ -371,6 +411,70 @@ try {
         if (-not $caught -or $caught -notmatch 'AnalyzeProofCoverage' -or $coverageCalls.Count -ne 0 -or
             [IO.Directory]::Exists($output)) { throw 'Source selection silently enabled diagnostics or was ignored.' }
     }
+    Assert-Scenario 'refactoring and line ranges affect only the selected supplemental coverage pass' {
+        $coverageCase = 'clean'
+        $coverageCalls.Clear()
+        $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-refactoring-' + [guid]::NewGuid().ToString('N'))
+        Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true @('verification/RecoveryKernel.dfy') @{ suggestRefactoring = $true; position = '1-3' }
+        $analysis = [IO.File]::ReadAllText((Join-Path $output 'proof-coverage.json')) | ConvertFrom-Json
+        $call = $coverageCalls[-1]
+        if (-not $analysis.suggestProofRefactoring -or $analysis.position -cne '1-3' -or
+            $call.Arguments -notcontains '--suggest-proof-refactoring' -or $call.Arguments -notcontains '--show-hints' -or
+            $call.Arguments -notcontains ($coverageFiles[1].Replace('\', '/') + ':1-3') -or $call.Arguments -notcontains $coverageFiles[0]) { throw 'Refactoring or range selection lost its exact dependency scope.' }
+        foreach ($mandatory in $coverageCalls | Where-Object Name -NE 'proof-coverage.verify') {
+            if ($mandatory.Arguments -contains '--filter-position' -or $mandatory.Arguments -contains '--suggest-proof-refactoring') { throw 'Optional diagnostics changed a mandatory invocation.' }
+        }
+    }
+    Assert-Scenario 'complexity follows every mandatory control and retains separate exact evidence' {
+        $coverageCase = 'clean'
+        $coverageCalls.Clear()
+        $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-complexity-' + [guid]::NewGuid().ToString('N'))
+        Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $false $null @{ measureComplexity = $true; complexitySources = @('verification/RecoveryKernel.dfy'); mutations = 2; position = '1-' }
+        $analysis = [IO.File]::ReadAllText((Join-Path $output 'proof-complexity.json')) | ConvertFrom-Json
+        $call = $coverageCalls[-1]
+        if ($call.Name -cne 'proof-complexity' -or $call.Arguments[0] -cne 'measure-complexity' -or
+            $call.Arguments -notcontains '--mutations' -or $call.Arguments -notcontains '2' -or
+            $call.Arguments -notcontains $coverageFiles[0] -or $call.Arguments -notcontains $coverageFiles[1] -or
+            $call.Arguments -contains $coverageFiles[2] -or $call.Arguments -notcontains ($coverageFiles[1].Replace('\', '/') + ':1-') -or
+            $analysis.status -cne 'complete' -or $analysis.acceptanceEvidence -ne $false -or $analysis.proofs.Count -ne 2 -or
+            $analysis.statistics.seeds.Count -ne 2 -or $analysis.dafny -cne $coverageToolchain.versionOutput -or
+            $analysis.solver -cne $coverageToolchain.solver.versionOutput -or
+            -not [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw 'Complexity lost its exact inputs, pins or successful evidence.' }
+        foreach ($mandatory in $coverageCalls | Where-Object Name -NE 'proof-complexity') {
+            if ($mandatory.Arguments -contains '--filter-position' -or $mandatory.Arguments -contains '--mutations') { throw 'Complexity selection narrowed a mandatory invocation.' }
+        }
+        foreach ($file in $coverageFiles) {
+            if (($coverageCalls | Where-Object Name -EQ 'inventory.verify').Arguments -notcontains $file) { throw 'Complexity narrowed mandatory source verification.' }
+        }
+    }
+    foreach ($diagnostic in @(
+        @{ suggestRefactoring = $true },
+        @{ position = '1' },
+        @{ complexitySources = @('verification/Good.dfy') },
+        @{ measureComplexity = $true; mutations = 3 },
+        @{ measureComplexity = $true; complexitySources = @('verification/Good.dfy'); mutations = 1 }
+    )) {
+        Assert-Scenario 'invalid diagnostic configuration refuses before output or verifier execution' {
+            $coverageCalls.Clear()
+            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-invalid-diagnostics-' + [guid]::NewGuid().ToString('N'))
+            $caught = $null
+            try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $false $null $diagnostic } catch { $caught = $_.Exception.Message }
+            if (-not $caught -or $coverageCalls.Count -ne 0 -or [IO.Directory]::Exists($output)) { throw 'Invalid diagnostic configuration was accepted.' }
+        }
+    }
+    foreach ($case in 'errors', 'empty', 'timeout', 'source-change') {
+        Assert-Scenario "complexity failure $case retains diagnostics without a success receipt" {
+            $coverageCase = $case
+            $originalSource = [IO.File]::ReadAllText($coverageFiles[0])
+            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-complexity-failure-' + [guid]::NewGuid().ToString('N'))
+            $caught = $null
+            try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $false $null @{ measureComplexity = $true; complexitySources = @('verification/LongValueKernel.dfy'); mutations = 2 } } catch { $caught = $_.Exception.Message }
+            finally { [IO.File]::WriteAllText($coverageFiles[0], $originalSource) }
+            $analysis = [IO.File]::ReadAllText((Join-Path $output 'proof-complexity.json')) | ConvertFrom-Json
+            if (-not $caught -or $analysis.status -cne 'failed' -or -not $analysis.failure -or
+                [IO.File]::Exists((Join-Path $output 'summary.json')) -or -not [IO.File]::Exists((Join-Path $output 'failure.json'))) { throw 'Complexity failure lost evidence or claimed acceptance.' }
+        }
+    }
     Assert-Scenario 'focused analysis still refuses drift in nonselected mandatory sources' {
         $coverageCase = 'source-change'
         $originalSource = [IO.File]::ReadAllText($coverageFiles[0])
@@ -383,7 +487,7 @@ try {
             $analysis.proofs.Count -ne 1 -or $analysis.proofs[0].file -cne 'verification/LongValueKernel.dfy' -or
             [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw 'Focused analysis hid a change to the complete strict inventory.' }
     }
-    foreach ($case in 'errors', 'empty', 'missing-summary', 'unexplained-exit', 'error-diagnostic', 'missing-reports', 'timeout', 'launch', 'source-change') {
+    foreach ($case in 'errors', 'empty', 'empty-assertions', 'missing-summary', 'unexplained-exit', 'error-diagnostic', 'missing-reports', 'timeout', 'launch', 'source-change') {
         Assert-Scenario "requested coverage rejects $case and retains failure status" {
             $coverageCase = $case
             $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-coverage-failure-' + [guid]::NewGuid().ToString('N'))
@@ -490,5 +594,48 @@ if ($directoryLinkSupported) {
                 [IO.File]::Exists((Join-Path $output 'inputs/src/JetDatabaseWriter/Verification/RecoveryKernel.g.cs'))) { throw 'Linked input directory was followed.' }
         }
     } finally { [IO.Directory]::Delete($directoryLink) }
+}
+Assert-Scenario 'diagnostic position binds one exact selected source' {
+    $position = Get-ProofDiagnosticPosition $fixture @('verification/Good.dfy') '1-3'
+    if ($position -cne ($source.Replace('\', '/') + ':1-3')) { throw 'Position lost its exact admitted source.' }
+}
+foreach ($range in '0', '4-2', ':1', '1 --no-verify', '2147483648', '1-2147483648') {
+    Assert-Scenario "invalid diagnostic range rejected $range" { Get-ProofDiagnosticPosition $fixture @('verification/Good.dfy') $range } 'Invalid diagnostic position'
+}
+Assert-Scenario 'diagnostic position needs one explicit root' { Get-ProofDiagnosticPosition $fixture @('verification/Good.dfy', 'verification/RecoveryKernel.dfy') '1' } 'one explicitly selected source'
+$complexityLog = Join-Path $fixture 'complexity.csv'
+$complexityOutput = "Starting verification of mutation 1/2 with seed 0`nStarting verification of mutation 2/2 with seed 1559595546"
+$complexityCsv = @'
+TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed
+Good,Passed,00:00:00.01,42,0
+Other,Passed,00:00:00.02,52,0
+Other,Passed,00:00:00.03,65,1559595546
+Good,Passed,00:00:00.02,58,1559595546
+'@
+Assert-Scenario 'complexity validates each seed with order-independent obligation identities' {
+    [IO.File]::WriteAllText($complexityLog, $complexityCsv)
+    $statistics = Assert-ProofComplexityResult ([pscustomobject]@{ ExitCode = 0; Stdout = $complexityOutput; Stderr = '' }) $complexityLog 2
+    if ($statistics.seeds.Count -ne 2 -or $statistics.obligationsPerSeed -ne 2 -or $statistics.maximumResources -ne 65) { throw 'Complexity evidence lost its measured coverage.' }
+}
+foreach ($case in 'empty', 'failed', 'duplicate', 'missing-obligation', 'missing-seed', 'bad-resource', 'bad-duration', 'unexpected-seed', 'missing-mutation', 'exit-failure') {
+    Assert-Scenario "complexity rejects $case evidence" {
+        $csv = $complexityCsv
+        $stdout = $complexityOutput
+        $exitCode = 0
+        switch ($case) {
+            'empty' { $csv = ($csv -split "`n")[0] }
+            'failed' { $csv = $csv.Replace('Other,Passed', 'Other,Failed') }
+            'duplicate' { $csv += "`nGood,Passed,00:00:00.01,42,0" }
+            'missing-obligation' { $csv = $csv.Replace("Good,Passed,00:00:00.02,58,1559595546", '') }
+            'missing-seed' { $csv = ($csv -split "`n" | Select-Object -First 3) -join "`n" }
+            'bad-resource' { $csv = $csv.Replace(',42,', ',invalid,') }
+            'bad-duration' { $csv = $csv.Replace('00:00:00.01', 'invalid') }
+            'unexpected-seed' { $csv = $csv.Replace(',1559595546', ',999') }
+            'missing-mutation' { $stdout = ($stdout -split "`n")[0] }
+            'exit-failure' { $exitCode = 4 }
+        }
+        [IO.File]::WriteAllText($complexityLog, $csv)
+        Assert-ProofComplexityResult ([pscustomobject]@{ ExitCode = $exitCode; Stdout = $stdout; Stderr = '' }) $complexityLog 2
+    } 'Complexity'
 }
 'Proof gate regression checks passed.'

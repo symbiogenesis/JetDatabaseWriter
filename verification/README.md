@@ -54,6 +54,12 @@ Mandatory negative controls run on every verification invocation: an intentional
 
 [Proof and trust review records](../docs/design/proof-trust-review.md) bind mapped sources, conformance evidence, proof inputs, pins and gate tooling to reviewed content. The mandatory CI job checks their freshness and retains review refusals and failed proof inputs alongside verifier/auditor diagnostics. A fresh record does not certify reviewer judgment or qualify storage effects.
 
+Ordinary inventory verification also retains `inventory.resources.csv` with
+per-definition or assertion-batch solver resources and duration. Each proof's
+receipt references that shared log. Compare resource costs with the same
+toolchain and platform before choosing any additional resource budget; the
+existing process and verification timeouts remain mandatory.
+
 ## Proof-dependency diagnostics
 
 For a specification review, add `-AnalyzeProofCoverage` to the verification
@@ -79,6 +85,19 @@ the selection analyzes the complete inventory. Source selection affects only
 supplemental diagnostics; it never selects a smaller acceptance gate or enables
 diagnostics in CI.
 
+Add `-SuggestProofRefactoring` with `-AnalyzeProofCoverage` to request Dafny's
+experimental suggestions and CLI hints. These appear in the retained text and
+process output; a run with no suggestions is valid. Suggestions are review
+inputs, not permission to weaken a contract or discard a needed assumption.
+
+For either diagnostic mode, `-ProofDiagnosticPosition 288-355` restricts the
+supplemental pass to an inclusive line range. A single line (`288`) and open
+ranges (`288-` or `-355`) are also accepted. A position requires exactly one
+explicitly selected root source in each enabled diagnostic mode. The script
+binds the range to that admitted source's normalized absolute path and keeps
+its complete normal-source dependency closure. An empty selection refuses;
+mandatory inventory verification is never filtered.
+
 The extra invocation isolates assertions, requests contradictory/redundant
 assumption warnings and writes dependency text plus HTML coverage. Retain
 `proof-coverage.json`, `proof-coverage.dependencies.log`, the `proof-coverage/`
@@ -102,15 +121,60 @@ either. Optional third-party ProofPulse analysis requires exact-pin and
 dependency compatibility qualification before use; see the
 [survey](../docs/design/proof-survey.md#specification-adequacy-and-proof-maintenance).
 
+## Proof robustness diagnostics
+
+Use the pinned verifier's seed mutations to find expensive or fragile proofs:
+
+```powershell
+$complexityRun = Join-Path ([IO.Path]::GetTempPath()) ('jdw-complexity-' + [guid]::NewGuid().ToString('N'))
+pwsh -NoProfile -File scripts/verify-proofs.ps1 `
+    -DafnyPath (Join-Path $proofRun "tool/$executable") `
+    -OutputDirectory $complexityRun `
+    -MeasureProofComplexity `
+    -ProofComplexitySources verification/LongValueKernel.dfy `
+    -ProofComplexityMutations 3 `
+    -ProofDiagnosticPosition 288-355
+```
+
+Complexity measurement requires explicit manifest sources and between two and
+twenty mutations. Sources have the same exact-path and dependency-closure
+rules as coverage diagnostics. Complete verification, audit, negative controls
+and both generated freshness checks run first. The supplemental command uses
+`measure-complexity --mutations`, assertion isolation and the pinned solver;
+it never changes canonical source files or runs library benchmarks.
+
+Retain `proof-complexity.json`, `proof-complexity.resources.csv` and the process
+and output logs. The receipt records exact source hashes, versions, scope,
+requested mutation count and `acceptanceEvidence: false`. Every requested seed
+must report the same nonempty set of distinct successful obligations with valid
+resource and duration values. Exit failure, missing/duplicate obligations,
+empty filters, timeouts and source drift refuse and retain a failure receipt.
+The complete mandatory source inventory is checked for drift, including sources
+outside the diagnostic closure. Resource variation guides proof maintenance;
+it does not establish specification adequacy or production execution costs.
+
 ## Executable kernel generation
 
 The manifest's `dependencies` map lists earlier proof sources required by an importing file. They are supplied as normal inputs to verification, audit and translation, so their bodies are checked with the same options. No `--library` trust shortcut is used.
+
+Both executable-kernel translations use `--enforce-determinism`. Ghost witness
+selection remains proof-only; executable nondeterministic statements and
+incomplete initialization refuse. This check supplements verification and
+exact generated-source comparison.
 
 After reviewing a kernel source change, run the command above with `-UpdateGeneratedSource`. The default command and CI independently refuse missing or edited `src/JetDatabaseWriter/Verification/RecoveryKernel.g.cs` and `LongValueKernel.g.cs`. The schema-version-2 receipt records exact source hashes in `proofs` and both generated-output hashes in `executableKernels`. Generation first completes the proof/trust checks, then translates with the pinned compiler and solver into the external result directory. Raw C# is retained for review.
 
 The projection accepts only the reviewed `RecoveryKernel` and `LongValueKernel` module names. It keeps each final compiled namespace, internalizes and renames its generated class, and updates generated self references to that type. It retains method bodies, native arithmetic and bounded primitive-array operations. Unused compiler scaffolding, embedded source attributes, abstract-model code and native-type descriptors are omitted. The projection rejects an unexpected module shape or references to omitted runtime/model support. Only the reviewed `nativeType` representations `ulong`, `uint` and `byte` are allowed in addition to proof hints.
 
 No Dafny runtime source is bundled and no Dafny license-bearing runtime material is redistributed. The development compiler is the upstream MIT-licensed [Dafny distribution](https://github.com/dafny-lang/dafny/tree/v4.11.0). The compiler, this packaging transformation, the C# compiler and .NET remain trusted; generation does not prove compiler correctness. Focused production tests and the ordinary hosted framework/analyzer/trimming/NativeAOT lanes remain required.
+
+Proof hints admit only the exact `trigger`, `induction` and `isolate` names in
+addition to the reviewed native representations. Local isolation accepts only
+`{:isolate}` and `{:isolate "paths"}`; other arguments and attribute spellings
+refuse. Scoped `by` proofs and local `hide`/`reveal` can reduce irrelevant solver
+context without changing contracts. Qualify each change with the pinned verifier
+and generated freshness; neither opaque blocks nor global assertion isolation
+are a default optimization for every proof.
 
 ## Review and updates
 
