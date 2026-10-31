@@ -724,6 +724,47 @@ interoperability and physical-storage qualification at their stated evidence
 levels. See the [proof review procedure](proof-trust-review.md) and
 [proof execution instructions](../../verification/README.md).
 
+## Regression coverage for relied-on behavior
+
+Current applications include the ordered-run splice, generated visited-set
+behavior and per-effect recoverability discipline in the undo model, alongside
+the existing proof/trust pipeline. Further literature transfers remain
+composition/qualification obligations, candidates, cautions or rejected
+transfers; their theorems are not production guarantees. The following unit
+and conformance tests check the executing contracts, including the existing
+admitted proof boundaries cited
+by the integration evidence. The [evidence map](verification-evidence-map.md)
+retains the complete production mappings and remaining obligations.
+
+| Relied-on behavior or model boundary | Relevant regression evidence |
+|---|---|
+| Stable ordered-run merge and general splice fallback | [IndexEntryOrderingTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexEntryOrderingTests.cs) checks existing-before-added ties, declaration order, input/key immutability and the result-storage allocation bound. `Splice_MatchesIndependentStableBucketsForEverySmallRunAndRemovalSubset` compares all short runs over empty, prefix and high-byte keys against independent stable buckets, with every removal subset. [IndexPageCodecAndEntrySplicerTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexPageCodecAndEntrySplicerTests.cs) retains missing-removal refusal. |
+| Existing query ordering contract | [QueryPipelineParityTests](../../tests/JetDatabaseWriter.Tests/Queries/QueryPipelineParityTests.cs) checks stable multikey ties, paging, live captures, deferred evaluation and selector failures across root/include/tail paths. This remains tested handwritten behavior. |
+| Conservative numeric seek, relocation and ownership baselines | [IndexSeekFilterTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexSeekFilterTests.cs) and [TypedMappingCoercionTests](../../tests/JetDatabaseWriter.Tests/Queries/TypedMappingCoercionTests.cs) retain fractional-bound refusal/predicate results. [CompactRowRelocationMapTests](../../tests/JetDatabaseWriter.Tests/Maintenance/CompactRowRelocationMapTests.cs) checks exact bookmark identity, monotone uniqueness, budgets and partial reads. [UsageMapOwnershipTests](../../tests/JetDatabaseWriter.Tests/Pages/UsageMapOwnershipTests.cs) and [UsageMapNonliveAliasTests](../../tests/JetDatabaseWriter.Tests/Pages/UsageMapNonliveAliasTests.cs) retain opaque-reference protection and source-preserving refusal. These are tested handwritten contracts; rounded-seek and complete rooted-graph refinement remain open. |
+| Exact visited membership, probing, rehash and count/growth orchestration (`LongValueKernel`) | [LongValueTraversalTests](../../tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueTraversalTests.cs) checks wrapped/full probes, duplicate-source rehash, native decision boundaries, null/empty initialization, count retention and duplicate/growth allocation boundaries. Independent multi-step controller traces compare membership and count through repeated growth with a `HashSet<uint>` oracle and the production wrapper. |
+| Descriptor representation and bounded chained-payload traversal (`LongValueKernel`, `LongValueTraversal`) | [LongValueDescriptorKernelTests](../../tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueDescriptorKernelTests.cs) uses independent byte/word oracles and unchanged-destination refusal checks. [LongValueStreamingTests](../../tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueStreamingTests.cs) and [LongValueTraversalTests](../../tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueTraversalTests.cs) check successful payloads, cycles/no progress, budgets, cancellation and leases. |
+| Bounded reads, journal admission and replay (`RecoveryKernel`, `UndoJournal`) | [SharedParsingKernelTests](../../tests/JetDatabaseWriter.Tests/Infrastructure/SharedParsingKernelTests.cs), [RecoveryKernelTests](../../tests/JetDatabaseWriter.Tests/Pages/Paging/RecoveryKernelTests.cs), [JournalContentKernelTests](../../tests/JetDatabaseWriter.Tests/Pages/Paging/JournalContentKernelTests.cs) and [BufferedJournalConformanceTests](../../tests/JetDatabaseWriter.Tests/Pages/Paging/BufferedJournalConformanceTests.cs) check independent range/byte oracles, admission/refusal and production replay schedules. |
+| Replacement admission, publication and cleanup (`RecoveryKernel`, `ReplacementProtocol`) | [ReplacementKernelTests](../../tests/JetDatabaseWriter.Tests/Encryption/ReplacementKernelTests.cs), [ReplacementFieldConformanceTests](../../tests/JetDatabaseWriter.Tests/Encryption/ReplacementFieldConformanceTests.cs), [ReplacementPublicationConformanceTests](../../tests/JetDatabaseWriter.Tests/Encryption/ReplacementPublicationConformanceTests.cs) and [ReplacementCleanupConformanceTests](../../tests/JetDatabaseWriter.Tests/Encryption/ReplacementCleanupConformanceTests.cs) check invalid-evidence refusal and interrupted effect schedules. |
+| Generation authority and cooperating-client ownership (`GenerationOwnership`, `MultiProcessOwnership`) | [RecoverableWriterLockTests](../../tests/JetDatabaseWriter.Tests/Transactions/RecoverableWriterLockTests.cs), [CrossProcessLockTests](../../tests/JetDatabaseWriter.Tests/Transactions/CrossProcessLockTests.cs) and replacement cleanup conformance check stale-owner refusal, incomplete acquisition retries and exclusion. |
+| Serialized scopes and frame lifetime (`WriterLifecycle`, `PageFrameOwnership`) | [WriterLifecycleConformanceTests](../../tests/JetDatabaseWriter.Tests/Writer/WriterLifecycleConformanceTests.cs) checks rollback/scope identity. [PageLeaseTests](../../tests/JetDatabaseWriter.Tests/Pages/Paging/PageLeaseTests.cs) checks concurrent same-lease disposal and distinct-reader acquisition/release, exactly-once accounting/return and surviving-reader/producer ownership. [PagerFrameCacheTests](../../tests/JetDatabaseWriter.Tests/Pages/Paging/PagerFrameCacheTests.cs) checks generation refusal during delayed lease acquisition, fresh cache sharing and old-image lifetime through invalidation/disposal. |
+| Row-slot/jump-table acquisition (`RecoveryKernel`) and compaction (`DataPageKernel`) | [DataRowSlotKernelTests](../../tests/JetDatabaseWriter.Tests/Pages/DataRowSlotKernelTests.cs), [Jet3JumpTableKernelTests](../../tests/JetDatabaseWriter.Tests/Pages/Jet3JumpTableKernelTests.cs) and [DataPageReclaimKernelTests](../../tests/JetDatabaseWriter.Tests/Pages/DataPageReclaimKernelTests.cs) compare independent slot/page images and check refusal before mutation. |
+| Index entry/child selection (`RecoveryKernel`) and page emission (`IndexMutationKernel`) | [IndexEntryBoundaryKernelTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexEntryBoundaryKernelTests.cs), [IndexChildSelectionKernelTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexChildSelectionKernelTests.cs) and [IndexPageEmissionKernelTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexPageEmissionKernelTests.cs) check bitmap/summary/byte oracles, truncated evidence and unchanged-destination refusals. |
+| Bitmap access/update (`RecoveryKernel`) and ordered enumeration (`UsageMapKernel`) | [UsageMapBitmapKernelTests](../../tests/JetDatabaseWriter.Tests/Pages/UsageMapBitmapKernelTests.cs) and [UsageMapEnumerationKernelTests](../../tests/JetDatabaseWriter.Tests/Pages/UsageMapEnumerationKernelTests.cs) check native arithmetic boundaries, exact selected-bit changes, enumeration/failure positions and borrowed-page cancellation. |
+| Mandatory proof gates and supplemental diagnostics | [verify-proofs.tests.ps1](../../scripts/tests/verify-proofs.tests.ps1) checks dependency-complete selection, diagnostic evidence separation and refusal before coverage or complexity analysis when verifier/solver pins, verification, audit, negative controls or any generated kernel's freshness fail. [proof-review.tests.ps1](../../scripts/tests/proof-review.tests.ps1) and [formal-workflow.tests.ps1](../../scripts/tests/formal-workflow.tests.ps1) retain review-inventory and required-gate controls. |
+
+These are finite regression and conformance checks, separate from the pinned
+verifier's quantified contracts. Tests do not establish the surveyed papers'
+theorems, complete handwritten implementation refinement, adversarial resource
+bounds, native compatibility or physical durability. Test links identify
+inspectable evidence; only a completed exact-revision CI run supplies an
+execution verdict. New proof or adapter claims require corresponding success
+and refusal evidence under the [continuing review policy](proof-trust-review.md).
+Review coverage against the property and its caller, rather than the number
+of proof lemmas or tests: use independent result oracles, preserve supported
+success domains, and exercise the effect adapters that establish the proof's
+premises. Additional isolated kernel examples cannot discharge an untested
+containing path or one of the evidence map's explicit composition gaps.
+
 ## Acceptance and plan ownership
 
 The implementation results below belong to the named revisions. The literature

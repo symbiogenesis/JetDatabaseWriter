@@ -6,7 +6,7 @@
     {
       "boundary": "implementation",
       "obligations": "Reviewed complete pre-mutation row-compaction admission, minimum/next-distinct boundary selection, directory/free-header rewriting and composition with modeled overlapping copy/clear. Preserve slot flags, alias policy, surviving byte intervals, secure erase and untouched pooled suffix; actual CLR bulk effects remain contracts. Reviewed maximal index prefix scanning, bounded entry capacity/progress, exact header/prefix/bookmark/child/boundary emission, finite payload composition and sentinel/free-space finalization. Pointer widths/layouts are unchanged; stable list acquisition, metadata preflight and exact key-suffix copy remain premises. Reviewed exact ordered usage-bitmap selection, packed continuation classification/payload laws, decreasing rank, tolerant invalid-member skipping and strict first-failure prefix retention. Production establishes range admission once and retains matching continuation and immutable array; list effects and reference-page cancellation/return remain contracts. The shared index-entry scan must bind a found non-sentinel boundary to the negated exhaustion statement under its original bounded-array contract. Existing recovery/replacement/descriptor/visited/frame/lifecycle boundaries remain documented in formal-verification.md and their model sources; no additional recovery or page-release authority follows.",
-      "conformance": "Independent complete-page row-compaction oracles cover Jet3/Jet4/ACE slots, aliases/flags, erase policies, malformed bounds, native widths, short images and untouched bytes. Index byte vectors cover leaf/intermediate headers, compressed payloads, extreme pointers, bitmap boundaries, empty keys/full pages and refusal; existing structural/native controls retain their evidence level. Bitmap tests compare every byte pattern and signed bounds against independent expansion, strict retained prefixes, reference-page return and cancellation. Focused local checks provide development feedback; settled-main CI, target/analyzer/package/trimming/NativeAOT and hosted measurements remain required. Original-algorithm microbenchmark controls and paired existing workloads retain performance evidence without treating generated code as a timing theorem. Existing cited recovery, lifecycle, parser, native and fault-injection evidence remains applicable within its stated scope.",
+      "conformance": "Independent stable key buckets cover every short mixed-length splice run and removal subset, including tie order and unchanged inputs. Independent visited-set traces compare exact membership/count and production adapter decisions through repeated collisions, duplicates, zero inputs and growth; exact-budget colliding chains preserve payloads and lease handoff. Concurrent lease disposal/acquisition checks exactly-once accounting and retained reader/producer ownership; delayed lease loads refuse stale cache publication while live images survive invalidation/disposal. Independent complete-page row-compaction oracles cover Jet3/Jet4/ACE slots, aliases/flags, erase policies, malformed bounds, native widths, short images and untouched bytes. Index byte vectors cover leaf/intermediate headers, compressed payloads, extreme pointers, bitmap boundaries, empty keys/full pages and refusal; existing structural/native controls retain their evidence level. Bitmap tests compare every byte pattern and signed bounds against independent expansion, strict retained prefixes, reference-page return and cancellation. Focused local checks provide development feedback; settled-main CI, target/analyzer/package/trimming/NativeAOT and hosted measurements remain required. Original-algorithm microbenchmark controls and paired existing workloads retain performance evidence without treating generated code as a timing theorem. Existing cited recovery, lifecycle, parser, native and fault-injection evidence remains applicable within its stated scope.",
       "remainingAssumptions": "Stable exclusive page/array identity, retained matching continuation, correct supplied native layouts, exact CLR bulk copy/clear, list append and stable entry acquisition remain adapter contracts. Reference reads, cancellation/pool effects, complete public parser resources, ordered trees/separators, allocator ownership and containing mutation/rollback require composition. Membership and row-space compaction grant no page-release authority. Existing I/O/hash/path/snapshot/coordinator/OS and compiler/runtime contracts remain. Physical persistence, directory durability, stale-I/O fencing and fresh native-engine gaps retain E4/F6/I15/V7 and their feature requirements. No whole-library proof, new native form or unconditional performance/durability guarantee is inferred.",
       "evidence": [
         "benchmarks/JetDatabaseWriter.Benchmarks/Indexes/IndexMutationBenchmarks.cs",
@@ -1125,7 +1125,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexEntryOrderingTests.cs",
-          "sha256": "f41aa2f538a89ff0fddc8fb488912b9710f66b209e469c39b6c287f7cbbeeece"
+          "sha256": "e234090a45104631fd3e20ac2133d61c141c907351fa30c0f8e71a1f8a8e6108"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexPageEmissionKernelTests.cs",
@@ -1221,11 +1221,11 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Pages/Paging/PageLeaseTests.cs",
-          "sha256": "a78c6e5d5a179b4ed3ef6f8db6d9cf986b08df152581130a10fae73ccffb9e1b"
+          "sha256": "063bd3c0982f533b36eddd167577eeb367fdff5ef001c91b710a5affe4102835"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Pages/Paging/PagerFrameCacheTests.cs",
-          "sha256": "424adaa9da65b68543aba5690963c9981b925f5d0a3d91cce82dd22a4d2c13f1"
+          "sha256": "18dcb84a1ab841fdf8996f7818e6dfa47a390c1948efa91d6b520a7b91ee2823"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Pages/Paging/PageStoreTests.cs",
@@ -1489,7 +1489,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueTraversalTests.cs",
-          "sha256": "fe062519f452a41b17a488774d1f74d12d0a66150d8b45d244d0ac8b72a262ae"
+          "sha256": "53ab20c4fb6ae386fe30ec1036a2ab8497a987a6e7b16d79de68454d41dd89be"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/ValueEncoding/NativeCompressedTextMarkerTests.cs",
@@ -1548,7 +1548,7 @@
     {
       "boundary": "proof-trust",
       "obligations": "Reviewed exact registration/source paths for five executable modules and the complete normal-source manifest. New page/index kernels are independent verified inputs; no assumptions, external declarations, omitted verification or new shipping dependencies are admitted. Native long joins ulong/uint/byte/int under the exact allowlist and emits CLR signed arithmetic without Dafny support. Projections retain generated bodies/self references, reject omitted runtime/model descriptors and unexpected structures. Exact-signature fixed inlining metadata is reviewed with its focused rejection controls; it changes optimization advice without changing method bodies or adding runtime support. Explicit byte-frame, bitmap, length and found-boundary witness contracts must hold in both complete-inventory and separate native-translation contexts. Mandatory verifier/auditor negative controls, deterministic translation, freshness, caller discovery, exact input hashes and failure snapshots cover every registered kernel. Reviewed supplemental survey transfers for per-write recoverability, layered recovery, transactional and CAS/lock refinement, peak-space/work credits, parser input identity, B+ tree leaf correspondence, rooted relocation and rounding bounds. Each remains conditional on its stated model and production correspondence; no runtime, proof source, adapter contract or advertised guarantee changes.",
-      "conformance": "Focused verify-proofs, proof-review and formal-workflow regressions cover new module packaging/provenance, wrong namespaces, runtime/descriptor rejection, five-kernel dispatch, signed-long admission/refusal, exact inlining declarations, complete failure snapshots and new callers. Fresh integrity-pinned Dafny/Z3 complete-inventory verification, clean audit, both mandatory negative controls and generated freshness are required for this settled source. Ordinary CI independently gates every selected runtime/library/analyzer/trim combination; hosted benchmarks establish their measured workloads only. Supplemental survey source statements and concrete code mappings received independent review. Upstream proof artifacts were not rerun; this is literature evidence, not new repository verification, native interoperability, platform qualification or performance acceptance.",
+      "conformance": "Selected coverage and complexity diagnostics refuse before supplemental execution for wrong Dafny/Z3 pins, failed inventory verification/audit, either negative-control failure and stale output from each of the five generated kernels; exact failure receipts remain required. The survey maps all admitted proof boundaries to independent unit or production conformance evidence without promoting finite tests to full refinement or storage guarantees. Focused verify-proofs, proof-review and formal-workflow regressions cover new module packaging/provenance, wrong namespaces, runtime/descriptor rejection, five-kernel dispatch, signed-long admission/refusal, exact inlining declarations, complete failure snapshots and new callers. Fresh integrity-pinned Dafny/Z3 complete-inventory verification, clean audit, both mandatory negative controls and generated freshness are required for this settled source. Ordinary CI independently gates every selected runtime/library/analyzer/trim combination; hosted benchmarks establish their measured workloads only. Supplemental survey source statements and concrete code mappings received independent review. Upstream proof artifacts were not rerun; this is literature evidence, not new repository verification, native interoperability, platform qualification or performance acceptance.",
       "remainingAssumptions": "Specification adequacy, Dafny/Z3 soundness, compiler projection, C# compiler and CLR/JIT/AOT remain trusted. Source hashes establish review freshness rather than reviewer identity, adapter refinement, actual I/O effects, native interoperability or physical durability. Sequence composition proves declared effects, while their C#/BCL implementation and complete public operation composition retain explicit obligations. Target compatibility and performance require independent builds, tests and hosted measurements. External literature retains its own atomicity, root-completeness, language/runtime, checksum and primitive hypotheses. Those hypotheses do not replace the repository torn-write model, native semantics, actual CLR effect contracts or independent timing/storage qualification.",
       "evidence": [
         "benchmarks/JetDatabaseWriter.Benchmarks/Reader/UsageMapEnumerationBenchmarks.cs",
@@ -1672,7 +1672,7 @@
         },
         {
           "path": "docs/design/proof-survey.md",
-          "sha256": "560af71ee91384865e5c3574a22bce6450cdb2408b80da8299fbb04fba39ca8e"
+          "sha256": "a0beb173500b41cf0e04477381a260363e7621153bdbe7fd31aa9e7f19ca30cc"
         },
         {
           "path": "docs/design/proof-trust-review.md",
@@ -1752,7 +1752,7 @@
         },
         {
           "path": "scripts/tests/verify-proofs.tests.ps1",
-          "sha256": "cf75eb5a78758995c2d536dc7bc735edbe3f9c598f2c7cb010d3d26c91607488"
+          "sha256": "931ecf519f44fd4b8698154d6557de998ba2f5497f856b5bad0bd648d3001262"
         },
         {
           "path": "scripts/verify-proofs.ps1",
