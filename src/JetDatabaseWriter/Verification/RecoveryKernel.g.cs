@@ -389,5 +389,95 @@ namespace JetDatabaseWriter.Verification {
       valid = true;
       return valid;
     }
+    public static ulong UsageBitmapPosition(uint length, uint start, uint count, ulong relative)
+    {
+      if (((((length) > (2147483647U)) || ((start) > (length))) || ((count) > ((length) - (start)))) || ((relative) >= (((ulong)(count)) * (8UL)))) {
+        return 18446744073709551615UL;
+      } else {
+        return (((ulong)(start)) * (8UL)) + (relative);
+      }
+    }
+    public static ulong InlineUsagePosition(byte[] bytes, uint start, uint size, ulong page)
+    {
+      ulong position = 0;
+      position = 18446744073709551615UL;
+      uint _0_length;
+      _0_length = (uint)(bytes).LongLength;
+      if ((((start) > (_0_length)) || ((size) <= (5U))) || ((size) > ((_0_length) - (start)))) {
+        return position;
+      }
+      ulong _1_base;
+      _1_base = ((((ulong)((bytes)[(int)((start) + (1U))])) + (((ulong)((bytes)[(int)((start) + (2U))])) * (256UL))) + (((ulong)((bytes)[(int)((start) + (3U))])) * (65536UL))) + (((ulong)((bytes)[(int)((start) + (4U))])) * (16777216UL));
+      if (((_1_base) > (2147483647UL)) || ((page) < (_1_base))) {
+        return position;
+      }
+      position = JetDatabaseWriter.Verification.RecoveryKernel.UsageBitmapPosition(_0_length, (start) + (5U), (size) - (5U), (page) - (_1_base));
+      return position;
+    }
+    public static ulong ReferenceUsagePosition(uint length, uint pageSize, ulong page)
+    {
+      if ((((length) > (2147483647U)) || ((pageSize) <= (4U))) || ((pageSize) > (length))) {
+        return 18446744073709551615UL;
+      } else {
+        return JetDatabaseWriter.Verification.RecoveryKernel.UsageBitmapPosition(length, 4U, (pageSize) - (4U), (page) % ((((ulong)(pageSize)) - (4UL)) * (8UL)));
+      }
+    }
+    public static uint UsageBitMask(uint bit) {
+      if ((bit) == (0U)) {
+        return 1U;
+      } else if ((bit) == (1U)) {
+        return 2U;
+      } else if ((bit) == (2U)) {
+        return 4U;
+      } else if ((bit) == (3U)) {
+        return 8U;
+      } else if ((bit) == (4U)) {
+        return 16U;
+      } else if ((bit) == (5U)) {
+        return 32U;
+      } else if ((bit) == (6U)) {
+        return 64U;
+      } else {
+        return 128U;
+      }
+    }
+    public static bool UsageByteMarked(byte @value, uint bit)
+    {
+      return ((((uint)(@value)) / (JetDatabaseWriter.Verification.RecoveryKernel.UsageBitMask(bit))) % (2U)) == (1U);
+    }
+    public static byte UpdatedUsageByte(byte @value, uint bit, bool marked)
+    {
+      uint _0_mask = JetDatabaseWriter.Verification.RecoveryKernel.UsageBitMask(bit);
+      return (byte)((((((uint)(@value)) / ((_0_mask) * (2U))) * ((_0_mask) * (2U))) + (((marked) ? (_0_mask) : (0U)))) + (((uint)(@value)) % (_0_mask)));
+    }
+    public static byte ReadUsageBit(byte[] bytes, ulong position)
+    {
+      byte state = 0;
+      state = (byte)(0);
+      if ((position) >= (((ulong)(bytes).LongLength) * (8UL))) {
+        return state;
+      }
+      if (JetDatabaseWriter.Verification.RecoveryKernel.UsageByteMarked((bytes)[(int)((position) / (8UL))], (uint)((position) % (8UL)))) {
+        state = (byte)(2);
+      } else {
+        state = (byte)(1);
+      }
+      return state;
+    }
+    public static bool WriteUsageBit(byte[] bytes, ulong position, bool marked)
+    {
+      bool valid = false;
+      valid = false;
+      if ((position) >= (((ulong)(bytes).LongLength) * (8UL))) {
+        return valid;
+      }
+      uint _0_index;
+      _0_index = (uint)((position) / (8UL));
+      uint _1_bit;
+      _1_bit = (uint)((position) % (8UL));
+      (bytes)[(int)((_0_index))] = JetDatabaseWriter.Verification.RecoveryKernel.UpdatedUsageByte((bytes)[(int)(_0_index)], _1_bit, marked);
+      valid = true;
+      return valid;
+    }
   }
 }

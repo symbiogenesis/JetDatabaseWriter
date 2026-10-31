@@ -1346,4 +1346,116 @@ module RecoveryKernel {
     }
     valid := true;
   }
+
+  // A position is an absolute bit index. The refusal sentinel lies outside
+  // every managed array, including pooled buffers with extra trailing bytes.
+  function UsageBitmapPosition(length: U32, start: U32, count: U32, relative: U64): U64 {
+    if length > 2147483647 || start > length || count > length - start ||
+      relative >= (count as U64) * 8
+    then 18446744073709551615
+    else (start as U64) * 8 + relative
+  }
+
+  lemma UsageBitmapPositionIsExact(length: U32, start: U32, count: U32, relative: U64)
+    ensures UsageBitmapPosition(length, start, count, relative) != 18446744073709551615 <==>
+      length <= 2147483647 && start <= length && count <= length - start && relative as int < count as int * 8
+    ensures UsageBitmapPosition(length, start, count, relative) != 18446744073709551615 ==>
+      UsageBitmapPosition(length, start, count, relative) as int == start as int * 8 + relative as int &&
+      start as int <= UsageBitmapPosition(length, start, count, relative) as int / 8 < start as int + count as int <= length as int
+  { }
+
+  ghost function InlineUsagePositionSpec(bytes: seq<Byte>, start: U32, size: U32, page: U64): U64 {
+    if |bytes| > 2147483647 || start as int > |bytes| || size <= 5 || size as int > |bytes| - start as int
+    then 18446744073709551615
+    else
+      var base := bytes[start + 1] as U64 + bytes[start + 2] as U64 * 256 +
+        bytes[start + 3] as U64 * 65536 + bytes[start + 4] as U64 * 16777216;
+      if base > 2147483647 || page < base then 18446744073709551615
+      else UsageBitmapPosition(|bytes| as U32, start + 5, size - 5, page - base)
+  }
+
+  method InlineUsagePosition(bytes: array<Byte>, start: U32, size: U32, page: U64) returns (position: U64)
+    requires bytes.Length <= 2147483647
+    ensures position == InlineUsagePositionSpec(bytes[..], start, size, page)
+    ensures position != 18446744073709551615 ==> start as int + 5 <= position as int / 8 < start as int + size as int <= bytes.Length
+  {
+    position := 18446744073709551615;
+    var length := bytes.Length as U32;
+    if start > length || size <= 5 || size > length - start { return; }
+    var base := bytes[start + 1] as U64 + bytes[start + 2] as U64 * 256 +
+      bytes[start + 3] as U64 * 65536 + bytes[start + 4] as U64 * 16777216;
+    if base > 2147483647 || page < base { return; }
+    UsageBitmapPositionIsExact(length, start + 5, size - 5, page - base);
+    position := UsageBitmapPosition(length, start + 5, size - 5, page - base);
+  }
+
+  function ReferenceUsagePosition(length: U32, pageSize: U32, page: U64): U64 {
+    if length > 2147483647 || pageSize <= 4 || pageSize > length
+    then 18446744073709551615
+    else UsageBitmapPosition(length, 4, pageSize - 4, page % ((pageSize as U64 - 4) * 8))
+  }
+
+  lemma ReferenceUsagePositionIsExact(length: U32, pageSize: U32, page: U64)
+    ensures ReferenceUsagePosition(length, pageSize, page) != 18446744073709551615 <==>
+      length <= 2147483647 && 4 < pageSize <= length
+    ensures ReferenceUsagePosition(length, pageSize, page) != 18446744073709551615 ==>
+      4 <= ReferenceUsagePosition(length, pageSize, page) as int / 8 < pageSize as int &&
+      ReferenceUsagePosition(length, pageSize, page) as int == 32 + page as int % ((pageSize as int - 4) * 8)
+  {
+    if length <= 2147483647 && 4 < pageSize <= length {
+      UsageBitmapPositionIsExact(length, 4, pageSize - 4, page % ((pageSize as U64 - 4) * 8));
+    }
+  }
+
+  function UsageBitMask(bit: U32): U32 {
+    if bit == 0 then 1 else if bit == 1 then 2 else if bit == 2 then 4 else if bit == 3 then 8
+    else if bit == 4 then 16 else if bit == 5 then 32 else if bit == 6 then 64 else 128
+  }
+
+  function UsageByteMarked(value: Byte, bit: U32): bool {
+    (value as U32 / UsageBitMask(bit)) % 2 == 1
+  }
+
+  function UpdatedUsageByte(value: Byte, bit: U32, marked: bool): Byte {
+    var mask := UsageBitMask(bit);
+    (value as U32 / (mask * 2) * (mask * 2) + (if marked then mask else 0) + value as U32 % mask) as Byte
+  }
+
+  lemma UpdatedUsageByteIsExact(value: Byte, bit: U32, marked: bool)
+    ensures UsageByteMarked(UpdatedUsageByte(value, bit, marked), bit) == marked
+    ensures UpdatedUsageByte(value, bit, marked) as U32 % UsageBitMask(bit) == value as U32 % UsageBitMask(bit)
+    ensures UpdatedUsageByte(value, bit, marked) as U32 / (UsageBitMask(bit) * 2) == value as U32 / (UsageBitMask(bit) * 2)
+  { }
+
+  method ReadUsageBit(bytes: array<Byte>, position: U64) returns (state: Byte)
+    requires bytes.Length <= 2147483647
+    ensures state <= 2
+    ensures state == 0 <==> position as int >= bytes.Length * 8
+    ensures state != 0 ==> (state == 2 <==> UsageByteMarked(bytes[position / 8], (position % 8) as U32))
+  {
+    state := 0;
+    if position >= (bytes.Length as U64) * 8 { return; }
+    state := if UsageByteMarked(bytes[position / 8], (position % 8) as U32) then 2 else 1;
+  }
+
+  method WriteUsageBit(bytes: array<Byte>, position: U64, marked: bool) returns (valid: bool)
+    requires bytes.Length <= 2147483647
+    modifies bytes
+    ensures valid <==> position as int < bytes.Length * 8
+    ensures !valid ==> bytes[..] == old(bytes[..])
+    ensures valid ==> UsageByteMarked(bytes[position / 8], (position % 8) as U32) == marked
+    ensures forall index: nat :: index < bytes.Length && index != position as int / 8 ==> bytes[index] == old(bytes[index])
+    ensures valid ==> (bytes[position / 8] as U32 % UsageBitMask((position % 8) as U32) ==
+      old(bytes[position / 8]) as U32 % UsageBitMask((position % 8) as U32))
+    ensures valid ==> (bytes[position / 8] as U32 / (UsageBitMask((position % 8) as U32) * 2) ==
+      old(bytes[position / 8]) as U32 / (UsageBitMask((position % 8) as U32) * 2))
+  {
+    valid := false;
+    if position >= (bytes.Length as U64) * 8 { return; }
+    var index := (position / 8) as U32;
+    var bit := (position % 8) as U32;
+    UpdatedUsageByteIsExact(bytes[index], bit, marked);
+    bytes[index] := UpdatedUsageByte(bytes[index], bit, marked);
+    valid := true;
+  }
 }

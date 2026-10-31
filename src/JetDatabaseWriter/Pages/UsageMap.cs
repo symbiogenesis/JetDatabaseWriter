@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Verification;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -248,80 +249,23 @@ internal static class UsageMap
 
     internal static bool TryGetInlinePageState(byte[] usageMapPage, int rowStart, int rowSize, long pageNumber, out bool isMarked)
     {
-        isMarked = false;
-        if (!TryGetInlineBitOffset(usageMapPage, rowStart, rowSize, pageNumber, out int byteOffset, out byte bitMask))
-        {
-            return false;
-        }
-
-        isMarked = (usageMapPage[byteOffset] & bitMask) != 0;
-        return true;
+        byte state = RecoveryKernel.ReadUsageBit(usageMapPage, GetInlineBitPosition(usageMapPage, rowStart, rowSize, pageNumber));
+        isMarked = state == 2;
+        return state != 0;
     }
 
     internal static bool TryGetReferencePageState(byte[] referencePage, int pageSize, long pageNumber, out bool isMarked)
     {
-        isMarked = false;
-        if (!TryGetReferenceBitOffset(referencePage, pageSize, pageNumber, out int byteOffset, out byte bitMask))
-        {
-            return false;
-        }
-
-        isMarked = (referencePage[byteOffset] & bitMask) != 0;
-        return true;
+        byte state = RecoveryKernel.ReadUsageBit(referencePage, GetReferenceBitPosition(referencePage, pageSize, pageNumber));
+        isMarked = state == 2;
+        return state != 0;
     }
 
     internal static bool TrySetReferencePageState(byte[] referencePage, int pageSize, long pageNumber, bool isMarked)
-    {
-        if (!TryGetReferenceBitOffset(referencePage, pageSize, pageNumber, out int byteOffset, out byte bitMask))
-        {
-            return false;
-        }
-
-        if (isMarked)
-        {
-            referencePage[byteOffset] |= bitMask;
-        }
-        else
-        {
-            referencePage[byteOffset] &= unchecked((byte)~bitMask);
-        }
-
-        return true;
-    }
+        => RecoveryKernel.WriteUsageBit(referencePage, GetReferenceBitPosition(referencePage, pageSize, pageNumber), isMarked);
 
     internal static bool TrySetInlinePageState(byte[] usageMapPage, int rowStart, int rowSize, long pageNumber, bool isMarked)
-    {
-        if (rowSize <= Constants.UsageMap.InlineMapHeaderSize)
-        {
-            return false;
-        }
-
-        int basePage = Ri32(usageMapPage, rowStart + Constants.UsageMap.ReferenceMapPointerOffset);
-        if (basePage < 0)
-        {
-            return false;
-        }
-
-        long bitIndex = pageNumber - basePage;
-        int bitCapacity = (rowSize - Constants.UsageMap.InlineMapHeaderSize) * 8;
-        if (bitIndex < 0 || bitIndex >= bitCapacity)
-        {
-            return false;
-        }
-
-        int byteOffset = rowStart + Constants.UsageMap.InlineBitmapOffset + ((int)bitIndex / 8);
-        byte bitMask = (byte)(1 << ((int)bitIndex % 8));
-        if (isMarked)
-        {
-            usageMapPage[byteOffset] |= bitMask;
-        }
-        else
-        {
-            usageMapPage[byteOffset] &= unchecked((byte)~bitMask);
-        }
-
-        return true;
-    }
+        => RecoveryKernel.WriteUsageBit(usageMapPage, GetInlineBitPosition(usageMapPage, rowStart, rowSize, pageNumber), isMarked);
 
     /// <summary>
     /// Writes an INLINE row that lists <paramref name="pageNumbers"/> over the
@@ -478,45 +422,13 @@ internal static class UsageMap
         return true;
     }
 
-    private static bool TryGetInlineBitOffset(byte[] usageMapPage, int rowStart, int rowSize, long pageNumber, out int byteOffset, out byte bitMask)
-    {
-        byteOffset = 0;
-        bitMask = 0;
-        if (rowSize <= Constants.UsageMap.InlineMapHeaderSize)
-        {
-            return false;
-        }
+    private static ulong GetInlineBitPosition(byte[] usageMapPage, int rowStart, int rowSize, long pageNumber)
+        => rowStart < 0 || rowSize < 0 || pageNumber < 0
+            ? ulong.MaxValue
+            : RecoveryKernel.InlineUsagePosition(usageMapPage, (uint)rowStart, (uint)rowSize, (ulong)pageNumber);
 
-        int basePage = Ri32(usageMapPage, rowStart + Constants.UsageMap.ReferenceMapPointerOffset);
-        long bitIndex = pageNumber - basePage;
-        int bitCapacity = (rowSize - Constants.UsageMap.InlineMapHeaderSize) * 8;
-        if (bitIndex < 0 || bitIndex >= bitCapacity)
-        {
-            return false;
-        }
-
-        byteOffset = rowStart + Constants.UsageMap.InlineBitmapOffset + ((int)bitIndex / 8);
-        bitMask = (byte)(1 << ((int)bitIndex % 8));
-        return true;
-    }
-
-    private static bool TryGetReferenceBitOffset(byte[] referencePage, int pageSize, long pageNumber, out int byteOffset, out byte bitMask)
-    {
-        byteOffset = 0;
-        bitMask = 0;
-        if (pageNumber < 0)
-        {
-            return false;
-        }
-
-        int bitIndex = (int)(pageNumber % PagesPerReferenceMapPage(pageSize));
-        byteOffset = Constants.UsageMap.ReferenceMapBitmapOffset + (bitIndex / 8);
-        if (byteOffset < Constants.UsageMap.ReferenceMapBitmapOffset || byteOffset >= referencePage.Length)
-        {
-            return false;
-        }
-
-        bitMask = (byte)(1 << (bitIndex % 8));
-        return true;
-    }
+    private static ulong GetReferenceBitPosition(byte[] referencePage, int pageSize, long pageNumber)
+        => pageSize < 0 || pageNumber < 0
+            ? ulong.MaxValue
+            : RecoveryKernel.ReferenceUsagePosition((uint)referencePage.Length, (uint)pageSize, (ulong)pageNumber);
 }
