@@ -5,6 +5,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Verification;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -234,7 +235,8 @@ internal static class DataPageRows
     /// <summary>
     /// Returns the bounds of slot <paramref name="rowIndex"/> on the data
     /// <paramref name="page"/> whatever its flags, for following an overflow pointer
-    /// to a slot Access flagged deleted. The slot must exist within the page's
+    /// to a slot Access flagged deleted. The complete logical page must be present.
+    /// The slot must exist within the page's
     /// (clamped) row count and start past the row-offset table and inside the page;
     /// it ends at the next greater offset of any slot, as in
     /// <see cref="ComputeRowDirectory"/>.
@@ -247,29 +249,19 @@ internal static class DataPageRows
     internal static bool TryGetSlotBound(JetFormat format, byte[] page, int rowIndex, out RowBound bound)
     {
         bound = default;
-        int numRows = Math.Min(Ru16(page, format.DataPage.NumRows), (page.Length - format.DataPage.RowsStart) / 2);
-        if (rowIndex < 0 || rowIndex >= numRows)
+        if (rowIndex < 0)
         {
             return false;
         }
 
-        int rowStart = Ru16(page, format.DataPage.RowsStart + (rowIndex * 2)) & Constants.DataPage.RowOffsetMask;
-        if (rowStart < format.DataPage.RowsStart + (numRows * 2) || rowStart >= format.PageSize)
+        RecoveryKernel.ReadDataRowSlot(page, (uint)format.PageSize, (uint)format.DataPage.NumRows,
+            (uint)format.DataPage.RowsStart, (uint)rowIndex, out uint start, out uint end);
+        if (end == 0)
         {
             return false;
         }
 
-        int rowEnd = format.PageSize;
-        for (int r = 0; r < numRows; r++)
-        {
-            int candidate = Ru16(page, format.DataPage.RowsStart + (r * 2)) & Constants.DataPage.RowOffsetMask;
-            if (candidate > rowStart && candidate < rowEnd)
-            {
-                rowEnd = candidate;
-            }
-        }
-
-        bound = new RowBound(rowIndex, rowStart, rowEnd - rowStart);
+        bound = new RowBound(rowIndex, checked((int)start), checked((int)(end - start)));
         return true;
     }
 

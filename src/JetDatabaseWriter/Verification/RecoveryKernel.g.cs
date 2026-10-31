@@ -479,5 +479,53 @@ namespace JetDatabaseWriter.Verification {
       valid = true;
       return valid;
     }
+    public static void ReadDataRowSlot(byte[] page, uint pageSize, uint countOffset, uint rowsStart, uint rowIndex, out uint start, out uint end)
+    {
+      start = 0;
+      end = 0;
+      uint _rhs0 = 0U;
+      uint _rhs1 = 0U;
+      start = _rhs0;
+      end = _rhs1;
+      if (((((pageSize) < (2U)) || ((pageSize) > ((uint)(page).LongLength))) || ((countOffset) > ((pageSize) - (2U)))) || ((rowsStart) > (pageSize))) {
+        return ;
+      }
+      uint _0_declared;
+      _0_declared = ((uint)((page)[(int)(countOffset)])) + ((256U) * ((uint)((page)[(int)((countOffset) + (1U))])));
+      uint _1_capacity;
+      _1_capacity = ((pageSize) - (rowsStart)) / (2U);
+      uint _2_count;
+      if ((_0_declared) < (_1_capacity)) {
+        _2_count = _0_declared;
+      } else {
+        _2_count = _1_capacity;
+      }
+      if ((rowIndex) >= (_2_count)) {
+        return ;
+      }
+      uint _3_position;
+      _3_position = (rowsStart) + ((rowIndex) * (2U));
+      uint _4_offset;
+      _4_offset = (((uint)((page)[(int)(_3_position)])) + ((256U) * ((uint)((page)[(int)((_3_position) + (1U))])))) % (8192U);
+      if (((_4_offset) < ((rowsStart) + ((_2_count) * (2U)))) || ((_4_offset) >= (pageSize))) {
+        return ;
+      }
+      uint _rhs2 = _4_offset;
+      uint _rhs3 = pageSize;
+      start = _rhs2;
+      end = _rhs3;
+      uint _5_index;
+      _5_index = 0U;
+      while ((_5_index) < (_2_count)) {
+        uint _6_slot;
+        _6_slot = (rowsStart) + ((_5_index) * (2U));
+        uint _7_candidate;
+        _7_candidate = (((uint)((page)[(int)(_6_slot)])) + ((256U) * ((uint)((page)[(int)((_6_slot) + (1U))])))) % (8192U);
+        if (((_7_candidate) > (start)) && ((_7_candidate) < (end))) {
+          end = _7_candidate;
+        }
+        _5_index = (_5_index) + (1U);
+      }
+    }
   }
 }

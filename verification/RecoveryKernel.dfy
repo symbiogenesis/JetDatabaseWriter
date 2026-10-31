@@ -1458,4 +1458,85 @@ module RecoveryKernel {
     bytes[index] := UpdatedUsageByte(bytes[index], bit, marked);
     valid := true;
   }
+
+  // Raw data-page slots include deleted overflow targets. The full logical
+  // page must be acquired before interpreting its bounded directory.
+  ghost predicate DataRowLayout(bytes: seq<Byte>, pageSize: U32, countOffset: U32, rowsStart: U32) {
+    2 <= pageSize as int <= |bytes| <= 2147483647 && countOffset <= pageSize - 2 && rowsStart <= pageSize
+  }
+
+  ghost function DataRowUInt16(bytes: seq<Byte>, position: nat): nat
+    requires position + 2 <= |bytes|
+  {
+    bytes[position] as int + 256 * bytes[position + 1] as int
+  }
+
+  ghost function DataRowCount(bytes: seq<Byte>, pageSize: U32, countOffset: U32, rowsStart: U32): nat
+    requires DataRowLayout(bytes, pageSize, countOffset, rowsStart)
+  {
+    var declared := DataRowUInt16(bytes, countOffset as int);
+    var capacity := (pageSize as int - rowsStart as int) / 2;
+    if declared < capacity then declared else capacity
+  }
+
+  ghost function DataRowOffset(bytes: seq<Byte>, rowsStart: U32, index: nat): nat
+    requires rowsStart as int + index * 2 + 2 <= |bytes|
+  {
+    DataRowUInt16(bytes, rowsStart as int + index * 2) % 8192
+  }
+
+  ghost predicate DataRowSlotAdmitted(bytes: seq<Byte>, pageSize: U32, countOffset: U32,
+      rowsStart: U32, rowIndex: U32) {
+    DataRowLayout(bytes, pageSize, countOffset, rowsStart) &&
+    rowIndex as int < DataRowCount(bytes, pageSize, countOffset, rowsStart) &&
+    rowsStart as int + 2 * DataRowCount(bytes, pageSize, countOffset, rowsStart) <=
+      DataRowOffset(bytes, rowsStart, rowIndex as int) < pageSize as int
+  }
+
+  method ReadDataRowSlot(page: array<Byte>, pageSize: U32, countOffset: U32,
+      rowsStart: U32, rowIndex: U32) returns (start: U32, end: U32)
+    requires page.Length <= 2147483647
+    ensures end != 0 <==> DataRowSlotAdmitted(page[..], pageSize, countOffset, rowsStart, rowIndex)
+    ensures end == 0 ==> start == 0
+    ensures end != 0 ==> (start as int == DataRowOffset(page[..], rowsStart, rowIndex as int) &&
+      rowsStart as int + 2 * DataRowCount(page[..], pageSize, countOffset, rowsStart) <= start as int < end as int <= pageSize as int)
+    ensures end != 0 ==> forall index: int | 0 <= index < DataRowCount(page[..], pageSize, countOffset, rowsStart) ::
+      DataRowOffset(page[..], rowsStart, index) > start as int ==> end as int <= DataRowOffset(page[..], rowsStart, index)
+    ensures end != 0 && end < pageSize ==> exists index: int ::
+      0 <= index < DataRowCount(page[..], pageSize, countOffset, rowsStart) &&
+      DataRowOffset(page[..], rowsStart, index) == end as int
+  {
+    start, end := 0, 0;
+    if pageSize < 2 || pageSize > page.Length as U32 || countOffset > pageSize - 2 || rowsStart > pageSize {
+      return;
+    }
+    var declared: U32 := page[countOffset] as U32 + 256 * page[countOffset + 1] as U32;
+    var capacity: U32 := (pageSize - rowsStart) / 2;
+    var count: U32 := if declared < capacity then declared else capacity;
+    assert count as int == DataRowCount(page[..], pageSize, countOffset, rowsStart);
+    if rowIndex >= count { return; }
+    var position: U32 := rowsStart + rowIndex * 2;
+    var offset: U32 := (page[position] as U32 + 256 * page[position + 1] as U32) % 8192;
+    if offset < rowsStart + count * 2 || offset >= pageSize { return; }
+    start, end := offset, pageSize;
+    var index: U32 := 0;
+    while index < count
+      invariant index <= count
+      invariant start as int == DataRowOffset(page[..], rowsStart, rowIndex as int)
+      invariant rowsStart + count * 2 <= start < end <= pageSize
+      invariant forall scanned: int | 0 <= scanned < index as int ::
+        DataRowOffset(page[..], rowsStart, scanned) > start as int ==> end as int <= DataRowOffset(page[..], rowsStart, scanned)
+      invariant end < pageSize ==> exists scanned: int ::
+        0 <= scanned < index as int && DataRowOffset(page[..], rowsStart, scanned) == end as int
+      decreases count - index
+    {
+      var slot: U32 := rowsStart + index * 2;
+      var candidate: U32 := (page[slot] as U32 + 256 * page[slot + 1] as U32) % 8192;
+      assert candidate as int == DataRowOffset(page[..], rowsStart, index as int);
+      if candidate > start && candidate < end {
+        end := candidate;
+      }
+      index := index + 1;
+    }
+  }
 }
