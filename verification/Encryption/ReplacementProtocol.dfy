@@ -1316,6 +1316,83 @@ module ReplacementProtocol {
       ApplyProductionCleanup(original, next, s, CrashCleanup), RestartCleanup(id, generation)).ownership, id, generation)
   {}
 
+  // Reachable cleanup states carry more than valid individual components:
+  // native deletion precedes receipt deletion, and a live owner cannot outlast
+  // its retained destination. These facts bridge interrupted cleanup to the
+  // existing recorded/fresh bootstrap cases without assuming a new lease.
+  predicate ProductionCleanupAuthority(s: ProductionCleanupSnapshot) {
+    (s.ownership.receiptName == Ownership.Absent ==> s.ownership.nativeName == Ownership.Absent) &&
+    (s.ownership.holder.Owned? ==> (s.databaseHeld && s.protocol.intent &&
+      (s.ownership.cleaning == s.ownership.holder || s.ownership.holder.id !in s.ownership.attempted))) &&
+    (s.ownership.holder == Ownership.Free && s.databaseHeld ==> CleanupNamesAbsent(s)) &&
+    (!s.protocol.intent ==> CleanupNamesAbsent(s) && s.ownership.holder == Ownership.Free)
+  }
+
+  lemma HeldGenerationEstablishesCleanupAuthority(original: seq<int>, next: seq<int>,
+      s: ProductionCleanupSnapshot, id: nat, generation: nat)
+    requires ProductionCleanupValid(original, next, s) && s.databaseHeld && s.protocol.intent
+    requires Ownership.HeldGenerationAuthority(s.ownership, id, generation)
+    ensures ProductionCleanupAuthority(s)
+  {}
+
+  lemma ProductionCleanupAuthorityStep(original: seq<int>, next: seq<int>, s: ProductionCleanupSnapshot,
+      a: ProductionCleanupAction)
+    requires ProductionCleanupValid(original, next, s) && ProductionCleanupAuthority(s)
+    requires ProductionCleanupEnabled(original, next, s, a)
+    ensures ProductionCleanupAuthority(ApplyProductionCleanup(original, next, s, a))
+  {
+    match a {
+      case CleanupOwnership(action) => Ownership.StepPreserves(s.ownership, action);
+      case DeleteCleanupIntent =>
+      case ReleaseCleanupDatabase =>
+      case CrashCleanup => Ownership.StepPreserves(s.ownership, Ownership.Crash);
+      case RestartCleanup(id, generation) => Ownership.StepPreserves(s.ownership, RestartOwnership(s, id, generation));
+    }
+  }
+
+  lemma ProductionCleanupAuthorityTrace(original: seq<int>, next: seq<int>,
+      states: seq<ProductionCleanupSnapshot>, actions: seq<ProductionCleanupAction>)
+    requires ProductionCleanupPath(original, next, states, actions)
+    requires ProductionCleanupValid(original, next, states[0]) && ProductionCleanupAuthority(states[0])
+    ensures ProductionCleanupValid(original, next, states[|states|-1])
+    ensures ProductionCleanupAuthority(states[|states|-1])
+    ensures states[|states|-1].protocol.decision == states[0].protocol.decision
+    ensures states[|states|-1].protocol.destination == states[0].protocol.destination
+    decreases |actions|
+  {
+    if |actions| != 0 {
+      ProductionCleanupStepPreserves(original, next, states[0], actions[0]);
+      ProductionCleanupAuthorityStep(original, next, states[0], actions[0]);
+      ProductionCleanupAuthorityTrace(original, next, states[1..], actions[1..]);
+    }
+  }
+
+  // Finite traces consume only finitely many abstract IDs. This constructs
+  // another ID rather than strengthening the recovery entry domain with an
+  // assumed fresh caller argument. It does not prove real GUID uniqueness.
+  lemma FreshCleanupIdentity(identities: set<nat>) returns (identity: nat)
+    ensures forall previous | previous in identities :: previous < identity
+    ensures identity !in identities
+    decreases |identities|
+  {
+    if identities == {} {
+      identity := 0;
+    } else {
+      var previous :| previous in identities;
+      var remaining := identities - {previous};
+      var above := FreshCleanupIdentity(remaining);
+      identity := if previous < above then above else previous + 1;
+      assert above <= identity;
+      forall member | member in identities
+        ensures member < identity
+      {
+        if member != previous {
+          assert member in remaining;
+        }
+      }
+    }
+  }
+
   function ProductionCleanupRank(s: ProductionCleanupSnapshot, id: nat): nat
     requires Ownership.Valid(s.ownership) &&
       (s.ownership.holder == Ownership.Owned(id) || s.ownership.holder == Ownership.Free)
@@ -1529,6 +1606,7 @@ module ReplacementProtocol {
     ensures fenceStates[0] == PublicationFenceSnapshot(PublishCopied(original, next, copies[|copies|-1]), false, false)
     ensures fenceStates[|fenceStates|-1].databaseHeld && fenceStates[|fenceStates|-1].destinationFlushed
     ensures ProductionCleanupPath(original, next, cleanupStates, cleanupActions)
+    ensures ProductionCleanupAuthority(cleanupStates[0])
     ensures cleanupStates[0] == ProductionCleanupSnapshot(fenceStates[|fenceStates|-1].protocol, ownership, true)
     ensures !cleanupStates[|cleanupStates|-1].databaseHeld && !cleanupStates[|cleanupStates|-1].protocol.intent
     ensures CleanupNamesAbsent(cleanupStates[|cleanupStates|-1])
@@ -1545,6 +1623,7 @@ module ReplacementProtocol {
     fenceStates, fenceActions := CompletePublicationFence(original, next, beginFence);
     var beginCleanup := ProductionCleanupSnapshot(fenceStates[|fenceStates|-1].protocol, ownership, true);
     assert ProductionCleanupValid(original, next, beginCleanup);
+    HeldGenerationEstablishesCleanupAuthority(original, next, beginCleanup, id, generation);
     cleanupStates, cleanupActions := CompleteProductionCleanup(original, next, beginCleanup, id);
   }
 
@@ -1560,6 +1639,7 @@ module ReplacementProtocol {
     ensures PublicationFencePath(original, next, fenceStates, fenceActions)
     ensures fenceStates[0] == interruptedStates[|interruptedStates|-1]
     ensures ProductionCleanupPath(original, next, cleanupStates, cleanupActions)
+    ensures ProductionCleanupAuthority(cleanupStates[0])
     ensures cleanupStates[0] == ProductionCleanupSnapshot(fenceStates[|fenceStates|-1].protocol, ownership, true)
     ensures !cleanupStates[|cleanupStates|-1].databaseHeld && !cleanupStates[|cleanupStates|-1].protocol.intent
     ensures CleanupNamesAbsent(cleanupStates[|cleanupStates|-1])
@@ -1570,6 +1650,69 @@ module ReplacementProtocol {
     fenceStates, fenceActions := CompletePublicationFence(original, next, interruptedStates[|interruptedStates|-1]);
     var beginCleanup := ProductionCleanupSnapshot(fenceStates[|fenceStates|-1].protocol, ownership, true);
     assert ProductionCleanupValid(original, next, beginCleanup);
+    HeldGenerationEstablishesCleanupAuthority(original, next, beginCleanup, id, generation);
     cleanupStates, cleanupActions := CompleteProductionCleanup(original, next, beginCleanup, id);
+  }
+
+  // CHL/Argosy-style recovery closure: after any finite production cleanup
+  // trace, including repeated crashes and recorded/fresh restarts, a successful
+  // continuation still removes the same decision's evidence in actual order.
+  // The caller need not supply a live owner after a crash. Acquisition remains
+  // the existing validated exclusive bootstrap contract; infinite failures,
+  // namespace durability and OS exclusion are not proved here.
+  lemma InterruptedProductionCleanupAllowsCompletion(original: seq<int>, next: seq<int>,
+      interruptedStates: seq<ProductionCleanupSnapshot>, interruptedActions: seq<ProductionCleanupAction>)
+    returns (states: seq<ProductionCleanupSnapshot>, actions: seq<ProductionCleanupAction>)
+    requires ProductionCleanupPath(original, next, interruptedStates, interruptedActions)
+    requires ProductionCleanupValid(original, next, interruptedStates[0])
+    requires ProductionCleanupAuthority(interruptedStates[0])
+    ensures ProductionCleanupPath(original, next, states, actions)
+    ensures states[0] == interruptedStates[|interruptedStates|-1]
+    ensures ProductionCleanupValid(original, next, states[|states|-1])
+    ensures CleanupSuccessorAdmission(states[|states|-1]) && CleanupNamesAbsent(states[|states|-1])
+    ensures states[|states|-1].ownership.holder == Ownership.Free
+    ensures states[|states|-1].protocol.decision == interruptedStates[0].protocol.decision
+    ensures states[|states|-1].protocol.destination == interruptedStates[0].protocol.destination
+    ensures !states[0].databaseHeld && states[0].protocol.intent ==> |actions| > 0 && actions[0].RestartCleanup?
+    ensures !states[0].databaseHeld && states[0].protocol.intent ==>
+      actions[0].id !in states[0].ownership.owners &&
+      Ownership.HeldGenerationAuthority(states[1].ownership, actions[0].id, actions[0].generation)
+    ensures (!states[0].databaseHeld && states[0].protocol.intent &&
+      states[0].ownership.receiptName == Ownership.Absent) ==>
+      actions[0].generation !in states[0].ownership.owners.Values
+    ensures (!states[0].databaseHeld && states[0].protocol.intent &&
+      states[0].ownership.receiptName.Generation?) ==>
+      actions[0] == RestartCleanup(actions[0].id, states[0].ownership.receiptName.value)
+  {
+    ProductionCleanupAuthorityTrace(original, next, interruptedStates, interruptedActions);
+    var last := interruptedStates[|interruptedStates|-1];
+    if last.databaseHeld {
+      var id := if last.ownership.holder.Owned? then last.ownership.holder.id else 0;
+      states, actions := CompleteProductionCleanup(original, next, last, id);
+    } else if !last.protocol.intent {
+      states, actions := [last], [];
+    } else {
+      var id := FreshCleanupIdentity(last.ownership.owners.Keys);
+      var freshGeneration := FreshCleanupIdentity(last.ownership.owners.Values);
+      var generation := if last.ownership.receiptName.Generation? then last.ownership.receiptName.value
+        else freshGeneration;
+      var restart := RestartCleanup(id, generation);
+      assert ProductionCleanupEnabled(original, next, last, restart);
+      ProductionCleanupStepPreserves(original, next, last, restart);
+      ProductionCleanupAuthorityStep(original, next, last, restart);
+      var acquired := ApplyProductionCleanup(original, next, last, restart);
+      assert Ownership.HeldGenerationAuthority(acquired.ownership, id, generation);
+      var tailStates, tailActions := CompleteProductionCleanup(original, next, acquired, id);
+      states, actions := [last] + tailStates, [restart] + tailActions;
+      forall i | 0 <= i < |actions|
+        ensures ProductionCleanupEnabled(original, next, states[i], actions[i]) &&
+          states[i+1] == ApplyProductionCleanup(original, next, states[i], actions[i])
+      {
+        if i != 0 {
+          assert states[i] == tailStates[i-1];
+          assert actions[i] == tailActions[i-1];
+        }
+      }
+    }
   }
 }

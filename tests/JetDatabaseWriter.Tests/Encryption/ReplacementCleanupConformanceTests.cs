@@ -130,6 +130,87 @@ public sealed class ReplacementCleanupConformanceTests
         Assert.False(File.Exists(receipt));
     }
 
+    /// <summary>Repeated recovery transfers surviving authority without changing the selected image or decision.</summary>
+    /// <param name="committed">Whether the complete decision selects the replacement.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Recover_RepeatedOwnershipRestarts_PreserveSelectionAndReconstructOnlySurvivingGeneration(bool committed)
+    {
+        using var directory = new CleanupDirectory();
+        byte[] original = [1, 2, 3];
+        byte[] replacement = [4, 5, 6, 7];
+        string stage = directory.Path + ".input.tmp";
+        string intent = EncryptionReplacementIntent.IntentPath(directory.Path);
+        string native = Path.ChangeExtension(directory.Path, ".laccdb");
+        string receipt = RecoverableWriterLock.ReceiptPath(directory.Path);
+        await File.WriteAllBytesAsync(directory.Path, original, Ct);
+        await File.WriteAllBytesAsync(stage, replacement, Ct);
+        Assert.Throws<IOException>(() => EncryptionReplacementCommit.Commit(stage, directory.Path, phase =>
+        {
+            if (phase == (committed ? "committed" : "renamed"))
+            {
+                throw new IOException("Capture the decision before repeated recovery.");
+            }
+        }));
+
+        byte[] decision = await File.ReadAllBytesAsync(intent, Ct);
+        File.Delete(directory.Path);
+        byte[]? lastReceipt = null;
+        foreach (string cut in new[] { "cleanup-native", "validated", "cleanup-native", "cleanup-receipt", "validated", "cleanup-native", "ownership-cleanup" })
+        {
+            bool recorded = File.Exists(receipt);
+            int freshBootstrap = 0;
+            bool interrupted = false;
+            Assert.Throws<IOException>(() => EncryptionReplacementIntent.Recover(directory.Path, phase =>
+            {
+                if (phase == "recovery-lock-created")
+                {
+                    freshBootstrap++;
+                }
+
+                if (phase == cut)
+                {
+                    interrupted = true;
+                    Assert.True(File.Exists(intent));
+                    Assert.Throws<IOException>(() =>
+                    {
+                        using var successor = new FileStream(directory.Path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+                    });
+                    throw new IOException("Interrupt another recovery owner at " + cut);
+                }
+            }, Ct));
+
+            Assert.True(interrupted);
+            Assert.Equal(recorded ? 0 : 1, freshBootstrap);
+            Assert.Equal(committed ? replacement : original, await File.ReadAllBytesAsync(directory.Path, Ct));
+            Assert.Equal(decision, await File.ReadAllBytesAsync(intent, Ct));
+            Assert.Equal(cut == "validated", File.Exists(native));
+            Assert.Equal(cut is "validated" or "cleanup-native", File.Exists(receipt));
+            Assert.Empty(Directory.GetFiles(directory.DirectoryPath, "*.jdw-replace-*"));
+            if (File.Exists(receipt))
+            {
+                byte[] currentReceipt = await File.ReadAllBytesAsync(receipt, Ct);
+                if (lastReceipt is not null)
+                {
+                    Assert.Equal(recorded, lastReceipt.AsSpan().SequenceEqual(currentReceipt));
+                }
+
+                lastReceipt = currentReceipt;
+            }
+        }
+
+        Assert.True(EncryptionReplacementIntent.Recover(directory.Path, cancellationToken: Ct));
+        Assert.False(EncryptionReplacementIntent.Recover(directory.Path, cancellationToken: Ct));
+        Assert.Equal(committed ? replacement : original, await File.ReadAllBytesAsync(directory.Path, Ct));
+        Assert.False(File.Exists(intent));
+        Assert.False(File.Exists(native));
+        Assert.False(File.Exists(receipt));
+        using RecoverableWriterLock successorOwner = RecoverableWriterLock.Acquire(directory.Path, "successor", "after-recovery");
+        Assert.True(File.Exists(native));
+        Assert.True(File.Exists(receipt));
+    }
+
     private sealed class CleanupDirectory : IDisposable
     {
         internal CleanupDirectory()
