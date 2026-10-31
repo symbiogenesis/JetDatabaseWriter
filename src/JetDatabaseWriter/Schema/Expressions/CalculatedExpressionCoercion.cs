@@ -210,7 +210,7 @@ internal static class CalculatedExpressionCoercion
     {
         if (context.IsCalculatingColumn && !IsNull(left) && !IsNull(right) && (left is string || right is string))
         {
-            return CompareValues(ToCalculatedText(left), ToCalculatedText(right), predicate, context.TextCollation);
+            return CompareValues(ToCalculatedComparisonText(left), ToCalculatedComparisonText(right), predicate, context.TextCollation);
         }
 
         return CompareValues(left, right, predicate, context.TextCollation);
@@ -431,6 +431,9 @@ internal static class CalculatedExpressionCoercion
             float number => ToCalculatedSpecialFloatingText(number) ?? ToText(number),
             _ => ToText(value),
         };
+
+    internal static string ToCalculatedComparisonText(object value)
+        => ToCalculatedText(CalculatedExpressionLogicalOperand.IntegerResult(value));
 
     private static string? ToCalculatedSpecialFloatingText(double value)
     {
