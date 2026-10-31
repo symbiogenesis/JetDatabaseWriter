@@ -846,8 +846,9 @@ compares pinned source/compacted native controls and fresh DAO authoring.
 
 `IN` stops at the first match and skips later errors; a Null needle skips its
 candidate list. A numeric/Text pair of literal results caches status 13 even for
-numeric-looking text. Fields and computed results instead compare formatted
-text. `IIf` retains its selected branch's literal discriminator; functions,
+numeric-looking text. Runtime Text opposite a numeric literal is converted
+numerically, preserving native conversion errors; other runtime numeric/Text
+pairs compare formatted text. `IIf` retains its selected branch's literal discriminator; functions,
 arithmetic and unary plus clear it. A directly adjacent signed numeric literal
 retains it, while parenthesized or space-separated negation clears it.
 Date/number pairs compare the raw serial. GUIDs retain their text identity.
