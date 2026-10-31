@@ -1664,7 +1664,7 @@ public sealed class CalculatedColumnWriteTests
     [InlineData(WriteMode.Direct)]
     [InlineData(WriteMode.AutoCommit)]
     [InlineData(WriteMode.ExplicitCommit)]
-    public async Task InsertAndUpdate_DateInTextExpression_StoresGeneralDate(WriteMode mode)
+    public async Task InsertAndUpdate_DateInTextExpression_StoresRegionalGeneralDate(WriteMode mode)
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -1698,8 +1698,8 @@ public sealed class CalculatedColumnWriteTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable table = await reader.ReadTableAsync("CalcDueText", cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal("Due 1/31/2020 6:30:05 PM", Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1)["Label"]);
-        Assert.Equal("Due 12/9/2021 7:05:00 AM", Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2)["Label"]);
+        Assert.Equal("Due 31.01.2020 18:30:05", Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1)["Label"]);
+        Assert.Equal("Due 09.12.2021 07:05:00", Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2)["Label"]);
     }
 
     [Fact]
