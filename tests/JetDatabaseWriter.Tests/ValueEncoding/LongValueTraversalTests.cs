@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.ValueEncoding;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
@@ -99,6 +100,55 @@ public sealed class LongValueTraversalTests
         {
             Assert.Equal(checked((byte)(index + 1)), payload[index]);
         }
+    }
+
+    [Theory]
+    [InlineData(8)]
+    [InlineData(9)]
+    [InlineData(16)]
+    [InlineData(17)]
+    [InlineData(128)]
+    [InlineData(129)]
+    public async Task CopyPayloadAsync_CancellationAfterCollidingRowReleasePreventsNextAcquisition(int cancelAfterRows)
+    {
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        int acquired = 0;
+        int released = 0;
+        byte[] page = new byte[5];
+        await using var output = new MemoryStream();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await LongValueStore.CopyPayloadAsync(
+                LongValueDescriptor.Chained(cancelAfterRows + 1, 16777216, 0),
+                ReadOnlyMemory<byte>.Empty,
+                output,
+                page.Length,
+                cancelAfterRows + 1,
+                cancelAfterRows + 1,
+                (pointer, _) =>
+                {
+                    Assert.Equal(acquired, released);
+                    acquired++;
+                    Assert.Equal(checked((uint)(acquired * 16777216L)), pointer);
+                    Wu32(page, 0, checked((uint)((acquired + 1) * 16777216L)));
+                    page[4] = checked((byte)acquired);
+                    return new ValueTask<LvalRowLocation>(new LvalRowLocation(page, 0, page.Length, null)
+                    {
+                        Lease = PageLease.Own(page, page.Length, buffer =>
+                        {
+                            Assert.Same(page, buffer);
+                            released++;
+                            if (released == cancelAfterRows)
+                            {
+                                cancellation.Cancel();
+                            }
+                        }),
+                    });
+                },
+                cancellation.Token));
+
+        Assert.Equal(cancelAfterRows, acquired);
+        Assert.Equal(acquired, released);
+        Assert.Equal(cancelAfterRows, output.Length);
     }
 
     [Theory]

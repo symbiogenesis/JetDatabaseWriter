@@ -233,11 +233,16 @@ module LongValueKernel {
   { }
   // Lookup stops at an empty slot only under the insertion-established chain
   // invariant. No random-hash or expected-time assumption enters correctness.
-  method ContainsVisited(entries: array<U32>, pointer: U32) returns (found: bool)
+  // Erased probes count each actual entries[slot] observation, including the
+  // terminating empty/matching slot. They do not count comparisons or CPU time.
+  method ContainsVisited(entries: array<U32>, pointer: U32) returns (found: bool, ghost probes: nat)
     requires entries.Length == 0 || VisitedTable(entries[..])
     ensures found <==> pointer != 0 && pointer in entries[..]
+    ensures probes <= entries.Length
+    ensures pointer == 0 ==> probes == 0
   {
     found := false;
+    probes := 0;
     if pointer == 0 { return; }
     var capacity := entries.Length as U32;
     var start := VisitedSlot(pointer, capacity);
@@ -248,10 +253,12 @@ module LongValueKernel {
       invariant capacity > 0 ==> slot < capacity
       invariant step < capacity ==> ProbeDistance(start as int, capacity as int, slot as int) == step as int
       invariant step <= capacity
+      invariant probes == step as int
       invariant forall previous: nat :: (previous < entries.Length &&
         ProbeDistance(start as int, capacity as int, previous) < step as int) ==> entries[previous] != pointer
       decreases capacity - step
     {
+      probes := probes + 1;
       var candidate := entries[slot];
       if candidate == 0 {
         forall target: nat | target < entries.Length
@@ -285,7 +292,7 @@ module LongValueKernel {
 
   // One bounded probe adds an absent identity or observes an existing one.
   // Zero denotes full, one present, and two inserted. Only insertion mutates.
-  method AddVisited(entries: array<U32>, pointer: U32) returns (result: Byte)
+  method AddVisited(entries: array<U32>, pointer: U32) returns (result: Byte, ghost probes: nat)
     requires VisitedTable(entries[..]) && pointer != 0
     modifies entries
     ensures result <= 2
@@ -298,8 +305,12 @@ module LongValueKernel {
       (value in entries[..] <==> value in old(entries[..]) || (result == 2 && value == pointer))
     ensures OccupiedCount(entries[..]) == OccupiedCount(old(entries[..])) + (if result == 2 then 1 else 0)
     ensures result == 0 ==> forall i: nat :: i < entries.Length ==> entries[i] != 0
+    ensures probes <= entries.Length
+    ensures entries.Length > 0 ==> probes > 0
+    ensures result == 0 ==> probes == entries.Length
   {
     result := 0;
+    probes := 0;
     var capacity := entries.Length as U32;
     var start := VisitedSlot(pointer, capacity);
     VisitedAllocationAndProbeBounds(pointer, capacity, 0);
@@ -310,11 +321,13 @@ module LongValueKernel {
       invariant slot < capacity
       invariant step < capacity ==> ProbeDistance(start as int, capacity as int, slot as int) == step as int
       invariant step <= capacity
+      invariant probes == step as int
       invariant forall previous: nat :: (previous < entries.Length &&
         ProbeDistance(start as int, capacity as int, previous) < step as int) ==>
           entries[previous] != 0 && entries[previous] != pointer
       decreases capacity - step
     {
+      probes := probes + 1;
       var candidate := entries[slot];
       if candidate == 0 {
         forall target: nat | target < entries.Length
@@ -358,7 +371,15 @@ module LongValueKernel {
   // Growth passes a distinct zero-filled destination larger than the source.
   // Each nonzero source slot adds at most one identity, so duplicate source
   // identities require no unproved occupancy premise from the source.
+  // Scanned slots count source-loop iterations; probes compose every called
+  // insertion's measured destination observations, including duplicate calls.
+  lemma AccumulateProbeWork(probes: nat, scanned: nat, capacity: nat, additional: nat)
+    requires probes <= scanned * capacity && additional <= capacity
+    ensures probes + additional <= (scanned + 1) * capacity
+  { }
+
   method RehashVisited(source: array<U32>, destination: array<U32>)
+      returns (ghost probes: nat, ghost scannedSlots: nat)
     requires source != destination
     requires source.Length < destination.Length <= 2147483647
     requires forall i: nat :: i < destination.Length ==> destination[i] == 0
@@ -368,7 +389,12 @@ module LongValueKernel {
     ensures OccupiedCount(destination[..]) == |VisitedMembers(source[..])|
     ensures forall value: U32 :: value != 0 ==>
       (value in destination[..] <==> value in source[..])
+    ensures probes <= source.Length * destination.Length
+    ensures scannedSlots == source.Length
   {
+    hide VisitedSlot, NextVisitedSlot, ProbeDistance;
+    probes := 0;
+    scannedSlots := 0;
     var index: U32 := 0;
     ZeroOccupiedCount(destination[..]);
     while index < source.Length as U32
@@ -378,10 +404,15 @@ module LongValueKernel {
       invariant forall value: U32 :: value != 0 ==>
         (value in destination[..] <==> value in source[..index])
       invariant OccupiedCount(destination[..]) <= index as int
+      invariant probes <= (index as int) * destination.Length
+      invariant scannedSlots == index as int
       decreases source.Length - index as int
     {
+      scannedSlots := scannedSlots + 1;
       if source[index] != 0 {
-        var added := AddVisited(destination, source[index]);
+        var added, insertionProbes := AddVisited(destination, source[index]);
+        AccumulateProbeWork(probes,index as int,destination.Length,insertionProbes);
+        probes := probes + insertionProbes;
         if added == 0 {
           AllOccupiedCount(destination[..]);
           assert false;
@@ -401,6 +432,16 @@ module LongValueKernel {
       VisitedTable(table) && DistinctVisited(table) &&
       OccupiedCount(table) == count as int && count as int <= |table| / 2 &&
       |table| <= 16 + 4 * (count as int))
+  }
+
+  lemma TrackedVisitedResourceFacts(table: seq<U32>, count: U32)
+    requires TrackedVisited(table,count)
+    ensures count as int <= |table| / 2
+    ensures |table| % 2 == 0
+    ensures |table| <= 16 + 4 * (count as int)
+    ensures |VisitedMembers(table)| == count as int && 0 !in VisitedMembers(table)
+  {
+    if |table| > 0 { DistinctOccupiedCount(table); }
   }
 
   // Decisions carry only the payload needed by their selected operation.
@@ -525,7 +566,7 @@ module LongValueKernel {
   // The original abstract controller postconditions use effective projections:
   // insertion supplies a count; every other result retains the caller count.
   method PrepareVisitedAdd(entries: array?<U32>, count: U32, pointer: U32)
-      returns (decision: U64)
+      returns (decision: U64, ghost probes: nat)
     requires TrackedVisited(VisitedSnapshot(entries), count)
     modifies entries
     ensures ValidVisitedDecision(decision)
@@ -549,7 +590,10 @@ module LongValueKernel {
       |VisitedSnapshot(entries)| < EffectiveVisitedAddCapacity(decision) as int <= 2147483646
     ensures VisitedAddResult(decision) != 2 ==> EffectiveVisitedAddCapacity(decision) == 0
     ensures VisitedAddResult(decision) == 3 ==> |VisitedSnapshot(entries)| >= 1073741824
+    ensures probes <= |VisitedSnapshot(entries)|
+    ensures pointer == 0 ==> probes == 0
   {
+    probes := 0;
     hide VisitedAddPayload, VisitedAddHasHighFlag, VisitedAddResult,
       VisitedInsertedDecision, VisitedGrowthDecision, ValidVisitedDecision,
       EffectiveVisitedAddCount, EffectiveVisitedAddCapacity;
@@ -567,7 +611,8 @@ module LongValueKernel {
       return;
     }
     if count >= (entries.Length as U32) / 2 {
-      var present := ContainsVisited(entries, pointer);
+      var present, lookupProbes := ContainsVisited(entries, pointer);
+      probes := lookupProbes;
       if present {
         decision := 0;
         return;
@@ -584,7 +629,8 @@ module LongValueKernel {
       }
       return;
     }
-    var added := AddVisited(entries, pointer);
+    var added, insertionProbes := AddVisited(entries, pointer);
+    probes := insertionProbes;
     if added == 0 {
       AllOccupiedCount(entries[..]);
       assert false;
@@ -599,7 +645,7 @@ module LongValueKernel {
   // Allocation is the only intervening effect: distinct, zero-filled storage
   // of exactly the requested size. Until it succeeds the source is unchanged.
   method CompleteVisitedGrowth(source: array?<U32>, destination: array<U32>,
-      count: U32, pointer: U32) returns (nextCount: U32)
+      count: U32, pointer: U32) returns (nextCount: U32, ghost probes: nat, ghost scannedSlots: nat)
     requires TrackedVisited(VisitedSnapshot(source), count)
     requires count as int == |VisitedSnapshot(source)| / 2
     requires pointer != 0 && pointer !in VisitedSnapshot(source)
@@ -612,15 +658,20 @@ module LongValueKernel {
     ensures nextCount as int == count as int + 1
     ensures forall value: U32 :: value != 0 ==>
       (value in destination[..] <==> value in VisitedSnapshot(source) || value == pointer)
+    ensures probes <= (|VisitedSnapshot(source)| + 1) * destination.Length
+    ensures scannedSlots == |VisitedSnapshot(source)|
   {
+    probes := 0;
+    scannedSlots := 0;
     if source != null && (source.Length as U32) > 0 {
       DistinctOccupiedCount(source[..]);
-      RehashVisited(source, destination);
+      probes, scannedSlots := RehashVisited(source, destination);
     } else {
       ZeroOccupiedCount(destination[..]);
     }
     assert OccupiedCount(destination[..]) == count as int;
-    var added := AddVisited(destination, pointer);
+    var added, insertionProbes := AddVisited(destination, pointer);
+    probes := probes + insertionProbes;
     if added == 0 {
       AllOccupiedCount(destination[..]);
       assert false;
