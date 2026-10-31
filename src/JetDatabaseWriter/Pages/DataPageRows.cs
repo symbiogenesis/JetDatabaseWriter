@@ -25,52 +25,30 @@ internal static class DataPageRows
     /// <exception cref="JetCorruptDataException">The row directory or deleted slot has invalid bounds.</exception>
     internal static void ReclaimDeletedRowSpace(JetFormat format, byte[] page, int rowIndex, bool clearFreedSpace)
     {
-        int rows = Ru16(page, format.DataPage.NumRows);
-        int directoryEnd = format.DataPage.RowsStart + (rows * 2);
-        if (rows > Constants.DataPage.MaxRowsPerPage || directoryEnd > format.PageSize
-            || !DataPageRows.TryGetSlotBound(format, page, rowIndex, out RowBound removed))
+        DataPageKernel.PrepareReclaim(
+            page,
+            (uint)format.PageSize,
+            (uint)format.DataPage.NumRows,
+            (uint)format.DataPage.RowsStart,
+            rowIndex < 0 ? uint.MaxValue : (uint)rowIndex,
+            out uint rows,
+            out uint first,
+            out uint start,
+            out uint end);
+        if (rows == 0)
         {
             throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The deleted row has invalid page bounds.");
         }
 
-        int first = format.PageSize;
-        for (int index = 0; index < rows; index++)
-        {
-            int start = Ru16(page, format.DataPage.RowsStart + (index * 2)) & Constants.DataPage.RowOffsetMask;
-            if (start > 0 && start < first)
-            {
-                first = start;
-            }
-        }
-
-        if (first < directoryEnd)
-        {
-            throw new JetCorruptDataException(JetErrorCode.CorruptPage, "The data page row directory overlaps its payload.");
-        }
-
-        int end = removed.RowStart + removed.RowSize;
-        Buffer.BlockCopy(page, first, page, first + removed.RowSize, removed.RowStart - first);
+        int removedSize = checked((int)(end - start));
+        int firstByte = checked((int)first);
+        Buffer.BlockCopy(page, firstByte, page, firstByte + removedSize, checked((int)(start - first)));
         if (clearFreedSpace)
         {
-            Array.Clear(page, first, removed.RowSize);
+            Array.Clear(page, firstByte, removedSize);
         }
 
-        for (int index = 0; index < rows; index++)
-        {
-            int position = format.DataPage.RowsStart + (index * 2);
-            int raw = Ru16(page, position);
-            int start = raw & Constants.DataPage.RowOffsetMask;
-            if (index == rowIndex)
-            {
-                Wu16(page, position, Constants.DataPage.NonLiveRowFlags | end);
-            }
-            else if (start >= first && start <= removed.RowStart)
-            {
-                Wu16(page, position, (raw & ~Constants.DataPage.RowOffsetMask) | (start + removed.RowSize));
-            }
-        }
-
-        Wu16(page, 2, first + removed.RowSize - directoryEnd);
+        DataPageKernel.RewriteReclaim(page, (uint)format.DataPage.RowsStart, (uint)rowIndex, rows, first, start, end);
     }
 
     /// <summary>
