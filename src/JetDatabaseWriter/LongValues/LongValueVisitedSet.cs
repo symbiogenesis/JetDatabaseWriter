@@ -16,13 +16,19 @@ internal struct LongValueVisitedSet
     /// <exception cref="JetOperationException">The table violates its insertion capacity invariant.</exception>
     internal bool Add(uint pointer)
     {
-        if (pointer == 0 || (this.entries is not null && LongValueKernel.ContainsVisited(this.entries, pointer)))
+        if (pointer == 0)
         {
             return false;
         }
 
         if (this.entries is null || this.count >= this.entries.Length / 2)
         {
+            // A duplicate at the growth boundary must not allocate a new table.
+            if (this.entries is not null && LongValueKernel.ContainsVisited(this.entries, pointer))
+            {
+                return false;
+            }
+
             uint capacity = LongValueKernel.NextVisitedCapacity(checked((uint)(this.entries?.Length ?? 0)));
             if (capacity == 0)
             {
@@ -38,7 +44,13 @@ internal struct LongValueVisitedSet
             this.entries = next;
         }
 
-        if (!LongValueKernel.InsertVisited(this.entries, pointer))
+        byte added = LongValueKernel.AddVisited(this.entries, pointer);
+        if (added == 1)
+        {
+            return false;
+        }
+
+        if (added != 2)
         {
             throw new JetOperationException(JetErrorCode.InvalidOperationState, "The long-value row-identity table is unexpectedly full.");
         }

@@ -148,10 +148,10 @@ namespace JetDatabaseWriter.Verification {
       }
       return found;
     }
-    public static bool InsertVisited(uint[] entries, uint pointer)
+    public static byte AddVisited(uint[] entries, uint pointer)
     {
-      bool inserted = false;
-      inserted = false;
+      byte result = 0;
+      result = (byte)(0);
       uint _0_capacity;
       _0_capacity = (uint)(entries).LongLength;
       uint _1_start;
@@ -161,15 +161,21 @@ namespace JetDatabaseWriter.Verification {
       uint _3_step;
       _3_step = 0U;
       while ((_3_step) < (_0_capacity)) {
-        if (((entries)[(int)(_2_slot)]) == (0U)) {
+        uint _4_candidate;
+        _4_candidate = (entries)[(int)(_2_slot)];
+        if ((_4_candidate) == (0U)) {
           (entries)[(int)((_2_slot))] = pointer;
-          inserted = true;
-          return inserted;
+          result = (byte)(2);
+          return result;
+        }
+        if ((_4_candidate) == (pointer)) {
+          result = (byte)(1);
+          return result;
         }
         _2_slot = JetDatabaseWriter.Verification.LongValueKernel.NextVisitedSlot(_2_slot, _0_capacity);
         _3_step = (_3_step) + (1U);
       }
-      return inserted;
+      return result;
     }
     public static void RehashVisited(uint[] source, uint[] destination)
     {
@@ -177,10 +183,10 @@ namespace JetDatabaseWriter.Verification {
       _0_index = 0U;
       while ((_0_index) < ((uint)(source).LongLength)) {
         if (((source)[(int)(_0_index)]) != (0U)) {
-          bool _1_inserted;
-          bool _out0;
-          _out0 = JetDatabaseWriter.Verification.LongValueKernel.InsertVisited(destination, (source)[(int)(_0_index)]);
-          _1_inserted = _out0;
+          byte _1_added;
+          byte _out0;
+          _out0 = JetDatabaseWriter.Verification.LongValueKernel.AddVisited(destination, (source)[(int)(_0_index)]);
+          _1_added = _out0;
         }
         _0_index = (_0_index) + (1U);
       }

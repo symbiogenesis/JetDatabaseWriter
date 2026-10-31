@@ -115,6 +115,41 @@ module LongValueKernel {
   ghost function OccupiedCount(table: seq<U32>): nat {
     if |table| == 0 then 0 else (if table[0] == 0 then 0 else 1) + OccupiedCount(table[1..])
   }
+  ghost function VisitedMembers(table: seq<U32>): set<U32> {
+    set value: U32 | value in table && value != 0
+  }
+  ghost predicate DistinctVisited(table: seq<U32>) {
+    forall first: nat, second: nat :: first < second < |table| && table[first] != 0 ==>
+      table[first] != table[second]
+  }
+  lemma DistinctOccupiedCount(table: seq<U32>)
+    requires DistinctVisited(table)
+    ensures OccupiedCount(table) == |VisitedMembers(table)|
+  {
+    if |table| > 0 {
+      DistinctOccupiedCount(table[1..]);
+      if table[0] != 0 {
+        assert table[0] !in table[1..];
+        assert VisitedMembers(table) == VisitedMembers(table[1..]) + {table[0]};
+      } else {
+        assert VisitedMembers(table) == VisitedMembers(table[1..]);
+      }
+    }
+  }
+  lemma EmptyInsertionPreservesDistinct(table: seq<U32>, slot: nat, pointer: U32)
+    requires DistinctVisited(table) && slot < |table| && table[slot] == 0
+    requires pointer != 0 && pointer !in table
+    ensures DistinctVisited(table[slot := pointer])
+  {
+    var after := table[slot := pointer];
+    forall first: nat, second: nat |
+        first < second < |table| && after[first] != 0
+      ensures after[first] != after[second]
+    {
+      if first == slot { assert table[second] != pointer; }
+      else if second == slot { assert table[first] != pointer; }
+    }
+  }
 
   lemma EmptyInsertionIncreasesCount(table: seq<U32>, slot: nat, pointer: U32)
     requires slot < |table| && table[slot] == 0 && pointer != 0
@@ -248,18 +283,23 @@ module LongValueKernel {
     }
   }
 
-  // A false result leaves a full table untouched. The wrapper supplies an
-  // absent nonzero identity after lookup and grows before reaching half load.
-  method InsertVisited(entries: array<U32>, pointer: U32) returns (inserted: bool)
+  // One bounded probe adds an absent identity or observes an existing one.
+  // Zero denotes full, one present, and two inserted. Only insertion mutates.
+  method AddVisited(entries: array<U32>, pointer: U32) returns (result: Byte)
     requires VisitedTable(entries[..]) && pointer != 0
     modifies entries
+    ensures result <= 2
     ensures VisitedTable(entries[..])
-    ensures inserted ==> forall value: U32 ::
-      (value in entries[..] && value != 0) <==> ((value in old(entries[..]) && value != 0) || value == pointer)
-    ensures !inserted ==> entries[..] == old(entries[..]) && forall i: nat :: i < entries.Length ==> entries[i] != 0
-    ensures inserted ==> OccupiedCount(entries[..]) == OccupiedCount(old(entries[..])) + 1
+    ensures DistinctVisited(old(entries[..])) ==> DistinctVisited(entries[..])
+    ensures result == 1 <==> pointer in old(entries[..])
+    ensures result != 2 ==> entries[..] == old(entries[..])
+    ensures result == 2 ==> pointer !in old(entries[..])
+    ensures forall value: U32 :: value != 0 ==>
+      (value in entries[..] <==> value in old(entries[..]) || (result == 2 && value == pointer))
+    ensures OccupiedCount(entries[..]) == OccupiedCount(old(entries[..])) + (if result == 2 then 1 else 0)
+    ensures result == 0 ==> forall i: nat :: i < entries.Length ==> entries[i] != 0
   {
-    inserted := false;
+    result := 0;
     var capacity := entries.Length as U32;
     var start := VisitedSlot(pointer, capacity);
     VisitedAllocationAndProbeBounds(pointer, capacity, 0);
@@ -271,39 +311,61 @@ module LongValueKernel {
       invariant step < capacity ==> ProbeDistance(start as int, capacity as int, slot as int) == step as int
       invariant step <= capacity
       invariant forall previous: nat :: (previous < entries.Length &&
-        ProbeDistance(start as int, capacity as int, previous) < step as int) ==> entries[previous] != 0
+        ProbeDistance(start as int, capacity as int, previous) < step as int) ==>
+          entries[previous] != 0 && entries[previous] != pointer
       decreases capacity - step
     {
-      if entries[slot] == 0 {
+      var candidate := entries[slot];
+      if candidate == 0 {
+        forall target: nat | target < entries.Length
+          ensures entries[target] != pointer
+        {
+          ProbeDistanceBounds(start as int, capacity as int, target);
+          var distance := ProbeDistance(start as int, capacity as int, target);
+          if entries[target] == pointer {
+            if distance < step as int { }
+            else if distance == step as int {
+              ProbeDistanceIsInjective(start as int, capacity as int, target, slot as int);
+            }
+            else {
+              assert entries[slot] != 0;
+            }
+          }
+        }
         ghost var before := entries[..];
         EmptyInsertionPreservesTable(before, slot as int, pointer);
         EmptyInsertionIncreasesCount(before, slot as int, pointer);
         EmptyInsertionHasExactMembers(before, slot as int, pointer);
+        if DistinctVisited(before) {
+          EmptyInsertionPreservesDistinct(before, slot as int, pointer);
+        }
         entries[slot] := pointer;
         assert entries[..] == before[slot := pointer];
-        inserted := true;
+        result := 2;
         return;
       }
+      if candidate == pointer { result := 1; return; }
       ProbeDistanceAdvances(start as int, capacity, slot);
       slot := NextVisitedSlot(slot, capacity);
       step := step + 1;
     }
     forall target: nat | target < entries.Length
-      ensures entries[target] != 0
+      ensures entries[target] != 0 && entries[target] != pointer
     {
       ProbeDistanceBounds(start as int, capacity as int, target);
     }
   }
-
   // Growth passes a distinct zero-filled destination larger than the source.
-  // Each insertion consumes one empty slot, including with duplicate source
-  // identities, so no unproved occupancy premise is needed from the source.
+  // Each nonzero source slot adds at most one identity, so duplicate source
+  // identities require no unproved occupancy premise from the source.
   method RehashVisited(source: array<U32>, destination: array<U32>)
     requires source != destination
     requires source.Length < destination.Length <= 2147483647
     requires forall i: nat :: i < destination.Length ==> destination[i] == 0
     modifies destination
     ensures VisitedTable(destination[..])
+    ensures DistinctVisited(destination[..])
+    ensures OccupiedCount(destination[..]) == |VisitedMembers(source[..])|
     ensures forall value: U32 :: value != 0 ==>
       (value in destination[..] <==> value in source[..])
   {
@@ -312,20 +374,23 @@ module LongValueKernel {
     while index < source.Length as U32
       invariant index as int <= source.Length
       invariant VisitedTable(destination[..])
+      invariant DistinctVisited(destination[..])
       invariant forall value: U32 :: value != 0 ==>
         (value in destination[..] <==> value in source[..index])
       invariant OccupiedCount(destination[..]) <= index as int
       decreases source.Length - index as int
     {
       if source[index] != 0 {
-        var inserted := InsertVisited(destination, source[index]);
-        if !inserted {
+        var added := AddVisited(destination, source[index]);
+        if added == 0 {
           AllOccupiedCount(destination[..]);
           assert false;
         }
       }
       index := index + 1;
     }
+    DistinctOccupiedCount(destination[..]);
+    assert VisitedMembers(destination[..]) == VisitedMembers(source[..]);
   }
 
   lemma ChainPayloadMakesBoundedProgress(total: U32, copied: U32, pageLength: U32,

@@ -164,23 +164,32 @@ native row identity and the containing parser's resource/ownership obligations
 explicit. Deterministic hash correctness does not establish expected
 constant-time lookup for adversarial files.
 
-Production now calls generated `ContainsVisited`, `InsertVisited` and
+Production now calls generated `ContainsVisited`, `AddVisited` and
 `RehashVisited` array operations. Their contracts establish exact nonzero
 membership, preservation of the probe-chain invariant, occupied-slot progress
-and unchanged full-table refusal. Rehash constructs a valid destination from
-any source array in distinct, larger, initially zero-filled storage. The
-wrapper supplies absent identities and maintains the half-load growth policy;
+and unchanged duplicate/full-table outcomes. `AddVisited` distinguishes a new
+identity, an existing identity and a full table in one scan. Below half load,
+the wrapper uses that scan directly; at the growth threshold it checks for a
+duplicate before allocating. Rehash constructs a valid destination from any
+source array in distinct, larger, initially zero-filled storage, including
+duplicate source identities. Its output has unique nonzero entries and an
+occupied count equal to the number of distinct nonzero source identities. The
+wrapper maintains occupied-count bookkeeping and the half-load growth policy;
 those caller obligations remain manually reviewed rather than proved.
 
-Resource composition must also count work inside an insertion. `Add` performs
-a membership probe, possible rehash, and insertion probe using deterministic
-hashing. Half occupancy does not bound every collision cluster by a constant.
+Resource composition must also count work inside an insertion. Growth still
+requires lookup, rehash and insertion work using deterministic hashing.
+Half occupancy does not bound every collision cluster by a constant.
 The containing `LongValueStore.CopyPayloadAsync` checks cancellation between
 rows; the synchronous probe and rehash loops run inside one row. Under V8/S1,
 assess total probes and cancellation latency on colliding valid identities,
 and count both arrays while growth holds the old and new tables. A terminating
 array loop and a row limit do not establish a useful latency bound. Preserve
 exact cycle refusal when evaluating any alternative representation.
+
+The single-scan change removes the separate absence lookup on ordinary
+insertions. It does not change the geometric array allocation policy or
+establish a public read speedup; hosted comparisons own timing acceptance.
 
 V8 owns the remaining composition into the full named parser. Validate the
 exact source using the integrity-pinned verifier, audit, negative controls and

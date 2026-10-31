@@ -111,6 +111,43 @@ public sealed class LongValueTraversalTests
     }
 
     [Fact]
+    public void VisitedSet_DuplicatesAtHalfLoadDoNotAllocate()
+    {
+        LongValueVisitedSet entries = default;
+        for (uint pointer = 1; pointer <= 8; pointer++)
+        {
+            Assert.True(entries.Add(pointer));
+        }
+
+        Assert.False(entries.Add(1));
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        bool inserted = false;
+        for (int attempt = 0; attempt < 64; attempt++)
+        {
+            inserted |= entries.Add(1);
+        }
+
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.False(inserted);
+        Assert.Equal(0, allocated);
+        Assert.True(entries.Add(9));
+        for (uint pointer = 1; pointer <= 9; pointer++)
+        {
+            Assert.False(entries.Add(pointer));
+        }
+    }
+
+    [Fact]
+    public void GeneratedVisitedSet_DuplicateInsertionLeavesTableUnchanged()
+    {
+        uint[] entries = new uint[16];
+        Assert.Equal((byte)2, LongValueKernel.AddVisited(entries, uint.MaxValue));
+        uint[] before = (uint[])entries.Clone();
+        Assert.Equal((byte)1, LongValueKernel.AddVisited(entries, uint.MaxValue));
+        Assert.Equal(before, entries);
+    }
+
+    [Fact]
     public void GeneratedVisitedSet_PreservesWrappedClustersAndRehashMembership()
     {
         uint[] source = new uint[16];
@@ -123,7 +160,7 @@ public sealed class LongValueTraversalTests
                 continue;
             }
 
-            Assert.True(LongValueKernel.InsertVisited(source, pointer));
+            Assert.Equal((byte)2, LongValueKernel.AddVisited(source, pointer));
             expected.Add(pointer);
             foreach (uint member in expected)
             {
@@ -132,7 +169,13 @@ public sealed class LongValueTraversalTests
         }
 
         uint[] before = (uint[])source.Clone();
-        Assert.False(LongValueKernel.InsertVisited(source, uint.MaxValue));
+        foreach (uint pointer in expected)
+        {
+            Assert.Equal((byte)1, LongValueKernel.AddVisited(source, pointer));
+        }
+
+        Assert.Equal(before, source);
+        Assert.Equal((byte)0, LongValueKernel.AddVisited(source, uint.MaxValue));
         Assert.Equal(before, source);
         uint[] destination = new uint[33];
         LongValueKernel.RehashVisited(source, destination);
@@ -143,8 +186,27 @@ public sealed class LongValueTraversalTests
         }
 
         Assert.False(LongValueKernel.ContainsVisited(destination, uint.MaxValue));
-        Assert.True(LongValueKernel.InsertVisited(destination, uint.MaxValue));
+        Assert.Equal((byte)2, LongValueKernel.AddVisited(destination, uint.MaxValue));
         Assert.True(LongValueKernel.ContainsVisited(destination, uint.MaxValue));
+    }
+
+    [Fact]
+    public void GeneratedVisitedSet_RehashesArbitraryDuplicateSourceIdentities()
+    {
+        uint[] source = [7, 0, 7, uint.MaxValue, 0, 7, 11, uint.MaxValue];
+        uint[] before = (uint[])source.Clone();
+        uint[] destination = new uint[17];
+        LongValueKernel.RehashVisited(source, destination);
+        Assert.Equal(before, source);
+        Assert.Equal(3, Array.FindAll(destination, static value => value != 0).Length);
+        foreach (uint pointer in new uint[] { 7, 11, uint.MaxValue })
+        {
+            Assert.True(LongValueKernel.ContainsVisited(destination, pointer));
+            Assert.Equal((byte)1, LongValueKernel.AddVisited(destination, pointer));
+        }
+
+        Assert.False(LongValueKernel.ContainsVisited(destination, 1));
+        Assert.Equal((byte)2, LongValueKernel.AddVisited(destination, 1));
     }
 
     [Fact]
@@ -153,9 +215,10 @@ public sealed class LongValueTraversalTests
         uint[] singleton = new uint[1];
         Assert.False(LongValueKernel.ContainsVisited(singleton, 0));
         Assert.False(LongValueKernel.ContainsVisited(singleton, 1));
-        Assert.True(LongValueKernel.InsertVisited(singleton, uint.MaxValue));
+        Assert.Equal((byte)2, LongValueKernel.AddVisited(singleton, uint.MaxValue));
         Assert.True(LongValueKernel.ContainsVisited(singleton, uint.MaxValue));
-        Assert.False(LongValueKernel.InsertVisited(singleton, 1));
+        Assert.Equal((byte)1, LongValueKernel.AddVisited(singleton, uint.MaxValue));
+        Assert.Equal((byte)0, LongValueKernel.AddVisited(singleton, 1));
         Assert.Equal(uint.MaxValue, singleton[0]);
         uint[] empty = new uint[16];
         uint[] destination = new uint[32];
