@@ -387,39 +387,24 @@ internal static class UsageMap
 
     private static bool TryEnumerateBitmapPages(byte[] bitmap, int offset, int byteCount, long basePage, long totalPages, long minimumPageNumber, bool strict, List<long> pageNumbers)
     {
-        for (int index = 0; index < byteCount; index++)
+        if (offset < 0 || byteCount < 0
+            || !UsageMapKernel.HasScanRange((uint)bitmap.Length, (uint)offset, (uint)byteCount, basePage, 0))
         {
-            int bits = bitmap[offset + index];
-            if (bits == 0)
-            {
-                continue;
-            }
-
-            long pageNumber = basePage + (index * 8);
-            do
-            {
-                if ((bits & 1) != 0)
-                {
-                    if (pageNumber < minimumPageNumber || pageNumber >= totalPages)
-                    {
-                        if (strict)
-                        {
-                            return false;
-                        }
-                    }
-                    else
-                    {
-                        pageNumbers.Add(pageNumber);
-                    }
-                }
-
-                bits >>= 1;
-                pageNumber++;
-            }
-            while (bits != 0);
+            return false;
         }
 
-        return true;
+        ulong continuation = 0;
+        while (true)
+        {
+            continuation = UsageMapKernel.NextBitmapPage(bitmap, (uint)offset, (uint)byteCount, basePage, totalPages, minimumPageNumber, strict, continuation);
+            byte state = UsageMapKernel.State(continuation);
+            if (state != 2)
+            {
+                return state == 1;
+            }
+
+            pageNumbers.Add(UsageMapKernel.Page(basePage, continuation));
+        }
     }
 
     private static ulong GetInlineBitPosition(byte[] usageMapPage, int rowStart, int rowSize, long pageNumber)
