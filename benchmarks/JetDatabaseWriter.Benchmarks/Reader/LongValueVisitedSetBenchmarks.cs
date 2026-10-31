@@ -9,6 +9,7 @@ using JetDatabaseWriter.Verification;
 
 /// <summary>Compares production visited control with its original count/growth wrapper.</summary>
 [MemoryDiagnoser]
+[DisassemblyDiagnoser(maxDepth: 4, printSource: true, exportCombinedDisassemblyReport: true)]
 public class LongValueVisitedSetBenchmarks
 {
     private uint[] pointers = [];
