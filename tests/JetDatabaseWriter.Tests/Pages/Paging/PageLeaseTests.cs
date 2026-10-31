@@ -75,8 +75,13 @@ public sealed class PageLeaseTests
             workers[index] = DisposeAsync();
         }
 
+        var allWorkers = Task.WhenAll(workers);
         start.SetResult();
-        await Task.WhenAll(workers).WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        // Retain worker failures and finish cleanup even after test cancellation.
+        await Assert.MultipleAsync(
+            async () => await allWorkers.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken),
+            async () => await allWorkers.WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None));
         Assert.Equal(1, released);
         Assert.Equal(0, returned);
         Assert.Equal(bytes, survivor.Memory.ToArray());
@@ -114,28 +119,44 @@ public sealed class PageLeaseTests
             workers[index] = AcquireAndReleaseAsync();
         }
 
-        start.SetResult();
+        var allWorkers = Task.WhenAll(workers);
+        bool producerReleased = false;
         try
         {
-            await allAcquired.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            start.SetResult();
+            await Assert.MultipleAsync(
+                async () =>
+                {
+                    try
+                    {
+                        await allAcquired.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+                        Assert.Equal(0, returned);
+                    }
+                    finally
+                    {
+                        release.TrySetResult();
+                    }
+                },
+                async () => await allWorkers.WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None));
+            Assert.Equal(workers.Length, released);
             Assert.Equal(0, returned);
+            using PageLease last = frame.Acquire(() => Interlocked.Increment(ref released));
+            Assert.Equal(bytes, last.Memory.ToArray());
+            producerReleased = true;
+            frame.Release();
+            Assert.Equal(0, returned);
+            last.Dispose();
+            Assert.Equal(workers.Length + 1, released);
+            Assert.Equal(1, returned);
+            Assert.Throws<ObjectDisposedException>(() => frame.Acquire());
         }
         finally
         {
-            release.SetResult();
+            if (!producerReleased)
+            {
+                frame.Release();
+            }
         }
-
-        await Task.WhenAll(workers).WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
-        Assert.Equal(workers.Length, released);
-        Assert.Equal(0, returned);
-        using PageLease last = frame.Acquire(() => Interlocked.Increment(ref released));
-        Assert.Equal(bytes, last.Memory.ToArray());
-        frame.Release();
-        Assert.Equal(0, returned);
-        last.Dispose();
-        Assert.Equal(workers.Length + 1, released);
-        Assert.Equal(1, returned);
-        Assert.Throws<ObjectDisposedException>(() => frame.Acquire());
 
         async Task AcquireAndReleaseAsync()
         {
