@@ -61,6 +61,20 @@ internal static class CalculatedExpressionRegionalProfile
         return parenthesized ? "-" + result : result;
     }
 
+    internal static bool TryNumber(string text, out double number)
+    {
+        try
+        {
+            number = CalculatedExpressionCoercion.ToDouble(text);
+            return true;
+        }
+        catch (Exception exception) when (exception is FormatException or InvalidCastException or OverflowException)
+        {
+            number = 0d;
+            return false;
+        }
+    }
+
     internal static string DateText(DateTime value)
     {
         DateTimeFormatInfo format = Culture.DateTimeFormat;
@@ -86,14 +100,28 @@ internal static class CalculatedExpressionRegionalProfile
 
         // Access accepts slash and hyphen dates across profiles, but a dot date
         // is legal only where the user date separator is itself a dot.
-        if (text.Contains('.', StringComparison.Ordinal) && Culture.DateTimeFormat.DateSeparator != ".")
+        if (text.Contains('.', StringComparison.Ordinal) && Culture.DateTimeFormat.DateSeparator != "." && !ContainsLetter(text))
         {
             throw new FormatException("The date separator does not match the regional settings.");
         }
 
-        if (Culture.TwoLetterISOLanguageName == "ja" && text.Contains('月', StringComparison.Ordinal) && text.Contains(' ', StringComparison.Ordinal))
+        string[] parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 3 && parts[1].EndsWith('月')
+            && int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out _)
+            && int.TryParse(parts[1].AsSpan(0, parts[1].Length - 1), NumberStyles.None, CultureInfo.InvariantCulture, out _)
+            && int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out _))
         {
             throw new FormatException("The localized month name is not a native Japanese date spelling.");
+        }
+
+        if (Culture.TwoLetterISOLanguageName == "en")
+        {
+            if (text.Contains('年', StringComparison.Ordinal))
+            {
+                throw new FormatException("Japanese date units are not a native English date spelling.");
+            }
+
+            text = text.Replace("Sept.", "Sep", StringComparison.OrdinalIgnoreCase);
         }
 
         if (!DateTime.TryParse(text, Culture, styles, out DateTime date)
@@ -103,6 +131,19 @@ internal static class CalculatedExpressionRegionalProfile
         }
 
         return date.Date == DateTime.MinValue.Date ? new DateTime(1899, 12, 30) + date.TimeOfDay : date;
+    }
+
+    private static bool ContainsLetter(string text)
+    {
+        foreach (char character in text)
+        {
+            if (char.IsLetter(character))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     internal static CultureInfo? Exchange(CultureInfo? culture)

@@ -112,6 +112,41 @@ $tables['RegionalCase'] = @(
     @('Upper', 'UCase("σςßſıİ𐐨")', 10),
     @('Lower', 'LCase("ΣΣẞSıİ𐐀")', 10)
 )
+$tables['RegionalGrammar'] = @(
+    @('PunctuatedMonthDay', 'Day("Jan. 4, 2020")', 7),
+    @('PunctuatedMonthYear', 'Year("4 Sept. 2020")', 7),
+    @('NumericDotDate', 'Day("03.04.2020")', 7),
+    @('JapaneseMonthOrder', 'Day("4 3月 2020")', 7),
+    @('JapaneseUnitDate', 'Day("2020年 3月4日")', 7),
+    @('LogicalCommaHalf', '"0,5" And True', 7),
+    @('LogicalDotHalf', '"0.5" And True', 7),
+    @('LogicalCurrencyHalf', '"$0.5" And True', 7),
+    @('LogicalParenthesizedCurrencyHalf', '"($0.5)" And True', 7),
+    @('DateNumericText', '#12:00:00# = "0.5"', 7),
+    @('DateCurrencyText', '#12:00:00# = "$0.5"', 7),
+    @('DateCommaText', '#12:00:00# = "0,5"', 7),
+    @('DateTimeText', '#12:00:00# = "12:00:00"', 7),
+    @('DateInvalidText', '#12:00:00# = "bad"', 7),
+    @('DateFormattedText', '#12:00:00# = "12:00:00 PM"', 7),
+    @('DateFullText', '#1/4/1900# = "1/4/1900"', 7),
+    @('DateTextOrder', '#12:00:00# < "bad"', 7),
+    @('DateSerialText', '#1/4/1900# = "5"', 7),
+    @('DateSerialNumber', '#1/4/1900# = 5', 7),
+    @('DateFractionNumber', '#12:00:00# = 0.5', 7)
+)
+$tables['RegionalBooleanResults'] = @(
+    @('EnglishTrue', '"True"', 1),
+    @('EnglishFalse', '"False"', 1),
+    @('GermanTrue', '"Wahr"', 1),
+    @('GermanFalse', '"Falsch"', 1),
+    @('FrenchTrue', '"Vrai"', 1),
+    @('FrenchFalse', '"Faux"', 1),
+    @('IntrinsicTrueText', 'IsNull(Null)&""', 1),
+    @('NumericDotHalf', '"0.5"', 1),
+    @('NumericCommaHalf', '"0,5"', 1),
+    @('NumericOne', '"1"', 1),
+    @('InvalidText', '"bad"', 1)
+)
 $engine = New-Object -ComObject DAO.DBEngine.120
 $observations = $null
 $extended = [Collections.Generic.List[object]]::new()

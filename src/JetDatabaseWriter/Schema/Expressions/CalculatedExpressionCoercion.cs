@@ -208,8 +208,7 @@ internal static class CalculatedExpressionCoercion
 
     internal static object CompareValues(object left, object right, Func<int, bool> predicate, CalculatedExpressionEvaluationContext context)
     {
-        if (context.IsCalculatingColumn && !IsNull(left) && !IsNull(right) && (left is string || right is string)
-            && left is not (NativeDate or DateTime) && right is not (NativeDate or DateTime))
+        if (context.IsCalculatingColumn && !IsNull(left) && !IsNull(right) && (left is string || right is string))
         {
             return CompareValues(ToCalculatedText(left), ToCalculatedText(right), predicate, context.TextCollation);
         }

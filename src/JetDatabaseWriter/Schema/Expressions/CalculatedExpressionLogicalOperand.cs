@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
-using System.Globalization;
 using JetDatabaseWriter.Models;
 
 /// <summary>Table expressions coerce logical operands to Boolean before AND, OR and NOT.</summary>
@@ -12,7 +11,7 @@ internal static class CalculatedExpressionLogicalOperand
     internal static object Normalize(object value) => value switch
     {
         DBNull or CalculatedError or bool => value,
-        string text => !double.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out double number) || FloatingTruth(number),
+        string text => !CalculatedExpressionRegionalProfile.TryNumber(text, out double number) || FloatingTruth(number),
         Guid => true,
         NativeDate date => FloatingTruth(date.Serial),
         DateTime date => FloatingTruth(date.ToOADate()),
