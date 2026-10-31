@@ -147,7 +147,8 @@ internal static class CalculatedExpressionDateTimeFunctions
             throw new ArgumentOutOfRangeException(nameof(function), "The month must be between 1 and 12.");
         }
 
-        return abbreviate ? CultureInfo.InvariantCulture.DateTimeFormat.GetAbbreviatedMonthName(month) : CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(month);
+        DateTimeFormatInfo format = CalculatedExpressionRegionalProfile.Culture.DateTimeFormat;
+        return abbreviate ? format.GetAbbreviatedMonthName(month) : format.GetMonthName(month);
     }
 
     private static string EvaluateWeekdayName(CalculatedFunctionInvocation function)
@@ -192,7 +193,7 @@ internal static class CalculatedExpressionDateTimeFunctions
     {
         if (year < 100)
         {
-            int maximum = new GregorianCalendar().TwoDigitYearMax;
+            int maximum = CalculatedExpressionRegionalProfile.Culture.DateTimeFormat.Calendar.TwoDigitYearMax;
             int century = maximum - (maximum % 100);
             year += century - (year > maximum % 100 ? 100 : 0);
         }
@@ -267,8 +268,8 @@ internal static class CalculatedExpressionDateTimeFunctions
 
         int sundayBased = (firstDay - 1 + (weekday - 1)) % 7;
         string[] names = abbreviate
-            ? CultureInfo.InvariantCulture.DateTimeFormat.AbbreviatedDayNames
-            : CultureInfo.InvariantCulture.DateTimeFormat.DayNames;
+            ? CalculatedExpressionRegionalProfile.Culture.DateTimeFormat.AbbreviatedDayNames
+            : CalculatedExpressionRegionalProfile.Culture.DateTimeFormat.DayNames;
         return names[sundayBased];
     }
 
@@ -279,7 +280,7 @@ internal static class CalculatedExpressionDateTimeFunctions
             throw new ArgumentOutOfRangeException(nameof(value), "The first day must be between 0 and 7.");
         }
 
-        return value == 0 ? 1 : value;
+        return value == 0 ? ((int)CalculatedExpressionRegionalProfile.Culture.DateTimeFormat.FirstDayOfWeek) + 1 : value;
     }
 
     private enum DateFunction

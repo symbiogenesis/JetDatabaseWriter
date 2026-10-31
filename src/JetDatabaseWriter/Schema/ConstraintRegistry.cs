@@ -51,11 +51,13 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// Optional; when not supplied the session starts from 1.
 /// </param>
 /// <param name="textCollation">The database text comparison collation.</param>
+/// <param name="calculatedCulture">The writer's regional settings for calculated columns.</param>
 internal sealed class ConstraintRegistry(
     Func<string, CancellationToken, ValueTask<ColumnPropertyBlock?>>? readLvPropForTable = null,
     Func<string, TableDef, int, CancellationToken, ValueTask<long>>? readUsedAutoNumberHighWater = null,
     Func<string, TableDef, CancellationToken, ValueTask<long>>? readComplexReferenceHighWater = null,
-    JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
+    JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null,
+    CultureInfo? calculatedCulture = null)
 {
     private readonly Dictionary<string, List<ColumnConstraint>> constraints =
         new(StringComparer.OrdinalIgnoreCase);
@@ -409,7 +411,7 @@ internal sealed class ConstraintRegistry(
                 values[i] = value ?? DBNull.Value;
             }
 
-            CalculatedExpressionEvaluator.Apply(tableDef, list, values, tableName, textCollation);
+            CalculatedExpressionEvaluator.Apply(tableDef, list, values, tableName, textCollation, calculatedCulture);
             ValidateCalculatedResults(tableName, list, values);
             CheckValidationRuleExpressions(tableName, tableDef, list, values, assignedColumns: null, textCollation);
             await this.CheckTableValidationRuleAsync(tableName, tableDef, list, values, cancellationToken).ConfigureAwait(false);
@@ -490,7 +492,7 @@ internal sealed class ConstraintRegistry(
             }
         }
 
-        CalculatedExpressionEvaluator.Apply(tableDef, list, values, tableName, textCollation);
+        CalculatedExpressionEvaluator.Apply(tableDef, list, values, tableName, textCollation, calculatedCulture);
         ValidateCalculatedResults(tableName, list, values);
         CheckValidationRuleExpressions(tableName, tableDef, list, values, assigned, textCollation);
         await this.CheckTableValidationRuleAsync(tableName, tableDef, list, values, cancellationToken).ConfigureAwait(false);

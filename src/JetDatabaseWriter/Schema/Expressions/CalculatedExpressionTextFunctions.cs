@@ -161,6 +161,11 @@ internal static partial class CalculatedExpressionTextFunctions
             _ => ToDecimal(value),
         };
         string text = ToText(number, function.Context);
+        if (function.Context.IsCalculatingColumn)
+        {
+            text = text.Replace(CalculatedExpressionRegionalProfile.Culture.NumberFormat.NumberDecimalSeparator, ".", StringComparison.Ordinal);
+        }
+
         bool negative = text.StartsWith('-');
         int start = negative ? 1 : 0;
         if (text.Length > start + 1 && text[start] == '0' && text[start + 1] == '.')

@@ -111,16 +111,19 @@ internal static class CalculatedExpressionCoercion
 
         if (targetType == typeof(short))
         {
+            value = RegionalNumericValue(value);
             return Convert.ToInt16(value, CultureInfo.InvariantCulture);
         }
 
         if (targetType == typeof(int))
         {
+            value = RegionalNumericValue(value);
             return Convert.ToInt32(value, CultureInfo.InvariantCulture);
         }
 
         if (targetType == typeof(long))
         {
+            value = RegionalNumericValue(value);
             return Convert.ToInt64(value, CultureInfo.InvariantCulture);
         }
 
@@ -382,7 +385,7 @@ internal static class CalculatedExpressionCoercion
 
         if (value is AccessCurrency currency)
         {
-            return currency.ToString();
+            return LocalizeFloatingText(currency.Value.ToString("0.####", CultureInfo.InvariantCulture));
         }
 
         if (value is bool boolean)
@@ -402,17 +405,17 @@ internal static class CalculatedExpressionCoercion
 
         if (value is double doubleValue)
         {
-            return ToFloatingText(doubleValue, 15);
+            return LocalizeFloatingText(ToFloatingText(doubleValue, 15));
         }
 
         if (value is float singleValue)
         {
-            return ToFloatingText(singleValue, 7);
+            return LocalizeFloatingText(ToFloatingText(singleValue, 7));
         }
 
         if (value is decimal decimalValue)
         {
-            return decimalValue.ToString("0.############################", CultureInfo.InvariantCulture);
+            return LocalizeFloatingText(decimalValue.ToString("0.############################", CultureInfo.InvariantCulture));
         }
 
         return IsNull(value) ? string.Empty : Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
@@ -424,7 +427,7 @@ internal static class CalculatedExpressionCoercion
     internal static string ToCalculatedText(object? value)
         => value switch
         {
-            bool boolean => boolean ? "True" : "False",
+            bool boolean => CalculatedExpressionRegionalProfile.BooleanText(boolean),
             double number => ToCalculatedSpecialFloatingText(number) ?? ToText(number),
             float number => ToCalculatedSpecialFloatingText(number) ?? ToText(number),
             _ => ToText(value),
@@ -490,6 +493,11 @@ internal static class CalculatedExpressionCoercion
             rounded = rounded.AddSeconds(1);
         }
 
+        if (CalculatedExpressionRegionalProfile.IsActive)
+        {
+            return CalculatedExpressionRegionalProfile.DateText(rounded);
+        }
+
         if (rounded.Date == OleDateZero)
         {
             return rounded.ToString("h:mm:ss tt", CultureInfo.InvariantCulture);
@@ -528,6 +536,7 @@ internal static class CalculatedExpressionCoercion
     /// <returns>The argument, with a Boolean replaced by -1 or 0.</returns>
     internal static object? AsAccessNumber(object? value)
     {
+        value = RegionalNumericValue(value);
         if (value is NativeDate native)
         {
             return native.Serial;
@@ -587,7 +596,9 @@ internal static class CalculatedExpressionCoercion
                 : throw new OverflowException("The value is outside the range of an Access Decimal.");
         }
 
-        return Convert.ToDecimal(value, CultureInfo.InvariantCulture);
+        return value is string text && CalculatedExpressionRegionalProfile.IsActive
+            ? decimal.Parse(CalculatedExpressionRegionalProfile.NumericText(text), NumberStyles.Float, CultureInfo.InvariantCulture)
+            : Convert.ToDecimal(value, CultureInfo.InvariantCulture);
     }
 
     /// <summary>
@@ -609,7 +620,7 @@ internal static class CalculatedExpressionCoercion
             return boolean ? byte.MaxValue : (byte)0;
         }
 
-        return Convert.ToByte(value, CultureInfo.InvariantCulture);
+        return Convert.ToByte(RegionalNumericValue(value), CultureInfo.InvariantCulture);
     }
 
     internal static double ToDouble(object? value)
@@ -634,7 +645,20 @@ internal static class CalculatedExpressionCoercion
             return boolean ? -1d : 0d;
         }
 
-        double result = value is decimal number ? DecimalToDouble(number) : Convert.ToDouble(value, CultureInfo.InvariantCulture);
+        double result;
+        if (value is decimal number)
+        {
+            result = DecimalToDouble(number);
+        }
+        else if (value is string numericText && CalculatedExpressionRegionalProfile.IsActive)
+        {
+            result = double.Parse(CalculatedExpressionRegionalProfile.NumericText(numericText), NumberStyles.Float, CultureInfo.InvariantCulture);
+        }
+        else
+        {
+            result = Convert.ToDouble(value, CultureInfo.InvariantCulture);
+        }
+
         if (value is string text && (double.IsNaN(result) || double.IsInfinity(result)))
         {
             string token = text.Trim().TrimStart('+', '-');
@@ -839,6 +863,9 @@ internal static class CalculatedExpressionCoercion
     /// <returns>The date.</returns>
     /// <exception cref="FormatException">The text is not a date.</exception>
     internal static DateTime ParseDate(string text)
+        => CalculatedExpressionRegionalProfile.IsActive ? CalculatedExpressionRegionalProfile.ParseDate(text) : ParseInvariantDate(text);
+
+    internal static DateTime ParseInvariantDate(string text)
     {
         if (DateTime.TryParseExact(text, DateParseFormats, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out DateTime exact))
         {
@@ -859,6 +886,11 @@ internal static class CalculatedExpressionCoercion
 
     internal static bool TryConvertDecimal(object? value, out decimal result)
     {
+        if (value is string text && CalculatedExpressionRegionalProfile.IsActive)
+        {
+            return decimal.TryParse(CalculatedExpressionRegionalProfile.NumericText(text), NumberStyles.Float, CultureInfo.InvariantCulture, out result);
+        }
+
         if (value is AccessCurrency currency)
         {
             result = currency.Value;
@@ -1017,6 +1049,12 @@ internal static class CalculatedExpressionCoercion
             ? value.ToString("0." + new string('#', precision), CultureInfo.InvariantCulture)
             : text;
     }
+
+    private static object? RegionalNumericValue(object? value)
+        => value is string && CalculatedExpressionRegionalProfile.IsActive ? ToDouble(value) : value;
+
+    private static string LocalizeFloatingText(string value)
+        => value.Replace(".", CalculatedExpressionRegionalProfile.Culture.NumberFormat.NumberDecimalSeparator, StringComparison.Ordinal);
 
     private static bool IsStoredScalarType(Type type)
         => type == typeof(string) || type == typeof(bool) || type == typeof(byte) || type == typeof(short)

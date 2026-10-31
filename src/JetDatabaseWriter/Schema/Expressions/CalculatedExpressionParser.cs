@@ -477,7 +477,7 @@ internal sealed class CalculatedExpressionParser
                     index = end + 1;
 
                     // A date literal is permitted where an explicit CDate call is not.
-                    result.Add(new Token(TokenKind.Value, expression[start..index], Function("CDATE", new CalculatedExpressionValueNode(value))));
+                    result.Add(new Token(TokenKind.Value, expression[start..index], Function("CDATE", new CalculatedExpressionValueNode(CalculatedExpressionCoercion.ParseInvariantDate(value)))));
                 }
                 else if (current == '{')
                 {

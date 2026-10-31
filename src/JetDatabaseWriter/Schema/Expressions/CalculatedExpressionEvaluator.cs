@@ -1,14 +1,15 @@
 namespace JetDatabaseWriter.Schema.Expressions;
 
 using System.Collections.Generic;
+using System.Globalization;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Schema.Models;
 
 internal static class CalculatedExpressionEvaluator
 {
-    public static void Apply(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
+    public static void Apply(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null, CultureInfo? calculatedCulture = null)
     {
-        var context = new CalculatedExpressionEvaluationContext(tableDef, constraints, values, tableName, textCollation);
+        var context = new CalculatedExpressionEvaluationContext(tableDef, constraints, values, tableName, textCollation, calculatedCulture);
         for (int i = 0; i < constraints.Count; i++)
         {
             ColumnConstraint constraint = constraints[i];

@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter;
 
 using System;
+using System.Globalization;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Transactions;
 
@@ -56,6 +57,14 @@ public sealed class AccessWriterOptions : AccessOptions
 
     /// <summary>Gets the maximum writer page-cache frame count. Default: 256; zero disables caching.</summary>
     public int PageCacheSize { get; init; } = 256;
+
+    /// <summary>
+    /// Gets the regional settings used for calculated-column date and number conversions
+    /// and month/weekday names. Null uses the current culture, including user overrides,
+    /// when the writer opens. Settings are copied for the writer's lifetime.
+    /// The database's text collation independently controls text comparisons.
+    /// </summary>
+    public CultureInfo? CalculatedExpressionCulture { get; init; }
 
     /// <summary>
     /// Gets the secure-erase behavior used by destructive writer operations.

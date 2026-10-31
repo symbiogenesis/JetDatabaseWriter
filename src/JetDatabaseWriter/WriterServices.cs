@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter;
 
 using System;
+using System.Globalization;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
@@ -98,7 +99,8 @@ internal sealed class WriterServices : IDisposable
                     ? 0
                     : await complexReferenceSeeds.ReadSeedAsync(entry.TDefPage, tableDef, ct).ConfigureAwait(false);
             },
-            new JetDatabaseWriter.Indexes.Collation.JetTextCollation(db.Format.DefaultTextSortOrder));
+            new JetDatabaseWriter.Indexes.Collation.JetTextCollation(db.Format.DefaultTextSortOrder),
+            JetDatabaseWriter.Schema.Expressions.CalculatedExpressionRegionalProfile.Snapshot(options.CalculatedExpressionCulture ?? CultureInfo.CurrentCulture));
 
         this.Indexes = new IndexMaintainer(db.Format, db.TableDefs, pager, this.TDefWriter, this.PageAllocator, dataPages, snapshots, catalogRows);
         this.Mutations = new MutationExecutor(db.Format, pager, db.OwnedPages, dataPages, tableRows, this.Indexes, autoNumbers);

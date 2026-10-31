@@ -377,6 +377,7 @@ internal static class AccessVariantOperators
         DateTime date => date.ToOADate(),
         bool boolean => boolean ? -1d : 0d,
         byte or short or int or long or float or double or decimal => Convert.ToDouble(value, CultureInfo.InvariantCulture),
+        string text when CalculatedExpressionRegionalProfile.IsActive => ToDouble(text),
         string text when double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed) => parsed,
         _ => throw TypeMismatch(value),
     };
@@ -399,6 +400,7 @@ internal static class AccessVariantOperators
             float or double => RoundedDouble(Convert.ToDouble(value, CultureInfo.InvariantCulture)),
             NativeDate native => RoundedDouble(native.Serial),
             DateTime date => RoundedDouble(date.ToOADate()),
+            string text when CalculatedExpressionRegionalProfile.IsActive => ToDecimal(text),
             string text when decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out decimal parsed) => parsed,
             _ => throw TypeMismatch(value),
         };

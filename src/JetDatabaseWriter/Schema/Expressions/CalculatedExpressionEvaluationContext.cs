@@ -19,6 +19,7 @@ internal sealed class CalculatedExpressionEvaluationContext
     private readonly IReadOnlyList<ColumnInfo> columns;
     private readonly object[] values;
     private readonly string? tableName;
+    private readonly CultureInfo calculatedCulture;
     private readonly Dictionary<string, int> columnIndexes;
     private readonly bool[] evaluating;
     private readonly bool[] evaluated;
@@ -26,9 +27,10 @@ internal sealed class CalculatedExpressionEvaluationContext
     private int calculationDepth;
     private bool liveStaleReferences;
 
-    public CalculatedExpressionEvaluationContext(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
+    public CalculatedExpressionEvaluationContext(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null, CultureInfo? calculatedCulture = null)
     {
         this.tableName = tableName;
+        this.calculatedCulture = calculatedCulture ?? CultureInfo.GetCultureInfo("en-US");
         this.TextCollation = textCollation ?? JetDatabaseWriter.Indexes.Collation.JetTextCollation.GeneralLegacy;
         this.constraints = constraints;
         this.columns = tableDef.Columns;
@@ -77,6 +79,7 @@ internal sealed class CalculatedExpressionEvaluationContext
 
         this.evaluating[index] = true;
         this.calculationDepth++;
+        CultureInfo? previousCulture = CalculatedExpressionRegionalProfile.Exchange(this.calculatedCulture);
         object? raw = null;
         bool storing = false;
         try
@@ -137,6 +140,7 @@ internal sealed class CalculatedExpressionEvaluationContext
         }
         finally
         {
+            CalculatedExpressionRegionalProfile.Exchange(previousCulture);
             this.evaluating[index] = false;
             this.calculationDepth--;
         }
