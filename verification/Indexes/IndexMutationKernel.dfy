@@ -3,6 +3,7 @@
 // key correspondence, collation and tree ownership are separate obligations.
 module IndexMutationNativeTypes {
   newtype {:nativeType "uint"} U32 = x: int | 0 <= x < 4294967296
+  newtype {:nativeType "ulong"} U64 = x: int | 0 <= x < 18446744073709551616
   newtype {:nativeType "long"} I64 = x: int | -9223372036854775808 <= x < 9223372036854775808
   newtype {:nativeType "byte"} Byte = x: int | 0 <= x < 256
 }
@@ -61,7 +62,7 @@ module IndexMutationKernel {
   function RelocationMiddle(low: I64, high: I64): I64
     requires 0 <= low < high
     ensures low <= RelocationMiddle(low, high) < high
-  { low + (high - low) / 2 }
+  { low + (((high - low) as U64 / 2) as I64) }
 
   ghost predicate RelocationSearchContains(sources: seq<U32>, target: U32, low: I64, high: I64) {
     0 <= low <= high && high as int <= |sources| &&
