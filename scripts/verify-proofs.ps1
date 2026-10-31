@@ -106,17 +106,22 @@ function ConvertFrom-NativeKernelTranslation([string] $KernelName, [string] $Tra
     if ($start -lt 0 -or $end -le $start -or $text.Substring($end + $footer.Length).Trim().Length -ne 0) { throw 'Unsupported native kernel translation structure.' }
     $body = $text.Substring($start + $header.Length, $end - $start - $header.Length)
     if (-not $body.EndsWith("  }") -or $body -match '\b(namespace|class|struct|interface)\b') { throw 'Unsupported native kernel translation body.' }
-    if ($body -match '\b(Dafny|BigInteger|System|FuncExtensions|UndoJournal|NativeRecoveryTypes|LongValueNativeTypes)\b') { throw 'The native kernel requires unreviewed runtime support.' }
-    if ($KernelName -ceq 'LongValueKernel') {
+    if ($body -match '\b(Dafny|BigInteger|System|FuncExtensions|UndoJournal|NativeRecoveryTypes|LongValueNativeTypes|DataPageNativeTypes|IndexMutationNativeTypes|UsageMapNativeTypes)\b') { throw 'The native kernel requires unreviewed runtime support.' }
+    if ($KernelName -cin 'LongValueKernel', 'UsageMapKernel') {
         if ($body -match '\b(MethodImpl(?:Attribute|Options)?|AggressiveInlining)\b') { throw 'Unreviewed native-kernel metadata.' }
         # The raw body has already passed the unchanged runtime-support check.
-        # Only these two exact compiler declarations receive fixed BCL metadata;
+        # Only these exact compiler declarations receive fixed BCL metadata;
         # no input attribute or configurable method/option is admitted.
         $attribute = '    [global::System.Runtime.CompilerServices.MethodImplAttribute(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]' + "`n"
-        foreach ($controller in @(
-            @{ Name = 'PrepareVisitedAdd'; Declaration = '    public static ulong PrepareVisitedAdd(uint[] entries, uint count, uint pointer)' },
-            @{ Name = 'CompleteVisitedGrowth'; Declaration = '    public static uint CompleteVisitedGrowth(uint[] source, uint[] destination, uint count, uint pointer)' }
-        )) {
+        $controllers = if ($KernelName -ceq 'LongValueKernel') {
+            @(
+                @{ Name = 'PrepareVisitedAdd'; Declaration = '    public static ulong PrepareVisitedAdd(uint[] entries, uint count, uint pointer)' },
+                @{ Name = 'CompleteVisitedGrowth'; Declaration = '    public static uint CompleteVisitedGrowth(uint[] source, uint[] destination, uint count, uint pointer)' }
+            )
+        } else {
+            @(@{ Name = 'NextBitmapPage'; Declaration = '    public static ulong NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, ulong continuation)' })
+        }
+        foreach ($controller in $controllers) {
             $declarationPattern = '(?m)^[ \t]*(?:public|private|protected|internal|static)\b[^;{}]*?\b' + [regex]::Escape($controller.Name) + '\s*(?:<[^;{}]*>)?\s*\('
             $anchorPattern = '(?m)^' + [regex]::Escape($controller.Declaration + "`n    {`n")
             $anchors = [regex]::Matches($body, $anchorPattern)
@@ -126,7 +131,7 @@ function ConvertFrom-NativeKernelTranslation([string] $KernelName, [string] $Tra
             $body = $body.Insert($anchors[0].Index, $attribute)
         }
     }
-    # Namespace/type packaging and the two reviewed controller metadata lines
+    # Namespace/type packaging and the reviewed controller metadata lines
     # change. Generated method bodies and native integer operations are retained,
     # including generated self references to the renamed type.
     $body = $body.Replace("JetDatabaseWriter.Verification.$KernelName.__default", "JetDatabaseWriter.Verification.$KernelName")
@@ -203,7 +208,7 @@ function Assert-ProofSource([string] $Path, [string] $Source) {
     # reviewed set exact; never accept nativeType overrides or arbitrary attributes.
     $withStrings = Get-DafnyPolicyText $Source -PreserveStrings
     foreach ($attribute in [regex]::Matches($withStrings, '\{\s*:\s*nativeType\b(?<value>[^}]*)\}')) {
-        if ($attribute.Groups['value'].Value.Trim() -cnotmatch '^"(?:ulong|uint|byte|int)"$') { throw "Disallowed proof construct in ${Path}: unreviewed nativeType" }
+        if ($attribute.Groups['value'].Value.Trim() -cnotmatch '^"(?:ulong|uint|byte|int|long)"$') { throw "Disallowed proof construct in ${Path}: unreviewed nativeType" }
     }
     foreach ($attribute in [regex]::Matches($withStrings, '\{\s*:\s*isolate\b(?<value>[^}]*)\}')) {
         if ($attribute.Groups['value'].Value.Trim() -cnotmatch '^(?:"paths")?$') { throw "Disallowed proof construct in ${Path}: unreviewed isolate argument" }

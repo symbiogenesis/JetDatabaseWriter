@@ -21,6 +21,15 @@ slot interval under the supplied layout and stable page-image contract.
 Complete row decoding, overflow traversal and native compatibility retain their
 own evidence in the [formal boundary](formal-verification.md#page-parsing-and-bitmap-operations).
 
+`ReclaimDeletedRowSpace` uses `DataPageKernel` for complete admission, minimum
+payload/next-distinct-boundary selection, directory relocation and free-space
+accounting. Invalid bounds refuse before mutation. Optimized overlapping bulk
+copy and optional secure clear retain explicit byte-effect contracts; generated
+directory writes preserve the payload and unrelated header/suffix bytes. The
+[compaction boundary](formal-verification.md#row-compaction-index-emission-and-usage-enumeration)
+separates modeled byte preservation from CLR effects, page ownership and the
+containing statement's rollback.
+
 ## Value decode policy
 
 `RowValueDecodePolicy` validates nonempty fixed-size payloads stored in variable slots and calculated envelopes before the string, typed or compiled POCO decoder reads them. Strict parsing reports malformed values with the column name; lenient parsing returns empty text for string output, `DBNull.Value` for typed rows and an unassigned/default POCO property. A valid zero-length Text or binary value retains its normal empty representation. Ordinary calculated Null maps to a missing value. The measured native Byte error form (39 bytes, first UInt32 6, all remaining bytes zero) instead raises contextual JetLimitationException with NumericOverflow in both parsing modes, before scalar conversion. CalculatedByteErrorReadTests constructs that native layout separately from its Null and malformed-framing controls; value-preserving error reads, other native error forms and native error writes remain R4 work. A nonempty payload shorter than its scalar type requires is malformed. Calculated MEMO/OLE envelopes use the same validation after exact long-value retrieval. Write-back snapshots retain the unreadable-long-value sentinel, and storage I/O failures propagate.

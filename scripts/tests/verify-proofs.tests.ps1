@@ -87,26 +87,58 @@ Assert-Scenario 'generated qualified self reference follows type packaging' {
     if (-not $projected.Contains('return JetDatabaseWriter.Verification.RecoveryKernel.Accept(value);')) { throw 'Qualified self reference was changed incorrectly.' }
 }
 Assert-Scenario 'runtime-dependent kernel rejected' { ConvertFrom-NativeKernelTranslation 'RecoveryKernel' ($translation.Replace('return (value) == ((byte)(0));', 'return Dafny.Helpers.Value(value);')) } 'runtime support'
+$usageDeclaration = '    public static ulong NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, ulong continuation)'
+$usageMethod = $usageDeclaration + "`n    {`n      return continuation;`n    }`n"
 foreach ($kernel in @(
     @{ Name = 'DataPageKernel'; Source = 'Pages/DataPageKernel' },
     @{ Name = 'IndexMutationKernel'; Source = 'Indexes/IndexMutationKernel' },
     @{ Name = 'UsageMapKernel'; Source = 'Pages/UsageMapKernel' }
 )) {
     $nativeTranslation = $translation.Replace('RecoveryKernel', $kernel.Name)
+    if ($kernel.Name -ceq 'UsageMapKernel') {
+        $nativeTranslation = $nativeTranslation.Replace('    public static bool Accept(byte value)', $usageMethod + '    public static bool Accept(byte value)')
+    }
     Assert-Scenario "$($kernel.Name) preserves generated bodies and source provenance" {
         $projected = ConvertFrom-NativeKernelTranslation $kernel.Name $nativeTranslation
         if (-not $projected.Contains("internal static class $($kernel.Name)") -or
             -not $projected.Contains("verification/$($kernel.Source).dfy") -or
             -not $projected.Contains('return (value) == ((byte)(0));') -or
-            $projected.Contains('MethodImpl')) { throw 'Native packaging changed executable logic.' }
+            ($kernel.Name -cne 'UsageMapKernel' -and $projected.Contains('MethodImpl'))) { throw 'Native packaging changed executable logic.' }
     }
     Assert-Scenario "$($kernel.Name) rejects runtime support" {
         ConvertFrom-NativeKernelTranslation $kernel.Name ($nativeTranslation.Replace('return (value) == ((byte)(0));', 'return Dafny.Helpers.Value(value);'))
+    } 'runtime support'
+    Assert-Scenario "$($kernel.Name) rejects omitted native descriptors" {
+        ConvertFrom-NativeKernelTranslation $kernel.Name ($nativeTranslation.Replace('return (value) == ((byte)(0));', 'return ' + $kernel.Name.Replace('Kernel', 'NativeTypes') + '.Value(value);'))
     } 'runtime support'
     Assert-Scenario "$($kernel.Name) rejects another kernel namespace" {
         ConvertFrom-NativeKernelTranslation $kernel.Name $translation
     } 'Unsupported native kernel translation'
 }
+$usageTranslation = $translation.Replace('RecoveryKernel', 'UsageMapKernel').Replace("`r`n", "`n").Replace('    public static bool Accept(byte value)', $usageMethod + '    public static bool Accept(byte value)')
+Assert-Scenario 'exact packed bitmap controller receives one fixed inlining annotation without body changes' {
+    $projected = (ConvertFrom-NativeKernelTranslation 'UsageMapKernel' $usageTranslation).Replace("`r`n", "`n")
+    $attribute = '    [global::System.Runtime.CompilerServices.MethodImplAttribute(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]' + "`n"
+    if ([regex]::Matches($projected, [regex]::Escape($attribute)).Count -ne 1 -or
+        -not $projected.Contains($attribute + $usageDeclaration + "`n    {`n")) { throw 'Bitmap metadata escaped its exact declaration.' }
+    $priorPackaging = (ConvertFrom-NativeKernelTranslation 'RecoveryKernel' $translation).Replace('RecoveryKernel', 'UsageMapKernel').Replace('Pages/Paging/', 'Pages/').Replace("`r`n", "`n").Replace('    public static bool Accept(byte value)', $usageMethod + '    public static bool Accept(byte value)')
+    if ($projected.Replace($attribute, '') -cne $priorPackaging) { throw 'Inlining metadata changed generated bitmap bodies.' }
+}
+foreach ($case in @(
+    @{ Name = 'missing'; Text = $usageTranslation.Replace($usageMethod, '') },
+    @{ Name = 'renamed'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('NextBitmapPage', 'Other')) },
+    @{ Name = 'duplicate'; Text = $usageTranslation.Replace($usageMethod, $usageMethod + $usageMethod) },
+    @{ Name = 'overload'; Text = $usageTranslation.Replace($usageMethod, $usageMethod + "    public static ulong NextBitmapPage(ulong continuation)`n    {`n      return continuation;`n    }`n") },
+    @{ Name = 'generic overload'; Text = $usageTranslation.Replace($usageMethod, $usageMethod + "    public static ulong NextBitmapPage<T>(ulong continuation)`n    {`n      return continuation;`n    }`n") },
+    @{ Name = 'return type'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('static ulong', 'static uint')) },
+    @{ Name = 'parameter'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('ulong continuation', 'uint continuation')) },
+    @{ Name = 'indentation'; Text = $usageTranslation.Replace($usageDeclaration, '  ' + $usageDeclaration) }
+)) {
+    Assert-Scenario "packed bitmap $($case.Name) declaration rejected" { ConvertFrom-NativeKernelTranslation 'UsageMapKernel' $case.Text } 'Unsupported native controller declaration'
+}
+Assert-Scenario 'bitmap raw metadata rejected before insertion' {
+    ConvertFrom-NativeKernelTranslation 'UsageMapKernel' ($usageTranslation.Replace('return continuation;', '[MethodImpl(MethodImplOptions.AggressiveInlining)] return continuation;'))
+} 'Unreviewed native-kernel metadata'
 Assert-Scenario 'unexpected compiled module rejected' { ConvertFrom-NativeKernelTranslation 'RecoveryKernel' ($translation + 'namespace Other {}') } 'Unsupported native kernel translation'
 $prepareDeclaration = '    public static ulong PrepareVisitedAdd(uint[] entries, uint count, uint pointer)'
 $completeDeclaration = '    public static uint CompleteVisitedGrowth(uint[] source, uint[] destination, uint count, uint pointer)'
@@ -296,7 +328,8 @@ foreach ($isolation in 'false', '"unknown"', '"paths" false', '"paths", "paths"'
 }
 Assert-Scenario 'reviewed native integer representations allowed' { Assert-ProofSource 'native.dfy' 'newtype {:nativeType "ulong"} U64 = x: int | 0 <= x < 18446744073709551616 newtype {:nativeType "uint"} U32 = x: int | 0 <= x < 4294967296 newtype {:nativeType "byte"} U8 = x: int | 0 <= x < 256' }
 Assert-Scenario 'reviewed signed comparison representation allowed' { Assert-ProofSource 'native.dfy' 'newtype {:nativeType "int"} I32 = x: int | -2147483648 <= x < 2147483648' }
-foreach ($nativeType in '"long"', '"Int32"', '"number"', 'false', '"ulong" false', '"int" false') {
+Assert-Scenario 'reviewed signed page-number representation allowed' { Assert-ProofSource 'native.dfy' 'newtype {:nativeType "long"} I64 = x: int | -9223372036854775808 <= x < 9223372036854775808' }
+foreach ($nativeType in '"Int64"', '"Int32"', '"number"', 'false', '"ulong" false', '"int" false', '"long" false') {
     Assert-Scenario "unreviewed native representation rejected $nativeType" { Assert-ProofSource 'native.dfy' "newtype {:nativeType $nativeType} Native = x: int | 0 <= x < 256" } 'Disallowed proof construct'
 }
 $report = Write-Fixture 'audit.txt' ''
@@ -619,6 +652,9 @@ function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyP
     throw 'synthetic failed proof'
 }
 try {
+    foreach ($kernelName in 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel') {
+        Write-Fixture "src/JetDatabaseWriter/Verification/$kernelName.g.cs" "class $kernelName {}" | Out-Null
+    }
     $failureOutput = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-failure-' + [guid]::NewGuid().ToString('N'))
     Assert-Scenario 'failed proof is still rejected' { Invoke-ProofVerification $fixture 'mock' $failureOutput 10 $false } 'synthetic failed proof'
     Assert-Scenario 'failure receipt binds source and retains counterexample diagnostics' {
@@ -634,6 +670,13 @@ try {
             [IO.File]::Exists((Join-Path $failureOutput 'summary.json'))) { throw 'Failed proof evidence is incomplete or claims success.' }
     }
     Assert-Scenario 'existing result directories remain untouched' { Invoke-ProofVerification $fixture 'mock' $failureOutput 10 $false } 'must not already exist'
+    Assert-Scenario 'failure snapshot retains every page kernel generated source' {
+        foreach ($kernelName in 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel') {
+            if (-not [IO.File]::Exists((Join-Path $failureOutput "inputs/src/JetDatabaseWriter/Verification/$kernelName.g.cs"))) {
+                throw "Missing generated failure input: $kernelName"
+            }
+        }
+    }
 } finally { ${function:Invoke-ProofVerificationCore} = $originalVerificationCore }
 $originalFailureReceipt = ${function:Write-ProofFailureReceipt}
 function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [int] $TimeoutSeconds, [bool] $Update) { throw 'original verification failure' }

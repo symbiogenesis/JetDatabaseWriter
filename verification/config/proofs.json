@@ -9,7 +9,10 @@
     "verification/LongValues/LongValueTraversal.dfy",
     "verification/Transactions/WriterLifecycle.dfy",
     "verification/Transactions/MultiProcessOwnership.dfy",
-    "verification/Pages/Paging/PageFrameOwnership.dfy"
+    "verification/Pages/Paging/PageFrameOwnership.dfy",
+    "verification/Pages/DataPageKernel.dfy",
+    "verification/Indexes/IndexMutationKernel.dfy",
+    "verification/Pages/UsageMapKernel.dfy"
   ],
   "dependencies": {
     "verification/Encryption/ReplacementProtocol.dfy": ["verification/Transactions/GenerationOwnership.dfy"],

@@ -10,6 +10,14 @@
 
 ## Mutation ownership
 
+Leaf and intermediate builders execute `IndexMutationKernel` for maximal key
+prefixes, capacity/progress, headers, bookmark/child metadata, bitmap boundaries
+and sentinel/free-space finalization. They retain existing bulk key-suffix
+copies and entry-list iteration as explicit effects. Complete emitted images
+retain the native layouts; byte-level conformance does not prove the ordered
+tree, allocator ownership or containing edit's atomicity. See the
+[emission boundary](formal-verification.md#row-compaction-index-emission-and-usage-enumeration).
+
 Intermediate-page seeks use generated Dafny entry admission, child-pointer and
 selection/progress controls around the existing vectorized span comparison.
 Shared prefixes can include bookmark and child-pointer bytes; the selected

@@ -16,6 +16,17 @@ checks establish the standard unencrypted CP1252/General 97 bootstrap; they do
 not establish every Jet3 feature or map variant. See
 [Jet3 definition metadata](jet3-definition-metadata.md#fresh-database-bootstrap).
 
+Page-kernel conformance retains complete independent byte-image controls in
+[IndexPageEmissionKernelTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexPageEmissionKernelTests.cs)
+for Jet3/Jet4/ACE leaf and intermediate pages, including prefix compression,
+full-width pointers, bitmap boundaries and sentinel/free space.
+[DataPageReclaimKernelTests](../../tests/JetDatabaseWriter.Tests/Pages/DataPageReclaimKernelTests.cs)
+compares complete compacted images, flags, aliases, secure clear and untouched
+pooled suffixes across those formats. These checks qualify implementation
+correspondence for the retained layouts; the existing Microsoft-authored/native
+controls below remain the independent format evidence. Generated execution does
+not broaden interoperability or page-reclamation authority.
+
 ## Individual complex items and append-only Memo history
 
 `ComplexItemIdentityTests` compares native AutoNumber identities with direct reads,

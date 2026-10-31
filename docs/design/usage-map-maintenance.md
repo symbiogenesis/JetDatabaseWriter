@@ -27,7 +27,11 @@ bit. Admission bounds the header, row, bitmap
 and byte before access. Successful updates preserve every other byte and bit;
 refusal preserves the complete buffer. Negative inline base pages refuse for
 both reads and writes. These properties cover bitmap representation and access.
-Whole-row emission, page identity, map traversal, alias isolation and reclamation authority still
+INLINE and REFERENCE enumeration also share the generated `UsageMapKernel`
+ordered bitmap scanner. It selects exact members with bounded progress and
+retains strict refusal's already-appended prefix; tolerant scans skip invalid
+members. List append and reference-page acquisition, cancellation and pooled
+return remain adapter effects. Whole-row emission, page identity, containing map traversal, alias isolation and reclamation authority still
 require the ownership checks below; see the [formal boundary](formal-verification.md#page-parsing-and-bitmap-operations).
 
 ## Ownership
