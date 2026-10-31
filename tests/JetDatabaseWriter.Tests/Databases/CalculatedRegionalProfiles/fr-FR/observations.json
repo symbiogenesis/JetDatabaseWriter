@@ -4,7 +4,7 @@
   "UserLanguage": "LanguageTag     : en-US\r\nAutonym         : English (United States)\r\nEnglishName     : English\r\nLocalizedName   : English (United States)\r\nScriptName      : Latin\r\nInputMethodTips : {0409:00000409}\r\nSpellchecking   : True\r\nHandwriting     : False",
   "Engine": "16.0",
   "OfficeVersion": "16.0.20527.20112",
-  "PowerShell": "7.6.7",
+  "PowerShell": "7.6.9",
   "RuntimeCultureMetadata": {
     "UseUserOverride": true,
     "Calendar": "GregorianCalendar",
@@ -3341,6 +3341,460 @@
           "ResultType": 10,
           "Type": "System.String",
           "Value": "σσẞsıİ𐐨"
+        }
+      ]
+    },
+    {
+      "Table": "RegionalGrammar",
+      "Observations": [
+        {
+          "Name": "PunctuatedMonthDay",
+          "Expression": "Day(\"Jan. 4, 2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "4"
+        },
+        {
+          "Name": "PunctuatedMonthYear",
+          "Expression": "Year(\"4 Sept. 2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2020"
+        },
+        {
+          "Name": "NumericDotDate",
+          "Expression": "Day(\"03.04.2020\")",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "JapaneseMonthOrder",
+          "Expression": "Day(\"4 3月 2020\")",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "JapaneseUnitDate",
+          "Expression": "Day(\"2020年 3月4日\")",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "LogicalCommaHalf",
+          "Expression": "\"0,5\" And True",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "0"
+        },
+        {
+          "Name": "LogicalDotHalf",
+          "Expression": "\"0.5\" And True",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "LogicalCurrencyHalf",
+          "Expression": "\"$0.5\" And True",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "LogicalParenthesizedCurrencyHalf",
+          "Expression": "\"($0.5)\" And True",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "DateNumericText",
+          "Expression": "#12:00:00# = \"0.5\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "0"
+        },
+        {
+          "Name": "DateCurrencyText",
+          "Expression": "#12:00:00# = \"$0.5\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "0"
+        },
+        {
+          "Name": "DateCommaText",
+          "Expression": "#12:00:00# = \"0,5\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "0"
+        },
+        {
+          "Name": "DateTimeText",
+          "Expression": "#12:00:00# = \"12:00:00\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "DateInvalidText",
+          "Expression": "#12:00:00# = \"bad\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "0"
+        },
+        {
+          "Name": "DateFormattedText",
+          "Expression": "#12:00:00# = \"12:00:00 PM\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "0"
+        },
+        {
+          "Name": "DateFullText",
+          "Expression": "#1/4/1900# = \"1/4/1900\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "0"
+        },
+        {
+          "Name": "DateTextOrder",
+          "Expression": "#12:00:00# < \"bad\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "DateSerialText",
+          "Expression": "#1/4/1900# = \"5\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "0"
+        },
+        {
+          "Name": "DateSerialNumber",
+          "Expression": "#1/4/1900# = 5",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "DateFractionNumber",
+          "Expression": "#12:00:00# = 0.5",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        }
+      ]
+    },
+    {
+      "Table": "RegionalBooleanResults",
+      "Observations": [
+        {
+          "Name": "EnglishTrue",
+          "Expression": "\"True\"",
+          "ResultType": 1,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "EnglishFalse",
+          "Expression": "\"False\"",
+          "ResultType": 1,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "GermanTrue",
+          "Expression": "\"Wahr\"",
+          "ResultType": 1,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "GermanFalse",
+          "Expression": "\"Falsch\"",
+          "ResultType": 1,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "FrenchTrue",
+          "Expression": "\"Vrai\"",
+          "ResultType": 1,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "FrenchFalse",
+          "Expression": "\"Faux\"",
+          "ResultType": 1,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "IntrinsicTrueText",
+          "Expression": "IsNull(Null)&\"\"",
+          "ResultType": 1,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "NumericDotHalf",
+          "Expression": "\"0.5\"",
+          "ResultType": 1,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "NumericCommaHalf",
+          "Expression": "\"0,5\"",
+          "ResultType": 1,
+          "Type": "System.Boolean",
+          "Value": "False"
+        },
+        {
+          "Name": "NumericOne",
+          "Expression": "\"1\"",
+          "ResultType": 1,
+          "Type": "System.Boolean",
+          "Value": "True"
+        },
+        {
+          "Name": "InvalidText",
+          "Expression": "\"bad\"",
+          "ResultType": 1,
+          "Type": "COMNULL",
+          "Value": ""
+        }
+      ]
+    },
+    {
+      "Table": "RegionalMembership",
+      "Observations": [
+        {
+          "Name": "LiteralMismatch",
+          "Expression": "1 In (\"1\")",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "DoubleFunction",
+          "Expression": "CDbl(1) In (\"1\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "FieldNumber",
+          "Expression": "[Id] In (\"1\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "NumberField",
+          "Expression": "\"1\" In ([Id])",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "FieldDot",
+          "Expression": "[N] In (\"1234.5\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "0"
+        },
+        {
+          "Name": "FieldComma",
+          "Expression": "[N] In (\"1234,5\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "DotField",
+          "Expression": "\"1234.5\" In ([N])",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "0"
+        },
+        {
+          "Name": "CommaField",
+          "Expression": "\"1234,5\" In ([N])",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "FieldExpression",
+          "Expression": "([Id]+0) In (\"1\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "EarlyField",
+          "Expression": "[Id] In (1,\"bad\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "LaterField",
+          "Expression": "[Id] In (\"bad\",1)",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "TextField",
+          "Expression": "1 In ([S])",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "FieldBeforeLiteral",
+          "Expression": "\"1\" In ([Id],1)",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "FieldFunction",
+          "Expression": "Abs([Id]) In (\"1\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "FormattedField",
+          "Expression": "[N] In ([N]&\"\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "SelectedLiteral",
+          "Expression": "IIf(True,1,[Id]) In (\"1\")",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "SelectedField",
+          "Expression": "IIf(False,1,[Id]) In (\"1\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "ParenthesizedNegation",
+          "Expression": "-(1) In (\"-1\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "IntrinsicBoolean",
+          "Expression": "IsNull(Null) In (\"-1\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        }
+      ]
+    },
+    {
+      "Table": "RegionalBooleanComparisons",
+      "Observations": [
+        {
+          "Name": "TrueName",
+          "Expression": "IsNull(Null)=\"True\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "0"
+        },
+        {
+          "Name": "TrueNumber",
+          "Expression": "IsNull(Null)=\"-1\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "ReverseTrueNumber",
+          "Expression": "\"-1\"=IsNull(Null)",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "FalseName",
+          "Expression": "IsEmpty(1)=\"False\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "0"
+        },
+        {
+          "Name": "FalseNumber",
+          "Expression": "IsEmpty(1)=\"0\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "LikeName",
+          "Expression": "IsNull(Null) Like \"True\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1"
+        },
+        {
+          "Name": "LikeNumber",
+          "Expression": "IsNull(Null) Like \"-1\"",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "0"
+        },
+        {
+          "Name": "Slice",
+          "Expression": "Left(IsNull(Null),1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "T"
+        },
+        {
+          "Name": "Length",
+          "Expression": "Len(IsNull(Null))",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "4"
+        },
+        {
+          "Name": "AscTrue",
+          "Expression": "Asc(IsNull(Null))",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "45"
+        },
+        {
+          "Name": "StrTrue",
+          "Expression": "Str(IsNull(Null))",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "True"
+        },
+        {
+          "Name": "StrFalse",
+          "Expression": "Str(IsEmpty(1))",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "False"
         }
       ]
     }
