@@ -338,6 +338,17 @@ public sealed class LongValueTraversalTests
         Assert.Equal(before, entries);
     }
 
+    [Theory]
+    [InlineData(0u)]
+    [InlineData(1u)]
+    [InlineData(uint.MaxValue)]
+    public void GeneratedVisitedSet_EmptyLookupIsAbsent(uint rowIdentity)
+    {
+        uint[] entries = [];
+        Assert.False(LongValueKernel.ContainsVisited(entries, rowIdentity));
+        Assert.Empty(entries);
+    }
+
     [Fact]
     public void GeneratedVisitedSet_PreservesWrappedClustersAndRehashMembership()
     {

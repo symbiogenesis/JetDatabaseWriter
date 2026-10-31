@@ -234,7 +234,7 @@ module LongValueKernel {
   // Lookup stops at an empty slot only under the insertion-established chain
   // invariant. No random-hash or expected-time assumption enters correctness.
   method ContainsVisited(entries: array<U32>, pointer: U32) returns (found: bool)
-    requires VisitedTable(entries[..])
+    requires entries.Length == 0 || VisitedTable(entries[..])
     ensures found <==> pointer != 0 && pointer in entries[..]
   {
     found := false;
@@ -245,7 +245,7 @@ module LongValueKernel {
     var slot := start;
     var step: U32 := 0;
     while step < capacity
-      invariant slot < capacity
+      invariant capacity > 0 ==> slot < capacity
       invariant step < capacity ==> ProbeDistance(start as int, capacity as int, slot as int) == step as int
       invariant step <= capacity
       invariant forall previous: nat :: (previous < entries.Length &&
@@ -553,15 +553,26 @@ module LongValueKernel {
     hide VisitedAddPayload, VisitedAddHasHighFlag, VisitedAddResult,
       VisitedInsertedDecision, VisitedGrowthDecision, ValidVisitedDecision,
       EffectiveVisitedAddCount, EffectiveVisitedAddCapacity;
-    decision := 0;
     UnchangedVisitedDecisionIsExact(count);
-    if pointer == 0 { return; }
-    if entries == null || count >= (entries.Length as U32) / 2 {
-      var length: U32 := if entries == null then 0 else entries.Length as U32;
-      if entries != null && length != 0 {
-        var present := ContainsVisited(entries, pointer);
-        if present { return; }
+    if pointer == 0 {
+      decision := 0;
+      return;
+    }
+    if entries == null {
+      decision := 9223372036854775824;
+      assert decision == VisitedGrowthDecision(16) by {
+        reveal VisitedGrowthDecision();
       }
+      GrowthVisitedDecisionIsExact(16, count);
+      return;
+    }
+    if count >= (entries.Length as U32) / 2 {
+      var present := ContainsVisited(entries, pointer);
+      if present {
+        decision := 0;
+        return;
+      }
+      var length := entries.Length as U32;
       var capacity := NextVisitedCapacity(length);
       VisitedAllocationAndProbeBounds(pointer, length, 0);
       if capacity == 0 {
@@ -581,6 +592,8 @@ module LongValueKernel {
     if added == 2 {
       decision := VisitedInsertedDecision(count + 1);
       InsertedVisitedDecisionIsExact(count + 1, count);
+    } else {
+      decision := 0;
     }
   }
   // Allocation is the only intervening effect: distinct, zero-filled storage

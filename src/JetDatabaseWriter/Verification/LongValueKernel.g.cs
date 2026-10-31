@@ -221,28 +221,27 @@ namespace JetDatabaseWriter.Verification {
     public static ulong PrepareVisitedAdd(uint[] entries, uint count, uint pointer)
     {
       ulong decision = 0;
-      decision = 0UL;
       if ((pointer) == (0U)) {
+        decision = 0UL;
         return decision;
       }
-      if (((entries) == (object) ((uint[])null)) || ((count) >= (((uint)(entries).LongLength) / (2U)))) {
-        uint _0_length;
-        if ((entries) == (object) ((uint[])null)) {
-          _0_length = 0U;
-        } else {
-          _0_length = (uint)(entries).LongLength;
+      if ((entries) == (object) ((uint[])null)) {
+        decision = 9223372036854775824UL;
+        return decision;
+      }
+      if ((count) >= (((uint)(entries).LongLength) / (2U))) {
+        bool _0_present;
+        bool _out0;
+        _out0 = JetDatabaseWriter.Verification.LongValueKernel.ContainsVisited(entries, pointer);
+        _0_present = _out0;
+        if (_0_present) {
+          decision = 0UL;
+          return decision;
         }
-        if (((entries) != (object) ((uint[])null)) && ((_0_length) != (0U))) {
-          bool _1_present;
-          bool _out0;
-          _out0 = JetDatabaseWriter.Verification.LongValueKernel.ContainsVisited(entries, pointer);
-          _1_present = _out0;
-          if (_1_present) {
-            return decision;
-          }
-        }
+        uint _1_length;
+        _1_length = (uint)(entries).LongLength;
         uint _2_capacity;
-        _2_capacity = JetDatabaseWriter.Verification.LongValueKernel.NextVisitedCapacity(_0_length);
+        _2_capacity = JetDatabaseWriter.Verification.LongValueKernel.NextVisitedCapacity(_1_length);
         if ((_2_capacity) == (0U)) {
           decision = 18446744073709551615UL;
         } else {
@@ -256,6 +255,8 @@ namespace JetDatabaseWriter.Verification {
       _3_added = _out1;
       if ((_3_added) == ((byte)(2))) {
         decision = JetDatabaseWriter.Verification.LongValueKernel.VisitedInsertedDecision((count) + (1U));
+      } else {
+        decision = 0UL;
       }
       return decision;
     }
