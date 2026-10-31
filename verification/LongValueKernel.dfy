@@ -403,39 +403,75 @@ module LongValueKernel {
       |table| <= 16 + 4 * (count as int))
   }
 
+  // Native return layout: status bits 0..1, count bits 2..32,
+  // capacity bits 33..63. Native arithmetic needs no collection or runtime.
+  function VisitedAddResult(packed: U64): Byte {
+    (packed % 4) as Byte
+  }
+  function VisitedAddCount(packed: U64): U32 {
+    ((packed / 4) % 2147483648) as U32
+  }
+  function VisitedAddCapacity(packed: U64): U32 {
+    (packed / 8589934592) as U32
+  }
+  function PackVisitedAdd(result: Byte, count: U32, capacity: U32): U64
+    requires result <= 3 && count < 2147483648 && capacity < 2147483648
+  {
+    (capacity as U64) * 8589934592 + (count as U64) * 4 + result as U64
+  }
+  lemma PackedVisitedAddIsReversible(result: Byte, count: U32, capacity: U32)
+    requires result <= 3 && count < 2147483648 && capacity < 2147483648
+    ensures VisitedAddResult(PackVisitedAdd(result, count, capacity)) == result
+    ensures VisitedAddCount(PackVisitedAdd(result, count, capacity)) == count
+    ensures VisitedAddCapacity(PackVisitedAdd(result, count, capacity)) == capacity
+  { }
+
   // Zero means unchanged, one inserted, two requests allocation, and three
   // refuses exhausted capacity. Only the below-half insertion mutates here.
   method PrepareVisitedAdd(entries: array<U32>, count: U32, pointer: U32)
-      returns (result: Byte, nextCount: U32, capacity: U32)
+      returns (packed: U64)
     requires TrackedVisited(entries[..], count)
     modifies entries
-    ensures result <= 3
-    ensures TrackedVisited(entries[..], nextCount)
-    ensures result != 1 ==> entries[..] == old(entries[..]) && nextCount == count
-    ensures result == 1 ==> nextCount as int == count as int + 1
-    ensures result == 0 <==> pointer == 0 || pointer in old(entries[..])
-    ensures result == 1 ==> pointer != 0 && pointer !in old(entries[..])
+    ensures VisitedAddResult(packed) <= 3
+    ensures TrackedVisited(entries[..], VisitedAddCount(packed))
+    ensures VisitedAddResult(packed) != 1 ==> entries[..] == old(entries[..]) && VisitedAddCount(packed) == count
+    ensures VisitedAddResult(packed) == 1 ==> VisitedAddCount(packed) as int == count as int + 1
+    ensures VisitedAddResult(packed) == 0 <==> pointer == 0 || pointer in old(entries[..])
+    ensures VisitedAddResult(packed) == 1 ==> pointer != 0 && pointer !in old(entries[..])
     ensures forall value: U32 :: value != 0 ==>
-      (value in entries[..] <==> value in old(entries[..]) || (result == 1 && value == pointer))
-    ensures result >= 2 ==> (pointer != 0 && pointer !in old(entries[..]) &&
+      (value in entries[..] <==> value in old(entries[..]) || (VisitedAddResult(packed) == 1 && value == pointer))
+    ensures VisitedAddResult(packed) >= 2 ==> (pointer != 0 && pointer !in old(entries[..]) &&
       count as int == entries.Length / 2)
-    ensures result == 2 ==> (capacity == NextVisitedCapacity(entries.Length as U32) &&
-      entries.Length < capacity as int <= 2147483646)
-    ensures result != 2 ==> capacity == 0
-    ensures result == 3 ==> entries.Length >= 1073741824
+    ensures VisitedAddResult(packed) == 2 ==> (VisitedAddCapacity(packed) == NextVisitedCapacity(entries.Length as U32) &&
+      entries.Length < VisitedAddCapacity(packed) as int <= 2147483646)
+    ensures VisitedAddResult(packed) != 2 ==> VisitedAddCapacity(packed) == 0
+    ensures VisitedAddResult(packed) == 3 ==> entries.Length >= 1073741824
   {
-    result, nextCount, capacity := 0, count, 0;
-    if pointer == 0 { return; }
+    hide VisitedAddResult, VisitedAddCount, VisitedAddCapacity, PackVisitedAdd;
+    var result: Byte := 0;
+    var nextCount: U32 := count;
+    var capacity: U32 := 0;
+    if pointer == 0 {
+      packed := PackVisitedAdd(result, nextCount, capacity);
+      PackedVisitedAddIsReversible(result, nextCount, capacity);
+      return;
+    }
     var length := entries.Length as U32;
     if length == 0 || count >= length / 2 {
       if length != 0 {
         var present := ContainsVisited(entries, pointer);
-        if present { return; }
+        if present {
+          packed := PackVisitedAdd(result, nextCount, capacity);
+          PackedVisitedAddIsReversible(result, nextCount, capacity);
+          return;
+        }
       }
       capacity := NextVisitedCapacity(length);
       VisitedAllocationAndProbeBounds(pointer, length, 0);
       if capacity == 0 { result := 3; }
       else { result := 2; }
+      packed := PackVisitedAdd(result, nextCount, capacity);
+      PackedVisitedAddIsReversible(result, nextCount, capacity);
       return;
     }
     var added := AddVisited(entries, pointer);
@@ -447,6 +483,8 @@ module LongValueKernel {
       nextCount := count + 1;
       result := 1;
     }
+    packed := PackVisitedAdd(result, nextCount, capacity);
+    PackedVisitedAddIsReversible(result, nextCount, capacity);
   }
 
   // Allocation is the only intervening effect: distinct, zero-filled storage

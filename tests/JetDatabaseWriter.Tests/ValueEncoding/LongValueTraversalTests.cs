@@ -230,17 +230,17 @@ public sealed class LongValueTraversalTests
         uint[] before = (uint[])source.Clone();
         for (int attempt = 0; attempt < 2; attempt++)
         {
-            LongValueKernel.PrepareVisitedAdd(source, 8, 9, out byte result, out uint count, out uint capacity);
-            Assert.Equal((byte)2, result);
-            Assert.Equal(8u, count);
-            Assert.Equal(32u, capacity);
+            ulong prepared = LongValueKernel.PrepareVisitedAdd(source, 8, 9);
+            Assert.Equal((byte)2, LongValueKernel.VisitedAddResult(prepared));
+            Assert.Equal(8u, LongValueKernel.VisitedAddCount(prepared));
+            Assert.Equal(32u, LongValueKernel.VisitedAddCapacity(prepared));
             Assert.Equal(before, source);
         }
 
-        LongValueKernel.PrepareVisitedAdd(source, 8, 1, out byte duplicate, out uint unchangedCount, out uint noGrowth);
-        Assert.Equal((byte)0, duplicate);
-        Assert.Equal(8u, unchangedCount);
-        Assert.Equal(0u, noGrowth);
+        ulong duplicate = LongValueKernel.PrepareVisitedAdd(source, 8, 1);
+        Assert.Equal((byte)0, LongValueKernel.VisitedAddResult(duplicate));
+        Assert.Equal(8u, LongValueKernel.VisitedAddCount(duplicate));
+        Assert.Equal(0u, LongValueKernel.VisitedAddCapacity(duplicate));
         Assert.Equal(before, source);
 
         uint[] destination = new uint[32];
@@ -259,16 +259,16 @@ public sealed class LongValueTraversalTests
     public void GeneratedVisitedController_InitialAllocationHasExactSoleMembership()
     {
         uint[] source = [];
-        LongValueKernel.PrepareVisitedAdd(source, 0, 0, out byte unchanged, out uint count, out uint capacity);
-        Assert.Equal((byte)0, unchanged);
-        Assert.Equal(0u, count);
-        Assert.Equal(0u, capacity);
+        ulong unchanged = LongValueKernel.PrepareVisitedAdd(source, 0, 0);
+        Assert.Equal((byte)0, LongValueKernel.VisitedAddResult(unchanged));
+        Assert.Equal(0u, LongValueKernel.VisitedAddCount(unchanged));
+        Assert.Equal(0u, LongValueKernel.VisitedAddCapacity(unchanged));
         for (int attempt = 0; attempt < 2; attempt++)
         {
-            LongValueKernel.PrepareVisitedAdd(source, 0, uint.MaxValue, out byte result, out count, out capacity);
-            Assert.Equal((byte)2, result);
-            Assert.Equal(0u, count);
-            Assert.Equal(16u, capacity);
+            ulong prepared = LongValueKernel.PrepareVisitedAdd(source, 0, uint.MaxValue);
+            Assert.Equal((byte)2, LongValueKernel.VisitedAddResult(prepared));
+            Assert.Equal(0u, LongValueKernel.VisitedAddCount(prepared));
+            Assert.Equal(16u, LongValueKernel.VisitedAddCapacity(prepared));
             Assert.Empty(source);
         }
 
@@ -278,6 +278,23 @@ public sealed class LongValueTraversalTests
         Assert.True(LongValueKernel.ContainsVisited(destination, uint.MaxValue));
         Assert.False(LongValueKernel.ContainsVisited(destination, 1));
         Assert.Empty(source);
+    }
+
+    [Theory]
+    [InlineData(0UL, (byte)0, 0u, 0u)]
+    [InlineData(3UL, (byte)3, 0u, 0u)]
+    [InlineData(4UL, (byte)0, 1u, 0u)]
+    [InlineData(0x0000_0001_FFFF_FFFFUL, (byte)3, 0x7FFF_FFFFu, 0u)]
+    [InlineData(0x0000_0002_0000_0000UL, (byte)0, 0u, 1u)]
+    [InlineData(0x8000_0000_0000_0000UL, (byte)0, 0u, 0x4000_0000u)]
+    [InlineData(0xFFFF_FFFD_FFFF_FFFCUL, (byte)0, 0x7FFF_FFFFu, 0x7FFF_FFFEu)]
+    [InlineData(ulong.MaxValue, (byte)3, 0x7FFF_FFFFu, 0x7FFF_FFFFu)]
+    public void GeneratedVisitedController_PackedCodecPreservesIndependentFieldBoundaries(ulong packed, byte result, uint count, uint capacity)
+    {
+        Assert.Equal(result, LongValueKernel.VisitedAddResult(packed));
+        Assert.Equal(count, LongValueKernel.VisitedAddCount(packed));
+        Assert.Equal(capacity, LongValueKernel.VisitedAddCapacity(packed));
+        Assert.Equal(packed, LongValueKernel.PackVisitedAdd(result, count, capacity));
     }
 
     [Fact]

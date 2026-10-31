@@ -183,6 +183,14 @@ during verification. The C# adapter supplies the requested distinct zero-filled
 CLR array and retains/publishes the matching array/count pair; actual allocation,
 adapter sequencing and containing-parser composition remain explicit obligations.
 
+The controller returns a native 64-bit decision word with proved exact status,
+count and capacity inverses. The adapter decodes only the fields needed for the
+selected outcome and publishes count/storage after successful completion. This
+representation adds no allocation, collection or probe work. Its timing still
+requires the hosted original-wrapper controls across ordinary, colliding,
+duplicate-boundary and single-row inputs; codec verification alone establishes
+no performance result.
+
 Resource composition must also count work inside an insertion. Growth still
 requires lookup, rehash and insertion work using deterministic hashing.
 Half occupancy does not bound every collision cluster by a constant.

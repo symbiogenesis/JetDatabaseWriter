@@ -191,48 +191,64 @@ namespace JetDatabaseWriter.Verification {
         _0_index = (_0_index) + (1U);
       }
     }
-    public static void PrepareVisitedAdd(uint[] entries, uint count, uint pointer, out byte result, out uint nextCount, out uint capacity)
+    public static byte VisitedAddResult(ulong packed) {
+      return (byte)((packed) % (4UL));
+    }
+    public static uint VisitedAddCount(ulong packed) {
+      return (uint)(((packed) / (4UL)) % (2147483648UL));
+    }
+    public static uint VisitedAddCapacity(ulong packed) {
+      return (uint)((packed) / (8589934592UL));
+    }
+    public static ulong PackVisitedAdd(byte result, uint count, uint capacity)
     {
-      result = 0;
-      nextCount = 0;
-      capacity = 0;
-      byte _rhs0 = (byte)(0);
-      uint _rhs1 = count;
-      uint _rhs2 = 0U;
-      result = _rhs0;
-      nextCount = _rhs1;
-      capacity = _rhs2;
+      return ((((ulong)(capacity)) * (8589934592UL)) + (((ulong)(count)) * (4UL))) + ((ulong)(result));
+    }
+    public static ulong PrepareVisitedAdd(uint[] entries, uint count, uint pointer)
+    {
+      ulong packed = 0;
+      byte _0_result;
+      _0_result = (byte)(0);
+      uint _1_nextCount;
+      _1_nextCount = count;
+      uint _2_capacity;
+      _2_capacity = 0U;
       if ((pointer) == (0U)) {
-        return ;
+        packed = JetDatabaseWriter.Verification.LongValueKernel.PackVisitedAdd(_0_result, _1_nextCount, _2_capacity);
+        return packed;
       }
-      uint _0_length;
-      _0_length = (uint)(entries).LongLength;
-      if (((_0_length) == (0U)) || ((count) >= ((_0_length) / (2U)))) {
-        if ((_0_length) != (0U)) {
-          bool _1_present;
+      uint _3_length;
+      _3_length = (uint)(entries).LongLength;
+      if (((_3_length) == (0U)) || ((count) >= ((_3_length) / (2U)))) {
+        if ((_3_length) != (0U)) {
+          bool _4_present;
           bool _out0;
           _out0 = JetDatabaseWriter.Verification.LongValueKernel.ContainsVisited(entries, pointer);
-          _1_present = _out0;
-          if (_1_present) {
-            return ;
+          _4_present = _out0;
+          if (_4_present) {
+            packed = JetDatabaseWriter.Verification.LongValueKernel.PackVisitedAdd(_0_result, _1_nextCount, _2_capacity);
+            return packed;
           }
         }
-        capacity = JetDatabaseWriter.Verification.LongValueKernel.NextVisitedCapacity(_0_length);
-        if ((capacity) == (0U)) {
-          result = (byte)(3);
+        _2_capacity = JetDatabaseWriter.Verification.LongValueKernel.NextVisitedCapacity(_3_length);
+        if ((_2_capacity) == (0U)) {
+          _0_result = (byte)(3);
         } else {
-          result = (byte)(2);
+          _0_result = (byte)(2);
         }
-        return ;
+        packed = JetDatabaseWriter.Verification.LongValueKernel.PackVisitedAdd(_0_result, _1_nextCount, _2_capacity);
+        return packed;
       }
-      byte _2_added;
+      byte _5_added;
       byte _out1;
       _out1 = JetDatabaseWriter.Verification.LongValueKernel.AddVisited(entries, pointer);
-      _2_added = _out1;
-      if ((_2_added) == ((byte)(2))) {
-        nextCount = (count) + (1U);
-        result = (byte)(1);
+      _5_added = _out1;
+      if ((_5_added) == ((byte)(2))) {
+        _1_nextCount = (count) + (1U);
+        _0_result = (byte)(1);
       }
+      packed = JetDatabaseWriter.Verification.LongValueKernel.PackVisitedAdd(_0_result, _1_nextCount, _2_capacity);
+      return packed;
     }
     public static uint CompleteVisitedGrowth(uint[] source, uint[] destination, uint count, uint pointer)
     {

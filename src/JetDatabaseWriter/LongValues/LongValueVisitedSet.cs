@@ -18,15 +18,18 @@ internal struct LongValueVisitedSet
     internal bool Add(uint pointer)
     {
         uint[] current = this.entries ?? [];
-        LongValueKernel.PrepareVisitedAdd(current, this.count, pointer, out byte result, out uint nextCount, out uint capacity);
+        ulong prepared = LongValueKernel.PrepareVisitedAdd(current, this.count, pointer);
+        byte result = LongValueKernel.VisitedAddResult(prepared);
         if (result == 0)
         {
             return false;
         }
 
+        uint nextCount;
         if (result == 2)
         {
             // Allocation supplies distinct, zero-filled storage to verified control.
+            uint capacity = LongValueKernel.VisitedAddCapacity(prepared);
             uint[] next = new uint[checked((int)capacity)];
             nextCount = LongValueKernel.CompleteVisitedGrowth(current, next, this.count, pointer);
             this.entries = next;
@@ -34,6 +37,10 @@ internal struct LongValueVisitedSet
         else if (result == 3)
         {
             throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The long-value row-identity tracking capacity is exhausted.");
+        }
+        else
+        {
+            nextCount = LongValueKernel.VisitedAddCount(prepared);
         }
 
         this.count = nextCount;
