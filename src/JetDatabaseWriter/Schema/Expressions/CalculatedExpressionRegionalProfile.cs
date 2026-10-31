@@ -114,13 +114,20 @@ internal static class CalculatedExpressionRegionalProfile
             throw new FormatException("The localized month name is not a native Japanese date spelling.");
         }
 
-        if (Culture.TwoLetterISOLanguageName == "en")
+        int january = text.IndexOf("Jan.", StringComparison.OrdinalIgnoreCase);
+        if (Culture.Name is "ar-SA" or "tr-TR" && january >= 0 && (january == 0 || !char.IsLetter(text[january - 1])))
         {
-            if (text.Contains('年', StringComparison.Ordinal))
-            {
-                throw new FormatException("Japanese date units are not a native English date spelling.");
-            }
+            throw new FormatException("The punctuated January abbreviation is not a native month name in this regional profile.");
+        }
 
+        if ((Culture.TwoLetterISOLanguageName == "en" || Culture.Name is "ar-SA" or "de-DE" or "fr-FR" or "tr-TR")
+            && text.Contains('年', StringComparison.Ordinal))
+        {
+            throw new FormatException("Japanese date units are not a native date spelling in this regional profile.");
+        }
+
+        if (Culture.TwoLetterISOLanguageName == "en" || Culture.Name is "de-DE" or "ja-JP")
+        {
             text = text.Replace("Sept.", "Sep", StringComparison.OrdinalIgnoreCase);
         }
 
