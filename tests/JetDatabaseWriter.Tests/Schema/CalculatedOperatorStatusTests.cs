@@ -52,6 +52,21 @@ public sealed class CalculatedOperatorStatusTests
         { "\"True\" In (IsNull(Null))", 0 },
         { "IsNull(Null) In (\"-1\")", -1 },
         { "\"-1\" In (IsNull(Null))", -1 },
+        { "1 In(UCase(\"bad\"))", 13 },
+        { "UCase(\"bad\") In(1)", 13 },
+        { "1 In(UCase(\"01\"))", -1 },
+        { "1 In(UCase(\"1.0\"))", -1 },
+        { "1 In(UCase(\"1.5\"))", 0 },
+        { "1 In(UCase(\"1E100\"))", 0 },
+        { "1 In(UCase(\"1E999\"))", 6 },
+        { "CDbl(1) In(UCase(\"01\"))", 0 },
+        { "UCase(\"01\") In(CDbl(1))", 0 },
+        { "9007199254740993 In(UCase(\"9007199254740993\"))", -1 },
+        { "9007199254740993 In(UCase(\"9007199254740992\"))", 0 },
+        { "9007199254740992 In(UCase(\"9007199254740993\"))", 0 },
+        { "1.0000000000000002 In(UCase(\"1.0000000000000002\"))", -1 },
+        { "1.5 In(UCase(\"1.5000000000000000000000000001\"))", 0 },
+        { "1 In(UCase(\"1.0000000000000000000000000001\"))", -1 },
     };
 
     [Theory]
@@ -61,13 +76,67 @@ public sealed class CalculatedOperatorStatusTests
         var table = new TableDef { Columns = [new ColumnInfo { Name = "V", Type = ColumnType.DoubleType, ExtraFlags = 0xC0, CalculatedResultType = ColumnType.DoubleType }] };
         ColumnConstraint[] constraints = [new() { Name = "V", IsCalculated = true, ClrType = typeof(double), CalculatedResultType = ColumnType.DoubleType, CalculationExpression = expression }];
         object actual = new CalculatedExpressionEvaluationContext(table, constraints, [DBNull.Value]).EvaluateColumn(0);
-        if (expected == 13)
+        if (expected is 6 or 13)
         {
-            Assert.Equal(13, Assert.IsType<CalculatedError>(actual).NativeCode);
+            Assert.Equal(expected, Assert.IsType<CalculatedError>(actual).NativeCode);
         }
         else
         {
             Assert.Equal(expected, Assert.IsType<double>(actual));
+        }
+    }
+
+    [Theory]
+    [InlineData("native-membership-conversion.accdb", "30FFFE459B8257EA385C8EE451B474AEF8724BA0872712E4E71C6639023A8A42")]
+    [InlineData("native-membership-conversion-compacted.accdb", "D26FE689050995AE0545DF6D77357A666E05F52F59FCC034D012CA94F223E4DA")]
+    public async Task NativeMembershipConversion_TextMemoAndDecimalInputsRetainEveryCache(string fixture, string hash)
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "Databases", "CalculatedMembershipConversion", fixture);
+        byte[] bytes = await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken);
+        Assert.Equal(hash, Convert.ToHexString(SHA256.HashData(bytes)));
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(bytes, TestContext.Current.CancellationToken);
+        object[][] native;
+        await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            native = (await reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken)).OrderBy(row => row[0]).ToArray();
+        }
+
+        Assert.Equal(9, native.Length);
+        Assert.Equal("iIıİäÄéÉßœ漢", native[8][1]);
+        foreach (int index in new[] { 1, 2 })
+        {
+            Assert.Equal(-1d, native[index][5]);
+            Assert.Equal(-1d, native[index][6]);
+            Assert.Equal(0d, native[index][7]);
+            Assert.Equal(0d, native[index][8]);
+        }
+
+        foreach (int index in new[] { 3, 4, 6, 8 })
+        {
+            int code = index == 4 ? 6 : 13;
+            foreach (int ordinal in new[] { 5, 6, 11, 12 })
+            {
+                Assert.Equal(code, Assert.IsType<CalculatedError>(native[index][ordinal]).NativeCode);
+            }
+        }
+
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false, CalculatedExpressionCulture = CultureInfo.GetCultureInfo("en-US") }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            foreach (object[] row in native)
+            {
+                Assert.Equal(1, await writer.UpdateRowsAsync("T", "Id", row[0], new Dictionary<string, object?> { ["S"] = row[1] }, TestContext.Current.CancellationToken));
+                await writer.InsertRowAsync("T", new RowValues { ["Id"] = (int)row[0] + 100, ["S"] = row[1], ["M"] = row[2], ["D"] = row[3], ["I"] = row[4] }, TestContext.Current.CancellationToken);
+            }
+        }
+
+        await using AccessReader reopened = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        object[][] rows = (await reopened.Rows("T", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken)).OrderBy(row => row[0]).ToArray();
+        Assert.Equal(native.Length * 2, rows.Length);
+        foreach (object[] row in rows)
+        {
+            int index = ((int)row[0] % 100) - 1;
+            Assert.Equal(native[index][1..], row[1..]);
         }
     }
 

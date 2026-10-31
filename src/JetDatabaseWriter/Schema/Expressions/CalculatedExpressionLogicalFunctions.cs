@@ -97,16 +97,42 @@ internal static class CalculatedExpressionLogicalFunctions
             object comparedValue = inValue;
             if (function.Context.IsCalculatingColumn && (inValue is string or Guid || candidateValue is string or Guid))
             {
-                // Native literal pairs retain a numeric/text mismatch. Fields
-                // and computed results instead compare their formatted text.
-                if (literalNeedle && literalCandidate
-                    && (CalculatedExpressionNumericComparison.IsNumber(inValue) || CalculatedExpressionNumericComparison.IsNumber(candidateValue)))
+                bool numericNeedle = literalNeedle && CalculatedExpressionNumericComparison.IsNumber(inValue);
+                bool numericCandidate = literalCandidate && CalculatedExpressionNumericComparison.IsNumber(candidateValue);
+                if (numericNeedle || numericCandidate)
                 {
-                    return new CalculatedError(13);
-                }
+                    // Two literals retain a type mismatch; a literal number
+                    // instead converts runtime text to Decimal or Double.
+                    if (literalNeedle && literalCandidate)
+                    {
+                        return new CalculatedError(13);
+                    }
 
-                comparedValue = ToCalculatedComparisonText(inValue);
-                candidateValue = ToCalculatedComparisonText(candidateValue);
+                    try
+                    {
+                        if (numericNeedle)
+                        {
+                            candidateValue = MembershipNumber(candidateValue, inValue);
+                        }
+                        else
+                        {
+                            comparedValue = MembershipNumber(inValue, candidateValue);
+                        }
+                    }
+                    catch (OverflowException)
+                    {
+                        return new CalculatedError(6);
+                    }
+                    catch (Exception exception) when (exception is InvalidCastException or FormatException)
+                    {
+                        return new CalculatedError(13);
+                    }
+                }
+                else
+                {
+                    comparedValue = ToCalculatedComparisonText(inValue);
+                    candidateValue = ToCalculatedComparisonText(candidateValue);
+                }
             }
 
             if (CompareValues(comparedValue, candidateValue, static comparison => comparison == 0, function.Context) is true)
@@ -117,6 +143,9 @@ internal static class CalculatedExpressionLogicalFunctions
 
         return function.Context.IsCalculatingColumn ? (short)0 : false;
     }
+
+    private static object MembershipNumber(object value, object literal)
+        => literal is decimal ? ToDecimal(value) : ToDouble(value);
 
     private static object EvaluateNot(CalculatedFunctionInvocation function)
     {
