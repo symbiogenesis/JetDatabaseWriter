@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.LongValues;
 
+using System.Runtime.CompilerServices;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Verification;
 
@@ -13,10 +14,16 @@ internal struct LongValueVisitedSet
     /// <param name="pointer">The nonzero external-row identity.</param>
     /// <returns>Whether the identity was absent.</returns>
     /// <exception cref="JetLimitationException">The bounded tracking capacity is exhausted.</exception>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool Add(uint pointer)
     {
         uint[] current = this.entries ?? [];
         LongValueKernel.PrepareVisitedAdd(current, this.count, pointer, out byte result, out uint nextCount, out uint capacity);
+        if (result == 0)
+        {
+            return false;
+        }
+
         if (result == 2)
         {
             // Allocation supplies distinct, zero-filled storage to verified control.
@@ -30,6 +37,6 @@ internal struct LongValueVisitedSet
         }
 
         this.count = nextCount;
-        return result != 0;
+        return true;
     }
 }
