@@ -83,7 +83,7 @@ public sealed class CalculatedRegionalProfileTests
     private static async Task<CultureInfo> ReadNativeCultureAsync(string name)
     {
         string path = Path.Combine(AppContext.BaseDirectory, "Databases", "CalculatedRegionalProfiles", name, "observations.json");
-        using JsonDocument report = JsonDocument.Parse(await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
+        using var report = JsonDocument.Parse(await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
         JsonElement metadata = report.RootElement.GetProperty("RuntimeCultureMetadata");
         var culture = new CultureInfo(name, useUserOverride: false);
         culture.DateTimeFormat.ShortDatePattern = metadata.GetProperty("ShortDatePattern").GetString()!;
