@@ -154,6 +154,11 @@ internal static partial class CalculatedExpressionTextFunctions
             return DBNull.Value;
         }
 
+        if (function.Context.IsCalculatingColumn && value is bool)
+        {
+            return ToCalculatedText(value);
+        }
+
         object number = value switch
         {
             double or float => value,
@@ -416,7 +421,7 @@ internal static partial class CalculatedExpressionTextFunctions
             throw new InvalidCastException("Asc cannot accept Null.");
         }
 
-        string text = ToText(value, context);
+        string text = context.IsCalculatingColumn ? ToCalculatedComparisonText(value) : ToText(value);
         if (string.IsNullOrEmpty(text))
         {
             throw new ArgumentException("Calculated-column Asc/AscW requires a non-empty string.");
