@@ -652,5 +652,89 @@ namespace JetDatabaseWriter.Verification {
       decision = (((((ulong)(JetDatabaseWriter.Verification.RecoveryKernel.IndexChildCanonicalByte(page, first, start, prefix, isFirst, (_0_keyLength) + (4U)))) * (16777216UL)) + (((ulong)(JetDatabaseWriter.Verification.RecoveryKernel.IndexChildCanonicalByte(page, first, start, prefix, isFirst, (_0_keyLength) + (5U)))) * (65536UL))) + (((ulong)(JetDatabaseWriter.Verification.RecoveryKernel.IndexChildCanonicalByte(page, first, start, prefix, isFirst, (_0_keyLength) + (6U)))) * (256UL))) + ((ulong)(JetDatabaseWriter.Verification.RecoveryKernel.IndexChildCanonicalByte(page, first, start, prefix, isFirst, (_0_keyLength) + (7U))));
       return decision;
     }
+    public static uint Jet3JumpCount(uint lengthWithoutJumps) {
+      if ((lengthWithoutJumps) <= (256U)) {
+        return 0U;
+      } else {
+        return ((lengthWithoutJumps) - (2U)) / (255U);
+      }
+    }
+    public static uint Jet3JumpEntryCount(uint rowLength) {
+      if ((rowLength) == (0U)) {
+        return 0U;
+      } else {
+        return ((rowLength) - (1U)) / (256U);
+      }
+    }
+    public static uint Jet3UsableJumpCount(uint entryCount, uint eodPosition)
+    {
+      if (((entryCount) > (0U)) && (((eodPosition) / (256U)) < (entryCount))) {
+        return (entryCount) - (1U);
+      } else {
+        return entryCount;
+      }
+    }
+    public static bool Jet3JumpReached(byte entry, byte previous, uint index)
+    {
+      return ((previous) <= (entry)) && (((uint)(entry)) <= (index));
+    }
+    public static bool Jet3JumpReadRange(uint length, uint start, uint end, uint count)
+    {
+      return ((((start) <= (length)) && ((end) <= ((length) - (start)))) && ((count) <= (end))) && ((count) <= (8388607U));
+    }
+    public static uint ReadJet3JumpHighPart(byte[] bytes, uint start, uint end, uint count, uint index)
+    {
+      uint high = 0;
+      high = 4294967295U;
+      if (!(JetDatabaseWriter.Verification.RecoveryKernel.Jet3JumpReadRange((uint)(bytes).LongLength, start, end, count))) {
+        return high;
+      }
+      uint _0_reached;
+      _0_reached = 0U;
+      byte _1_previous;
+      _1_previous = (byte)(0);
+      while ((_0_reached) < (count)) {
+        byte _2_entry;
+        _2_entry = (bytes)[(int)((((start) + (end)) - (1U)) - (_0_reached))];
+        if (!(JetDatabaseWriter.Verification.RecoveryKernel.Jet3JumpReached(_2_entry, _1_previous, index))) {
+          high = (_0_reached) * (256U);
+          return high;
+        }
+        _1_previous = _2_entry;
+        _0_reached = (_0_reached) + (1U);
+      }
+      high = (_0_reached) * (256U);
+      return high;
+    }
+    public static uint Jet3JumpEntryStart(uint variableCount, uint boundary, uint eod)
+    {
+      if ((eod) < (boundary)) {
+        return 255U;
+      } else if ((variableCount) == (0U)) {
+        return 0U;
+      } else {
+        return 256U;
+      }
+    }
+    public static uint Jet3JumpEntryAdvance(uint boundary, uint index, uint offset)
+    {
+      if ((offset) >= (boundary)) {
+        return index;
+      } else {
+        return 256U;
+      }
+    }
+    public static uint Jet3DummyJumpCount(uint entries, uint eod)
+    {
+      if (((eod) / (256U)) < (entries)) {
+        return (entries) - ((eod) / (256U));
+      } else {
+        return 0U;
+      }
+    }
+    public static bool Jet3JumpWritable(uint variableCount, uint entries, uint eod)
+    {
+      return ((variableCount) != (255U)) || ((JetDatabaseWriter.Verification.RecoveryKernel.Jet3DummyJumpCount(entries, eod)) <= (1U));
+    }
   }
 }

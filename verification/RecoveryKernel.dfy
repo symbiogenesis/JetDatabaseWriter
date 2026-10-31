@@ -1839,4 +1839,127 @@ module RecoveryKernel {
       isFirst := false;
     }
   }
+
+  // Jet3 jump-table controls. Native rows use at most seven entries, but the
+  // sizing law is exact for every positive native-width input. Span access and
+  // retention remain adapter effects; no copied row/offset arrays are needed.
+  function Jet3JumpCount(lengthWithoutJumps: U32): U32 {
+    if lengthWithoutJumps <= 256 then 0 else (lengthWithoutJumps - 2) / 255
+  }
+
+  lemma Jet3JumpCountIsSmallestFixedPoint(length: U32, smaller: U32)
+    requires length > 0
+    ensures (length as int + Jet3JumpCount(length) as int - 1) / 256 == Jet3JumpCount(length) as int
+    ensures smaller < Jet3JumpCount(length) ==>
+      (length as int + smaller as int - 1) / 256 > smaller as int
+  {
+    if length > 256 {
+      var count := Jet3JumpCount(length) as int;
+      assert 255 * count <= length as int - 2 < 255 * (count + 1);
+    }
+  }
+
+  function Jet3JumpEntryCount(rowLength: U32): U32 {
+    if rowLength == 0 then 0 else (rowLength - 1) / 256
+  }
+
+  function Jet3UsableJumpCount(entryCount: U32, eodPosition: U32): U32 {
+    if entryCount > 0 && eodPosition / 256 < entryCount then entryCount - 1 else entryCount
+  }
+
+  lemma Jet3JumpCountsPreserveBoundaries(rowLength: U32, entries: U32, eod: U32)
+    ensures rowLength > 0 ==> (256 * Jet3JumpEntryCount(rowLength) as int < rowLength as int <=
+      256 * (Jet3JumpEntryCount(rowLength) as int + 1))
+    ensures Jet3UsableJumpCount(entries, eod) <= entries
+    ensures entries - Jet3UsableJumpCount(entries, eod) <= 1
+    ensures Jet3UsableJumpCount(entries, eod) < entries <==> entries > 0 && eod / 256 < entries
+  { }
+
+  function Jet3JumpReached(entry: Byte, previous: Byte, index: U32): bool {
+    previous <= entry && entry as U32 <= index
+  }
+
+  ghost predicate Jet3JumpPrefix(bytes: seq<Byte>, end: nat, reached: nat, index: U32)
+    requires reached <= end <= |bytes|
+    decreases reached
+  {
+    reached == 0 || (Jet3JumpPrefix(bytes, end, reached - 1, index) &&
+      Jet3JumpReached(bytes[end - reached], if reached == 1 then 0 else bytes[end - reached + 1], index))
+  }
+
+  function Jet3JumpReadRange(length: U32, start: U32, end: U32, count: U32): bool {
+    start <= length && end <= length - start && count <= end && count <= 8388607
+  }
+
+  method ReadJet3JumpHighPart(bytes: array<Byte>, start: U32, end: U32, count: U32, index: U32)
+      returns (high: U32)
+    requires bytes.Length <= 2147483647
+    ensures high == 4294967295 <==> !Jet3JumpReadRange(bytes.Length as U32, start, end, count)
+    ensures high != 4294967295 ==> (high <= 2147483392 && high % 256 == 0 &&
+      high / 256 <= count &&
+      Jet3JumpPrefix(bytes[..], (start + end) as int, (high / 256) as int, index) &&
+      (high / 256 == count ||
+       !Jet3JumpReached(bytes[start + end - 1 - high / 256],
+         if high == 0 then 0 else bytes[start + end - high / 256], index)))
+  {
+    high := 4294967295;
+    if !Jet3JumpReadRange(bytes.Length as U32, start, end, count) { return; }
+    ghost var image := bytes[..];
+    ghost var absoluteEnd: nat := (start + end) as int;
+    var reached: U32 := 0;
+    var previous: Byte := 0;
+    while reached < count
+      invariant reached <= count
+      invariant Jet3JumpPrefix(image, absoluteEnd, reached as int, index)
+      invariant previous == (if reached == 0 then 0 else bytes[start + end - reached])
+      decreases count - reached
+    {
+      var entry := bytes[start + end - 1 - reached];
+      if !Jet3JumpReached(entry, previous, index) {
+        high := reached * 256;
+        return;
+      }
+      assert Jet3JumpPrefix(image, absoluteEnd, reached as int + 1, index);
+      previous := entry;
+      reached := reached + 1;
+    }
+    high := reached * 256;
+  }
+
+  // 256 requests another acquired variable offset; 255 is the native dummy.
+  // Zero-column rows that cross a boundary select the EOD's index zero.
+  function Jet3JumpEntryStart(variableCount: U32, boundary: U32, eod: U32): U32 {
+    if eod < boundary then 255 else if variableCount == 0 then 0 else 256
+  }
+
+  function Jet3JumpEntryAdvance(boundary: U32, index: U32, offset: U32): U32 {
+    if offset >= boundary then index else 256
+  }
+
+  function Jet3DummyJumpCount(entries: U32, eod: U32): U32 {
+    if eod / 256 < entries then entries - eod / 256 else 0
+  }
+
+  function Jet3JumpWritable(variableCount: U32, entries: U32, eod: U32): bool {
+    variableCount != 255 || Jet3DummyJumpCount(entries, eod) <= 1
+  }
+
+  lemma Jet3JumpEncoderDecisionsAreExact(variableCount: U32, boundaryIndex: U32,
+      eod: U32, index: U32, offset: U32, entries: U32)
+    requires variableCount <= 255 && 0 < boundaryIndex <= 8388607 && index < variableCount
+    ensures Jet3JumpEntryStart(variableCount, boundaryIndex * 256, eod) == 255 <==>
+      eod as int < 256 * boundaryIndex as int
+    ensures Jet3JumpEntryAdvance(boundaryIndex * 256, index, offset) == index <==>
+      offset as int >= 256 * boundaryIndex as int
+    ensures Jet3JumpEntryAdvance(boundaryIndex * 256, index, offset) == 256 <==>
+      offset as int < 256 * boundaryIndex as int
+    ensures Jet3DummyJumpCount(entries, eod) == 0 <==> entries <= eod / 256
+    ensures Jet3DummyJumpCount(entries, eod) > 0 ==>
+      Jet3DummyJumpCount(entries, eod) + eod / 256 == entries
+    ensures boundaryIndex <= entries ==>
+      (eod as int < 256 * boundaryIndex as int <==>
+       boundaryIndex > entries - Jet3DummyJumpCount(entries, eod))
+    ensures !Jet3JumpWritable(variableCount, entries, eod) <==>
+      variableCount == 255 && Jet3DummyJumpCount(entries, eod) >= 2
+  { }
 }

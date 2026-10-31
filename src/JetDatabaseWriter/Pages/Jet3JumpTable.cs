@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Pages;
 
 using System;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Verification;
 
 /// <summary>
 /// The jump table of a Jet3 (Access 97) row. Jet3 stores the EOD and each
@@ -33,7 +34,8 @@ internal static class Jet3JumpTable
     /// </summary>
     /// <param name="rowLength">The row length in bytes.</param>
     /// <returns>The number of jump entries.</returns>
-    internal static int EntryCount(int rowLength) => (rowLength - 1) / BoundarySize;
+    internal static int EntryCount(int rowLength)
+        => checked((int)RecoveryKernel.Jet3JumpEntryCount(checked((uint)rowLength)));
 
     /// <summary>
     /// Returns how many of a row's <paramref name="entryCount"/> jump entries
@@ -45,7 +47,7 @@ internal static class Jet3JumpTable
     /// <param name="eodPosition">The row-relative position of the EOD byte.</param>
     /// <returns>The number of jump entries in use.</returns>
     internal static int UsableEntryCount(int entryCount, int eodPosition)
-        => entryCount > 0 && eodPosition / BoundarySize < entryCount ? entryCount - 1 : entryCount;
+        => checked((int)RecoveryKernel.Jet3UsableJumpCount(checked((uint)entryCount), checked((uint)eodPosition)));
 
     /// <summary>
     /// Returns the high part to add to the low byte of offset
@@ -63,11 +65,11 @@ internal static class Jet3JumpTable
     internal static int HighPart(ReadOnlySpan<byte> row, int rowStart, int jumpTableEnd, int usableEntries, int index)
     {
         int reached = 0;
-        int previous = 0;
+        byte previous = 0;
         while (reached < usableEntries)
         {
-            int entry = row[rowStart + jumpTableEnd - 1 - reached];
-            if (entry > index || entry < previous)
+            byte entry = row[rowStart + jumpTableEnd - 1 - reached];
+            if (index < 0 || !RecoveryKernel.Jet3JumpReached(entry, previous, checked((uint)index)))
             {
                 break;
             }
@@ -90,15 +92,7 @@ internal static class Jet3JumpTable
     /// <param name="lengthWithoutJumps">The row length without its jump table.</param>
     /// <returns>The number of jump entries.</returns>
     internal static int CountForLength(int lengthWithoutJumps)
-    {
-        int count = 0;
-        while (EntryCount(lengthWithoutJumps + count) > count)
-        {
-            count++;
-        }
-
-        return count;
-    }
+        => checked((int)RecoveryKernel.Jet3JumpCount(checked((uint)lengthWithoutJumps)));
 
     /// <summary>
     /// Writes a Jet3 row's jump entries in stored order, the highest
@@ -117,33 +111,30 @@ internal static class Jet3JumpTable
     internal static void Write(Span<byte> destination, ReadOnlySpan<int> variableOffsets, int eod)
     {
         int varLen = variableOffsets.Length;
-        int dummies = 0;
         for (int k = destination.Length; k >= 1; k--)
         {
             int boundary = k * BoundarySize;
-            int entry = DummyEntry;
-            if (eod >= boundary)
+            uint entry = RecoveryKernel.Jet3JumpEntryStart(checked((uint)varLen), checked((uint)boundary), checked((uint)eod));
+            if (entry == 256)
             {
-                entry = varLen;
+                entry = checked((uint)varLen);
                 for (int i = 0; i < varLen; i++)
                 {
-                    if (variableOffsets[i] >= boundary)
+                    uint candidate = RecoveryKernel.Jet3JumpEntryAdvance(checked((uint)boundary), checked((uint)i), checked((uint)variableOffsets[i]));
+                    if (candidate != 256)
                     {
-                        entry = i;
+                        entry = candidate;
                         break;
                     }
                 }
-            }
-            else
-            {
-                dummies++;
             }
 
             destination[^k] = (byte)entry;
         }
 
-        if (varLen == DummyEntry && dummies > 1)
+        if (!RecoveryKernel.Jet3JumpWritable(checked((uint)varLen), checked((uint)destination.Length), checked((uint)eod)))
         {
+            uint dummies = RecoveryKernel.Jet3DummyJumpCount(checked((uint)destination.Length), checked((uint)eod));
             throw new JetLimitationException(JetErrorCode.RowTooLarge, $"A Jet3 row with 255 variable columns cannot end its variable data at offset {eod}: its jump table would need {dummies} unused entries, which Jet cannot tell from the EOD's index.");
         }
     }
