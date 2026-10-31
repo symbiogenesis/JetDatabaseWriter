@@ -56,6 +56,52 @@ public sealed class LongValueTraversalTests
     }
 
     [Theory]
+    [InlineData(9)]
+    [InlineData(17)]
+    [InlineData(129)]
+    public async Task CopyPayloadAsync_CompletesCollidingChainAtExactBudgets(int distinctRows)
+    {
+        int acquired = 0;
+        int released = 0;
+        byte[] page = new byte[5];
+        await using var output = new MemoryStream();
+        await LongValueStore.CopyPayloadAsync(
+            LongValueDescriptor.Chained(distinctRows, 16777216, 0),
+            ReadOnlyMemory<byte>.Empty,
+            output,
+            page.Length,
+            distinctRows,
+            distinctRows,
+            (pointer, _) =>
+            {
+                Assert.Equal(acquired, released);
+                acquired++;
+                Assert.Equal(checked((uint)(acquired * 16777216L)), pointer);
+                uint next = acquired == distinctRows ? 16777216u : checked((uint)((acquired + 1) * 16777216L));
+                Wu32(page, 0, next);
+                page[4] = checked((byte)acquired);
+                return new ValueTask<LvalRowLocation>(new LvalRowLocation(page, 0, page.Length, null)
+                {
+                    Lease = PageLease.Own(page, page.Length, buffer =>
+                    {
+                        Assert.Same(page, buffer);
+                        released++;
+                    }),
+                });
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(distinctRows, acquired);
+        Assert.Equal(acquired, released);
+        byte[] payload = output.ToArray();
+        Assert.Equal(distinctRows, payload.Length);
+        for (int index = 0; index < payload.Length; index++)
+        {
+            Assert.Equal(checked((byte)(index + 1)), payload[index]);
+        }
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(3)]
@@ -301,6 +347,76 @@ public sealed class LongValueTraversalTests
         for (uint pointer = 1; pointer <= 4; pointer++)
         {
             Assert.True(LongValueKernel.ContainsVisited(source, pointer));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void GeneratedVisitedController_MatchesIndependentSetAcrossRepeatedTransitions(bool useNullStorage)
+    {
+        uint[]? entries = useNullStorage ? null : [];
+        uint count = 0;
+        LongValueVisitedSet adapter = default;
+        var expected = new HashSet<uint>();
+        var operations = new List<uint> { 0, 0, uint.MaxValue, 0x80000000, 0 };
+        for (uint index = 1; index <= 129; index++)
+        {
+            // The first run shares initial slot 15 and wraps its cluster;
+            // later identities share slot zero across several capacities.
+            uint pointer = index <= 16 ? 254 + (index * 16) : (index - 16) * 16777216;
+            operations.Add(pointer);
+            operations.Add(pointer);
+            operations.Add(0);
+            operations.Add(uint.MaxValue);
+        }
+
+        foreach (uint pointer in operations)
+        {
+            uint[] before = entries is null ? [] : (uint[])entries.Clone();
+            int retainedCount = expected.Count;
+            bool inserted = pointer != 0 && expected.Add(pointer);
+            Assert.Equal(inserted, adapter.Add(pointer));
+
+            ulong decision = LongValueKernel.PrepareVisitedAdd(entries, count, pointer);
+            if (!inserted)
+            {
+                Assert.Equal(0UL, decision);
+                Assert.Equal(before, entries ?? []);
+            }
+            else if (retainedCount < before.Length / 2)
+            {
+                Assert.Equal(checked((ulong)expected.Count), decision);
+                count = checked((uint)expected.Count);
+            }
+            else
+            {
+                int capacity = before.Length == 0 ? 16 : before.Length * 2;
+                Assert.Equal(0x8000000000000000UL | checked((ulong)capacity), decision);
+                Assert.Equal(before, entries ?? []);
+                uint[] next = new uint[capacity];
+                count = LongValueKernel.CompleteVisitedGrowth(entries, next, count, pointer);
+                Assert.Equal(before, entries ?? []);
+                entries = next;
+            }
+
+            Assert.Equal(checked((uint)expected.Count), count);
+            uint[] occupied = Array.FindAll(entries ?? [], static value => value != 0);
+            Assert.Equal(expected.Count, occupied.Length);
+            Assert.True(expected.SetEquals(occupied));
+            Assert.True(entries is null || count <= entries.Length / 2);
+            Assert.True(entries is null || entries.Length <= 16 + (4 * count));
+            foreach (uint member in expected)
+            {
+                Assert.NotNull(entries);
+                Assert.True(LongValueKernel.ContainsVisited(entries, member));
+            }
+
+            if (entries is not null)
+            {
+                Assert.False(LongValueKernel.ContainsVisited(entries, 0));
+                Assert.False(LongValueKernel.ContainsVisited(entries, 0x12345678));
+            }
         }
     }
 
