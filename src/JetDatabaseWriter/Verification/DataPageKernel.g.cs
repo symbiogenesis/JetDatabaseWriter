@@ -66,38 +66,45 @@ namespace JetDatabaseWriter.Verification {
       start = _rhs6;
       end = _rhs7;
     }
-    public static uint ReclaimedWord(uint raw, bool selected, uint first, uint start, uint end)
-    {
-      if (selected) {
-        return (49152U) + (end);
-      } else if (((first) <= ((raw) % (8192U))) && (((raw) % (8192U)) <= (start))) {
-        return (((raw) / (8192U)) * (8192U)) + ((((raw) % (8192U)) + (end)) - (start));
-      } else {
-        return raw;
-      }
-    }
     public static void RewriteReclaim(byte[] page, uint rowsStart, uint rowIndex, uint rows, uint first, uint start, uint end)
     {
-      uint _0_index;
-      _0_index = 0U;
-      while ((_0_index) < (rows)) {
-        uint _1_position;
-        _1_position = (rowsStart) + ((_0_index) * (2U));
-        uint _2_raw;
-        _2_raw = JetDatabaseWriter.Verification.DataPageKernel.ReadWord(page, _1_position);
-        uint _3_updated;
-        _3_updated = JetDatabaseWriter.Verification.DataPageKernel.ReclaimedWord(_2_raw, (_0_index) == (rowIndex), first, start, end);
-        (page)[(int)((_1_position))] = (byte)((_3_updated) % (256U));
-        uint _index0 = (_1_position) + (1U);
-        (page)[(int)(_index0)] = (byte)((_3_updated) / (256U));
-        _0_index = (_0_index) + (1U);
+      uint _0_width;
+      _0_width = (end) - (start);
+      uint _1_index;
+      _1_index = 0U;
+      while ((_1_index) < (rows)) {
+        uint _2_position;
+        _2_position = (rowsStart) + ((_1_index) * (2U));
+        if ((_1_index) == (rowIndex)) {
+          uint _3_updated;
+          _3_updated = (49152U) + (end);
+          (page)[(int)((_2_position))] = (byte)((_3_updated) % (256U));
+          uint _index0 = (_2_position) + (1U);
+          (page)[(int)(_index0)] = (byte)(((_3_updated) / (256U)) % (256U));
+        } else {
+          uint _4_raw;
+          _4_raw = JetDatabaseWriter.Verification.DataPageKernel.ReadWord(page, _2_position);
+          uint _5_offset;
+          _5_offset = (uint)((ushort)(((ushort)(_4_raw)) & ((ushort)(8191))));
+          if (((first) <= (_5_offset)) && ((_5_offset) <= (start))) {
+            uint _6_shifted;
+            _6_shifted = (_5_offset) + (_0_width);
+            uint _7_updated;
+            _7_updated = (uint)((ushort)(((ushort)(((ushort)(_4_raw)) & ((ushort)(57344)))) | ((ushort)(_6_shifted))));
+            (page)[(int)((_2_position))] = (byte)((_7_updated) % (256U));
+            uint _index1 = (_2_position) + (1U);
+            (page)[(int)(_index1)] = (byte)(((_7_updated) / (256U)) % (256U));
+          } else {
+          }
+        }
+        _1_index = (_1_index) + (1U);
       }
-      uint _4_free;
-      _4_free = ((((first) + (end)) - (start)) - (rowsStart)) - ((rows) * (2U));
-      uint _index1 = (uint)(2U);
-      (page)[(int)(_index1)] = (byte)((_4_free) % (256U));
-      uint _index2 = (uint)(3U);
-      (page)[(int)(_index2)] = (byte)((_4_free) / (256U));
+      uint _8_free;
+      _8_free = ((((first) + (end)) - (start)) - (rowsStart)) - ((rows) * (2U));
+      uint _index2 = (uint)(2U);
+      (page)[(int)(_index2)] = (byte)((_8_free) % (256U));
+      uint _index3 = (uint)(3U);
+      (page)[(int)(_index3)] = (byte)((_8_free) / (256U));
     }
   }
 }

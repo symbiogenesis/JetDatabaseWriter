@@ -101,7 +101,7 @@ module DataPageKernel {
     rows, first, start, end := count, minimum, selected, next;
   }
 
-  function ReclaimedWord(raw: U32, selected: bool, first: U32, start: U32, end: U32): U32
+  ghost function ReclaimedWord(raw: U32, selected: bool, first: U32, start: U32, end: U32): U32
     requires raw < 65536 && first <= start < end <= 8191
     ensures ReclaimedWord(raw, selected, first, start, end) < 65536
   {
@@ -115,6 +115,18 @@ module DataPageKernel {
     ensures ReclaimedWord(raw, false, first, start, end) / 8192 == raw / 8192
     ensures ReclaimedWord(raw, false, first, start, end) % 8192 ==
       (if first <= raw % 8192 <= start then raw % 8192 + end - start else raw % 8192)
+  { }
+
+  // Native word masks retain the exact arithmetic slot/flag representation.
+  lemma NativeWordMasks(raw: U32, offset: U32)
+    requires raw < 65536 && offset < 8192
+    ensures (raw as bv16 & 8191) as U32 == raw % 8192
+    ensures ((raw as bv16 & 57344) | offset as bv16) as U32 == raw / 8192 * 8192 + offset
+  { }
+
+  lemma WordBytesInverse(word: U32)
+    requires word < 65536
+    ensures word % 256 + 256 * (word / 256 % 256) == word
   { }
 
   ghost predicate DirectoryRewrite(before: seq<Byte>, after: seq<Byte>,
@@ -131,8 +143,8 @@ module DataPageKernel {
         !(rowsStart as int <= position < rowsStart as int + rows as int * 2) :: after[position] == before[position])
   }
 
-  // This complete generated loop writes exactly the directory words and free
-  // header. It neither scans nor touches the moved payload or pooled suffix.
+  // This complete generated loop writes only selected/shifted directory words
+  // and the free header, retaining the bulk effects' moved payload and suffix.
   method RewriteReclaim(page: array<Byte>, rowsStart: U32, rowIndex: U32,
       rows: U32, first: U32, start: U32, end: U32)
     requires page.Length <= 2147483647
@@ -148,7 +160,9 @@ module DataPageKernel {
     ensures forall position | 0 <= position < page.Length && position != 2 && position != 3 &&
         !(rowsStart as int <= position < rowsStart as int + rows as int * 2) :: page[position] == old(page[position])
   {
+    hide ReclaimedWord;
     ghost var before := page[..];
+    var width := end - start;
     var index: U32 := 0;
     while index < rows
       invariant index <= rows
@@ -162,10 +176,34 @@ module DataPageKernel {
     {
       var position := rowsStart + index * 2;
       ghost var iteration := page[..];
-      var raw := ReadWord(page, position);
-      var updated := ReclaimedWord(raw, index == rowIndex, first, start, end);
-      page[position] := (updated % 256) as Byte;
-      page[position + 1] := (updated / 256) as Byte;
+      if index == rowIndex {
+        var updated := 49152 + end;
+        assert {:isolate} updated == ReclaimedWord(Word(iteration, position as int), true, first, start, end) by {
+          reveal ReclaimedWord;
+        }
+        page[position] := (updated % 256) as Byte;
+        page[position + 1] := (updated / 256 % 256) as Byte;
+        assert {:isolate} Word(page[..], position as int) == updated by { WordBytesInverse(updated); }
+      } else {
+        var raw := ReadWord(page, position);
+        var offset := (raw as bv16 & 8191) as U32;
+        assert {:isolate} offset == raw % 8192 by { NativeWordMasks(raw, 0); }
+        if first <= offset <= start {
+          var shifted := offset + width;
+          var updated := ((raw as bv16 & 57344) | shifted as bv16) as U32;
+          assert {:isolate} updated == ReclaimedWord(raw, false, first, start, end) by {
+            reveal ReclaimedWord;
+            NativeWordMasks(raw, shifted);
+          }
+          page[position] := (updated % 256) as Byte;
+          page[position + 1] := (updated / 256 % 256) as Byte;
+          assert {:isolate} Word(page[..], position as int) == updated by { WordBytesInverse(updated); }
+        } else {
+          assert {:isolate} ReclaimedWord(raw, false, first, start, end) == raw by {
+            reveal ReclaimedWord;
+          }
+        }
+      }
       assert forall untouched | 0 <= untouched < page.Length &&
         untouched != position as int && untouched != position as int + 1 :: page[untouched] == iteration[untouched];
       index := index + 1;
