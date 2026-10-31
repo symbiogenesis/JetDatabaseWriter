@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Verification;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -816,29 +817,14 @@ internal static class IndexPageCodec
         int payloadEnd,
         int currentStart)
     {
-        if (page == null || currentStart < layout.FirstEntryOffset || payloadEnd <= layout.FirstEntryOffset)
+        if (page == null || layout.BitmaskOffset < 0 || layout.FirstEntryOffset < 0
+            || payloadEnd < 0 || currentStart < 0)
         {
             return -1;
         }
 
-        int searchStart = currentStart - layout.FirstEntryOffset + 1;
-        int searchEnd = payloadEnd - layout.FirstEntryOffset;
-        for (int bitIndex = searchStart; bitIndex < searchEnd; bitIndex++)
-        {
-            int byteOffset = layout.BitmaskOffset + (bitIndex / 8);
-            if (byteOffset >= layout.FirstEntryOffset || byteOffset >= page.Length)
-            {
-                return -1;
-            }
-
-            if ((page[byteOffset] & (1 << (bitIndex % 8))) != 0)
-            {
-                int candidate = layout.FirstEntryOffset + bitIndex;
-                return candidate < payloadEnd ? candidate : -1;
-            }
-        }
-
-        return -1;
+        uint next = RecoveryKernel.FindIndexEntryStart(page, (uint)layout.BitmaskOffset, (uint)layout.FirstEntryOffset, (uint)payloadEnd, (uint)currentStart);
+        return next == uint.MaxValue ? -1 : checked((int)next);
     }
 
     /// <summary>
@@ -1221,28 +1207,8 @@ internal static class IndexPageCodec
     }
 
     private static bool HasExactLeafPayloadBoundary(IndexPageLayout layout, byte[] page, int payloadEnd)
-    {
-        int payloadLength = payloadEnd - layout.FirstEntryOffset;
-        int bitmapLength = (layout.FirstEntryOffset - layout.BitmaskOffset) * 8;
-        if (payloadLength < 0 || payloadLength >= bitmapLength)
-        {
-            return false;
-        }
-
-        // The first entry is implicit. Only a non-empty payload has an end sentinel.
-        for (int bit = 0; bit < bitmapLength; bit++)
-        {
-            bool isSet = (page[layout.BitmaskOffset + (bit / 8)] & (1 << (bit % 8))) != 0;
-            if ((bit == 0 && isSet)
-                || (bit > payloadLength && isSet)
-                || (bit == payloadLength && isSet != (payloadLength > 0)))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+        => layout.BitmaskOffset >= 0 && layout.FirstEntryOffset >= 0 && payloadEnd >= 0
+            && RecoveryKernel.CheckIndexLeafBitmap(page, (uint)layout.BitmaskOffset, (uint)layout.FirstEntryOffset, (uint)payloadEnd);
 
     private static bool TryGetPayloadEnd(
         IndexPageLayout layout,

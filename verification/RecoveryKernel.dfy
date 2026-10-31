@@ -1241,4 +1241,109 @@ module RecoveryKernel {
     ReplacementAdmissionRefinesRecordBytes(bytes, pathIdentity, digest, headerValid,
       oldLength as U64, newLength as U64, decisionValid);
   }
+
+  // Index entry starts are bits relative to the payload, least-significant
+  // bit first. Constant divisors retain native arithmetic without runtime support.
+  function IndexBitmapBit(value: Byte, bit: U32): bool {
+    if bit == 0 then value % 2 == 1
+    else if bit == 1 then value / 2 % 2 == 1
+    else if bit == 2 then value / 4 % 2 == 1
+    else if bit == 3 then value / 8 % 2 == 1
+    else if bit == 4 then value / 16 % 2 == 1
+    else if bit == 5 then value / 32 % 2 == 1
+    else if bit == 6 then value / 64 % 2 == 1
+    else bit == 7 && value / 128 == 1
+  }
+
+  ghost predicate IndexBoundaryAt(bytes: seq<Byte>, bitmap: U32, first: U32, position: int) {
+    bitmap < first && first as int <= |bytes| && first as int <= position < |bytes| &&
+      bitmap as int + (position - first as int) / 8 < first as int &&
+      IndexBitmapBit(bytes[bitmap as int + (position - first as int) / 8],
+        ((position - first as int) % 8) as U32)
+  }
+
+  ghost predicate IndexSearchValid(length: int, bitmap: U32, first: U32, payloadEnd: U32, current: U32) {
+    bitmap < first <= current < payloadEnd && payloadEnd as int <= length <= 2147483647
+  }
+
+  method FindIndexEntryStart(page: array<Byte>, bitmap: U32, first: U32,
+      payloadEnd: U32, current: U32) returns (next: U32)
+    requires page.Length <= 2147483647
+    ensures !IndexSearchValid(page.Length, bitmap, first, payloadEnd, current) ==> next == 4294967295
+    ensures next != 4294967295 ==>
+      current < next < payloadEnd && IndexBoundaryAt(page[..], bitmap, first, next as int) &&
+      (forall p | current as int < p < next as int :: !IndexBoundaryAt(page[..], bitmap, first, p))
+    ensures IndexSearchValid(page.Length, bitmap, first, payloadEnd, current) ==>
+      (next == 4294967295 <==>
+        (forall p | current as int < p < payloadEnd as int :: !IndexBoundaryAt(page[..], bitmap, first, p)))
+  {
+    next := 4294967295;
+    if bitmap >= first || first > current || current >= payloadEnd || payloadEnd > page.Length as U32 {
+      return;
+    }
+    var bit: U32 := current - first + 1;
+    var end: U32 := payloadEnd - first;
+    while bit < end && bitmap + bit / 8 < first
+      invariant current - first + 1 <= bit <= end
+      invariant forall p | current as int < p < first as int + bit as int ::
+        !IndexBoundaryAt(page[..], bitmap, first, p)
+      decreases end - bit
+    {
+      if IndexBitmapBit(page[bitmap + bit / 8], bit % 8) {
+        next := first + bit;
+        return;
+      }
+      bit := bit + 1;
+    }
+    forall p | current as int < p < payloadEnd as int
+      ensures !IndexBoundaryAt(page[..], bitmap, first, p)
+    {
+      if p >= first as int + bit as int {
+        assert bitmap as int + (p - first as int) / 8 >= first as int;
+      }
+    }
+  }
+
+  function IndexLeafBitValid(bit: U64, payloadLength: U64, isSet: bool): bool {
+    (bit != 0 || !isSet) && (bit <= payloadLength || !isSet) &&
+      (bit != payloadLength || isSet == (payloadLength > 0))
+  }
+
+  ghost predicate IndexLeafBitmapExact(bytes: seq<Byte>, bitmap: U32, first: U32, payloadEnd: U32) {
+    bitmap < first <= payloadEnd && payloadEnd as int <= |bytes| <= 2147483647 &&
+      payloadEnd as int - first as int < (first as int - bitmap as int) * 8 &&
+      (forall b | 0 <= b < (first as int - bitmap as int) * 8 ::
+        IndexLeafBitValid(b as U64, (payloadEnd - first) as U64,
+          IndexBitmapBit(bytes[bitmap as int + b / 8], (b % 8) as U32)))
+  }
+
+  method CheckIndexLeafBitmap(page: array<Byte>, bitmap: U32, first: U32,
+      payloadEnd: U32) returns (valid: bool)
+    requires page.Length <= 2147483647
+    ensures valid == IndexLeafBitmapExact(page[..], bitmap, first, payloadEnd)
+  {
+    valid := false;
+    if bitmap >= first || first > payloadEnd || payloadEnd > page.Length as U32 {
+      return;
+    }
+    var payloadLength: U64 := (payloadEnd - first) as U64;
+    var bitmapLength: U64 := (first - bitmap) as U64 * 8;
+    if payloadLength >= bitmapLength { return; }
+    var bit: U64 := 0;
+    while bit < bitmapLength
+      invariant bit <= bitmapLength
+      invariant forall b | 0 <= b < bit as int ::
+        IndexLeafBitValid(b as U64, payloadLength,
+          IndexBitmapBit(page[bitmap as int + b / 8], (b % 8) as U32))
+      decreases bitmapLength - bit
+    {
+      var offset: U64 := bitmap as U64 + bit / 8;
+      if !IndexLeafBitValid(bit, payloadLength,
+          IndexBitmapBit(page[offset], (bit % 8) as U32)) {
+        return;
+      }
+      bit := bit + 1;
+    }
+    valid := true;
+  }
 }

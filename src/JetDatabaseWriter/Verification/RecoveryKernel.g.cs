@@ -318,5 +318,76 @@ namespace JetDatabaseWriter.Verification {
       }
       return valid;
     }
+    public static bool IndexBitmapBit(byte @value, uint bit)
+    {
+      if ((bit) == (0U)) {
+        return ((byte)((@value) % ((byte)(2)))) == ((byte)(1));
+      } else if ((bit) == (1U)) {
+        return ((byte)(((byte)((@value) / ((byte)(2)))) % ((byte)(2)))) == ((byte)(1));
+      } else if ((bit) == (2U)) {
+        return ((byte)(((byte)((@value) / ((byte)(4)))) % ((byte)(2)))) == ((byte)(1));
+      } else if ((bit) == (3U)) {
+        return ((byte)(((byte)((@value) / ((byte)(8)))) % ((byte)(2)))) == ((byte)(1));
+      } else if ((bit) == (4U)) {
+        return ((byte)(((byte)((@value) / ((byte)(16)))) % ((byte)(2)))) == ((byte)(1));
+      } else if ((bit) == (5U)) {
+        return ((byte)(((byte)((@value) / ((byte)(32)))) % ((byte)(2)))) == ((byte)(1));
+      } else if ((bit) == (6U)) {
+        return ((byte)(((byte)((@value) / ((byte)(64)))) % ((byte)(2)))) == ((byte)(1));
+      } else {
+        return ((bit) == (7U)) && (((byte)((@value) / ((byte)(128)))) == ((byte)(1)));
+      }
+    }
+    public static uint FindIndexEntryStart(byte[] page, uint bitmap, uint first, uint payloadEnd, uint current)
+    {
+      uint next = 0;
+      next = 4294967295U;
+      if (((((bitmap) >= (first)) || ((first) > (current))) || ((current) >= (payloadEnd))) || ((payloadEnd) > ((uint)(page).LongLength))) {
+        return next;
+      }
+      uint _0_bit;
+      _0_bit = ((current) - (first)) + (1U);
+      uint _1_end;
+      _1_end = (payloadEnd) - (first);
+      while (((_0_bit) < (_1_end)) && (((bitmap) + ((_0_bit) / (8U))) < (first))) {
+        if (JetDatabaseWriter.Verification.RecoveryKernel.IndexBitmapBit((page)[(int)((bitmap) + ((_0_bit) / (8U)))], (_0_bit) % (8U))) {
+          next = (first) + (_0_bit);
+          return next;
+        }
+        _0_bit = (_0_bit) + (1U);
+      }
+      return next;
+    }
+    public static bool IndexLeafBitValid(ulong bit, ulong payloadLength, bool isSet)
+    {
+      return ((((bit) != (0UL)) || (!(isSet))) && (((bit) <= (payloadLength)) || (!(isSet)))) && (((bit) != (payloadLength)) || ((isSet) == ((payloadLength) > (0UL))));
+    }
+    public static bool CheckIndexLeafBitmap(byte[] page, uint bitmap, uint first, uint payloadEnd)
+    {
+      bool valid = false;
+      valid = false;
+      if ((((bitmap) >= (first)) || ((first) > (payloadEnd))) || ((payloadEnd) > ((uint)(page).LongLength))) {
+        return valid;
+      }
+      ulong _0_payloadLength;
+      _0_payloadLength = (ulong)((payloadEnd) - (first));
+      ulong _1_bitmapLength;
+      _1_bitmapLength = ((ulong)((first) - (bitmap))) * (8UL);
+      if ((_0_payloadLength) >= (_1_bitmapLength)) {
+        return valid;
+      }
+      ulong _2_bit;
+      _2_bit = 0UL;
+      while ((_2_bit) < (_1_bitmapLength)) {
+        ulong _3_offset;
+        _3_offset = ((ulong)(bitmap)) + ((_2_bit) / (8UL));
+        if (!(JetDatabaseWriter.Verification.RecoveryKernel.IndexLeafBitValid(_2_bit, _0_payloadLength, JetDatabaseWriter.Verification.RecoveryKernel.IndexBitmapBit((page)[(int)(_3_offset)], (uint)((_2_bit) % (8UL)))))) {
+          return valid;
+        }
+        _2_bit = (_2_bit) + (1UL);
+      }
+      valid = true;
+      return valid;
+    }
   }
 }
