@@ -127,6 +127,53 @@ internal sealed class ConstraintRegistry(
         }
     }
 
+    /// <summary>Populates appended calculations using the source row's retained caches.</summary>
+    /// <param name="tableName">The existing table.</param>
+    /// <param name="definitions">The complete projected column definitions.</param>
+    /// <param name="format">The database format.</param>
+    /// <param name="rows">The projected source rows, updated in place.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task representing table-rule validation.</returns>
+    internal async ValueTask PopulateAddedCalculatedColumnsAsync(string tableName, IReadOnlyList<ColumnDefinition> definitions, JetFormat format, IReadOnlyList<object[]> rows, CancellationToken cancellationToken)
+    {
+        var added = new List<int>();
+        for (int index = 0; index < definitions.Count; index++)
+        {
+            if (definitions[index] is { IsCalculated: true, SourceColumn: null })
+            {
+                added.Add(index);
+            }
+        }
+
+        if (added.Count == 0 || rows.Count == 0)
+        {
+            return;
+        }
+
+        TableDef definition = TDefPageBuilder.BuildTableDefinition(definitions, format);
+        var projected = new List<ColumnConstraint>(definitions.Count);
+        for (int index = 0; index < definitions.Count; index++)
+        {
+            ColumnConstraint constraint = ToConstraint(definitions[index], format);
+            constraint.PhysicalColumn = definition.Columns[index];
+            projected.Add(constraint);
+        }
+
+        foreach (object[] values in rows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var context = new CalculatedExpressionEvaluationContext(definition, projected, values, tableName, textCollation, calculatedCulture);
+            foreach (int index in added)
+            {
+                values[index] = context.EvaluateAddedColumn(index);
+            }
+
+            // Native field append fills existing caches without enforcing Required
+            // or field rules, including cached Text/Memo errors. Table rules still apply.
+            await this.CheckTableValidationRuleAsync(tableName, definition, projected, values, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     public void Unregister(string tableName)
     {
         this.constraints.Remove(tableName);

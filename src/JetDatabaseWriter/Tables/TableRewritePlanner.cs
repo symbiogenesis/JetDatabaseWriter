@@ -233,6 +233,8 @@ internal sealed class TableRewritePlanner(
             projectedFixedText.Add(fixedTextBytes);
         }
 
+        await constraints.PopulateAddedCalculatedColumnsAsync(tableName, newDefs, format, projectedRows, cancellationToken).ConfigureAwait(false);
+
         await this.InitializeNewComplexReferencesAsync(tableName, tableDef, newDefs, projectedRows, cancellationToken).ConfigureAwait(false);
 
         // Preserve surviving complex identities; reclaim dropped children and rename

@@ -58,6 +58,17 @@ internal sealed class CalculatedExpressionEvaluationContext
         return context;
     }
 
+    /// <summary>Computes an appended field while retaining every existing calculated cache.</summary>
+    /// <param name="index">The newly appended calculated column.</param>
+    /// <returns>The computed cached value.</returns>
+    internal object EvaluateAddedColumn(int index)
+    {
+        Array.Fill(this.evaluated, true);
+        this.liveStaleReferences = true;
+        this.evaluated[index] = false;
+        return this.EvaluateColumn(index);
+    }
+
     public object EvaluateColumn(int index)
     {
         object current = this.values[index];
@@ -171,7 +182,7 @@ internal sealed class CalculatedExpressionEvaluationContext
         if (this.liveStaleReferences && referenced.IsCalculated && this.tableName is not null
             && (referenced.CalculatedExpressionPlan ??= CalculatedExpressionParser.Parse(referenced.CalculationExpression!)).HasStaleQualifier(this.tableName))
         {
-            return CalculatedError.Uncached;
+            return new CalculatedError(-5617);
         }
 
         object value = referenced.IsCalculated ? this.EvaluateColumn(index) : this.values[index];

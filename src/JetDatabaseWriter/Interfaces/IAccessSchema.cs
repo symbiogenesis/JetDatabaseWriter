@@ -97,7 +97,8 @@ public interface IAccessSchema : IAccessBase
 
     /// <summary>
     /// Asynchronously appends a new column to an existing table. Existing rows receive
-    /// <see cref="DBNull.Value"/> for the new column. Implemented by copying the
+    /// <see cref="DBNull.Value"/> for an ordinary new column; a calculated column
+    /// evaluates its expression against each existing row. Implemented by copying the
     /// table to a new schema and renaming the result back to <paramref name="tableName"/>.
     /// Existing data and modeled schema are carried forward, subject to the preservation
     /// limits described for <see cref="RenameColumnAsync"/>; the new column gets the
