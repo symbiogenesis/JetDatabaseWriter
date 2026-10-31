@@ -12,73 +12,92 @@ namespace JetDatabaseWriter.Verification {
     {
       return ((byte)(((byte)(@value)) & (unchecked((byte)(((byte)(((byte)(1)) << ((int)((byte)((byte)(bit))))))))))) != ((byte)(0));
     }
-    public static byte Shifted(byte @value, uint bit)
+    public static uint BatchStart(uint next) {
+      if ((next) == (0U)) {
+        return 0U;
+      } else {
+        return (((next) - (1U)) / (8U)) * (8U);
+      }
+    }
+    public static long Page(long basePage, uint next)
     {
-      return (byte)((byte)(((byte)(@value)) >> ((int)((byte)((byte)(bit))))));
+      return (basePage) + ((long)(JetDatabaseWriter.Verification.UsageMapKernel.BatchStart(next)));
     }
-    public static ulong Pack(uint cursor, byte remaining, byte state)
+    public static long PageOffset(long firstPage, byte bit)
     {
-      return (((ulong)(cursor)) + (((ulong)(remaining)) * (4294967296UL))) + (((ulong)(state)) * (1099511627776UL));
+      return (firstPage) + ((long)(bit));
     }
-    public static uint Cursor(ulong decision) {
-      return (uint)((decision) % (4294967296UL));
-    }
-    public static byte Remaining(ulong decision) {
-      return (byte)(((decision) / (4294967296UL)) % (256UL));
-    }
-    public static byte State(ulong decision) {
-      return (byte)(((decision) / (1099511627776UL)) % (256UL));
-    }
-    public static long Page(long basePage, ulong decision)
+    public static byte AddMember(byte members, uint bit)
     {
-      return (basePage) + ((long)((JetDatabaseWriter.Verification.UsageMapKernel.Cursor(decision)) - (1U)));
+      return (byte)((byte)(((byte)(members)) | (unchecked((byte)(((byte)(((byte)(1)) << ((int)((byte)((byte)(bit)))))))))));
     }
     [global::System.Runtime.CompilerServices.MethodImplAttribute(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    public static ulong NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, ulong continuation)
+    public static void NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, uint cursor, out uint next, out byte members, out byte state)
     {
-      ulong decision = 0;
-      uint _0_cursor;
-      _0_cursor = JetDatabaseWriter.Verification.UsageMapKernel.Cursor(continuation);
-      uint _1_next;
-      _1_next = _0_cursor;
-      uint _2_limit;
-      _2_limit = (count) * (8U);
-      byte _3_value;
-      _3_value = JetDatabaseWriter.Verification.UsageMapKernel.Remaining(continuation);
-      while ((_1_next) < (_2_limit)) {
-        uint _4_index;
-        _4_index = (_1_next) / (8U);
-        if (((_1_next) % (8U)) == (0U)) {
-          _3_value = (bytes)[(int)((offset) + (_4_index))];
-        }
-        if ((_3_value) == ((byte)(0))) {
-          uint _5_following;
-          _5_following = ((_4_index) + (1U)) * (8U);
-          _1_next = _5_following;
-        } else {
-          uint _6_bit;
-          _6_bit = (_1_next) % (8U);
-          long _7_candidate;
-          _7_candidate = (basePage) + ((long)(_1_next));
-          bool _8_marked;
-          _8_marked = JetDatabaseWriter.Verification.UsageMapKernel.Marked(_3_value, 0U);
-          _3_value = (byte)((_3_value) / ((byte)(2)));
-          _1_next = (_1_next) + (1U);
-          if (_8_marked) {
-            if (((_7_candidate) < (minimum)) || ((_7_candidate) >= (total))) {
-              if (strict) {
-                decision = JetDatabaseWriter.Verification.UsageMapKernel.Pack(_1_next, _3_value, (byte)(3));
-                return decision;
-              }
-            } else {
-              decision = JetDatabaseWriter.Verification.UsageMapKernel.Pack(_1_next, _3_value, (byte)(2));
-              return decision;
-            }
+      next = 0;
+      members = 0;
+      state = 0;
+      uint _rhs0 = cursor;
+      byte _rhs1 = (byte)(0);
+      byte _rhs2 = (byte)(1);
+      next = _rhs0;
+      members = _rhs1;
+      state = _rhs2;
+      int _0_start;
+      _0_start = (int)(offset);
+      int _1_limit;
+      _1_limit = (int)(count);
+      int _2_scanIndex;
+      _2_scanIndex = (int)((cursor) / (8U));
+      while ((_2_scanIndex) < (_1_limit)) {
+        byte _3_value;
+        _3_value = (bytes)[(int)((_0_start) + (_2_scanIndex))];
+        if ((_3_value) != ((byte)(0))) {
+          long _4_firstPage;
+          _4_firstPage = (basePage) + (((long)(_2_scanIndex)) * (8L));
+          if (((_4_firstPage) >= (minimum)) && (((_4_firstPage) + (7L)) < (total))) {
+            uint _rhs3 = (((uint)(_2_scanIndex)) + (1U)) * (8U);
+            byte _rhs4 = _3_value;
+            byte _rhs5 = (byte)(2);
+            next = _rhs3;
+            members = _rhs4;
+            state = _rhs5;
+            return ;
           }
+          members = (byte)(0);
+          uint _5_bit;
+          _5_bit = 0U;
+          while ((_5_bit) < (8U)) {
+            if (JetDatabaseWriter.Verification.UsageMapKernel.Marked(_3_value, _5_bit)) {
+              long _6_candidate;
+              _6_candidate = (_4_firstPage) + ((long)(_5_bit));
+              if (((_6_candidate) < (minimum)) || ((_6_candidate) >= (total))) {
+                if (strict) {
+                  uint _rhs6 = ((((uint)(_2_scanIndex)) * (8U)) + (_5_bit)) + (1U);
+                  byte _rhs7 = (byte)(3);
+                  next = _rhs6;
+                  state = _rhs7;
+                  return ;
+                }
+              } else {
+                members = JetDatabaseWriter.Verification.UsageMapKernel.AddMember(members, _5_bit);
+              }
+            }
+            _5_bit = (_5_bit) + (1U);
+          }
+          if ((members) != ((byte)(0))) {
+            uint _rhs8 = (((uint)(_2_scanIndex)) + (1U)) * (8U);
+            byte _rhs9 = (byte)(2);
+            next = _rhs8;
+            state = _rhs9;
+            return ;
+          }
+        } else {
         }
+        _2_scanIndex = (_2_scanIndex) + (1);
       }
-      decision = JetDatabaseWriter.Verification.UsageMapKernel.Pack(_1_next, (byte)(0), (byte)(1));
-      return decision;
+      next = (count) * (8U);
+      return ;
     }
   }
 }

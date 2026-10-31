@@ -52,19 +52,30 @@ public sealed class UsageMapEnumerationKernelTests
 
                         byte[] original = (byte[])bitmap.Clone();
                         var actual = new List<long>();
-                        ulong continuation = 0;
+                        uint cursor = 0;
                         byte state;
                         do
                         {
-                            uint previous = UsageMapKernel.Cursor(continuation);
-                            continuation = UsageMapKernel.NextBitmapPage(bitmap, 1, 4, basePage, total, minimum, strict, continuation);
-                            uint cursor = UsageMapKernel.Cursor(continuation);
-                            state = UsageMapKernel.State(continuation);
+                            uint previous = cursor;
+                            UsageMapKernel.NextBitmapPage(bitmap, 1, 4, basePage, total, minimum, strict, cursor, out cursor, out byte members, out state);
                             Assert.InRange(cursor, previous, 32U);
+                            if (members != 0)
+                            {
+                                long firstPage = UsageMapKernel.Page(basePage, cursor);
+                                for (byte bit = 0; bit < 8; bit++)
+                                {
+                                    if ((members & (1 << bit)) != 0)
+                                    {
+                                        actual.Add(UsageMapKernel.PageOffset(firstPage, bit));
+                                    }
+                                }
+                            }
+
                             if (state == 2)
                             {
                                 Assert.True(cursor > previous);
-                                actual.Add(UsageMapKernel.Page(basePage, continuation));
+                                Assert.Equal(0U, cursor % 8);
+                                Assert.NotEqual((byte)0, members);
                             }
                         }
                         while (state == 2);
@@ -94,20 +105,83 @@ public sealed class UsageMapEnumerationKernelTests
         }
     }
 
-    /// <summary>Every decision field retains its complete native width without aliasing adjacent fields.</summary>
+    /// <summary>Native cursor extremes select the exact byte base and preserve every signed page offset.</summary>
     [Fact]
-    public void PackedContinuation_NativeExtremes_RoundTripExactFields()
+    public void BatchPageBase_NativeExtremes_PreserveByteAndSignedOffsets()
     {
-        foreach (uint cursor in new uint[] { 0, 1, 7, 8, int.MaxValue, uint.MaxValue })
+        foreach (uint cursor in new uint[] { 0, 1, 7, 8, 9, int.MaxValue, uint.MaxValue })
         {
-            foreach (byte remaining in new byte[] { 0, 1, 127, byte.MaxValue })
+            uint expectedStart = cursor == 0 ? 0 : (uint)(((long)cursor - 1) / 8 * 8);
+            Assert.Equal(expectedStart, UsageMapKernel.BatchStart(cursor));
+            if (cursor == 0)
             {
-                foreach (byte state in new byte[] { 0, 1, 2, 3, byte.MaxValue })
+                continue;
+            }
+
+            foreach (long basePage in new long[] { long.MinValue, 0, long.MaxValue - expectedStart - 7 })
+            {
+                long firstPage = UsageMapKernel.Page(basePage, cursor);
+                Assert.Equal(basePage + expectedStart, firstPage);
+                for (byte bit = 0; bit < 8; bit++)
                 {
-                    ulong decision = UsageMapKernel.Pack(cursor, remaining, state);
-                    Assert.Equal(cursor, UsageMapKernel.Cursor(decision));
-                    Assert.Equal(remaining, UsageMapKernel.Remaining(decision));
-                    Assert.Equal(state, UsageMapKernel.State(decision));
+                    Assert.Equal(firstPage + bit, UsageMapKernel.PageOffset(firstPage, bit));
+                }
+            }
+        }
+    }
+
+    /// <summary>A batched strict refusal retains every earlier admitted member from that same byte.</summary>
+    [Fact]
+    public void GeneratedBatch_AllBytePatternsAndBoundaryCuts_PreserveExactMaskAndFirstRefusal()
+    {
+        for (int pattern = 0; pattern <= byte.MaxValue; pattern++)
+        {
+            byte[] bitmap = [(byte)pattern];
+            for (int minimum = 0; minimum <= 8; minimum++)
+            {
+                for (int total = 0; total <= 8; total++)
+                {
+                    foreach (bool strict in new[] { false, true })
+                    {
+                        int expectedMask = 0;
+                        uint expectedCursor = 8;
+                        byte expectedState = 1;
+                        for (int bit = 0; bit < 8; bit++)
+                        {
+                            if ((pattern & (1 << bit)) == 0)
+                            {
+                                continue;
+                            }
+
+                            if (bit < minimum || bit >= total)
+                            {
+                                if (strict)
+                                {
+                                    expectedState = 3;
+                                    expectedCursor = (uint)bit + 1;
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                expectedMask |= 1 << bit;
+                            }
+                        }
+
+                        if (expectedState == 1 && expectedMask != 0)
+                        {
+                            expectedState = 2;
+                        }
+
+                        UsageMapKernel.NextBitmapPage(bitmap, 0, 1, 0, total, minimum, strict, 0, out uint cursor, out byte members, out byte state);
+                        Assert.Equal((byte)expectedMask, members);
+                        Assert.Equal(expectedState, state);
+                        Assert.Equal(expectedCursor, cursor);
+                        if (expectedMask != 0)
+                        {
+                            Assert.Equal(0, UsageMapKernel.Page(0, cursor));
+                        }
+                    }
                 }
             }
         }
