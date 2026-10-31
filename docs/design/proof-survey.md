@@ -183,13 +183,17 @@ during verification. The C# adapter supplies the requested distinct zero-filled
 CLR array and retains/publishes the matching array/count pair; actual allocation,
 adapter sequencing and containing-parser composition remain explicit obligations.
 
-The controller returns a native 64-bit decision word with proved exact status,
-count and capacity inverses. The adapter decodes only the fields needed for the
-selected outcome and publishes count/storage after successful completion. This
-representation adds no allocation, collection or probe work. Its timing still
-requires the hosted original-wrapper controls across ordinary, colliding,
-duplicate-boundary and single-row inputs; codec verification alone establishes
-no performance result.
+The controller returns only the selected operation's payload in a native
+64-bit decision: zero for unchanged state, a direct count after insertion,
+a high flag plus capacity for growth, and all bits set for exhausted capacity.
+Classification, payload inverses and a constructive representation theorem retain
+the abstract transition; unchanged and growth-request outcomes retain the input
+count through ghost effective projections. Null initial storage is admitted
+directly, alongside the existing empty-array form. The adapter publishes matching
+count/storage only after success. This representation adds no allocation,
+collection or probe work. Timing still requires the hosted original-wrapper
+controls across ordinary, colliding, duplicate-boundary and single-row inputs;
+verification alone establishes no performance result.
 
 Resource composition must also count work inside an insertion. Growth still
 requires lookup, rehash and insertion work using deterministic hashing.

@@ -232,15 +232,15 @@ public sealed class LongValueTraversalTests
         {
             ulong prepared = LongValueKernel.PrepareVisitedAdd(source, 8, 9);
             Assert.Equal((byte)2, LongValueKernel.VisitedAddResult(prepared));
-            Assert.Equal(8u, LongValueKernel.VisitedAddCount(prepared));
-            Assert.Equal(32u, LongValueKernel.VisitedAddCapacity(prepared));
+            Assert.True(LongValueKernel.VisitedAddHasHighFlag(prepared));
+            Assert.False(LongValueKernel.VisitedAddIsExhausted(prepared));
+            Assert.Equal(32u, LongValueKernel.VisitedAddPayload(prepared));
             Assert.Equal(before, source);
         }
 
         ulong duplicate = LongValueKernel.PrepareVisitedAdd(source, 8, 1);
+        Assert.Equal(0UL, duplicate);
         Assert.Equal((byte)0, LongValueKernel.VisitedAddResult(duplicate));
-        Assert.Equal(8u, LongValueKernel.VisitedAddCount(duplicate));
-        Assert.Equal(0u, LongValueKernel.VisitedAddCapacity(duplicate));
         Assert.Equal(before, source);
 
         uint[] destination = new uint[32];
@@ -255,21 +255,23 @@ public sealed class LongValueTraversalTests
         Assert.False(LongValueKernel.ContainsVisited(destination, 10));
     }
 
-    [Fact]
-    public void GeneratedVisitedController_InitialAllocationHasExactSoleMembership()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void GeneratedVisitedController_InitialAllocationHasExactSoleMembership(bool useNullStorage)
     {
-        uint[] source = [];
+        uint[]? source = useNullStorage ? null : [];
         ulong unchanged = LongValueKernel.PrepareVisitedAdd(source, 0, 0);
+        Assert.Equal(0UL, unchanged);
         Assert.Equal((byte)0, LongValueKernel.VisitedAddResult(unchanged));
-        Assert.Equal(0u, LongValueKernel.VisitedAddCount(unchanged));
-        Assert.Equal(0u, LongValueKernel.VisitedAddCapacity(unchanged));
         for (int attempt = 0; attempt < 2; attempt++)
         {
             ulong prepared = LongValueKernel.PrepareVisitedAdd(source, 0, uint.MaxValue);
             Assert.Equal((byte)2, LongValueKernel.VisitedAddResult(prepared));
-            Assert.Equal(0u, LongValueKernel.VisitedAddCount(prepared));
-            Assert.Equal(16u, LongValueKernel.VisitedAddCapacity(prepared));
-            Assert.Empty(source);
+            Assert.True(LongValueKernel.VisitedAddHasHighFlag(prepared));
+            Assert.False(LongValueKernel.VisitedAddIsExhausted(prepared));
+            Assert.Equal(16u, LongValueKernel.VisitedAddPayload(prepared));
+            Assert.True(source is null || source.Length == 0);
         }
 
         uint[] destination = new uint[16];
@@ -277,24 +279,53 @@ public sealed class LongValueTraversalTests
         Assert.Single(Array.FindAll(destination, static value => value != 0));
         Assert.True(LongValueKernel.ContainsVisited(destination, uint.MaxValue));
         Assert.False(LongValueKernel.ContainsVisited(destination, 1));
-        Assert.Empty(source);
+        Assert.True(source is null || source.Length == 0);
+    }
+
+    [Fact]
+    public void GeneratedVisitedController_ZeroOnInitializedTablePreservesRetainedCount()
+    {
+        uint[] source = new uint[16];
+        for (uint pointer = 1; pointer <= 3; pointer++)
+        {
+            Assert.Equal((byte)2, LongValueKernel.AddVisited(source, pointer));
+        }
+
+        uint[] before = (uint[])source.Clone();
+        Assert.Equal(0UL, LongValueKernel.PrepareVisitedAdd(source, 3, 0));
+        Assert.Equal(before, source);
+        ulong inserted = LongValueKernel.PrepareVisitedAdd(source, 3, 4);
+        Assert.Equal(4UL, inserted);
+        Assert.Equal((byte)1, LongValueKernel.VisitedAddResult(inserted));
+        Assert.Equal(4u, LongValueKernel.VisitedAddPayload(inserted));
+        for (uint pointer = 1; pointer <= 4; pointer++)
+        {
+            Assert.True(LongValueKernel.ContainsVisited(source, pointer));
+        }
     }
 
     [Theory]
-    [InlineData(0UL, (byte)0, 0u, 0u)]
-    [InlineData(3UL, (byte)3, 0u, 0u)]
-    [InlineData(4UL, (byte)0, 1u, 0u)]
-    [InlineData(0x0000_0001_FFFF_FFFFUL, (byte)3, 0x7FFF_FFFFu, 0u)]
-    [InlineData(0x0000_0002_0000_0000UL, (byte)0, 0u, 1u)]
-    [InlineData(0x8000_0000_0000_0000UL, (byte)0, 0u, 0x4000_0000u)]
-    [InlineData(0xFFFF_FFFD_FFFF_FFFCUL, (byte)0, 0x7FFF_FFFFu, 0x7FFF_FFFEu)]
-    [InlineData(ulong.MaxValue, (byte)3, 0x7FFF_FFFFu, 0x7FFF_FFFFu)]
-    public void GeneratedVisitedController_PackedCodecPreservesIndependentFieldBoundaries(ulong packed, byte result, uint count, uint capacity)
+    [InlineData(0UL, (byte)0, 0u, false, false)]
+    [InlineData(1UL, (byte)1, 1u, false, false)]
+    [InlineData(0x0000_0000_FFFF_FFFFUL, (byte)1, uint.MaxValue, false, false)]
+    [InlineData(0x8000_0000_0000_0001UL, (byte)2, 1u, true, false)]
+    [InlineData(0x8000_0000_FFFF_FFFFUL, (byte)2, uint.MaxValue, true, false)]
+    [InlineData(ulong.MaxValue, (byte)3, uint.MaxValue, true, true)]
+    public void GeneratedVisitedController_DecisionModesHaveIndependentBoundaryValues(ulong decision, byte result, uint payload, bool highFlag, bool exhausted)
     {
-        Assert.Equal(result, LongValueKernel.VisitedAddResult(packed));
-        Assert.Equal(count, LongValueKernel.VisitedAddCount(packed));
-        Assert.Equal(capacity, LongValueKernel.VisitedAddCapacity(packed));
-        Assert.Equal(packed, LongValueKernel.PackVisitedAdd(result, count, capacity));
+        Assert.Equal(result, LongValueKernel.VisitedAddResult(decision));
+        Assert.Equal(payload, LongValueKernel.VisitedAddPayload(decision));
+        Assert.Equal(highFlag, LongValueKernel.VisitedAddHasHighFlag(decision));
+        Assert.Equal(exhausted, LongValueKernel.VisitedAddIsExhausted(decision));
+    }
+
+    [Theory]
+    [InlineData(1u, 1UL, 0x8000_0000_0000_0001UL)]
+    [InlineData(uint.MaxValue, 0x0000_0000_FFFF_FFFFUL, 0x8000_0000_FFFF_FFFFUL)]
+    public void GeneratedVisitedController_ConstructorsHaveIndependentBoundaryWords(uint payload, ulong inserted, ulong growth)
+    {
+        Assert.Equal(inserted, LongValueKernel.VisitedInsertedDecision(payload));
+        Assert.Equal(growth, LongValueKernel.VisitedGrowthDecision(payload));
     }
 
     [Fact]

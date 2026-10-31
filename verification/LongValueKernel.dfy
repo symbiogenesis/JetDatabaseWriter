@@ -403,75 +403,174 @@ module LongValueKernel {
       |table| <= 16 + 4 * (count as int))
   }
 
-  // Native return layout: status bits 0..1, count bits 2..32,
-  // capacity bits 33..63. Native arithmetic needs no collection or runtime.
-  function VisitedAddResult(packed: U64): Byte {
-    (packed % 4) as Byte
+  // Decisions carry only the payload needed by their selected operation.
+  // Zero is unchanged; a positive low-band word is the new count; the high
+  // flag plus a positive uint payload requests growth; all bits set refuses.
+  function VisitedAddPayload(decision: U64): U32 {
+    (decision % 4294967296) as U32
   }
-  function VisitedAddCount(packed: U64): U32 {
-    ((packed / 4) % 2147483648) as U32
+  function VisitedAddHasHighFlag(decision: U64): bool {
+    decision >= 9223372036854775808
   }
-  function VisitedAddCapacity(packed: U64): U32 {
-    (packed / 8589934592) as U32
+  function VisitedAddIsExhausted(decision: U64): bool {
+    decision == 18446744073709551615
   }
-  function PackVisitedAdd(result: Byte, count: U32, capacity: U32): U64
-    requires result <= 3 && count < 2147483648 && capacity < 2147483648
-  {
-    (capacity as U64) * 8589934592 + (count as U64) * 4 + result as U64
+  function VisitedAddResult(decision: U64): Byte {
+    if decision == 0 then 0
+    else if VisitedAddIsExhausted(decision) then 3
+    else if VisitedAddHasHighFlag(decision) then 2 else 1
   }
-  lemma PackedVisitedAddIsReversible(result: Byte, count: U32, capacity: U32)
-    requires result <= 3 && count < 2147483648 && capacity < 2147483648
-    ensures VisitedAddResult(PackVisitedAdd(result, count, capacity)) == result
-    ensures VisitedAddCount(PackVisitedAdd(result, count, capacity)) == count
-    ensures VisitedAddCapacity(PackVisitedAdd(result, count, capacity)) == capacity
+  function VisitedInsertedDecision(count: U32): U64
+    requires count > 0
+  { count as U64 }
+  function VisitedGrowthDecision(capacity: U32): U64
+    requires capacity > 0
+  { 9223372036854775808 + capacity as U64 }
+
+  ghost predicate ValidVisitedDecision(decision: U64) {
+    decision == 0 || 0 < decision <= 4294967295 ||
+    9223372036854775808 < decision <= 9223372041149743103 ||
+    decision == 18446744073709551615
+  }
+  ghost function EffectiveVisitedAddCount(decision: U64, retained: U32): U32 {
+    if VisitedAddResult(decision) == 1 then VisitedAddPayload(decision) else retained
+  }
+  ghost function EffectiveVisitedAddCapacity(decision: U64): U32 {
+    if VisitedAddResult(decision) == 2 then VisitedAddPayload(decision) else 0
+  }
+  lemma UnchangedVisitedDecisionIsExact(retained: U32)
+    ensures ValidVisitedDecision(0)
+    ensures VisitedAddResult(0) == 0
+    ensures VisitedAddPayload(0) == 0 && !VisitedAddHasHighFlag(0)
+    ensures EffectiveVisitedAddCount(0, retained) == retained
+    ensures EffectiveVisitedAddCapacity(0) == 0
+  { }
+  lemma ExhaustedVisitedDecisionIsExact(retained: U32)
+    ensures ValidVisitedDecision(18446744073709551615)
+    ensures VisitedAddResult(18446744073709551615) == 3
+    ensures VisitedAddPayload(18446744073709551615) == 4294967295
+    ensures VisitedAddHasHighFlag(18446744073709551615)
+    ensures EffectiveVisitedAddCount(18446744073709551615, retained) == retained
+    ensures EffectiveVisitedAddCapacity(18446744073709551615) == 0
+  { }
+  lemma InsertedVisitedDecisionIsExact(count: U32, retained: U32)
+    requires count > 0
+    ensures ValidVisitedDecision(VisitedInsertedDecision(count))
+    ensures VisitedAddResult(VisitedInsertedDecision(count)) == 1
+    ensures VisitedAddPayload(VisitedInsertedDecision(count)) == count
+    ensures EffectiveVisitedAddCount(VisitedInsertedDecision(count), retained) == count
+    ensures EffectiveVisitedAddCapacity(VisitedInsertedDecision(count)) == 0
+    ensures !VisitedAddHasHighFlag(VisitedInsertedDecision(count))
+    ensures VisitedInsertedDecision(count) != 0 &&
+      VisitedInsertedDecision(count) != 18446744073709551615
+  { }
+  lemma GrowthVisitedDecisionIsExact(capacity: U32, retained: U32)
+    requires capacity > 0
+    ensures ValidVisitedDecision(VisitedGrowthDecision(capacity))
+    ensures VisitedAddResult(VisitedGrowthDecision(capacity)) == 2
+    ensures VisitedAddPayload(VisitedGrowthDecision(capacity)) == capacity
+    ensures EffectiveVisitedAddCount(VisitedGrowthDecision(capacity), retained) == retained
+    ensures EffectiveVisitedAddCapacity(VisitedGrowthDecision(capacity)) == capacity
+    ensures VisitedAddHasHighFlag(VisitedGrowthDecision(capacity))
+    ensures VisitedGrowthDecision(capacity) != 0 &&
+      VisitedGrowthDecision(capacity) != 18446744073709551615
+  { }
+  lemma VisitedDecisionConstructorsAreDisjoint(count: U32, capacity: U32)
+    requires count > 0 && capacity > 0
+    ensures VisitedInsertedDecision(count) != VisitedGrowthDecision(capacity)
+    ensures VisitedInsertedDecision(count) < 9223372036854775808
+    ensures VisitedGrowthDecision(capacity) >= 9223372036854775808
   { }
 
-  // Zero means unchanged, one inserted, two requests allocation, and three
-  // refuses exhausted capacity. Only the below-half insertion mutates here.
-  method PrepareVisitedAdd(entries: array<U32>, count: U32, pointer: U32)
-      returns (packed: U64)
-    requires TrackedVisited(entries[..], count)
-    modifies entries
-    ensures VisitedAddResult(packed) <= 3
-    ensures TrackedVisited(entries[..], VisitedAddCount(packed))
-    ensures VisitedAddResult(packed) != 1 ==> entries[..] == old(entries[..]) && VisitedAddCount(packed) == count
-    ensures VisitedAddResult(packed) == 1 ==> VisitedAddCount(packed) as int == count as int + 1
-    ensures VisitedAddResult(packed) == 0 <==> pointer == 0 || pointer in old(entries[..])
-    ensures VisitedAddResult(packed) == 1 ==> pointer != 0 && pointer !in old(entries[..])
-    ensures forall value: U32 :: value != 0 ==>
-      (value in entries[..] <==> value in old(entries[..]) || (VisitedAddResult(packed) == 1 && value == pointer))
-    ensures VisitedAddResult(packed) >= 2 ==> (pointer != 0 && pointer !in old(entries[..]) &&
-      count as int == entries.Length / 2)
-    ensures VisitedAddResult(packed) == 2 ==> (VisitedAddCapacity(packed) == NextVisitedCapacity(entries.Length as U32) &&
-      entries.Length < VisitedAddCapacity(packed) as int <= 2147483646)
-    ensures VisitedAddResult(packed) != 2 ==> VisitedAddCapacity(packed) == 0
-    ensures VisitedAddResult(packed) == 3 ==> entries.Length >= 1073741824
+  lemma ValidVisitedDecisionHasExactClassification(decision: U64)
+    requires ValidVisitedDecision(decision)
+    ensures VisitedAddResult(decision) == 0 <==> decision == 0
+    ensures VisitedAddResult(decision) == 1 <==> 0 < decision <= 4294967295
+    ensures VisitedAddResult(decision) == 2 <==>
+      9223372036854775808 < decision <= 9223372041149743103
+    ensures VisitedAddResult(decision) == 3 <==> decision == 18446744073709551615
+    ensures VisitedAddHasHighFlag(decision) <==> VisitedAddResult(decision) >= 2
+    ensures VisitedAddIsExhausted(decision) <==> VisitedAddResult(decision) == 3
+    ensures VisitedAddResult(decision) == 1 || VisitedAddResult(decision) == 2 ==>
+      VisitedAddPayload(decision) > 0
+  { }
+  // Every prior abstract status/count/capacity tuple has a new encoding with
+  // the same effective transition. Raw word field identity is not promised.
+  lemma EncodeAbstractVisitedDecision(result: Byte, nextCount: U32,
+      capacity: U32, retained: U32) returns (decision: U64)
+    requires result <= 3
+    requires result == 1 ==> nextCount > 0
+    requires result != 1 ==> nextCount == retained
+    requires result == 2 ==> capacity > 0
+    requires result != 2 ==> capacity == 0
+    ensures ValidVisitedDecision(decision)
+    ensures VisitedAddResult(decision) == result
+    ensures EffectiveVisitedAddCount(decision, retained) == nextCount
+    ensures EffectiveVisitedAddCapacity(decision) == capacity
   {
-    hide VisitedAddResult, VisitedAddCount, VisitedAddCapacity, PackVisitedAdd;
-    var result: Byte := 0;
-    var nextCount: U32 := count;
-    var capacity: U32 := 0;
-    if pointer == 0 {
-      packed := PackVisitedAdd(result, nextCount, capacity);
-      PackedVisitedAddIsReversible(result, nextCount, capacity);
-      return;
-    }
-    var length := entries.Length as U32;
-    if length == 0 || count >= length / 2 {
-      if length != 0 {
+    if result == 0 { decision := 0; }
+    else if result == 1 { decision := VisitedInsertedDecision(nextCount); }
+    else if result == 2 { decision := VisitedGrowthDecision(capacity); }
+    else { decision := 18446744073709551615; }
+  }
+
+  // Nonnull arrays retain the original entry domain. Null storage widens only
+  // the unallocated representation, whose TrackedVisited count must be zero.
+  ghost function VisitedSnapshot(entries: array?<U32>): seq<U32>
+    reads entries
+  {
+    if entries == null then [] else entries[..]
+  }
+
+  // The original abstract controller postconditions use effective projections:
+  // insertion supplies a count; every other result retains the caller count.
+  method PrepareVisitedAdd(entries: array?<U32>, count: U32, pointer: U32)
+      returns (decision: U64)
+    requires TrackedVisited(VisitedSnapshot(entries), count)
+    modifies entries
+    ensures ValidVisitedDecision(decision)
+    ensures VisitedAddResult(decision) <= 3
+    ensures TrackedVisited(VisitedSnapshot(entries), EffectiveVisitedAddCount(decision, count))
+    ensures VisitedAddResult(decision) != 1 ==>
+      VisitedSnapshot(entries) == old(VisitedSnapshot(entries)) &&
+      EffectiveVisitedAddCount(decision, count) == count
+    ensures VisitedAddResult(decision) == 1 ==>
+      EffectiveVisitedAddCount(decision, count) as int == count as int + 1
+    ensures VisitedAddResult(decision) == 0 <==> pointer == 0 || pointer in old(VisitedSnapshot(entries))
+    ensures VisitedAddResult(decision) == 1 ==> pointer != 0 && pointer !in old(VisitedSnapshot(entries))
+    ensures forall value: U32 :: value != 0 ==>
+      (value in VisitedSnapshot(entries) <==> (value in old(VisitedSnapshot(entries)) ||
+        (VisitedAddResult(decision) == 1 && value == pointer)))
+    ensures VisitedAddResult(decision) >= 2 ==>
+      pointer != 0 && pointer !in old(VisitedSnapshot(entries)) &&
+      count as int == |VisitedSnapshot(entries)| / 2
+    ensures VisitedAddResult(decision) == 2 ==>
+      EffectiveVisitedAddCapacity(decision) == NextVisitedCapacity(|VisitedSnapshot(entries)| as U32) &&
+      |VisitedSnapshot(entries)| < EffectiveVisitedAddCapacity(decision) as int <= 2147483646
+    ensures VisitedAddResult(decision) != 2 ==> EffectiveVisitedAddCapacity(decision) == 0
+    ensures VisitedAddResult(decision) == 3 ==> |VisitedSnapshot(entries)| >= 1073741824
+  {
+    hide VisitedAddPayload, VisitedAddHasHighFlag, VisitedAddResult,
+      VisitedInsertedDecision, VisitedGrowthDecision, ValidVisitedDecision,
+      EffectiveVisitedAddCount, EffectiveVisitedAddCapacity;
+    decision := 0;
+    UnchangedVisitedDecisionIsExact(count);
+    if pointer == 0 { return; }
+    if entries == null || count >= (entries.Length as U32) / 2 {
+      var length: U32 := if entries == null then 0 else entries.Length as U32;
+      if entries != null && length != 0 {
         var present := ContainsVisited(entries, pointer);
-        if present {
-          packed := PackVisitedAdd(result, nextCount, capacity);
-          PackedVisitedAddIsReversible(result, nextCount, capacity);
-          return;
-        }
+        if present { return; }
       }
-      capacity := NextVisitedCapacity(length);
+      var capacity := NextVisitedCapacity(length);
       VisitedAllocationAndProbeBounds(pointer, length, 0);
-      if capacity == 0 { result := 3; }
-      else { result := 2; }
-      packed := PackVisitedAdd(result, nextCount, capacity);
-      PackedVisitedAddIsReversible(result, nextCount, capacity);
+      if capacity == 0 {
+        decision := 18446744073709551615;
+        ExhaustedVisitedDecisionIsExact(count);
+      } else {
+        decision := VisitedGrowthDecision(capacity);
+        GrowthVisitedDecisionIsExact(capacity, count);
+      }
       return;
     }
     var added := AddVisited(entries, pointer);
@@ -480,32 +579,28 @@ module LongValueKernel {
       assert false;
     }
     if added == 2 {
-      nextCount := count + 1;
-      result := 1;
+      decision := VisitedInsertedDecision(count + 1);
+      InsertedVisitedDecisionIsExact(count + 1, count);
     }
-    packed := PackVisitedAdd(result, nextCount, capacity);
-    PackedVisitedAddIsReversible(result, nextCount, capacity);
   }
-
   // Allocation is the only intervening effect: distinct, zero-filled storage
   // of exactly the requested size. Until it succeeds the source is unchanged.
-  method CompleteVisitedGrowth(source: array<U32>, destination: array<U32>,
+  method CompleteVisitedGrowth(source: array?<U32>, destination: array<U32>,
       count: U32, pointer: U32) returns (nextCount: U32)
-    requires TrackedVisited(source[..], count)
-    requires count as int == source.Length / 2
-    requires pointer != 0 && pointer !in source[..]
+    requires TrackedVisited(VisitedSnapshot(source), count)
+    requires count as int == |VisitedSnapshot(source)| / 2
+    requires pointer != 0 && pointer !in VisitedSnapshot(source)
     requires source != destination
-    requires destination.Length == NextVisitedCapacity(source.Length as U32) as int
-    requires source.Length < destination.Length <= 2147483646
+    requires destination.Length == NextVisitedCapacity(|VisitedSnapshot(source)| as U32) as int
+    requires |VisitedSnapshot(source)| < destination.Length <= 2147483646
     requires forall i: nat :: i < destination.Length ==> destination[i] == 0
     modifies destination
     ensures TrackedVisited(destination[..], nextCount)
     ensures nextCount as int == count as int + 1
     ensures forall value: U32 :: value != 0 ==>
-      (value in destination[..] <==> value in source[..] || value == pointer)
+      (value in destination[..] <==> value in VisitedSnapshot(source) || value == pointer)
   {
-    var length := source.Length as U32;
-    if length > 0 {
+    if source != null && (source.Length as U32) > 0 {
       DistinctOccupiedCount(source[..]);
       RehashVisited(source, destination);
     } else {

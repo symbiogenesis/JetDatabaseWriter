@@ -17,30 +17,29 @@ internal struct LongValueVisitedSet
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool Add(uint pointer)
     {
-        uint[] current = this.entries ?? [];
-        ulong prepared = LongValueKernel.PrepareVisitedAdd(current, this.count, pointer);
-        byte result = LongValueKernel.VisitedAddResult(prepared);
-        if (result == 0)
+        ulong decision = LongValueKernel.PrepareVisitedAdd(this.entries, this.count, pointer);
+        if (decision == 0)
         {
             return false;
         }
 
         uint nextCount;
-        if (result == 2)
+        if (LongValueKernel.VisitedAddHasHighFlag(decision))
         {
+            if (LongValueKernel.VisitedAddIsExhausted(decision))
+            {
+                throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The long-value row-identity tracking capacity is exhausted.");
+            }
+
             // Allocation supplies distinct, zero-filled storage to verified control.
-            uint capacity = LongValueKernel.VisitedAddCapacity(prepared);
+            uint capacity = LongValueKernel.VisitedAddPayload(decision);
             uint[] next = new uint[checked((int)capacity)];
-            nextCount = LongValueKernel.CompleteVisitedGrowth(current, next, this.count, pointer);
+            nextCount = LongValueKernel.CompleteVisitedGrowth(this.entries, next, this.count, pointer);
             this.entries = next;
-        }
-        else if (result == 3)
-        {
-            throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The long-value row-identity tracking capacity is exhausted.");
         }
         else
         {
-            nextCount = LongValueKernel.VisitedAddCount(prepared);
+            nextCount = LongValueKernel.VisitedAddPayload(decision);
         }
 
         this.count = nextCount;
