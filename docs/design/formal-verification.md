@@ -142,12 +142,47 @@ That model assumes an atomic canonical coordinator, fresh tickets/generations, v
 
 These boundaries retain E4/F6/I15. The [storage qualification contract](recovery-storage-contract.md) records the managed flush/source audit, separate namespace and restart obligations and qualification receipt requirements. The [caller-stream contract](caller-stream-recovery.md) defines current live rollback, disposal and isolation requirements and the identity, journal, fence, reopen and lease capabilities required before persistent stream recovery can be implemented or advertised. No OS/filesystem/device combination has a power-loss qualification receipt. A persistently provisioned journal is a possible future way to reduce namespace changes; it would still need a proven provisioning/reuse/decision protocol and OS evidence. It is not the current implementation.
 
+## Page parsing and bitmap operations
+
+The shared executable kernel also covers three bounded page operations used by
+production: data-page slot acquisition, usage-map bitmap access/update, and
+index entry-boundary scans. These are array-level properties under the supplied
+layout and immutable-input contracts. Their containing public parsers, page
+identity, traversal budgets and mutation ownership retain separate obligations.
+
+`ReadDataRowSlot` bounds the count by the physical directory, reads the
+selected masked offset, refuses directory overlap and selects the least strictly
+greater masked offset across all slots. Deleted slots remain valid boundary
+contributors and may be selected as overflow targets. Duplicate offsets do not
+produce a zero-sized row. The proof covers the selected interval. Complete row
+decoding and overflow traversal retain separate obligations.
+
+`InlineUsagePosition` and `ReferenceUsagePosition` admit the complete bitmap
+window before selecting a byte and bit. `ReadUsageBit` acquires its state;
+`WriteUsageBit` preserves unrelated bytes and bits. Refusal
+leaves the array unchanged. Negative native base pages and invalid signed
+adapter inputs refuse. A bitmap bit records membership; reclaiming a page still
+requires the independent incoming-reference and ownership checks.
+
+`FindIndexEntryStart` selects the first set boundary strictly after the current
+entry and strictly before the payload end. `CheckIndexLeafBitmap` checks the implicit first
+entry, exact nonempty end sentinel and clear tail. The sentinel is excluded from
+entry selection. Each scan has a decreasing bounded cursor. Key reconstruction,
+comparison, complete tree traversal and edit/reclamation composition remain
+separate obligations.
+
 ## Production correspondence
 
-Paths are relative to the repository root. Method names identify the intended refinement boundary; the models deliberately omit page serialization and physical I/O.
+Paths are relative to the repository root. Method names identify the exact
+executable or refinement boundary. Byte acquisition is covered only where
+named; physical I/O and the remaining containing algorithms retain their
+explicit contracts.
 
 | Modeled obligation | Production boundary | Existing focused evidence | Remaining correspondence gap |
 |---|---|---|---|
+| Exact bounded data-row slot acquisition and next-distinct offset | `Pages/DataPageRows.cs` `TryGetSlotBound`; generated `ReadDataRowSlot` | `DataRowSlotKernelTests`, `RowDirectoryTests`, overflow/reclamation regressions | The complete slot scan is generated. Other directory builders, row decoding, page identity and overflow traversal remain separate. |
+| Bounded inline/reference bitmap admission and exact bit access/update | `Pages/UsageMap.cs` bitmap state readers/writers; generated usage-position and bit methods | `UsageMapBitmapKernelTests`, `UsageMapBitmapEnumerationTests`, usage-map maintenance regressions | Generated updates preserve unrelated bytes/bits and refuse atomically. Map traversal, alias isolation, page ownership and reclamation authority remain separate. |
+| Index next-entry selection and exact leaf sentinel/tail admission | `Indexes/IndexPageCodec.cs` `NextEntryStart`, `HasExactLeafPayloadBoundary`; generated `FindIndexEntryStart`, `CheckIndexLeafBitmap` | `IndexEntryBoundaryKernelTests`, `IndexPageCodecStrictLeafTests`, `IndexPageCodecLeafPageTests` | Both complete bounded scans are generated. Key reconstruction/comparison, complete tree traversal and structural edit/ownership composition remain separate. |
 | Prepare evidence before mutation | `Pages/Paging/PhysicalRollback.cs` `BeginWrite`; `PersistentRollbackJournal.cs` `Create`; all under `src/JetDatabaseWriter/` | `PersistentRollbackJournalTests`, `SelectiveRollbackJournalTests` | Logical captures now derive durable coverage, but preparation parsing, namespace promotion/discovery and actual flush ordering are handwritten. |
 | Protect overwritten original bytes | `Pages/Paging/StreamPageStore.cs` `WriteAsync`; `PersistentRollbackJournal.cs` `RecordBeforeWrite`, `CaptureOriginalPage`, `AppendRecord` | `SelectiveRollbackJournalTests`, `FileRollbackTests`, `BufferedJournalConformanceTests` | Buffered effects derive protection from durable logical captures. Page-record extraction/checksums and C# control flow still require conformance. |
 | Protect removed original tail | `Pages/Paging/StreamPageStore.cs` `SetLengthAsync`; `PersistentRollbackJournal.cs` `RecordBeforeTruncate` | `ShrinkCrashRecoveryTests`, `RecoveryReplayCrashTests`, `BufferedJournalConformanceTests` | Constructive preparation establishes logical original-tail coverage; generated page selection is shared by production preparation and parser admission. Exact validated map-to-record/hash correspondence, secure erase and actual file-length semantics remain unproved. |

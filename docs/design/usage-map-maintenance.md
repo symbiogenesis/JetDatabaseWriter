@@ -19,6 +19,17 @@ page. `Jet3NativeExternalMemoTests` compares the frozen DAO3.6 geometry and chec
 external Memo update/delete, native table allocation, primary-key refusal and
 compact/readback. Existing imported maps retain their actual row bounds.
 
+## Verified bitmap access
+
+The inline/reference bitmap state getters and setters in `UsageMap` call
+generated Dafny code to admit bitmap windows and read or update the selected
+bit. Admission bounds the header, row, bitmap
+and byte before access. Successful updates preserve every other byte and bit;
+refusal preserves the complete buffer. Negative inline base pages refuse for
+both reads and writes. These properties cover bitmap representation and access.
+Whole-row emission, page identity, map traversal, alias isolation and reclamation authority still
+require the ownership checks below; see the [formal boundary](formal-verification.md#page-parsing-and-bitmap-operations).
+
 ## Ownership
 
 Physical page owner zero does not prove that a map row is private.

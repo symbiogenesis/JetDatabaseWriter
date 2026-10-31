@@ -10,6 +10,17 @@ Jet3, Jet4 and ACE apart from the header offsets. The reference is
 `findRowEnd`, `positionAtRowData`, `deleteRow`, `updateRow`), checked against
 the Access-authored fixtures in `tests/JetDatabaseWriter.Tests/Databases`.
 
+## Verified slot acquisition
+
+`DataPageRows.TryGetSlotBound` uses generated Dafny code for bounded directory
+acquisition and the complete next-distinct-offset scan. The selected start must
+follow the clamped directory and lie within the page. Every slot, including a
+deleted slot, can bound the next row; equal offsets are skipped. Header and
+directory reads are bounded before acquisition. This verifies the returned
+slot interval under the supplied layout and stable page-image contract.
+Complete row decoding, overflow traversal and native compatibility retain their
+own evidence in the [formal boundary](formal-verification.md#page-parsing-and-bitmap-operations).
+
 ## Value decode policy
 
 `RowValueDecodePolicy` validates nonempty fixed-size payloads stored in variable slots and calculated envelopes before the string, typed or compiled POCO decoder reads them. Strict parsing reports malformed values with the column name; lenient parsing returns empty text for string output, `DBNull.Value` for typed rows and an unassigned/default POCO property. A valid zero-length Text or binary value retains its normal empty representation. Ordinary calculated Null maps to a missing value. The measured native Byte error form (39 bytes, first UInt32 6, all remaining bytes zero) instead raises contextual JetLimitationException with NumericOverflow in both parsing modes, before scalar conversion. CalculatedByteErrorReadTests constructs that native layout separately from its Null and malformed-framing controls; value-preserving error reads, other native error forms and native error writes remain R4 work. A nonempty payload shorter than its scalar type requires is malformed. Calculated MEMO/OLE envelopes use the same validation after exact long-value retrieval. Write-back snapshots retain the unreadable-long-value sentinel, and storage I/O failures propagate.

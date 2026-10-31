@@ -8,6 +8,16 @@ The [proof and algorithm survey](../docs/design/proof-survey.md) records recent 
 
 ## Scope
 
+`RecoveryKernel` also supplies complete bounded array operations for data-page
+slot acquisition (`ReadDataRowSlot`), inline/reference usage-bitmap admission
+and bit reads/updates, and index entry-boundary/sentinel scans
+(`FindIndexEntryStart`, `CheckIndexLeafBitmap`). Their contracts establish exact
+slot intervals, atomic bit refusal/preservation and strict scan progress. The
+[page-operation boundary](../docs/design/formal-verification.md#page-parsing-and-bitmap-operations)
+records production callers and the remaining containing-parser, ownership and
+native-format obligations. These operations use the existing native projection
+and introduce no additional executable module or shipping dependency.
+
 | Model | Main checked properties | Deliberate boundary |
 |---|---|---|
 | [UndoJournal.dfy](UndoJournal.dfy) | Logical and buffered journal traces preserve exact undo coverage, durable acknowledgement and terminating recovery under explicit persistence contracts. Aligned multi-page preparation derives padded original payloads and complete removed-tail coverage. Content admission composes recorded gap intents, torn writes and replay mixtures under the zero-exposure contract. Serialized inventory proofs derive exact map membership/source positions, consume exact saved ranges with the production replay rank and construct complete restoration. | Serialized acquisition, checksums and payload identity are explicit contracts. Successful modeled effects do not verify returned C# I/O or physical persistence. Unrestricted pre-marker reordering can preserve undo while requiring parser refusal; the abstract completion schedule and full production algorithm remain distinct. |

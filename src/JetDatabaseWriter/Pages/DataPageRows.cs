@@ -254,8 +254,14 @@ internal static class DataPageRows
             return false;
         }
 
-        RecoveryKernel.ReadDataRowSlot(page, (uint)format.PageSize, (uint)format.DataPage.NumRows,
-            (uint)format.DataPage.RowsStart, (uint)rowIndex, out uint start, out uint end);
+        RecoveryKernel.ReadDataRowSlot(
+            page,
+            (uint)format.PageSize,
+            (uint)format.DataPage.NumRows,
+            (uint)format.DataPage.RowsStart,
+            (uint)rowIndex,
+            out uint start,
+            out uint end);
         if (end == 0)
         {
             return false;

@@ -76,6 +76,9 @@ public sealed class UsageMapBitmapKernelTests
     }
 
     /// <summary>Malformed signed bounds and incomplete headers refuse before reading or mutating the buffer.</summary>
+    /// <param name="start">The row's signed starting offset.</param>
+    /// <param name="size">The row's declared size.</param>
+    /// <param name="pageNumber">The page whose membership is requested.</param>
     [Theory]
     [InlineData(-1, 7, 0L)]
     [InlineData(0, -1, 0L)]
@@ -97,6 +100,8 @@ public sealed class UsageMapBitmapKernelTests
     }
 
     /// <summary>Negative inline bases and either edge outside the bitmap window refuse consistently.</summary>
+    /// <param name="basePage">The signed base page stored in the row.</param>
+    /// <param name="pageNumber">The page whose membership is requested.</param>
     [Theory]
     [InlineData(-1, 0L)]
     [InlineData(1000, 999L)]
@@ -113,6 +118,9 @@ public sealed class UsageMapBitmapKernelTests
     }
 
     /// <summary>Reference addressing rejects invalid layout and missing bitmap bytes without arithmetic failures.</summary>
+    /// <param name="pageSize">The declared logical page size.</param>
+    /// <param name="pageNumber">The page whose membership is requested.</param>
+    /// <param name="length">The acquired buffer length.</param>
     [Theory]
     [InlineData(2048, -1L, 2048)]
     [InlineData(2048, long.MinValue, 2048)]
@@ -131,6 +139,7 @@ public sealed class UsageMapBitmapKernelTests
     }
 
     /// <summary>Exact native-size window edges remain addressable without touching pooled trailing bytes.</summary>
+    /// <param name="pageSize">The declared logical page size.</param>
     [Theory]
     [InlineData(2048)]
     [InlineData(4096)]

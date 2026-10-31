@@ -81,7 +81,9 @@ public sealed class DataRowSlotKernelTests
             int directoryEnd = format.DataPage.RowsStart + (raw.Length * 2);
             for (int index = 0; index < raw.Length; index++)
             {
+#pragma warning disable CA5394 // Seeded specimen generation is reproducible and makes no security decisions.
                 raw[index] = random.Next(0, format.PageSize + 1) | (random.Next(0, 8) << 13);
+#pragma warning restore CA5394
             }
 
             byte[] page = BuildPage(format, raw);

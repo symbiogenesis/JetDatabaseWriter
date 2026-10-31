@@ -381,6 +381,15 @@ The bitmask encodes 1 bit per byte of payload (LSB-first within each byte). The 
 
 ### 4.3 Entry record
 
+`IndexPageCodec.NextEntryStart` and strict leaf bitmap admission execute the
+generated Dafny scans `FindIndexEntryStart` and `CheckIndexLeafBitmap`. Their
+contracts establish the least later entry boundary before the payload end,
+strictly decreasing scan work, the implicit first entry, exact nonempty end
+sentinel and clear bitmap tail. Empty payloads admit no bitmap bits. The scans
+bound every bitmap read by the supplied page and layout. Complete key decoding,
+tree traversal and edit/ownership composition remain separate; see the
+[formal boundary](formal-verification.md#page-parsing-and-bitmap-operations).
+
 ```text
 1 byte   flags          // 0x7F = ascending non-null, 0x80 = descending non-null,
                         // 0x00 = ascending null, 0xFF = descending null
