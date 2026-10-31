@@ -3,6 +3,8 @@ namespace JetDatabaseWriter.Tests.Pages.Paging;
 using System;
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Threading;
+using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Pages.Paging;
 using Xunit;
@@ -50,6 +52,103 @@ public sealed class PageLeaseTests
         frame.Release();
         Assert.Throws<ObjectDisposedException>(() => frame.Acquire());
         Assert.Equal(1, returned);
+    }
+
+    [Fact]
+    public async Task ConcurrentDisposalOfOneLease_PreservesSurvivorAndReleasesExactlyOnce()
+    {
+        byte[] bytes = [73, 19];
+        int returned = 0;
+        int released = 0;
+        var frame = new PageFrame(bytes, bytes.Length, buffer =>
+        {
+            Assert.Same(bytes, buffer);
+            Interlocked.Increment(ref returned);
+        });
+        using PageLease survivor = frame.Acquire();
+        using PageLease disposed = frame.Acquire(() => Interlocked.Increment(ref released));
+        frame.Release();
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task[] workers = new Task[32];
+        for (int index = 0; index < workers.Length; index++)
+        {
+            workers[index] = DisposeAsync();
+        }
+
+        start.SetResult();
+        await Task.WhenAll(workers).WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        Assert.Equal(1, released);
+        Assert.Equal(0, returned);
+        Assert.Equal(bytes, survivor.Memory.ToArray());
+        Assert.Throws<ObjectDisposedException>(() => disposed.Memory);
+        survivor.Dispose();
+        survivor.Dispose();
+        Assert.Equal(1, returned);
+        Assert.Throws<ObjectDisposedException>(() => frame.Acquire());
+
+        async Task DisposeAsync()
+        {
+            await start.Task.WaitAsync(TestContext.Current.CancellationToken);
+            disposed.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentDistinctLeases_RetainProducerUntilItsFinalRelease()
+    {
+        byte[] bytes = [73, 19];
+        int returned = 0;
+        int released = 0;
+        int acquired = 0;
+        var frame = new PageFrame(bytes, bytes.Length, buffer =>
+        {
+            Assert.Same(bytes, buffer);
+            Interlocked.Increment(ref returned);
+        });
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allAcquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task[] workers = new Task[32];
+        for (int index = 0; index < workers.Length; index++)
+        {
+            workers[index] = AcquireAndReleaseAsync();
+        }
+
+        start.SetResult();
+        try
+        {
+            await allAcquired.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            Assert.Equal(0, returned);
+        }
+        finally
+        {
+            release.SetResult();
+        }
+
+        await Task.WhenAll(workers).WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        Assert.Equal(workers.Length, released);
+        Assert.Equal(0, returned);
+        using PageLease last = frame.Acquire(() => Interlocked.Increment(ref released));
+        Assert.Equal(bytes, last.Memory.ToArray());
+        frame.Release();
+        Assert.Equal(0, returned);
+        last.Dispose();
+        Assert.Equal(workers.Length + 1, released);
+        Assert.Equal(1, returned);
+        Assert.Throws<ObjectDisposedException>(() => frame.Acquire());
+
+        async Task AcquireAndReleaseAsync()
+        {
+            await start.Task.WaitAsync(TestContext.Current.CancellationToken);
+            using PageLease lease = frame.Acquire(() => Interlocked.Increment(ref released));
+            if (Interlocked.Increment(ref acquired) == workers.Length)
+            {
+                allAcquired.SetResult();
+            }
+
+            await release.Task.WaitAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(bytes, lease.Memory.ToArray());
+        }
     }
 
     [Fact]
