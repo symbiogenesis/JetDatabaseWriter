@@ -850,3 +850,28 @@ text. Date/Text and nonfinite numeric/Text pairs compare native formatted text;
 Date/number pairs compare the raw serial. GUIDs retain their text identity.
 The [membership controls](../../tests/JetDatabaseWriter.Tests/Databases/CalculatedMembership/README.md)
 pin both operand orders, Nulls, errors, subtype boundaries and native compaction.
+
+## Adding fields to populated tables
+
+Adding a calculated field computes its existing-row caches before replacement
+storage is allocated. Existing calculations retain their stored caches; only the
+new field is evaluated under the writer's regional snapshot. Native append
+semantics bypass Required and field validation rules for those old rows, while
+the table validation rule remains active. Refusal preserves database bytes and
+the caller's transaction state. A new calculation depending on a stale bracketed
+calculated reference receives native dependency status -5617.
+
+Native field append also clears existing stale bracketed caches, even when the
+added field is ordinary or independent. The library preserves those surviving
+cached values, following its schema-preservation contract rather than emulating
+destructive native DDL behavior. It matches the new field's independently
+observed native value or error. `CalculatedColumnAddTests` covers scalar, Text,
+Memo, Null/error, dependent, constraint, regional and rollback cases.
+The [native append specimens](../../tests/JetDatabaseWriter.Tests/Databases/CalculatedAdd/README.md)
+retain the exact native discrepancy, hashes and reproducing script.
+
+`CalculatedRegionalGrammarTests` separately pins native punctuated month-name
+dates, logical numeric-string conversion and Date/Text comparison. Date/Text
+relational operators compare the date's regional text; Date/number operators
+retain the original serial. Invalid hash-delimited date literals refuse as
+parser syntax errors before mutation.

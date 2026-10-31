@@ -35,7 +35,7 @@ Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from yo
 | ✅ | **Encryption** | Read/update built-in JET RC4 and ACE CryptoAPI, Standard AES and Agile AES; create JET RC4 or ACE Agile AES and maintain passwords. See [Encryption Support](#encryption-support) for provider and platform scope. |
 | Partial | **Schema&nbsp;features** | Supported indexes, selectable text collations, primary & foreign keys with referential integrity (cascade update/delete), and linked tables; complete native schema and application dependency preservation remains incomplete |
 | ✅ | **Complex&nbsp;columns** | Read, add, replace and remove attachments and multi-value items with native item IDs; maintain append-only Memo history (ACCDB) |
-| Partial | **Calculated&nbsp;columns** | ACCDB metadata, cached values, and a bounded row-local evaluator for a supported subset of Access expressions |
+| ✅ | **Calculated&nbsp;columns** | Native ACCDB expressions, metadata and cached values; recompute dependent results on insert/update and populate newly added fields, with native error values and regional settings. See [calculated fields](docs/writing.md#calculated-columns). |
 | ✅ | **Concurrency** | `.ldb` / `.laccdb` lockfile + BCL page-level byte-range locks where supported |
 | ✅ | **Transactions** | Group or nest changes with `CommitAsync` / `RollbackAsync`; file transactions recover after process crashes (see [guarantees](docs/operations.md#transactions)) |
 | ✅ | **Storage&nbsp;maintenance** | Access-style free-page reuse, free-page scrubbing, opt-in secure erase, and tail shrinking |
