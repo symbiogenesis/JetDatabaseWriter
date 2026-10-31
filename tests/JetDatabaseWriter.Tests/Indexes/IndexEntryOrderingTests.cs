@@ -169,6 +169,69 @@ public sealed class IndexEntryOrderingTests
         Assert.Equal([0, 1], existing.Select(entry => entry.DataRow));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(7)]
+    public void Splice_MatchesIndependentStableBucketsForEverySmallRunAndRemovalSubset(int removalMask)
+    {
+        // This alphabet orders empty, prefix, longer-prefix and high-byte keys
+        // independently of the production comparator and sorting algorithm.
+        byte[][] alphabet = [[], [0x7F], [0x7F, 0], [0xFF]];
+        for (int sample = 0; sample < 1024; sample++)
+        {
+            var ranks = new int[5];
+            var entries = new IndexEntry[5];
+            var originalKeys = new byte[5][];
+            for (int index = 0; index < entries.Length; index++)
+            {
+                ranks[index] = (sample >> (index * 2)) & 3;
+                byte[] key = [.. alphabet[ranks[index]]];
+                originalKeys[index] = [.. key];
+                entries[index] = new(key, 100 + index, 0);
+            }
+
+            List<IndexEntry> existing = [entries[0], entries[1], entries[2]];
+            List<IndexEntry> adds = [entries[3], entries[4]];
+            var removes = new List<(long Page, byte Row)>();
+            for (int index = 0; index < existing.Count; index++)
+            {
+                if ((removalMask & (1 << index)) != 0)
+                {
+                    removes.Add((entries[index].DataPage, entries[index].DataRow));
+                }
+            }
+
+            var expected = new List<IndexEntry>();
+            for (int rank = 0; rank < alphabet.Length; rank++)
+            {
+                for (int index = 0; index < entries.Length; index++)
+                {
+                    if (ranks[index] == rank && (index >= existing.Count || (removalMask & (1 << index)) == 0))
+                    {
+                        expected.Add(entries[index]);
+                    }
+                }
+            }
+
+            List<IndexEntry>? actual = IndexEntrySplicer.Splice(existing, adds, removes);
+
+            Assert.NotNull(actual);
+            Assert.Equal(expected, actual);
+            Assert.Equal(entries.Take(3), existing);
+            Assert.Equal(entries.Skip(3), adds);
+            for (int index = 0; index < entries.Length; index++)
+            {
+                Assert.Equal(originalKeys[index], entries[index].Key);
+            }
+        }
+    }
+
     [Fact]
     public void ApplyIntermediateOps_SortsOriginalIndicesAndPreservesDeclarationOrderWithinTies()
     {
