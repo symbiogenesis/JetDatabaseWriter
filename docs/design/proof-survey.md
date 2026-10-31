@@ -1,8 +1,8 @@
 # Proof and algorithm survey
 
-Survey date: 2026-10-30.
+Survey date: 2026-10-30. Supplemental storage/resource review: 2026-10-31.
 
-This document connects recent mathematics, algorithms and proof-engineering
+This document connects mathematics, algorithms and proof-engineering
 research to JetDatabaseWriter's performance, integrity, allocations and
 maintainability. It records applicability decisions and their limits. The
 [root plan](../../PLAN.md) owns outstanding implementation and acceptance work;
@@ -10,9 +10,11 @@ this document is not a second backlog.
 
 ## Scope and evidence
 
-The survey screens OpenAI's mathematics catalog, examines selected relevant
+The original survey screens OpenAI's mathematics catalog, examines selected relevant
 theorem statements and formalization scopes, and includes independent 2026
-algorithm and software-verification research. It is an applicability review,
+algorithm and software-verification research. The supplemental review includes
+foundational storage, resource, parser and data-structure proofs from earlier
+years, alongside relevant 2025/2026 work. It is an applicability review,
 not an independent verification of every manuscript or a reproduction of the
 papers' experiments.
 
@@ -27,7 +29,7 @@ before relying on a result.
 Catalog screening means reviewing the family descriptions for a matching
 computational problem, then examining selected papers and formalization scopes;
 it does not mean checking all 721 manuscripts. This literature review did not
-rerun the upstream Lean or Rocq artifacts. Publisher-reported verification,
+rerun the upstream Lean, Rocq, Isabelle or F* artifacts. Publisher-reported verification,
 independent examination and this repository's own CI evidence remain separate.
 
 Distinguish these forms of evidence:
@@ -48,6 +50,11 @@ The current applicability decisions, in order of practical relevance, are:
 
 | Opportunity | Expected benefit and next evidence |
 |---|---|
+| Recoverability at every write and across recovery layers | PoWER, CHL and Argosy supply complementary proof patterns for V3/V5/V6. Compose actual admitted bytes, returned effects and repeated recovery; retain V7/I15 storage qualification. |
+| Transaction and concurrent implementation refinement | DaisyNFS, Perennial and ReLoC inform I5/V6/V10's remaining state, authority and CAS/lock correspondence. They do not verify the current C# controller. |
+| Explicit peak-space and work budgets | IrisFit and time-credit proofs inform I7/S1/V8/V10: account for suspended owners, pool retention, growth overlap and adversarial probes before removing copies or tightening limits. |
+| Native tree and relocation semantics | Verified B+ trees and CertiGC inform I2/I17/V9: tree descent must agree with leaf iteration, and relocation must preserve all rooted references before reclamation. |
+| Rounded numeric seek bounds | Flocq supplies relevant rounding lemmas for I9, conditional on matching native key and CLR comparison semantics and proving no false negatives. |
 | Reuse ordered runs before general stable sorting | Existing splice measurements establish a named allocation benefit. I12 still owns public timing acceptance; a full sorting implementation needs a remaining measured bottleneck. |
 | Compose visited-set orchestration with the containing parser | Generated count/growth decisions retain exact membership and the single-scan path under V8/S1. Compose allocation effects, adversarial probe work, growth overlap and cancellation; exact membership alone is insufficient. |
 | Fixed-contract proof repair and dependency review | Less proof-maintenance work under V6/V12, while preserving supported behavior and independently reviewed specifications. A benchmark solve rate is not repository acceptance. |
@@ -56,6 +63,278 @@ The current applicability decisions, in order of practical relevance, are:
 | SAT, matrix arithmetic and unrelated pure mathematics | No matching production bottleneck or demonstrated drop-in improvement. Keep their theorem statements separate from practical performance claims. |
 
 ## Results with concrete repository applications
+
+### Recoverability preconditions on storage effects
+
+[PoWER Never Corrupts](https://www.usenix.org/system/files/osdi25-leblanc.pdf),
+OSDI July 2025, puts a quantified precondition on durable writes: every newly
+possible partial-persistence state must remain recoverable. Its machine-checked
+correspondence to crash conditions supports using ordinary ghost state and
+quantifiers in Dafny. This paper is already a root-plan reference; its concrete
+application deserves inclusion here.
+
+The existing [undo model](../../verification/Pages/Paging/UndoJournal.dfy)
+already follows this discipline. V3/V5/V6 should carry it through actual
+preparation, serialized admission and returned-effect interfaces in
+[PersistentRollbackJournal](../../src/JetDatabaseWriter/Pages/Paging/PersistentRollbackJournal.cs)
+and [EncryptionReplacementIntent](../../src/JetDatabaseWriter/Encryption/EncryptionReplacementIntent.cs).
+Prove preservation of recovery authorization and acknowledged decisions for
+every admitted outcome; retain separate progress obligations. A declared
+effect contract still needs implementation correspondence.
+
+The evaluated systems target persistent memory with aligned eight-byte atomic
+persistence. Their corruption-detecting Boolean cannot be copied into a
+torn-byte stream contract. Their CRC reasoning assumes bounded corrupted bits
+and a trusted checksum property. It supplies no arbitrary-corruption or
+adversarial-integrity guarantee; data/checksum generations still need protocol
+correspondence. Neither this result nor a valid digest qualifies file/name
+durability. Retain V7/I15 and the existing byte-level fault model.
+
+### Recovery invariants and composition across layers
+
+[FSCQ and Crash Hoare Logic](https://adam.chlipala.net/papers/FscqSOSP15/FscqSOSP15.pdf),
+SOSP October 2015, distinguish normal postconditions, crash conditions and
+recovery specifications. Recovery preserves the condition needed to restart
+it after another interruption. This is useful specification structure for
+V3/V5/V6, already recognized by the root plan. The original atomic-block disk
+assumption and unverified Haskell/FUSE environment do not establish this
+library's torn-write or managed-I/O contracts.
+
+[Argosy](https://pdos.csail.mit.edu/papers/argosy:pldi19.pdf), PLDI June 2019,
+proves in Coq that recovery refinements compose, including active recovery
+that writes storage and can crash repeatedly. Its example layers a write-ahead
+log over replicated disks. Crashing during upper-layer recovery can require
+lower-layer recovery to run again; independent component proofs alone do not
+justify that sequence.
+
+For V3/V5/V6/V10, connect serialized acquisition, journal replay, replacement
+publication and generation cleanup with explicit abstraction relations and
+matching initial states. Include recovery before any new operation and
+interruptions during recovery itself. Keep selected bytes, lengths, decision
+identity and retained evidence related across layers. The composition theorem
+is conditional on primitive/crash semantics, not an OS durability proof or a
+termination guarantee under endless failures. Transfer these obligations into
+the existing Dafny boundary rather than introducing another recovery engine.
+
+### Transaction refinement and post-crash authority
+
+[DaisyNFS](https://www.usenix.org/system/files/osdi22-chajed.pdf), OSDI July
+2022, combines sequential Dafny operation proofs with a Coq-proved transaction
+layer to derive concurrent, crash-safe refinement. Its transaction bodies
+access shared mutable state through that layer. The paper retains trusted
+cross-language specification correspondence and primitive contracts.
+
+This directly informs [MutationExecutor](../../src/JetDatabaseWriter/Tables/MutationExecutor.cs),
+[TransactionLifecycle](../../src/JetDatabaseWriter/Transactions/TransactionLifecycle.cs)
+and [PagerTransaction](../../src/JetDatabaseWriter/Pages/Paging/PagerTransaction.cs)
+under I5/V6/V9/V10. Page rollback alone does not cover catalog generations,
+constraint state, counters, allocator hints or callbacks. Include those
+effects in the refinement or prove their restoration separately. DaisyNFS's
+allocator illustrates a useful distinction: an in-memory hint proposes a
+candidate, while transactional allocation metadata authorizes its use.
+
+[Perennial](https://www.chajed.io/papers/perennial:sosp2019.pdf), SOSP October
+2019, uses versioned volatile resources, recovery leases and recovery helping
+to reason about concurrent crash safety. These are useful patterns for
+generation-bound cleanup and uncertain replacement completion under V5/V6/V10.
+They do not establish an OS lock or permission from a pathname alone. The
+original work proves safety, not liveness, and its Goose filesystem model
+excludes deferred durability. Its [current upstream repository](https://github.com/mit-pdos/perennial)
+has changed proof languages and reports no crash program logic on its default
+Lean branch; pin a matching historical artifact before attempting reuse.
+
+### Persistence models and failed flushes
+
+[Ferrite](https://syslab.cs.washington.edu/papers/ferrite-asplos16.pdf), ASPLOS
+April 2016, separates allowed crash outcomes from ordinary syscall semantics
+using axiomatic/operational models and litmus tests. It validates an ext4 model
+and demonstrates model-relative verification and synthesis of synchronization
+calls. This is a route to reviewing both missing fences and unnecessary fences;
+it is not a universal minimal-flush theorem for this library.
+
+For V7/I15, make the [storage contract](recovery-storage-contract.md) precise
+about byte/length persistence, creation/rename/deletion discovery, ordering
+across files and restart quiescence. Couple each modeled premise to small
+host-level litmus tests for the actual runtime, OS, filesystem, mount and
+device configuration. Extend this to replacement and ownership receipts, not
+only database contents. Finite tests validate assumptions; they do not prove
+an unrestricted filesystem model. Linux/ext4 findings cannot qualify Windows,
+macOS, SMB or arbitrary caller streams.
+
+[Can Applications Recover from fsync Failures?](https://www.usenix.org/system/files/atc20-rebello.pdf),
+USENIX ATC July 2020, is complementary experimental evidence. In its tested
+Linux filesystems, failed writeback can leave pages marked clean, so a later
+successful flush need not rewrite the lost bytes. A managed exception sweep
+does not exercise that behavior. Preserve uncertain outcomes and evidence;
+qualify rewriting, rereading and recovery after failure rather than treating
+a bare retry as a successful fence. These are requirements on the host
+contract, not a newly demonstrated defect in the library.
+
+### Peak live storage and suspended owners
+
+[IrisFit / Will It Fit?](https://iris-project.org/pdfs/2025-toplas-willitfit.pdf),
+TOPLAS 2025, proves sound space-credit reasoning for concurrent programs with
+tracing GC. Its analysis includes roots held by sleeping threads; retained
+storage need not be reachable from an active cache. Its strongest guarantees
+depend on its language's allocation, polling and protected-section semantics,
+and the paper explicitly does not bound physical heap size.
+
+Under I7/S1/V10, apply that accounting discipline to
+[ReaderPageCache](../../src/JetDatabaseWriter/Pages/ReaderPageCache.cs),
+[PageFrame](../../src/JetDatabaseWriter/Pages/Paging/PageFrame.cs),
+[PageLease](../../src/JetDatabaseWriter/Pages/Paging/PageLease.cs),
+[Pager](../../src/JetDatabaseWriter/Pages/Paging/Pager.cs) and suspended async
+enumerators. Charge distinct live arrays, directories, lease objects and
+producer loads, including displaced leased frames and duplicate reader
+misses. Count old and new visited tables simultaneously during growth.
+Release reusable-buffer credits only after all owners are discharged;
+pool-retained storage is different from GC-unreachable storage.
+
+Restate the named resource invariant in Dafny and connect actual acquisition,
+transfer and disposal to it. IrisFit's runtime semantics are not .NET's:
+neither its heap limit nor allocation-progress theorem transfers automatically.
+This can guide safe copy removal and budget admission, but managed allocation
+measurements and aggregate resource acceptance remain independent.
+
+### Amortized work is a separate executable obligation
+
+[Charguéraud and Pottier's time-credit development](https://www.chargueraud.org/research/2017/credits_jar/credits_jar.pdf),
+JAR March 2019, verifies functional correctness and amortized complexity of
+imperative union-find using consumable proof credits in Coq/CFML. Its
+inverse-Ackermann bound concerns union-find; the transferable result is the
+method for composing work budgets, not that bound for a hash table.
+
+For V8/S1, add ghost work counters to the existing
+[LongValueKernel](../../verification/LongValues/LongValueKernel.dfy) and
+[LongValueTraversal](../../verification/LongValues/LongValueTraversal.dfy)
+composition. Charge every probe, source scan, destination initialization and
+rehash insertion, including unsuccessful and duplicate operations. Relate the
+sum to the containing [LongValueStore](../../src/JetDatabaseWriter/LongValues/LongValueStore.cs)
+path and the work between cancellation checks. Geometric array growth bounds
+allocation volume but does not make deterministic colliding probes constant
+time. Preserve worst-case adversarial bounds and separate total work,
+peak storage and cancellation latency. Erased ghost counters add no executing
+collection; wall-clock bounds still require managed-path qualification.
+
+### Parser composition and stable input identity
+
+[EverParse](https://www.microsoft.com/en-us/research/publication/everparse/),
+USENIX Security 2019, verifies binary parser/serializer safety and inverse
+properties. [EverParse3D](https://www.normalesup.org/~ramanana/research/everparse/pldi2022/paper.pdf),
+PLDI 2022, adds verified double-fetch freedom using forward-stream permissions,
+alongside memory, arithmetic and format correctness. User parsing actions'
+functional correctness remains outside its stated specifications.
+
+For V8/S1/S3, relate validation to the exact bytes consumed by
+[RowDecoder](../../src/JetDatabaseWriter/ValueDecoding/RowDecoder.cs),
+[DataPageRows](../../src/JetDatabaseWriter/Pages/DataPageRows.cs) and long-value
+traversal. Compose cursor progress, layout admission, output effects and
+failure/cancellation behavior. Keep the matching immutable page lease alive
+through awaited consumers: checking one image cannot authorize use of a changed
+or recycled buffer. Double-fetch freedom is a useful streaming discipline,
+not a reason to prohibit rereading immutable leased bytes.
+
+These proofs can inform removal of redundant copies/checks only after full
+composition. Do not import F*/C into the managed package or require canonical
+encodings that exclude valid native representations. Preserve opaque/reserved
+bytes and independent Microsoft Access evidence; a format specification alone
+does not establish compatibility.
+
+### Refining frame ownership through CAS and cache locks
+
+[ReLoC Reloaded](https://lmcs.episciences.org/7708), LMCS July 2021, provides
+mechanized contextual refinement for fine-grained concurrent implementations
+through logically atomic relational specifications in Coq/Iris. It supplies
+a pattern for relating concrete concurrent operations to an abstract ledger,
+rather than treating that ledger's atomic transitions as verified code.
+
+For V10/I7, bridge [PageFrameOwnership](../../verification/Pages/Paging/PageFrameOwnership.dfy)
+to [PageFrame](../../src/JetDatabaseWriter/Pages/Paging/PageFrame.cs) and
+[PageLease](../../src/JetDatabaseWriter/Pages/Paging/PageLease.cs):
+successful CAS, failed retries, lease-construction compensation, final release
+and cache-locked lookup/producer handoff all need correspondence. Identify the
+linearization points and relate actual frame/array identity to the tickets.
+Keep .NET Interlocked, Volatile, locks, allocation and pooling as explicit
+effect boundaries, with their callers' preconditions established.
+
+Extend the existing Dafny interleaving model rather than adopting another
+shipping engine. A refined reference ledger would strengthen the justification
+for removing copies; it would not establish database-read linearizability
+during concurrent mutation, deadlock freedom, an aggregate heap ceiling or
+better throughput. Those remain separate named obligations and measurements.
+
+### B+ tree refinement and exact leaf iteration
+
+[Mündler and Nipkow's verified B+ trees](https://arxiv.org/html/2208.09066v1),
+ICTAC 2022, refine an abstract set through a functional tree to imperative
+membership, insertion and range iteration in Isabelle/HOL. An ordered fringe
+of leaf pointers connects tree descent to the linked leaf chain. The paper
+proves functional deletion, but not its imperative counterpart.
+
+For I2/V9, relate [IndexCursor](../../src/JetDatabaseWriter/Indexes/IndexCursor.cs)
+and [IndexBTreeEditor](../../src/JetDatabaseWriter/Indexes/IndexBTreeEditor.cs)
+through the same ordered leaf sequence. Splits, root changes and sibling edits
+must preserve exact results without omissions or duplicate visits. Replace the
+paper's set/count-capacity assumptions with duplicate-preserving encoded-key
+and bookmark semantics, native byte capacity, prefix compression and Prev/Next
+links. Page emission proofs alone do not establish that correspondence.
+
+The earlier [KIV/TVLA B+ tree proof project](https://kiv.isse.de/projects/btree.html)
+complements the missing imperative deletion argument: checked recursive
+insertion/deletion compose with splitting, merging and redistribution proofs,
+including balance, size and no-dangling-pointer invariants. Reuse this local
+edit/parent-controller decomposition for grouped edits and reclamation. Neither
+development proves JET compressed page forms, transaction rollback or physical
+crash safety. Retain I2/V9's native evidence and V6 composition before removing
+fallback paths; no throughput improvement follows from the structural proofs.
+
+### Relocation preserves the complete rooted reference graph
+
+[CertiGC](https://arxiv.org/html/2609.13186v1), a 2026 preprint on a verified
+generational collector, connects a C implementation to Rocq/VST proofs of
+root-reachable graph isomorphism. Forwarding, scanning and remembered-set
+proofs preserve labels, edges and sharing through the outer collector loop.
+Its graph/root invariants and contracted nonportable pointer/tag primitives
+remain assumptions; it is not a proof about database files or .NET GC.
+
+For I17/V9, apply the graph-preservation criterion to
+[CompactRowRelocationMap](../../src/JetDatabaseWriter/Maintenance/CompactRowRelocationMap.cs),
+[CompactPinnedDatabaseValidator](../../src/JetDatabaseWriter/Maintenance/CompactPinnedDatabaseValidator.cs)
+and [UsageMapOwnership](../../src/JetDatabaseWriter/Pages/UsageMapOwnership.cs).
+Monotone unique bookmarks establish neither complete incoming references nor
+preserved object identity. Require an injective relocation that preserves root
+observations, reference targets and shared ownership, with all surviving edges
+accounted for before reclaiming storage. Opaque native metadata remains
+potential ownership and must stay pinned until completeness is established.
+The collector's trusted root enumeration cannot discover unknown Access
+references. Keep native inventory evidence, source-preserving refusal and
+journal/publication crash safety separate from this relocation proof pattern.
+
+### Rounded numeric bounds without lost matches
+
+[Flocq](https://flocq.gitlabpages.inria.fr/), introduced at ARITH 2011, provides
+machine-checked multi-radix floating/fixed-point arithmetic. Its
+[generic rounding theorems](https://flocq.gitlabpages.inria.fr/flocq/html/Flocq.Core.Generic_fmt.html),
+including `round_le`, `round_ge_generic` and `round_le_generic`, establish
+monotonicity and bounds relative to representable values under explicit format
+and rounding hypotheses. These are useful missing mathematical ingredients
+for I9, rather than a general query-optimizer equivalence theorem.
+
+[IndexSeekFilter](../../src/JetDatabaseWriter/Indexes/IndexSeekFilter.cs)
+currently requires exact numeric operands. For a future rounded range, prove
+that every row satisfying the original CLR predicate lies inside the encoded
+seek interval. For example, an integral key satisfying `key > 1.5` cannot be
+sought with the strict bound `key > 2`; the key `2` would disappear. Bound
+direction and strict/inclusive endpoints must be derived together, with the
+original residual predicate retained.
+
+Instantiate the proof for integer, scaled Currency/Decimal and Single formats,
+then connect native key ordering, widening/conversion, limits, NaN, infinities,
+signed zero and null behavior. Real-valued generic rounding alone covers none
+of those implementation choices. Preserve predicate evaluation order,
+exceptions and per-execution captures. Keep native comparison evidence and
+paired seek/scan measurements separate; do not replace current conservative
+admission until its no-false-negatives refinement is established.
 
 ### Stable sorting and splice allocations
 
@@ -462,11 +741,15 @@ scope and native/platform evidence limits described above.
 
 | Existing plan owner | Research-informed work and acceptance |
 |---|---|
+| V3/V5/V6 | Apply PoWER's per-effect recoverability discipline and CHL/Argosy recovery specifications to serialized admission, preparation, actual outcomes and complete layered restart. Compose initial states and abstraction relations; component proofs alone do not close the controller. |
+| V7/I15 | Qualify explicit byte/length, namespace and stale-I/O premises against fixed host configurations using persistence litmus tests and failure survivors. Ferrite and failed-fsync experiments guide the model; neither supplies a platform qualification receipt. |
 | V8/S1 | Compose generated visited-set count/growth orchestration with actual allocation/adapter effects, acquisition and the containing parser's complete resource/ownership bounds, including collision probes, rehash overlap and cancellation latency. Production executes generated verified behavior or a checked refinement. |
+| I5/V6/V10 | Use transaction and concurrency refinement to cover auxiliary-state restoration, generation authority, actual CAS/cache-lock steps and producer/lease compensation. Include state outside page transactions explicitly; abstract ownership alone does not verify C# interleavings. |
 | V12 | Review the pinned verifier's dependency diagnostics against independent examples. Consider optional ProofPulse only for a concrete attribution gap and demonstrate exact-pin compatibility. Preserve ordinary verification and negative controls; coverage alone cannot promote a guarantee. |
-| I2/V9/I13 | Stable splice behavior and verified native incremental edits before proactive splitting. Retain fallback contracts, ordering, ownership, byte-capacity and DAO checks. |
-| I7/S1/I17 | Evidence-led metadata representations with aggregate accounting, including pinned/evicted images, in-flight loads, live leases and simultaneous traversals; compare immutable disk-ledger and simple bitmap/range baselines before dynamic compression. |
-| I9 | Rounded-bound seek inference requires a separate no-false-negatives proof under native numeric semantics and preserved predicate evaluation. None of the surveyed asymptotic results discharges it. |
+| I2/V9/I13 | Stable splice behavior and verified native incremental edits before proactive splitting. Compose exact tree/leaf-chain correspondence and local split/merge/deletion contracts; retain fallbacks, ordering, ownership, byte-capacity and DAO checks. |
+| I17/V9 | Establish complete roots and incoming/potential references, then prove injective relocation preserves rooted object identity, edges and sharing before reclamation. Collector graph proofs do not discover unknown native references or establish crash-safe publication. |
+| I7/S1/I17 | Evidence-led metadata representations with peak aggregate accounting, including pinned/evicted images, in-flight loads, live leases, suspended traversals, pool retention and growth overlap; compare immutable disk-ledger and simple bitmap/range baselines before dynamic compression. |
+| I9 | Instantiate rounding bounds and prove no false negatives under native key/CLR numeric semantics, strict/inclusive endpoints and preserved predicate evaluation. Flocq supplies mathematical ingredients, not a refinement of the seek planner. |
 | I12 | Settled-main CI and hosted paired measurements with allocation controls and representative workload shapes before accepting performance claims. |
 
 Do not create parallel engines, alternative file encodings or new trusted

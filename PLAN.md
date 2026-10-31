@@ -194,7 +194,7 @@ Acceptance: an auditable inventory connects each in-scope critical behavior to c
 
 ### Primary references
 
-- [Proof and algorithm survey](docs/design/proof-survey.md): reviewed 2026 mathematics, algorithm and verification results, repository applications and acceptance boundaries.
+- [Proof and algorithm survey](docs/design/proof-survey.md): reviewed mathematics, algorithms and storage/resource verification results, repository applications and acceptance boundaries.
 - [PoWER: Preconditions on Writes Enforcing Recoverability (OSDI 2025)](https://www.usenix.org/conference/osdi25/presentation/leblanc).
 - [FSCQ and Crash Hoare Logic](https://css.csail.mit.edu/fscq/).
 - [Yggdrasil and crash refinement (OSDI 2016)](https://www.usenix.org/conference/osdi16/technical-sessions/presentation/sigurbjarnarson).
