@@ -80,7 +80,7 @@ internal static class CalculatedExpressionLogicalFunctions
 
     private static object EvaluateIn(CalculatedFunctionInvocation function)
     {
-        object inValue = function.Arg(0);
+        (object inValue, bool literalNeedle) = function.MembershipArg(0);
         if (IsNull(inValue))
         {
             return DBNull.Value;
@@ -88,7 +88,7 @@ internal static class CalculatedExpressionLogicalFunctions
 
         for (int argIndex = 1; argIndex < function.Count; argIndex++)
         {
-            object candidateValue = function.Arg(argIndex);
+            (object candidateValue, bool literalCandidate) = function.MembershipArg(argIndex);
             if (IsNull(candidateValue))
             {
                 continue;
@@ -97,15 +97,16 @@ internal static class CalculatedExpressionLogicalFunctions
             object comparedValue = inValue;
             if (function.Context.IsCalculatingColumn && (inValue is string or Guid || candidateValue is string or Guid))
             {
-                // IN refuses text/finite-number pairs. Dates and nonfinite
-                // numbers instead compare using their native formatted text.
-                if (IsFiniteNumber(inValue) || IsFiniteNumber(candidateValue))
+                // Native literal pairs retain a numeric/text mismatch. Fields
+                // and computed results instead compare their formatted text.
+                if (literalNeedle && literalCandidate
+                    && (CalculatedExpressionNumericComparison.IsNumber(inValue) || CalculatedExpressionNumericComparison.IsNumber(candidateValue)))
                 {
                     return new CalculatedError(13);
                 }
 
-                comparedValue = ToCalculatedText(inValue);
-                candidateValue = ToCalculatedText(candidateValue);
+                comparedValue = ToCalculatedComparisonText(inValue);
+                candidateValue = ToCalculatedComparisonText(candidateValue);
             }
 
             if (CompareValues(comparedValue, candidateValue, static comparison => comparison == 0, function.Context) is true)
@@ -116,13 +117,6 @@ internal static class CalculatedExpressionLogicalFunctions
 
         return function.Context.IsCalculatingColumn ? (short)0 : false;
     }
-
-    private static bool IsFiniteNumber(object value) => value switch
-    {
-        double number => !double.IsNaN(number) && !double.IsInfinity(number),
-        float number => !float.IsNaN(number) && !float.IsInfinity(number),
-        _ => CalculatedExpressionNumericComparison.IsNumber(value),
-    };
 
     private static object EvaluateNot(CalculatedFunctionInvocation function)
     {

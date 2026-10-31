@@ -5,11 +5,14 @@ using JetDatabaseWriter.Models;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
-internal sealed class CalculatedExpressionUnaryNode(bool negate, CalculatedExpressionNode operand) : CalculatedExpressionNode
+internal sealed class CalculatedExpressionUnaryNode(bool negate, CalculatedExpressionNode operand, bool isSignedLiteral) : CalculatedExpressionNode
 {
     internal override bool HasStaleQualifier(string tableName) => operand.HasStaleQualifier(tableName);
 
     internal override bool HasUntypedNullResult { get; } = operand.HasUntypedNullResult;
+
+    internal override (object Value, bool IsLiteral) EvaluateMembershipOperand(CalculatedExpressionEvaluationContext context)
+        => (this.Evaluate(context), isSignedLiteral);
 
     public override object Evaluate(CalculatedExpressionEvaluationContext context)
     {

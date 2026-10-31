@@ -2,18 +2,107 @@ namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Expressions;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>Calculated operators preserve native argument evaluation, subtypes and cached errors.</summary>
 public sealed class CalculatedOperatorStatusTests
 {
+    /// <summary>Gets native IN literal, runtime and selected-branch discriminator controls.</summary>
+    public static TheoryData<string, int> NativeLiteralProvenance { get; } = new()
+    {
+        { "1 In (\"1\")", 13 },
+        { "\"1\" In (1)", 13 },
+        { "1.5 In (\"1.5\")", 13 },
+        { "1E100 In (\"1E+100\")", 13 },
+        { "-1 In (\"-1\")", 13 },
+        { "(-1) In (\"-1\")", 13 },
+        { "-(1) In (\"-1\")", -1 },
+        { "-((1)) In (\"-1\")", -1 },
+        { "- 1 In (\"-1\")", -1 },
+        { "- (1) In (\"-1\")", -1 },
+        { "--1 In (\"1\")", -1 },
+        { "+1 In (\"1\")", -1 },
+        { "(1+0) In (\"1\")", -1 },
+        { "Abs(1) In (\"1\")", -1 },
+        { "CDbl(1) In (\"1\")", -1 },
+        { "1 In (1&\"\")", -1 },
+        { "1 In (+\"1\")", -1 },
+        { "1 In (Choose(1,\"1\",\"2\"))", -1 },
+        { "IIf(True,1,CDbl(2)) In (\"1\")", 13 },
+        { "IIf(True,CDbl(1),2) In (\"1\")", -1 },
+        { "1 In (IIf(True,\"1\",UCase(\"2\")))", 13 },
+        { "1 In (IIf(True,UCase(\"1\"),\"2\"))", -1 },
+        { "-IIf(True,1,2) In (\"-1\")", -1 },
+        { "IIf(True,1,2) In (UCase(\"1\"))", -1 },
+        { "-CDbl(0) In (\"-0\")", -1 },
+        { "-CDbl(0) In (\"0\")", 0 },
+        { "IsNull(Null) In (\"True\")", 0 },
+        { "\"True\" In (IsNull(Null))", 0 },
+        { "IsNull(Null) In (\"-1\")", -1 },
+        { "\"-1\" In (IsNull(Null))", -1 },
+    };
+
+    [Theory]
+    [MemberData(nameof(NativeLiteralProvenance))]
+    public void Membership_PreservesOnlySelectedNativeLiteralDiscriminators(string expression, int expected)
+    {
+        var table = new TableDef { Columns = [new ColumnInfo { Name = "V", Type = ColumnType.DoubleType, ExtraFlags = 0xC0, CalculatedResultType = ColumnType.DoubleType }] };
+        ColumnConstraint[] constraints = [new() { Name = "V", IsCalculated = true, ClrType = typeof(double), CalculatedResultType = ColumnType.DoubleType, CalculationExpression = expression }];
+        object actual = new CalculatedExpressionEvaluationContext(table, constraints, [DBNull.Value]).EvaluateColumn(0);
+        if (expected == 13)
+        {
+            Assert.Equal(13, Assert.IsType<CalculatedError>(actual).NativeCode);
+        }
+        else
+        {
+            Assert.Equal(expected, Assert.IsType<double>(actual));
+        }
+    }
+
+    [Theory]
+    [InlineData("native-membership-provenance.accdb", "8CF1CB72889DC7EE0AE31B1055419D9CEDF51788CA9BB70106DEFB0545027759")]
+    [InlineData("native-membership-provenance-compacted.accdb", "BBD0C7D1EC4FBC7207EB1814C5DA61174D39231BECA293505C8FA34E67267870")]
+    public async Task NativeMembershipProvenance_FieldReadsAndSelectedBranchesRetainNativeCaches(string fixture, string hash)
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "Databases", "CalculatedMembershipProvenance", fixture);
+        byte[] bytes = await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken);
+        Assert.Equal(hash, Convert.ToHexString(SHA256.HashData(bytes)));
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(bytes, TestContext.Current.CancellationToken);
+        object[] native;
+        await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            native = Assert.Single(await reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken));
+        }
+
+        Assert.Equal(13, Assert.IsType<CalculatedError>(native[7]).NativeCode);
+        Assert.Equal(13, Assert.IsType<CalculatedError>(native[8]).NativeCode);
+        Assert.Equal(-1d, native[9]);
+        Assert.Equal(-1d, native[10]);
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false, CalculatedExpressionCulture = CultureInfo.GetCultureInfo("en-US") }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            Assert.Equal(1, await writer.UpdateRowsAsync("T", "Id", 1, new Dictionary<string, object?> { ["S"] = "1" }, TestContext.Current.CancellationToken));
+            await writer.InsertRowAsync("T", new RowValues { ["Id"] = 1, ["S"] = "1", ["NegS"] = "-1" }, TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reopened = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        object[][] rows = await reopened.Rows("T", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(2, rows.Length);
+        Assert.All(rows, row => Assert.Equal(native, row));
+    }
+
     [Theory]
     [InlineData("native-membership.accdb", "31E420C894D0117E75B346B117043F3F1B9A752E9A8E3D06AF1AB141B3D866F8")]
     [InlineData("native-membership-compacted.accdb", "DEA2BF5E77F0F94BF707F621CCECA32ADCB06B99EE0181CEBCD2FAF993FDAE4B")]

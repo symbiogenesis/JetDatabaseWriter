@@ -235,13 +235,17 @@ internal sealed class CalculatedExpressionParser
         {
             Token literalToken = this.Peek();
             CalculatedExpressionNode operand = this.ParseExpression(12);
+            bool adjacent = token.StartOffset >= 0 && literalToken.StartOffset == token.StartOffset + token.Text.Length;
             if (token.Text == "-" && ReferenceEquals(literalToken.Node, operand)
-                && TryReadExactDecimal(literalToken.Text, out decimal literal) && literal == 2147483648m)
+                && TryReadExactDecimal(literalToken.Text, out decimal literal) && literal == 2147483648m
+                && (!this.isCalculatedColumn || adjacent))
             {
                 return new CalculatedExpressionValueNode(int.MinValue);
             }
 
-            return new CalculatedExpressionUnaryNode(token.Text == "-", operand);
+            bool signedLiteral = token.Text == "-" && adjacent && ReferenceEquals(literalToken.Node, operand)
+                && operand is CalculatedExpressionValueNode { IsNumericLiteral: true };
+            return new CalculatedExpressionUnaryNode(token.Text == "-", operand, signedLiteral);
         }
 
         switch (token.Kind)
@@ -529,6 +533,8 @@ internal sealed class CalculatedExpressionParser
 
                     result.Add(new Token(kind, expression[start..index]));
                 }
+
+                result[^1] = result[^1] with { StartOffset = start };
             }
 
             return result;
@@ -693,7 +699,7 @@ internal sealed class CalculatedExpressionParser
 
     private readonly record struct BinaryOperatorInfo(string Name, int Precedence);
 
-    internal readonly record struct Token(TokenKind Kind, string Text, CalculatedExpressionNode? Node = null)
+    internal readonly record struct Token(TokenKind Kind, string Text, CalculatedExpressionNode? Node = null, int StartOffset = -1)
     {
         public bool IsWord(string text) => this.Kind == TokenKind.Word && this.Text.Equals(text, StringComparison.OrdinalIgnoreCase);
 

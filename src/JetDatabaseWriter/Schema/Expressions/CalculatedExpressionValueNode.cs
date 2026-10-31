@@ -7,6 +7,11 @@ internal sealed class CalculatedExpressionValueNode(object? value) : CalculatedE
 {
     internal override bool HasUntypedNullResult { get; } = value is null or DBNull;
 
+    internal bool IsNumericLiteral { get; } = value is not null and not bool && CalculatedExpressionNumericComparison.IsNumber(value);
+
+    internal override (object Value, bool IsLiteral) EvaluateMembershipOperand(CalculatedExpressionEvaluationContext context)
+        => (this.Evaluate(context), true);
+
     public override object Evaluate(CalculatedExpressionEvaluationContext context)
     {
         object result = value ?? DBNull.Value;

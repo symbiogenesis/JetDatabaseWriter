@@ -15,6 +15,17 @@ internal readonly struct CalculatedFunctionInvocation(
 
     public CalculatedExpressionEvaluationContext Context => context;
 
+    internal (object Value, bool IsLiteral) MembershipArg(int index)
+    {
+        (object value, bool isLiteral) = args[index].EvaluateMembershipOperand(context);
+        if (value is CalculatedError error)
+        {
+            throw new CalculatedErrorPropagationException(error);
+        }
+
+        return (value, isLiteral);
+    }
+
     public object Arg(int index)
     {
         object value = index < args.Count ? args[index].Evaluate(context) : DBNull.Value;

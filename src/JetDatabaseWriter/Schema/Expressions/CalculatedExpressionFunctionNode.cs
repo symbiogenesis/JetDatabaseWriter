@@ -20,6 +20,18 @@ internal sealed class CalculatedExpressionFunctionNode(string name, IReadOnlyLis
 
     internal override bool HasUntypedNullResult { get; } = ReturnsUntypedNull(name, args);
 
+    internal override (object Value, bool IsLiteral) EvaluateMembershipOperand(CalculatedExpressionEvaluationContext context)
+    {
+        if (context.IsCalculatingColumn && args.Count == 3 && name.Equals("IIF", System.StringComparison.OrdinalIgnoreCase))
+        {
+            var invocation = new CalculatedFunctionInvocation(name, args, context);
+            int selected = CalculatedExpressionCoercion.ToCalculatedCondition(invocation.Arg(0)) ? 1 : 2;
+            return invocation.MembershipArg(selected);
+        }
+
+        return base.EvaluateMembershipOperand(context);
+    }
+
     public override object Evaluate(CalculatedExpressionEvaluationContext context)
     {
         try
