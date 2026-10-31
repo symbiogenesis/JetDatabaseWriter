@@ -557,22 +557,22 @@ internal static class IndexPageCodec
         int prefixLength = ReadPrefixLength(layout, page);
         int entryStart = layout.FirstEntryOffset;
         int prefixStart = layout.FirstEntryOffset;
+        if (!RecoveryKernel.IsIndexChildSearch((uint)page.Length, unchecked((uint)layout.BitmaskOffset), unchecked((uint)prefixStart), (uint)payloadEnd, (uint)prefixLength))
+        {
+            return null;
+        }
+
         bool isFirstEntry = true;
         while (entryStart < payloadEnd)
         {
-            int nextEntryStart = NextEntryStart(layout, page, payloadEnd, entryStart);
-            int entryEnd = nextEntryStart < 0 ? payloadEnd : nextEntryStart;
+            uint acquiredEnd = RecoveryKernel.ReadIndexChildEntry(page, (uint)layout.BitmaskOffset, (uint)prefixStart, (uint)payloadEnd, (uint)entryStart, (uint)prefixLength, isFirstEntry);
+            if (acquiredEnd == uint.MaxValue)
+            {
+                return null;
+            }
+
+            int entryEnd = checked((int)acquiredEnd);
             int suffixLength = entryEnd - entryStart - IntermediateTrailerSize;
-            if (suffixLength + (isFirstEntry ? 0 : prefixLength) < 0 || entryStart + suffixLength + IntermediateTrailerSize > page.Length)
-            {
-                return null;
-            }
-
-            if (isFirstEntry && prefixLength > suffixLength + IntermediateTrailerSize)
-            {
-                return null;
-            }
-
             int comparison = CompareSearchKeyToEntry(
                 searchKey,
                 page,
@@ -581,25 +581,19 @@ internal static class IndexPageCodec
                 suffixLength,
                 prefixLength,
                 isFirstEntry);
-            if (comparison <= 0)
+            ulong decision = RecoveryKernel.AdvanceIndexChildSearch(page, (uint)prefixStart, (uint)payloadEnd, (uint)entryStart, acquiredEnd, (uint)prefixLength, isFirstEntry, comparison);
+            if (decision <= uint.MaxValue)
             {
-                long childPage = 0;
-                int pointerOffset = suffixLength + (isFirstEntry ? 0 : prefixLength) + 4;
-                for (int pointerByte = 0; pointerByte < 4; pointerByte++)
-                {
-                    childPage = (childPage << 8) | ReadCanonicalKeyByte(page, prefixStart, entryStart, prefixLength, isFirstEntry, pointerOffset + pointerByte);
-                }
-
-                return childPage;
+                return checked((long)decision);
             }
 
-            if (nextEntryStart < 0)
+            if (decision == ulong.MaxValue)
             {
-                break;
+                return null;
             }
 
             isFirstEntry = false;
-            entryStart = nextEntryStart;
+            entryStart = checked((int)(decision - (1UL << 32)));
         }
 
         return null;

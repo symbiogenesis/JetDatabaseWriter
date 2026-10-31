@@ -6,6 +6,7 @@ module NativeRecoveryTypes {
   newtype {:nativeType "ulong"} U64 = x: int | 0 <= x < 18446744073709551616
   newtype {:nativeType "uint"} U32 = x: int | 0 <= x < 4294967296
   newtype {:nativeType "byte"} Byte = x: int | 0 <= x < 256
+  newtype {:nativeType "int"} I32 = x: int | -2147483648 <= x < 2147483648
 }
 
 module RecoveryKernel {
@@ -1642,6 +1643,200 @@ module RecoveryKernel {
         end := candidate;
       }
       index := index + 1;
+    }
+  }
+
+  // Intermediate-index descent keeps the platform's vectorized lexicographic
+  // comparison as an explicit effect. These operations acquire one complete
+  // compressed entry and consume its comparison sign, including exact child
+  // bytes and the strictly increasing next-entry continuation.
+  ghost predicate IndexChildLayout(bytes: seq<Byte>, bitmap: U32, first: U32,
+      payloadEnd: U32, start: U32, prefix: U32, isFirst: bool) {
+    bitmap < first <= start < payloadEnd && payloadEnd as int <= |bytes| <= 2147483647 &&
+      prefix as int <= |bytes| - first as int && (isFirst ==> start == first)
+  }
+
+  function IsIndexChildSearch(length: U32, bitmap: U32, first: U32, payloadEnd: U32, prefix: U32): bool {
+    length <= 2147483647 && bitmap < first < payloadEnd <= length && prefix <= length - first
+  }
+
+  lemma IndexChildSearchAdmission(bytes: seq<Byte>, bitmap: U32, first: U32, payloadEnd: U32, prefix: U32)
+    requires |bytes| <= 2147483647
+    ensures IsIndexChildSearch(|bytes| as U32, bitmap, first, payloadEnd, prefix) <==>
+      IndexChildLayout(bytes, bitmap, first, payloadEnd, first, prefix, true)
+  { }
+
+  ghost function IndexChildBoundary(bytes: seq<Byte>, bitmap: U32, first: U32,
+      payloadEnd: U32, candidate: nat): nat
+    requires bitmap < first && first as int <= candidate <= payloadEnd as int <= |bytes| <= 2147483647
+    ensures candidate <= IndexChildBoundary(bytes, bitmap, first, payloadEnd, candidate) <= payloadEnd as int
+    decreases payloadEnd as int - candidate
+  {
+    if candidate == payloadEnd as int || IndexBoundaryAt(bytes, bitmap, first, candidate)
+    then candidate
+    else IndexChildBoundary(bytes, bitmap, first, payloadEnd, candidate + 1)
+  }
+
+  lemma IndexChildBoundaryExact(bytes: seq<Byte>, bitmap: U32, first: U32,
+      payloadEnd: U32, candidate: nat)
+    requires bitmap < first && first as int <= candidate <= payloadEnd as int <= |bytes| <= 2147483647
+    ensures candidate <= IndexChildBoundary(bytes, bitmap, first, payloadEnd, candidate) <= payloadEnd as int
+    ensures IndexChildBoundary(bytes, bitmap, first, payloadEnd, candidate) < payloadEnd as int ==>
+      IndexBoundaryAt(bytes, bitmap, first, IndexChildBoundary(bytes, bitmap, first, payloadEnd, candidate))
+    ensures forall p | candidate <= p < IndexChildBoundary(bytes, bitmap, first, payloadEnd, candidate) ::
+      !IndexBoundaryAt(bytes, bitmap, first, p)
+    decreases payloadEnd as int - candidate
+  {
+    if candidate < payloadEnd as int && !IndexBoundaryAt(bytes, bitmap, first, candidate) {
+      IndexChildBoundaryExact(bytes, bitmap, first, payloadEnd, candidate + 1);
+    }
+  }
+
+  ghost predicate IndexChildEntry(bytes: seq<Byte>, first: U32, payloadEnd: U32,
+      start: U32, end: U32, prefix: U32, isFirst: bool) {
+    first <= start < end <= payloadEnd && payloadEnd as int <= |bytes| <= 2147483647 &&
+      prefix as int <= |bytes| - first as int &&
+      end as int - start as int + (if isFirst then 0 else prefix as int) >= 8 &&
+      (isFirst ==> start == first && prefix <= end - start)
+  }
+
+  ghost function IndexChildAcquisition(bytes: seq<Byte>, bitmap: U32, first: U32,
+      payloadEnd: U32, start: U32, prefix: U32, isFirst: bool): U32
+    requires IndexChildLayout(bytes, bitmap, first, payloadEnd, start, prefix, isFirst)
+    ensures IndexChildAcquisition(bytes, bitmap, first, payloadEnd, start, prefix, isFirst) != 4294967295 ==>
+      IndexChildEntry(bytes, first, payloadEnd, start,
+        IndexChildAcquisition(bytes, bitmap, first, payloadEnd, start, prefix, isFirst), prefix, isFirst)
+  {
+    var boundary := IndexChildBoundary(bytes, bitmap, first, payloadEnd, start as int + 1) as U32;
+    if IndexChildEntry(bytes, first, payloadEnd, start, boundary, prefix, isFirst) then boundary else 4294967295
+  }
+
+  method ReadIndexChildEntry(page: array<Byte>, bitmap: U32, first: U32,
+      payloadEnd: U32, start: U32, prefix: U32, isFirst: bool) returns (end: U32)
+    requires IndexChildLayout(page[..], bitmap, first, payloadEnd, start, prefix, isFirst)
+    ensures end == IndexChildAcquisition(page[..], bitmap, first, payloadEnd, start, prefix, isFirst)
+    ensures end != 4294967295 ==>
+      IndexChildEntry(page[..], first, payloadEnd, start, end, prefix, isFirst)
+    ensures (var boundary := IndexChildBoundary(page[..], bitmap, first, payloadEnd, start as int + 1);
+       end == (if IndexChildEntry(page[..], first, payloadEnd, start, boundary as U32, prefix, isFirst)
+         then boundary as U32 else 4294967295))
+  {
+    end := 4294967295;
+    var next := FindIndexEntryStart(page, bitmap, first, payloadEnd, start);
+    var boundary: U32 := if next == 4294967295 then payloadEnd else next;
+    IndexChildBoundaryExact(page[..], bitmap, first, payloadEnd, start as int + 1);
+    ghost var exact := IndexChildBoundary(page[..], bitmap, first, payloadEnd, start as int + 1);
+    if boundary as int < exact {
+      assert IndexBoundaryAt(page[..], bitmap, first, boundary as int);
+    } else if exact < boundary as int {
+      assert IndexBoundaryAt(page[..], bitmap, first, exact);
+    }
+    assert boundary as int == exact;
+    var stored: U32 := boundary - start;
+    if stored as U64 + (if isFirst then 0 else prefix as U64) < 8 || (isFirst && prefix > stored) {
+      return;
+    }
+    end := boundary;
+  }
+
+  function IndexChildCanonicalByte(page: array<Byte>, first: U32, start: U32,
+      ghost end: U32, prefix: U32, isFirst: bool, offset: U32): Byte
+    requires IndexChildEntry(page[..], first, end, start, end, prefix, isFirst)
+    requires offset as int < end as int - start as int + (if isFirst then 0 else prefix as int)
+    reads page
+  {
+    if !isFirst && offset < prefix then page[first + offset]
+    else page[start + (offset - (if isFirst then 0 else prefix))]
+  }
+
+  ghost function IndexChildPointer(page: array<Byte>, first: U32, start: U32,
+      end: U32, prefix: U32, isFirst: bool): U64
+    requires IndexChildEntry(page[..], first, end, start, end, prefix, isFirst)
+    reads page
+  {
+    var keyLength: U32 := (end as int - start as int + (if isFirst then 0 else prefix as int) - 8) as U32;
+    IndexChildCanonicalByte(page, first, start, end, prefix, isFirst, keyLength + 4) as U64 * 16777216 +
+      IndexChildCanonicalByte(page, first, start, end, prefix, isFirst, keyLength + 5) as U64 * 65536 +
+      IndexChildCanonicalByte(page, first, start, end, prefix, isFirst, keyLength + 6) as U64 * 256 +
+      IndexChildCanonicalByte(page, first, start, end, prefix, isFirst, keyLength + 7) as U64
+  }
+
+  ghost function IndexChildAdvance(page: array<Byte>, first: U32, payloadEnd: U32,
+      start: U32, end: U32, prefix: U32, isFirst: bool, comparison: I32): U64
+    requires IndexChildEntry(page[..], first, payloadEnd, start, end, prefix, isFirst)
+    reads page
+  {
+    if comparison <= 0 then IndexChildPointer(page, first, start, end, prefix, isFirst)
+    else if end == payloadEnd then 18446744073709551615
+    else 4294967296 + end as U64
+  }
+
+  method AdvanceIndexChildSearch(page: array<Byte>, first: U32, payloadEnd: U32,
+      start: U32, end: U32, prefix: U32, isFirst: bool, comparison: I32) returns (decision: U64)
+    requires IndexChildEntry(page[..], first, payloadEnd, start, end, prefix, isFirst)
+    ensures decision == IndexChildAdvance(page, first, payloadEnd, start, end, prefix, isFirst, comparison)
+    ensures comparison <= 0 ==> decision == IndexChildPointer(page, first, start, end, prefix, isFirst) && decision <= 4294967295
+    ensures comparison > 0 && end == payloadEnd ==> decision == 18446744073709551615
+    ensures comparison > 0 && end < payloadEnd ==> (decision == 4294967296 + end as U64 &&
+      first <= end < payloadEnd && payloadEnd - end < payloadEnd - start)
+    ensures decision <= 4294967295 <==> comparison <= 0
+  {
+    if comparison > 0 {
+      decision := if end == payloadEnd then 18446744073709551615 else 4294967296 + end as U64;
+      return;
+    }
+    var keyLength: U32 := (end as U64 - start as U64 + (if isFirst then 0 else prefix as U64) - 8) as U32;
+    decision := IndexChildCanonicalByte(page, first, start, end, prefix, isFirst, keyLength + 4) as U64 * 16777216 +
+      IndexChildCanonicalByte(page, first, start, end, prefix, isFirst, keyLength + 5) as U64 * 65536 +
+      IndexChildCanonicalByte(page, first, start, end, prefix, isFirst, keyLength + 6) as U64 * 256 +
+      IndexChildCanonicalByte(page, first, start, end, prefix, isFirst, keyLength + 7) as U64;
+  }
+
+  // The oracle reports the actual vectorized comparison sign at each admitted
+  // entry start. This complete finite control trace composes both executable
+  // operations: every skipped entry compares positive, selection is the first
+  // nonpositive comparison, and malformed acquisition never selects a child.
+  lemma IndexChildSearchTrace(page: array<Byte>, bitmap: U32, first: U32,
+      payloadEnd: U32, prefix: U32, comparisons: seq<I32>)
+      returns (decision: U64, visited: seq<U32>)
+    requires IndexChildLayout(page[..], bitmap, first, payloadEnd, first, prefix, true)
+    requires |comparisons| >= payloadEnd as int - first as int
+    ensures decision == 18446744073709551615 || decision <= 4294967295
+    ensures |visited| <= payloadEnd as int - first as int
+    ensures forall i | 0 <= i < |visited| :: first <= visited[i] < payloadEnd
+    ensures forall i | 0 <= i < |visited| - 1 :: comparisons[visited[i] as int - first as int] > 0
+    ensures decision == 18446744073709551615 ==>
+      forall i | 0 <= i < |visited| :: comparisons[visited[i] as int - first as int] > 0
+    ensures decision <= 4294967295 ==> (|visited| > 0 &&
+      comparisons[visited[|visited| - 1] as int - first as int] <= 0 &&
+      (var start := visited[|visited| - 1];
+       var end := IndexChildAcquisition(page[..], bitmap, first, payloadEnd, start, prefix, start == first);
+       end != 4294967295 && decision == IndexChildPointer(page, first, start, end, prefix, start == first)))
+  {
+    decision, visited := 18446744073709551615, [];
+    var start := first;
+    var isFirst := true;
+    while start < payloadEnd
+      invariant first <= start < payloadEnd
+      invariant isFirst == (start == first)
+      invariant |visited| <= start as int - first as int
+      invariant forall i | 0 <= i < |visited| :: first <= visited[i] < start
+      invariant forall i | 0 <= i < |visited| :: comparisons[visited[i] as int - first as int] > 0
+      decreases payloadEnd - start
+    {
+      var end := IndexChildAcquisition(page[..], bitmap, first, payloadEnd, start, prefix, isFirst);
+      if end == 4294967295 { return; }
+      var comparison := comparisons[start as int - first as int];
+      var step := IndexChildAdvance(page, first, payloadEnd, start, end, prefix, isFirst, comparison);
+      visited := visited + [start];
+      if step <= 4294967295 {
+        decision := step;
+        return;
+      }
+      assert comparison > 0;
+      if step == 18446744073709551615 { return; }
+      start := (step - 4294967296) as U32;
+      isFirst := false;
     }
   }
 }

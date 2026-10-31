@@ -602,5 +602,55 @@ namespace JetDatabaseWriter.Verification {
         _5_index = (_5_index) + (1U);
       }
     }
+    public static bool IsIndexChildSearch(uint length, uint bitmap, uint first, uint payloadEnd, uint prefix)
+    {
+      return (((length) <= (2147483647U)) && ((((bitmap) < (first)) && ((first) < (payloadEnd))) && ((payloadEnd) <= (length)))) && ((prefix) <= ((length) - (first)));
+    }
+    public static uint ReadIndexChildEntry(byte[] page, uint bitmap, uint first, uint payloadEnd, uint start, uint prefix, bool isFirst)
+    {
+      uint end = 0;
+      end = 4294967295U;
+      uint _0_next;
+      uint _out0;
+      _out0 = JetDatabaseWriter.Verification.RecoveryKernel.FindIndexEntryStart(page, bitmap, first, payloadEnd, start);
+      _0_next = _out0;
+      uint _1_boundary;
+      if ((_0_next) == (4294967295U)) {
+        _1_boundary = payloadEnd;
+      } else {
+        _1_boundary = _0_next;
+      }
+      uint _2_stored;
+      _2_stored = (_1_boundary) - (start);
+      if (((((ulong)(_2_stored)) + (((isFirst) ? (0UL) : ((ulong)(prefix))))) < (8UL)) || ((isFirst) && ((prefix) > (_2_stored)))) {
+        return end;
+      }
+      end = _1_boundary;
+      return end;
+    }
+    public static byte IndexChildCanonicalByte(byte[] page, uint first, uint start, uint prefix, bool isFirst, uint offset)
+    {
+      if ((!(isFirst)) && ((offset) < (prefix))) {
+        return (page)[(int)((first) + (offset))];
+      } else {
+        return (page)[(int)((start) + ((offset) - (((isFirst) ? (0U) : (prefix)))))];
+      }
+    }
+    public static ulong AdvanceIndexChildSearch(byte[] page, uint first, uint payloadEnd, uint start, uint end, uint prefix, bool isFirst, int comparison)
+    {
+      ulong decision = 0;
+      if ((comparison) > (0)) {
+        if ((end) == (payloadEnd)) {
+          decision = 18446744073709551615UL;
+        } else {
+          decision = (4294967296UL) + ((ulong)(end));
+        }
+        return decision;
+      }
+      uint _0_keyLength;
+      _0_keyLength = (uint)(((((ulong)(end)) - ((ulong)(start))) + (((isFirst) ? (0UL) : ((ulong)(prefix))))) - (8UL));
+      decision = (((((ulong)(JetDatabaseWriter.Verification.RecoveryKernel.IndexChildCanonicalByte(page, first, start, prefix, isFirst, (_0_keyLength) + (4U)))) * (16777216UL)) + (((ulong)(JetDatabaseWriter.Verification.RecoveryKernel.IndexChildCanonicalByte(page, first, start, prefix, isFirst, (_0_keyLength) + (5U)))) * (65536UL))) + (((ulong)(JetDatabaseWriter.Verification.RecoveryKernel.IndexChildCanonicalByte(page, first, start, prefix, isFirst, (_0_keyLength) + (6U)))) * (256UL))) + ((ulong)(JetDatabaseWriter.Verification.RecoveryKernel.IndexChildCanonicalByte(page, first, start, prefix, isFirst, (_0_keyLength) + (7U))));
+      return decision;
+    }
   }
 }
