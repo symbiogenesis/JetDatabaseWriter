@@ -18,6 +18,12 @@ records production callers and the remaining containing-parser, ownership and
 native-format obligations. These operations use the existing native projection
 and introduce no additional executable module or shipping dependency.
 
+The same module supplies Jet3 jump-table controls, intermediate-index seek
+admission/selection and complete journal page-byte authorization scans. The
+[expanded boundary](../docs/design/formal-verification.md#row-jumps-index-seek-control-and-journal-content-scans)
+distinguishes generated execution from the span-load/store, vectorized comparison,
+record-acquisition and I/O contracts retained by their production adapters.
+
 | Model | Main checked properties | Deliberate boundary |
 |---|---|---|
 | [UndoJournal.dfy](UndoJournal.dfy) | Logical and buffered journal traces preserve exact undo coverage, durable acknowledgement and terminating recovery under explicit persistence contracts. Aligned multi-page preparation derives padded original payloads and complete removed-tail coverage. Content admission composes recorded gap intents, torn writes and replay mixtures under the zero-exposure contract. Serialized inventory proofs derive exact map membership/source positions, consume exact saved ranges with the production replay rank and construct complete restoration. | Serialized acquisition, checksums and payload identity are explicit contracts. Successful modeled effects do not verify returned C# I/O or physical persistence. Unrestricted pre-marker reordering can preserve undo while requiring parser refusal; the abstract completion schedule and full production algorithm remain distinct. |
@@ -174,7 +180,7 @@ exact generated-source comparison.
 
 After reviewing a kernel source change, run the command above with `-UpdateGeneratedSource`. The default command and CI independently refuse missing or edited `src/JetDatabaseWriter/Verification/RecoveryKernel.g.cs` and `LongValueKernel.g.cs`. The schema-version-2 receipt records exact source hashes in `proofs` and both generated-output hashes in `executableKernels`. Generation first completes the proof/trust checks, then translates with the pinned compiler and solver into the external result directory. Raw C# is retained for review.
 
-The projection accepts only the reviewed `RecoveryKernel` and `LongValueKernel` module names. It keeps each final compiled namespace, internalizes and renames its generated class, and updates generated self references to that type. It retains method bodies, native arithmetic and bounded primitive-array operations. Unused compiler scaffolding, embedded source attributes, abstract-model code and native-type descriptors are omitted. The projection rejects an unexpected module shape or references to omitted runtime/model support. Only the reviewed `nativeType` representations `ulong`, `uint` and `byte` are allowed in addition to proof hints.
+The projection accepts only the reviewed `RecoveryKernel` and `LongValueKernel` module names. It keeps each final compiled namespace, internalizes and renames its generated class, and updates generated self references to that type. It retains method bodies, native arithmetic and bounded primitive-array operations. Unused compiler scaffolding, embedded source attributes, abstract-model code and native-type descriptors are omitted. The projection rejects an unexpected module shape or references to omitted runtime/model support. Only the reviewed `nativeType` representations `ulong`, `uint`, `byte` and `int` are allowed in addition to proof hints. The signed `int` representation carries the BCL lexicographic comparison result directly into verified index selection, including both signed extrema; it adds no runtime helper. Unknown representations and attribute arguments still refuse.
 
 After rejecting raw runtime references and preexisting inlining metadata, the projection adds one fixed, fully qualified BCL `MethodImplAttribute(AggressiveInlining)` to each of `LongValueKernel.PrepareVisitedAdd` and `CompleteVisitedGrowth`. Each complete declaration and opening brace must match its reviewed signature exactly once; missing, duplicate, overloaded or changed declarations refuse. Generated method bodies remain unchanged. Array loops and `RecoveryKernel` receive no added metadata. The hint requests compiler inlining; hosted measurements qualify its timing effect.
 

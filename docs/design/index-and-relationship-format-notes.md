@@ -10,6 +10,14 @@
 
 ## Mutation ownership
 
+Intermediate-page seeks use generated Dafny entry admission, child-pointer and
+selection/progress controls around the existing vectorized span comparison.
+Shared prefixes can include bookmark and child-pointer bytes; the selected
+pointer is reconstructed from the canonical entry. The comparison sign, stable
+page image and supplied layout remain adapter contracts. This boundary does
+not grant edit/reclamation authority or prove a complete tree traversal; see
+the [formal scope](formal-verification.md#row-jumps-index-seek-control-and-journal-content-scans).
+
 `RelationshipManager` owns declaration checks, relationship catalog lifecycle and schema-rewrite orchestration. `ForeignKeyMetadataEditor` owns the physical FK descriptor layout, logical TDEF-chain writes, partner links and leaf reservations. It has no relationship-catalog or table-catalog dependency. Unlinked leaf reservations are released on failure; TDEF writes link them inside the caller's existing transaction. The relationship workflow keeps native-security checks ahead of physical edits and coordinates catalog state with those edits.
 
 ## Index capacity and publication

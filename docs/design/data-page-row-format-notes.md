@@ -317,6 +317,15 @@ of range, leave the file unchanged.
 
 ### The Jet3 jump table
 
+`Jet3JumpTable` executes generated Dafny sizing and boundary/dummy decisions.
+The size selector proves the smallest self-consistent jump count directly;
+the decoder stops at the first unreached or decreasing boundary. Native dummy
+bytes and the ambiguous 255-variable-column refusal retain their existing
+meaning. Span adapters preserve stack-allocated offsets and avoid row copies.
+These properties cover the named jump controls; full row acquisition and
+native compatibility retain their separate evidence and
+[formal boundary](formal-verification.md#row-jumps-index-seek-control-and-journal-content-scans).
+
 A Jet3 offset is one byte, so a row longer than 256 bytes needs the high part
 of its offsets from a jump table between the offset table and `var_len`. The
 rule follows mdbtools `mdb_crack_row3` and Jackcess

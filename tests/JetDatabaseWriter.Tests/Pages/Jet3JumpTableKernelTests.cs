@@ -36,6 +36,7 @@ public sealed class Jet3JumpTableKernelTests
     [InlineData("FF0201", 255, 768)]
     public void HighPartStopsAtTheFirstUnreachedOrDecreasingEntry(string hex, int index, int expected)
     {
+        ArgumentNullException.ThrowIfNull(hex);
         byte[] bytes = Convert.FromHexString("AABB" + hex + "CCDD");
         byte[] original = (byte[])bytes.Clone();
         int count = hex.Length / 2;

@@ -171,6 +171,37 @@ entry selection. Each scan has a decreasing bounded cursor. Key reconstruction,
 comparison, complete tree traversal and edit/reclamation composition remain
 separate obligations.
 
+## Row jumps, index seek control and journal content scans
+
+The Jet3 jump-table boundary covers native entry sizing, dummy admission,
+monotone boundary progress and offset high-part decisions. Production retains
+allocation-free span adapters for row bytes and stack-allocated offsets. Their
+loads and stores remain explicit effects; generated scalar controls supply the
+format decisions without copying either span. Array-level specifications and
+focused native-row controls support this boundary. Span-loop sequencing and
+retention have manual correspondence; the complete generated array-scan proof
+is not a mechanical refinement of those C# loops. Full row-trailer acquisition,
+schema-derived offsets and complete public row decoding remain separate.
+
+Intermediate index child selection uses generated entry admission and cursor
+decisions, including shared-prefix bounds and canonical child-pointer bytes.
+The adapter retains the existing vectorized span comparison and reports its
+lexicographic sign to the controller. That BCL comparison, correct supplied
+layout, stable page bytes and containing tree traversal remain explicit
+contracts. The C# orchestration of the generated entry/advance operations retains
+manual correspondence to the checked controller trace. A selected child pointer
+grants neither ownership nor reclamation
+authority; structural edits and native collation qualification remain separate.
+
+Journal content authorization executes generated array scans for original or
+replay-zero admission, accumulation of matching after-image bytes, final byte
+admission and zero-filled extension checks. These scans preserve unrelated
+scratch entries and input bytes, and retain the existing page-sized scratch
+allocation and record iteration. Exact journal/database reads, admitted record
+identity, checksum/hash validation and serialized inventory construction remain
+contracts of the containing parser. Byte admission alone does not prove undo
+coverage, exclusive authority, returned I/O effects or physical durability.
+
 ## Production correspondence
 
 Paths are relative to the repository root. Method names identify the exact
@@ -180,6 +211,9 @@ explicit contracts.
 
 | Modeled obligation | Production boundary | Existing focused evidence | Remaining correspondence gap |
 |---|---|---|---|
+| Jet3 jump sizing, monotone decoding and native dummy/encoding decisions | `Pages/Jet3JumpTable.cs`; generated `Jet3JumpCount`, `Jet3JumpReached` and encoder controls | `Jet3JumpTableKernelTests`, existing native long-row/jump controls | Span access and complete row acquisition remain adapter/containing-parser obligations. No row or offset array copy is introduced. |
+| Compressed intermediate-entry admission, child selection and bounded progress | `Indexes/IndexPageCodec.cs` `SelectChildPage`; generated `ReadIndexChildEntry`, `AdvanceIndexChildSearch` | Focused child-selection, prefix and malformed-entry controls; public seek regressions | Vectorized comparison sign, layout/page identity and containing tree traversal remain explicit contracts. |
+| Exact journal page-byte authorization and zero-extension admission | `Pages/Paging/PersistentRollbackJournal.cs` `ValidateCurrentContent`; generated authorization array scans | `JournalContentKernelTests`, `SelectiveRollbackJournalTests`, `BufferedJournalConformanceTests` | Exact acquired record identity, hashes/maps, I/O effects and complete recovery composition remain separate. |
 | Exact bounded data-row slot acquisition and next-distinct offset | `Pages/DataPageRows.cs` `TryGetSlotBound`; generated `ReadDataRowSlot` | `DataRowSlotKernelTests`, `RowDirectoryTests`, overflow/reclamation regressions | The complete slot scan is generated. Other directory builders, row decoding, page identity and overflow traversal remain separate. |
 | Bounded inline/reference bitmap admission and exact bit access/update | `Pages/UsageMap.cs` bitmap state readers/writers; generated usage-position and bit methods | `UsageMapBitmapKernelTests`, `UsageMapBitmapEnumerationTests`, usage-map maintenance regressions | Generated updates preserve unrelated bytes/bits and refuse atomically. Map traversal, alias isolation, page ownership and reclamation authority remain separate. |
 | Index next-entry selection and exact leaf sentinel/tail admission | `Indexes/IndexPageCodec.cs` `NextEntryStart`, `HasExactLeafPayloadBoundary`; generated `FindIndexEntryStart`, `CheckIndexLeafBitmap` | `IndexEntryBoundaryKernelTests`, `IndexPageCodecStrictLeafTests`, `IndexPageCodecLeafPageTests` | Both complete bounded scans are generated. Key reconstruction/comparison, complete tree traversal and structural edit/ownership composition remain separate. |

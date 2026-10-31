@@ -275,7 +275,8 @@ foreach ($isolation in 'false', '"unknown"', '"paths" false', '"paths", "paths"'
     Assert-Scenario "unreviewed isolation argument rejected $isolation" { Assert-ProofSource 'isolation.dfy' "method X() { assert {:isolate $isolation} true; }" } 'Disallowed proof construct'
 }
 Assert-Scenario 'reviewed native integer representations allowed' { Assert-ProofSource 'native.dfy' 'newtype {:nativeType "ulong"} U64 = x: int | 0 <= x < 18446744073709551616 newtype {:nativeType "uint"} U32 = x: int | 0 <= x < 4294967296 newtype {:nativeType "byte"} U8 = x: int | 0 <= x < 256' }
-foreach ($nativeType in '"int"', '"number"', 'false', '"ulong" false') {
+Assert-Scenario 'reviewed signed comparison representation allowed' { Assert-ProofSource 'native.dfy' 'newtype {:nativeType "int"} I32 = x: int | -2147483648 <= x < 2147483648' }
+foreach ($nativeType in '"long"', '"Int32"', '"number"', 'false', '"ulong" false', '"int" false') {
     Assert-Scenario "unreviewed native representation rejected $nativeType" { Assert-ProofSource 'native.dfy' "newtype {:nativeType $nativeType} Native = x: int | 0 <= x < 256" } 'Disallowed proof construct'
 }
 $report = Write-Fixture 'audit.txt' ''

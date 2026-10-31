@@ -187,7 +187,7 @@ function Assert-ProofSource([string] $Path, [string] $Source) {
     # reviewed set exact; never accept nativeType overrides or arbitrary attributes.
     $withStrings = Get-DafnyPolicyText $Source -PreserveStrings
     foreach ($attribute in [regex]::Matches($withStrings, '\{\s*:\s*nativeType\b(?<value>[^}]*)\}')) {
-        if ($attribute.Groups['value'].Value.Trim() -cnotmatch '^"(?:ulong|uint|byte)"$') { throw "Disallowed proof construct in ${Path}: unreviewed nativeType" }
+        if ($attribute.Groups['value'].Value.Trim() -cnotmatch '^"(?:ulong|uint|byte|int)"$') { throw "Disallowed proof construct in ${Path}: unreviewed nativeType" }
     }
     foreach ($attribute in [regex]::Matches($withStrings, '\{\s*:\s*isolate\b(?<value>[^}]*)\}')) {
         if ($attribute.Groups['value'].Value.Trim() -cnotmatch '^(?:"paths")?$') { throw "Disallowed proof construct in ${Path}: unreviewed isolate argument" }
