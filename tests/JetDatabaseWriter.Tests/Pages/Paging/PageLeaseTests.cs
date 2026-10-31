@@ -69,7 +69,7 @@ public sealed class PageLeaseTests
         using PageLease disposed = frame.Acquire(() => Interlocked.Increment(ref released));
         frame.Release();
         var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Task[] workers = new Task[32];
+        var workers = new Task[32];
         for (int index = 0; index < workers.Length; index++)
         {
             workers[index] = DisposeAsync();
@@ -108,7 +108,7 @@ public sealed class PageLeaseTests
         var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allAcquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Task[] workers = new Task[32];
+        var workers = new Task[32];
         for (int index = 0; index < workers.Length; index++)
         {
             workers[index] = AcquireAndReleaseAsync();
