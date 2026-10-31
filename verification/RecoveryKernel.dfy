@@ -1068,6 +1068,7 @@ module RecoveryKernel {
     ensures (FoldReplacementHeader(header, pathIdentity, digest(header[..224]), 256) &&
       FoldReplacementGeneration(header, 256)) <==> Replacement.ValidHeaderFields(header, pathIdentity, digest)
   {
+    hide FoldReplacementHeader, FoldReplacementGeneration;
     var checksum := digest(header[..224]);
     ReplacementHeaderPrefixIsExact(header, pathIdentity, checksum, 256);
     var constants := Replacement.HeaderMagic() + [1, 0, 0, 0, 0, 1, 0, 0];
@@ -1145,6 +1146,7 @@ module RecoveryKernel {
     ensures FoldReplacementDecision(header, decision, digest(decision[..64]), 96) <==>
       Replacement.ValidDecisionBytes(header, decision, digest)
   {
+    hide FoldReplacementDecision;
     var checksum := digest(decision[..64]);
     ReplacementDecisionPrefixIsExact(header, decision, checksum, 96);
     assert forall i | 0 <= i < 8 :: ReplacementDecisionFixedByte(i as U32) as int == Replacement.DecisionMagic()[i];
@@ -1179,7 +1181,10 @@ module RecoveryKernel {
       {
         if i < 8 { assert decision[i] == Replacement.DecisionMagic()[i]; }
         else if i < 24 { assert decision[i] == header[16 + i - 8]; }
-        else if i < 56 { assert decision[i] == header[112 + i - 24]; }
+        else if i < 56 {
+          assert decision[24..56][i - 24] == header[112..144][i - 24];
+          assert decision[i] == header[112 + i - 24];
+        }
         else if 64 <= i { assert decision[i] == checksum[i - 64]; }
       }
     }

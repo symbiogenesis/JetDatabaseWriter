@@ -269,7 +269,7 @@ module LongValueKernel {
             }
           }
         }
-        return;
+        return {:isolate};
       }
       if candidate == pointer { found := true; return; }
       ProbeDistanceAdvances(start as int, capacity, slot);
@@ -342,9 +342,9 @@ module LongValueKernel {
         entries[slot] := pointer;
         assert entries[..] == before[slot := pointer];
         result := 2;
-        return;
+        return {:isolate};
       }
-      if candidate == pointer { result := 1; return; }
+      if candidate == pointer { result := 1; return {:isolate}; }
       ProbeDistanceAdvances(start as int, capacity, slot);
       slot := NextVisitedSlot(slot, capacity);
       step := step + 1;
