@@ -824,6 +824,111 @@ module RecoveryKernel {
     allowed || current == after
   }
 
+  // The page-content controller keeps the same bounded scratch array across
+  // records. Input byte arrays are stable during each call; only the admitted
+  // prefix of authorization scratch changes. No allocation executes here.
+  ghost predicate JournalAuthorizationBounds(currentLength: int, originalLength: int,
+      validLength: int, count: U32, offset: U64) {
+    count as int <= currentLength && count as int <= originalLength && count as int <= validLength &&
+      (count == 0 || offset as int + count as int - 1 < 18446744073709551616)
+  }
+
+  method InitializeJournalAuthorization(current: array<Byte>, original: array<Byte>, valid: array<bool>,
+      count: U32, recovering: bool, offset: U64, minimumLength: U64) returns (state: Byte)
+    requires current.Length <= 2147483647 && original.Length <= 2147483647 && valid.Length <= 2147483647
+    modifies valid
+    ensures state <= 2
+    ensures state == 0 <==> !JournalAuthorizationBounds(current.Length, original.Length, valid.Length, count, offset)
+    ensures state == 0 ==> valid[..] == old(valid[..])
+    ensures state != 0 ==> forall index: nat :: index < count as int ==>
+      valid[index] == OriginalOrZeroByte(recovering, offset + index as U64, minimumLength, current[index], original[index])
+    ensures state != 0 ==> (state == 2 <==> forall index: nat :: index < count as int ==> valid[index])
+    ensures forall index: nat :: count as int <= index < valid.Length ==> valid[index] == old(valid[index])
+  {
+    state := 0;
+    if count > current.Length as U32 || count > original.Length as U32 || count > valid.Length as U32 ||
+        (count > 0 && (count - 1) as U64 > 18446744073709551615 - offset) { return; }
+    var index: U32 := 0;
+    var matches := true;
+    while index < count
+      invariant index <= count
+      invariant forall prior: nat :: prior < index as int ==>
+        valid[prior] == OriginalOrZeroByte(recovering, offset + prior as U64, minimumLength, current[prior], original[prior])
+      invariant matches <==> forall prior: nat :: prior < index as int ==> valid[prior]
+      invariant forall later: nat :: index as int <= later < valid.Length ==> valid[later] == old(valid[later])
+      decreases count - index
+    {
+      valid[index] := OriginalOrZeroByte(recovering, offset + index as U64, minimumLength, current[index], original[index]);
+      matches := matches && valid[index];
+      index := index + 1;
+    }
+    state := if matches then 2 else 1;
+  }
+
+  method IncludeJournalAfterImage(current: array<Byte>, record: array<Byte>, valid: array<bool>, count: U32)
+      returns (admitted: bool)
+    requires current.Length <= 2147483647 && record.Length <= 2147483647 && valid.Length <= 2147483647
+    modifies valid
+    ensures admitted <==> count as int <= current.Length && count as int <= valid.Length && count as int + 8 <= record.Length
+    ensures !admitted ==> valid[..] == old(valid[..])
+    ensures admitted ==> forall index: nat :: index < count as int ==>
+      valid[index] == IncludeAfterImageByte(old(valid[index]), current[index], record[8 + index])
+    ensures forall index: nat :: count as int <= index < valid.Length ==> valid[index] == old(valid[index])
+  {
+    admitted := false;
+    if count > current.Length as U32 || count > valid.Length as U32 || record.Length as U32 < 8 ||
+        count > record.Length as U32 - 8 { return; }
+    var index: U32 := 0;
+    while index < count
+      invariant index <= count
+      invariant forall prior: nat :: prior < index as int ==>
+        valid[prior] == IncludeAfterImageByte(old(valid[prior]), current[prior], record[8 + prior])
+      invariant forall later: nat :: index as int <= later < valid.Length ==> valid[later] == old(valid[later])
+      decreases count - index
+    {
+      valid[index] := IncludeAfterImageByte(valid[index], current[index], record[8 + index]);
+      index := index + 1;
+    }
+    admitted := true;
+  }
+
+  method CheckJournalAuthorization(valid: array<bool>, count: U32) returns (admitted: bool)
+    requires valid.Length <= 2147483647
+    ensures admitted <==> count as int <= valid.Length && forall index: nat :: index < count as int ==> valid[index]
+  {
+    admitted := false;
+    if count > valid.Length as U32 { return; }
+    var index: U32 := 0;
+    while index < count
+      invariant index <= count
+      invariant forall prior: nat :: prior < index as int ==> valid[prior]
+      decreases count - index
+    {
+      if !valid[index] { return; }
+      index := index + 1;
+    }
+    admitted := true;
+  }
+
+  method CheckJournalZeroExtension(current: array<Byte>, start: U32, count: U32) returns (admitted: bool)
+    requires current.Length <= 2147483647
+    ensures admitted <==> (start <= count && count as int <= current.Length &&
+      forall index: nat :: start as int <= index < count as int ==> current[index] == 0)
+  {
+    admitted := false;
+    if start > count || count > current.Length as U32 { return; }
+    var index := start;
+    while index < count
+      invariant start <= index <= count
+      invariant forall prior: nat :: start as int <= prior < index as int ==> current[prior] == 0
+      decreases count - index
+    {
+      if current[index] != 0 { return; }
+      index := index + 1;
+    }
+    admitted := true;
+  }
+
   lemma PageOffsetAuthorizesOnlyCompleteBoundedPages(offset: U64, pageSize: U32)
     requires IsPageOffset(offset, pageSize)
     ensures pageSize == 2048 || pageSize == 4096

@@ -499,12 +499,9 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 }
 
                 VerifyOriginalPage(journal, state.PageSize, state.OriginalLength, offset, current);
-                for (int index = oldCount; index < count; index++)
+                if (!RecoveryKernel.CheckJournalZeroExtension(current, (uint)oldCount, (uint)count))
                 {
-                    if (current[index] != 0)
-                    {
-                        throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "An unassigned extension of an original page is not zero-filled.");
-                    }
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "An unassigned extension of an original page is not zero-filled.");
                 }
 
                 continue;
@@ -516,36 +513,30 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 _ = ReadOriginalPage(journal, state, offset, beforePosition, original, record);
             }
 
-            bool matchesOriginal = true;
-            for (int index = 0; index < count; index++)
+            byte authorization = RecoveryKernel.InitializeJournalAuthorization(
+                current, original, valid, (uint)count, state.Recovering, (ulong)offset, (ulong)state.MinimumLength);
+            if (authorization == 0)
             {
-                valid[index] = RecoveryKernel.OriginalOrZeroByte(
-                    state.Recovering, (ulong)(offset + index), (ulong)state.MinimumLength, current[index], original[index]);
-                matchesOriginal &= valid[index];
+                throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery content buffers have invalid bounds.");
             }
 
-            if (matchesOriginal)
+            if (authorization == 2)
             {
                 continue;
             }
 
             for (long position = state.Start; position < state.CompleteEnd; position = NextRecord(state.PageSize, state.OriginalLength, state.CompleteEnd, position))
             {
-                if (ReadRecord(journal, state.PageSize, state.OriginalLength, state.CompleteEnd, position, record) == offset)
+                if (ReadRecord(journal, state.PageSize, state.OriginalLength, state.CompleteEnd, position, record) == offset
+                    && !RecoveryKernel.IncludeJournalAfterImage(current, record, valid, (uint)count))
                 {
-                    for (int index = 0; index < count; index++)
-                    {
-                        valid[index] = RecoveryKernel.IncludeAfterImageByte(valid[index], current[index], record[8 + index]);
-                    }
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery content buffers have invalid bounds.");
                 }
             }
 
-            for (int index = 0; index < count; index++)
+            if (!RecoveryKernel.CheckJournalAuthorization(valid, (uint)count))
             {
-                if (!valid[index])
-                {
-                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "Database content conflicts with the recovery journal; no recovery bytes were written.");
-                }
+                throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "Database content conflicts with the recovery journal; no recovery bytes were written.");
             }
         }
     }

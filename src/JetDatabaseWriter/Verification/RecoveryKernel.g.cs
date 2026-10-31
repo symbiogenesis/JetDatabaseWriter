@@ -217,6 +217,81 @@ namespace JetDatabaseWriter.Verification {
     {
       return (allowed) || ((current) == (after));
     }
+    public static byte InitializeJournalAuthorization(byte[] current, byte[] original, bool[] valid, uint count, bool recovering, ulong offset, ulong minimumLength)
+    {
+      byte state = 0;
+      state = (byte)(0);
+      if (((((count) > ((uint)(current).LongLength)) || ((count) > ((uint)(original).LongLength))) || ((count) > ((uint)(valid).LongLength))) || (((count) > (0U)) && (((ulong)((count) - (1U))) > ((18446744073709551615UL) - (offset))))) {
+        return state;
+      }
+      uint _0_index;
+      _0_index = 0U;
+      bool _1_matches;
+      _1_matches = true;
+      while ((_0_index) < (count)) {
+        (valid)[(int)((_0_index))] = JetDatabaseWriter.Verification.RecoveryKernel.OriginalOrZeroByte(recovering, (offset) + ((ulong)(_0_index)), minimumLength, (current)[(int)(_0_index)], (original)[(int)(_0_index)]);
+        _1_matches = (_1_matches) && ((valid)[(int)(_0_index)]);
+        _0_index = (_0_index) + (1U);
+      }
+      if (_1_matches) {
+        state = (byte)(2);
+      } else {
+        state = (byte)(1);
+      }
+      return state;
+    }
+    public static bool IncludeJournalAfterImage(byte[] current, byte[] record, bool[] valid, uint count)
+    {
+      bool admitted = false;
+      admitted = false;
+      if (((((count) > ((uint)(current).LongLength)) || ((count) > ((uint)(valid).LongLength))) || (((uint)(record).LongLength) < (8U))) || ((count) > (((uint)(record).LongLength) - (8U)))) {
+        return admitted;
+      }
+      uint _0_index;
+      _0_index = 0U;
+      while ((_0_index) < (count)) {
+        (valid)[(int)((_0_index))] = JetDatabaseWriter.Verification.RecoveryKernel.IncludeAfterImageByte((valid)[(int)(_0_index)], (current)[(int)(_0_index)], (record)[(int)((8U) + (_0_index))]);
+        _0_index = (_0_index) + (1U);
+      }
+      admitted = true;
+      return admitted;
+    }
+    public static bool CheckJournalAuthorization(bool[] valid, uint count)
+    {
+      bool admitted = false;
+      admitted = false;
+      if ((count) > ((uint)(valid).LongLength)) {
+        return admitted;
+      }
+      uint _0_index;
+      _0_index = 0U;
+      while ((_0_index) < (count)) {
+        if (!((valid)[(int)(_0_index)])) {
+          return admitted;
+        }
+        _0_index = (_0_index) + (1U);
+      }
+      admitted = true;
+      return admitted;
+    }
+    public static bool CheckJournalZeroExtension(byte[] current, uint start, uint count)
+    {
+      bool admitted = false;
+      admitted = false;
+      if (((start) > (count)) || ((count) > ((uint)(current).LongLength))) {
+        return admitted;
+      }
+      uint _0_index;
+      _0_index = start;
+      while ((_0_index) < (count)) {
+        if (((current)[(int)(_0_index)]) != ((byte)(0))) {
+          return admitted;
+        }
+        _0_index = (_0_index) + (1U);
+      }
+      admitted = true;
+      return admitted;
+    }
     public static uint ReplacementReadAdvance(uint length, uint offset, uint count)
     {
       if ((((((length) != (256U)) && ((length) != (96U))) || ((offset) >= (length))) || ((count) == (0U))) || ((count) > ((length) - (offset)))) {
