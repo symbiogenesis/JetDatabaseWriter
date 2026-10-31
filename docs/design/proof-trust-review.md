@@ -52,6 +52,8 @@ For mapped storage or lifecycle code, review admission before effects, journal/d
 
 For a verifier, solver, compiler pin or trust-tooling update, inspect upstream provenance and the version/asset/digest changes. Review the policy, compiler projection, normal-source dependencies, negative controls and platform execution evidence together. Reinstall changed verifier distributions into fresh external directories and run verification, audit, both negative controls and generated freshness; qualify Windows and Linux distributions as required by the [tool update policy](../../verification/README.md#review-and-updates). A hash update alone does not satisfy that policy.
 
+The reviewed projection's two controller inlining annotations are an explicit target-metadata transformation. Review its exact-signature matcher, fixed BCL attribute and unchanged generated bodies together. Raw runtime references or source-emitted inlining metadata still refuse; recovery and array-loop methods receive no hints. Compiler/JIT/AOT behavior remains trusted, and the hint's advisory timing effect requires hosted controls alongside the ordinary proof/build gates.
+
 Record only the reviewed final input hashes and current production-name inventory digest. There is intentionally no blanket accept or receipt-refresh mode in the gate. Existing `Get-ProofReviewHash`, `Get-ProofReviewInputs` and `Get-ProofReviewInventoryHash` functions provide deterministic calculations; using them to calculate a hash does not perform the required review. Do not mark pending hosted checks as successful in the committed explanation.
 
 Run a focused development check in a fresh external directory:

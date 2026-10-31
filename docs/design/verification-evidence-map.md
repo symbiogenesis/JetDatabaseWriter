@@ -15,7 +15,7 @@ Every critical-behavior ID in the [scope inventory](verification-scope.md) maps 
 | A3 authority/coordination | Canonical identity, fresh object/generation/ticket identities, validated receipts and exclusive cooperating acquisition remain held through cleanup. Actual composite .NET/OS exclusion and deadlock prevention require refinement; valid record bytes alone grant no lease. |
 | A4 native representation | Page/tag/token/row/field/key/collation meanings match supported native forms. Microsoft fixtures, independent byte inspection and successful named DAO operations are separate evidence. |
 | A5 resources/ownership | Borrowed bytes stay stable until release; locator/pool/destination ownership and admitted aggregate work/storage bounds hold. CLR overhead, shared pools and caller resources need separate scope. Logical snapshot/allocation effects do not prove C# bookkeeping. |
-| A6 compilation/runtime | Reviewed Dafny/Z3, projection, C# compiler and .NET preserve generated semantics. The [trust policy](proof-trust-review.md) binds reviewed content; hashes attest freshness, not reviewer judgment, tool soundness or specification adequacy. |
+| A6 compilation/runtime | Reviewed Dafny/Z3, projection including the two exact-signature controller inlining annotations, C# compiler and .NET JIT/AOT preserve generated semantics. The [trust policy](proof-trust-review.md) binds reviewed content; hashes attest freshness, not reviewer judgment, tool soundness or specification adequacy. |
 
 ## Creation and journals
 

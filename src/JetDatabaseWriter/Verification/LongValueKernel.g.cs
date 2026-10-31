@@ -217,6 +217,7 @@ namespace JetDatabaseWriter.Verification {
     public static ulong VisitedGrowthDecision(uint capacity) {
       return (9223372036854775808UL) + ((ulong)(capacity));
     }
+    [global::System.Runtime.CompilerServices.MethodImplAttribute(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public static ulong PrepareVisitedAdd(uint[] entries, uint count, uint pointer)
     {
       ulong decision = 0;
@@ -258,6 +259,7 @@ namespace JetDatabaseWriter.Verification {
       }
       return decision;
     }
+    [global::System.Runtime.CompilerServices.MethodImplAttribute(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public static uint CompleteVisitedGrowth(uint[] source, uint[] destination, uint count, uint pointer)
     {
       uint nextCount = 0;

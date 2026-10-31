@@ -78,7 +78,8 @@ Assert-Scenario 'native projection preserves generated method body' {
     $projected = ConvertFrom-NativeKernelTranslation 'RecoveryKernel' $translation
     if (-not $projected.Contains('return (value) == ((byte)(0));') -or
         -not $projected.Contains('internal static class RecoveryKernel') -or
-        $projected.Contains('Unused compiler scaffolding') -or $projected -match '(?<!\r)\n') { throw 'Unexpected projection.' }
+        $projected.Contains('Unused compiler scaffolding') -or $projected.Contains('MethodImpl') -or
+        $projected -match '(?<!\r)\n') { throw 'Unexpected projection.' }
 }
 Assert-Scenario 'changed compiler structure rejected' { ConvertFrom-NativeKernelTranslation 'RecoveryKernel' ($translation.Replace('public partial class __default', 'public class Other')) } 'Unsupported native kernel translation'
 Assert-Scenario 'generated qualified self reference follows type packaging' {
@@ -87,7 +88,30 @@ Assert-Scenario 'generated qualified self reference follows type packaging' {
 }
 Assert-Scenario 'runtime-dependent kernel rejected' { ConvertFrom-NativeKernelTranslation 'RecoveryKernel' ($translation.Replace('return (value) == ((byte)(0));', 'return Dafny.Helpers.Value(value);')) } 'runtime support'
 Assert-Scenario 'unexpected compiled module rejected' { ConvertFrom-NativeKernelTranslation 'RecoveryKernel' ($translation + 'namespace Other {}') } 'Unsupported native kernel translation'
-$longValueTranslation = $translation.Replace('RecoveryKernel', 'LongValueKernel')
+$prepareDeclaration = '    public static ulong PrepareVisitedAdd(uint[] entries, uint count, uint pointer)'
+$completeDeclaration = '    public static uint CompleteVisitedGrowth(uint[] source, uint[] destination, uint count, uint pointer)'
+$controllerMethods = @'
+    public static ulong PrepareVisitedAdd(uint[] entries, uint count, uint pointer)
+    {
+      return count;
+    }
+    public static uint CompleteVisitedGrowth(uint[] source, uint[] destination, uint count, uint pointer)
+    {
+      return count + pointer;
+    }
+'@
+$controllerMethods = $controllerMethods.Replace("`r`n", "`n") + "`n"
+$longValueTranslation = $translation.Replace('RecoveryKernel', 'LongValueKernel').Replace('    public static bool Accept(byte value)', $controllerMethods + '    public static bool Accept(byte value)').Replace("`r`n", "`n")
+$inliningAttribute = '    [global::System.Runtime.CompilerServices.MethodImplAttribute(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]' + "`n"
+Assert-Scenario 'exactly two reviewed controller declarations receive fixed inlining metadata' {
+    $projected = (ConvertFrom-NativeKernelTranslation 'LongValueKernel' $longValueTranslation).Replace("`r`n", "`n")
+    if ([regex]::Matches($projected, [regex]::Escape($inliningAttribute)).Count -ne 2 -or
+        -not $projected.Contains($inliningAttribute + $prepareDeclaration + "`n    {`n") -or
+        -not $projected.Contains($inliningAttribute + $completeDeclaration + "`n    {`n")) { throw 'Only the exact two controller declarations may receive the fixed metadata.' }
+    $withoutMetadata = $projected.Replace($inliningAttribute, '')
+    $priorPackaging = (ConvertFrom-NativeKernelTranslation 'RecoveryKernel' $translation).Replace('RecoveryKernel', 'LongValueKernel').Replace("`r`n", "`n").Replace('    public static bool Accept(byte value)', $controllerMethods + '    public static bool Accept(byte value)')
+    if ($withoutMetadata -cne $priorPackaging) { throw 'Controller metadata changed generated methods or prior packaging.' }
+}
 Assert-Scenario 'second native kernel preserves method bodies and self references' {
     $projected = ConvertFrom-NativeKernelTranslation 'LongValueKernel' ($longValueTranslation.Replace('return (value) == ((byte)(0));', 'return JetDatabaseWriter.Verification.LongValueKernel.__default.Accept(value);'))
     if (-not $projected.Contains('internal static class LongValueKernel') -or
@@ -97,6 +121,43 @@ Assert-Scenario 'second native kernel preserves method bodies and self reference
 Assert-Scenario 'only reviewed native kernel names admitted' { ConvertFrom-NativeKernelTranslation 'Other' $translation } 'Unsupported native kernel'
 Assert-Scenario 'wrong kernel namespace rejected' { ConvertFrom-NativeKernelTranslation 'LongValueKernel' $translation } 'Unsupported native kernel translation'
 Assert-Scenario 'second kernel refuses runtime-dependent translation' { ConvertFrom-NativeKernelTranslation 'LongValueKernel' ($longValueTranslation.Replace('return (value) == ((byte)(0));', 'return LongValueNativeTypes.Value(value);')) } 'runtime support'
+foreach ($declaration in $prepareDeclaration, $completeDeclaration) {
+    $methodName = if ($declaration -eq $prepareDeclaration) { 'PrepareVisitedAdd' } else { 'CompleteVisitedGrowth' }
+    $methodText = if ($declaration -eq $prepareDeclaration) { $controllerMethods.Substring(0, $controllerMethods.IndexOf($completeDeclaration, [StringComparison]::Ordinal)) } else { $controllerMethods.Substring($controllerMethods.IndexOf($completeDeclaration, [StringComparison]::Ordinal)) }
+    foreach ($case in @(
+        @{ Name = 'missing'; Text = $longValueTranslation.Replace($methodText, '') },
+        @{ Name = 'renamed'; Text = $longValueTranslation.Replace($declaration, $declaration.Replace($methodName, 'AbsentController')) },
+        @{ Name = 'duplicate'; Text = $longValueTranslation.Replace($declaration, $declaration + "`n    {`n      return 0;`n    }`n" + $declaration) },
+        @{ Name = 'overload'; Text = $longValueTranslation.Replace($declaration, "    public static uint $methodName(uint value)`n    {`n      return value;`n    }`n" + $declaration) },
+        @{ Name = 'generic overload'; Text = $longValueTranslation.Replace($declaration, "    public static uint $methodName<T>(uint value)`n    {`n      return value;`n    }`n" + $declaration) },
+        @{ Name = 'multiline overload'; Text = $longValueTranslation.Replace($declaration, "    public static uint`n      $methodName(uint value)`n    {`n      return value;`n    }`n" + $declaration) },
+        @{ Name = 'return type'; Text = $longValueTranslation.Replace($declaration, $declaration.Replace('public static ulong', 'public static byte').Replace('public static uint', 'public static byte')) },
+        @{ Name = 'parameter'; Text = $longValueTranslation.Replace($declaration, $declaration.Replace('uint pointer', 'ulong pointer')) },
+        @{ Name = 'declaration indentation'; Text = $longValueTranslation.Replace($declaration, '  ' + $declaration) },
+        @{ Name = 'brace indentation'; Text = $longValueTranslation.Replace($declaration + "`n    {", $declaration + "`n      {") }
+    )) {
+        Assert-Scenario "controller $methodName $($case.Name) rejected" { ConvertFrom-NativeKernelTranslation 'LongValueKernel' $case.Text } 'Unsupported native controller declaration'
+    }
+}
+Assert-Scenario 'unrelated array loops and similarly named methods receive no metadata' {
+    $unrelated = $longValueTranslation.Replace('    public static bool Accept(byte value)', "    public static uint PrepareVisitedAddOther(uint value)`n    {`n      return value;`n    }`n    public static byte AddVisited(uint[] entries, uint pointer)`n    {`n      uint index = 0;`n      while (index < entries.Length) { index++; }`n      return 0;`n    }`n    public static bool Accept(byte value)")
+    $projected = (ConvertFrom-NativeKernelTranslation 'LongValueKernel' $unrelated).Replace("`r`n", "`n")
+    if ([regex]::Matches($projected, [regex]::Escape($inliningAttribute)).Count -ne 2 -or
+        $projected.Contains($inliningAttribute + '    public static uint PrepareVisitedAddOther') -or
+        $projected.Contains($inliningAttribute + '    public static byte AddVisited') -or
+        $projected.Contains($inliningAttribute + '    public static bool Accept')) { throw 'Metadata escaped its two reviewed controllers.' }
+}
+foreach ($rawSupport in 'return Dafny.Helpers.Value(value);', 'return BigInteger.Zero;') {
+    Assert-Scenario "raw omitted runtime support rejected $rawSupport" { ConvertFrom-NativeKernelTranslation 'LongValueKernel' ($longValueTranslation.Replace('return (value) == ((byte)(0));', $rawSupport)) } 'runtime support'
+}
+foreach ($rawSupport in @(
+    'return System.Convert.ToBoolean(value);',
+    '[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]',
+    '[MethodImpl(MethodImplOptions.AggressiveInlining)]',
+    '[MethodImplAttribute(MethodImplOptions.NoInlining)]'
+)) {
+    Assert-Scenario "raw runtime or method metadata rejected $rawSupport" { ConvertFrom-NativeKernelTranslation 'LongValueKernel' ($longValueTranslation.Replace('return (value) == ((byte)(0));', $rawSupport)) } $(if ($rawSupport.Contains('System')) { 'runtime support' } else { 'Unreviewed native-kernel metadata' })
+}
 $originalProofProcess = ${function:Invoke-ProofProcess}
 $inventoryCalls = [Collections.Generic.List[object]]::new()
 $inventoryWriteResources = $true
@@ -187,6 +248,21 @@ try {
         [IO.File]::WriteAllText($longValueGeneratedPath, ([IO.File]::ReadAllText($longValueGeneratedPath).Replace('return (value) == ((byte)(0));', 'return true;')))
         Sync-NativeKernel 'LongValueKernel' $fixture 'mock' $fixture @($source) @() 10 $false
     } 'stale'
+    foreach ($metadataEdit in 'missing', 'changed', 'extra') {
+        Assert-Scenario "second kernel $metadataEdit inlining metadata rejected by freshness" {
+            Sync-NativeKernel 'LongValueKernel' $fixture 'mock' $fixture @($source) @() 10 $true
+            $longValueGeneratedPath = Join-Path $fixture 'src/JetDatabaseWriter/Verification/LongValueKernel.g.cs'
+            $generated = [IO.File]::ReadAllText($longValueGeneratedPath)
+            $attributeLine = $inliningAttribute.Replace("`n", "`r`n")
+            $changed = switch ($metadataEdit) {
+                'missing' { $generated.Replace($attributeLine, '') }
+                'changed' { $generated.Replace('MethodImplOptions.AggressiveInlining', 'MethodImplOptions.NoInlining') }
+                'extra' { $attributeLine + $generated }
+            }
+            [IO.File]::WriteAllText($longValueGeneratedPath, $changed)
+            Sync-NativeKernel 'LongValueKernel' $fixture 'mock' $fixture @($source) @() 10 $false
+        } 'stale'
+    }
 } finally { ${function:Invoke-ProofProcess} = $originalProofProcess }
 Assert-Scenario 'comments and strings do not become policy tokens' { Assert-ProofSource '// assume include {:axiom}' "lemma Good() { var x := `"assume`"; /* nested /* assume */ include */ }" }
 foreach ($sourceText in 'lemma X() { assume false; }', 'include "other.dfy"', 'lemma {:verify false} X() {}', 'lemma {:axiom} X() ensures false', 'lemma {:extern} X() ensures false', 'lemma {:options "--no-verify"} X() {}', 'method X() decreases * {}', '@Options("--no-verify") lemma X() {}') {
