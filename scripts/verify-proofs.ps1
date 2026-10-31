@@ -75,8 +75,12 @@ function Get-ProofDependencies([string] $RepositoryRoot, [string] $ManifestPath,
     return $result
 }
 
+function Get-NativeKernelNames {
+    return 'RecoveryKernel', 'LongValueKernel', 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel'
+}
+
 function Assert-NativeKernelName([string] $KernelName) {
-    if ($KernelName -cnotin 'RecoveryKernel', 'LongValueKernel') { throw "Unsupported native kernel: $KernelName" }
+    if ($KernelName -cnotin (Get-NativeKernelNames)) { throw "Unsupported native kernel: $KernelName" }
 }
 
 function Get-NativeKernelSource([string] $KernelName) {
@@ -84,6 +88,9 @@ function Get-NativeKernelSource([string] $KernelName) {
     switch -Exact ($KernelName) {
         'RecoveryKernel' { return 'verification/Pages/Paging/RecoveryKernel.dfy' }
         'LongValueKernel' { return 'verification/LongValues/LongValueKernel.dfy' }
+        'DataPageKernel' { return 'verification/Pages/DataPageKernel.dfy' }
+        'IndexMutationKernel' { return 'verification/Indexes/IndexMutationKernel.dfy' }
+        'UsageMapKernel' { return 'verification/Pages/UsageMapKernel.dfy' }
     }
 }
 
@@ -517,7 +524,7 @@ function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyP
     if (-not $auditRejected) { throw 'Assumption negative control was accepted by the audit policy.' }
     $summary = @(Invoke-ProofInventory $RepositoryRoot $executable $output $files $options $TimeoutSeconds)
     Write-Output "Verified and audited complete inventory: $($files.Count) sources with $cores verifier cores"
-    $kernels = foreach ($kernelName in 'RecoveryKernel', 'LongValueKernel') {
+    $kernels = foreach ($kernelName in Get-NativeKernelNames) {
         $kernelSource = Join-Path $RepositoryRoot (Get-NativeKernelSource $kernelName)
         if ($kernelSource -cnotin $files) { throw "Native kernel is missing from the proof inventory: $kernelName" }
         Sync-NativeKernel $kernelName $RepositoryRoot $executable $output $dependenciesByFile[$kernelSource] $options $TimeoutSeconds $Update
@@ -556,7 +563,8 @@ function Write-ProofFailureReceipt([string] $RepositoryRoot, [string] $OutputDir
             foreach ($file in Get-ChildItem -LiteralPath $verification -Filter '*.json' -File -Recurse -Force) { [void]$paths.Add($file.FullName) }
         } else { $snapshotErrors.Add('Refused linked verification directory.') }
     } catch { $snapshotErrors.Add($_.Exception.Message) }
-    foreach ($relative in 'scripts/verify-proofs.ps1', 'scripts/install-dafny.ps1', 'scripts/check-proof-review.ps1', 'src/JetDatabaseWriter/Verification/RecoveryKernel.g.cs', 'src/JetDatabaseWriter/Verification/LongValueKernel.g.cs') {
+    $fixedInputs = @('scripts/verify-proofs.ps1', 'scripts/install-dafny.ps1', 'scripts/check-proof-review.ps1') + @(Get-NativeKernelNames | ForEach-Object { "src/JetDatabaseWriter/Verification/$_.g.cs" })
+    foreach ($relative in $fixedInputs) {
         $path = Join-Path $RepositoryRoot $relative
         if ([IO.File]::Exists($path)) { [void]$paths.Add($path) }
     }
