@@ -24,6 +24,23 @@ internal sealed class CalculatedExpressionUnaryNode(bool negate, CalculatedExpre
             return DBNull.Value;
         }
 
-        return negate ? AccessVariantOperators.Negate(value) : AccessVariantOperators.Identity(value);
+        try
+        {
+            if (context.IsCalculatingColumn && value is string)
+            {
+                // Native unary + retains text; unary - converts it to Double.
+                return negate ? -ToDouble(value) : value;
+            }
+
+            return negate ? AccessVariantOperators.Negate(value) : AccessVariantOperators.Identity(value);
+        }
+        catch (OverflowException) when (context.IsCalculatingColumn)
+        {
+            return new CalculatedError(6);
+        }
+        catch (Exception exception) when (context.IsCalculatingColumn && exception is InvalidCastException or FormatException)
+        {
+            return new CalculatedError(13);
+        }
     }
 }
