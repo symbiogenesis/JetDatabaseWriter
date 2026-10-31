@@ -1,0 +1,3348 @@
+{
+  "Culture": "tr-TR",
+  "InstalledUICulture": "tr-TR",
+  "UserLanguage": "LanguageTag     : en-US\r\nAutonym         : English (United States)\r\nEnglishName     : English\r\nLocalizedName   : English (United States)\r\nScriptName      : Latin\r\nInputMethodTips : {0409:00000409}\r\nSpellchecking   : True\r\nHandwriting     : False",
+  "Engine": "16.0",
+  "OfficeVersion": "16.0.20527.20112",
+  "PowerShell": "7.6.9",
+  "RuntimeCultureMetadata": {
+    "UseUserOverride": true,
+    "Calendar": "GregorianCalendar",
+    "ShortDatePattern": "d.MM.yyyy",
+    "LongTimePattern": "HH:mm:ss",
+    "FirstDayOfWeek": "Monday",
+    "NumberDecimalSeparator": ",",
+    "NumberGroupSeparator": ".",
+    "AMDesignator": "ÖÖ",
+    "PMDesignator": "ÖS"
+  },
+  "Observations": [
+    {
+      "Name": "DateText",
+      "Expression": "[D]&\"\"",
+      "ResultType": 10,
+      "Type": "System.String",
+      "Value": "4.03.2020 13:45:00"
+    },
+    {
+      "Name": "DateAdd",
+      "Expression": "[D]+0.5",
+      "ResultType": 8,
+      "Type": "System.DateTime",
+      "Value": "2020-03-05T01:45:00.0000000"
+    },
+    {
+      "Name": "Year",
+      "Expression": "Year([D])",
+      "ResultType": 7,
+      "Type": "System.Double",
+      "Value": "2020"
+    },
+    {
+      "Name": "MonthName",
+      "Expression": "MonthName(3)",
+      "ResultType": 10,
+      "Type": "System.String",
+      "Value": "Mart"
+    },
+    {
+      "Name": "MonthAbbrev",
+      "Expression": "MonthName(9,True)",
+      "ResultType": 10,
+      "Type": "System.String",
+      "Value": "Eyl"
+    },
+    {
+      "Name": "WeekdayName",
+      "Expression": "WeekdayName(2)",
+      "ResultType": 10,
+      "Type": "System.String",
+      "Value": "Salı"
+    },
+    {
+      "Name": "WeekdayAbbrev",
+      "Expression": "WeekdayName(2,True)",
+      "ResultType": 10,
+      "Type": "System.String",
+      "Value": "Sal"
+    },
+    {
+      "Name": "WeekdaySystemName",
+      "Expression": "WeekdayName(1,False,0)",
+      "ResultType": 10,
+      "Type": "System.String",
+      "Value": "Pazartesi"
+    },
+    {
+      "Name": "WeekdaySystem",
+      "Expression": "Weekday([D],0)",
+      "ResultType": 7,
+      "Type": "System.Double",
+      "Value": "3"
+    },
+    {
+      "Name": "NumberText",
+      "Expression": "[N]&\"\"",
+      "ResultType": 10,
+      "Type": "System.String",
+      "Value": "1234,5"
+    },
+    {
+      "Name": "NumberStr",
+      "Expression": "Str([N])",
+      "ResultType": 10,
+      "Type": "System.String",
+      "Value": " 1234.5"
+    },
+    {
+      "Name": "DotNumber",
+      "Expression": "CDbl(\"1.5\")",
+      "ResultType": 7,
+      "Type": "System.Double",
+      "Value": "15"
+    },
+    {
+      "Name": "CommaNumber",
+      "Expression": "CDbl(\"1,5\")",
+      "ResultType": 7,
+      "Type": "System.Double",
+      "Value": "1.5"
+    },
+    {
+      "Name": "DateParseMonth",
+      "Expression": "Month(\"03/04/2020\")",
+      "ResultType": 7,
+      "Type": "System.Double",
+      "Value": "4"
+    },
+    {
+      "Name": "DateParseDay",
+      "Expression": "Day(\"03/04/2020\")",
+      "ResultType": 7,
+      "Type": "System.Double",
+      "Value": "3"
+    },
+    {
+      "Name": "DateParseDMY",
+      "Expression": "Day(\"31/12/2020\")",
+      "ResultType": 7,
+      "Type": "System.Double",
+      "Value": "31"
+    },
+    {
+      "Name": "Upper",
+      "Expression": "UCase([S])",
+      "ResultType": 10,
+      "Type": "System.String",
+      "Value": "IIıİÄÄÉÉßŒ漢"
+    },
+    {
+      "Name": "Lower",
+      "Expression": "LCase([S])",
+      "ResultType": 10,
+      "Type": "System.String",
+      "Value": "iiıİääééßœ漢"
+    },
+    {
+      "Name": "AnsiAsc",
+      "Expression": "Asc(\"é\")",
+      "ResultType": 7,
+      "Type": "System.Double",
+      "Value": "233"
+    },
+    {
+      "Name": "AnsiAscTurkish",
+      "Expression": "Asc(\"İ\")",
+      "ResultType": 7,
+      "Type": "System.Double",
+      "Value": "73"
+    },
+    {
+      "Name": "AnsiString",
+      "Expression": "String(1,128)",
+      "ResultType": 10,
+      "Type": "System.String",
+      "Value": "€"
+    },
+    {
+      "Name": "TwoDigitYear",
+      "Expression": "DateSerial([Id]+48,1,1)",
+      "ResultType": 8,
+      "Type": "System.DateTime",
+      "Value": "2049-01-01T00:00:00.0000000"
+    }
+  ],
+  "ExtendedTables": [
+    {
+      "Table": "MonthNames",
+      "Observations": [
+        {
+          "Name": "Full1",
+          "Expression": "MonthName(1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ocak"
+        },
+        {
+          "Name": "Abbreviated1",
+          "Expression": "MonthName(1,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Oca"
+        },
+        {
+          "Name": "Full2",
+          "Expression": "MonthName(2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Şubat"
+        },
+        {
+          "Name": "Abbreviated2",
+          "Expression": "MonthName(2,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Şub"
+        },
+        {
+          "Name": "Full3",
+          "Expression": "MonthName(3)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Mart"
+        },
+        {
+          "Name": "Abbreviated3",
+          "Expression": "MonthName(3,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Mar"
+        },
+        {
+          "Name": "Full4",
+          "Expression": "MonthName(4)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Nisan"
+        },
+        {
+          "Name": "Abbreviated4",
+          "Expression": "MonthName(4,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Nis"
+        },
+        {
+          "Name": "Full5",
+          "Expression": "MonthName(5)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Mayıs"
+        },
+        {
+          "Name": "Abbreviated5",
+          "Expression": "MonthName(5,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "May"
+        },
+        {
+          "Name": "Full6",
+          "Expression": "MonthName(6)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Haziran"
+        },
+        {
+          "Name": "Abbreviated6",
+          "Expression": "MonthName(6,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Haz"
+        },
+        {
+          "Name": "Full7",
+          "Expression": "MonthName(7)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Temmuz"
+        },
+        {
+          "Name": "Abbreviated7",
+          "Expression": "MonthName(7,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Tem"
+        },
+        {
+          "Name": "Full8",
+          "Expression": "MonthName(8)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ağustos"
+        },
+        {
+          "Name": "Abbreviated8",
+          "Expression": "MonthName(8,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ağu"
+        },
+        {
+          "Name": "Full9",
+          "Expression": "MonthName(9)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Eylül"
+        },
+        {
+          "Name": "Abbreviated9",
+          "Expression": "MonthName(9,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Eyl"
+        },
+        {
+          "Name": "Full10",
+          "Expression": "MonthName(10)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ekim"
+        },
+        {
+          "Name": "Abbreviated10",
+          "Expression": "MonthName(10,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Eki"
+        },
+        {
+          "Name": "Full11",
+          "Expression": "MonthName(11)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Kasım"
+        },
+        {
+          "Name": "Abbreviated11",
+          "Expression": "MonthName(11,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Kas"
+        },
+        {
+          "Name": "Full12",
+          "Expression": "MonthName(12)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Aralık"
+        },
+        {
+          "Name": "Abbreviated12",
+          "Expression": "MonthName(12,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ara"
+        }
+      ]
+    },
+    {
+      "Table": "WeekNames",
+      "Observations": [
+        {
+          "Name": "FullDefault1",
+          "Expression": "WeekdayName(1,False)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Pazartesi"
+        },
+        {
+          "Name": "AbbreviatedDefault1",
+          "Expression": "WeekdayName(1,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Pzt"
+        },
+        {
+          "Name": "FullSystem1",
+          "Expression": "WeekdayName(1,False,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Pazartesi"
+        },
+        {
+          "Name": "AbbreviatedSystem1",
+          "Expression": "WeekdayName(1,True,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Pzt"
+        },
+        {
+          "Name": "FullSunday1",
+          "Expression": "WeekdayName(1,False,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Pazar"
+        },
+        {
+          "Name": "AbbreviatedSunday1",
+          "Expression": "WeekdayName(1,True,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Paz"
+        },
+        {
+          "Name": "FullMonday1",
+          "Expression": "WeekdayName(1,False,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Pazartesi"
+        },
+        {
+          "Name": "AbbreviatedMonday1",
+          "Expression": "WeekdayName(1,True,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Pzt"
+        },
+        {
+          "Name": "FullDefault2",
+          "Expression": "WeekdayName(2,False)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Salı"
+        },
+        {
+          "Name": "AbbreviatedDefault2",
+          "Expression": "WeekdayName(2,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Sal"
+        },
+        {
+          "Name": "FullSystem2",
+          "Expression": "WeekdayName(2,False,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Salı"
+        },
+        {
+          "Name": "AbbreviatedSystem2",
+          "Expression": "WeekdayName(2,True,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Sal"
+        },
+        {
+          "Name": "FullSunday2",
+          "Expression": "WeekdayName(2,False,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Pazartesi"
+        },
+        {
+          "Name": "AbbreviatedSunday2",
+          "Expression": "WeekdayName(2,True,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Pzt"
+        },
+        {
+          "Name": "FullMonday2",
+          "Expression": "WeekdayName(2,False,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Salı"
+        },
+        {
+          "Name": "AbbreviatedMonday2",
+          "Expression": "WeekdayName(2,True,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Sal"
+        },
+        {
+          "Name": "FullDefault3",
+          "Expression": "WeekdayName(3,False)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Çarşamba"
+        },
+        {
+          "Name": "AbbreviatedDefault3",
+          "Expression": "WeekdayName(3,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Çar"
+        },
+        {
+          "Name": "FullSystem3",
+          "Expression": "WeekdayName(3,False,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Çarşamba"
+        },
+        {
+          "Name": "AbbreviatedSystem3",
+          "Expression": "WeekdayName(3,True,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Çar"
+        },
+        {
+          "Name": "FullSunday3",
+          "Expression": "WeekdayName(3,False,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Salı"
+        },
+        {
+          "Name": "AbbreviatedSunday3",
+          "Expression": "WeekdayName(3,True,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Sal"
+        },
+        {
+          "Name": "FullMonday3",
+          "Expression": "WeekdayName(3,False,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Çarşamba"
+        },
+        {
+          "Name": "AbbreviatedMonday3",
+          "Expression": "WeekdayName(3,True,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Çar"
+        },
+        {
+          "Name": "FullDefault4",
+          "Expression": "WeekdayName(4,False)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Perşembe"
+        },
+        {
+          "Name": "AbbreviatedDefault4",
+          "Expression": "WeekdayName(4,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Per"
+        },
+        {
+          "Name": "FullSystem4",
+          "Expression": "WeekdayName(4,False,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Perşembe"
+        },
+        {
+          "Name": "AbbreviatedSystem4",
+          "Expression": "WeekdayName(4,True,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Per"
+        },
+        {
+          "Name": "FullSunday4",
+          "Expression": "WeekdayName(4,False,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Çarşamba"
+        },
+        {
+          "Name": "AbbreviatedSunday4",
+          "Expression": "WeekdayName(4,True,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Çar"
+        },
+        {
+          "Name": "FullMonday4",
+          "Expression": "WeekdayName(4,False,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Perşembe"
+        },
+        {
+          "Name": "AbbreviatedMonday4",
+          "Expression": "WeekdayName(4,True,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Per"
+        },
+        {
+          "Name": "FullDefault5",
+          "Expression": "WeekdayName(5,False)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cuma"
+        },
+        {
+          "Name": "AbbreviatedDefault5",
+          "Expression": "WeekdayName(5,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cum"
+        },
+        {
+          "Name": "FullSystem5",
+          "Expression": "WeekdayName(5,False,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cuma"
+        },
+        {
+          "Name": "AbbreviatedSystem5",
+          "Expression": "WeekdayName(5,True,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cum"
+        },
+        {
+          "Name": "FullSunday5",
+          "Expression": "WeekdayName(5,False,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Perşembe"
+        },
+        {
+          "Name": "AbbreviatedSunday5",
+          "Expression": "WeekdayName(5,True,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Per"
+        },
+        {
+          "Name": "FullMonday5",
+          "Expression": "WeekdayName(5,False,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cuma"
+        },
+        {
+          "Name": "AbbreviatedMonday5",
+          "Expression": "WeekdayName(5,True,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cum"
+        },
+        {
+          "Name": "FullDefault6",
+          "Expression": "WeekdayName(6,False)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cumartesi"
+        },
+        {
+          "Name": "AbbreviatedDefault6",
+          "Expression": "WeekdayName(6,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cmt"
+        },
+        {
+          "Name": "FullSystem6",
+          "Expression": "WeekdayName(6,False,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cumartesi"
+        },
+        {
+          "Name": "AbbreviatedSystem6",
+          "Expression": "WeekdayName(6,True,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cmt"
+        },
+        {
+          "Name": "FullSunday6",
+          "Expression": "WeekdayName(6,False,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cuma"
+        },
+        {
+          "Name": "AbbreviatedSunday6",
+          "Expression": "WeekdayName(6,True,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cum"
+        },
+        {
+          "Name": "FullMonday6",
+          "Expression": "WeekdayName(6,False,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cumartesi"
+        },
+        {
+          "Name": "AbbreviatedMonday6",
+          "Expression": "WeekdayName(6,True,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cmt"
+        },
+        {
+          "Name": "FullDefault7",
+          "Expression": "WeekdayName(7,False)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Pazar"
+        },
+        {
+          "Name": "AbbreviatedDefault7",
+          "Expression": "WeekdayName(7,True)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Paz"
+        },
+        {
+          "Name": "FullSystem7",
+          "Expression": "WeekdayName(7,False,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Pazar"
+        },
+        {
+          "Name": "AbbreviatedSystem7",
+          "Expression": "WeekdayName(7,True,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Paz"
+        },
+        {
+          "Name": "FullSunday7",
+          "Expression": "WeekdayName(7,False,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cumartesi"
+        },
+        {
+          "Name": "AbbreviatedSunday7",
+          "Expression": "WeekdayName(7,True,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Cmt"
+        },
+        {
+          "Name": "FullMonday7",
+          "Expression": "WeekdayName(7,False,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Pazar"
+        },
+        {
+          "Name": "AbbreviatedMonday7",
+          "Expression": "WeekdayName(7,True,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Paz"
+        },
+        {
+          "Name": "WeekdayDefault",
+          "Expression": "Weekday([D])",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "4"
+        },
+        {
+          "Name": "WeekdaySystem",
+          "Expression": "Weekday([D],0)",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "3"
+        },
+        {
+          "Name": "WeekdaySunday",
+          "Expression": "Weekday([D],1)",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "4"
+        },
+        {
+          "Name": "WeekdayMonday",
+          "Expression": "Weekday([D],2)",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "3"
+        }
+      ]
+    },
+    {
+      "Table": "RegionalNumbers",
+      "Observations": [
+        {
+          "Name": "Parsed0",
+          "Expression": "CDbl(\"1.5\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "15"
+        },
+        {
+          "Name": "Arithmetic0",
+          "Expression": "\"1.5\"+0",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "15"
+        },
+        {
+          "Name": "Parsed1",
+          "Expression": "CDbl(\"1,5\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1.5"
+        },
+        {
+          "Name": "Arithmetic1",
+          "Expression": "\"1,5\"+0",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1.5"
+        },
+        {
+          "Name": "Parsed2",
+          "Expression": "CDbl(\"1,234.5\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1.2345"
+        },
+        {
+          "Name": "Arithmetic2",
+          "Expression": "\"1,234.5\"+0",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1.2345"
+        },
+        {
+          "Name": "Parsed3",
+          "Expression": "CDbl(\"1.234,5\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1234.5"
+        },
+        {
+          "Name": "Arithmetic3",
+          "Expression": "\"1.234,5\"+0",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1234.5"
+        },
+        {
+          "Name": "Parsed4",
+          "Expression": "CDbl(\"1 234,5\")",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "Arithmetic4",
+          "Expression": "\"1 234,5\"+0",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "Parsed5",
+          "Expression": "CDbl(\"1 234,5\")",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "Arithmetic5",
+          "Expression": "\"1 234,5\"+0",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "Parsed6",
+          "Expression": "CDbl(\"1 234,5\")",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "Arithmetic6",
+          "Expression": "\"1 234,5\"+0",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "Parsed7",
+          "Expression": "CDbl(\"1E3\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1000"
+        },
+        {
+          "Name": "Arithmetic7",
+          "Expression": "\"1E3\"+0",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1000"
+        },
+        {
+          "Name": "Parsed8",
+          "Expression": "CDbl(\"1,5E2\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "150"
+        },
+        {
+          "Name": "Arithmetic8",
+          "Expression": "\"1,5E2\"+0",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "150"
+        },
+        {
+          "Name": "Parsed9",
+          "Expression": "CDbl(\"1.5E2\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1500"
+        },
+        {
+          "Name": "Arithmetic9",
+          "Expression": "\"1.5E2\"+0",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1500"
+        },
+        {
+          "Name": "Parsed10",
+          "Expression": "CDbl(\"+1,5\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1.5"
+        },
+        {
+          "Name": "Arithmetic10",
+          "Expression": "\"+1,5\"+0",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1.5"
+        },
+        {
+          "Name": "Parsed11",
+          "Expression": "CDbl(\"(1,5)\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1.5"
+        },
+        {
+          "Name": "Arithmetic11",
+          "Expression": "\"(1,5)\"+0",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "-1.5"
+        },
+        {
+          "Name": "Parsed12",
+          "Expression": "CDbl(\"$1,5\")",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "Arithmetic12",
+          "Expression": "\"$1,5\"+0",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "Parsed13",
+          "Expression": "CDbl(\"€1,5\")",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "Arithmetic13",
+          "Expression": "\"€1,5\"+0",
+          "ResultType": 7,
+          "Type": "COMNULL",
+          "Value": ""
+        },
+        {
+          "Name": "NegativeNumberText",
+          "Expression": "-[N]&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "-1234,5"
+        },
+        {
+          "Name": "FractionText",
+          "Expression": "(1/3)&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "0,333333333333333"
+        },
+        {
+          "Name": "ScientificText",
+          "Expression": "CDbl(1E100)&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "1E+100"
+        },
+        {
+          "Name": "NegativeZeroText",
+          "Expression": "-CDbl(0)&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "-0"
+        },
+        {
+          "Name": "StrNegativeZero",
+          "Expression": "Str(\"-0\")",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "-0"
+        },
+        {
+          "Name": "StrLargeText",
+          "Expression": "Str(\"1E100\")",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": " 1E+100"
+        },
+        {
+          "Name": "StrPrecisionText",
+          "Expression": "Str(\"12345678901234567\")",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": " 1.23456789012346E+16"
+        },
+        {
+          "Name": "StrCommaText",
+          "Expression": "Str(\"1,5\")",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": " 1.5"
+        },
+        {
+          "Name": "IntrinsicTrueText",
+          "Expression": "IsNull(Null)&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Doğru"
+        },
+        {
+          "Name": "IntrinsicFalseText",
+          "Expression": "IsEmpty(1)&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Yanlış"
+        },
+        {
+          "Name": "LikeTrueText",
+          "Expression": "(1 Like \"1\")&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Doğru"
+        },
+        {
+          "Name": "ComparisonTrueText",
+          "Expression": "(1=1)&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "-1"
+        },
+        {
+          "Name": "ConditionalBooleanText",
+          "Expression": "IIf(True,IsNull(Null),False)&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Doğru"
+        },
+        {
+          "Name": "NegativeInfinityDirect",
+          "Expression": "PV(-1,10,-100,1000)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "-inf"
+        },
+        {
+          "Name": "NegativeInfinityConcat",
+          "Expression": "(PV(-1,10,-100,1000))&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "-inf"
+        },
+        {
+          "Name": "NegativeInfinityStr",
+          "Expression": "Str(PV(-1,10,-100,1000))",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "-inf"
+        },
+        {
+          "Name": "IndefiniteDirect",
+          "Expression": "PMT(-1,10,1000,0,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "-nan(ind)"
+        },
+        {
+          "Name": "IndefiniteConcat",
+          "Expression": "(PMT(-1,10,1000,0,1))&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "-nan(ind)"
+        },
+        {
+          "Name": "IndefiniteStr",
+          "Expression": "Str(PMT(-1,10,1000,0,1))",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "-nan(ind)"
+        },
+        {
+          "Name": "PositiveInfinityDirect",
+          "Expression": "SYD(1E308,0,1000,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "inf"
+        },
+        {
+          "Name": "PositiveInfinityConcat",
+          "Expression": "(SYD(1E308,0,1000,1))&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "inf"
+        },
+        {
+          "Name": "PositiveInfinityStr",
+          "Expression": "Str(SYD(1E308,0,1000,1))",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": " inf"
+        }
+      ]
+    },
+    {
+      "Table": "RegionalDates",
+      "Observations": [
+        {
+          "Name": "DateOnly",
+          "Expression": "DateSerial(2020,3,4)&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "4.03.2020"
+        },
+        {
+          "Name": "Morning",
+          "Expression": "(DateSerial(2020,3,4)+TimeSerial(1,2,3))&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "4.03.2020 01:02:03"
+        },
+        {
+          "Name": "Noon",
+          "Expression": "(DateSerial(2020,3,4)+TimeSerial(12,0,0))&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "4.03.2020 12:00:00"
+        },
+        {
+          "Name": "Evening",
+          "Expression": "(DateSerial(2020,11,12)+TimeSerial(23,59,59))&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "12.11.2020 23:59:59"
+        },
+        {
+          "Name": "DayZero",
+          "Expression": "DateSerial(1899,12,30)&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "00:00:00"
+        },
+        {
+          "Name": "TimeOnly",
+          "Expression": "TimeSerial(1,2,3)&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "01:02:03"
+        },
+        {
+          "Name": "NegativeDate",
+          "Expression": "(DateSerial(1899,12,29)-TimeSerial(1,2,3))&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "-1,04309027777778"
+        },
+        {
+          "Name": "EarlyYear",
+          "Expression": "DateSerial([Id]+99,3,4)&\"\"",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "4.03.100"
+        },
+        {
+          "Name": "LiteralMonth",
+          "Expression": "Month(#03/04/2020#)",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "3"
+        },
+        {
+          "Name": "LiteralDay",
+          "Expression": "Day(#03/04/2020#)",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "4"
+        },
+        {
+          "Name": "Year0",
+          "Expression": "Year(\"03/04/2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2020"
+        },
+        {
+          "Name": "Month0",
+          "Expression": "Month(\"03/04/2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "4"
+        },
+        {
+          "Name": "Day0",
+          "Expression": "Day(\"03/04/2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "3"
+        },
+        {
+          "Name": "Year1",
+          "Expression": "Year(\"03.04.2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2020"
+        },
+        {
+          "Name": "Month1",
+          "Expression": "Month(\"03.04.2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "4"
+        },
+        {
+          "Name": "Day1",
+          "Expression": "Day(\"03.04.2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "3"
+        },
+        {
+          "Name": "Year2",
+          "Expression": "Year(\"03-04-2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2020"
+        },
+        {
+          "Name": "Month2",
+          "Expression": "Month(\"03-04-2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "4"
+        },
+        {
+          "Name": "Day2",
+          "Expression": "Day(\"03-04-2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "3"
+        },
+        {
+          "Name": "Year3",
+          "Expression": "Year(\"2020/03/04\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2020"
+        },
+        {
+          "Name": "Month3",
+          "Expression": "Month(\"2020/03/04\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "3"
+        },
+        {
+          "Name": "Day3",
+          "Expression": "Day(\"2020/03/04\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "4"
+        },
+        {
+          "Name": "Year4",
+          "Expression": "Year(\"2020-03-04\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2020"
+        },
+        {
+          "Name": "Month4",
+          "Expression": "Month(\"2020-03-04\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "3"
+        },
+        {
+          "Name": "Day4",
+          "Expression": "Day(\"2020-03-04\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "4"
+        },
+        {
+          "Name": "Year5",
+          "Expression": "Year(\"31/12/2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2020"
+        },
+        {
+          "Name": "Month5",
+          "Expression": "Month(\"31/12/2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "12"
+        },
+        {
+          "Name": "Day5",
+          "Expression": "Day(\"31/12/2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "31"
+        },
+        {
+          "Name": "Year6",
+          "Expression": "Year(\"01/02/00\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2000"
+        },
+        {
+          "Name": "Month6",
+          "Expression": "Month(\"01/02/00\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2"
+        },
+        {
+          "Name": "Day6",
+          "Expression": "Day(\"01/02/00\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1"
+        },
+        {
+          "Name": "Year7",
+          "Expression": "Year(\"01/02/29\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2029"
+        },
+        {
+          "Name": "Month7",
+          "Expression": "Month(\"01/02/29\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2"
+        },
+        {
+          "Name": "Day7",
+          "Expression": "Day(\"01/02/29\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1"
+        },
+        {
+          "Name": "Year8",
+          "Expression": "Year(\"01/02/30\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2030"
+        },
+        {
+          "Name": "Month8",
+          "Expression": "Month(\"01/02/30\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2"
+        },
+        {
+          "Name": "Day8",
+          "Expression": "Day(\"01/02/30\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1"
+        },
+        {
+          "Name": "Year9",
+          "Expression": "Year(\"01/02/49\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2049"
+        },
+        {
+          "Name": "Month9",
+          "Expression": "Month(\"01/02/49\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2"
+        },
+        {
+          "Name": "Day9",
+          "Expression": "Day(\"01/02/49\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1"
+        },
+        {
+          "Name": "Year10",
+          "Expression": "Year(\"01/02/50\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1950"
+        },
+        {
+          "Name": "Month10",
+          "Expression": "Month(\"01/02/50\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2"
+        },
+        {
+          "Name": "Day10",
+          "Expression": "Day(\"01/02/50\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1"
+        },
+        {
+          "Name": "Year11",
+          "Expression": "Year(\"01/02/99\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1999"
+        },
+        {
+          "Name": "Month11",
+          "Expression": "Month(\"01/02/99\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2"
+        },
+        {
+          "Name": "Day11",
+          "Expression": "Day(\"01/02/99\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "1"
+        },
+        {
+          "Name": "LocalizedYear0",
+          "Expression": "Year(\"4 Mart 2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2020"
+        },
+        {
+          "Name": "LocalizedMonth0",
+          "Expression": "Month(\"4 Mart 2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "3"
+        },
+        {
+          "Name": "LocalizedDay0",
+          "Expression": "Day(\"4 Mart 2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "4"
+        },
+        {
+          "Name": "LocalizedYear1",
+          "Expression": "Year(\"4 Eyl 2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "2020"
+        },
+        {
+          "Name": "LocalizedMonth1",
+          "Expression": "Month(\"4 Eyl 2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "9"
+        },
+        {
+          "Name": "LocalizedDay1",
+          "Expression": "Day(\"4 Eyl 2020\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "4"
+        }
+      ]
+    },
+    {
+      "Table": "AnsiStrings0",
+      "Observations": [
+        {
+          "Name": "Byte0",
+          "Expression": "String(1,0)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0000"
+        },
+        {
+          "Name": "Byte1",
+          "Expression": "String(1,1)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0001"
+        },
+        {
+          "Name": "Byte2",
+          "Expression": "String(1,2)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0002"
+        },
+        {
+          "Name": "Byte3",
+          "Expression": "String(1,3)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0003"
+        },
+        {
+          "Name": "Byte4",
+          "Expression": "String(1,4)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0004"
+        },
+        {
+          "Name": "Byte5",
+          "Expression": "String(1,5)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0005"
+        },
+        {
+          "Name": "Byte6",
+          "Expression": "String(1,6)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0006"
+        },
+        {
+          "Name": "Byte7",
+          "Expression": "String(1,7)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0007"
+        },
+        {
+          "Name": "Byte8",
+          "Expression": "String(1,8)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\b"
+        },
+        {
+          "Name": "Byte9",
+          "Expression": "String(1,9)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\t"
+        },
+        {
+          "Name": "Byte10",
+          "Expression": "String(1,10)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\n"
+        },
+        {
+          "Name": "Byte11",
+          "Expression": "String(1,11)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u000b"
+        },
+        {
+          "Name": "Byte12",
+          "Expression": "String(1,12)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\f"
+        },
+        {
+          "Name": "Byte13",
+          "Expression": "String(1,13)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\r"
+        },
+        {
+          "Name": "Byte14",
+          "Expression": "String(1,14)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u000e"
+        },
+        {
+          "Name": "Byte15",
+          "Expression": "String(1,15)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u000f"
+        },
+        {
+          "Name": "Byte16",
+          "Expression": "String(1,16)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0010"
+        },
+        {
+          "Name": "Byte17",
+          "Expression": "String(1,17)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0011"
+        },
+        {
+          "Name": "Byte18",
+          "Expression": "String(1,18)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0012"
+        },
+        {
+          "Name": "Byte19",
+          "Expression": "String(1,19)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0013"
+        },
+        {
+          "Name": "Byte20",
+          "Expression": "String(1,20)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0014"
+        },
+        {
+          "Name": "Byte21",
+          "Expression": "String(1,21)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0015"
+        },
+        {
+          "Name": "Byte22",
+          "Expression": "String(1,22)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0016"
+        },
+        {
+          "Name": "Byte23",
+          "Expression": "String(1,23)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0017"
+        },
+        {
+          "Name": "Byte24",
+          "Expression": "String(1,24)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0018"
+        },
+        {
+          "Name": "Byte25",
+          "Expression": "String(1,25)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u0019"
+        },
+        {
+          "Name": "Byte26",
+          "Expression": "String(1,26)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u001a"
+        },
+        {
+          "Name": "Byte27",
+          "Expression": "String(1,27)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u001b"
+        },
+        {
+          "Name": "Byte28",
+          "Expression": "String(1,28)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u001c"
+        },
+        {
+          "Name": "Byte29",
+          "Expression": "String(1,29)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u001d"
+        },
+        {
+          "Name": "Byte30",
+          "Expression": "String(1,30)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u001e"
+        },
+        {
+          "Name": "Byte31",
+          "Expression": "String(1,31)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\u001f"
+        },
+        {
+          "Name": "Byte32",
+          "Expression": "String(1,32)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": " "
+        },
+        {
+          "Name": "Byte33",
+          "Expression": "String(1,33)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "!"
+        },
+        {
+          "Name": "Byte34",
+          "Expression": "String(1,34)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\""
+        },
+        {
+          "Name": "Byte35",
+          "Expression": "String(1,35)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "#"
+        },
+        {
+          "Name": "Byte36",
+          "Expression": "String(1,36)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "$"
+        },
+        {
+          "Name": "Byte37",
+          "Expression": "String(1,37)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "%"
+        },
+        {
+          "Name": "Byte38",
+          "Expression": "String(1,38)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "&"
+        },
+        {
+          "Name": "Byte39",
+          "Expression": "String(1,39)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "'"
+        },
+        {
+          "Name": "Byte40",
+          "Expression": "String(1,40)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "("
+        },
+        {
+          "Name": "Byte41",
+          "Expression": "String(1,41)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": ")"
+        },
+        {
+          "Name": "Byte42",
+          "Expression": "String(1,42)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "*"
+        },
+        {
+          "Name": "Byte43",
+          "Expression": "String(1,43)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "+"
+        },
+        {
+          "Name": "Byte44",
+          "Expression": "String(1,44)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": ","
+        },
+        {
+          "Name": "Byte45",
+          "Expression": "String(1,45)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "-"
+        },
+        {
+          "Name": "Byte46",
+          "Expression": "String(1,46)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "."
+        },
+        {
+          "Name": "Byte47",
+          "Expression": "String(1,47)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "/"
+        },
+        {
+          "Name": "Byte48",
+          "Expression": "String(1,48)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "0"
+        },
+        {
+          "Name": "Byte49",
+          "Expression": "String(1,49)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "1"
+        },
+        {
+          "Name": "Byte50",
+          "Expression": "String(1,50)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "2"
+        },
+        {
+          "Name": "Byte51",
+          "Expression": "String(1,51)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "3"
+        },
+        {
+          "Name": "Byte52",
+          "Expression": "String(1,52)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "4"
+        },
+        {
+          "Name": "Byte53",
+          "Expression": "String(1,53)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "5"
+        },
+        {
+          "Name": "Byte54",
+          "Expression": "String(1,54)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "6"
+        },
+        {
+          "Name": "Byte55",
+          "Expression": "String(1,55)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "7"
+        },
+        {
+          "Name": "Byte56",
+          "Expression": "String(1,56)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "8"
+        },
+        {
+          "Name": "Byte57",
+          "Expression": "String(1,57)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "9"
+        },
+        {
+          "Name": "Byte58",
+          "Expression": "String(1,58)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": ":"
+        },
+        {
+          "Name": "Byte59",
+          "Expression": "String(1,59)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": ";"
+        },
+        {
+          "Name": "Byte60",
+          "Expression": "String(1,60)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "<"
+        },
+        {
+          "Name": "Byte61",
+          "Expression": "String(1,61)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "="
+        },
+        {
+          "Name": "Byte62",
+          "Expression": "String(1,62)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": ">"
+        },
+        {
+          "Name": "Byte63",
+          "Expression": "String(1,63)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "?"
+        },
+        {
+          "Name": "Byte64",
+          "Expression": "String(1,64)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "@"
+        },
+        {
+          "Name": "Byte65",
+          "Expression": "String(1,65)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "A"
+        },
+        {
+          "Name": "Byte66",
+          "Expression": "String(1,66)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "B"
+        },
+        {
+          "Name": "Byte67",
+          "Expression": "String(1,67)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "C"
+        },
+        {
+          "Name": "Byte68",
+          "Expression": "String(1,68)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "D"
+        },
+        {
+          "Name": "Byte69",
+          "Expression": "String(1,69)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "E"
+        },
+        {
+          "Name": "Byte70",
+          "Expression": "String(1,70)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "F"
+        },
+        {
+          "Name": "Byte71",
+          "Expression": "String(1,71)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "G"
+        },
+        {
+          "Name": "Byte72",
+          "Expression": "String(1,72)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "H"
+        },
+        {
+          "Name": "Byte73",
+          "Expression": "String(1,73)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "I"
+        },
+        {
+          "Name": "Byte74",
+          "Expression": "String(1,74)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "J"
+        },
+        {
+          "Name": "Byte75",
+          "Expression": "String(1,75)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "K"
+        },
+        {
+          "Name": "Byte76",
+          "Expression": "String(1,76)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "L"
+        },
+        {
+          "Name": "Byte77",
+          "Expression": "String(1,77)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "M"
+        },
+        {
+          "Name": "Byte78",
+          "Expression": "String(1,78)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "N"
+        },
+        {
+          "Name": "Byte79",
+          "Expression": "String(1,79)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "O"
+        },
+        {
+          "Name": "Byte80",
+          "Expression": "String(1,80)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "P"
+        },
+        {
+          "Name": "Byte81",
+          "Expression": "String(1,81)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Q"
+        },
+        {
+          "Name": "Byte82",
+          "Expression": "String(1,82)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "R"
+        },
+        {
+          "Name": "Byte83",
+          "Expression": "String(1,83)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "S"
+        },
+        {
+          "Name": "Byte84",
+          "Expression": "String(1,84)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "T"
+        },
+        {
+          "Name": "Byte85",
+          "Expression": "String(1,85)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "U"
+        },
+        {
+          "Name": "Byte86",
+          "Expression": "String(1,86)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "V"
+        },
+        {
+          "Name": "Byte87",
+          "Expression": "String(1,87)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "W"
+        },
+        {
+          "Name": "Byte88",
+          "Expression": "String(1,88)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "X"
+        },
+        {
+          "Name": "Byte89",
+          "Expression": "String(1,89)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Y"
+        },
+        {
+          "Name": "Byte90",
+          "Expression": "String(1,90)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Z"
+        },
+        {
+          "Name": "Byte91",
+          "Expression": "String(1,91)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "["
+        },
+        {
+          "Name": "Byte92",
+          "Expression": "String(1,92)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "\\"
+        },
+        {
+          "Name": "Byte93",
+          "Expression": "String(1,93)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "]"
+        },
+        {
+          "Name": "Byte94",
+          "Expression": "String(1,94)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "^"
+        },
+        {
+          "Name": "Byte95",
+          "Expression": "String(1,95)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "_"
+        },
+        {
+          "Name": "Byte96",
+          "Expression": "String(1,96)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "`"
+        },
+        {
+          "Name": "Byte97",
+          "Expression": "String(1,97)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "a"
+        },
+        {
+          "Name": "Byte98",
+          "Expression": "String(1,98)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "b"
+        },
+        {
+          "Name": "Byte99",
+          "Expression": "String(1,99)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "c"
+        },
+        {
+          "Name": "Byte100",
+          "Expression": "String(1,100)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "d"
+        },
+        {
+          "Name": "Byte101",
+          "Expression": "String(1,101)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "e"
+        },
+        {
+          "Name": "Byte102",
+          "Expression": "String(1,102)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "f"
+        },
+        {
+          "Name": "Byte103",
+          "Expression": "String(1,103)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "g"
+        },
+        {
+          "Name": "Byte104",
+          "Expression": "String(1,104)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "h"
+        },
+        {
+          "Name": "Byte105",
+          "Expression": "String(1,105)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "i"
+        },
+        {
+          "Name": "Byte106",
+          "Expression": "String(1,106)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "j"
+        },
+        {
+          "Name": "Byte107",
+          "Expression": "String(1,107)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "k"
+        },
+        {
+          "Name": "Byte108",
+          "Expression": "String(1,108)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "l"
+        },
+        {
+          "Name": "Byte109",
+          "Expression": "String(1,109)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "m"
+        },
+        {
+          "Name": "Byte110",
+          "Expression": "String(1,110)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "n"
+        },
+        {
+          "Name": "Byte111",
+          "Expression": "String(1,111)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "o"
+        },
+        {
+          "Name": "Byte112",
+          "Expression": "String(1,112)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "p"
+        },
+        {
+          "Name": "Byte113",
+          "Expression": "String(1,113)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "q"
+        },
+        {
+          "Name": "Byte114",
+          "Expression": "String(1,114)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "r"
+        },
+        {
+          "Name": "Byte115",
+          "Expression": "String(1,115)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "s"
+        },
+        {
+          "Name": "Byte116",
+          "Expression": "String(1,116)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "t"
+        },
+        {
+          "Name": "Byte117",
+          "Expression": "String(1,117)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "u"
+        },
+        {
+          "Name": "Byte118",
+          "Expression": "String(1,118)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "v"
+        },
+        {
+          "Name": "Byte119",
+          "Expression": "String(1,119)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "w"
+        },
+        {
+          "Name": "Byte120",
+          "Expression": "String(1,120)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "x"
+        },
+        {
+          "Name": "Byte121",
+          "Expression": "String(1,121)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "y"
+        },
+        {
+          "Name": "Byte122",
+          "Expression": "String(1,122)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "z"
+        },
+        {
+          "Name": "Byte123",
+          "Expression": "String(1,123)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "{"
+        },
+        {
+          "Name": "Byte124",
+          "Expression": "String(1,124)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "|"
+        },
+        {
+          "Name": "Byte125",
+          "Expression": "String(1,125)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "}"
+        },
+        {
+          "Name": "Byte126",
+          "Expression": "String(1,126)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "~"
+        },
+        {
+          "Name": "Byte127",
+          "Expression": "String(1,127)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": ""
+        }
+      ]
+    },
+    {
+      "Table": "AnsiStrings128",
+      "Observations": [
+        {
+          "Name": "Byte128",
+          "Expression": "String(1,128)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "€"
+        },
+        {
+          "Name": "Byte129",
+          "Expression": "String(1,129)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": ""
+        },
+        {
+          "Name": "Byte130",
+          "Expression": "String(1,130)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "‚"
+        },
+        {
+          "Name": "Byte131",
+          "Expression": "String(1,131)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ƒ"
+        },
+        {
+          "Name": "Byte132",
+          "Expression": "String(1,132)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "„"
+        },
+        {
+          "Name": "Byte133",
+          "Expression": "String(1,133)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "…"
+        },
+        {
+          "Name": "Byte134",
+          "Expression": "String(1,134)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "†"
+        },
+        {
+          "Name": "Byte135",
+          "Expression": "String(1,135)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "‡"
+        },
+        {
+          "Name": "Byte136",
+          "Expression": "String(1,136)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ˆ"
+        },
+        {
+          "Name": "Byte137",
+          "Expression": "String(1,137)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "‰"
+        },
+        {
+          "Name": "Byte138",
+          "Expression": "String(1,138)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Š"
+        },
+        {
+          "Name": "Byte139",
+          "Expression": "String(1,139)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "‹"
+        },
+        {
+          "Name": "Byte140",
+          "Expression": "String(1,140)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Œ"
+        },
+        {
+          "Name": "Byte141",
+          "Expression": "String(1,141)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": ""
+        },
+        {
+          "Name": "Byte142",
+          "Expression": "String(1,142)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ž"
+        },
+        {
+          "Name": "Byte143",
+          "Expression": "String(1,143)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": ""
+        },
+        {
+          "Name": "Byte144",
+          "Expression": "String(1,144)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": ""
+        },
+        {
+          "Name": "Byte145",
+          "Expression": "String(1,145)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "‘"
+        },
+        {
+          "Name": "Byte146",
+          "Expression": "String(1,146)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "’"
+        },
+        {
+          "Name": "Byte147",
+          "Expression": "String(1,147)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "“"
+        },
+        {
+          "Name": "Byte148",
+          "Expression": "String(1,148)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "”"
+        },
+        {
+          "Name": "Byte149",
+          "Expression": "String(1,149)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "•"
+        },
+        {
+          "Name": "Byte150",
+          "Expression": "String(1,150)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "–"
+        },
+        {
+          "Name": "Byte151",
+          "Expression": "String(1,151)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "—"
+        },
+        {
+          "Name": "Byte152",
+          "Expression": "String(1,152)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "˜"
+        },
+        {
+          "Name": "Byte153",
+          "Expression": "String(1,153)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "™"
+        },
+        {
+          "Name": "Byte154",
+          "Expression": "String(1,154)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "š"
+        },
+        {
+          "Name": "Byte155",
+          "Expression": "String(1,155)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "›"
+        },
+        {
+          "Name": "Byte156",
+          "Expression": "String(1,156)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "œ"
+        },
+        {
+          "Name": "Byte157",
+          "Expression": "String(1,157)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": ""
+        },
+        {
+          "Name": "Byte158",
+          "Expression": "String(1,158)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ž"
+        },
+        {
+          "Name": "Byte159",
+          "Expression": "String(1,159)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ÿ"
+        },
+        {
+          "Name": "Byte160",
+          "Expression": "String(1,160)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": " "
+        },
+        {
+          "Name": "Byte161",
+          "Expression": "String(1,161)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¡"
+        },
+        {
+          "Name": "Byte162",
+          "Expression": "String(1,162)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¢"
+        },
+        {
+          "Name": "Byte163",
+          "Expression": "String(1,163)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "£"
+        },
+        {
+          "Name": "Byte164",
+          "Expression": "String(1,164)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¤"
+        },
+        {
+          "Name": "Byte165",
+          "Expression": "String(1,165)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¥"
+        },
+        {
+          "Name": "Byte166",
+          "Expression": "String(1,166)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¦"
+        },
+        {
+          "Name": "Byte167",
+          "Expression": "String(1,167)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "§"
+        },
+        {
+          "Name": "Byte168",
+          "Expression": "String(1,168)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¨"
+        },
+        {
+          "Name": "Byte169",
+          "Expression": "String(1,169)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "©"
+        },
+        {
+          "Name": "Byte170",
+          "Expression": "String(1,170)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ª"
+        },
+        {
+          "Name": "Byte171",
+          "Expression": "String(1,171)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "«"
+        },
+        {
+          "Name": "Byte172",
+          "Expression": "String(1,172)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¬"
+        },
+        {
+          "Name": "Byte173",
+          "Expression": "String(1,173)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "­"
+        },
+        {
+          "Name": "Byte174",
+          "Expression": "String(1,174)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "®"
+        },
+        {
+          "Name": "Byte175",
+          "Expression": "String(1,175)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¯"
+        },
+        {
+          "Name": "Byte176",
+          "Expression": "String(1,176)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "°"
+        },
+        {
+          "Name": "Byte177",
+          "Expression": "String(1,177)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "±"
+        },
+        {
+          "Name": "Byte178",
+          "Expression": "String(1,178)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "²"
+        },
+        {
+          "Name": "Byte179",
+          "Expression": "String(1,179)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "³"
+        },
+        {
+          "Name": "Byte180",
+          "Expression": "String(1,180)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "´"
+        },
+        {
+          "Name": "Byte181",
+          "Expression": "String(1,181)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "µ"
+        },
+        {
+          "Name": "Byte182",
+          "Expression": "String(1,182)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¶"
+        },
+        {
+          "Name": "Byte183",
+          "Expression": "String(1,183)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "·"
+        },
+        {
+          "Name": "Byte184",
+          "Expression": "String(1,184)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¸"
+        },
+        {
+          "Name": "Byte185",
+          "Expression": "String(1,185)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¹"
+        },
+        {
+          "Name": "Byte186",
+          "Expression": "String(1,186)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "º"
+        },
+        {
+          "Name": "Byte187",
+          "Expression": "String(1,187)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "»"
+        },
+        {
+          "Name": "Byte188",
+          "Expression": "String(1,188)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¼"
+        },
+        {
+          "Name": "Byte189",
+          "Expression": "String(1,189)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "½"
+        },
+        {
+          "Name": "Byte190",
+          "Expression": "String(1,190)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¾"
+        },
+        {
+          "Name": "Byte191",
+          "Expression": "String(1,191)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "¿"
+        },
+        {
+          "Name": "Byte192",
+          "Expression": "String(1,192)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "À"
+        },
+        {
+          "Name": "Byte193",
+          "Expression": "String(1,193)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Á"
+        },
+        {
+          "Name": "Byte194",
+          "Expression": "String(1,194)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Â"
+        },
+        {
+          "Name": "Byte195",
+          "Expression": "String(1,195)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ã"
+        },
+        {
+          "Name": "Byte196",
+          "Expression": "String(1,196)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ä"
+        },
+        {
+          "Name": "Byte197",
+          "Expression": "String(1,197)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Å"
+        },
+        {
+          "Name": "Byte198",
+          "Expression": "String(1,198)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Æ"
+        },
+        {
+          "Name": "Byte199",
+          "Expression": "String(1,199)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ç"
+        },
+        {
+          "Name": "Byte200",
+          "Expression": "String(1,200)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "È"
+        },
+        {
+          "Name": "Byte201",
+          "Expression": "String(1,201)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "É"
+        },
+        {
+          "Name": "Byte202",
+          "Expression": "String(1,202)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ê"
+        },
+        {
+          "Name": "Byte203",
+          "Expression": "String(1,203)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ë"
+        },
+        {
+          "Name": "Byte204",
+          "Expression": "String(1,204)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ì"
+        },
+        {
+          "Name": "Byte205",
+          "Expression": "String(1,205)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Í"
+        },
+        {
+          "Name": "Byte206",
+          "Expression": "String(1,206)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Î"
+        },
+        {
+          "Name": "Byte207",
+          "Expression": "String(1,207)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ï"
+        },
+        {
+          "Name": "Byte208",
+          "Expression": "String(1,208)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ð"
+        },
+        {
+          "Name": "Byte209",
+          "Expression": "String(1,209)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ñ"
+        },
+        {
+          "Name": "Byte210",
+          "Expression": "String(1,210)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ò"
+        },
+        {
+          "Name": "Byte211",
+          "Expression": "String(1,211)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ó"
+        },
+        {
+          "Name": "Byte212",
+          "Expression": "String(1,212)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ô"
+        },
+        {
+          "Name": "Byte213",
+          "Expression": "String(1,213)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Õ"
+        },
+        {
+          "Name": "Byte214",
+          "Expression": "String(1,214)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ö"
+        },
+        {
+          "Name": "Byte215",
+          "Expression": "String(1,215)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "×"
+        },
+        {
+          "Name": "Byte216",
+          "Expression": "String(1,216)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ø"
+        },
+        {
+          "Name": "Byte217",
+          "Expression": "String(1,217)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ù"
+        },
+        {
+          "Name": "Byte218",
+          "Expression": "String(1,218)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ú"
+        },
+        {
+          "Name": "Byte219",
+          "Expression": "String(1,219)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Û"
+        },
+        {
+          "Name": "Byte220",
+          "Expression": "String(1,220)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ü"
+        },
+        {
+          "Name": "Byte221",
+          "Expression": "String(1,221)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Ý"
+        },
+        {
+          "Name": "Byte222",
+          "Expression": "String(1,222)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Þ"
+        },
+        {
+          "Name": "Byte223",
+          "Expression": "String(1,223)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ß"
+        },
+        {
+          "Name": "Byte224",
+          "Expression": "String(1,224)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "à"
+        },
+        {
+          "Name": "Byte225",
+          "Expression": "String(1,225)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "á"
+        },
+        {
+          "Name": "Byte226",
+          "Expression": "String(1,226)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "â"
+        },
+        {
+          "Name": "Byte227",
+          "Expression": "String(1,227)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ã"
+        },
+        {
+          "Name": "Byte228",
+          "Expression": "String(1,228)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ä"
+        },
+        {
+          "Name": "Byte229",
+          "Expression": "String(1,229)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "å"
+        },
+        {
+          "Name": "Byte230",
+          "Expression": "String(1,230)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "æ"
+        },
+        {
+          "Name": "Byte231",
+          "Expression": "String(1,231)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ç"
+        },
+        {
+          "Name": "Byte232",
+          "Expression": "String(1,232)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "è"
+        },
+        {
+          "Name": "Byte233",
+          "Expression": "String(1,233)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "é"
+        },
+        {
+          "Name": "Byte234",
+          "Expression": "String(1,234)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ê"
+        },
+        {
+          "Name": "Byte235",
+          "Expression": "String(1,235)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ë"
+        },
+        {
+          "Name": "Byte236",
+          "Expression": "String(1,236)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ì"
+        },
+        {
+          "Name": "Byte237",
+          "Expression": "String(1,237)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "í"
+        },
+        {
+          "Name": "Byte238",
+          "Expression": "String(1,238)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "î"
+        },
+        {
+          "Name": "Byte239",
+          "Expression": "String(1,239)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ï"
+        },
+        {
+          "Name": "Byte240",
+          "Expression": "String(1,240)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ð"
+        },
+        {
+          "Name": "Byte241",
+          "Expression": "String(1,241)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ñ"
+        },
+        {
+          "Name": "Byte242",
+          "Expression": "String(1,242)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ò"
+        },
+        {
+          "Name": "Byte243",
+          "Expression": "String(1,243)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ó"
+        },
+        {
+          "Name": "Byte244",
+          "Expression": "String(1,244)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ô"
+        },
+        {
+          "Name": "Byte245",
+          "Expression": "String(1,245)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "õ"
+        },
+        {
+          "Name": "Byte246",
+          "Expression": "String(1,246)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ö"
+        },
+        {
+          "Name": "Byte247",
+          "Expression": "String(1,247)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "÷"
+        },
+        {
+          "Name": "Byte248",
+          "Expression": "String(1,248)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ø"
+        },
+        {
+          "Name": "Byte249",
+          "Expression": "String(1,249)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ù"
+        },
+        {
+          "Name": "Byte250",
+          "Expression": "String(1,250)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ú"
+        },
+        {
+          "Name": "Byte251",
+          "Expression": "String(1,251)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "û"
+        },
+        {
+          "Name": "Byte252",
+          "Expression": "String(1,252)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ü"
+        },
+        {
+          "Name": "Byte253",
+          "Expression": "String(1,253)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ý"
+        },
+        {
+          "Name": "Byte254",
+          "Expression": "String(1,254)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "þ"
+        },
+        {
+          "Name": "Byte255",
+          "Expression": "String(1,255)",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "ÿ"
+        }
+      ]
+    },
+    {
+      "Table": "RegionalCase",
+      "Observations": [
+        {
+          "Name": "WideAsc",
+          "Expression": "Asc(\"漢\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "63"
+        },
+        {
+          "Name": "SupplementaryAsc",
+          "Expression": "Asc(\"😀\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "63"
+        },
+        {
+          "Name": "BestFitAsc",
+          "Expression": "Asc(\"Ā\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "65"
+        },
+        {
+          "Name": "DotlessAsc",
+          "Expression": "Asc(\"ı\")",
+          "ResultType": 7,
+          "Type": "System.Double",
+          "Value": "105"
+        },
+        {
+          "Name": "Upper",
+          "Expression": "UCase(\"σςßſıİ𐐨\")",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "Σςßſıİ𐐀"
+        },
+        {
+          "Name": "Lower",
+          "Expression": "LCase(\"ΣΣẞSıİ𐐀\")",
+          "ResultType": 10,
+          "Type": "System.String",
+          "Value": "σσẞsıİ𐐨"
+        }
+      ]
+    }
+  ]
+}
