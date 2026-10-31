@@ -61,6 +61,8 @@ public sealed class CalculatedExpressionParserTests
     [InlineData("[Missing")]
     [InlineData("[T].")]
     [InlineData("[T].[A].[B]")]
+    [InlineData("#not-a-date#")]
+    [InlineData("#2020-13-40#")]
     public void MalformedExpression_ThrowsArgumentException(string expression)
         => Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse(expression));
 

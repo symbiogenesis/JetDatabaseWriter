@@ -476,8 +476,18 @@ internal sealed class CalculatedExpressionParser
                     string value = expression[(index + 1)..end];
                     index = end + 1;
 
+                    DateTime date;
+                    try
+                    {
+                        date = CalculatedExpressionCoercion.ParseInvariantDate(value);
+                    }
+                    catch (FormatException)
+                    {
+                        throw this.SyntaxError("invalid date literal");
+                    }
+
                     // A date literal is permitted where an explicit CDate call is not.
-                    result.Add(new Token(TokenKind.Value, expression[start..index], Function("CDATE", new CalculatedExpressionValueNode(CalculatedExpressionCoercion.ParseInvariantDate(value)))));
+                    result.Add(new Token(TokenKind.Value, expression[start..index], Function("CDATE", new CalculatedExpressionValueNode(date))));
                 }
                 else if (current == '{')
                 {
