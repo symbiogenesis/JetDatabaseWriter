@@ -162,7 +162,9 @@ public sealed class ReplacementCleanupConformanceTests
             bool recorded = File.Exists(receipt);
             int freshBootstrap = 0;
             bool interrupted = false;
-            Assert.Throws<IOException>(() => EncryptionReplacementIntent.Recover(directory.Path, phase =>
+            Assert.Throws<IOException>(() => EncryptionReplacementIntent.Recover(
+            directory.Path,
+            phase =>
             {
                 if (phase == "recovery-lock-created")
                 {
@@ -179,7 +181,8 @@ public sealed class ReplacementCleanupConformanceTests
                     });
                     throw new IOException("Interrupt another recovery owner at " + cut);
                 }
-            }, Ct));
+            },
+            Ct));
 
             Assert.True(interrupted);
             Assert.Equal(recorded ? 0 : 1, freshBootstrap);
@@ -206,7 +209,7 @@ public sealed class ReplacementCleanupConformanceTests
         Assert.False(File.Exists(intent));
         Assert.False(File.Exists(native));
         Assert.False(File.Exists(receipt));
-        using RecoverableWriterLock successorOwner = RecoverableWriterLock.Acquire(directory.Path, "successor", "after-recovery");
+        using var successorOwner = RecoverableWriterLock.Acquire(directory.Path, "successor", "after-recovery");
         Assert.True(File.Exists(native));
         Assert.True(File.Exists(receipt));
     }

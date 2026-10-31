@@ -90,8 +90,10 @@ public sealed class CompactRowRelocationMapTests
         uint destination = 0x40000;
         for (int index = 0; index < count; index++)
         {
+#pragma warning disable CA5394 // Seeded gaps make this ledger regression reproducible.
             source += checked((uint)random.Next(1, 250));
             destination += checked((uint)random.Next(1, 97));
+#pragma warning restore CA5394
             rows[index] = (source, destination);
             expected.Add(source, destination);
         }
@@ -101,7 +103,8 @@ public sealed class CompactRowRelocationMapTests
         byte[] key = [0xA5, 0x5A];
         for (int index = 0; index < count; index++)
         {
-            uint target = rows[index * 37 % count].Source;
+            int permutedIndex = index * 37;
+            uint target = rows[permutedIndex % count].Source;
             IndexEntry actual = await map.RelocateAsync(new(key, target >> 8, checked((byte)(target & 255))), Ct);
             Assert.Same(key, actual.Key);
             Assert.Equal(expected[target], checked(((uint)actual.DataPage << 8) | actual.DataRow));
