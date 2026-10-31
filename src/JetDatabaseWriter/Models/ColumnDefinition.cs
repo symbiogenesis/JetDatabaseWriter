@@ -503,11 +503,11 @@ public sealed record ColumnDefinition
     /// <para>
     /// The writer can create ACCDB calculated columns and recomputes their
     /// cached results on insert and update, ignoring supplied calculated values.
-    /// <see cref="CalculationExpression"/> must be in the supported row-local
-    /// subset. Expression syntax, coercion and
-    /// function admissibility have incomplete native coverage; successful library
-    /// evaluation or round-trip does not establish Microsoft Access acceptance.
-    /// See <see href="docs/design/calculated-columns-format-notes.md" />.
+    /// <see cref="CalculationExpression"/> uses Access's row-local table-calculation
+    /// language, whose function and operator admissibility differs from defaults
+    /// and validation rules. Expression bounds, result types, cached errors and
+    /// native compatibility evidence are described in
+    /// <see href="docs/design/calculated-columns-format-notes.md" />.
     /// </para>
     /// </remarks>
     public bool IsCalculated { get; init; }
