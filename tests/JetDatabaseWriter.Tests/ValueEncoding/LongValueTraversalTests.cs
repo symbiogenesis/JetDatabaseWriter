@@ -392,7 +392,7 @@ public sealed class LongValueTraversalTests
             else
             {
                 int capacity = before.Length == 0 ? 16 : before.Length * 2;
-                Assert.Equal(0x8000000000000000UL | checked((ulong)capacity), decision);
+                Assert.Equal(0x8000000000000000UL | checked((uint)capacity), decision);
                 Assert.Equal(before, entries ?? []);
                 uint[] next = new uint[capacity];
                 count = LongValueKernel.CompleteVisitedGrowth(entries, next, count, pointer);
@@ -410,6 +410,7 @@ public sealed class LongValueTraversalTests
             {
                 Assert.NotNull(entries);
                 Assert.True(LongValueKernel.ContainsVisited(entries, member));
+                Assert.False(adapter.Add(member));
             }
 
             if (entries is not null)

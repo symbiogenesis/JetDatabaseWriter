@@ -185,9 +185,9 @@ public sealed class IndexEntryOrderingTests
         byte[][] alphabet = [[], [0x7F], [0x7F, 0], [0xFF]];
         for (int sample = 0; sample < 1024; sample++)
         {
-            var ranks = new int[5];
+            int[] ranks = new int[5];
             var entries = new IndexEntry[5];
-            var originalKeys = new byte[5][];
+            byte[][] originalKeys = new byte[5][];
             for (int index = 0; index < entries.Length; index++)
             {
                 ranks[index] = (sample >> (index * 2)) & 3;
