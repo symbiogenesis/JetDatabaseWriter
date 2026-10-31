@@ -1590,9 +1590,10 @@ module UndoJournal {
       var tailPages: seq<PageCapture>;
       var tailStates: seq<BufferedState>;
       var tailActions: seq<BufferedAction>;
-      NextPageIsAligned(start, pageSize);
       next, tailPages, tailStates, tailActions :=
-        CaptureAlignedPageRangeSchedule(original, captured, pageSize, start + pageSize, limit);
+        CaptureAlignedPageRangeSchedule(original, captured, pageSize, start + pageSize, limit) by {
+          NextPageIsAligned(start, pageSize);
+        }
       ComposeCapturePaths(original, b, captured, next, headStates, headActions, tailStates, tailActions);
       states, actions := headStates[..|headStates|-1] + tailStates, headActions + tailActions;
       pages := headPages + tailPages;
