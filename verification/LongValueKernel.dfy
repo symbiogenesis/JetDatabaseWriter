@@ -393,6 +393,96 @@ module LongValueKernel {
     assert VisitedMembers(destination[..]) == VisitedMembers(source[..]);
   }
 
+  // The empty array represents unallocated storage. The representation invariant
+  // is ghost: production never rescans a table to establish its occupied count.
+  ghost predicate TrackedVisited(table: seq<U32>, count: U32) {
+    if |table| == 0 then count == 0
+    else (16 <= |table| <= 2147483646 && |table| % 2 == 0 &&
+      VisitedTable(table) && DistinctVisited(table) &&
+      OccupiedCount(table) == count as int && count as int <= |table| / 2 &&
+      |table| <= 16 + 4 * (count as int))
+  }
+
+  // Zero means unchanged, one inserted, two requests allocation, and three
+  // refuses exhausted capacity. Only the below-half insertion mutates here.
+  method PrepareVisitedAdd(entries: array<U32>, count: U32, pointer: U32)
+      returns (result: Byte, nextCount: U32, capacity: U32)
+    requires TrackedVisited(entries[..], count)
+    modifies entries
+    ensures result <= 3
+    ensures TrackedVisited(entries[..], nextCount)
+    ensures result != 1 ==> entries[..] == old(entries[..]) && nextCount == count
+    ensures result == 1 ==> nextCount as int == count as int + 1
+    ensures result == 0 <==> pointer == 0 || pointer in old(entries[..])
+    ensures result == 1 ==> pointer != 0 && pointer !in old(entries[..])
+    ensures forall value: U32 :: value != 0 ==>
+      (value in entries[..] <==> value in old(entries[..]) || (result == 1 && value == pointer))
+    ensures result >= 2 ==> (pointer != 0 && pointer !in old(entries[..]) &&
+      count as int == entries.Length / 2)
+    ensures result == 2 ==> (capacity == NextVisitedCapacity(entries.Length as U32) &&
+      entries.Length < capacity as int <= 2147483646)
+    ensures result != 2 ==> capacity == 0
+    ensures result == 3 ==> entries.Length >= 1073741824
+  {
+    result, nextCount, capacity := 0, count, 0;
+    if pointer == 0 { return; }
+    var length := entries.Length as U32;
+    if length == 0 || count >= length / 2 {
+      if length != 0 {
+        var present := ContainsVisited(entries, pointer);
+        if present { return; }
+      }
+      capacity := NextVisitedCapacity(length);
+      VisitedAllocationAndProbeBounds(pointer, length, 0);
+      if capacity == 0 { result := 3; }
+      else { result := 2; }
+      return;
+    }
+    var added := AddVisited(entries, pointer);
+    if added == 0 {
+      AllOccupiedCount(entries[..]);
+      assert false;
+    }
+    if added == 2 {
+      nextCount := count + 1;
+      result := 1;
+    }
+  }
+
+  // Allocation is the only intervening effect: distinct, zero-filled storage
+  // of exactly the requested size. Until it succeeds the source is unchanged.
+  method CompleteVisitedGrowth(source: array<U32>, destination: array<U32>,
+      count: U32, pointer: U32) returns (nextCount: U32)
+    requires TrackedVisited(source[..], count)
+    requires count as int == source.Length / 2
+    requires pointer != 0 && pointer !in source[..]
+    requires source != destination
+    requires destination.Length == NextVisitedCapacity(source.Length as U32) as int
+    requires source.Length < destination.Length <= 2147483646
+    requires forall i: nat :: i < destination.Length ==> destination[i] == 0
+    modifies destination
+    ensures TrackedVisited(destination[..], nextCount)
+    ensures nextCount as int == count as int + 1
+    ensures forall value: U32 :: value != 0 ==>
+      (value in destination[..] <==> value in source[..] || value == pointer)
+  {
+    var length := source.Length as U32;
+    if length > 0 {
+      DistinctOccupiedCount(source[..]);
+      RehashVisited(source, destination);
+    } else {
+      ZeroOccupiedCount(destination[..]);
+    }
+    assert OccupiedCount(destination[..]) == count as int;
+    var added := AddVisited(destination, pointer);
+    if added == 0 {
+      AllOccupiedCount(destination[..]);
+      assert false;
+    }
+    assert added == 2;
+    nextCount := count + 1;
+  }
+
   lemma ChainPayloadMakesBoundedProgress(total: U32, copied: U32, pageLength: U32,
       start: U32, size: U32, prefix: U32, single: bool)
     ensures ChainPayloadCount(total,copied,pageLength,start,size,prefix,single) > 0 ==>

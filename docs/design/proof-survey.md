@@ -49,7 +49,7 @@ The current applicability decisions, in order of practical relevance, are:
 | Opportunity | Expected benefit and next evidence |
 |---|---|
 | Reuse ordered runs before general stable sorting | Existing splice measurements establish a named allocation benefit. I12 still owns public timing acceptance; a full sorting implementation needs a remaining measured bottleneck. |
-| Compose exact visited-table operations with their caller | Integrity and explicit resource bounds under V8/S1. Include adversarial probe work, growth overlap and cancellation; exact membership alone is insufficient. |
+| Compose visited-set orchestration with the containing parser | Generated count/growth decisions retain exact membership and the single-scan path under V8/S1. Compose allocation effects, adversarial probe work, growth overlap and cancellation; exact membership alone is insufficient. |
 | Fixed-contract proof repair and dependency review | Less proof-maintenance work under V6/V12, while preserving supported behavior and independently reviewed specifications. A benchmark solve rate is not repository acceptance. |
 | Compact metadata and cache accounting | Possible allocation reductions under I7/I17/S1. Compare existing disk ledgers, ranges and bitmaps first; account for in-flight and leased storage as well as retained entries. |
 | Proactive B-tree splitting | A later I2/V9 experiment after native byte-capacity and ownership invariants, incremental edits and workload evidence exist. |
@@ -173,9 +173,15 @@ the wrapper uses that scan directly; at the growth threshold it checks for a
 duplicate before allocating. Rehash constructs a valid destination from any
 source array in distinct, larger, initially zero-filled storage, including
 duplicate source identities. Its output has unique nonzero entries and an
-occupied count equal to the number of distinct nonzero source identities. The
-wrapper maintains occupied-count bookkeeping and the half-load growth policy;
-those caller obligations remain manually reviewed rather than proved.
+occupied count equal to the number of distinct nonzero source identities.
+Generated `PrepareVisitedAdd` and `CompleteVisitedGrowth` compose those array
+operations with occupied-count bookkeeping and the half-load growth policy.
+The ghost `TrackedVisited` representation connects empty initial storage,
+distinct exact membership, occupied count, half occupancy, the native capacity
+ceiling and `capacity <= 16 + 4*count`. Its set/count expressions execute only
+during verification. The C# adapter supplies the requested distinct zero-filled
+CLR array and retains/publishes the matching array/count pair; actual allocation,
+adapter sequencing and containing-parser composition remain explicit obligations.
 
 Resource composition must also count work inside an insertion. Growth still
 requires lookup, rehash and insertion work using deterministic hashing.
@@ -190,6 +196,10 @@ exact cycle refusal when evaluating any alternative representation.
 The single-scan change removes the separate absence lookup on ordinary
 insertions. It does not change the geometric array allocation policy or
 establish a public read speedup; hosted comparisons own timing acceptance.
+The generated orchestration retains that scan/allocation schedule and adds no
+executing set, recount or tuple allocation. The recorded integration and
+benchmark results in this survey predate this increment and supply no new timing or
+acceptance verdict for it.
 
 V8 owns the remaining composition into the full named parser. Validate the
 exact source using the integrity-pinned verifier, audit, negative controls and
@@ -440,7 +450,7 @@ scope and native/platform evidence limits described above.
 
 | Existing plan owner | Research-informed work and acceptance |
 |---|---|
-| V8/S1 | Exact visited-set operations composed with count/growth, acquisition and the containing parser's complete resource/ownership bounds, including collision probes, rehash overlap and cancellation latency. Production executes generated verified behavior or a checked refinement. |
+| V8/S1 | Compose generated visited-set count/growth orchestration with actual allocation/adapter effects, acquisition and the containing parser's complete resource/ownership bounds, including collision probes, rehash overlap and cancellation latency. Production executes generated verified behavior or a checked refinement. |
 | V12 | Review the pinned verifier's dependency diagnostics against independent examples. Consider optional ProofPulse only for a concrete attribution gap and demonstrate exact-pin compatibility. Preserve ordinary verification and negative controls; coverage alone cannot promote a guarantee. |
 | I2/V9/I13 | Stable splice behavior and verified native incremental edits before proactive splitting. Retain fallback contracts, ordering, ownership, byte-capacity and DAO checks. |
 | I7/S1/I17 | Evidence-led metadata representations with aggregate accounting, including pinned/evicted images, in-flight loads, live leases and simultaneous traversals; compare immutable disk-ledger and simple bitmap/range baselines before dynamic compression. |

@@ -111,6 +111,87 @@ public sealed class LongValueTraversalTests
     }
 
     [Fact]
+    public void VisitedSet_ZeroIdentityDoesNotAllocateDefaultStorage()
+    {
+        LongValueVisitedSet entries = default;
+        Assert.False(entries.Add(0));
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        bool inserted = false;
+        for (int attempt = 0; attempt < 64; attempt++)
+        {
+            inserted |= entries.Add(0);
+        }
+
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.False(inserted);
+        Assert.Equal(0, allocated);
+        Assert.True(entries.Add(1));
+        Assert.False(entries.Add(1));
+    }
+
+    [Fact]
+    public void VisitedSet_InsertionsAndDuplicatesBelowHalfLoadDoNotAllocate()
+    {
+        LongValueVisitedSet entries = default;
+        Assert.True(entries.Add(1));
+        Assert.False(entries.Add(1));
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        bool inserted = true;
+        bool duplicateInserted = false;
+        for (uint pointer = 2; pointer <= 7; pointer++)
+        {
+            inserted &= entries.Add(pointer);
+            duplicateInserted |= entries.Add(pointer);
+        }
+
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(inserted);
+        Assert.False(duplicateInserted);
+        Assert.Equal(0, allocated);
+    }
+
+    [Theory]
+    [InlineData(8u)]
+    [InlineData(16u)]
+    [InlineData(32u)]
+    [InlineData(64u)]
+    [InlineData(256u)]
+    public void VisitedSet_GrowsOnceAfterDistinctInsertionAtHalfLoad(uint threshold)
+    {
+        LongValueVisitedSet entries = default;
+        for (uint pointer = 1; pointer <= threshold; pointer++)
+        {
+            Assert.True(entries.Add(pointer));
+        }
+
+        Assert.False(entries.Add(1));
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        bool duplicateInserted = false;
+        for (uint pointer = 1; pointer <= threshold; pointer++)
+        {
+            duplicateInserted |= entries.Add(pointer);
+        }
+
+        long duplicateAllocation = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.False(duplicateInserted);
+        Assert.Equal(0, duplicateAllocation);
+        before = GC.GetAllocatedBytesForCurrentThread();
+        bool inserted = entries.Add(threshold + 1);
+        long growthAllocation = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(inserted);
+        Assert.InRange(growthAllocation, threshold * 16L, (threshold * 16L) + 64);
+        before = GC.GetAllocatedBytesForCurrentThread();
+        inserted = entries.Add(threshold + 2);
+        long nextAllocation = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(inserted);
+        Assert.Equal(0, nextAllocation);
+        for (uint pointer = 1; pointer <= threshold + 2; pointer++)
+        {
+            Assert.False(entries.Add(pointer));
+        }
+    }
+
+    [Fact]
     public void VisitedSet_DuplicatesAtHalfLoadDoNotAllocate()
     {
         LongValueVisitedSet entries = default;
@@ -135,6 +216,68 @@ public sealed class LongValueTraversalTests
         {
             Assert.False(entries.Add(pointer));
         }
+    }
+
+    [Fact]
+    public void GeneratedVisitedController_GrowthRequestRetainsSourceUntilCompletion()
+    {
+        uint[] source = new uint[16];
+        for (uint pointer = 1; pointer <= 8; pointer++)
+        {
+            Assert.Equal((byte)2, LongValueKernel.AddVisited(source, pointer));
+        }
+
+        uint[] before = (uint[])source.Clone();
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            LongValueKernel.PrepareVisitedAdd(source, 8, 9, out byte result, out uint count, out uint capacity);
+            Assert.Equal((byte)2, result);
+            Assert.Equal(8u, count);
+            Assert.Equal(32u, capacity);
+            Assert.Equal(before, source);
+        }
+
+        LongValueKernel.PrepareVisitedAdd(source, 8, 1, out byte duplicate, out uint unchangedCount, out uint noGrowth);
+        Assert.Equal((byte)0, duplicate);
+        Assert.Equal(8u, unchangedCount);
+        Assert.Equal(0u, noGrowth);
+        Assert.Equal(before, source);
+
+        uint[] destination = new uint[32];
+        uint nextCount = LongValueKernel.CompleteVisitedGrowth(source, destination, 8, 9);
+        Assert.Equal(9u, nextCount);
+        Assert.Equal(before, source);
+        for (uint pointer = 1; pointer <= 9; pointer++)
+        {
+            Assert.True(LongValueKernel.ContainsVisited(destination, pointer));
+        }
+
+        Assert.False(LongValueKernel.ContainsVisited(destination, 10));
+    }
+
+    [Fact]
+    public void GeneratedVisitedController_InitialAllocationHasExactSoleMembership()
+    {
+        uint[] source = [];
+        LongValueKernel.PrepareVisitedAdd(source, 0, 0, out byte unchanged, out uint count, out uint capacity);
+        Assert.Equal((byte)0, unchanged);
+        Assert.Equal(0u, count);
+        Assert.Equal(0u, capacity);
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            LongValueKernel.PrepareVisitedAdd(source, 0, uint.MaxValue, out byte result, out count, out capacity);
+            Assert.Equal((byte)2, result);
+            Assert.Equal(0u, count);
+            Assert.Equal(16u, capacity);
+            Assert.Empty(source);
+        }
+
+        uint[] destination = new uint[16];
+        Assert.Equal(1u, LongValueKernel.CompleteVisitedGrowth(source, destination, 0, uint.MaxValue));
+        Assert.Single(Array.FindAll(destination, static value => value != 0));
+        Assert.True(LongValueKernel.ContainsVisited(destination, uint.MaxValue));
+        Assert.False(LongValueKernel.ContainsVisited(destination, 1));
+        Assert.Empty(source);
     }
 
     [Fact]

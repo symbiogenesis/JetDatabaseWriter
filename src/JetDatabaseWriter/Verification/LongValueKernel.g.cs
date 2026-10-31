@@ -191,6 +191,65 @@ namespace JetDatabaseWriter.Verification {
         _0_index = (_0_index) + (1U);
       }
     }
+    public static void PrepareVisitedAdd(uint[] entries, uint count, uint pointer, out byte result, out uint nextCount, out uint capacity)
+    {
+      result = 0;
+      nextCount = 0;
+      capacity = 0;
+      byte _rhs0 = (byte)(0);
+      uint _rhs1 = count;
+      uint _rhs2 = 0U;
+      result = _rhs0;
+      nextCount = _rhs1;
+      capacity = _rhs2;
+      if ((pointer) == (0U)) {
+        return ;
+      }
+      uint _0_length;
+      _0_length = (uint)(entries).LongLength;
+      if (((_0_length) == (0U)) || ((count) >= ((_0_length) / (2U)))) {
+        if ((_0_length) != (0U)) {
+          bool _1_present;
+          bool _out0;
+          _out0 = JetDatabaseWriter.Verification.LongValueKernel.ContainsVisited(entries, pointer);
+          _1_present = _out0;
+          if (_1_present) {
+            return ;
+          }
+        }
+        capacity = JetDatabaseWriter.Verification.LongValueKernel.NextVisitedCapacity(_0_length);
+        if ((capacity) == (0U)) {
+          result = (byte)(3);
+        } else {
+          result = (byte)(2);
+        }
+        return ;
+      }
+      byte _2_added;
+      byte _out1;
+      _out1 = JetDatabaseWriter.Verification.LongValueKernel.AddVisited(entries, pointer);
+      _2_added = _out1;
+      if ((_2_added) == ((byte)(2))) {
+        nextCount = (count) + (1U);
+        result = (byte)(1);
+      }
+    }
+    public static uint CompleteVisitedGrowth(uint[] source, uint[] destination, uint count, uint pointer)
+    {
+      uint nextCount = 0;
+      uint _0_length;
+      _0_length = (uint)(source).LongLength;
+      if ((_0_length) > (0U)) {
+        JetDatabaseWriter.Verification.LongValueKernel.RehashVisited(source, destination);
+      } else {
+      }
+      byte _1_added;
+      byte _out0;
+      _out0 = JetDatabaseWriter.Verification.LongValueKernel.AddVisited(destination, pointer);
+      _1_added = _out0;
+      nextCount = (count) + (1U);
+      return nextCount;
+    }
     public static void DecodeFields(byte b0, byte b1, byte b2, byte b3, byte b4, byte b5, byte b6, byte b7, byte b8, byte b9, byte b10, byte b11, out uint length, out byte mode, out uint firstDp, out uint token)
     {
       length = 0;

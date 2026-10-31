@@ -7,55 +7,29 @@ using JetDatabaseWriter.Verification;
 internal struct LongValueVisitedSet
 {
     private uint[]? entries;
-    private int count;
+    private uint count;
 
     /// <summary>Adds a nonzero identity once, refusing impossible array growth.</summary>
     /// <param name="pointer">The nonzero external-row identity.</param>
     /// <returns>Whether the identity was absent.</returns>
     /// <exception cref="JetLimitationException">The bounded tracking capacity is exhausted.</exception>
-    /// <exception cref="JetOperationException">The table violates its insertion capacity invariant.</exception>
     internal bool Add(uint pointer)
     {
-        if (pointer == 0)
+        uint[] current = this.entries ?? [];
+        LongValueKernel.PrepareVisitedAdd(current, this.count, pointer, out byte result, out uint nextCount, out uint capacity);
+        if (result == 2)
         {
-            return false;
-        }
-
-        if (this.entries is null || this.count >= this.entries.Length / 2)
-        {
-            // A duplicate at the growth boundary must not allocate a new table.
-            if (this.entries is not null && LongValueKernel.ContainsVisited(this.entries, pointer))
-            {
-                return false;
-            }
-
-            uint capacity = LongValueKernel.NextVisitedCapacity(checked((uint)(this.entries?.Length ?? 0)));
-            if (capacity == 0)
-            {
-                throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The long-value row-identity tracking capacity is exhausted.");
-            }
-
+            // Allocation supplies distinct, zero-filled storage to verified control.
             uint[] next = new uint[checked((int)capacity)];
-            if (this.entries is not null)
-            {
-                LongValueKernel.RehashVisited(this.entries, next);
-            }
-
+            nextCount = LongValueKernel.CompleteVisitedGrowth(current, next, this.count, pointer);
             this.entries = next;
         }
-
-        byte added = LongValueKernel.AddVisited(this.entries, pointer);
-        if (added == 1)
+        else if (result == 3)
         {
-            return false;
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The long-value row-identity tracking capacity is exhausted.");
         }
 
-        if (added != 2)
-        {
-            throw new JetOperationException(JetErrorCode.InvalidOperationState, "The long-value row-identity table is unexpectedly full.");
-        }
-
-        this.count++;
-        return true;
+        this.count = nextCount;
+        return result != 0;
     }
 }
