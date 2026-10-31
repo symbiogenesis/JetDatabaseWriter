@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    "verification/Pages/Paging/UndoJournal.dfy",
+    "verification/Transactions/GenerationOwnership.dfy",
+    "verification/Encryption/ReplacementProtocol.dfy",
+    "verification/Pages/Paging/RecoveryKernel.dfy",
+    "verification/LongValues/LongValueKernel.dfy",
+    "verification/LongValues/LongValueTraversal.dfy",
+    "verification/Transactions/WriterLifecycle.dfy",
+    "verification/Transactions/MultiProcessOwnership.dfy",
+    "verification/Pages/Paging/PageFrameOwnership.dfy"
+  ],
+  "dependencies": {
+    "verification/Encryption/ReplacementProtocol.dfy": ["verification/Transactions/GenerationOwnership.dfy"],
+    "verification/Pages/Paging/RecoveryKernel.dfy": ["verification/Pages/Paging/UndoJournal.dfy", "verification/Transactions/GenerationOwnership.dfy", "verification/Encryption/ReplacementProtocol.dfy"],
+    "verification/LongValues/LongValueTraversal.dfy": ["verification/LongValues/LongValueKernel.dfy"],
+    "verification/Transactions/WriterLifecycle.dfy": ["verification/Transactions/GenerationOwnership.dfy"]
+  }
+}

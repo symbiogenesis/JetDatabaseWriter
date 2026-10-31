@@ -27,8 +27,8 @@ function Get-ProofReviewFixedInputs([string] $Boundary) {
         }
         'proof-trust' {
             @(
-                'verification/dafny-toolchain.json'
-                'verification/proofs.json'
+                'verification/config/dafny-toolchain.json'
+                'verification/config/proofs.json'
                 'verification/README.md'
                 'global.json'
                 '.github/dotnet11/global.json'
@@ -179,4 +179,4 @@ function Invoke-ProofReview([string] $RepositoryRoot, [string] $ReviewPath, [str
 }
 
 $repositoryRoot = Split-Path $PSScriptRoot -Parent
-Invoke-ProofReview $repositoryRoot (Join-Path $repositoryRoot 'verification/proof-review.json') $OutputDirectory
+Invoke-ProofReview $repositoryRoot (Join-Path $repositoryRoot 'verification/config/proof-review.json') $OutputDirectory

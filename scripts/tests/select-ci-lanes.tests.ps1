@@ -19,7 +19,7 @@ function Assert-Lanes([string] $Name, [string[]] $Paths, [bool] $Dotnet, [bool] 
 }
 Assert-Lanes 'unchanged validated tree' @() $false $false
 Assert-Lanes 'readme only' @('README.md') $false $false
-Assert-Lanes 'proof-only edit' @('verification/UndoJournal.dfy', 'verification/proof-review.json', 'docs/design/formal-verification.md') $false $true
+Assert-Lanes 'proof-only edit' @('verification/Pages/Paging/UndoJournal.dfy', 'verification/config/proof-review.json', 'docs/design/formal-verification.md') $false $true
 Assert-Lanes 'proof outside manifest directory cannot hide under docs' @('docs/Unlisted.dfy') $false $true
 Assert-Lanes 'hidden proof with alternate extension case' @('docs/.hidden.DFY') $false $true
 Assert-Lanes 'proof tooling' @('scripts/verify-proofs.ps1', 'scripts/tests/verify-proofs.tests.ps1') $false $true

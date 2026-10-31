@@ -28,7 +28,7 @@ function Assert-Scenario([string] $Name, [scriptblock] $Action, [string] $Expect
 foreach ($path in @(Get-ProofReviewFixedInputs 'implementation') + @(Get-ProofReviewFixedInputs 'proof-trust')) {
     Write-Fixture $path "reviewed fixture $path`n" | Out-Null
 }
-Write-Fixture 'verification/Example.dfy' 'lemma Example() ensures true {}' | Out-Null
+Write-Fixture 'verification/Pages/Paging/Example.dfy' 'lemma Example() ensures true {}' | Out-Null
 Write-Fixture 'src/JetDatabaseWriter/Verification/RecoveryKernel.g.cs' 'class RecoveryKernel {}' | Out-Null
 Write-Fixture 'src/JetDatabaseWriter/Unmapped.cs' 'class Unmapped {}' | Out-Null
 Write-Fixture 'scripts/ci-matrix.ps1' 'function Get-CiAnalyzerMatrix {}' | Out-Null
@@ -49,7 +49,7 @@ function New-Receipt {
     return [ordered]@{ schemaVersion = 1; productionInventorySha256 = Get-ProofReviewInventoryHash $fixture; inventoryReview = 'All production source names were classified against the mapped boundary.'; reviews = @($reviews) }
 }
 $receipt = New-Receipt
-$reviewPath = Write-Fixture 'verification/proof-review.json' ($receipt | ConvertTo-Json -Depth 8)
+$reviewPath = Write-Fixture 'verification/config/proof-review.json' ($receipt | ConvertTo-Json -Depth 8)
 function Save-Receipt($Value) { [IO.File]::WriteAllText($reviewPath, ($Value | ConvertTo-Json -Depth 8)) }
 Assert-Scenario 'complete reviewed source inventory' { Assert-ProofReview $fixture $reviewPath }
 Assert-Scenario 'mapped source edit requires review' {
@@ -59,7 +59,7 @@ Assert-Scenario 'mapped source edit requires review' {
     finally { [IO.File]::WriteAllText($path, $original) }
 } 'Stale proof review'
 Assert-Scenario 'pin update requires trust review' {
-    $path = Join-Path $fixture 'verification/dafny-toolchain.json'
+    $path = Join-Path $fixture 'verification/config/dafny-toolchain.json'
     $original = [IO.File]::ReadAllText($path)
     try { [IO.File]::WriteAllText($path, 'changed verifier pin'); Assert-ProofReview $fixture $reviewPath }
     finally { [IO.File]::WriteAllText($path, $original) }
@@ -71,7 +71,7 @@ Assert-Scenario 'CI matrix update requires trust review' {
     finally { [IO.File]::WriteAllText($path, $original) }
 } 'Stale proof review'
 Assert-Scenario 'proof edit requires review' {
-    $path = Join-Path $fixture 'verification/Example.dfy'
+    $path = Join-Path $fixture 'verification/Pages/Paging/Example.dfy'
     try { [IO.File]::WriteAllText($path, 'lemma Example() ensures false {}'); Assert-ProofReview $fixture $reviewPath }
     finally { [IO.File]::WriteAllText($path, 'lemma Example() ensures true {}') }
 } 'Stale proof review'

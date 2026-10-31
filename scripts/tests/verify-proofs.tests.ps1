@@ -32,7 +32,7 @@ function Write-Fixture([string] $Relative, [string] $Content) {
     return $path
 }
 $source = Write-Fixture 'verification/Good.dfy' 'lemma Good() ensures 1 == 1 {}'
-$manifest = Write-Fixture 'verification/proofs.json' '{"schemaVersion":1,"files":["verification/Good.dfy"]}'
+$manifest = Write-Fixture 'verification/config/proofs.json' '{"schemaVersion":1,"files":["verification/Good.dfy"]}'
 Assert-Scenario 'complete exact inventory' { Get-ProofFiles $fixture $manifest }
 Assert-Scenario 'omitted proof' {
     $extra = Write-Fixture 'Hidden.dfy' 'lemma Hidden() {}'
@@ -42,19 +42,19 @@ Assert-Scenario 'missing proof' { Get-ProofFiles $fixture (Write-Fixture 'missin
 Assert-Scenario 'duplicate proof' { Get-ProofFiles $fixture (Write-Fixture 'duplicate.json' '{"schemaVersion":1,"files":["verification/Good.dfy","verification/Good.dfy"]}') } 'Duplicate proof'
 Assert-Scenario 'relative traversal' { Get-ProofFiles $fixture (Write-Fixture 'escape.json' '{"schemaVersion":1,"files":["verification/../Good.dfy"]}') } 'Invalid proof path'
 Assert-Scenario 'empty proof inventory' { Get-ProofFiles $fixture (Write-Fixture 'empty.json' '{"schemaVersion":1,"files":[]}') } 'nonempty'
-$dependent = Write-Fixture 'verification/RecoveryKernel.dfy' 'module RecoveryKernel {}'
-$dependencyManifest = Write-Fixture 'dependencies.json' '{"schemaVersion":1,"files":["verification/Good.dfy","verification/RecoveryKernel.dfy"],"dependencies":{"verification/RecoveryKernel.dfy":["verification/Good.dfy"]}}'
+$dependent = Write-Fixture 'verification/Pages/Paging/RecoveryKernel.dfy' 'module RecoveryKernel {}'
+$dependencyManifest = Write-Fixture 'dependencies.json' '{"schemaVersion":1,"files":["verification/Good.dfy","verification/Pages/Paging/RecoveryKernel.dfy"],"dependencies":{"verification/Pages/Paging/RecoveryKernel.dfy":["verification/Good.dfy"]}}'
 Assert-Scenario 'independently verified earlier library' {
     $dependenciesByFile = Get-ProofDependencies $fixture $dependencyManifest @($source, $dependent)
     if ($dependenciesByFile[$dependent].Count -ne 1 -or $dependenciesByFile[$dependent][0] -ne $source) { throw 'Library mapping changed.' }
 }
 foreach ($libraryCase in @(
     '{"dependencies":{"verification/Absent.dfy":["verification/Good.dfy"]}}',
-    '{"dependencies":{"verification/RecoveryKernel.dfy":["verification/Absent.dfy"]}}',
-    '{"dependencies":{"verification/Good.dfy":["verification/RecoveryKernel.dfy"]}}',
-    '{"dependencies":{"verification/RecoveryKernel.dfy":["verification/RecoveryKernel.dfy"]}}',
-    '{"dependencies":{"verification/RecoveryKernel.dfy":["verification/Good.dfy","verification/Good.dfy"]}}',
-    '{"dependencies":{"verification/RecoveryKernel.dfy":"verification/Good.dfy"}}'
+    '{"dependencies":{"verification/Pages/Paging/RecoveryKernel.dfy":["verification/Absent.dfy"]}}',
+    '{"dependencies":{"verification/Good.dfy":["verification/Pages/Paging/RecoveryKernel.dfy"]}}',
+    '{"dependencies":{"verification/Pages/Paging/RecoveryKernel.dfy":["verification/Pages/Paging/RecoveryKernel.dfy"]}}',
+    '{"dependencies":{"verification/Pages/Paging/RecoveryKernel.dfy":["verification/Good.dfy","verification/Good.dfy"]}}',
+    '{"dependencies":{"verification/Pages/Paging/RecoveryKernel.dfy":"verification/Good.dfy"}}'
 )) {
     Assert-Scenario "reject unverified or circular library $libraryCase" { Get-ProofDependencies $fixture (Write-Fixture 'bad-library.json' $libraryCase) @($source, $dependent) } 'Invalid proof dependency'
 }
@@ -109,13 +109,13 @@ Assert-Scenario 'exactly two reviewed controller declarations receive fixed inli
         -not $projected.Contains($inliningAttribute + $prepareDeclaration + "`n    {`n") -or
         -not $projected.Contains($inliningAttribute + $completeDeclaration + "`n    {`n")) { throw 'Only the exact two controller declarations may receive the fixed metadata.' }
     $withoutMetadata = $projected.Replace($inliningAttribute, '')
-    $priorPackaging = (ConvertFrom-NativeKernelTranslation 'RecoveryKernel' $translation).Replace('RecoveryKernel', 'LongValueKernel').Replace("`r`n", "`n").Replace('    public static bool Accept(byte value)', $controllerMethods + '    public static bool Accept(byte value)')
+    $priorPackaging = (ConvertFrom-NativeKernelTranslation 'RecoveryKernel' $translation).Replace('RecoveryKernel', 'LongValueKernel').Replace('Pages/Paging/', 'LongValues/').Replace("`r`n", "`n").Replace('    public static bool Accept(byte value)', $controllerMethods + '    public static bool Accept(byte value)')
     if ($withoutMetadata -cne $priorPackaging) { throw 'Controller metadata changed generated methods or prior packaging.' }
 }
 Assert-Scenario 'second native kernel preserves method bodies and self references' {
     $projected = ConvertFrom-NativeKernelTranslation 'LongValueKernel' ($longValueTranslation.Replace('return (value) == ((byte)(0));', 'return JetDatabaseWriter.Verification.LongValueKernel.__default.Accept(value);'))
     if (-not $projected.Contains('internal static class LongValueKernel') -or
-        -not $projected.Contains('verification/LongValueKernel.dfy') -or
+        -not $projected.Contains('verification/LongValues/LongValueKernel.dfy') -or
         -not $projected.Contains('return JetDatabaseWriter.Verification.LongValueKernel.Accept(value);')) { throw 'Second kernel packaging changed incorrectly.' }
 }
 Assert-Scenario 'only reviewed native kernel names admitted' { ConvertFrom-NativeKernelTranslation 'Other' $translation } 'Unsupported native kernel'
@@ -186,7 +186,7 @@ try {
                 $call.Arguments -contains '--library' -or $call.Arguments -contains '--no-verify') { throw 'Every proof must be a normal checked input.' }
         }
         if ($summaries.Count -ne 2 -or $summaries[0].file -cne 'verification/Good.dfy' -or
-            $summaries[1].file -cne 'verification/RecoveryKernel.dfy' -or
+            $summaries[1].file -cne 'verification/Pages/Paging/RecoveryKernel.dfy' -or
             $summaries[0].sha256 -cne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant() -or
             $summaries[1].sha256 -cne (Get-FileHash -LiteralPath $dependent -Algorithm SHA256).Hash.ToLowerInvariant() -or
             $summaries[0].verification -cne $summaries[1].verification -or
@@ -318,15 +318,16 @@ Assert-Scenario 'process result receipt retains exit and arguments' {
 $originalVerificationCore = ${function:Invoke-ProofVerificationCore}
 $originalNativeKernelSync = ${function:Sync-NativeKernel}
 $coverageRoot = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-coverage-tests-' + [guid]::NewGuid().ToString('N'))
-[void][IO.Directory]::CreateDirectory((Join-Path $coverageRoot 'verification'))
-$coverageFiles = foreach ($name in 'Good', 'RecoveryKernel', 'LongValueKernel') {
+[void][IO.Directory]::CreateDirectory((Join-Path $coverageRoot 'verification/config'))
+$coverageFiles = foreach ($name in 'Good', 'Pages/Paging/RecoveryKernel', 'LongValues/LongValueKernel') {
     $path = Join-Path $coverageRoot "verification/$name.dfy"
-    [IO.File]::WriteAllText($path, "module $name {}")
+    [void][IO.Directory]::CreateDirectory((Split-Path $path -Parent))
+    [IO.File]::WriteAllText($path, "module $(Split-Path $name -Leaf) {}")
     $path
 }
-[IO.File]::WriteAllText((Join-Path $coverageRoot 'verification/proofs.json'), '{"schemaVersion":1,"files":["verification/Good.dfy","verification/RecoveryKernel.dfy","verification/LongValueKernel.dfy"],"dependencies":{"verification/RecoveryKernel.dfy":["verification/Good.dfy"]}}')
-$coverageToolchain = [IO.File]::ReadAllText((Join-Path $repoRoot 'verification/dafny-toolchain.json')) | ConvertFrom-Json
-[IO.File]::WriteAllText((Join-Path $coverageRoot 'verification/dafny-toolchain.json'), ($coverageToolchain | ConvertTo-Json -Depth 5))
+[IO.File]::WriteAllText((Join-Path $coverageRoot 'verification/config/proofs.json'), '{"schemaVersion":1,"files":["verification/Good.dfy","verification/Pages/Paging/RecoveryKernel.dfy","verification/LongValues/LongValueKernel.dfy"],"dependencies":{"verification/Pages/Paging/RecoveryKernel.dfy":["verification/Good.dfy"]}}')
+$coverageToolchain = [IO.File]::ReadAllText((Join-Path $repoRoot 'verification/config/dafny-toolchain.json')) | ConvertFrom-Json
+[IO.File]::WriteAllText((Join-Path $coverageRoot 'verification/config/dafny-toolchain.json'), ($coverageToolchain | ConvertTo-Json -Depth 5))
 $coverageExecutable = Join-Path $coverageRoot 'mock-dafny'
 [IO.File]::WriteAllText($coverageExecutable, '')
 $coverageCalls = [Collections.Generic.List[object]]::new()
@@ -382,7 +383,7 @@ function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [strin
 }
 function Sync-NativeKernel([string] $KernelName, [string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [string[]] $Dependencies, [string[]] $Options, [int] $TimeoutSeconds, [bool] $Update) {
     $coverageCalls.Add([pscustomobject]@{ Executable = $DafnyPath; Arguments = $Options; Name = "$KernelName.translate"; Dependencies = $Dependencies })
-    return [ordered]@{ source = "verification/$KernelName.dfy"; sha256 = 'mock-native-source' }
+    return [ordered]@{ source = Get-NativeKernelSource $KernelName; sha256 = 'mock-native-source' }
 }
 try {
     Assert-Scenario 'coverage diagnostics remain disabled by default after every strict control' {
@@ -415,7 +416,7 @@ try {
                 $analysis.acceptanceEvidence -ne $false -or $analysis.dafny -cne $coverageToolchain.versionOutput -or
                 $analysis.solver -cne $coverageToolchain.solver.versionOutput -or $analysis.proofs.Count -ne 3 -or
                 $analysis.scope -cne 'complete-inventory' -or $analysis.requestedSources.Count -ne 0 -or
-                ($analysis.dependencyClosure -join ',') -cne 'verification/Good.dfy,verification/RecoveryKernel.dfy,verification/LongValueKernel.dfy' -or
+                ($analysis.dependencyClosure -join ',') -cne 'verification/Good.dfy,verification/Pages/Paging/RecoveryKernel.dfy,verification/LongValues/LongValueKernel.dfy' -or
                 $analysis.status -cne $(if ($case -eq 'warnings') { 'warnings' } else { 'complete' }) -or
                 $analysis.warnings.Count -ne $(if ($case -eq 'warnings') { 1 } else { 0 }) -or
                 -not [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw 'Coverage diagnostics changed trust, pins or status.' }
@@ -432,13 +433,13 @@ try {
         $baseFile = Join-Path $coverageRoot 'verification/Base.dfy'
         $files = @($baseFile) + $coverageFiles
         $dependencies = @{ $coverageFiles[1] = @($coverageFiles[0]); $coverageFiles[0] = @($baseFile) }
-        $selected = Get-ProofCoverageFiles $coverageRoot $files $dependencies @('verification/RecoveryKernel.dfy')
+        $selected = Get-ProofCoverageFiles $coverageRoot $files $dependencies @('verification/Pages/Paging/RecoveryKernel.dfy')
         if (($selected -join ',') -cne (($files | Select-Object -First 3) -join ',')) { throw 'Transitive coverage dependency closure or ordering changed.' }
     }
     foreach ($selection in @(
-        @{ name = 'independent'; requested = @('verification/LongValueKernel.dfy'); expected = @('verification/LongValueKernel.dfy') },
-        @{ name = 'dependent'; requested = @('verification/RecoveryKernel.dfy'); expected = @('verification/Good.dfy', 'verification/RecoveryKernel.dfy') },
-        @{ name = 'multiple'; requested = @('verification/LongValueKernel.dfy', 'verification/RecoveryKernel.dfy'); expected = @('verification/Good.dfy', 'verification/RecoveryKernel.dfy', 'verification/LongValueKernel.dfy') }
+        @{ name = 'independent'; requested = @('verification/LongValues/LongValueKernel.dfy'); expected = @('verification/LongValues/LongValueKernel.dfy') },
+        @{ name = 'dependent'; requested = @('verification/Pages/Paging/RecoveryKernel.dfy'); expected = @('verification/Good.dfy', 'verification/Pages/Paging/RecoveryKernel.dfy') },
+        @{ name = 'multiple'; requested = @('verification/LongValues/LongValueKernel.dfy', 'verification/Pages/Paging/RecoveryKernel.dfy'); expected = @('verification/Good.dfy', 'verification/Pages/Paging/RecoveryKernel.dfy', 'verification/LongValues/LongValueKernel.dfy') }
     )) {
         Assert-Scenario "selected $($selection.name) coverage leaves every strict source checked" {
             $coverageCase = 'clean'
@@ -468,7 +469,7 @@ try {
         @{ name = 'escaping'; requested = @('verification/../LongValueKernel.dfy') },
         @{ name = 'absolute'; requested = @($coverageFiles[2]) },
         @{ name = 'case-mismatched'; requested = @('verification/longvaluekernel.dfy') },
-        @{ name = 'duplicate'; requested = @('verification/LongValueKernel.dfy', 'verification/LongValueKernel.dfy') },
+        @{ name = 'duplicate'; requested = @('verification/LongValues/LongValueKernel.dfy', 'verification/LongValues/LongValueKernel.dfy') },
         @{ name = 'empty'; requested = [string[]]@() }
     )) {
         Assert-Scenario "invalid $($selection.name) coverage selection refuses before proof execution" {
@@ -484,7 +485,7 @@ try {
         $coverageCalls.Clear()
         $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-selection-without-mode-' + [guid]::NewGuid().ToString('N'))
         $caught = $null
-        try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $false @('verification/LongValueKernel.dfy') } catch { $caught = $_.Exception.Message }
+        try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $false @('verification/LongValues/LongValueKernel.dfy') } catch { $caught = $_.Exception.Message }
         if (-not $caught -or $caught -notmatch 'AnalyzeProofCoverage' -or $coverageCalls.Count -ne 0 -or
             [IO.Directory]::Exists($output)) { throw 'Source selection silently enabled diagnostics or was ignored.' }
     }
@@ -492,7 +493,7 @@ try {
         $coverageCase = 'clean'
         $coverageCalls.Clear()
         $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-refactoring-' + [guid]::NewGuid().ToString('N'))
-        Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true @('verification/RecoveryKernel.dfy') @{ suggestRefactoring = $true; position = '1-3' }
+        Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true @('verification/Pages/Paging/RecoveryKernel.dfy') @{ suggestRefactoring = $true; position = '1-3' }
         $analysis = [IO.File]::ReadAllText((Join-Path $output 'proof-coverage.json')) | ConvertFrom-Json
         $call = $coverageCalls[-1]
         if (-not $analysis.suggestProofRefactoring -or $analysis.position -cne '1-3' -or
@@ -506,7 +507,7 @@ try {
         $coverageCase = 'clean'
         $coverageCalls.Clear()
         $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-complexity-' + [guid]::NewGuid().ToString('N'))
-        Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $false $null @{ measureComplexity = $true; complexitySources = @('verification/RecoveryKernel.dfy'); mutations = 2; position = '1-' }
+        Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $false $null @{ measureComplexity = $true; complexitySources = @('verification/Pages/Paging/RecoveryKernel.dfy'); mutations = 2; position = '1-' }
         $analysis = [IO.File]::ReadAllText((Join-Path $output 'proof-complexity.json')) | ConvertFrom-Json
         $call = $coverageCalls[-1]
         if ($call.Name -cne 'proof-complexity' -or $call.Arguments[0] -cne 'measure-complexity' -or
@@ -545,7 +546,7 @@ try {
             $originalSource = [IO.File]::ReadAllText($coverageFiles[0])
             $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-complexity-failure-' + [guid]::NewGuid().ToString('N'))
             $caught = $null
-            try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $false $null @{ measureComplexity = $true; complexitySources = @('verification/LongValueKernel.dfy'); mutations = 2 } } catch { $caught = $_.Exception.Message }
+            try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $false $null @{ measureComplexity = $true; complexitySources = @('verification/LongValues/LongValueKernel.dfy'); mutations = 2 } } catch { $caught = $_.Exception.Message }
             finally { [IO.File]::WriteAllText($coverageFiles[0], $originalSource) }
             $analysis = [IO.File]::ReadAllText((Join-Path $output 'proof-complexity.json')) | ConvertFrom-Json
             if (-not $caught -or $analysis.status -cne 'failed' -or -not $analysis.failure -or
@@ -557,11 +558,11 @@ try {
         $originalSource = [IO.File]::ReadAllText($coverageFiles[0])
         $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-nonselected-drift-' + [guid]::NewGuid().ToString('N'))
         $caught = $null
-        try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true @('verification/LongValueKernel.dfy') } catch { $caught = $_.Exception.Message }
+        try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true @('verification/LongValues/LongValueKernel.dfy') } catch { $caught = $_.Exception.Message }
         finally { [IO.File]::WriteAllText($coverageFiles[0], $originalSource) }
         $analysis = [IO.File]::ReadAllText((Join-Path $output 'proof-coverage.json')) | ConvertFrom-Json
         if (-not $caught -or $caught -notmatch 'Proof source changed' -or $analysis.status -cne 'failed' -or
-            $analysis.proofs.Count -ne 1 -or $analysis.proofs[0].file -cne 'verification/LongValueKernel.dfy' -or
+            $analysis.proofs.Count -ne 1 -or $analysis.proofs[0].file -cne 'verification/LongValues/LongValueKernel.dfy' -or
             [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw 'Focused analysis hid a change to the complete strict inventory.' }
     }
     foreach ($case in 'errors', 'empty', 'empty-assertions', 'missing-summary', 'unexplained-exit', 'error-diagnostic', 'missing-reports', 'timeout', 'launch', 'source-change') {
@@ -606,7 +607,7 @@ try {
         if ($failure.status -ne 'failed' -or $failure.failure -ne 'synthetic failed proof' -or
             $failure.artifacts -notcontains 'negative-false.stdout.log' -or
             -not [IO.File]::Exists((Join-Path $failureOutput 'FalseTheorem.dfy')) -or
-            -not [IO.File]::Exists((Join-Path $failureOutput 'inputs/verification/RecoveryKernel.dfy')) -or
+            -not [IO.File]::Exists((Join-Path $failureOutput 'inputs/verification/Pages/Paging/RecoveryKernel.dfy')) -or
             $failure.negativeControls -notmatch 'genuine gate failure' -or
             [IO.File]::ReadAllText($saved) -ne [IO.File]::ReadAllText($source) -or
             -not (@($failure.inputs | Where-Object path -CEQ 'verification/Good.dfy').sha256 -ceq (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()) -or
@@ -679,7 +680,7 @@ Assert-Scenario 'diagnostic position binds one exact selected source' {
 foreach ($range in '0', '4-2', ':1', '1 --no-verify', '2147483648', '1-2147483648') {
     Assert-Scenario "invalid diagnostic range rejected $range" { Get-ProofDiagnosticPosition $fixture @('verification/Good.dfy') $range } 'Invalid diagnostic position'
 }
-Assert-Scenario 'diagnostic position needs one explicit root' { Get-ProofDiagnosticPosition $fixture @('verification/Good.dfy', 'verification/RecoveryKernel.dfy') '1' } 'one explicitly selected source'
+Assert-Scenario 'diagnostic position needs one explicit root' { Get-ProofDiagnosticPosition $fixture @('verification/Good.dfy', 'verification/Pages/Paging/RecoveryKernel.dfy') '1' } 'one explicitly selected source'
 $complexityLog = Join-Path $fixture 'complexity.csv'
 $complexityOutput = "Starting verification of mutation 1/2 with seed 0`nStarting verification of mutation 2/2 with seed 1559595546"
 $complexityCsv = @'

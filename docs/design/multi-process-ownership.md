@@ -1,6 +1,6 @@
 # Cooperating process ownership model
 
-[MultiProcessOwnership.dfy](../../verification/MultiProcessOwnership.dfy) models arbitrarily many cooperating clients of one canonical database identity. Each client has its own acquisition queue, phase, cached namespace observations and acquisition ticket. The shared state contains native and receipt evidence, the exclusive coordinator and the sets of previously used tickets and generations. This is an unbounded verification-only model; no code is extracted.
+[MultiProcessOwnership.dfy](../../verification/Transactions/MultiProcessOwnership.dfy) models arbitrarily many cooperating clients of one canonical database identity. Each client has its own acquisition queue, phase, cached namespace observations and acquisition ticket. The shared state contains native and receipt evidence, the exclusive coordinator and the sets of previously used tickets and generations. This is an unbounded verification-only model; no code is extracted.
 
 `Coordinate` is an assumed atomic exclusive-coordination operation, rather than a proof that a particular collection of .NET handles implements that operation. Every preparation, recovery-control and deletion operation requires the currently held client/ticket pair. Client IDs may restart; acquisition tickets and generation tokens are not reused. Queuing, observation, waiting, crash and restart are scheduler/process events. Their action ticket carries no authority.
 

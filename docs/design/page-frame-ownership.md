@@ -40,7 +40,7 @@ process-wide heap or aggregate concurrent-reader memory limit.
 
 ## Checked model and production boundary
 
-[PageFrameOwnership.dfy](../../verification/PageFrameOwnership.dfy) is a
+[PageFrameOwnership.dfy](../../verification/Pages/Paging/PageFrameOwnership.dfy) is a
 verification-only ledger for one frame. `Valid` equates the bounded reference
 count with its cache or temporary producer owner plus the set of live lease
 tickets. `Acquire`, `Release`, `Detach` and `DropProducer` describe atomic

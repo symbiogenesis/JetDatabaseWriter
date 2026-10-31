@@ -1,6 +1,6 @@
 # Writer, transaction and lease lifecycle specification
 
-[WriterLifecycle.dfy](../../verification/WriterLifecycle.dfy) specifies the supported serialized lifecycle after a writer has acquired exclusive ownership. Its fault model covers returned command failures and in-process disposal; process termination discards these in-memory objects and belongs to the separate recovery models. It is a verification-only state machine: no additional runtime or generated library code is introduced. The image and auxiliary-state snapshots are exact logical values. The model's `committed` image is the last selected committed value; its name does not prove filesystem durability or describe intermediate physical statement spills.
+[WriterLifecycle.dfy](../../verification/Transactions/WriterLifecycle.dfy) specifies the supported serialized lifecycle after a writer has acquired exclusive ownership. Its fault model covers returned command failures and in-process disposal; process termination discards these in-memory objects and belongs to the separate recovery models. It is a verification-only state machine: no additional runtime or generated library code is introduced. The image and auxiliary-state snapshots are exact logical values. The model's `committed` image is the last selected committed value; its name does not prove filesystem durability or describe intermediate physical statement spills.
 
 ## Legal states and operations
 

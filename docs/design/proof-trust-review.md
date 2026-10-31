@@ -1,6 +1,6 @@
 # Proof and trust review records
 
-The mandatory `formal` CI job checks [proof-review.json](../../verification/proof-review.json) before installing the verifier. The record binds reviewed implementation, conformance evidence, proofs, generated kernels, verifier/solver pins, build targets and proof tooling to their exact text content. A changed input fails until its review record is updated. This is an enforceable freshness requirement, not an attestation of reviewer identity or judgment, an automated C# refinement proof, or a storage qualification receipt.
+The mandatory `formal` CI job checks [proof-review.json](../../verification/config/proof-review.json) before installing the verifier. The record binds reviewed implementation, conformance evidence, proofs, generated kernels, verifier/solver pins, build targets and proof tooling to their exact text content. A changed input fails until its review record is updated. This is an enforceable freshness requirement, not an attestation of reviewer identity or judgment, an automated C# refinement proof, or a storage qualification receipt.
 
 ## Scope and source inventory
 

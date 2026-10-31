@@ -1,6 +1,6 @@
 # Bounded external long-value streaming
 
-The selected hostile-file surface is `LongValueStore.CopyPayloadAsync` for an external chained descriptor. `verification/LongValueTraversal.dfy` proves termination and resource bounds for its row schedule. Production calls the generated `LongValueKernel.ChainVisitAdmission` and `ChainPayloadCount` decisions. Its visited set uses generated `PrepareVisitedAdd` and `CompleteVisitedGrowth` methods, composing the exact `ContainsVisited`, `AddVisited` and `RehashVisited` array operations with occupied-count bookkeeping and growth decisions. Actual allocation, adapter sequencing, the complete C# parser, native row ownership and arbitrary locator/destination implementations remain separate contracts.
+The selected hostile-file surface is `LongValueStore.CopyPayloadAsync` for an external chained descriptor. `verification/LongValues/LongValueTraversal.dfy` proves termination and resource bounds for its row schedule. Production calls the generated `LongValueKernel.ChainVisitAdmission` and `ChainPayloadCount` decisions. Its visited set uses generated `PrepareVisitedAdd` and `CompleteVisitedGrowth` methods, composing the exact `ContainsVisited`, `AddVisited` and `RehashVisited` array operations with occupied-count bookkeeping and growth decisions. Actual allocation, adapter sequencing, the complete C# parser, native row ownership and arbitrary locator/destination implementations remain separate contracts.
 
 ## Admission and progress
 

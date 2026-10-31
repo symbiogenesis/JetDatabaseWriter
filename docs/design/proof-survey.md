@@ -156,7 +156,7 @@ Dafny boundary without adopting another verifier or shipping dependency.
 The concrete target is
 [LongValueVisitedSet](../../src/JetDatabaseWriter/LongValues/LongValueVisitedSet.cs)
 and the generated
-[LongValueKernel](../../verification/LongValueKernel.dfy).
+[LongValueKernel](../../verification/LongValues/LongValueKernel.dfy).
 Useful executable contracts establish exact membership, insertion of one
 absent nonzero identity, preservation during rehash, and safe early lookup
 termination at an empty slot. Keep count/growth callers, allocation failures,

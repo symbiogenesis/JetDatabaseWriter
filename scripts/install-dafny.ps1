@@ -18,7 +18,7 @@ function Install-PinnedDafny([string] $RepositoryRoot, [string] $Destination) {
     $supported = ($IsWindows -and $architecture -in [Runtime.InteropServices.Architecture]::X64, [Runtime.InteropServices.Architecture]::Arm64) -or
         ($IsLinux -and $architecture -eq [Runtime.InteropServices.Architecture]::X64)
     if (-not $supported) { throw 'The pinned toolchain supports Windows x64 (including Windows Arm64 emulation) and Ubuntu x64 only.' }
-    $manifest = [IO.File]::ReadAllText((Join-Path $RepositoryRoot 'verification/dafny-toolchain.json')) | ConvertFrom-Json
+    $manifest = [IO.File]::ReadAllText((Join-Path $RepositoryRoot 'verification/config/dafny-toolchain.json')) | ConvertFrom-Json
     if ($manifest.schemaVersion -ne 1 -or $manifest.version -ne '4.11.0') { throw 'Unsupported Dafny toolchain manifest.' }
     $asset = if ($IsWindows) { $manifest.assets.windows } else { $manifest.assets.linux }
     if ($asset.url -notmatch '^https://github\.com/dafny-lang/dafny/releases/download/v4\.11\.0/dafny-4\.11\.0-x64-(windows-2022|ubuntu-22\.04)\.zip$') { throw 'Unexpected Dafny release asset URL.' }
