@@ -156,7 +156,7 @@ internal static partial class CalculatedExpressionTextFunctions
 
         if (function.Context.IsCalculatingColumn && value is bool)
         {
-            return ToCalculatedText(value);
+            return ToText(value, function.Context);
         }
 
         object number = value switch

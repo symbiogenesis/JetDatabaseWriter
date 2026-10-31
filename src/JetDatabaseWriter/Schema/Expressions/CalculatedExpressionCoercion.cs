@@ -421,7 +421,14 @@ internal static class CalculatedExpressionCoercion
     }
 
     internal static string ToText(object? value, CalculatedExpressionEvaluationContext context)
-        => context.IsCalculatingColumn ? ToCalculatedText(value) : ToText(value);
+    {
+        if (context.IsCalculatingColumn && value is bool boolean)
+        {
+            return boolean ? "True" : "False";
+        }
+
+        return context.IsCalculatingColumn ? ToCalculatedText(value) : ToText(value);
+    }
 
     internal static string ToCalculatedText(object? value)
         => value switch
