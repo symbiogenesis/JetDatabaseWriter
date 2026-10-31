@@ -4,33 +4,19 @@
 namespace JetDatabaseWriter.Verification {
 
   internal static class IndexMutationKernel {
-    public static byte WordByte(uint word, uint position)
-    {
-      if ((position) == (0U)) {
-        return (byte)((word) % (256U));
-      } else if ((position) == (1U)) {
-        return (byte)(((word) / (256U)) % (256U));
-      } else if ((position) == (2U)) {
-        return (byte)(((word) / (65536U)) % (256U));
-      } else if ((position) == (3U)) {
-        return (byte)((word) / (16777216U));
-      } else {
-        return (byte)(0);
-      }
-    }
     public static bool HasRange(uint length, uint start, uint count)
     {
       return ((start) <= (length)) && ((count) <= ((length) - (start)));
     }
     public static void WriteWord(byte[] page, uint start, uint word)
     {
-      (page)[(int)((start))] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(word, 0U);
+      (page)[(int)((start))] = (byte)((word) % (256U));
       uint _index0 = (start) + (1U);
-      (page)[(int)(_index0)] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(word, 1U);
+      (page)[(int)(_index0)] = (byte)(((word) / (256U)) % (256U));
       uint _index1 = (start) + (2U);
-      (page)[(int)(_index1)] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(word, 2U);
+      (page)[(int)(_index1)] = (byte)(((word) / (65536U)) % (256U));
       uint _index2 = (start) + (3U);
-      (page)[(int)(_index2)] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(word, 3U);
+      (page)[(int)(_index2)] = (byte)((word) / (16777216U));
     }
     public static uint CommonPrefix(byte[] first, byte[] key, uint limit)
     {
@@ -74,10 +60,10 @@ namespace JetDatabaseWriter.Verification {
       JetDatabaseWriter.Verification.IndexMutationKernel.WriteWord(page, previousOffset, previous);
       JetDatabaseWriter.Verification.IndexMutationKernel.WriteWord(page, nextOffset, next);
       JetDatabaseWriter.Verification.IndexMutationKernel.WriteWord(page, tailOffset, tail);
-      (page)[(int)((prefixOffset))] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(prefix, 0U);
+      (page)[(int)((prefixOffset))] = (byte)((prefix) % (256U));
       if (!(jet3)) {
         uint _index2 = (prefixOffset) + (1U);
-        (page)[(int)(_index2)] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(prefix, 1U);
+        (page)[(int)(_index2)] = (byte)(((prefix) / (256U)) % (256U));
       }
       ok = true;
       return ok;
@@ -89,22 +75,22 @@ namespace JetDatabaseWriter.Verification {
     {
       uint _0_pointer;
       _0_pointer = (cursor) + (suffixLength);
-      (page)[(int)((_0_pointer))] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(dataPage, 2U);
+      (page)[(int)((_0_pointer))] = (byte)(((dataPage) / (65536U)) % (256U));
       uint _index0 = (_0_pointer) + (1U);
-      (page)[(int)(_index0)] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(dataPage, 1U);
+      (page)[(int)(_index0)] = (byte)(((dataPage) / (256U)) % (256U));
       uint _index1 = (_0_pointer) + (2U);
-      (page)[(int)(_index1)] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(dataPage, 0U);
+      (page)[(int)(_index1)] = (byte)((dataPage) % (256U));
       uint _index2 = (_0_pointer) + (3U);
       (page)[(int)(_index2)] = row;
       if (intermediate) {
         uint _index3 = (_0_pointer) + (4U);
-        (page)[(int)(_index3)] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(child, 3U);
+        (page)[(int)(_index3)] = (byte)((child) / (16777216U));
         uint _index4 = (_0_pointer) + (5U);
-        (page)[(int)(_index4)] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(child, 2U);
+        (page)[(int)(_index4)] = (byte)(((child) / (65536U)) % (256U));
         uint _index5 = (_0_pointer) + (6U);
-        (page)[(int)(_index5)] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(child, 1U);
+        (page)[(int)(_index5)] = (byte)(((child) / (256U)) % (256U));
         uint _index6 = (_0_pointer) + (7U);
-        (page)[(int)(_index6)] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(child, 0U);
+        (page)[(int)(_index6)] = (byte)((child) % (256U));
       }
       if (!(initial)) {
         uint _1_position;
@@ -122,9 +108,9 @@ namespace JetDatabaseWriter.Verification {
       uint _1_free;
       _1_free = ((uint)(page).LongLength) - (cursor);
       uint _index0 = (uint)(2U);
-      (page)[(int)(_index0)] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(_1_free, 0U);
+      (page)[(int)(_index0)] = (byte)((_1_free) % (256U));
       uint _index1 = (uint)(3U);
-      (page)[(int)(_index1)] = JetDatabaseWriter.Verification.IndexMutationKernel.WordByte(_1_free, 1U);
+      (page)[(int)(_index1)] = (byte)(((_1_free) / (256U)) % (256U));
     }
   }
 }

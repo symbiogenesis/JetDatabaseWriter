@@ -9,7 +9,7 @@ module IndexMutationNativeTypes {
 module IndexMutationKernel {
   import opened IndexMutationNativeTypes
 
-  function WordByte(word: U32, position: U32): Byte {
+  ghost function WordByte(word: U32, position: U32): Byte {
     if position == 0 then (word % 256) as Byte
     else if position == 1 then (word / 256 % 256) as Byte
     else if position == 2 then (word / 65536 % 256) as Byte
@@ -30,10 +30,10 @@ module IndexMutationKernel {
     modifies page
     ensures page[..] == PutWord(old(page[..]), start as int, word)
   {
-    page[start] := WordByte(word, 0);
-    page[start + 1] := WordByte(word, 1);
-    page[start + 2] := WordByte(word, 2);
-    page[start + 3] := WordByte(word, 3);
+    page[start] := (word % 256) as Byte;
+    page[start + 1] := (word / 256 % 256) as Byte;
+    page[start + 2] := (word / 65536 % 256) as Byte;
+    page[start + 3] := (word / 16777216) as Byte;
   }
 
   // Complete bounded shared-prefix scan. Its maximality is needed for exact
@@ -101,8 +101,8 @@ module IndexMutationKernel {
     WriteWord(page, previousOffset, previous);
     WriteWord(page, nextOffset, next);
     WriteWord(page, tailOffset, tail);
-    page[prefixOffset] := WordByte(prefix, 0);
-    if !jet3 { page[prefixOffset + 1] := WordByte(prefix, 1); }
+    page[prefixOffset] := (prefix % 256) as Byte;
+    if !jet3 { page[prefixOffset + 1] := (prefix / 256 % 256) as Byte; }
     ok := true;
   }
 
@@ -165,15 +165,15 @@ module IndexMutationKernel {
     ensures forall i: nat :: cursor as int <= i < cursor as int + suffixLength as int ==> page[i] == old(page[i])
   {
     var pointer := cursor + suffixLength;
-    page[pointer] := WordByte(dataPage, 2);
-    page[pointer + 1] := WordByte(dataPage, 1);
-    page[pointer + 2] := WordByte(dataPage, 0);
+    page[pointer] := (dataPage / 65536 % 256) as Byte;
+    page[pointer + 1] := (dataPage / 256 % 256) as Byte;
+    page[pointer + 2] := (dataPage % 256) as Byte;
     page[pointer + 3] := row;
     if intermediate {
-      page[pointer + 4] := WordByte(child, 3);
-      page[pointer + 5] := WordByte(child, 2);
-      page[pointer + 6] := WordByte(child, 1);
-      page[pointer + 7] := WordByte(child, 0);
+      page[pointer + 4] := (child / 16777216) as Byte;
+      page[pointer + 5] := (child / 65536 % 256) as Byte;
+      page[pointer + 6] := (child / 256 % 256) as Byte;
+      page[pointer + 7] := (child % 256) as Byte;
     }
     if !initial {
       var position := bitmap + (cursor - first) / 8;
@@ -204,8 +204,8 @@ module IndexMutationKernel {
       page[position] := (page[position] as bv8 | BitMask((cursor - first) % 8) as bv8) as Byte;
     }
     var free := (page.Length as U32) - cursor;
-    page[2 as U32] := WordByte(free, 0);
-    page[3 as U32] := WordByte(free, 1);
+    page[2 as U32] := (free % 256) as Byte;
+    page[3 as U32] := (free / 256 % 256) as Byte;
   }
 
   ghost function StoredEntry(key: seq<Byte>, prefix: nat, initial: bool, dataPage: U32,
