@@ -388,11 +388,13 @@ $coverageCase = 'clean'
 function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [string] $WorkingDirectory, [string] $Name, [int] $TimeoutSeconds) {
     $coverageCalls.Add([pscustomobject]@{ Executable = $Executable; Arguments = $Arguments; Name = $Name; TimeoutSeconds = $TimeoutSeconds })
     if ($Name -eq 'version') { return [pscustomobject]@{ ExitCode = 0; Stdout = $(if ($coverageCase -eq 'pin-mismatch') { 'unreviewed verifier' } else { $coverageToolchain.versionOutput }); Stderr = '' } }
-    if ($Name -eq 'solver-version') { return [pscustomobject]@{ ExitCode = 0; Stdout = $coverageToolchain.solver.versionOutput; Stderr = '' } }
+    if ($Name -eq 'solver-version') { return [pscustomobject]@{ ExitCode = 0; Stdout = $(if ($coverageCase -eq 'solver-pin-mismatch') { 'unreviewed solver' } else { $coverageToolchain.solver.versionOutput }); Stderr = '' } }
     if ($Name -eq 'negative-false') { return [pscustomobject]@{ ExitCode = $(if ($coverageCase -eq 'negative-control') { 0 } else { 4 }); Stdout = 'Dafny program verifier finished with 0 verified, 1 error'; Stderr = '' } }
+    if ($Name -eq 'negative-assume.verify' -and $coverageCase -eq 'negative-assume-verification') { return [pscustomobject]@{ ExitCode = 4; Stdout = 'Dafny program verifier finished with 0 verified, 1 error'; Stderr = '' } }
     if ($Name -eq 'inventory.verify') {
         $logIndex = [Array]::IndexOf($Arguments, '--log-format') + 1
         [IO.File]::WriteAllText($Arguments[$logIndex].Substring('csv;LogFileName='.Length), 'resource evidence')
+        if ($coverageCase -eq 'inventory-failure') { return [pscustomobject]@{ ExitCode = 4; Stdout = 'Dafny program verifier finished with 2 verified, 1 error'; Stderr = '' } }
     }
     if ($Name -eq 'proof-complexity') {
         if ($coverageCase -eq 'timeout') { throw 'Complexity process timed out.' }
@@ -406,7 +408,7 @@ function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [strin
     }
     if ($Arguments[0] -eq 'audit') {
         $reportIndex = [Array]::IndexOf($Arguments, '--report-file') + 1
-        $finding = $Name -eq 'negative-assume' -or ($Name -eq 'inventory.audit' -and $coverageCase -eq 'audit-finding')
+        $finding = ($Name -eq 'negative-assume' -and $coverageCase -ne 'negative-assume-control') -or ($Name -eq 'inventory.audit' -and $coverageCase -eq 'audit-finding')
         [IO.File]::WriteAllText($Arguments[$reportIndex], $(if ($finding) { 'assume' } else { '' }))
         return [pscustomobject]@{ ExitCode = 0; Stdout = "Dafny auditor completed with $(if ($finding) { 1 } else { 0 }) findings"; Stderr = '' }
     }
@@ -436,6 +438,7 @@ function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [strin
 }
 function Sync-NativeKernel([string] $KernelName, [string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [string[]] $Dependencies, [string[]] $Options, [int] $TimeoutSeconds, [bool] $Update) {
     $coverageCalls.Add([pscustomobject]@{ Executable = $DafnyPath; Arguments = $Options; Name = "$KernelName.translate"; Dependencies = $Dependencies })
+    if ($coverageCase -eq ('stale-' + $KernelName)) { throw "Generated source is stale for $KernelName" }
     return [ordered]@{ source = Get-NativeKernelSource $KernelName; sha256 = 'mock-native-source' }
 }
 try {
@@ -631,15 +634,39 @@ try {
             if ($case -eq 'source-change') { [IO.File]::WriteAllText($coverageFiles[0], 'module Good {}') }
         }
     }
-    foreach ($case in 'pin-mismatch', 'negative-control', 'audit-finding') {
-        Assert-Scenario "requested coverage cannot bypass strict $case rejection" {
-            $coverageCase = $case
-            $coverageCalls.Clear()
-            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-before-coverage-' + [guid]::NewGuid().ToString('N'))
-            $caught = $null
-            try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true } catch { $caught = $_.Exception.Message }
-            if (-not $caught -or @($coverageCalls | Where-Object Name -EQ 'proof-coverage.verify').Count -ne 0 -or
-                [IO.File]::Exists((Join-Path $output 'proof-coverage.json')) -or [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw 'Analysis bypassed a mandatory proof check.' }
+    $strictFailures = [ordered]@{
+        'pin-mismatch' = 'Dafny version'
+        'solver-pin-mismatch' = 'Z3 version'
+        'negative-control' = 'False-theorem negative control'
+        'negative-assume-verification' = 'assumption negative control'
+        'negative-assume-control' = 'Assumption negative control'
+        'inventory-failure' = 'Verification failed for complete inventory'
+        'audit-finding' = 'audit findings for complete inventory'
+    }
+    foreach ($kernelName in 'RecoveryKernel', 'LongValueKernel', 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel') {
+        $strictFailures['stale-' + $kernelName] = "Generated source is stale for $kernelName"
+    }
+    foreach ($mode in 'coverage', 'complexity') {
+        foreach ($case in $strictFailures.Keys) {
+            Assert-Scenario "requested $mode cannot bypass strict $case rejection" {
+                $coverageCase = $case
+                $coverageCalls.Clear()
+                $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-before-diagnostics-' + [guid]::NewGuid().ToString('N'))
+                $caught = $null
+                try {
+                    if ($mode -eq 'coverage') {
+                        Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true @('verification/LongValues/LongValueKernel.dfy')
+                    } else {
+                        Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $false $null @{ measureComplexity = $true; complexitySources = @('verification/LongValues/LongValueKernel.dfy'); mutations = 2 }
+                    }
+                } catch { $caught = $_.Exception.Message }
+                if (-not $caught -or -not $caught.Contains($strictFailures[$case]) -or
+                    @($coverageCalls | Where-Object { $_.Name -in 'proof-coverage.verify', 'proof-complexity' }).Count -ne 0 -or
+                    [IO.File]::Exists((Join-Path $output 'proof-coverage.json')) -or [IO.File]::Exists((Join-Path $output 'proof-complexity.json')) -or
+                    [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw "Analysis bypassed $case or reported a different failure: $caught" }
+                $failure = [IO.File]::ReadAllText((Join-Path $output 'failure.json')) | ConvertFrom-Json
+                if ($failure.status -cne 'failed' -or $failure.failure -cne $caught) { throw 'The strict rejection lost its exact failure receipt.' }
+            }
         }
     }
 } finally {
