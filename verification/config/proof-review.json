@@ -5,16 +5,19 @@
   "reviews": [
     {
       "boundary": "implementation",
-      "obligations": "Reviewed complete pre-mutation row-compaction admission, minimum/next-distinct boundary selection, directory/free-header rewriting and composition with modeled overlapping copy/clear. Preserve slot flags, alias policy, surviving byte intervals, secure erase and untouched pooled suffix; actual CLR bulk effects remain contracts. Reviewed maximal index prefix scanning, bounded entry capacity/progress, exact header/prefix/bookmark/child/boundary emission, finite payload composition and sentinel/free-space finalization. Pointer widths/layouts are unchanged; stable list acquisition, metadata preflight and exact key-suffix copy remain premises. Reviewed exact ordered usage-bitmap selection, packed continuation classification/payload laws, decreasing rank, tolerant invalid-member skipping and strict first-failure prefix retention. Production establishes range admission once and retains matching continuation and immutable array; list effects and reference-page cancellation/return remain contracts. The shared index-entry scan must bind a found non-sentinel boundary to the negated exhaustion statement under its original bounded-array contract. Existing recovery/replacement/descriptor/visited/frame/lifecycle boundaries remain documented in formal-verification.md and their model sources; no additional recovery or page-release authority follows.",
-      "conformance": "Independent stable key buckets cover every three-existing/two-added splice run over four mixed-length keys and every removal subset, including tie order and unchanged inputs. Independent visited-set traces compare exact membership/count and production adapter decisions through repeated collisions, duplicates, zero inputs and growth; exact-budget colliding chains preserve payloads and lease handoff. Concurrent lease disposal/acquisition checks exactly-once accounting and retained reader/producer ownership; delayed lease loads refuse stale cache publication while live images survive invalidation/disposal. Independent complete-page row-compaction oracles cover Jet3/Jet4/ACE slots, aliases/flags, erase policies, malformed bounds, native widths, short images and untouched bytes. Index byte vectors cover leaf/intermediate headers, compressed payloads, extreme pointers, bitmap boundaries, empty keys/full pages and refusal; existing structural/native controls retain their evidence level. Bitmap tests compare every byte pattern and signed bounds against independent expansion, strict retained prefixes, reference-page return and cancellation. Focused local checks provide development feedback; settled-main CI, target/analyzer/package/trimming/NativeAOT and hosted measurements remain required. Original-algorithm microbenchmark controls and paired existing workloads retain performance evidence without treating generated code as a timing theorem. Existing cited recovery, lifecycle, parser, native and fault-injection evidence remains applicable within its stated scope.",
-      "remainingAssumptions": "Stable exclusive page/array identity, retained matching continuation, correct supplied native layouts, exact CLR bulk copy/clear, list append and stable entry acquisition remain adapter contracts. Reference reads, cancellation/pool effects, complete public parser resources, ordered trees/separators, allocator ownership and containing mutation/rollback require composition. Membership and row-space compaction grant no page-release authority. Existing I/O/hash/path/snapshot/coordinator/OS and compiler/runtime contracts remain. Physical persistence, directory durability, stale-I/O fencing and fresh native-engine gaps retain E4/F6/I15/V7 and their feature requirements. No whole-library proof, new native form or unconditional performance/durability guarantee is inferred.",
+      "obligations": "Reviewed complete pre-mutation row-compaction admission, minimum/next-distinct boundary selection, conditional selected/relocated directory writes, hoisted-width native flag updates, free-header accounting and composition with modeled overlapping copy/clear. Preserve surviving slot flags, alias policy, surviving byte intervals, secure erase and untouched pooled suffix; actual CLR bulk effects remain contracts. Reviewed maximal index prefix scanning, bounded entry capacity/progress, direct fixed-position header/prefix/bookmark/child/boundary byte extraction under the unchanged ghost byte law, finite payload composition and sentinel/free-space finalization. Pointer widths/layouts are unchanged; stable list acquisition, metadata preflight and exact key-suffix copy remain premises. Reviewed exact ordered usage-bitmap selection, direct cursor/member-mask/status outputs, exact byte-mask selection and byte-index zero skipping, decreasing rank, tolerant invalid-member skipping and strict first-failure prefix retention. Production establishes range admission once, retains an admitted byte-aligned cursor and immutable array, and appends selected bits in order before terminal refusal handling; list effects and reference-page cancellation/return remain contracts. The shared index-entry scan must bind a found non-sentinel boundary to the negated exhaustion statement under its original bounded-array contract. Existing recovery/replacement/descriptor/visited/frame/lifecycle boundaries remain documented in formal-verification.md and their model sources; no additional recovery or page-release authority follows.",
+      "conformance": "Independent complete-page row-compaction oracles cover Jet3/Jet4/ACE slots, aliases/flags, erase policies, malformed bounds, native widths, short images and untouched bytes. Index byte vectors cover leaf/intermediate headers, compressed payloads, extreme pointers, bitmap boundaries, empty keys/full pages and refusal; existing structural/native controls retain their evidence level. Bitmap tests compare every byte pattern and signed bounds against independent expansion, strict retained prefixes, reference-page return and cancellation. Focused local checks provide development feedback; settled-main CI, target/analyzer/package/trimming/NativeAOT and hosted measurements remain required. Original-algorithm microbenchmark controls and paired existing workloads retain performance evidence without treating generated code as a timing theorem. Existing cited recovery, lifecycle, parser, native and fault-injection evidence remains applicable within its stated scope. Independent stable key buckets cover every three-existing/two-added splice run over four mixed-length keys and every removal subset, including tie order and unchanged inputs. Independent visited-set traces compare exact membership/count and production adapter decisions through repeated collisions, duplicates, zero inputs and growth; exact-budget colliding chains preserve payloads and lease handoff. Concurrent lease disposal/acquisition checks exactly-once accounting and retained reader/producer ownership; delayed lease loads refuse stale cache publication while live images survive invalidation/disposal.",
+      "remainingAssumptions": "Stable exclusive page/array identity, retained admitted byte cursor and faithful ordered mask emission, correct supplied native layouts, exact CLR bulk copy/clear, list append and stable entry acquisition remain adapter contracts. Reference reads, cancellation/pool effects, complete public parser resources, ordered trees/separators, allocator ownership and containing mutation/rollback require composition. Membership and row-space compaction grant no page-release authority. Existing I/O/hash/path/snapshot/coordinator/OS and compiler/runtime contracts remain. Physical persistence, directory durability, stale-I/O fencing and fresh native-engine gaps retain E4/F6/I15/V7 and their feature requirements. No whole-library proof, new native form or unconditional performance/durability guarantee is inferred.",
       "evidence": [
         "benchmarks/JetDatabaseWriter.Benchmarks/Indexes/IndexMutationBenchmarks.cs",
+        "benchmarks/JetDatabaseWriter.Benchmarks/Reader/AccessReaderOwnedPageDiscoveryBenchmarks.cs",
         "benchmarks/JetDatabaseWriter.Benchmarks/Reader/Jet3JumpTableBenchmarks.cs",
         "benchmarks/JetDatabaseWriter.Benchmarks/Reader/LongValueVisitedSetBenchmarks.cs",
         "benchmarks/JetDatabaseWriter.Benchmarks/Reader/UsageMapEnumerationBenchmarks.cs",
+        "benchmarks/JetDatabaseWriter.Benchmarks/Writer/AccessWriterPageIoBenchmarks.cs",
         "benchmarks/JetDatabaseWriter.Benchmarks/Writer/DataPageReclaimBenchmarks.cs",
         "benchmarks/JetDatabaseWriter.Benchmarks/Writer/JournalContentBenchmarks.cs",
+        "benchmarks/JetDatabaseWriter.Benchmarks/Writer/MetadataAndCascadeBenchmarks.cs",
         "docs/design/calculated-columns-format-notes.md",
         "docs/design/caller-stream-recovery.md",
         "docs/design/catalog-index-maintenance-notes.md",
@@ -288,6 +291,10 @@
           "sha256": "8e7610d81b23f9e56ce49c4c5c01ced71d97a32e64dc90fe8a4bc46260874683"
         },
         {
+          "path": "benchmarks/JetDatabaseWriter.Benchmarks/Reader/AccessReaderOwnedPageDiscoveryBenchmarks.cs",
+          "sha256": "e1d2e9fa8161517402f3027b31f1c8225c7354c741eaa1920dd7ca4d6be3d9a1"
+        },
+        {
           "path": "benchmarks/JetDatabaseWriter.Benchmarks/Reader/Jet3JumpTableBenchmarks.cs",
           "sha256": "c1d0d541c41dcb3ede0b877cf00a3a15d7469523a7d9197887bf0a80c323c3ad"
         },
@@ -297,7 +304,11 @@
         },
         {
           "path": "benchmarks/JetDatabaseWriter.Benchmarks/Reader/UsageMapEnumerationBenchmarks.cs",
-          "sha256": "b3f1359cd82db82345ead38e586c41681174cf96205d81fc88233773d52ebf98"
+          "sha256": "26b9e061dab2ac24b872eee58237232d64b0227aca03d3345a2f25c981a21e30"
+        },
+        {
+          "path": "benchmarks/JetDatabaseWriter.Benchmarks/Writer/AccessWriterPageIoBenchmarks.cs",
+          "sha256": "d21ce374146a053571f7ad159f2e2e1719e7f918e1eed55a332def49ce54370a"
         },
         {
           "path": "benchmarks/JetDatabaseWriter.Benchmarks/Writer/DataPageReclaimBenchmarks.cs",
@@ -306,6 +317,10 @@
         {
           "path": "benchmarks/JetDatabaseWriter.Benchmarks/Writer/JournalContentBenchmarks.cs",
           "sha256": "87382dbf687aee0d586777d64ecf674bc5c946cf331e4f25561f718a382ab46f"
+        },
+        {
+          "path": "benchmarks/JetDatabaseWriter.Benchmarks/Writer/MetadataAndCascadeBenchmarks.cs",
+          "sha256": "9a4961e2742848d6af1a3cf889bd8900fbfd2db1a72069cadb07df4eb3252b69"
         },
         {
           "path": "docs/design/calculated-columns-format-notes.md",
@@ -329,7 +344,7 @@
         },
         {
           "path": "docs/design/formal-verification.md",
-          "sha256": "457ee730f60915234a0e4474f89fc8e3f13b286c6e98d9b65db016276c4ead25"
+          "sha256": "b4a899341583541f0238f0bcc65795aca38877a0d03cebabd7abc666e1648b59"
         },
         {
           "path": "docs/design/index-and-relationship-format-notes.md",
@@ -361,11 +376,11 @@
         },
         {
           "path": "docs/design/usage-map-maintenance.md",
-          "sha256": "e0878dfba52d4ef16f8c2761e82c8e2d64f76fd843509d0c5cec721ce00af6b0"
+          "sha256": "6d1477f27acfb98b182975f3312895fa0a6273262e76437d5b6398a723f6cde0"
         },
         {
           "path": "docs/design/verification-evidence-map.md",
-          "sha256": "c0df0b5658fc860c1bf743fbb5f8927d09fde4e1afd82d5cbfc1c480ee5c5626"
+          "sha256": "ec8285ad0a4f24bf6823c2baa16c8850e6e6bc7893ade7829d58f6386c2ce6b0"
         },
         {
           "path": "docs/design/verification-scope.md",
@@ -697,7 +712,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Pages/UsageMap.cs",
-          "sha256": "6d18bab656559d6a2d10ba7954d1b8f8b173b72ec62c687c442be1e1487d25f5"
+          "sha256": "9b0ce04159000a5f5c97838ac7922a0c06b2bd55dad33ce1aae0e97965d4162d"
         },
         {
           "path": "src/JetDatabaseWriter/Queries/AccessQueryTranslator.cs",
@@ -961,11 +976,11 @@
         },
         {
           "path": "src/JetDatabaseWriter/Verification/DataPageKernel.g.cs",
-          "sha256": "7a8e7c814fd09096bb17003180d99945eefe24e4216d24afde8d62bccfae809f"
+          "sha256": "4df8323cb3fb7d67379389446e767030571842b250b5ea4a1b30a82f4d4444bc"
         },
         {
           "path": "src/JetDatabaseWriter/Verification/IndexMutationKernel.g.cs",
-          "sha256": "4f273375947e7d3e7f8546193e46612b62977345c07fea30816f7271cd76c11a"
+          "sha256": "01d7b5e12dbefb5b081797880b5ce6b26fbb9e7ea28f40b44e6cb13a9c0f46ac"
         },
         {
           "path": "src/JetDatabaseWriter/Verification/LongValueKernel.g.cs",
@@ -977,7 +992,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Verification/UsageMapKernel.g.cs",
-          "sha256": "71f8119fee75cdf2338a65c43e26cf2fe35b7c71601866653f1551ce53c8e4c1"
+          "sha256": "b0f9002173c3c7c82371394c65baf68275908cf246c357f521522c6715e35703"
         },
         {
           "path": "src/JetDatabaseWriter/WriterServices.cs",
@@ -1241,7 +1256,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Pages/UsageMapEnumerationKernelTests.cs",
-          "sha256": "d196216eb3a07628f352160404cf2a7de31c14f55091cbb149239d164dac1921"
+          "sha256": "65a499a43e6ede442410f0f2622a7d8a01a5ad171a7fa193a3d93c7169f5ab98"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Queries/QueryLambdaCompilerTests.cs",
@@ -1548,11 +1563,14 @@
     {
       "boundary": "proof-trust",
       "obligations": "Reviewed exact registration/source paths for five executable modules and the complete normal-source manifest. New page/index kernels are independent verified inputs; no assumptions, external declarations, omitted verification or new shipping dependencies are admitted. Native long joins ulong/uint/byte/int under the exact allowlist and emits CLR signed arithmetic without Dafny support. Projections retain generated bodies/self references, reject omitted runtime/model descriptors and unexpected structures. Exact-signature fixed inlining metadata is reviewed with its focused rejection controls; it changes optimization advice without changing method bodies or adding runtime support. Explicit byte-frame, bitmap, length and found-boundary witness contracts must hold in both complete-inventory and separate native-translation contexts. Mandatory verifier/auditor negative controls, deterministic translation, freshness, caller discovery, exact input hashes and failure snapshots cover every registered kernel. Reviewed supplemental survey transfers for per-write recoverability, layered recovery, transactional and CAS/lock refinement, peak-space/work credits, parser input identity, B+ tree leaf correspondence, rooted relocation and rounding bounds. Each remains conditional on its stated model and production correspondence; no runtime, proof source, adapter contract or advertised guarantee changes.",
-      "conformance": "Selected coverage and complexity diagnostics refuse before supplemental execution for wrong Dafny/Z3 pins, failed inventory verification/audit, either negative-control failure and stale output from each of the five generated kernels; exact failure receipts remain required. The survey maps all admitted proof boundaries to independent unit or production conformance evidence without promoting finite tests to full refinement or storage guarantees. Focused verify-proofs, proof-review and formal-workflow regressions cover new module packaging/provenance, wrong namespaces, runtime/descriptor rejection, five-kernel dispatch, signed-long admission/refusal, exact inlining declarations, complete failure snapshots and new callers. Fresh integrity-pinned Dafny/Z3 complete-inventory verification, clean audit, both mandatory negative controls and generated freshness are required for this settled source. Ordinary CI independently gates every selected runtime/library/analyzer/trim combination; hosted benchmarks establish their measured workloads only. Supplemental survey source statements and concrete code mappings received independent review. Upstream proof artifacts were not rerun; this is literature evidence, not new repository verification, native interoperability, platform qualification or performance acceptance.",
+      "conformance": "Focused verify-proofs, proof-review and formal-workflow regressions cover new module packaging/provenance, wrong namespaces, runtime/descriptor rejection, five-kernel dispatch, signed-long admission/refusal, exact inlining declarations, complete failure snapshots and new callers. Fresh integrity-pinned Dafny/Z3 complete-inventory verification, clean audit, both mandatory negative controls and generated freshness are required for this settled source. Ordinary CI independently gates every selected runtime/library/analyzer/trim combination; hosted benchmarks establish their measured workloads only. Selected coverage and complexity diagnostics refuse before supplemental execution for wrong Dafny/Z3 pins, failed inventory verification/audit, either negative-control failure and stale output from each of the five generated kernels; exact failure receipts remain required. The survey maps all admitted proof boundaries to independent unit or production conformance evidence without promoting finite tests to full refinement or storage guarantees.  Supplemental survey source statements and concrete code mappings received independent review. Upstream proof artifacts were not rerun; this is literature evidence, not new repository verification, native interoperability, platform qualification or performance acceptance.",
       "remainingAssumptions": "Specification adequacy, Dafny/Z3 soundness, compiler projection, C# compiler and CLR/JIT/AOT remain trusted. Source hashes establish review freshness rather than reviewer identity, adapter refinement, actual I/O effects, native interoperability or physical durability. Sequence composition proves declared effects, while their C#/BCL implementation and complete public operation composition retain explicit obligations. Target compatibility and performance require independent builds, tests and hosted measurements. External literature retains its own atomicity, root-completeness, language/runtime, checksum and primitive hypotheses. Those hypotheses do not replace the repository torn-write model, native semantics, actual CLR effect contracts or independent timing/storage qualification.",
       "evidence": [
+        "benchmarks/JetDatabaseWriter.Benchmarks/Reader/AccessReaderOwnedPageDiscoveryBenchmarks.cs",
         "benchmarks/JetDatabaseWriter.Benchmarks/Reader/UsageMapEnumerationBenchmarks.cs",
+        "benchmarks/JetDatabaseWriter.Benchmarks/Writer/AccessWriterPageIoBenchmarks.cs",
         "benchmarks/JetDatabaseWriter.Benchmarks/Writer/DataPageReclaimBenchmarks.cs",
+        "benchmarks/JetDatabaseWriter.Benchmarks/Writer/MetadataAndCascadeBenchmarks.cs",
         "docs/design/calculated-columns-format-notes.md",
         "docs/design/caller-stream-recovery.md",
         "docs/design/catalog-index-maintenance-notes.md",
@@ -1611,12 +1629,24 @@
           "sha256": "98d2117fff86aee5f8957e43115ae56dec25106821edaa9618ef71a803933d27"
         },
         {
+          "path": "benchmarks/JetDatabaseWriter.Benchmarks/Reader/AccessReaderOwnedPageDiscoveryBenchmarks.cs",
+          "sha256": "e1d2e9fa8161517402f3027b31f1c8225c7354c741eaa1920dd7ca4d6be3d9a1"
+        },
+        {
           "path": "benchmarks/JetDatabaseWriter.Benchmarks/Reader/UsageMapEnumerationBenchmarks.cs",
-          "sha256": "b3f1359cd82db82345ead38e586c41681174cf96205d81fc88233773d52ebf98"
+          "sha256": "26b9e061dab2ac24b872eee58237232d64b0227aca03d3345a2f25c981a21e30"
+        },
+        {
+          "path": "benchmarks/JetDatabaseWriter.Benchmarks/Writer/AccessWriterPageIoBenchmarks.cs",
+          "sha256": "d21ce374146a053571f7ad159f2e2e1719e7f918e1eed55a332def49ce54370a"
         },
         {
           "path": "benchmarks/JetDatabaseWriter.Benchmarks/Writer/DataPageReclaimBenchmarks.cs",
           "sha256": "653afb09cdfe832f661f88d8e9c30e29b2621618c7d80b002b8a08728f25f25f"
+        },
+        {
+          "path": "benchmarks/JetDatabaseWriter.Benchmarks/Writer/MetadataAndCascadeBenchmarks.cs",
+          "sha256": "9a4961e2742848d6af1a3cf889bd8900fbfd2db1a72069cadb07df4eb3252b69"
         },
         {
           "path": "Directory.Build.props",
@@ -1644,7 +1674,7 @@
         },
         {
           "path": "docs/design/formal-verification.md",
-          "sha256": "457ee730f60915234a0e4474f89fc8e3f13b286c6e98d9b65db016276c4ead25"
+          "sha256": "b4a899341583541f0238f0bcc65795aca38877a0d03cebabd7abc666e1648b59"
         },
         {
           "path": "docs/design/index-and-relationship-format-notes.md",
@@ -1676,7 +1706,7 @@
         },
         {
           "path": "docs/design/proof-trust-review.md",
-          "sha256": "28671c3d0930118999d7e370a0724abb7d1c49c6cec4ed7187bcd70acf676c0c"
+          "sha256": "313b8dd2f11db7b916fa48f3b0b89d7ee2497b3b1de3509c86960abd445ab8f0"
         },
         {
           "path": "docs/design/read-performance-bottlenecks.md",
@@ -1688,11 +1718,11 @@
         },
         {
           "path": "docs/design/usage-map-maintenance.md",
-          "sha256": "e0878dfba52d4ef16f8c2761e82c8e2d64f76fd843509d0c5cec721ce00af6b0"
+          "sha256": "6d1477f27acfb98b182975f3312895fa0a6273262e76437d5b6398a723f6cde0"
         },
         {
           "path": "docs/design/verification-evidence-map.md",
-          "sha256": "c0df0b5658fc860c1bf743fbb5f8927d09fde4e1afd82d5cbfc1c480ee5c5626"
+          "sha256": "ec8285ad0a4f24bf6823c2baa16c8850e6e6bc7893ade7829d58f6386c2ce6b0"
         },
         {
           "path": "docs/design/verification-scope.md",
@@ -1752,11 +1782,11 @@
         },
         {
           "path": "scripts/tests/verify-proofs.tests.ps1",
-          "sha256": "931ecf519f44fd4b8698154d6557de998ba2f5497f856b5bad0bd648d3001262"
+          "sha256": "fca343d987c073e52560b49e10e919a18d700aa6b8577b0605feb66a2508429b"
         },
         {
           "path": "scripts/verify-proofs.ps1",
-          "sha256": "8de3816131593229e038cad7876547857698fdfed482b322127c525492748309"
+          "sha256": "8211c9c5b58bcbcd2be28d6117bb01f4ce02c76e9f8f2b353ec0468c5738d3cb"
         },
         {
           "path": "src/JetDatabaseWriter/Constants.cs",
@@ -1788,7 +1818,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Pages/UsageMap.cs",
-          "sha256": "6d18bab656559d6a2d10ba7954d1b8f8b173b72ec62c687c442be1e1487d25f5"
+          "sha256": "9b0ce04159000a5f5c97838ac7922a0c06b2bd55dad33ce1aae0e97965d4162d"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexEntryBoundaryKernelTests.cs",
@@ -1836,7 +1866,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Pages/UsageMapEnumerationKernelTests.cs",
-          "sha256": "d196216eb3a07628f352160404cf2a7de31c14f55091cbb149239d164dac1921"
+          "sha256": "65a499a43e6ede442410f0f2622a7d8a01a5ad171a7fa193a3d93c7169f5ab98"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/TestProgram.cs",
@@ -1884,7 +1914,7 @@
         },
         {
           "path": "verification/Indexes/IndexMutationKernel.dfy",
-          "sha256": "a32154506d40d50816cbbe7e659b9118edd4741e5beefc165754818197e89504"
+          "sha256": "b8c44e48d170804a6050f09b8bd68df32842b899ddd20c556d3a8a6c68063fa0"
         },
         {
           "path": "verification/LongValues/LongValueKernel.dfy",
@@ -1896,7 +1926,7 @@
         },
         {
           "path": "verification/Pages/DataPageKernel.dfy",
-          "sha256": "3af59bc82b2d4ac6c09fb39d89578832d5c23ddc3974f058a7f4b274b678d7cd"
+          "sha256": "116e3f78526b112409e4e356618417d2615996420bd32889dbcef493298e7e5c"
         },
         {
           "path": "verification/Pages/Paging/PageFrameOwnership.dfy",
@@ -1912,11 +1942,11 @@
         },
         {
           "path": "verification/Pages/UsageMapKernel.dfy",
-          "sha256": "731a84f85583f6c7aaf2c7bd3bd468807295b267061b11df1e8814ed877743bc"
+          "sha256": "ee9c2d1061c3d2ef58ac97a5b6f3b03265a5926e6fadae8970fcfb2ff46a9740"
         },
         {
           "path": "verification/README.md",
-          "sha256": "0156f7efe5d4ee14ed8e5ba9f48e529bfac090da47fe20b4824996eed42f0861"
+          "sha256": "528c19a0d75891ab3106e742a6836c72d73a77bb457f01dab0ca129c950acf90"
         },
         {
           "path": "verification/Transactions/GenerationOwnership.dfy",

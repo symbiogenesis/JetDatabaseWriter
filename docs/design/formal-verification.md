@@ -211,9 +211,9 @@ Their generated method bodies pass the same deterministic translation, audit,
 negative controls and freshness checks as the recovery and long-value kernels.
 
 `DataPageKernel` admits physical deleted-row reclamation before any mutation,
-selects the minimum payload offset and next distinct row boundary, and rewrites
-every directory word plus the free-space header. Its contracts preserve slot
-flags and unrelated bytes. The exact overlapping `Buffer.BlockCopy` and optional
+selects the minimum payload offset and next distinct row boundary, and updates
+selected or relocated directory words plus the free-space header. Its contracts
+preserve surviving slot flags and unrelated bytes. The exact overlapping `Buffer.BlockCopy` and optional
 `Array.Clear` effects remain explicit adapter contracts; modeled byte-image
 preservation does not verify the CLR implementation. Stable exclusive page
 ownership, the supplied native layout and containing statement rollback remain
@@ -221,19 +221,22 @@ separate obligations. Reclaiming row space grants no authority to free a page.
 
 `IndexMutationKernel` executes shared-prefix scanning, capacity/cursor decisions,
 header emission, entry bookmarks and child pointers, bitmap boundaries, and
-final sentinel/free-space emission for leaf and intermediate pages. The adapter
-retains the existing list representation and bulk key-suffix copy. Exact copied
+final sentinel/free-space emission for leaf and intermediate pages. Fixed-position
+stores extract bytes directly; the general byte law remains ghost specification.
+The adapter retains the existing list representation and bulk key-suffix copy. Exact copied
 bytes, stable entry acquisition, correct layouts and caller-established
 preconditions remain contracts. Ordered multisets, native collation, separators,
 allocation, split/merge/root changes and full tree-edit rollback require their
 own composition; an encoded page is not an ownership proof.
 
 `UsageMapKernel` admits the complete array range once, then scans the actual
-acquired bitmap using a packed native continuation for ordered members shared
-by INLINE and REFERENCE enumeration. Its cursor has bounded progress; strict
-refusal preserves the previously appended prefix, while tolerant enumeration
-skips out-of-range members. Signed 64-bit page controls preserve the adapter's
-native domain without narrowing. List append, stable array lifetime, reference
+acquired bitmap using a native byte-mask result shared by INLINE and
+REFERENCE enumeration. Zero-byte scanning advances a byte index; each nonempty
+result admits up to eight ordered members. The adapter appends the selected
+mask bits before handling terminal status, including valid members before a
+strict failure within that byte. The cursor makes bounded progress; tolerant
+enumeration skips out-of-range members. Signed 64-bit page controls preserve the
+adapter's native domain without narrowing. List append, stable array lifetime, reference
 pointer/page acquisition, cancellation and pooled-page return remain explicit
 effects. Exact bitmap membership does not establish complete database ownership
 or authorize reclamation.
@@ -324,4 +327,4 @@ Do not advertise whole-library formal verification, unconditional crash safety, 
 
 The undo model follows the principle of placing recoverability conditions before writes: protect every original byte that a write or truncation could destroy, preserve the invariant through torn writes and interrupted replay, and permit a commit decision only after the complete selected image is durable. This is inspired by [PoWER](https://www.usenix.org/conference/osdi25/presentation/leblanc) and [crash refinement](https://www.usenix.org/conference/osdi16/technical-sessions/presentation/sigurbjarnarson); it is a project-specific model, not a reuse of either project's verified implementation.
 
-Dafny supplies both verification-only models and the small executable native kernels. The [generation policy](../../verification/README.md#executable-kernel-generation) records the exact source projection and trusted compiler boundary; generated primitive operations require no runtime support. Its three fixed inlining annotations (two long-value controllers and the packed usage-bitmap controller) require exact unique signatures after raw-runtime rejection and preserve generated bodies. This BCL metadata insertion and the C# compiler/JIT/AOT remain trusted; an advisory inlining hint supplies no performance theorem. Target compatibility, trimming/AOT, production invocation and hosted timing remain acceptance obligations. Dafny external declarations would merely trust existing C#, so they cannot close its proof gap. F* remains an option for a concrete future boundary, but no second verifier or extraction toolchain is introduced.
+Dafny supplies both verification-only models and the small executable native kernels. The [generation policy](../../verification/README.md#executable-kernel-generation) records the exact source projection and trusted compiler boundary; generated primitive operations require no runtime support. Its three fixed inlining annotations (two long-value controllers and the byte-batch usage-map controller) require exact unique signatures after raw-runtime rejection and preserve generated bodies. This BCL metadata insertion and the C# compiler/JIT/AOT remain trusted; an advisory inlining hint supplies no performance theorem. Target compatibility, trimming/AOT, production invocation and hosted timing remain acceptance obligations. Dafny external declarations would merely trust existing C#, so they cannot close its proof gap. F* remains an option for a concrete future boundary, but no second verifier or extraction toolchain is introduced.

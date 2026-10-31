@@ -87,8 +87,8 @@ Assert-Scenario 'generated qualified self reference follows type packaging' {
     if (-not $projected.Contains('return JetDatabaseWriter.Verification.RecoveryKernel.Accept(value);')) { throw 'Qualified self reference was changed incorrectly.' }
 }
 Assert-Scenario 'runtime-dependent kernel rejected' { ConvertFrom-NativeKernelTranslation 'RecoveryKernel' ($translation.Replace('return (value) == ((byte)(0));', 'return Dafny.Helpers.Value(value);')) } 'runtime support'
-$usageDeclaration = '    public static ulong NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, ulong continuation)'
-$usageMethod = $usageDeclaration + "`n    {`n      return continuation;`n    }`n"
+$usageDeclaration = '    public static void NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, uint cursor, out uint next, out byte members, out byte state)'
+$usageMethod = $usageDeclaration + "`n    {`n      next = cursor;`n      members = 0;`n      state = 1;`n    }`n"
 foreach ($kernel in @(
     @{ Name = 'DataPageKernel'; Source = 'Pages/DataPageKernel' },
     @{ Name = 'IndexMutationKernel'; Source = 'Indexes/IndexMutationKernel' },
@@ -116,7 +116,7 @@ foreach ($kernel in @(
     } 'Unsupported native kernel translation'
 }
 $usageTranslation = $translation.Replace('RecoveryKernel', 'UsageMapKernel').Replace("`r`n", "`n").Replace('    public static bool Accept(byte value)', $usageMethod + '    public static bool Accept(byte value)')
-Assert-Scenario 'exact packed bitmap controller receives one fixed inlining annotation without body changes' {
+Assert-Scenario 'exact bitmap batch controller receives one fixed inlining annotation without body changes' {
     $projected = (ConvertFrom-NativeKernelTranslation 'UsageMapKernel' $usageTranslation).Replace("`r`n", "`n")
     $attribute = '    [global::System.Runtime.CompilerServices.MethodImplAttribute(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]' + "`n"
     if ([regex]::Matches($projected, [regex]::Escape($attribute)).Count -ne 1 -or
@@ -130,14 +130,18 @@ foreach ($case in @(
     @{ Name = 'duplicate'; Text = $usageTranslation.Replace($usageMethod, $usageMethod + $usageMethod) },
     @{ Name = 'overload'; Text = $usageTranslation.Replace($usageMethod, $usageMethod + "    public static ulong NextBitmapPage(ulong continuation)`n    {`n      return continuation;`n    }`n") },
     @{ Name = 'generic overload'; Text = $usageTranslation.Replace($usageMethod, $usageMethod + "    public static ulong NextBitmapPage<T>(ulong continuation)`n    {`n      return continuation;`n    }`n") },
-    @{ Name = 'return type'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('static ulong', 'static uint')) },
-    @{ Name = 'parameter'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('ulong continuation', 'uint continuation')) },
+    @{ Name = 'return type'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('static void', 'static uint')) },
+    @{ Name = 'parameter'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('uint cursor', 'ulong cursor')) },
+    @{ Name = 'cursor output modifier'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('out uint next', 'ref uint next')) },
+    @{ Name = 'mask output type'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('out byte members', 'out uint members')) },
+    @{ Name = 'status output modifier'; Text = $usageTranslation.Replace($usageDeclaration, $usageDeclaration.Replace('out byte state', 'ref byte state')) },
+    @{ Name = 'old packed signature'; Text = $usageTranslation.Replace($usageDeclaration, '    public static ulong NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, ulong continuation)') },
     @{ Name = 'indentation'; Text = $usageTranslation.Replace($usageDeclaration, '  ' + $usageDeclaration) }
 )) {
-    Assert-Scenario "packed bitmap $($case.Name) declaration rejected" { ConvertFrom-NativeKernelTranslation 'UsageMapKernel' $case.Text } 'Unsupported native controller declaration'
+    Assert-Scenario "bitmap batch $($case.Name) declaration rejected" { ConvertFrom-NativeKernelTranslation 'UsageMapKernel' $case.Text } 'Unsupported native controller declaration'
 }
 Assert-Scenario 'bitmap raw metadata rejected before insertion' {
-    ConvertFrom-NativeKernelTranslation 'UsageMapKernel' ($usageTranslation.Replace('return continuation;', '[MethodImpl(MethodImplOptions.AggressiveInlining)] return continuation;'))
+    ConvertFrom-NativeKernelTranslation 'UsageMapKernel' ($usageTranslation.Replace('next = cursor;', '[MethodImpl(MethodImplOptions.AggressiveInlining)] next = cursor;'))
 } 'Unreviewed native-kernel metadata'
 Assert-Scenario 'unexpected compiled module rejected' { ConvertFrom-NativeKernelTranslation 'RecoveryKernel' ($translation + 'namespace Other {}') } 'Unsupported native kernel translation'
 $prepareDeclaration = '    public static ulong PrepareVisitedAdd(uint[] entries, uint count, uint pointer)'
