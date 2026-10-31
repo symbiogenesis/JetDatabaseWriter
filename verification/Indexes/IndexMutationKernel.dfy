@@ -1,13 +1,144 @@
-// Executing native index-page emission. Key-suffix bulk copies remain exact
-// BCL effects in the adapter; key acquisition, collation and tree ownership
-// are not inferred from a valid encoded page.
+// Executing native index-page emission and monotone bookmark relocation.
+// Key-suffix copies and immutable ledger acquisition remain adapter effects;
+// key correspondence, collation and tree ownership are separate obligations.
 module IndexMutationNativeTypes {
   newtype {:nativeType "uint"} U32 = x: int | 0 <= x < 4294967296
+  newtype {:nativeType "long"} I64 = x: int | -9223372036854775808 <= x < 9223372036854775808
   newtype {:nativeType "byte"} Byte = x: int | 0 <= x < 256
 }
 
 module IndexMutationKernel {
   import opened IndexMutationNativeTypes
+
+  // The disk-backed relocation adapter supplies complete immutable records.
+  // These controls retain a monotone injective identity map without allocating
+  // an executing sequence or retaining its contents in memory.
+  function AdmitRelocationPair(source: U32, destination: U32, priorSource: U32, priorDestination: U32): bool {
+    source / 256 != 0 && destination / 256 != 0 && priorSource < source && priorDestination < destination
+  }
+
+  ghost predicate MonotoneRelocation(sources: seq<U32>, destinations: seq<U32>) {
+    |sources| == |destinations| &&
+    (forall index: nat :: index < |sources| ==> sources[index] / 256 != 0 && destinations[index] / 256 != 0) &&
+    (forall first: nat, second: nat :: first < second < |sources| ==>
+      sources[first] < sources[second] && destinations[first] < destinations[second])
+  }
+
+  lemma AppendRelocationPreservesIdentity(sources: seq<U32>, destinations: seq<U32>, source: U32, destination: U32)
+    requires MonotoneRelocation(sources, destinations)
+    requires AdmitRelocationPair(source, destination, if |sources| == 0 then 0 else sources[|sources| - 1],
+      if |destinations| == 0 then 0 else destinations[|destinations| - 1])
+    ensures MonotoneRelocation(sources + [source], destinations + [destination])
+  {
+    forall first: nat, second: nat | first < second < |sources + [source]|
+      ensures (sources + [source])[first] < (sources + [source])[second] &&
+        (destinations + [destination])[first] < (destinations + [destination])[second]
+    {
+      if second == |sources| {
+        assert first <= |sources| - 1;
+        if first < |sources| - 1 {
+          assert sources[first] < sources[|sources| - 1];
+          assert destinations[first] < destinations[|destinations| - 1];
+        }
+      }
+    }
+  }
+
+  lemma RelocationIsInjectiveAndOrdered(sources: seq<U32>, destinations: seq<U32>, first: nat, second: nat)
+    requires MonotoneRelocation(sources, destinations)
+    requires first < |sources| && second < |sources|
+    ensures sources[first] == sources[second] <==> first == second
+    ensures destinations[first] == destinations[second] <==> first == second
+    ensures sources[first] < sources[second] <==> destinations[first] < destinations[second]
+  {
+    if first < second {
+      assert sources[first] < sources[second] && destinations[first] < destinations[second];
+    } else if second < first {
+      assert sources[second] < sources[first] && destinations[second] < destinations[first];
+    }
+  }
+
+  function RelocationMiddle(low: I64, high: I64): I64
+    requires 0 <= low < high
+    ensures low <= RelocationMiddle(low, high) < high
+  { low + (high - low) / 2 }
+
+  ghost predicate RelocationSearchContains(sources: seq<U32>, target: U32, low: I64, high: I64) {
+    0 <= low <= high && high as int <= |sources| &&
+    (forall index: nat :: index < |sources| && sources[index] == target ==> low as int <= index < high as int)
+  }
+
+  // Ghost source contents describe the already validated immutable stream;
+  // only the native interval, just-read identity and decision outputs execute.
+  method AdvanceRelocationSearch(low: I64, high: I64, middle: I64, source: U32, target: U32,
+      ghost sources: seq<U32>) returns (nextLow: I64, nextHigh: I64, found: bool)
+    requires 0 <= low < high
+    requires middle == RelocationMiddle(low, high)
+    requires forall first: nat, second: nat :: first < second < |sources| ==> sources[first] < sources[second]
+    requires RelocationSearchContains(sources, target, low, high)
+    requires source == sources[middle as int]
+    ensures found <==> source == target
+    ensures found ==> nextLow == low && nextHigh == high
+    ensures found ==> forall index: nat :: index < |sources| && sources[index] == target ==> index == middle as int
+    ensures !found ==> RelocationSearchContains(sources, target, nextLow, nextHigh)
+    ensures !found ==> low <= nextLow <= nextHigh <= high && nextHigh - nextLow < high - low
+    ensures !found ==> nextHigh - nextLow <= (high - low) / 2
+    ensures source < target ==> nextLow == middle + 1 && nextHigh == high
+    ensures target < source ==> nextLow == low && nextHigh == middle
+  {
+    found := source == target;
+    nextLow := low;
+    nextHigh := high;
+    if source < target {
+      nextLow := middle + 1;
+    } else if target < source {
+      nextHigh := middle;
+    }
+    forall index: nat | index < |sources| && sources[index] == target
+      ensures if found then index == middle as int else nextLow as int <= index < nextHigh as int
+    {
+      if index < middle as int {
+        assert sources[index] < sources[middle as int];
+      } else if middle as int < index {
+        assert sources[middle as int] < sources[index];
+      }
+    }
+  }
+
+  lemma ExhaustedRelocationSearchRefuses(sources: seq<U32>, target: U32, cursor: I64)
+    requires RelocationSearchContains(sources, target, cursor, cursor)
+    ensures target !in sources
+  { }
+
+  lemma InitialRelocationSearchRetainsAllCandidates(sources: seq<U32>, target: U32)
+    requires |sources| <= 9223372036854775807
+    ensures RelocationSearchContains(sources, target, 0, |sources| as I64)
+  { }
+
+  lemma FoundRelocationRetainsExactIdentity(sources: seq<U32>, destinations: seq<U32>, target: U32, index: nat)
+    requires MonotoneRelocation(sources, destinations)
+    requires index < |sources| && sources[index] == target
+    ensures destinations[index] / 256 != 0
+    ensures forall other: nat :: other < |sources| && sources[other] == target ==>
+      other == index && destinations[other] == destinations[index]
+  {
+    forall other: nat | other < |sources| && sources[other] == target
+      ensures other == index && destinations[other] == destinations[index]
+    {
+      RelocationIsInjectiveAndOrdered(sources, destinations, index, other);
+    }
+  }
+
+  lemma ReachableRelocationAndRefusal()
+    ensures MonotoneRelocation([], [])
+    ensures MonotoneRelocation([256, 511, 512, 4294967295], [256, 512, 768, 4294967295])
+    ensures RelocationSearchContains([256, 511, 512, 4294967295], 511, 0, 4)
+    ensures AdmitRelocationPair(4294967295, 4294967295, 512, 768)
+    ensures !AdmitRelocationPair(512, 768, 512, 768)
+    ensures !AdmitRelocationPair(512, 768, 511, 768)
+    ensures !AdmitRelocationPair(255, 768, 0, 0)
+    ensures RelocationMiddle(9223372036854775806, 9223372036854775807) == 9223372036854775806
+  { }
 
   ghost function WordByte(word: U32, position: U32): Byte {
     if position == 0 then (word % 256) as Byte

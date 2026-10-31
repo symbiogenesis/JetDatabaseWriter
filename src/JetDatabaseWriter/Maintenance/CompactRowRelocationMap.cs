@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Verification;
 
 /// <summary>Validates and searches a disk-capable monotone row ledger with fixed storage and cumulative I/O limits.</summary>
 /// <remarks>
@@ -63,7 +64,7 @@ internal sealed class CompactRowRelocationMap
             await map.ReadRecordAsync(index, cancellationToken).ConfigureAwait(false);
             uint source = BinaryPrimitives.ReadUInt32LittleEndian(map.record);
             uint destination = BinaryPrimitives.ReadUInt32LittleEndian(map.record.AsSpan(4));
-            if ((source >> 8) == 0 || (destination >> 8) == 0 || source <= priorSource || destination <= priorDestination)
+            if (!IndexMutationKernel.AdmitRelocationPair(source, destination, priorSource, priorDestination))
             {
                 throw Corrupt("Relocation bookmarks are invalid, aliased or not strictly increasing.");
             }
@@ -105,24 +106,16 @@ internal sealed class CompactRowRelocationMap
             long high = this.rowCount;
             while (low < high)
             {
-                long middle = low + ((high - low) / 2);
+                long middle = IndexMutationKernel.RelocationMiddle(low, high);
                 await this.ReadRecordAsync(middle, cancellationToken).ConfigureAwait(false);
                 uint source = BinaryPrimitives.ReadUInt32LittleEndian(this.record);
-                if (source == target)
+                IndexMutationKernel.AdvanceRelocationSearch(low, high, middle, source, target, out low, out high, out bool found);
+                if (found)
                 {
                     uint destination = BinaryPrimitives.ReadUInt32LittleEndian(this.record.AsSpan(4));
                     this.CheckLength();
                     cancellationToken.ThrowIfCancellationRequested();
                     return entry with { DataPage = destination >> 8, DataRow = checked((byte)(destination & 0xFF)) };
-                }
-
-                if (source < target)
-                {
-                    low = middle + 1;
-                }
-                else
-                {
-                    high = middle;
                 }
             }
 
