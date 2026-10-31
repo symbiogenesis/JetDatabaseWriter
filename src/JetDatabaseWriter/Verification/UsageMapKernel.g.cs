@@ -12,17 +12,6 @@ namespace JetDatabaseWriter.Verification {
     {
       return ((byte)(((byte)(@value)) & (unchecked((byte)(((byte)(((byte)(1)) << ((int)((byte)((byte)(bit))))))))))) != ((byte)(0));
     }
-    public static uint BatchStart(uint next) {
-      if ((next) == (0U)) {
-        return 0U;
-      } else {
-        return (((next) - (1U)) / (8U)) * (8U);
-      }
-    }
-    public static long Page(long basePage, uint next)
-    {
-      return (basePage) + ((long)(JetDatabaseWriter.Verification.UsageMapKernel.BatchStart(next)));
-    }
     public static long PageOffset(long firstPage, byte bit)
     {
       return (firstPage) + ((long)(bit));
@@ -32,17 +21,20 @@ namespace JetDatabaseWriter.Verification {
       return (byte)((byte)(((byte)(members)) | (unchecked((byte)(((byte)(((byte)(1)) << ((int)((byte)((byte)(bit)))))))))));
     }
     [global::System.Runtime.CompilerServices.MethodImplAttribute(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    public static void NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, uint cursor, out uint next, out byte members, out byte state)
+    public static void NextBitmapPage(byte[] bytes, uint offset, uint count, long basePage, long total, long minimum, bool strict, uint cursor, out uint next, out byte members, out byte state, out long firstPage)
     {
       next = 0;
       members = 0;
       state = 0;
+      firstPage = 0;
       uint _rhs0 = cursor;
       byte _rhs1 = (byte)(0);
       byte _rhs2 = (byte)(1);
+      long _rhs3 = 0L;
       next = _rhs0;
       members = _rhs1;
       state = _rhs2;
+      firstPage = _rhs3;
       int _0_start;
       _0_start = (int)(offset);
       int _1_limit;
@@ -53,50 +45,52 @@ namespace JetDatabaseWriter.Verification {
         byte _3_value;
         _3_value = (bytes)[(int)((_0_start) + (_2_scanIndex))];
         if ((_3_value) != ((byte)(0))) {
-          long _4_firstPage;
-          _4_firstPage = (basePage) + (((long)(_2_scanIndex)) * (8L));
-          if (((_4_firstPage) >= (minimum)) && (((_4_firstPage) + (7L)) < (total))) {
-            uint _rhs3 = (((uint)(_2_scanIndex)) + (1U)) * (8U);
-            byte _rhs4 = _3_value;
-            byte _rhs5 = (byte)(2);
-            next = _rhs3;
-            members = _rhs4;
-            state = _rhs5;
+          firstPage = (basePage) + (((long)(_2_scanIndex)) * (8L));
+          if (((firstPage) >= (minimum)) && (((firstPage) + (7L)) < (total))) {
+            uint _rhs4 = (((uint)(_2_scanIndex)) + (1U)) * (8U);
+            byte _rhs5 = _3_value;
+            byte _rhs6 = (byte)(2);
+            next = _rhs4;
+            members = _rhs5;
+            state = _rhs6;
             return ;
           }
           members = (byte)(0);
-          uint _5_bit;
-          _5_bit = 0U;
-          while ((_5_bit) < (8U)) {
-            if (JetDatabaseWriter.Verification.UsageMapKernel.Marked(_3_value, _5_bit)) {
-              long _6_candidate;
-              _6_candidate = (_4_firstPage) + ((long)(_5_bit));
-              if (((_6_candidate) < (minimum)) || ((_6_candidate) >= (total))) {
+          uint _4_bit;
+          _4_bit = 0U;
+          while ((_4_bit) < (8U)) {
+            if (JetDatabaseWriter.Verification.UsageMapKernel.Marked(_3_value, _4_bit)) {
+              long _5_candidate;
+              _5_candidate = (firstPage) + ((long)(_4_bit));
+              if (((_5_candidate) < (minimum)) || ((_5_candidate) >= (total))) {
                 if (strict) {
-                  uint _rhs6 = ((((uint)(_2_scanIndex)) * (8U)) + (_5_bit)) + (1U);
-                  byte _rhs7 = (byte)(3);
-                  next = _rhs6;
-                  state = _rhs7;
+                  uint _rhs7 = ((((uint)(_2_scanIndex)) * (8U)) + (_4_bit)) + (1U);
+                  byte _rhs8 = (byte)(3);
+                  next = _rhs7;
+                  state = _rhs8;
                   return ;
                 }
               } else {
-                members = JetDatabaseWriter.Verification.UsageMapKernel.AddMember(members, _5_bit);
+                members = JetDatabaseWriter.Verification.UsageMapKernel.AddMember(members, _4_bit);
               }
             }
-            _5_bit = (_5_bit) + (1U);
+            _4_bit = (_4_bit) + (1U);
           }
           if ((members) != ((byte)(0))) {
-            uint _rhs8 = (((uint)(_2_scanIndex)) + (1U)) * (8U);
-            byte _rhs9 = (byte)(2);
-            next = _rhs8;
-            state = _rhs9;
+            uint _rhs9 = (((uint)(_2_scanIndex)) + (1U)) * (8U);
+            byte _rhs10 = (byte)(2);
+            next = _rhs9;
+            state = _rhs10;
             return ;
           }
         } else {
         }
         _2_scanIndex = (_2_scanIndex) + (1);
       }
-      next = (count) * (8U);
+      uint _rhs11 = (count) * (8U);
+      long _rhs12 = 0L;
+      next = _rhs11;
+      firstPage = _rhs12;
       return ;
     }
   }

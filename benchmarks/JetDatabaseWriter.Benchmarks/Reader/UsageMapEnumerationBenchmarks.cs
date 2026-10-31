@@ -67,48 +67,39 @@ public class UsageMapEnumerationBenchmarks
         uint cursor = 0;
         while (true)
         {
-            UsageMapKernel.NextBitmapPage(this.bitmap, 0, (uint)this.bitmap.Length, 100, long.MaxValue, 0, true, cursor, out cursor, out byte members, out byte state);
+            UsageMapKernel.NextBitmapPage(this.bitmap, 0, (uint)this.bitmap.Length, 100, long.MaxValue, 0, true, cursor, out cursor, out byte members, out byte state, out long firstPage);
             if (members != 0)
             {
-                long firstPage = UsageMapKernel.Page(100, cursor);
-                if ((members & 1) != 0)
+                if (members == byte.MaxValue)
                 {
                     this.pages.Add(firstPage);
-                }
-
-                if ((members & 2) != 0)
-                {
                     this.pages.Add(UsageMapKernel.PageOffset(firstPage, 1));
-                }
-
-                if ((members & 4) != 0)
-                {
                     this.pages.Add(UsageMapKernel.PageOffset(firstPage, 2));
-                }
-
-                if ((members & 8) != 0)
-                {
                     this.pages.Add(UsageMapKernel.PageOffset(firstPage, 3));
-                }
-
-                if ((members & 16) != 0)
-                {
                     this.pages.Add(UsageMapKernel.PageOffset(firstPage, 4));
-                }
-
-                if ((members & 32) != 0)
-                {
                     this.pages.Add(UsageMapKernel.PageOffset(firstPage, 5));
-                }
-
-                if ((members & 64) != 0)
-                {
                     this.pages.Add(UsageMapKernel.PageOffset(firstPage, 6));
-                }
-
-                if ((members & 128) != 0)
-                {
                     this.pages.Add(UsageMapKernel.PageOffset(firstPage, 7));
+                }
+                else
+                {
+                    int bits = members;
+                    long pageNumber = firstPage;
+                    while (true)
+                    {
+                        if ((bits & 1) != 0)
+                        {
+                            this.pages.Add(pageNumber);
+                        }
+
+                        bits >>= 1;
+                        if (bits == 0)
+                        {
+                            break;
+                        }
+
+                        pageNumber++;
+                    }
                 }
             }
 

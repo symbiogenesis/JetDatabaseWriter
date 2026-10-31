@@ -57,11 +57,11 @@ public sealed class UsageMapEnumerationKernelTests
                         do
                         {
                             uint previous = cursor;
-                            UsageMapKernel.NextBitmapPage(bitmap, 1, 4, basePage, total, minimum, strict, cursor, out cursor, out byte members, out state);
+                            UsageMapKernel.NextBitmapPage(bitmap, 1, 4, basePage, total, minimum, strict, cursor, out cursor, out byte members, out state, out long firstPage);
                             Assert.InRange(cursor, previous, 32U);
+                            Assert.Equal(state == 1 ? 0 : basePage + (((long)cursor - 1) / 8 * 8), firstPage);
                             if (members != 0)
                             {
-                                long firstPage = UsageMapKernel.Page(basePage, cursor);
                                 for (byte bit = 0; bit < 8; bit++)
                                 {
                                     if ((members & (1 << bit)) != 0)
@@ -105,28 +105,31 @@ public sealed class UsageMapEnumerationKernelTests
         }
     }
 
-    /// <summary>Native cursor extremes select the exact byte base and preserve every signed page offset.</summary>
+    /// <summary>The scanner returns the exact byte base for signed extrema and clears it on exhaustion.</summary>
     [Fact]
     public void BatchPageBase_NativeExtremes_PreserveByteAndSignedOffsets()
     {
-        foreach (uint cursor in new uint[] { 0, 1, 7, 8, 9, int.MaxValue, uint.MaxValue })
+        byte[] bitmap = [0, 0xA5, 0xFF];
+        foreach (long basePage in new long[] { long.MinValue, -8, 0, long.MaxValue - 24 })
         {
-            uint expectedStart = cursor == 0 ? 0 : (uint)(((long)cursor - 1) / 8 * 8);
-            Assert.Equal(expectedStart, UsageMapKernel.BatchStart(cursor));
-            if (cursor == 0)
+            uint cursor = 0;
+            foreach (int index in new[] { 1, 2 })
             {
-                continue;
-            }
-
-            foreach (long basePage in new long[] { long.MinValue, 0, long.MaxValue - expectedStart - 7 })
-            {
-                long firstPage = UsageMapKernel.Page(basePage, cursor);
-                Assert.Equal(basePage + expectedStart, firstPage);
+                UsageMapKernel.NextBitmapPage(bitmap, 0, 3, basePage, long.MaxValue, long.MinValue, true, cursor, out cursor, out byte members, out byte state, out long firstPage);
+                Assert.Equal((byte)2, state);
+                Assert.Equal(bitmap[index], members);
+                Assert.Equal(basePage + (index * 8L), firstPage);
                 for (byte bit = 0; bit < 8; bit++)
                 {
                     Assert.Equal(firstPage + bit, UsageMapKernel.PageOffset(firstPage, bit));
                 }
             }
+
+            UsageMapKernel.NextBitmapPage(bitmap, 0, 3, basePage, long.MaxValue, long.MinValue, true, cursor, out cursor, out byte finalMembers, out byte finalState, out long finalPage);
+            Assert.Equal(24U, cursor);
+            Assert.Equal((byte)0, finalMembers);
+            Assert.Equal((byte)1, finalState);
+            Assert.Equal(0, finalPage);
         }
     }
 
@@ -173,13 +176,13 @@ public sealed class UsageMapEnumerationKernelTests
                             expectedState = 2;
                         }
 
-                        UsageMapKernel.NextBitmapPage(bitmap, 0, 1, 0, total, minimum, strict, 0, out uint cursor, out byte members, out byte state);
+                        UsageMapKernel.NextBitmapPage(bitmap, 0, 1, 0, total, minimum, strict, 0, out uint cursor, out byte members, out byte state, out long firstPage);
                         Assert.Equal((byte)expectedMask, members);
                         Assert.Equal(expectedState, state);
                         Assert.Equal(expectedCursor, cursor);
                         if (expectedMask != 0)
                         {
-                            Assert.Equal(0, UsageMapKernel.Page(0, cursor));
+                            Assert.Equal(0, firstPage);
                         }
                     }
                 }

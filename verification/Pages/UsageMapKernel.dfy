@@ -156,14 +156,9 @@ module UsageMapKernel {
     }
   }
 
-  function BatchStart(next: U32): U32 {
+  ghost function BatchStart(next: U32): U32 {
     if next == 0 then 0 else (next - 1) / 8 * 8
   }
-  function Page(basePage: I64, next: U32): I64
-    requires next > 0
-    requires basePage <= 9223372036854775807 - (BatchStart(next) as I64) - 7
-    ensures Page(basePage, next) <= 9223372036854775800
-  { basePage + BatchStart(next) as I64 }
   function PageOffset(firstPage: I64, bit: Byte): I64
     requires bit < 8 && firstPage <= 9223372036854775800
   { firstPage + bit as I64 }
@@ -337,13 +332,15 @@ module UsageMapKernel {
 
   method NextBitmapPage(bytes: array<Byte>, offset: U32, count: U32,
       basePage: I64, total: I64, minimum: I64, strict: bool, cursor: U32)
-      returns (next: U32, members: Byte, state: Byte)
+      returns (next: U32, members: Byte, state: Byte, firstPage: I64)
     requires bytes.Length <= 2147483647
     requires HasScanRange(bytes.Length as U32, offset, count, basePage, cursor)
     requires cursor % 8 == 0
     ensures BatchResult(bytes[..], offset, count, basePage, total, minimum, strict, cursor, next, members, state)
+    ensures state == 1 ==> firstPage == 0
+    ensures state != 1 ==> next > 0 && firstPage as int == basePage as int + BatchStart(next) as int && firstPage <= 9223372036854775800
   {
-    next, members, state := cursor, 0, 1;
+    next, members, state, firstPage := cursor, 0, 1, 0;
     var start: I32 := offset as I32;
     var limit: I32 := count as I32;
     var scanIndex: I32 := (cursor / 8) as I32;
@@ -359,7 +356,7 @@ module UsageMapKernel {
       ghost var index: U32 := scanIndex as U32;
       var value := bytes[start + scanIndex];
       if value != 0 {
-        var firstPage: I64 := basePage + (scanIndex as I64) * 8;
+        firstPage := basePage + (scanIndex as I64) * 8;
         if firstPage >= minimum && firstPage + 7 < total {
           forall local: U32 {:trigger Marked(value, local)} | local < 8
             ensures Marked(value, local) <==>
@@ -431,7 +428,7 @@ module UsageMapKernel {
       }
       scanIndex := scanIndex + 1;
     }
-    next := count * 8;
+    next, firstPage := count * 8, 0;
     reveal BatchResult();
     return {:isolate};
   }
