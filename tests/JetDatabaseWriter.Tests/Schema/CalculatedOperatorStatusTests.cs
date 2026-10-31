@@ -15,6 +15,53 @@ using Xunit;
 public sealed class CalculatedOperatorStatusTests
 {
     [Theory]
+    [InlineData("native-membership.accdb", "31E420C894D0117E75B346B117043F3F1B9A752E9A8E3D06AF1AB141B3D866F8")]
+    [InlineData("native-membership-compacted.accdb", "DEA2BF5E77F0F94BF707F621CCECA32ADCB06B99EE0181CEBCD2FAF993FDAE4B")]
+    public async Task NativeMembershipFixtures_RetainNativeTypeMismatchAndFormattedComparison(string fixture, string hash)
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "Databases", "CalculatedMembership", fixture);
+        byte[] bytes = await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken);
+        Assert.Equal(hash, Convert.ToHexString(SHA256.HashData(bytes)));
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(bytes, TestContext.Current.CancellationToken);
+        object[] native;
+        Dictionary<string, object> named;
+        await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            native = Assert.Single(await reader.Rows("Membership", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken));
+            IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("Membership", TestContext.Current.CancellationToken);
+            named = columns.Select((column, index) => (column.Name, Value: native[index])).ToDictionary(pair => pair.Name, pair => pair.Value, StringComparer.Ordinal);
+        }
+
+        foreach (string name in new[] { "NumberText", "NumberBadText", "TextNumber", "TextBadNumber", "NumberGroupedText", "NumberExponentText", "BooleanText", "NullCandidate", "GuidNumber", "NumberGuid" })
+        {
+            Assert.Equal(13, Assert.IsType<CalculatedError>(named[name]).NativeCode);
+        }
+
+        foreach (string name in new[] { "EarlyNumber", "EarlyText", "DateCanonical", "DateAfterBadText", "TextDate", "DateTimeCanonical", "DateNumber", "NumberDate", "GuidText", "TextGuid", "InfinityText", "TextInfinity", "NegativeInfinityText", "NaNCanonical", "NaNNumber", "NumberNaN", "InfinitySelf" })
+        {
+            Assert.Equal(-1d, named[name]);
+        }
+
+        foreach (string name in new[] { "DatePadded", "DateBadText", "BadTextDate", "DateMidnightText", "GuidBadText", "BadTextGuid", "InfinityBadText", "NegativeInfinityOther", "NaNOtherText", "InfinityNumber" })
+        {
+            Assert.Equal(0d, named[name]);
+        }
+
+        Assert.Equal(DBNull.Value, named["NullNeedle"]);
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            Assert.Equal(1, await writer.UpdateRowsAsync("Membership", "Id", 1, new Dictionary<string, object?> { ["Id"] = 2 }, TestContext.Current.CancellationToken));
+            await writer.InsertRowAsync("Membership", new RowValues { ["Id"] = 3 }, TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reopened = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        object[][] written = await reopened.Rows("Membership", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(2, written.Length);
+        Assert.All(written, row => Assert.Equal(native[1..], row[1..]));
+    }
+
+    [Theory]
     [InlineData("native-operators.accdb", "079445EF0BC57C9E41949D1E9A0AFE6EF357163F2F6F3C0165C1BAC11C984434")]
     [InlineData("native-operators-compacted.accdb", "73593FF49BBE2C01B93FA2A8368F069D5F14C3F7625BBE41161CC3B8054820C3")]
     public async Task NativeOperatorFixtures_PreserveStatusesAndUnaryTextIdentity(string fixture, string hash)
@@ -88,6 +135,12 @@ public sealed class CalculatedOperatorStatusTests
             "1 In (1,Sqr(-1))", "1 In (Sqr(-1),1)", "(1/0) In (1,2)",
             "+\"bad\"", "-\"bad\"", "+\"1E999\"", "-\"1E999\"",
             "+\"1E100\"", "-\"1E100\"", "+\"1.2345678901234567\"", "-\"1.2345678901234567\"",
+            "1 In (\"1\")", "1 In (\"bad\",1)", "\"1\" In (1)",
+            "#2020-01-01# In (\"bad\")", "#2020-01-01# In (\"bad\",#2020-01-01#)",
+            "#2020-01-01# In (\"01/01/2020\")", "#2020-01-01# In (\"1/1/2020\")",
+            "\"1/1/2020\" In (#2020-01-01#)", "#2020-01-01# In (43831)", "43831 In (#2020-01-01#)",
+            "SYD(1E308,0,1000,1) In (\"inf\")", "\"inf\" In (SYD(1E308,0,1000,1))",
+            "PMT(-1,10,1000,0,1) In (1)", "1 In (PMT(-1,10,1000,0,1))",
         ];
         await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.CalculatedInErrors");
         string path = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
