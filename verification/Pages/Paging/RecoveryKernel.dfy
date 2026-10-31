@@ -1397,6 +1397,10 @@ module RecoveryKernel {
     {
       if IndexBitmapBit(page[bitmap + bit / 8], bit % 8) {
         next := first + bit;
+        assert current < next < payloadEnd <= 2147483647;
+        assert IndexBoundaryAt(page[..], bitmap, first, next as int);
+        assert !(forall p | current as int < p < payloadEnd as int ::
+          !IndexBoundaryAt(page[..], bitmap, first, p));
         return;
       }
       bit := bit + 1;
