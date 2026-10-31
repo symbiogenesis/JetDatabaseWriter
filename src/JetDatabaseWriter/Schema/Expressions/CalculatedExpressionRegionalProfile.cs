@@ -124,8 +124,9 @@ internal static class CalculatedExpressionRegionalProfile
             text = text.Replace("Sept.", "Sep", StringComparison.OrdinalIgnoreCase);
         }
 
+        // Native fallback tries yy/M/d before d/M/yy: 31/12/20 is 2031-12-20.
         if (!DateTime.TryParse(text, Culture, styles, out DateTime date)
-            && !DateTime.TryParseExact(text, ["d/M/yyyy", "yyyy/M/d", "yyyy-M-d", "M/d/yy"], Culture, styles, out date))
+            && !DateTime.TryParseExact(text, ["d/M/yyyy", "yyyy/M/d", "yyyy-M-d", "M/d/yy", "yy/M/d", "d/M/yy", "d-M-yyyy", "d/M/yyyy H:mm"], Culture, styles, out date))
         {
             throw new FormatException("The text is not a valid regional date.");
         }
