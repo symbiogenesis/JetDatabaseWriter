@@ -76,6 +76,37 @@ new ColumnDefinition("Weight",    typeof(decimal)) { NumericPrecision = 10, Nume
 
 Jet3 (Access 97) databases have no Decimal type, so on a Jet3 `.mdb` a `decimal` column is created as Currency. Its values then keep four decimal places whatever `NumericScale` says, and the precision and scale are neither stored nor applied to values. Currency's largest value, 922,337,203,685,477.5807, leaves room for every value with up to 14 digits before the decimal point, so a declared `NumericScale` above 4, or a `NumericPrecision` more than 14 above `NumericScale`, throws `NotSupportedException` before anything is written. That includes Decimal(15,0) and the default Decimal(18,0): on Jet3, declare a precision and scale that fit, such as Decimal(18,4) or Decimal(10,2), or set `IsCurrency` for Currency's full range.
 
+#### Calculated columns
+
+ACCDB tables support Access calculated fields. Set `IsCalculated` and
+`CalculationExpression`; the CLR type selects the result type. For example:
+
+```csharp
+new ColumnDefinition("Quantity", typeof(int)),
+new ColumnDefinition("UnitPrice", typeof(double)),
+new ColumnDefinition("Total", typeof(double))
+{
+    IsCalculated = true,
+    CalculationExpression = "[Quantity] * [UnitPrice]",
+},
+```
+
+Inserts and updates recompute the cached result and its dependent calculations;
+caller-supplied calculated values are ignored. Readers expose native cached
+values, including `CalculatedError` values, without running expressions.
+Column renames update references, and dropping a referenced column is refused.
+
+Calculations use the writer's captured regional settings for numeric and date
+text, month/day names and system week starts. To select a profile explicitly,
+set `AccessWriterOptions.CalculatedExpressionCulture`, for example to
+`CultureInfo.GetCultureInfo("de-DE")`. The default captures `CurrentCulture`
+when the writer opens. Each writer owns a snapshot of those settings.
+
+Access table calculations have their own expression language: they do not admit
+every function available in queries, defaults or validation rules. Jet3 and Jet4
+MDB files cannot contain calculated fields. See the [native language, storage
+and resource limits](design/calculated-columns-format-notes.md).
+
 #### Column constraints
 
 `ColumnDefinition` accepts four optional constraints in addition to `Name`/`ClrType`/`MaxLength`:

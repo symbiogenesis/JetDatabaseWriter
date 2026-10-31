@@ -468,8 +468,8 @@ Date mixed with Decimal retains Decimal for addition, subtraction, multiplicatio
 and division in both operand orders, including Null propagation and values outside
 the Date range. Exponentiation returns Double. Fresh ACE query TypeName controls
 independently establish the same promotion for the shared arithmetic helpers.
-This evidence does not qualify every caller-field conversion, shared expression
-function or foreign user regional profile.
+Shared expression and caller-field conversions retain their separate qualification
+requirements. User regional profiles have their own native controls below.
 
 ### Numeric literals and Decimal-to-floating expression coercion
 
@@ -724,13 +724,12 @@ DateTime millisecond loss. `CalculatedNativeDateExpressionTests` and its DAO
 pipeline compare exact native source bits, dependencies and expression results
 through writer updates, native recalculation and both compactions.
 
-Two-digit DateSerial years follow the operating system Gregorian calendar window;
-the measured host uses 2049 as its upper endpoint. The independently measured
-English General profile uses Sunday for system-default week starts and English
-month/day names. `CalculatedNativeDateFunctionTests` and its DAO controls retain
-native subtypes through Binary payloads and verify writer/native recalculation
-and compact. Database/thread locale probes are separate from changing operating
-system regional settings; they did not alter the measured naming profile.
+Two-digit DateSerial years follow the captured Gregorian calendar window;
+the measured native hosts use 2049 as its upper endpoint. The writer snapshots
+that window with its regional settings. `CalculatedNativeDateFunctionTests` and
+its DAO controls retain native subtypes through Binary payloads and verify
+writer/native recalculation and compact. The six independent Windows user
+profiles below establish localized names, date text and system week starts.
 
 ## Native calculated Binary and OLE results
 
@@ -805,5 +804,49 @@ concatenation and Str accept these valid financial/source values; cached arithme
 errors still follow their separate status/constraint rules. The fresh numeric
 controls verify canonical, noncanonical and signaling payloads and financial,
 unary, Abs and Round contexts through native recalculation and compact. These
-table-specific forms do not change the shared formatting profile or complete
-foreign regional-profile qualification.
+table-specific forms do not change the shared formatting profile.
+
+## Regional settings
+
+Each writer captures a read-only clone of
+`AccessWriterOptions.CalculatedExpressionCulture`, or `CurrentCulture` when
+the option is absent. Calculated evaluation activates that snapshot only during
+the synchronous evaluation and storage conversion of a column, restoring the
+previous scope in `finally`. Nested dependencies retain the same settings;
+concurrent writers do not share a mutable culture. Defaults and validation rules
+keep their separate shared expression profile. Hash-delimited date literals
+retain invariant Access grammar.
+
+Native table calculations use regional numeric parsing, number/date text,
+intrinsic Boolean text, month/day names and system week starts. `Str` parses
+numeric text regionally but formats its result with a decimal point. Gregorian
+OLE dates remain Gregorian under the ar-SA user profile. Native abbreviated
+names and directional-mark handling are applied independently of differences
+in runtime globalization tables. ANSI character and Unicode casing controls
+remain unchanged across these user profiles.
+
+`CalculatedRegionalProfileTests` compares every retained calculated cache in
+independent en-US, fr-FR, de-DE, tr-TR, ja-JP and ar-SA source and compacted
+databases with writer insertion and recomputation. Their database LCID remains
+1033 while each disposable Windows runner changes its actual user regional
+profile before loading DAO. `CalculatedRegionalAnsiTests` separately compares
+all 256 ANSI byte values, best-fit Asc and Unicode case controls.
+`CalculatedCultureIsolationTests` verifies snapshot ownership, the Gregorian
+year window, concurrent writers and the unchanged shared default profile.
+The [fixture provenance](../../tests/JetDatabaseWriter.Tests/Databases/CalculatedRegionalProfiles/README.md)
+records engine versions, hashes, observations and the native workflow.
+
+## Unary values and membership
+
+Native unary plus preserves Text identity; unary minus converts Text to Double.
+Result storage then applies its own conversion, including native cached statuses
+13 and 6 for invalid numeric text and overflow. Binary caches expose the retained
+subtype independently of numeric readback. `CalculatedOperatorStatusTests`
+compares pinned source/compacted native controls and fresh DAO authoring.
+
+`IN` stops at the first match and skips later errors; a Null needle skips its
+candidate list. Finite numeric/Text pairs cache status 13 even for numeric-looking
+text. Date/Text and nonfinite numeric/Text pairs compare native formatted text;
+Date/number pairs compare the raw serial. GUIDs retain their text identity.
+The [membership controls](../../tests/JetDatabaseWriter.Tests/Databases/CalculatedMembership/README.md)
+pin both operand orders, Nulls, errors, subtype boundaries and native compaction.

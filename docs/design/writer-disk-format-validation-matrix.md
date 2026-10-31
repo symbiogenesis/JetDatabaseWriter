@@ -815,8 +815,25 @@ controls; positive Str results retain their leading space. The shared formatting
 profile remains separate. `CalculatedChooseTests` adds pinned native
 source/compacted fixtures and fresh controls for Single index rounding,
 out-of-range Null, overflow/Null statuses and selected branch widths; provenance
-is in `Databases/CalculatedChoose/README.md`. These controls do not complete the
-foreign user regional-profile gate or the remaining shared-language and
-caller/storage requirements in R4.
+is in `Databases/CalculatedChoose/README.md`. The shared-language and
+caller/storage requirements in R4 retain their separate contexts.
+
+`CalculatedRegionalProfileTests` compares all retained calculated caches in
+independently native-authored en-US, fr-FR, de-DE, tr-TR, ja-JP and ar-SA
+source/compacted controls through writer insert and recomputation. Actual Windows
+user regional settings vary while the database LCID stays 1033. Native numeric
+parsing, date/number/Boolean text, names and system week starts match the captured
+profiles; `Str` retains its decimal-point output. `CalculatedRegionalAnsiTests`
+covers every ANSI byte and native Asc/casing controls, while
+`CalculatedCultureIsolationTests` checks per-writer ownership and calendar-window
+snapshots. Fixture hashes and engine/workflow provenance are retained beside
+`Databases/CalculatedRegionalProfiles/`.
+
+`CalculatedOperatorStatusTests` independently compares native source/compacted
+unary and membership matrices through writer inserts and updates, then repeats
+fresh DAO authoring. Unary plus preserves Text subtype and unary minus converts
+Text through Double; invalid numeric storage retains native error statuses.
+`IN` keeps native early-match/Null/error order and its distinct mixed-type
+coercions, including formatted Date and nonfinite numeric text.
 
 `PublicTextCollationTests` and `TextSortOrderFixtureTests` cover public General97/General Legacy/General choices, raw stored ID/version metadata, null header-default selection, unknown-ID reporting, no-mutation invalid-choice refusal, Text/Memo/calculated Text and schema preservation. `PublicTextCollationDaoTests` independently checks writer-created columns through schema edits and row updates, native case-equivalent seek, duplicate refusal, insert/update and compact/readback. Current x86 DAO3.6 (`dao360.dll` 10.0.26100.5074) controls passed for Jet3 General97 and Jet4 General Legacy. Four fresh DAO120 Jet4/ACE cases remain guarded and skipped on this host. Existing encoders and text code pages are unchanged; broader locale, long-key and native mixed-column coverage remains F9/E2 work.
