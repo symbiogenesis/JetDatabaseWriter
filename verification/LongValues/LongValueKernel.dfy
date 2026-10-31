@@ -582,6 +582,8 @@ module LongValueKernel {
     ensures forall value: U32 :: value != 0 ==>
       (value in VisitedSnapshot(entries) <==> (value in old(VisitedSnapshot(entries)) ||
         (VisitedAddResult(decision) == 1 && value == pointer)))
+    ensures VisitedMembers(VisitedSnapshot(entries)) == old(VisitedMembers(VisitedSnapshot(entries))) +
+      (if VisitedAddResult(decision) == 1 then {pointer} else {})
     ensures VisitedAddResult(decision) >= 2 ==>
       pointer != 0 && pointer !in old(VisitedSnapshot(entries)) &&
       count as int == |VisitedSnapshot(entries)| / 2
@@ -658,6 +660,7 @@ module LongValueKernel {
     ensures nextCount as int == count as int + 1
     ensures forall value: U32 :: value != 0 ==>
       (value in destination[..] <==> value in VisitedSnapshot(source) || value == pointer)
+    ensures VisitedMembers(destination[..]) == VisitedMembers(VisitedSnapshot(source)) + {pointer}
     ensures probes <= (|VisitedSnapshot(source)| + 1) * destination.Length
     ensures scannedSlots == |VisitedSnapshot(source)|
   {

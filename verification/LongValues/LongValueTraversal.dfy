@@ -136,8 +136,9 @@ module LongValueTraversal {
     hide K.TrackedVisited, K.VisitedTable, K.DistinctVisited, K.OccupiedCount,
       K.VisitedSlot, K.NextVisitedSlot, K.ProbeDistance, K.VisitedAddPayload,
       K.VisitedAddHasHighFlag, K.VisitedAddResult, K.VisitedInsertedDecision,
-      K.VisitedGrowthDecision, K.ValidVisitedDecision;
+      K.VisitedGrowthDecision, K.ValidVisitedDecision, K.VisitedMembers;
     assert K.TrackedVisited([],0) by { reveal K.TrackedVisited(); }
+    assert K.VisitedMembers([]) == {} by { reveal K.VisitedMembers(); }
     var current := first;
     var copied: U32 := 0;
     var count: U32 := 0;
@@ -207,12 +208,17 @@ module LongValueTraversal {
         capacity := next;
         count := nextCount;
       } else {
+        AccumulateGrowthWork(count as int,growthProbes,allocationSlots,0,0);
         count := K.VisitedAddPayload(decision);
       }
       assert count as int == previousCount + 1;
       seen := seen + {current};
-      assert preparationProbes <= (count as int) * (16 + 4 * (count as int));
+      assert {:isolate} preparationProbes <= (count as int) * (16 + 4 * (count as int));
+      assert {:isolate} growthProbes <= (2 * (count as int) + 1) * allocationSlots;
+      assert {:isolate} scannedSlots <= allocationSlots && peakSlots <= allocationSlots &&
+        2 * peakSlots <= 3 * (capacity as int);
       // Acquisition's bounded page is borrowed rather than retained per row.
+      K.AccumulateProbeWork(acquired,previousCount,pageSize as int,pageSize as int);
       acquired := acquired + pageSize as int;
       if current !in graph {
         ResourceMetersFit(count as int,capacity as int,allocationSlots,preparationProbes,growthProbes,peakSlots);
