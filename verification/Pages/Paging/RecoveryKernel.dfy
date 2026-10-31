@@ -14,6 +14,58 @@ module RecoveryKernel {
   import Undo = UndoJournal
   import Replacement = ReplacementProtocol
 
+  // The adapter compares the encoded bound with the original operand in the
+  // predicate's lossless comparison domain. Keep equality exact; a range may
+  // broaden only away from matching keys, retaining the original predicate.
+  function IsOutwardSeekBound(op: U32, comparison: I32): bool {
+    if op == 0 then comparison == 0
+    else if op == 2 || op == 3 then comparison <= 0
+    else if op == 4 || op == 5 then comparison >= 0
+    else false
+  }
+
+  ghost predicate MatchesSeekComparison(op: U32, key: real, bound: real) {
+    if op == 0 then key == bound
+    else if op == 2 then key > bound
+    else if op == 3 then key >= bound
+    else if op == 4 then key < bound
+    else if op == 5 then key <= bound
+    else false
+  }
+
+  lemma OutwardSeekBoundRetainsEveryMatch(op: U32, comparison: I32,
+      original: real, encoded: real, key: real)
+    requires (comparison < 0 <==> encoded < original)
+    requires (comparison == 0 <==> encoded == original)
+    requires (comparison > 0 <==> encoded > original)
+    requires IsOutwardSeekBound(op, comparison)
+    ensures MatchesSeekComparison(op, key, original) ==>
+      MatchesSeekComparison(op, key, encoded)
+  { }
+
+  lemma InwardStrictRoundingCanLoseAMatch()
+    ensures MatchesSeekComparison(2, 2.0, 1.5)
+    ensures !MatchesSeekComparison(2, 2.0, 2.0)
+    ensures !IsOutwardSeekBound(2, 1)
+    ensures MatchesSeekComparison(4, -2.0, -1.5)
+    ensures !MatchesSeekComparison(4, -2.0, -2.0)
+    ensures !IsOutwardSeekBound(4, -1)
+  { }
+
+  // IEEE encodings distinguish the two zeros even though CLR predicates do
+  // not. Use the lower zero for an inclusive lower bound and the upper zero
+  // for an inclusive upper bound; equality needs both and must scan instead.
+  function IsFloatingZeroSeekBound(op: U32, negative: bool): bool {
+    op == 2 || op == 4 || (op == 3 && negative) || (op == 5 && !negative)
+  }
+
+  lemma FloatingZeroBoundRetainsEveryMatch(op: U32, negative: bool, keyRank: int)
+    requires IsFloatingZeroSeekBound(op, negative)
+    ensures MatchesSeekComparison(op,
+      if keyRank < 0 then -1.0 else if keyRank <= 1 then 0.0 else 1.0, 0.0) ==>
+      MatchesSeekComparison(op, keyRank as real, if negative then 0.0 else 1.0)
+  { }
+
   // Shared parser slices use the signed managed offset domain. Subtraction
   // follows offset admission, so even hostile native-width values are total.
   function IsByteRange(length: U64, offset: U64, count: U64): bool {

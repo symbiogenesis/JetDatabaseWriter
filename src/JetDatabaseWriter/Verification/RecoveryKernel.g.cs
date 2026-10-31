@@ -4,6 +4,22 @@
 namespace JetDatabaseWriter.Verification {
 
   internal static class RecoveryKernel {
+    public static bool IsOutwardSeekBound(uint op, int comparison)
+    {
+      if ((op) == (0U)) {
+        return (comparison) == (0);
+      } else if (((op) == (2U)) || ((op) == (3U))) {
+        return (comparison) <= (0);
+      } else if (((op) == (4U)) || ((op) == (5U))) {
+        return (comparison) >= (0);
+      } else {
+        return false;
+      }
+    }
+    public static bool IsFloatingZeroSeekBound(uint op, bool negative)
+    {
+      return ((((op) == (2U)) || ((op) == (4U))) || (((op) == (3U)) && (negative))) || (((op) == (5U)) && (!(negative)));
+    }
     public static bool IsByteRange(ulong length, ulong offset, ulong count)
     {
       return (((length) <= (9223372036854775807UL)) && ((offset) <= (length))) && ((count) <= ((length) - (offset)));

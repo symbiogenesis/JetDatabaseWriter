@@ -4,6 +4,28 @@
 namespace JetDatabaseWriter.Verification {
 
   internal static class IndexMutationKernel {
+    public static bool AdmitRelocationPair(uint source, uint destination, uint priorSource, uint priorDestination)
+    {
+      return (((((source) / (256U)) != (0U)) && (((destination) / (256U)) != (0U))) && ((priorSource) < (source))) && ((priorDestination) < (destination));
+    }
+    public static long RelocationMiddle(long low, long high)
+    {
+      return (low) + ((long)(((ulong)((high) - (low))) / (2UL)));
+    }
+    public static void AdvanceRelocationSearch(long low, long high, long middle, uint source, uint target, out long nextLow, out long nextHigh, out bool found)
+    {
+      nextLow = 0;
+      nextHigh = 0;
+      found = false;
+      found = (source) == (target);
+      nextLow = low;
+      nextHigh = high;
+      if ((source) < (target)) {
+        nextLow = (middle) + (1L);
+      } else if ((target) < (source)) {
+        nextHigh = middle;
+      }
+    }
     public static bool HasRange(uint length, uint start, uint count)
     {
       return ((start) <= (length)) && ((count) <= ((length) - (start)));

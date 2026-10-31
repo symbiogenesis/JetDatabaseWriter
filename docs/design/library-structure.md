@@ -708,7 +708,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Registry** | `ConstraintRegistry`, `CalculatedExpressionFunctionRegistry` | Centralized constraint management and calculated-expression function dispatch — decoupled from the writer orchestrator and evaluator entry point |
 | **Query Provider / Pipeline** | `AccessQueryProvider`, `AccessQueryTranslator`, `QueryStage` subclasses | LINQ `IQueryable` provider over the reader's `TableReader`, `IndexRowReader`, and `SchemaReader` that translates an expression tree into an ordered stage pipeline, pushes a leading filter run into index inference, and runs the tail above it over the streamed rows (`InMemoryTail`) |
 | **Specification** | `RowCriteria`, `ColumnPredicate`, `RowCriteriaEvaluator` | Named-column predicate objects expressing writer update/delete filters independently of how they compile and evaluate against decoded rows |
-| **Query Planner** | `IndexPlanner`, `IndexPredicateTranslator`, `IndexSeekFilter`, `IndexPlan` | Chooses the best index for a predicate and builds a sound (superset) seek, leaving a residual client-side filter to enforce exactness; a comparison whose property holds a converted value, or whose operand the key cannot hold, is left to that filter |
+| **Query Planner** | `IndexPlanner`, `IndexPredicateTranslator`, `IndexSeekFilter`, `IndexPlan` | Chooses the best index for a predicate and builds a sound (superset) seek, leaving a residual client-side filter to enforce exactness; a comparison whose property holds a converted value, or whose operand cannot encode a safe bound, is left to that filter |
 
 ---
 

@@ -78,7 +78,7 @@ public sealed class TypedMappingCoercionTests(DatabaseCache db) : IClassFixture<
             var data = new TheoryData<DatabaseFormat, string>();
             foreach (DatabaseFormat format in (DatabaseFormat[])[DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb])
             {
-                foreach (string name in (string[])["EnumOnText", "GuidOnText", "GuidOnBinary", "EnumOnLongInteger", "FractionalBound", "BoundBeyondTheRange"])
+                foreach (string name in (string[])["EnumOnText", "GuidOnText", "GuidOnBinary", "EnumOnLongInteger", "FractionalBound", "RoundedLowerBound", "RoundedUpperBound", "RoundedInterval", "BoundBeyondTheRange"])
                 {
                     data.Add(format, name);
                 }
@@ -214,6 +214,55 @@ public sealed class TypedMappingCoercionTests(DatabaseCache db) : IClassFixture<
         Assert.Equal(expected, (await reader.Query<CoercedRow>(Table).Where(predicate).ToListAsync(Ct)).Select(r => r.Id).Order());
     }
 
+    [Theory]
+    [MemberData(nameof(SeekFormats))]
+    public async Task FloatingZeroPredicates_IndexedReadsMatchFullScan(DatabaseFormat format)
+    {
+        float negativeSingleZero = BitConverter.Int32BitsToSingle(int.MinValue);
+        double negativeDoubleZero = BitConverter.Int64BitsToDouble(long.MinValue);
+        await using MemoryStream stream = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct))
+        {
+            await writer.CreateTableAsync(
+                "ZeroBounds",
+                [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("Weight", typeof(float)), new ColumnDefinition("Score", typeof(double))],
+                [new IndexDefinition("IX_Weight", "Weight"), new IndexDefinition("IX_Score", "Score")],
+                Ct);
+            await writer.InsertRowsAsync(
+                "ZeroBounds",
+                [[1, -float.Epsilon, -double.Epsilon], [2, negativeSingleZero, negativeDoubleZero], [3, 0f, 0.0], [4, float.Epsilon, double.Epsilon]],
+                Ct);
+        }
+
+        stream.Position = 0;
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        List<FloatingRow> all = await reader.Rows<FloatingRow>("ZeroBounds", cancellationToken: Ct).ToListAsync(Ct);
+        Assert.Equal([2, 3], all.Where(r => r.Score == 0).Select(r => r.Id).Order());
+        FloatingRow negative = Assert.Single(all, r => r.Id == 2);
+        FloatingRow positive = Assert.Single(all, r => r.Id == 3);
+        Assert.Equal(int.MinValue, BitConverter.SingleToInt32Bits(negative.Weight));
+        Assert.Equal(long.MinValue, BitConverter.DoubleToInt64Bits(negative.Score));
+        Assert.Equal(0, BitConverter.SingleToInt32Bits(positive.Weight));
+        Assert.Equal(0L, BitConverter.DoubleToInt64Bits(positive.Score));
+        Expression<Func<FloatingRow, bool>>[] predicates =
+        [
+            r => r.Weight == 0f,
+            r => r.Score == 0.0,
+            r => r.Weight >= 0f,
+            r => r.Score <= negativeDoubleZero,
+            r => r.Weight >= negativeSingleZero,
+            r => r.Score <= 0.0,
+            r => r.Weight > 1e-46,
+            r => r.Weight < -1e-46,
+        ];
+        foreach (Expression<Func<FloatingRow, bool>> predicate in predicates)
+        {
+            int[] expected = [.. all.Where(predicate.Compile()).Select(r => r.Id).Order()];
+            Assert.Equal(expected, (await reader.Rows<FloatingRow>("ZeroBounds", predicate, cancellationToken: Ct).ToListAsync(Ct)).Select(r => r.Id).Order());
+            Assert.Equal(expected, (await reader.Query<FloatingRow>("ZeroBounds").Where(predicate).ToListAsync(Ct)).Select(r => r.Id).Order());
+        }
+    }
+
     /// <summary>
     /// Returns the predicate <see cref="IndexedPredicates"/> names, over a table with an index on
     /// every column, and the ids of the rows it matches.
@@ -241,6 +290,9 @@ public sealed class TypedMappingCoercionTests(DatabaseCache db) : IClassFixture<
 
             // Bounds the Long Integer key cannot hold: a fraction, and a number outside its range.
             "FractionalBound" => (r => r.Id > 1.5, [2]),
+            "RoundedLowerBound" => (r => r.Id >= 0.5, [1, 2]),
+            "RoundedUpperBound" => (r => r.Id < 1.5, [1]),
+            "RoundedInterval" => (r => r.Id > 0.25 && r.Id <= 1.75, [1]),
             "BoundBeyondTheRange" => (r => r.Id < beyondLongInteger, [1, 2]),
             _ => throw new ArgumentOutOfRangeException(nameof(name), name, "Unknown predicate."),
         };
@@ -329,6 +381,16 @@ public sealed class TypedMappingCoercionTests(DatabaseCache db) : IClassFixture<
 
         ms.Position = 0;
         return ms;
+    }
+
+    /// <summary>Maps floating values without changing their zero signs.</summary>
+    internal sealed class FloatingRow
+    {
+        public int Id { get; set; }
+
+        public float Weight { get; set; }
+
+        public double Score { get; set; }
     }
 
     /// <summary>Maps a Long column and a Text column to enums, and a Text and a Binary column to <see cref="Guid"/>.</summary>

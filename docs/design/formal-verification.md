@@ -91,7 +91,16 @@ Inverse laws cover every pointer/token word and each supported 30-bit length/sto
 
 The selected [external chained-payload surface](long-value-traversal.md) is `LongValueStore.CopyPayloadAsync`, used by streaming decode and compact discovery. `LongValueTraversal.Traverse` proves finite traversal with distinct nonzero visited identities, a decreasing row budget and strict payload progress for each completed output chunk. Null, repeated, absent and no-progress rows refuse. For `n` attempted acquisitions, including a final malformed row, `n <= min(declaredLength, rowBudget)`; output is bounded by the declared length and logical page-prefix acquisition work by `pageSize * n`.
 
-Production invokes generated row-admission/payload-count and visited capacity/probe decisions. The specialized visited table allocates lazily and doubles at half occupancy; the model bounds current capacity by `16 + 4*n` uint slots and cumulative allocations by `32 + 8*n` slots, including superseded arrays. Circular-probe lemmas establish decreasing probe work and complete bounded slot coverage. Generated `ContainsVisited`, `AddVisited` and `RehashVisited` array loops prove exact nonzero membership under the insertion-established probe-chain invariant, preservation during insertion/rehash and bounded termination. `TrackedVisited` couples those entry contracts to distinct membership, exact occupied count, half occupancy and the capacity bound. Generated `PrepareVisitedAdd` and `CompleteVisitedGrowth` compose count/growth policy with the array operations, preserving the single-scan insertion and duplicate-before-growth behavior. Preparation returns zero for unchanged state, a direct insertion count, a marked growth capacity or exhausted refusal. Exact classification, payload inverses and a constructive representation theorem preserve the abstract transition through ghost effective count/capacity projections. Null initial storage and the existing empty-array form are admitted. The C# adapter supplies CLR allocation and retains/publishes the array/count pair; its effect sequencing and composition with the traversal schedule remain manual obligations. Aggregate adversarial probe work, cancellation latency, CLR overhead, GC behavior, locator/cache/pool buffers, destination allocations, returned I/O effects and native pointer/ownership meaning remain separate contracts. These are named traversal bounds, not a verified complete public parser or a whole-library hostile-file claim.
+Production invokes generated row-admission/payload-count and visited capacity/probe decisions. The specialized visited table allocates lazily and doubles at half occupancy; the model bounds current capacity by `16 + 4*n` uint slots and cumulative allocations by `32 + 8*n` slots, including superseded arrays. Circular-probe lemmas establish decreasing probe work and complete bounded slot coverage. Generated `ContainsVisited`, `AddVisited` and `RehashVisited` array loops prove exact nonzero membership under the insertion-established probe-chain invariant, preservation during insertion/rehash and bounded termination. `TrackedVisited` couples those entry contracts to distinct membership, exact occupied count, half occupancy and the capacity bound. Generated `PrepareVisitedAdd` and `CompleteVisitedGrowth` compose count/growth policy with the array operations, preserving the single-scan insertion and duplicate-before-growth behavior. Preparation returns zero for unchanged state, a direct insertion count, a marked growth capacity or exhausted refusal. Exact classification, payload inverses and a constructive representation theorem preserve the abstract transition through ghost effective count/capacity projections. Null initial storage and the existing empty-array form are admitted. The C# adapter supplies CLR allocation and retains/publishes the array/count pair; its effect sequencing and composition with the public acquisition/write path remain manual obligations. Synchronous cancellation latency, CLR overhead, GC behavior, locator/cache/pool buffers, destination allocations, returned I/O effects and native pointer/ownership meaning remain separate contracts. These are named traversal bounds, not a verified complete public parser or a whole-library hostile-file claim.
+
+The array-backed `LongValueTraversal.Traverse` calls the same generated
+count/growth controllers and their concrete array operations. Ghost probe and
+source-iteration meters derive `probes <= 20*n*n + 92*n + 48`,
+`scannedSlots <= allocatedSlots <= 32 + 8*n` and
+`peakSlots <= allocatedSlots` with `peakSlots <= 24 + 6*n`, including old/new
+growth overlap and final refusal work. These are named table payload/work
+bounds, not a total CPU, physical heap or .NET allocation-progress theorem.
+Actual public parser effects and synchronous cancellation latency remain open.
 
 ## Page-frame ownership
 
@@ -249,6 +258,54 @@ Generated-source correctness supplies no timing theorem; actual allocation and
 wall-clock preservation require those hosted measurements. Complete public
 parser, tree and mutation proofs remain in V8/V9/V12.
 
+## Numeric seek admission and relocation ledgers
+
+`RecoveryKernel.IsOutwardSeekBound` admits exact numeric equality and range
+bounds whose conversion moves away from matching values. Its order theorem
+preserves every original match without changing strict/inclusive endpoints.
+`IndexSeekFilter` executes this decision after checking lossless property and
+operand domains and comparing nearest-even encoded values with the original
+operand. Integral, Currency, declared-scale Decimal and finite Single rounding
+may broaden a range; the original residual predicate still filters every row.
+Overflow, NaN, unsafe inward rounding and nonexact numeric equality refuse.
+The existing Date/Time policy uses the same range decision, retaining its
+whole-millisecond equality exception.
+
+`IsFloatingZeroSeekBound` separately accounts for the distinct index encodings
+of CLR-equal negative and positive zero. Strict zero ranges remain admissible;
+an inclusive lower bound must use negative zero and an inclusive upper bound
+positive zero. Other zero comparisons scan. A rank-based theorem preserves both
+zero observations. Numeric conversion, comparison signs and native key order
+remain adapter contracts, checked by independent encoded-key vectors for
+supported orders and both Decimal key forms, plus public indexed-versus-scan tests.
+These are scalar admission proofs, not complete query-planner refinement or
+new native-format evidence. Endpoint-rewriting optimizations remain I9.
+
+Legacy descending Decimal encodings retain a sign-byte rule that does not
+establish reversed cross-sign byte order. Inferred descending ranges remain
+residual; planner regressions guard both complete refusal and retention of an
+earlier equality prefix. Native fixture/comparison qualification remains F9/I9.
+
+`IndexMutationKernel` also executes monotone relocation-pair admission and
+overflow-safe binary-search pivot/interval decisions in `CompactRowRelocationMap`.
+Ledger-extension proofs derive unique sources, injective destinations and
+preserved bookmark order; search proofs retain exact membership and halve an
+unsuccessful interval. Successful lookup preserves the stored key and returns
+the destination belonging to that source position. The caller supplies an
+immutable exclusively owned stream and exact read effects. Complete root and
+incoming-reference enumeration, key/row correspondence, graph preservation,
+safe reclamation and crash-safe compact publication remain I17/V9 obligations.
+
+The replacement cleanup model composes `ProductionCleanupAuthority` through
+arbitrary finite admitted cleanup/crash/restart traces. Both fenced entry
+proofs establish it; `InterruptedProductionCleanupAllowsCompletion` constructs
+a successful continuation with the same selected image and decision, recorded
+generation reuse while a receipt survives, and fresh authority after name loss.
+Repeated production interruption tests check these authority transfers and
+final successor admission. Validated bootstrap, actual OS exclusion, successful
+effects, namespace durability and eventual successful I/O remain explicit
+contracts. This does not close complete recovery-controller refinement.
+
 ## Production correspondence
 
 Paths are relative to the repository root. Method names identify the exact
@@ -258,6 +315,8 @@ explicit contracts.
 
 | Modeled obligation | Production boundary | Existing focused evidence | Remaining correspondence gap |
 |---|---|---|---|
+| Outward numeric range and signed-zero admission | `Indexes/IndexSeekFilter.cs`; generated `RecoveryKernel.IsOutwardSeekBound`, `IsFloatingZeroSeekBound` | `IndexSeekRoundingTests`, `IndexSeekFilterTests`, `TypedMappingCoercionTests` | CLR conversion/comparison and native key-order correspondence remain contracts; full planner/evaluation semantics and endpoint rewriting remain I9. |
+| Monotone injective relocation and bounded exact ledger search | `Maintenance/CompactRowRelocationMap.cs`; generated `IndexMutationKernel` relocation controls | `CompactRowRelocationMapTests`, existing raw index assembly/validator tests | Immutable exclusive ledger/read effects remain contracts; complete rooted graph, native key/row correspondence and reclaim/publication composition remain I17/V9. |
 | Complete row-reclamation admission and directory/free-space rewrite | `Pages/DataPageRows.cs` `ReclaimDeletedRowSpace`; generated `DataPageKernel` | `DataPageReclaimKernelTests`, existing deletion/overflow/reclamation tests | Exact overlapping copy/clear effects, exclusive page/layout identity, containing mutation and statement rollback remain contracts. |
 | Leaf/intermediate index header, compressed entry metadata and page finalization | `Indexes/IndexPageCodec.cs` page builder and prefix scan; generated `IndexMutationKernel` | `IndexPageEmissionKernelTests`, strict leaf/intermediate and structural tests; existing hosted index-emission benchmarks | Exact suffix copy and stable list/layout inputs remain adapter contracts; ordered trees, separators, allocation and full edit paths remain open. |
 | Ordered INLINE/REFERENCE bitmap member scan and strict prefix refusal | `Pages/UsageMap.cs` `TryEnumerateBitmapPages`; generated `UsageMapKernel` | `UsageMapEnumerationKernelTests`, existing bitmap enumeration and ownership tests | List append, reference-page acquisition/return, cancellation, map identity and complete public resource/ownership composition remain separate. |
@@ -275,7 +334,7 @@ explicit contracts.
 | Bounded journal values, framing/cursors, record classification, inventory-bound replay selection, original-page sources, truncate-tail schedules, payload/hash slices and byte authorization | `Verification/RecoveryKernel.g.cs`, generated from `verification/Pages/Paging/RecoveryKernel.dfy`, called by `PersistentRollbackJournal` | `RecoveryKernelTests`, `JournalReplayInventoryTests`, malformed-journal and replay tests; mandatory generated-source freshness | Pure decisions are generated; exact acquisition, checksums and cryptographic identity remain implementation contracts. Serialized inventory and successful replay effects have scoped refinement proofs; the complete effectful C# algorithm is not verified. |
 | Valid old/new decision and publication | `Encryption/EncryptionReplacementIntent.cs` `ReadState`, `ValidateState`, `ValidatePublication`, `Copy`, `Publish`, `Recover`, `Commit`, `Cleanup` | `ReplacementKernelTests`, `ReplacementFieldConformanceTests`, `ReplacementIntentTests`, `ReplacementCrashRecoveryTests`, `ReplacementNamespaceModelTests`, `ReplacementCleanupConformanceTests`, `ReplacementCopyConformanceTests`, `ReplacementPublicationConformanceTests` | Generated bounded array scans verify exact header/decision field comparisons and refine byte admission. Focused production controls bind short reads, refusal and validation-before-bootstrap; SHA/path primitives, copy syscalls, full recovery control flow, metadata and namespace persistence remain explicit contracts. |
 | Complete long-value descriptor codec, bounded acquisition/serialization, payload admission and row-pointer packing | `LongValues/Models/LongValueDescriptor.cs` `TryRead`, `WriteTo`; `LongValues/LongValueStore.cs` pointer helpers and `ValidatePayload`; `Verification/LongValueKernel.g.cs` | `LongValueDescriptorKernelTests`, `LongValueStoreTests`, malformed long-value and compact-audit tests | Generated array methods prove complete 12-byte acquisition/serialization, exact field inverses, bounds, atomic refusal and preservation outside the descriptor. Span adapters use generated range/field decisions. Payload admission and 24-bit page/8-bit row packing are generated. External-chain traversal, aggregate resource bounds, token meaning and native compatibility remain separate. |
-| Bounded external chained-payload traversal | `LongValues/LongValueStore.cs` `CopyPayloadAsync`; `LongValueVisitedSet.cs`; `LongValueKernel.g.cs` | `LongValueTraversalTests`, `LongValueStreamingTests`, `CompactRawDataLongValueValidatorTests` | Generated array loops establish exact lookup, single-scan idempotent add and rehash membership under their contracts. `PrepareVisitedAdd` and `CompleteVisitedGrowth` compose those operations with exact count/growth policy under `TrackedVisited`; zero/duplicate handling, the half-load threshold and bounded growth requests execute in generated code. Operation-specific native decisions preserve the abstract transition through exact classification/payload laws and contextual retained-count projections. Present/full array outcomes remain unchanged, and rehash accepts duplicate source identities while producing unique entries and the exact distinct-source occupied count. Actual allocation, retention/publication of matching array/count state, traversal-schedule composition, aggregate adversarial probe work/cancellation, locator/pool/cache and destination resources, I/O effects and native ownership retain explicit manual contracts. |
+| Bounded external chained-payload traversal | `LongValues/LongValueStore.cs` `CopyPayloadAsync`; `LongValueVisitedSet.cs`; `LongValueKernel.g.cs` | `LongValueTraversalTests`, `LongValueStreamingTests`, `CompactRawDataLongValueValidatorTests` | Generated array loops establish exact lookup, single-scan idempotent add and rehash membership under their contracts. `PrepareVisitedAdd` and `CompleteVisitedGrowth` compose those operations with exact count/growth policy under `TrackedVisited`; zero/duplicate handling, the half-load threshold and bounded growth requests execute in generated code. Operation-specific native decisions preserve the abstract transition through exact classification/payload laws and contextual retained-count projections. Present/full array outcomes remain unchanged, and rehash accepts duplicate source identities while producing unique entries and the exact distinct-source occupied count. Actual allocation, retention/publication of matching array/count state, public C# traversal-schedule correspondence, correspondence of the modeled aggregate probe/overlap bounds, cancellation latency, locator/pool/cache and destination resources, I/O effects and native ownership retain explicit manual contracts. |
 | Generation bootstrap and cleanup | `Transactions/RecoverableWriterLock.cs` `RecoveryLease`; `Pages/Paging/PersistentRollbackJournal.cs` `CleanupCompleted` | `RecoverableWriterLockTests`, `RecoveryLockFileTests`, `RecoveryReplayCrashTests`, completed-journal disposal regressions | Staged bootstrap, the abstract coordinated schedule and production-order leased cleanup are modeled; selected incomplete-evidence/refusal/reconstruction/deletion traces have production tests. GUID freshness, receipt parsing and actual lock/fence behavior remain separate obligations. |
 
 The shared range/read boundary is exercised by `SharedParsingKernelTests`: wide-arithmetic boundary oracles, overflowing native pointer offsets, every short-read partition of an eight-byte request, EOF, cancellation, exceptions and invalid returned counts. `ByteRangeIsExactAndOverflowSafe` and `NestedByteSlicesCompose` prove bounded slicing; `BufferReadMakesExactProgress` and `ReadTraceConsumesBoundedPrefix` prove exact cursor progress and bound the successful read count by the initial remainder. `ExactReadTraceAcquiresRequestedPrefix` composes arbitrary finite chunks into the exact requested source prefix under the named stream effects. Production `BinaryBuffer`, pointer readers and exact-read adapters invoke these decisions on both targets; containing parser loops and aggregate budgets remain unproved.

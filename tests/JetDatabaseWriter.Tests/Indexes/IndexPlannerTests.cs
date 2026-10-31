@@ -1,9 +1,11 @@
 namespace JetDatabaseWriter.Tests.Indexes;
 
+using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 using Xunit;
 
 /// <summary>
@@ -119,6 +121,43 @@ public sealed class IndexPlannerTests
         var criteria = new RowCriteria { ColumnPredicate.GreaterThan("A", 2) };
 
         Assert.Null(IndexPlanner.TryPlan(indexes, criteria));
+    }
+
+    [Fact]
+    public void RoundedDescendingNumericRange_StaysResidualDespiteScalarAdmission()
+    {
+        var column = new ColumnInfo { Name = "Amount", Type = ColumnType.NumericType, NumericScale = 2 };
+        var descending = new List<IndexMetadata> { MakeIndex("IX_Amount", firstDp: 12, indexNumber: 0, unique: false, ("Amount", false)) };
+        var composite = new List<IndexMetadata> { MakeIndex("IX_ParentAmount", firstDp: 12, indexNumber: 0, unique: false, ("Parent", true), ("Amount", false)) };
+        ColumnPredicate[] ranges =
+        [
+            ColumnPredicate.GreaterThan("Amount", 1.005m),
+            ColumnPredicate.GreaterThanOrEqual("Amount", 1.005m),
+            ColumnPredicate.LessThan("Amount", 1.015m),
+            ColumnPredicate.LessThanOrEqual("Amount", 1.015m),
+        ];
+        foreach (ColumnPredicate range in ranges)
+        {
+            Assert.True(IndexSeekFilter.IsSeekable(column, typeof(decimal), range.Operator, range.Operand));
+            Assert.Null(IndexPlanner.TryPlan(descending, [range]));
+            IndexPlan? plan = IndexPlanner.TryPlan(composite, [ColumnPredicate.EqualTo("Parent", 7), range]);
+            Assert.NotNull(plan);
+            Assert.Equal(IndexQueryKind.KeyPrefix, plan.Criteria.Kind);
+            Assert.Equal([7], plan.Criteria.Values);
+            Assert.Equal(1, plan.MatchedKeyColumns);
+            Assert.Null(plan.Criteria.Lower);
+            Assert.Null(plan.Criteria.Upper);
+        }
+    }
+
+    [Fact]
+    public void LegacyDescendingNumericBytes_DoNotEstablishReversedCrossSignOrder()
+    {
+        byte[] key = Assert.IsType<byte[]>(IndexKeyEncoder.TryEncodeColumnEntry(ColumnType.NumericType, -1.00m, false, 2, true, default));
+        byte[] bound = Assert.IsType<byte[]>(IndexKeyEncoder.TryEncodeColumnEntry(ColumnType.NumericType, 1.015m, false, 2, true, default));
+        Assert.True(decimal.Compare(-1.00m, 1.015m) < 0);
+        int reversedByteComparison = -key.AsSpan().SequenceCompareTo(bound);
+        Assert.False(reversedByteComparison < 0);
     }
 
     [Fact]

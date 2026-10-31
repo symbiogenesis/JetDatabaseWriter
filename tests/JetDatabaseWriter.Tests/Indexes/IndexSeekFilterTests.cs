@@ -11,7 +11,7 @@ using Xunit;
 
 /// <summary>
 /// Tests for <see cref="IndexSeekFilter"/>: a comparison is sought only when the property holds
-/// every stored key exactly and the operand is a value the key holds exactly, so the seek finds
+/// every stored key exactly and rounding the operand retains every original match, so the seek finds
 /// the rows the residual filter keeps. Everything else is left to the residual filter.
 /// </summary>
 public sealed class IndexSeekFilterTests
@@ -102,7 +102,7 @@ public sealed class IndexSeekFilterTests
         // The encoder would round these, half to even, so r.Id > 1.5 would seek Id > 2 and
         // drop row 2, or throw past the key's range.
         Assert.False(Seekable(ColumnType.LongIntegerType, typeof(int), 1.5, ColumnPredicateOperator.GreaterThan));
-        Assert.False(Seekable(ColumnType.LongIntegerType, typeof(int), 1.5m, ColumnPredicateOperator.LessThan));
+        Assert.False(Seekable(ColumnType.LongIntegerType, typeof(int), 2.5m, ColumnPredicateOperator.LessThan));
         Assert.False(Seekable(ColumnType.LongIntegerType, typeof(int), 3_000_000_000L));
         Assert.False(Seekable(ColumnType.LongIntegerType, typeof(int), double.PositiveInfinity));
         Assert.False(Seekable(ColumnType.ByteType, typeof(byte), 300));
@@ -192,10 +192,10 @@ public sealed class IndexSeekFilterTests
 
         RowCriteria seekable = IndexSeekFilter.SelectSeekable(pushable, typeof(Row), table);
 
-        // Kept: Id > 1 and Id between 1 and 9. Dropped: an enum on a Text column, a fractional
-        // bound, a Between with a fractional bound, In, a column the table lacks, and a column
+        // Kept: exact bounds and fractional upper bounds that round outward. Dropped: an enum
+        // on a Text column, In, a column the table lacks, and a column
         // no property maps.
-        Assert.Equal([pushable.Predicates[0], pushable.Predicates[4]], seekable.Predicates);
+        Assert.Equal([pushable.Predicates[0], pushable.Predicates[2], pushable.Predicates[3], pushable.Predicates[4]], seekable.Predicates);
     }
 
     private static bool Seekable(

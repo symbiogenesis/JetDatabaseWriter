@@ -10,6 +10,7 @@ using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.Verification;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
@@ -25,7 +26,7 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// <item><description>The column's type can be sought, and the column decodes to its key's own CLR type, so it is not a hyperlink or a calculated column.</description></item>
 /// <item><description>The property's type, unwrapped from <see cref="Nullable{T}"/> and from an enum to its underlying type, is the column's CLR type or a lossless widening of it (<see cref="ClosureValueReader.IsLosslessWidening(Type, Type)"/>). An enum or <see cref="Guid"/> property bound to a Text or Binary column, or an <see cref="int"/> property bound to a Double column, holds converted values that do not compare like the stored keys.</description></item>
 /// <item><description>The operand is null, which an equality seeks among the null keys, or its type is the column's CLR type or a lossless widening of it, since the comparison runs in the operand's type.</description></item>
-/// <item><description>The column holds the operand's value exactly: a whole number in range for Byte, Integer, Long Integer and Large Number; at most four decimal places in range for Currency; at most the declared scale for Decimal; a value a <see cref="float"/> holds for Single; and never NaN. A Date/Time key keeps whole milliseconds, so it may also move the operand, as long as it moves away from the matches: down for a lower bound, up for an upper bound, either way for an equality, which then matches no row.</description></item>
+/// <item><description>The encoded operand stays exact or rounds away from matching values: down for a lower bound, up for an upper bound. Numeric equality stays exact; NaN and values that overflow the key are refused. A Date/Time equality may move because no stored whole-millisecond value then matches the original operand.</description></item>
 /// </list>
 /// <para>
 /// A comparison that fails any of them is not sought. The residual filter, which the reader
@@ -135,19 +136,20 @@ internal static class IndexSeekFilter
 
     private static bool IsKeyBound(ColumnInfo column, ColumnPredicateOperator @operator, object operand) => column.Type switch
     {
-        ByteType => IsWholeNumberIn(operand, byte.MinValue, byte.MaxValue),
-        IntegerType => IsWholeNumberIn(operand, short.MinValue, short.MaxValue),
-        LongIntegerType => IsWholeNumberIn(operand, int.MinValue, int.MaxValue),
-        BigIntType => IsWholeNumberIn(operand, long.MinValue, long.MaxValue),
-        MoneyType => operand is decimal money && money == decimal.Round(money, 4) && money >= CurrencyMin && money <= CurrencyMax,
-        NumericType => operand is decimal number && column.NumericScale <= MaxDecimalScale && number == decimal.Round(number, column.NumericScale),
+        ByteType => IsIntegralKeyBound(operand, byte.MinValue, byte.MaxValue, @operator),
+        IntegerType => IsIntegralKeyBound(operand, short.MinValue, short.MaxValue, @operator),
+        LongIntegerType => IsIntegralKeyBound(operand, int.MinValue, int.MaxValue, @operator),
+        BigIntType => IsIntegralKeyBound(operand, long.MinValue, long.MaxValue, @operator),
+        MoneyType => operand is decimal money && IsScaledKeyBound(money, 4, @operator, currency: true),
+        NumericType => operand is decimal number && column.NumericScale <= MaxDecimalScale
+            && IsScaledKeyBound(number, column.NumericScale, @operator, currency: false),
         FloatType => operand switch
         {
-            float single => !float.IsNaN(single),
-            double wide => !double.IsNaN(wide) && (double)(float)wide == wide,
+            float single => IsExactFloatingBound(single, @operator),
+            double wide => IsSingleKeyBound(wide, @operator),
             _ => false,
         },
-        DoubleType => operand is double real && !double.IsNaN(real),
+        DoubleType => operand is double real && IsExactFloatingBound(real, @operator),
         DateTimeType => operand is DateTime date && IsDateKeyBound(date, @operator),
 
         // The operand is the key's own string, Guid, byte array or DateTime.
@@ -155,6 +157,57 @@ internal static class IndexSeekFilter
         GuidType or BinaryType or DateTimeExtendedType => true,
         BooleanType or OleType or BigBinaryType or ComplexType or _ => false,
     };
+
+    private static bool IsOutward(ColumnPredicateOperator @operator, int comparison) =>
+        RecoveryKernel.IsOutwardSeekBound((uint)@operator, comparison);
+
+    private static bool IsScaledKeyBound(decimal operand, byte scale, ColumnPredicateOperator @operator, bool currency)
+    {
+        decimal rounded = decimal.Round(operand, scale, MidpointRounding.ToEven);
+        return (!currency || rounded is >= CurrencyMin and <= CurrencyMax) && IsOutward(@operator, rounded.CompareTo(operand));
+    }
+
+    private static bool IsSingleKeyBound(double operand, ColumnPredicateOperator @operator)
+    {
+        if (!IsExactFloatingBound(operand, @operator))
+        {
+            return false;
+        }
+
+        double rounded = (float)operand;
+        return rounded == operand || (!double.IsInfinity(rounded) && IsOutward(@operator, rounded.CompareTo(operand)));
+    }
+
+    private static bool IsExactFloatingBound(double operand, ColumnPredicateOperator @operator) =>
+        !double.IsNaN(operand) && (operand != 0 || RecoveryKernel.IsFloatingZeroSeekBound((uint)@operator, BitConverter.DoubleToInt64Bits(operand) < 0));
+
+    private static bool IsIntegralKeyBound(object operand, long min, long max, ColumnPredicateOperator @operator)
+    {
+        if (IsWholeNumberIn(operand, min, max))
+        {
+            return true;
+        }
+
+        return operand switch
+        {
+            double real => IsRoundedIntegralBound(real, min, max, @operator),
+            float single => IsRoundedIntegralBound(single, min, max, @operator),
+            decimal number => IsRoundedIntegralBound(number, min, max, @operator),
+            _ => false,
+        };
+    }
+
+    private static bool IsRoundedIntegralBound(double operand, long min, long max, ColumnPredicateOperator @operator)
+    {
+        double rounded = Math.Round(operand, MidpointRounding.ToEven);
+        return rounded >= min && rounded <= max && IsOutward(@operator, rounded.CompareTo(operand));
+    }
+
+    private static bool IsRoundedIntegralBound(decimal operand, long min, long max, ColumnPredicateOperator @operator)
+    {
+        decimal rounded = decimal.Round(operand, 0, MidpointRounding.ToEven);
+        return rounded >= min && rounded <= max && IsOutward(@operator, rounded.CompareTo(operand));
+    }
 
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="operand"/>, a number of a type that
@@ -203,8 +256,6 @@ internal static class IndexSeekFilter
             return true;
         }
 
-        return keyTicks < value.Ticks
-            ? @operator is ColumnPredicateOperator.GreaterThan or ColumnPredicateOperator.GreaterThanOrEqual
-            : @operator is ColumnPredicateOperator.LessThan or ColumnPredicateOperator.LessThanOrEqual;
+        return IsOutward(@operator, keyTicks.CompareTo(value.Ticks));
     }
 }

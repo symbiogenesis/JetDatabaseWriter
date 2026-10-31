@@ -204,17 +204,20 @@ imperative union-find using consumable proof credits in Coq/CFML. Its
 inverse-Ackermann bound concerns union-find; the transferable result is the
 method for composing work budgets, not that bound for a hash table.
 
-For V8/S1, add ghost work counters to the existing
+
+ erased ghost work counters are attached to the existing
 [LongValueKernel](../../verification/LongValues/LongValueKernel.dfy) and
 [LongValueTraversal](../../verification/LongValues/LongValueTraversal.dfy)
-composition. Charge every probe, source scan, destination initialization and
-rehash insertion, including unsuccessful and duplicate operations. Relate the
-sum to the containing [LongValueStore](../../src/JetDatabaseWriter/LongValues/LongValueStore.cs)
-path and the work between cancellation checks. Geometric array growth bounds
-allocation volume but does not make deterministic colliding probes constant
-time. Preserve worst-case adversarial bounds and separate total work,
-peak storage and cancellation latency. Erased ghost counters add no executing
-collection; wall-clock bounds still require managed-path qualification.
+composition. The array-backed traversal invokes the generated controllers,
+charging destination probes, rehash source-loop iterations and newly allocated
+zero-filled slots. For `n` acquired rows, probes are bounded by
+`20*n*n + 92*n + 48`, cumulative slots by `32 + 8*n` and peak owned old/new
+slots by `24 + 6*n`, including final refusal. These counts do not make
+deterministic colliding probes constant time or count all CPU instructions.
+The containing [LongValueStore](../../src/JetDatabaseWriter/LongValues/LongValueStore.cs)
+still needs actual effect/resource composition and in-loop cancellation-latency
+qualification. Ghost meters add no executing collection or instrumentation;
+wall-clock and physical-memory claims require independent managed-path evidence.
 
 ### Parser composition and stable input identity
 
@@ -321,20 +324,22 @@ and rounding hypotheses. These are useful missing mathematical ingredients
 for I9, rather than a general query-optimizer equivalence theorem.
 
 [IndexSeekFilter](../../src/JetDatabaseWriter/Indexes/IndexSeekFilter.cs)
-currently requires exact numeric operands. For a future rounded range, prove
-that every row satisfying the original CLR predicate lies inside the encoded
-seek interval. For example, an integral key satisfying `key > 1.5` cannot be
+executes generated outward-bound admission: every row satisfying the original
+predicate remains inside the encoded seek interval under explicit CLR/native
+comparison correspondence. Numeric equality stays exact. For example, an integral key satisfying `key > 1.5` cannot be
 sought with the strict bound `key > 2`; the key `2` would disappear. Bound
 direction and strict/inclusive endpoints must be derived together, with the
 original residual predicate retained.
 
-Instantiate the proof for integer, scaled Currency/Decimal and Single formats,
-then connect native key ordering, widening/conversion, limits, NaN, infinities,
-signed zero and null behavior. Real-valued generic rounding alone covers none
-of those implementation choices. Preserve predicate evaluation order,
-exceptions and per-execution captures. Keep native comparison evidence and
-paired seek/scan measurements separate; do not replace current conservative
-admission until its no-false-negatives refinement is established.
+The native scalar controller retains strict/inclusive endpoints for outward
+integer, Currency/Decimal and finite Single conversion. A separate signed-zero
+rank theorem admits only zero bounds that contain both CLR-equal zero images;
+unsafe equality/inclusive bounds scan. Independent encoded-key oracles exercise
+supported key orders and both Decimal key forms, and public query tests compare against
+full scans. Conversion, native ordering and full planner/evaluation composition
+remain adapter obligations. Flocq itself is not imported or rerun. Preserve
+exceptions and per-execution captures; endpoint rewrites for inward rounding,
+independent native evidence and timing qualification remain I9/I12 work.
 
 ### Stable sorting and splice allocations
 
@@ -478,7 +483,8 @@ Resource composition must also count work inside an insertion. Growth still
 requires lookup, rehash and insertion work using deterministic hashing.
 Half occupancy does not bound every collision cluster by a constant.
 The containing `LongValueStore.CopyPayloadAsync` checks cancellation between
-rows; the synchronous probe and rehash loops run inside one row. Under V8/S1,
+rows; the synchronous probe and rehash loops run inside one row.
+
 assess total probes and cancellation latency on colliding valid identities,
 and count both arrays while growth holds the old and new tables. A terminating
 array loop and a row limit do not establish a useful latency bound. Preserve
@@ -724,6 +730,28 @@ interoperability and physical-storage qualification at their stated evidence
 levels. See the [proof review procedure](proof-trust-review.md) and
 [proof execution instructions](../../verification/README.md).
 
+## Supplemental integration boundary
+
+The storage/resource review is applied through the existing managed/Dafny
+architecture. Its concrete increments are generated outward numeric admission
+and signed-zero refusal, generated monotone relocation admission/search,
+controller-connected visited-table resource accounting, and recovery cleanup
+closure after finite repeated interruptions. Their focused tests use independent
+numeric/key and dictionary oracles, retained payload/authority observations and
+growth/cancellation boundaries. The [formal boundary](formal-verification.md)
+records executing decisions, model-only composition and contracted effects.
+
+CHL/Argosy/Perennial inform the cleanup invariant and constructive continuation;
+PoWER's per-effect recoverability discipline remains in the undo model.
+DaisyNFS-style whole-transaction auxiliary-state refinement remains I5/V6/V10.
+IrisFit/time credits inform named table payload/work counters; full cache/GC
+accounting remains I7/S1. EverParse/ReLoC inform immutable input and frame-lifetime
+tests while complete parser/CAS refinement remains V8/V10. Verified B+ tree and
+CertiGC patterns inform exact local ordering/relocation contracts; complete tree
+edits and rooted-reference discovery remain I2/I17/V9. Ferrite-style host models
+and failed-flush survivors remain V7/I15 qualification. None of these citations
+imports a proof artifact, runtime or unchecked assumption into the library.
+
 ## Regression coverage for relied-on behavior
 
 Current applications include the ordered-run splice, generated visited-set
@@ -740,7 +768,7 @@ retains the complete production mappings and remaining obligations.
 |---|---|
 | Stable ordered-run merge and general splice fallback | [IndexEntryOrderingTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexEntryOrderingTests.cs) checks existing-before-added ties, declaration order, input/key immutability and the result-storage allocation bound. `Splice_MatchesIndependentStableBucketsForEverySmallRunAndRemovalSubset` compares every three-existing/two-added run over four empty/prefix/high-byte keys against independent stable buckets, with every removal subset. [IndexPageCodecAndEntrySplicerTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexPageCodecAndEntrySplicerTests.cs) retains missing-removal refusal. |
 | Existing query ordering contract | [QueryPipelineParityTests](../../tests/JetDatabaseWriter.Tests/Queries/QueryPipelineParityTests.cs) checks stable multikey ties, paging, live captures, deferred evaluation and selector failures across root/include/tail paths. This remains tested handwritten behavior. |
-| Conservative numeric seek, relocation and ownership baselines | [IndexSeekFilterTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexSeekFilterTests.cs) and [TypedMappingCoercionTests](../../tests/JetDatabaseWriter.Tests/Queries/TypedMappingCoercionTests.cs) retain fractional-bound refusal/predicate results. [CompactRowRelocationMapTests](../../tests/JetDatabaseWriter.Tests/Maintenance/CompactRowRelocationMapTests.cs) checks exact bookmark identity, monotone uniqueness, budgets and partial reads. [UsageMapOwnershipTests](../../tests/JetDatabaseWriter.Tests/Pages/UsageMapOwnershipTests.cs) and [UsageMapNonliveAliasTests](../../tests/JetDatabaseWriter.Tests/Pages/UsageMapNonliveAliasTests.cs) retain opaque-reference protection and source-preserving refusal. These are tested handwritten contracts; rounded-seek and complete rooted-graph refinement remain open. |
+| Generated numeric admission, relocation and conservative ownership | [IndexSeekRoundingTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexSeekRoundingTests.cs), [IndexSeekFilterTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexSeekFilterTests.cs) and [TypedMappingCoercionTests](../../tests/JetDatabaseWriter.Tests/Queries/TypedMappingCoercionTests.cs) compare outward rounding and signed-zero admission with independent native-key/full-scan oracles, retaining unsafe-bound refusal. [CompactRowRelocationMapTests](../../tests/JetDatabaseWriter.Tests/Maintenance/CompactRowRelocationMapTests.cs) checks native endpoints, exact identity/order, sparse independent dictionaries, logarithmic record reads, budgets and partial reads. [UsageMapOwnershipTests](../../tests/JetDatabaseWriter.Tests/Pages/UsageMapOwnershipTests.cs) and [UsageMapNonliveAliasTests](../../tests/JetDatabaseWriter.Tests/Pages/UsageMapNonliveAliasTests.cs) retain opaque-reference protection and source-preserving refusal. Full planner, rooted graph and effects refinement remain open. |
 | Exact visited membership, probing, rehash and count/growth orchestration (`LongValueKernel`) | [LongValueTraversalTests](../../tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueTraversalTests.cs) checks wrapped/full probes, duplicate-source rehash, native decision boundaries, null/empty initialization, count retention and duplicate/growth allocation boundaries. Independent multi-step controller traces compare membership and count through repeated growth with a `HashSet<uint>` oracle and the production wrapper. |
 | Descriptor representation and bounded chained-payload traversal (`LongValueKernel`, `LongValueTraversal`) | [LongValueDescriptorKernelTests](../../tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueDescriptorKernelTests.cs) uses independent byte/word oracles and unchanged-destination refusal checks. [LongValueStreamingTests](../../tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueStreamingTests.cs) and [LongValueTraversalTests](../../tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueTraversalTests.cs) check successful payloads, cycles/no progress, budgets, cancellation and leases. |
 | Bounded reads, journal admission and replay (`RecoveryKernel`, `UndoJournal`) | [SharedParsingKernelTests](../../tests/JetDatabaseWriter.Tests/Infrastructure/SharedParsingKernelTests.cs), [RecoveryKernelTests](../../tests/JetDatabaseWriter.Tests/Pages/Paging/RecoveryKernelTests.cs), [JournalContentKernelTests](../../tests/JetDatabaseWriter.Tests/Pages/Paging/JournalContentKernelTests.cs) and [BufferedJournalConformanceTests](../../tests/JetDatabaseWriter.Tests/Pages/Paging/BufferedJournalConformanceTests.cs) check independent range/byte oracles, admission/refusal and production replay schedules. |
