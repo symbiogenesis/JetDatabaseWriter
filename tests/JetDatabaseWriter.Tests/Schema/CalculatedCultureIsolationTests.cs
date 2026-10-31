@@ -1,6 +1,5 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
-using System;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -21,10 +20,10 @@ public sealed class CalculatedCultureIsolationTests
         {
             culture.NumberFormat.NumberDecimalSeparator = ":";
             culture.DateTimeFormat.MonthNames = Enumerable.Repeat("Changed", 13).ToArray();
-            await writer.InsertRowAsync("T", new object?[] { 1.5d, null, null, DbDefault.Value }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", [1.5d, null, null, DbDefault.Value], TestContext.Current.CancellationToken);
         }
 
-        Assert.Equal(new object[] { 1.5d, "1,5", "März", 1.5d }, await ReadRowAsync(stream));
+        Assert.Equal<object>([1.5d, "1,5", "März", 1.5d], await ReadRowAsync(stream));
     }
 
     [Fact]
@@ -37,14 +36,14 @@ public sealed class CalculatedCultureIsolationTests
             CultureInfo.CurrentCulture = new CultureInfo("fr-FR", useUserOverride: false);
             await using AccessWriter writer = await CreateWriterAsync(stream, null);
             CultureInfo.CurrentCulture = new CultureInfo("en-US", useUserOverride: false);
-            await writer.InsertRowAsync("T", new object?[] { 1.5d, null, null, DbDefault.Value }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", [1.5d, null, null, DbDefault.Value], TestContext.Current.CancellationToken);
         }
         finally
         {
             CultureInfo.CurrentCulture = previous;
         }
 
-        Assert.Equal(new object[] { 1.5d, "1,5", "mars", 1.5d }, await ReadRowAsync(stream));
+        Assert.Equal<object>([1.5d, "1,5", "mars", 1.5d], await ReadRowAsync(stream));
     }
 
     [Fact]
@@ -56,15 +55,17 @@ public sealed class CalculatedCultureIsolationTests
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false, CalculatedExpressionCulture = culture }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             culture.DateTimeFormat.Calendar.TwoDigitYearMax = 2099;
-            await writer.CreateTableAsync("T", new ColumnDefinition[]
-            {
-                new("Year", typeof(int)),
-                new("CalculatedYear", typeof(int)) { IsCalculated = true, CalculationExpression = "Year(DateSerial([Year],1,1))" },
-            }, TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync("T", new object?[] { 30, null }, TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new("Year", typeof(int)),
+                    new("CalculatedYear", typeof(int)) { IsCalculated = true, CalculationExpression = "Year(DateSerial([Year],1,1))" },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", [30, null], TestContext.Current.CancellationToken);
         }
 
-        Assert.Equal(new object[] { 30, 1930 }, await ReadRowAsync(stream));
+        Assert.Equal<object>([30, 1930], await ReadRowAsync(stream));
     }
 
     [Fact]
@@ -74,9 +75,9 @@ public sealed class CalculatedCultureIsolationTests
         Task<object[]> german = CalculateAsync("de-DE");
         Task<object[]> french = CalculateAsync("fr-FR");
         object[][] results = await Task.WhenAll(english, german, french);
-        Assert.Equal(new object[] { 1.5d, "1.5", "March", 1.5d }, results[0]);
-        Assert.Equal(new object[] { 1.5d, "1,5", "März", 1.5d }, results[1]);
-        Assert.Equal(new object[] { 1.5d, "1,5", "mars", 1.5d }, results[2]);
+        Assert.Equal<object>([1.5d, "1.5", "March", 1.5d], results[0]);
+        Assert.Equal<object>([1.5d, "1,5", "März", 1.5d], results[1]);
+        Assert.Equal<object>([1.5d, "1,5", "mars", 1.5d], results[2]);
     }
 
     private static async Task<object[]> CalculateAsync(string culture)
@@ -85,7 +86,7 @@ public sealed class CalculatedCultureIsolationTests
         await using (AccessWriter writer = await CreateWriterAsync(stream, new CultureInfo(culture, useUserOverride: false)))
         {
             await Task.Yield();
-            await writer.InsertRowAsync("T", new object?[] { 1.5d, null, null, DbDefault.Value }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", [1.5d, null, null, DbDefault.Value], TestContext.Current.CancellationToken);
         }
 
         return await ReadRowAsync(stream);
@@ -96,13 +97,15 @@ public sealed class CalculatedCultureIsolationTests
         AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false, CalculatedExpressionCulture = culture }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         try
         {
-            await writer.CreateTableAsync("T", new ColumnDefinition[]
-            {
-                new("N", typeof(double)),
-                new("NumberText", typeof(string)) { IsCalculated = true, CalculationExpression = "[N]&\"\"" },
-                new("MonthName", typeof(string)) { IsCalculated = true, CalculationExpression = "MonthName(3)" },
-                new("SharedDefault", typeof(double)) { DefaultValueExpression = "CDbl(\"1.5\")" },
-            }, TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new("N", typeof(double)),
+                    new("NumberText", typeof(string)) { IsCalculated = true, CalculationExpression = "[N]&\"\"" },
+                    new("MonthName", typeof(string)) { IsCalculated = true, CalculationExpression = "MonthName(3)" },
+                    new("SharedDefault", typeof(double)) { DefaultValueExpression = "CDbl(\"1.5\")" },
+                ],
+                TestContext.Current.CancellationToken);
             return writer;
         }
         catch
