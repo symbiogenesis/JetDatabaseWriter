@@ -253,6 +253,39 @@ module IndexMutationKernel {
     assert after[cursor..cursor + |encoded|] == encoded;
   }
 
+  lemma TrailerPreservesPrefix(bytes: seq<Byte>, pointer: nat, dataPage: U32,
+      row: Byte, child: U32, intermediate: bool, boundary: nat)
+    requires boundary <= pointer && pointer + (if intermediate then 8 else 4) <= |bytes|
+    ensures Trailer(bytes, pointer, dataPage, row, child, intermediate)[..boundary] == bytes[..boundary]
+  {}
+
+  lemma InitialEmissionPreservesPrefix(bytes: seq<Byte>, bitmap: nat, first: nat, cursor: nat,
+      key: seq<Byte>, prefix: nat, dataPage: U32, row: Byte, child: U32, intermediate: bool)
+    requires prefix <= |key| && bitmap < first <= cursor
+    requires cursor + |key| + (if intermediate then 8 else 4) <= |bytes|
+    ensures EmissionStep(bytes, bitmap, first, cursor, key, prefix, true, dataPage, row, child, intermediate)[..cursor] == bytes[..cursor]
+  {
+    var copied := CopySuffix(bytes, cursor, key);
+    assert copied[..cursor] == bytes[..cursor];
+    TrailerPreservesPrefix(copied, cursor + |key|, dataPage, row, child, intermediate, cursor);
+  }
+
+  lemma EmissionStepBitmapByte(bytes: seq<Byte>, bitmap: nat, first: nat, cursor: nat,
+      key: seq<Byte>, prefix: nat, initial: bool, dataPage: U32, row: Byte,
+      child: U32, intermediate: bool, location: nat)
+    requires prefix <= |key| && bitmap < first <= cursor && location < first
+    requires cursor + |key| - (if initial then 0 else prefix) + (if intermediate then 8 else 4) <= |bytes|
+    requires !initial ==> bitmap + (cursor - first) / 8 < first
+    ensures EmissionStep(bytes, bitmap, first, cursor, key, prefix, initial, dataPage, row, child, intermediate)[location] ==
+      (if !initial && location == bitmap + (cursor - first) / 8 then
+        (bytes[location] as bv8 | BitMask(((cursor - first) % 8) as U32) as bv8) as Byte else bytes[location])
+  {
+    var suffix := key[(if initial then 0 else prefix)..];
+    var copied := CopySuffix(bytes, cursor, suffix);
+    assert copied[..first] == bytes[..first];
+    TrailerPreservesPrefix(copied, cursor + |suffix|, dataPage, row, child, intermediate, first);
+  }
+
   ghost function EncodedPayload(keys: seq<seq<Byte>>, pages: seq<U32>, rows: seq<Byte>,
       children: seq<U32>, prefix: nat, intermediate: bool, n: nat): seq<Byte>
     requires n <= |keys| == |pages| == |rows| == |children|
@@ -319,9 +352,18 @@ module IndexMutationKernel {
 
   lemma FinishPreservesPayload(bytes: seq<Byte>, bitmap: nat, first: nat, cursor: nat, hasEntries: bool)
     requires |bytes| >= 4 && 4 <= first <= cursor <= |bytes| && bitmap < first && |bytes| - cursor <= 65535
+    ensures |Finished(bytes, bitmap, first, cursor, hasEntries)| == |bytes|
     ensures Finished(bytes, bitmap, first, cursor, hasEntries)[first..cursor] == bytes[first..cursor]
     ensures Finished(bytes, bitmap, first, cursor, hasEntries)[2] == WordByte((|bytes| - cursor) as U32, 0)
     ensures Finished(bytes, bitmap, first, cursor, hasEntries)[3] == WordByte((|bytes| - cursor) as U32, 1)
+  {}
+
+  lemma FinishBitmapByte(bytes: seq<Byte>, bitmap: nat, first: nat, cursor: nat, hasEntries: bool, location: nat)
+    requires |bytes| >= 4 && bitmap < first <= cursor <= |bytes| && |bytes| - cursor <= 65535
+    requires 4 <= location < first
+    ensures Finished(bytes, bitmap, first, cursor, hasEntries)[location] ==
+      (if hasEntries && bitmap + (cursor - first) / 8 < first && location == bitmap + (cursor - first) / 8 then
+        (bytes[location] as bv8 | BitMask(((cursor - first) % 8) as U32) as bv8) as Byte else bytes[location])
   {}
 
   lemma PutWordPreservesSuffix(bytes: seq<Byte>, start: nat, word: U32, boundary: nat)
@@ -334,6 +376,8 @@ module IndexMutationKernel {
       tailOffset: nat, prefixOffset: nat, prefix: U32, jet3: bool, boundary: nat)
     requires 8 <= boundary <= |bytes| && previousOffset + 4 <= boundary && nextOffset + 4 <= boundary
     requires tailOffset + 4 <= boundary && prefixOffset + (if jet3 then 1 else 2) <= boundary
+    ensures |Header(bytes, intermediate, parent, previous, next, tail, previousOffset,
+      nextOffset, tailOffset, prefixOffset, prefix, jet3)| == |bytes|
     ensures Header(bytes, intermediate, parent, previous, next, tail, previousOffset,
       nextOffset, tailOffset, prefixOffset, prefix, jet3)[boundary..] == bytes[boundary..]
   {
@@ -356,6 +400,12 @@ module IndexMutationKernel {
 
   lemma ReachableCompleteEmission()
   {
+    hide Header;
+    hide PutWord;
+    hide EmissionStep;
+    hide EntryMetadata;
+    hide Trailer;
+    hide Finished;
     var blank := seq(64, i => 0 as Byte);
     var header := Header(blank, false, 7, 1, 2, 3, 8, 12, 16, 20, 2, false);
     HeaderPreservesSuffix(blank, false, 7, 1, 2, 3, 8, 12, 16, 20, 2, false, 22);
@@ -367,15 +417,23 @@ module IndexMutationKernel {
     var rows: seq<Byte> := [255, 0];
     var children: seq<U32> := [0, 0];
     var first := EmissionStep(header, 22, 32, 32, keys[0], 2, true, pages[0], rows[0], 0, false);
+    EmissionStepExact(header, 22, 32, 32, keys[0], 2, true, pages[0], rows[0], 0, false);
+    InitialEmissionPreservesPrefix(header, 22, 32, 32, keys[0], 2, pages[0], rows[0], 0, false);
+    assert first[..32] == header[..32];
+    assert first[22] == 0 && first[23] == 0;
     var second := EmissionStep(first, 22, 32, 39, keys[1], 2, false, pages[1], rows[1], 0, false);
+    EmissionStepExact(first, 22, 32, 39, keys[1], 2, false, pages[1], rows[1], 0, false);
+    EmissionStepBitmapByte(first, 22, 32, 39, keys[1], 2, false, pages[1], rows[1], 0, false, 22);
+    EmissionStepBitmapByte(first, 22, 32, 39, keys[1], 2, false, pages[1], rows[1], 0, false, 23);
+    assert second[22] == 128 && second[23] == 0;
     EmissionTraceExact(keys, pages, rows, children, 2, false, 22, 32, [32, 39, 44], [header, first, second], 2);
     FinishPreservesPayload(second, 22, 32, 44, true);
+    FinishBitmapByte(second, 22, 32, 44, true, 22);
+    FinishBitmapByte(second, 22, 32, 44, true, 23);
     var finished := Finished(second, 22, 32, 44, true);
     assert finished[32..44] == [17, 34, 51, 255, 255, 255, 255, 68, 0, 0, 0, 0];
     assert finished[2] == 20 && finished[3] == 0;
     assert BitMask(7) == 128 && BitMask(4) == 16;
-    assert first[22] == 0 && first[23] == 0;
-    assert second[22] == 128 && second[23] == 0;
     assert finished[22] == 128 && finished[23] == 16;
     SharedPrefixReconstructsKey(keys[0], keys[1], 2);
   }
