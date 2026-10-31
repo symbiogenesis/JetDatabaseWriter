@@ -926,14 +926,21 @@ internal static class IndexPageCodec
         }
 
         byte[] page = new byte[pageSize];
-        WriteIndexPageHeader(page, getChild is null ? Constants.IndexLeafPage.PageTypeLeaf : Constants.IndexLeafPage.PageTypeIntermediate, layout, parentTdefPage, prevPage, nextPage, tailPage);
-        if (layout.PrefLenOffset == Constants.IndexLeafPage.Jet3.PrefLenOffset)
+        if (!IndexMutationKernel.InitializePage(
+            page,
+            getChild is not null,
+            (uint)parentTdefPage,
+            (uint)prevPage,
+            (uint)nextPage,
+            (uint)tailPage,
+            (uint)layout.PrevPageOffset,
+            (uint)layout.NextPageOffset,
+            (uint)layout.TailPageOffset,
+            (uint)layout.PrefLenOffset,
+            (uint)prefix,
+            layout.PrefLenOffset == Constants.IndexLeafPage.Jet3.PrefLenOffset))
         {
-            page[layout.PrefLenOffset] = (byte)prefix;
-        }
-        else
-        {
-            Wu16(page, layout.PrefLenOffset, prefix);
+            throw new ArgumentOutOfRangeException(nameof(layout));
         }
 
         int cursor = layout.FirstEntryOffset;
@@ -944,20 +951,21 @@ internal static class IndexPageCodec
             int keyOffset = i == 0 ? 0 : prefix;
             int keyLength = entry.Key.Length - keyOffset;
             Buffer.BlockCopy(entry.Key, keyOffset, page, cursor, keyLength);
-            int pointerOffset = cursor + keyLength;
-            WriteUInt24BigEndian(page, pointerOffset, (int)entry.DataPage);
-            page[pointerOffset + 3] = entry.DataRow;
-            if (getChild is not null)
-            {
-                BinaryPrimitives.WriteUInt32BigEndian(page.AsSpan(pointerOffset + LeafTrailerSize, 4), (uint)getChild(item));
-            }
-
-            SetEntryStartBit(layout, page, cursor, isFirstEntry: i == 0, parameterName: nameof(entries), overflowMessage: "Bitmask overflow on index page.");
-            cursor = pointerOffset + (getChild is null ? LeafTrailerSize : IntermediateTrailerSize);
+            IndexMutationKernel.EmitEntryMetadata(
+                page,
+                (uint)layout.BitmaskOffset,
+                (uint)layout.FirstEntryOffset,
+                (uint)cursor,
+                (uint)keyLength,
+                (uint)entry.DataPage,
+                entry.DataRow,
+                getChild is null ? 0 : (uint)getChild(item),
+                i == 0,
+                getChild is not null);
+            cursor += keyLength + (getChild is null ? LeafTrailerSize : IntermediateTrailerSize);
         }
 
-        SetSentinelBit(layout, page, cursor, entries.Count > 0);
-        Wu16(page, 2, pageSize - cursor);
+        IndexMutationKernel.FinishPage(page, (uint)layout.BitmaskOffset, (uint)layout.FirstEntryOffset, (uint)cursor, entries.Count > 0);
         return page;
     }
 
@@ -1023,14 +1031,8 @@ internal static class IndexPageCodec
                 throw new ArgumentOutOfRangeException(nameof(entries), "Index entry pointer exceeds its format range.");
             }
 
-            int matched = 0;
             byte[] firstKey = getEntry(entries[0]).Key;
-            while (matched < sharedPrefix && matched < entry.Key.Length && firstKey[matched] == entry.Key[matched])
-            {
-                matched++;
-            }
-
-            sharedPrefix = matched;
+            sharedPrefix = (int)IndexMutationKernel.CommonPrefix(firstKey, entry.Key, (uint)sharedPrefix);
         }
 
         prefix = enablePrefixCompression ? Math.Min(sharedPrefix, ushort.MaxValue) : 0;
@@ -1040,22 +1042,25 @@ internal static class IndexPageCodec
             prefix = Math.Min(prefix, byte.MaxValue);
         }
 
-        long cursor = layout.FirstEntryOffset;
+        uint cursor = (uint)layout.FirstEntryOffset;
         for (int i = 0; i < entries.Count; i++)
         {
-            if (i > 0 && layout.BitmaskOffset + ((cursor - layout.FirstEntryOffset) / 8) >= layout.FirstEntryOffset)
-            {
-                return false;
-            }
-
-            cursor += (long)getEntry(entries[i]).Key.Length - (i == 0 ? 0 : prefix) + (getChild is null ? LeafTrailerSize : IntermediateTrailerSize);
-            if (cursor > pageSize)
+            cursor = IndexMutationKernel.AdvanceEntry(
+                (uint)pageSize,
+                (uint)layout.BitmaskOffset,
+                (uint)layout.FirstEntryOffset,
+                cursor,
+                (uint)getEntry(entries[i]).Key.Length,
+                (uint)prefix,
+                i == 0,
+                getChild is not null);
+            if (cursor == 0)
             {
                 return false;
             }
         }
 
-        freeSpace = pageSize - checked((int)cursor);
+        freeSpace = pageSize - (int)cursor;
         return getChild is null || entries.Count > 0;
     }
 
@@ -1065,21 +1070,6 @@ internal static class IndexPageCodec
         {
             throw new ArgumentOutOfRangeException(parameterName, "Index page number exceeds the 32-bit range.");
         }
-    }
-
-    private static void WriteIndexPageHeader(
-        byte[] page,
-        byte pageType,
-        IndexPageLayout layout,
-        long parentTdefPage,
-        long prevPage,
-        long nextPage,
-        long tailPage)
-    {
-        page[0] = pageType;
-        page[1] = 0x01;
-        WritePageNumber32(page, 4, parentTdefPage, nameof(parentTdefPage));
-        WriteSiblingPointers(layout, page, prevPage, nextPage, tailPage);
     }
 
     private static void WritePageNumber32(byte[] page, int offset, long pageNumber, string parameterName)
@@ -1096,48 +1086,6 @@ internal static class IndexPageCodec
         }
 
         Wu32(page, offset, (uint)pageNumber);
-    }
-
-    private static void SetEntryStartBit(
-        IndexPageLayout layout,
-        byte[] page,
-        int entryStart,
-        bool isFirstEntry,
-        string parameterName,
-        string overflowMessage)
-    {
-        if (isFirstEntry)
-        {
-            return;
-        }
-
-        int bitIndex = entryStart - layout.FirstEntryOffset;
-        int byteOffset = layout.BitmaskOffset + (bitIndex / 8);
-        if (byteOffset >= layout.FirstEntryOffset)
-        {
-            throw new JetLimitationException(JetErrorCode.IndexEntryTooLarge, overflowMessage, new JetErrorInfo { Reason = parameterName });
-        }
-
-        page[byteOffset] |= (byte)(1 << (bitIndex % 8));
-    }
-
-    private static void SetSentinelBit(
-        IndexPageLayout layout,
-        byte[] page,
-        int payloadCursor,
-        bool hasEntries)
-    {
-        if (!hasEntries)
-        {
-            return;
-        }
-
-        int sentinelBitIndex = payloadCursor - layout.FirstEntryOffset;
-        int sentinelByteOffset = layout.BitmaskOffset + (sentinelBitIndex / 8);
-        if (sentinelByteOffset < layout.FirstEntryOffset)
-        {
-            page[sentinelByteOffset] |= (byte)(1 << (sentinelBitIndex % 8));
-        }
     }
 
     private static bool TryDecodeLeafEntriesCore(
