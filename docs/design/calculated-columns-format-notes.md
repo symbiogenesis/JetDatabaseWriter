@@ -856,9 +856,10 @@ The [membership controls](../../tests/JetDatabaseWriter.Tests/Databases/Calculat
 pin both operand orders, Nulls, errors, subtype boundaries and native compaction.
 
 Relational and membership comparisons project intrinsic Boolean results to
-signed Integer text (`-1`/`0`). Concatenation, LIKE, Len and string slicing retain
-the regional Boolean word. Asc uses numeric Boolean text, while Str and Str$
-retain the intrinsic word without numeric padding. Stored Boolean references
+signed Integer text (`-1`/`0`). Concatenation uses the regional Boolean word;
+LIKE, Len and string slicing use the English word. Asc uses numeric Boolean
+text, while Str and Str$ retain the English word without numeric padding.
+Stored Boolean references
 already project Integer and retain their separate numeric behavior.
 
 ## Adding fields to populated tables
