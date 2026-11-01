@@ -269,16 +269,20 @@ public sealed class OverflowRowWriteTests
     public async Task Clear_DeleteTwoHopOverflowRow_ClearsAllSlots(WriteMode mode, bool rollback, OverflowRowLayout layout, bool secureErase)
     {
         byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(DatabaseFormat.Jet4Mdb, SyntheticTable, 300, primaryKey: true, Ct);
+        byte[] original = (byte[])bytes.Clone();
         SyntheticOverflowRow moved = await SyntheticOverflowRows.MoveRowAsync(bytes, SyntheticTable, layout, Ct);
         (int pageSize, _) = await PageLayoutAsync(bytes);
-        (int Id, string Name)[] expected = await ReadSyntheticRowsAsync(bytes);
+        int movedId = await ReadSyntheticIdAsync(original, location => location.PageNumber == moved.HeaderPage && location.RowIndex == moved.HeaderRow);
+        (int Id, string Name)[] expected = [.. (await ReadSyntheticRowsAsync(original)).Where(row => row.Id != movedId)];
         var clearedSlots = new List<(long Page, int Row)> { (moved.HeaderPage, moved.HeaderRow) };
         if (layout == OverflowRowLayout.TwoHop)
         {
-            int movedId = await ReadOverflowIdAsync(bytes);
-            expected = [.. expected.Where(row => row.Id != movedId)];
             clearedSlots.Add((moved.DataPage, moved.DataRow));
             clearedSlots.Add((moved.DataPage, moved.DataRow + 1));
+        }
+        else
+        {
+            await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ReadSyntheticRowsAsync(bytes));
         }
 
         await using var stream = new MemoryStream();
@@ -899,6 +903,13 @@ public sealed class OverflowRowWriteTests
     /// <param name="bytes">The database image.</param>
     /// <returns>The moved row's Id.</returns>
     private static async ValueTask<int> ReadOverflowIdAsync(byte[] bytes)
+        => await ReadSyntheticIdAsync(bytes, static location => location.IsOverflow);
+
+    /// <summary>Reads one independently selected synthetic row's key.</summary>
+    /// <param name="bytes">The intact database image.</param>
+    /// <param name="select">Selects the required row by its physical location.</param>
+    /// <returns>The selected row's Id.</returns>
+    private static async ValueTask<int> ReadSyntheticIdAsync(byte[] bytes, Func<RowLocation, bool> select)
     {
         await using var stream = new MemoryStream(bytes, writable: false);
         await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
@@ -910,7 +921,7 @@ public sealed class OverflowRowWriteTests
             entry.TDefPage,
             async (row, token) =>
             {
-                if (!row.Location.IsOverflow)
+                if (!select(row.Location))
                 {
                     return true;
                 }
