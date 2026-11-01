@@ -440,6 +440,12 @@ internal sealed class TableStorageEditor(
     internal async ValueTask DropTableCoreAsync(string tableName, CancellationToken cancellationToken)
     {
         Dictionary<long, TableDef> definitions = await this.ReadDefinitionsBeforeDropAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (definitions.Count == 0 && await catalogWriter.TryDeleteLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false))
+        {
+            constraints.Unregister(tableName);
+            return;
+        }
+
         IReadOnlyList<long> deletedPages = await catalogWriter.DeleteUserTableCatalogRowsAsync(
             tableName,
             tdefPage: null,

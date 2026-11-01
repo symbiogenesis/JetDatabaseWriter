@@ -322,7 +322,8 @@ internal sealed class TableSchemaEditor(
         // A missing table still reports "does not exist" from the drop below,
         // even when MSysRelationships has rows left that name it.
         IReadOnlyList<string> relationshipNames = [];
-        if (await catalog.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) is not null)
+        if (await catalog.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) is not null
+            || await catalogWriter.ContainsLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false))
         {
             relationshipNames = await relationships.PlanTableDropRelationshipsAsync(tableName, cancellationToken).ConfigureAwait(false);
         }

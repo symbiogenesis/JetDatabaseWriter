@@ -30,7 +30,7 @@ public sealed class NativeApplicationObjectPreservationTests
         {
             foreach (WriteMode mode in Enum.GetValues<WriteMode>())
             {
-                foreach (string operation in new[] { "rows", "columns", "table", "indexes" })
+                foreach (string operation in new[] { "rows", "columns", "table", "indexes", "relationships", "links" })
                 {
                     cases.Add(codeObjects, mode, operation);
                 }
@@ -46,7 +46,7 @@ public sealed class NativeApplicationObjectPreservationTests
     {
         await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.ApplicationPreservation");
         await SeedAsync(session.SourcePath, codeObjects);
-        Snapshot original = await ReadSnapshotAsync(session.SourcePath);
+        Snapshot original = await ReadSnapshotAsync(session.SourcePath, changedRelationships: operation == "relationships");
         Assert.Contains(original.Catalog, row => row.Contains(Hex("EvidenceForm"), StringComparison.Ordinal));
         Assert.Contains(original.Catalog, row => row.Contains(Hex("EvidenceReport"), StringComparison.Ordinal));
         Assert.True(original.Pages.Count > 0);
@@ -62,7 +62,7 @@ public sealed class NativeApplicationObjectPreservationTests
         }
 
         await MutateAsync(session.SourcePath, mode, operation);
-        Snapshot actual = await ReadSnapshotAsync(session.SourcePath);
+        Snapshot actual = await ReadSnapshotAsync(session.SourcePath, changedRelationships: operation == "relationships");
         AssertSnapshotsEqual(original, actual, operation);
 
         await AssertItemsAsync(session.SourcePath, operation);
@@ -74,11 +74,11 @@ public sealed class NativeApplicationObjectPreservationTests
     {
         await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.WorkgroupPreservation", databaseExtension: ".mdb");
         string password = await SeedWorkgroupAsync(session.SourcePath, changedPassword);
-        Snapshot original = await ReadSnapshotAsync(session.SourcePath, password, "T");
+        Snapshot original = await ReadSnapshotAsync(session.SourcePath, password, "T", operation == "relationships");
         Assert.True(original.SharedPermissionPages > 0);
         Assert.NotEmpty(original.PermissionRows);
         await MutateAsync(session.SourcePath, mode, operation, password, "T");
-        Snapshot actual = await ReadSnapshotAsync(session.SourcePath, password, "T");
+        Snapshot actual = await ReadSnapshotAsync(session.SourcePath, password, "T", operation == "relationships");
         AssertSnapshotsEqual(original, actual, operation);
         await using AccessReader reader = await TestDatabase.OpenReaderAsync(session.SourcePath, new(password) { UseLockFile = false }, Ct);
         using DataTable table = await reader.ReadTableAsync("T", cancellationToken: Ct);
@@ -96,10 +96,14 @@ public sealed class NativeApplicationObjectPreservationTests
     [InlineData(false, "columns")]
     [InlineData(false, "table")]
     [InlineData(false, "indexes")]
+    [InlineData(false, "relationships")]
+    [InlineData(false, "links")]
     [InlineData(true, "rows")]
     [InlineData(true, "columns")]
     [InlineData(true, "table")]
     [InlineData(true, "indexes")]
+    [InlineData(true, "relationships")]
+    [InlineData(true, "links")]
     public async Task Dao120_PublicMutationPreservesInertDefinitionsThroughCompact(bool codeObjects, string operation)
     {
         await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.ApplicationPreservation.Native");
@@ -189,10 +193,14 @@ public sealed class NativeApplicationObjectPreservationTests
     [InlineData(false, "columns")]
     [InlineData(false, "table")]
     [InlineData(false, "indexes")]
+    [InlineData(false, "relationships")]
+    [InlineData(false, "links")]
     [InlineData(true, "rows")]
     [InlineData(true, "columns")]
     [InlineData(true, "table")]
     [InlineData(true, "indexes")]
+    [InlineData(true, "relationships")]
+    [InlineData(true, "links")]
     public async Task Dao120_PublicMutationPreservesWorkgroupOwnersAndGrantsThroughCompact(bool changedPassword, string operation)
     {
         await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.WorkgroupPreservation.Native", databaseExtension: ".mdb");
@@ -324,12 +332,34 @@ public sealed class NativeApplicationObjectPreservationTests
                     case "table":
                         await writer.CreateTableAsync("Scratch", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], Ct);
                         await writer.InsertRowAsync("Scratch", [1], Ct);
-                        await writer.DropTableAsync("Scratch", Ct);
+                        await writer.RenameTableAsync("Scratch", "RenamedScratch", Ct);
+                        await writer.DropTableAsync("RenamedScratch", Ct);
                         break;
                     case "indexes":
                         await writer.CreateIndexAsync(tableName, new("ScratchIndex", "Label"), Ct);
                         await writer.RenameIndexAsync(tableName, "ScratchIndex", "RenamedIndex", Ct);
                         await writer.DropIndexAsync(tableName, "RenamedIndex", Ct);
+                        break;
+                    case "relationships":
+                        await writer.CreateTableAsync("ScratchParent", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], Ct);
+                        await writer.CreateTableAsync("ScratchChild", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int))], Ct);
+                        await writer.InsertRowAsync("ScratchParent", [1], Ct);
+                        await writer.InsertRowAsync("ScratchChild", [1, 1], Ct);
+                        await writer.CreateRelationshipAsync(new("ScratchRelationship", "ScratchParent", "Id", "ScratchChild", "ParentId") { CascadeUpdates = true, CascadeDeletes = true }, Ct);
+                        await writer.RenameRelationshipAsync("ScratchRelationship", "RenamedRelationship", Ct);
+                        await writer.DropRelationshipAsync("RenamedRelationship", Ct);
+                        await writer.DropTableAsync("ScratchChild", Ct);
+                        await writer.DropTableAsync("ScratchParent", Ct);
+                        break;
+                    case "links":
+                        await writer.CreateLinkedTableAsync("ScratchAccessLink", path, tableName, Ct);
+                        await writer.CreateLinkedTextTableAsync("ScratchTextLink", Path.GetDirectoryName(path)!, "inert.csv", "Text;HDR=YES;FMT=Delimited", Ct);
+                        await writer.CreateLinkedOdbcTableAsync("ScratchOdbcLink", "ODBC;DSN=InertPreservationControl", "dbo.Inert", Ct);
+                        foreach (string link in new[] { "ScratchAccessLink", "ScratchTextLink", "ScratchOdbcLink" })
+                        {
+                            await writer.RenameTableAsync(link, link + "Renamed", Ct);
+                            await writer.DropTableAsync(link + "Renamed", Ct);
+                        }
                         break;
                     default:
                         throw new ArgumentOutOfRangeException(nameof(operation));
@@ -349,7 +379,7 @@ public sealed class NativeApplicationObjectPreservationTests
         Assert.DoesNotContain(await reader.ListTablesAsync(Ct), name => name == "Scratch");
     }
 
-    private static async Task<Snapshot> ReadSnapshotAsync(string path, string? password = null, string editedTable = "Items")
+    private static async Task<Snapshot> ReadSnapshotAsync(string path, string? password = null, string editedTable = "Items", bool changedRelationships = false)
     {
         await using AccessReader reader = await TestDatabase.OpenReaderAsync(path, new(password) { UseLockFile = false }, Ct);
         using DataTable catalog = await reader.ReadTableAsync("MSysObjects", cancellationToken: Ct);
@@ -384,7 +414,11 @@ public sealed class NativeApplicationObjectPreservationTests
                 continue;
             }
 
-            owners.Add((int)row["Id"]);
+            if (!changedRelationships || name != "MSysRelationships")
+            {
+                owners.Add((int)row["Id"]);
+            }
+
             using DataTable data = await reader.ReadTableAsync(name, cancellationToken: Ct);
             tables.Add(name, data.AsEnumerable().Select(EncodeRow).Order(StringComparer.Ordinal).ToArray());
         }

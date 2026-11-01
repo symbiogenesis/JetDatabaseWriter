@@ -686,11 +686,19 @@ security variants remain separate evidence requirements.
 
 `NativeApplicationObjectPreservationTests` extends both pinned inert ACE specimens to public insert/update/delete, unrelated column add/rename/drop, another table's create/drop and index create/rename/drop in every write mode. It compares all unedited catalog field values (including exact timestamp ticks), complete unaffected table values/binary payloads, and selected original owning TDEF/data/index pages. It also compares every original MSysACEs row value, stored long-value descriptors bound to stable object identities, and exact reachable external LVAL rows, including page tokens, directory slots, chain pointers, padding and terminal pointers. The specimens explicitly contain permission DATA pages shared by multiple ObjectIds. Every retained permission row keeps its bookmark, directory slot, bytes including padding, and original page-header framing; row-only edits also retain complete permission DATA pages. Fresh DAO120 public-mutation/reopen/compact controls passed on 2026-10-31 with ACEDAO 16.0.20527.20112 under x64 PowerShell. Independently compacted native controls establish physical column reordering and query catalog-ID renumbering: post-native comparisons retain every named value/type and resolve only MSysQueries.ObjectId through the catalog query name. Exact original writer-side catalog, permission, page, descriptor and LVAL comparisons remain unchanged; native-only controls also preserve the frozen source values through compact. No embedded content is invoked, and broader application/security/replication variants remain S9 work.
 
+The public matrix also covers local-table rename, relationship create/rename/drop
+and Access/text/ODBC link create/rename/drop. Retained original system pages stay
+under exact byte comparison; the touched relationship table may allocate new
+owned pages while every original page remains checked. DAO reopen and compact
+controls retain the application definitions and custom-workgroup semantics for
+these paths too. This extends the mutation paths tested on the pinned specimens;
+it does not establish arbitrary Access UI definition exports or replication.
+
 The same public-mutation checks cover both pinned encrypted Jet4 custom-workgroup
 specimens (`NativeJet4Workgroup.mdb` and `NativeJet4WorkgroupChanged.mdb`). They
 retain unaffected catalog/system-table values and selected owning pages, the
 edited table's other catalog fields, shared permission-row framing and external
-LVAL identities through row, column, table and index edits in every write mode.
+LVAL identities through row, column, table, index, relationship and linked-table edits in every write mode.
 Fresh DAO120 controls on 2026-10-31 compare native authentication, custom owners,
 permissions and row values through separate native-control and writer-output
 compacts. These named native security variants do not close broader security,
@@ -896,6 +904,16 @@ their complete metadata through table rename in every write mode. Stored query,
 lookup and expression text follows the established DAO preservation behavior;
 Access UI Name AutoCorrect and arbitrary application rebinding remain separate
 requirements.
+
+`DropLinkedTableTests` covers Access/text/ODBC catalog deletion in all supported
+formats and write modes, native cached link specimens, unchanged source files,
+permission cleanup, name reuse, ambiguous-identity refusal, live shared LVAL
+interior tails under secure erase, exact rollback and every partial-write
+boundary. `LinkedTableRelationshipDaoTests` independently authors linked
+relationships and compares native and managed deletion with DAO3.6 Jet3/Jet4
+and DAO120 Jet4/ACE through reopen and compact: deleting a link removes its
+unenforced relationship metadata. Opaque cached definitions and shared external
+catalog storage remain pinned until complete incoming ownership is established.
 
 `RenameIndexTests` checks logical-name ordering, unchanged physical descriptors
 and unrelated pages, stable PK/FK identities, same-name column versus index

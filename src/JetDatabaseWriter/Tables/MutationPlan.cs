@@ -105,8 +105,9 @@ internal sealed class MutationPlan
         /// <param name="location">The original row slot.</param>
         /// <param name="original">The original decoded or index values, when available.</param>
         /// <param name="dataMode">The payload erase policy.</param>
-        internal void Delete(RowLocation location, object[]? original = null, DeletedRowDataMode dataMode = DeletedRowDataMode.Default)
-            => this.Rows.Add(new RowChange(location, original, null, null, dataMode, -1));
+        /// <param name="longValues">Original external catalog slots whose shared storage must remain pinned.</param>
+        internal void Delete(RowLocation location, object[]? original = null, DeletedRowDataMode dataMode = DeletedRowDataMode.Default, IReadOnlyDictionary<int, byte[]>? longValues = null)
+            => this.Rows.Add(new RowChange(location, original, null, null, dataMode, -1) { LongValues = longValues });
     }
 
     /// <summary>One prepared insert, replacement or deletion.</summary>
