@@ -12,7 +12,7 @@ $buildProps = [xml][IO.File]::ReadAllText((Join-Path $repoRoot 'Directory.Build.
 $testProject = [xml][IO.File]::ReadAllText((Join-Path $repoRoot 'tests/JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj'))
 $toolsFilter = [IO.File]::ReadAllText((Join-Path $repoRoot '.github/ci-tools.slnf')) | ConvertFrom-Json
 . (Join-Path $repoRoot 'scripts/ci-matrix.ps1')
-$matrix = (Get-CiAnalyzerMatrix).include
+$matrix = @((Get-CiAnalyzerMatrix).include) + @((Get-CiTestMatrix).include)
 
 function Assert-Contract([bool] $Condition, [string] $Message) {
     if (-not $Condition) { throw $Message }
@@ -31,7 +31,7 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract ($events -match '(?m)^  push:$' -and $events -match '(?m)^      - main$' -and $events -match '(?m)^  pull_request:$' -and $events -match '(?m)^  workflow_dispatch:$' -and $events -notmatch '(?m)^    paths(?:-ignore)?:') 'Push and PR triggers must retain the required gate for every content type; select jobs inside the workflow.'
     Assert-Contract ($Workflow.Contains('group: ci-${{ github.ref }}') -and $Workflow.Contains("cancel-in-progress: `${{ !startsWith(github.ref, 'refs/tags/') }}")) 'Superseded branch runs must be cancelled without cancelling release runs.'
     $analyze = Get-CiJob $Workflow 'analyze'
-    $test = $analyze
+    $test = Get-CiJob $Workflow 'test'
     Assert-Contract ($analyze.Contains('matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}') -and [regex]::Matches($analyze, '(?m)^      matrix:').Count -eq 1) 'The analyzer matrix must consume the complete shared definition.'
     $lanes = @($Lanes)
 
@@ -48,10 +48,18 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract (@(Compare-Object @($projects | Where-Object { $_ -notin 'JetDatabaseWriter', 'JetDatabaseWriter.Tests' }) @($filtered | Where-Object { $_ -ne 'JetDatabaseWriter' })).Count -eq 0) 'Every remaining solution project must belong to the tools filter.'
 
     $frameworks = @($TestProject.SelectNodes('/Project/PropertyGroup/TargetFrameworks') | ForEach-Object { $_.InnerText.Split(';', [StringSplitOptions]::RemoveEmptyEntries) } | Sort-Object -Unique)
-    Assert-Contract ($frameworks.Count -gt 0) 'The test project framework declaration is missing.'
-    $testLanes = @($lanes | Where-Object project -eq 'tests/JetDatabaseWriter.Tests')
     Assert-Contract (($frameworks -join ';') -eq 'net10.0') 'Tests must build locally with the pinned .NET 10 SDK.'
-    Assert-Contract ($testLanes.Count -eq 15) 'Native .NET 10, netstandard and .NET 11 must each have five analyzed test partitions.'
+    $buildLanes = @($lanes | Where-Object project -eq 'tests/JetDatabaseWriter.Tests')
+    Assert-Contract ($buildLanes.Count -eq 2) 'Exactly two analyzed test assets must serve every runtime partition.'
+    foreach ($asset in 'native', 'standard') {
+        $buildLane = @($buildLanes | Where-Object asset -CEQ $asset)
+        $expectedOptions = '-f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests'
+        $restoreOptions = ''
+        if ($asset -eq 'standard') { $expectedOptions += ' -p:TestNetStandard=true'; $restoreOptions = '-p:TestNetStandard=true' }
+        Assert-Contract ($buildLane.Count -eq 1 -and $buildLane[0].name -ceq "tests $asset" -and $buildLane[0].options -ceq $expectedOptions -and [string]$buildLane[0]['restore-options'] -ceq $restoreOptions -and $buildLane[0].runner -is [bool] -and $buildLane[0].runner) 'The two test assets must restore and analyze their exact dependency graphs once.'
+    }
+    $testLanes = @($lanes | Where-Object partition)
+    Assert-Contract ($testLanes.Count -eq 15) 'Native .NET 10, netstandard and .NET 11 must each have five test partitions.'
     $sweepClasses = [ordered]@{
         jet3 = 'JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests'
         jet4 = 'JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests'
@@ -60,11 +68,10 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     $partitionNamespaces = 'JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer'
     $partitions = @('ordinary', 'schema-writer') + @($sweepClasses.Keys)
     foreach ($framework in 'net10.0', 'net10.0-netstandard', 'net11.0') {
-        $expectedOptions = '-f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests'
-        if ($framework -eq 'net10.0-netstandard') { $expectedOptions += ' -p:TestNetStandard=true' }
+        $expectedAsset = if ($framework -eq 'net10.0-netstandard') { 'standard' } else { 'native' }
         foreach ($partition in $partitions) {
             $lane = @($testLanes | Where-Object { $_.tf -eq $framework -and $_.partition -eq $partition })
-            Assert-Contract ($lane.Count -eq 1 -and $lane[0].options -eq $expectedOptions -and $lane[0].runner -is [bool] -and $lane[0].runner) "The '$framework/$partition' test partition must analyze and execute its matching runner exactly once."
+            Assert-Contract ($lane.Count -eq 1 -and $lane[0].asset -ceq $expectedAsset -and -not $lane[0].project -and -not $lane[0].options -and -not $lane[0]['restore-options']) "The '$framework/$partition' test partition must execute its matching analyzed asset exactly once."
             $name = 'tests ' + $framework.Replace('net10.0-netstandard', 'net10.0 netstandard') + ' ' + $partition
             Assert-Contract ($lane[0].name -ceq $name) 'Test partition job names must match the validated ancestor job inventory.'
             $expectedFilter = switch ($partition) {
@@ -73,13 +80,10 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
                 default { '--filter-class ' + $sweepClasses[$partition] }
             }
             Assert-Contract ($lane[0]['test-options'] -ceq $expectedFilter) "The '$framework/$partition' filter must retain the exhaustive, disjoint partition of the full ordinary suite."
-            if ($framework -eq 'net10.0-netstandard') {
-                Assert-Contract ($lane[0]['restore-options'] -eq '-p:TestNetStandard=true') 'The netstandard lane must restore its matching dependency graph.'
-            }
         }
     }
-    Assert-Contract ($lanes.Count -eq 17) 'Unexpected analyzer lanes require a coverage review.'
-    Assert-Contract (@($lanes.name | Sort-Object -Unique).Count -eq $lanes.Count) 'Every analyzer partition must have a unique job name.'
+    Assert-Contract ($lanes.Count -eq 19) 'Unexpected build or execution lanes require a coverage review.'
+    Assert-Contract (@($lanes.name | Sort-Object -Unique).Count -eq $lanes.Count) 'Every build and execution partition must have a unique job name.'
 
     $build = [regex]::Match($analyze, '(?m)^        run: (?<command>dotnet build [^\n]+)$').Groups['command'].Value
     Assert-Contract ($build -match '(?:^| )-c Release(?: |$)' -and $build.Contains('${{ matrix.project }}') -and $build.Contains('${{ matrix.options }}')) 'The analyzer build must use Release and every matrix lane option.'
@@ -94,46 +98,46 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     $suppressed = @($TestProject.SelectNodes('/Project/PropertyGroup/NoWarn') | ForEach-Object { $_.InnerText.Split(';') } | Where-Object { $_ -and $_ -ne '$(NoWarn)' } | Sort-Object -Unique)
     Assert-Contract (($suppressed -join ';') -eq 'CA1707;SA1615') 'The test project must not add blanket warning suppressions.'
 
-    # Each runtime leg executes its own Release analyzer output in the same job.
-    # The artifact remains available for focused DAO checks on Access hosts.
-    $runnerName = 'name: dao-test-runner-${{ matrix.tf }}'
-    $runnerPath = 'path: tests/JetDatabaseWriter.Tests/bin/Release/net10.0/'
-    $upload = [regex]::Match($analyze, '(?ms)^      - name: Upload DAO test runner\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
-    Assert-Contract ($upload.Contains("if: matrix.runner && matrix.partition == 'ordinary'") -and $upload.Contains($runnerName) -and $upload.Contains($runnerPath) -and $upload -match 'uses: actions/upload-artifact@[0-9a-f]{40}(?:\s|$)' -and $upload.Contains('if-no-files-found: error')) 'Ordinary partitions must publish the complete matching test runner exactly once with a pinned action.'
+    $upload = [regex]::Match($analyze, '(?ms)^      - name: Upload analyzed test runner\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    Assert-Contract ($upload.Contains('if: matrix.runner') -and $upload.Contains('name: analyzed-runner-${{ matrix.asset }}') -and $upload.Contains('path: tests/JetDatabaseWriter.Tests/bin/Release/net10.0/') -and $upload -match 'uses: actions/upload-artifact@[0-9a-f]{40}(?:\s|$)' -and $upload.Contains('if-no-files-found: error')) 'Each analyzed test asset must publish its complete runner exactly once with a pinned action.'
+    Assert-Contract ($analyze.IndexOf('      - name: Build', [StringComparison]::Ordinal) -lt $analyze.IndexOf('      - name: Upload analyzed test runner', [StringComparison]::Ordinal) -and $upload -notmatch '(?m)^        if:.*(?:always|cancelled)') 'Analyzed runners may publish only after their successful Release build.'
     foreach ($name in 'analyze', 'aot', 'encryption-replacement') {
         $laneJob = Get-CiJob $Workflow $name
-        Assert-Contract ($laneJob -match '(?m)^    needs: changes$' -and [regex]::Matches($laneJob, '(?m)^    needs:').Count -eq 1) 'Test analyzer lanes must start independently of other analyzer lanes.'
+        Assert-Contract ($laneJob -match '(?m)^    needs: changes$' -and [regex]::Matches($laneJob, '(?m)^    needs:').Count -eq 1) 'Analyzer lanes must start independently of other analyzer lanes.'
         Assert-Contract ($laneJob -match "(?m)^    if: needs\.changes\.outputs\.dotnet == 'true'$" -and [regex]::Matches($laneJob, '(?m)^    if:').Count -eq 1) 'All .NET jobs must use the same reviewed lane selection.'
     }
+    Assert-Contract ($test.Contains('needs: [changes, analyze]') -and $test -match "(?m)^    if: needs\.changes\.outputs\.dotnet == 'true'$" -and $test.Contains('name: Test (${{ matrix.name }})') -and $analyze.Contains('name: Analyze (${{ matrix.name }})')) 'Test consumers must wait for successful analyzed artifacts and match the ancestor inventory.'
+    Assert-Contract ($test.Contains('matrix: ${{ fromJSON(needs.changes.outputs.test-matrix) }}')) 'The test matrix must consume every shared runtime partition.'
+    $download = [regex]::Match($test, '(?ms)^      - name: Download analyzed test runner\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    Assert-Contract ($download.Contains('name: analyzed-runner-${{ matrix.asset }}') -and $download.Contains('path: artifacts/test-runner') -and $download -match 'uses: actions/download-artifact@[0-9a-f]{40}(?:\s|$)') 'Each test partition must download its exact analyzed asset with a pinned action.'
     $testSteps = [regex]::Matches($test, '(?ms)^      - name: Test\n(?<step>.*?)(?=^      - |\z)')
-    Assert-Contract ($testSteps.Count -eq 1) 'Every test analyzer partition must execute its assigned tests exactly once.'
+    Assert-Contract ($testSteps.Count -eq 1) 'Every test partition must execute its assigned tests exactly once.'
     $testStep = $testSteps[0].Groups['step'].Value
-    Assert-Contract ($testStep -match '(?m)^        if: matrix.runner$') 'Every test analyzer partition must run its assigned tests.'
-    $buildPosition = $test.IndexOf('      - name: Build', [StringComparison]::Ordinal)
+    Assert-Contract ($testStep -notmatch '(?m)^        if:') 'Every test partition must run its assigned tests.'
+    $downloadPosition = $test.IndexOf('      - name: Download analyzed test runner', [StringComparison]::Ordinal)
     $testPosition = $test.IndexOf('      - name: Test', [StringComparison]::Ordinal)
-    Assert-Contract ($buildPosition -ge 0 -and $buildPosition -lt $testPosition) 'Ordinary tests must follow their successful Release analyzer build.'
-    $afterBuild = $test.Substring($buildPosition + '      - name: Build'.Length)
-    Assert-Contract ([regex]::Matches($afterBuild, '(?m)^[ \t]+(?:run:.*\b)?dotnet[ \t]+(?:build|restore|publish)\b').Count -eq 1) 'Ordinary tests must execute the validated binaries without rebuilding.'
+    Assert-Contract ($downloadPosition -ge 0 -and $downloadPosition -lt $testPosition) 'Ordinary tests must follow acquisition of their analyzed runner.'
+    Assert-Contract ($test -notmatch '\bdotnet\s+(?:build|restore|publish|pack)\b') 'Ordinary tests must execute the analyzed binaries without rebuilding.'
     Assert-Contract ($test.Contains('global-json-file: .github/dotnet11/global.json') -and $test.Contains("if: matrix.tf == 'net11.0'")) 'The .NET 11 lane must install the pinned prerelease runtime.'
     Assert-Contract ($testStep.Contains("DOTNET_ROLL_FORWARD: `${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}") -and $testStep.Contains("DOTNET_ROLL_FORWARD_TO_PRERELEASE: `${{ matrix.tf == 'net11.0' && '1' || '0' }}") -and $testStep.Contains("JDW_EXPECTED_RUNTIME_MAJOR: `${{ matrix.tf == 'net11.0' && '11' || '10' }}")) 'Test lanes must select and verify their intended runtime, including prereleases.'
     $testCommand = [regex]::Match($testStep, '(?m)^        run: (?<command>[^\n]+)$').Groups['command'].Value
     if ($testCommand -eq '>-') {
         $testCommand = ([regex]::Matches($testStep, '(?m)^          (?<line>[^\n]+)$') | ForEach-Object { $_.Groups['line'].Value.Trim() }) -join ' '
     }
-    Assert-Contract ($testCommand.Contains('--test-modules JetDatabaseWriter.Tests.dll') -and $testCommand.Contains('--root-directory tests/JetDatabaseWriter.Tests/bin/Release/net10.0') -and $testCommand -match '(?:^| )--minimum-expected-tests 48(?: |$)') 'Every partition must launch the validated module and require at least all 48 fault theory rows.'
+    Assert-Contract ($testCommand.Contains('--test-modules JetDatabaseWriter.Tests.dll') -and $testCommand.Contains('--root-directory artifacts/test-runner') -and $testCommand -match '(?:^| )--minimum-expected-tests 48(?: |$)') 'Every partition must launch the validated module and require at least all 48 fault theory rows.'
     Assert-Contract ($testCommand.Contains('${{ matrix.test-options }}') -and $testCommand -notmatch '(?:^| )--(?:filter|list-tests|explicit|project|solution)\b') 'Test partitions must use only their reviewed exhaustive matrix filters.'
     Assert-Contract ($testCommand.Contains('--results-directory artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}')) 'Test result directories must distinguish every framework and partition.'
     Assert-Contract ($testStep.Contains('JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}-${{ matrix.partition }}')) 'Ordinary tests must retain normalized golden specimens in their framework partition.'
-    $results = [regex]::Match($analyze, '(?ms)^      - name: Upload test results\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
-    Assert-Contract ($results.Contains('if: ${{ !cancelled() && matrix.runner }}') -and $results.Contains('name: test-results-${{ matrix.tf }}-${{ matrix.partition }}') -and $results.Contains('path: artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}/')) 'Every partition must retain uniquely named test results after failures as well as successes.'
-    $skipPolicy = [regex]::Match($analyze, '(?ms)^      - name: Validate test outcomes\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
-    Assert-Contract ($skipPolicy.Contains('if: ${{ !cancelled() && matrix.runner }}') -and $skipPolicy.Contains('shell: pwsh') -and $skipPolicy.Contains('./scripts/assert-test-results.ps1 -ResultsDirectory artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}')) 'Every ordinary partition must reject unapproved skips and missing or failed xUnit results.'
-    $golden = [regex]::Match($analyze, '(?ms)^      - name: Upload golden diagnostics\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
-    Assert-Contract ($golden.Contains('if: ${{ !cancelled() && matrix.runner }}') -and $golden.Contains('name: golden-bytes-${{ matrix.tf }}-${{ matrix.partition }}') -and $golden.Contains('path: artifacts/golden/${{ matrix.tf }}-${{ matrix.partition }}/')) 'Every partition must retain uniquely named golden diagnostics after failures as well as successes.'
+    $results = [regex]::Match($test, '(?ms)^      - name: Upload test results\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    Assert-Contract ($results.Contains('if: ${{ !cancelled() }}') -and $results.Contains('name: test-results-${{ matrix.tf }}-${{ matrix.partition }}') -and $results.Contains('path: artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}/')) 'Every partition must retain uniquely named test results after failures as well as successes.'
+    $skipPolicy = [regex]::Match($test, '(?ms)^      - name: Validate test outcomes\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    Assert-Contract ($skipPolicy.Contains('if: ${{ !cancelled() }}') -and $skipPolicy.Contains('shell: pwsh') -and $skipPolicy.Contains('./scripts/assert-test-results.ps1 -ResultsDirectory artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}')) 'Every ordinary partition must reject unapproved skips and missing or failed xUnit results.'
+    $golden = [regex]::Match($test, '(?ms)^      - name: Upload golden diagnostics\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    Assert-Contract ($golden.Contains('if: ${{ !cancelled() }}') -and $golden.Contains('name: golden-bytes-${{ matrix.tf }}-${{ matrix.partition }}') -and $golden.Contains('path: artifacts/golden/${{ matrix.tf }}-${{ matrix.partition }}/')) 'Every partition must retain uniquely named golden diagnostics after failures as well as successes.'
     Assert-Contract ($Workflow -notmatch '(?i)infersharp') 'InferSharp must remain in its independent workflow.'
 
     $changes = Get-CiJob $Workflow 'changes'
-    Assert-Contract ($changes.Contains('matrix: ${{ steps.select.outputs.matrix }}')) 'The selection job must expose the complete shared analyzer matrix.'
+    Assert-Contract ($changes.Contains('matrix: ${{ steps.select.outputs.matrix }}') -and $changes.Contains('test-matrix: ${{ steps.select.outputs.test-matrix }}')) 'The selection job must expose both complete shared matrices.'
     Assert-Contract ($changes.Contains('package: ${{ steps.select.outputs.package }}')) 'The selection job must expose documentation package selection.'
     Assert-Contract ($changes.Contains('fetch-depth: 0') -and $changes.Contains('run: ./scripts/select-ci-lanes.ps1') -and $changes.Contains('GITHUB_TOKEN: ${{ github.token }}') -and $changes -notmatch '(?m)^    (?:if|needs):') 'Path selection must inspect complete history and run unconditionally.'
     Assert-Contract ($Workflow.Contains("  workflow_call:`n    inputs:`n      full:") -and $Workflow.Contains('        default: true') -and $changes.Contains('JDW_CI_FORCE_FULL: ${{ inputs.full || false }}')) 'Reusable workflow calls must default to complete validation.'
@@ -144,11 +148,11 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract ($package.Contains('fetch-depth: 0') -and $package.Contains('global-json-file: global.json') -and $package.Contains('dotnet restore src/JetDatabaseWriter/JetDatabaseWriter.csproj --locked-mode') -and $package.Contains('dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-restore -o artifacts/nupkg') -and $package -notmatch 'dotnet test|--no-build|continue-on-error:') 'Documentation packaging must restore locked dependencies and build the strict Release library without running the test suite.'
     Assert-Contract ($package.Contains('name: nupkg') -and $package.Contains('path: artifacts/nupkg/*.nupkg') -and $package.Contains('if-no-files-found: error')) 'Documentation packaging must retain its package artifact.'
     $gate = Get-CiJob $Workflow 'gate'
-    Assert-Contract ($gate.Contains('needs: [changes, checks, formal, analyze, native-access, aot, encryption-replacement, package]') -and $gate.Contains('if: ${{ !cancelled() }}') -and $gate.Contains('JDW_CI_NEEDS: ${{ toJSON(needs) }}') -and $gate.Contains('run: ./scripts/select-ci-lanes.ps1 -CheckResults')) 'The aggregate gate must reject failure and missing selected jobs while honoring workflow cancellation.'
+    Assert-Contract ($gate.Contains('needs: [changes, checks, formal, analyze, test, native-access, aot, encryption-replacement, package]') -and $gate.Contains('if: ${{ !cancelled() }}') -and $gate.Contains('JDW_CI_NEEDS: ${{ toJSON(needs) }}') -and $gate.Contains('run: ./scripts/select-ci-lanes.ps1 -CheckResults')) 'The aggregate gate must reject failure and missing selected jobs while honoring workflow cancellation.'
     $native = Get-CiJob $Workflow 'native-access'
     Assert-Contract ($native.Contains('name: Native Access compatibility (${{ matrix.tf }})') -and $native.Contains('needs: [changes, analyze]') -and $native.Contains('if: ${{ !cancelled() && needs.changes.outputs.dotnet == ''true'' }}') -and $native.Contains('runs-on: windows-latest') -and $native.Contains('timeout-minutes: 90') -and $native -notmatch 'continue-on-error:') 'Native compatibility must gate every selected .NET revision after its analyzed artifacts are available, including independent evidence after self-test failures.'
     Assert-Contract ($native.Contains('tf: [net10.0, net10.0-netstandard, net11.0]') -and $native.Contains('global-json-file: global.json') -and $native.Contains('global-json-file: .github/dotnet11/global.json')) 'Native compatibility must cover all three runtime/library combinations.'
-    Assert-Contract ($native -match 'uses: actions/download-artifact@[0-9a-f]{40}(?:\s|$)' -and $native.Contains('name: dao-test-runner-${{ matrix.tf }}') -and $native.Contains('path: artifacts/native-runner') -and $native -notmatch 'dotnet (?:build|restore|publish)\b') 'Native compatibility must consume the exact analyzed runner without rebuilding.'
+    Assert-Contract ($native -match 'uses: actions/download-artifact@[0-9a-f]{40}(?:\s|$)' -and $native.Contains('name: analyzed-runner-${{ matrix.tf == ''net10.0-netstandard'' && ''standard'' || ''native'' }}') -and $native.Contains('path: artifacts/native-runner') -and $native -notmatch 'dotnet (?:build|restore|publish)\b') 'Native compatibility must consume the exact analyzed runner without rebuilding.'
     Assert-Contract ($native.Contains('run: ./scripts/install-native-access.ps1') -and $native.Contains('run: ./scripts/run-native-compatibility.ps1 -RunnerDirectory artifacts/native-runner -ResultsDirectory artifacts/native-results/${{ matrix.tf }}') -and $native.IndexOf('run: ./scripts/install-native-access.ps1', [StringComparison]::Ordinal) -lt $native.IndexOf('run: ./scripts/run-native-compatibility.ps1', [StringComparison]::Ordinal)) 'Native compatibility must provision the pinned independent engine before executing its zero-skip method inventory.'
     Assert-Contract ($native.Contains("JDW_EXPECTED_RUNTIME_MAJOR: `${{ matrix.tf == 'net11.0' && '11' || '10' }}") -and $native.Contains("DOTNET_ROLL_FORWARD: `${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}") -and $native.Contains("DOTNET_ROLL_FORWARD_TO_PRERELEASE: `${{ matrix.tf == 'net11.0' && '1' || '0' }}")) 'Native compatibility must execute its declared runtime, including prereleases.'
     $nativeResults = [regex]::Match($native, '(?ms)^      - name: Upload native results\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
@@ -182,46 +186,56 @@ Assert-Scenario 'documentation package omitted from gate' ($workflow.Replace('en
 Assert-Scenario 'obsolete branch runs block current validation' ($workflow.Replace("cancel-in-progress: `${{ !startsWith(github.ref, 'refs/tags/') }}", 'cancel-in-progress: false')) 'Superseded branch runs must be cancelled'
 Assert-MatrixScenario 'incomplete solution analysis' { param($lanes) $lanes[1].project = 'tests/JetDatabaseWriter.TestSupport'; $lanes } 'The tools lane must analyze the complete tools filter'
 Assert-Scenario 'shared matrix ignored' ($workflow.Replace('matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}', 'matrix: {}')) 'The analyzer matrix must consume the complete shared definition'
-Assert-Scenario 'shared matrix output omitted' ($workflow.Replace('matrix: ${{ steps.select.outputs.matrix }}', 'removed: value')) 'The selection job must expose the complete shared analyzer matrix'
+Assert-Scenario 'shared matrix output omitted' ($workflow.Replace('matrix: ${{ steps.select.outputs.matrix }}', 'removed: value')) 'The selection job must expose both complete shared matrices'
+Assert-Scenario 'test matrix output omitted' ($workflow.Replace('test-matrix: ${{ steps.select.outputs.test-matrix }}', 'removed: value')) 'The selection job must expose both complete shared matrices'
+Assert-Scenario 'test matrix ignored' ($workflow.Replace('matrix: ${{ fromJSON(needs.changes.outputs.test-matrix) }}', 'matrix: {}')) 'The test matrix must consume every shared runtime partition'
 Assert-Scenario 'Debug analyzer build' ($workflow.Replace('dotnet build ${{ matrix.project }} -c Release', 'dotnet build ${{ matrix.project }} -c Debug')) 'The analyzer build must use Release'
 Assert-Scenario 'disabled analyzers' ($workflow.Replace('dotnet build ${{ matrix.project }}', 'dotnet build -p:RunAnalyzers=false ${{ matrix.project }}')) 'Analyzer jobs must retain all strict build guarantees'
-Assert-Scenario 'ordinary suite disabled' ($workflow.Replace("      - name: Test`n        if: matrix.runner", "      - name: Test`n        if: false")) 'Every test analyzer partition must run its assigned tests'
+Assert-Scenario 'ordinary suite disabled' ($workflow.Replace("      - name: Test`n", "      - name: Test`n        if: false`n")) 'Every test partition must run its assigned tests'
 Assert-Scenario 'skip policy omitted' ($workflow.Replace('      - name: Validate test outcomes', '      - name: Removed test outcomes')) 'Every ordinary partition must reject unapproved skips'
-Assert-Scenario 'native compatibility omitted from gate' ($workflow.Replace('analyze, native-access, aot', 'analyze, aot')) 'The aggregate gate must reject failure'
+Assert-Scenario 'native compatibility omitted from gate' ($workflow.Replace('test, native-access, aot', 'test, aot')) 'The aggregate gate must reject failure'
+Assert-Scenario 'test execution omitted from gate' ($workflow.Replace('analyze, test, native-access', 'analyze, native-access')) 'The aggregate gate must reject failure'
 Assert-Scenario 'native evidence blocked by self-test failures' ($workflow.Replace('if: ${{ !cancelled() && needs.changes.outputs.dotnet == ''true'' }}', 'if: needs.changes.outputs.dotnet == ''true''')) 'including independent evidence after self-test failures'
 Assert-Scenario 'native runner rebuilt' ($workflow.Replace('run: ./scripts/run-native-compatibility.ps1', 'run: dotnet build; ./scripts/run-native-compatibility.ps1')) 'Native compatibility must consume the exact analyzed runner'
 Assert-Scenario 'native engine not provisioned' ($workflow.Replace('run: ./scripts/install-native-access.ps1', 'run: echo already-installed')) 'Native compatibility must provision the pinned independent engine'
 Assert-Scenario 'native target omitted' ($workflow.Replace('tf: [net10.0, net10.0-netstandard, net11.0]', 'tf: [net10.0, net11.0]')) 'Native compatibility must cover all three runtime/library combinations'
-Assert-Scenario 'unrelated analyzer barrier' ($workflow.Replace("    name: Analyze", "    needs: another-analyzer`n    name: Analyze")) 'Test analyzer lanes must start independently'
+Assert-Scenario 'unrelated analyzer barrier' ($workflow.Replace("    name: Analyze", "    needs: another-analyzer`n    name: Analyze")) 'Analyzer lanes must start independently'
 Assert-Scenario 'dotnet lane selection disabled' ($workflow.Replace("if: needs.changes.outputs.dotnet == 'true'", 'if: false')) 'All .NET jobs must use the same reviewed lane selection'
 Assert-Scenario 'missing aggregate gate' ($workflow.Replace('  gate:', '  removed:')) "The 'gate' CI job is missing"
-Assert-Scenario 'aggregate ignores skipped prerequisites' ($workflow.Replace('if: ${{ !cancelled() }}', 'if: success()')) 'The aggregate gate must reject failure'
-Assert-Scenario 'aggregate blocks superseding runs after cancellation' ($workflow.Replace('if: ${{ !cancelled() }}', 'if: always()')) 'honoring workflow cancellation'
+$gateJob = Get-CiJob $workflow 'gate'
+Assert-Scenario 'aggregate ignores skipped prerequisites' ($workflow.Replace($gateJob, $gateJob.Replace('if: ${{ !cancelled() }}', 'if: success()'))) 'The aggregate gate must reject failure'
+Assert-Scenario 'aggregate blocks superseding runs after cancellation' ($workflow.Replace($gateJob, $gateJob.Replace('if: ${{ !cancelled() }}', 'if: always()'))) 'honoring workflow cancellation'
 
-$analyzeJob = Get-CiJob $workflow 'analyze'
-$testStep = [regex]::Match($analyzeJob, '(?ms)^      - name: Test\n.*?(?=^      - |\z)').Value
-Assert-Scenario 'missing ordinary suite' ($workflow.Replace($testStep, '')) 'Every test analyzer partition must execute its assigned tests exactly once'
-Assert-Scenario 'duplicate ordinary suite' ($workflow.Replace($testStep, $testStep + $testStep)) 'Every test analyzer partition must execute its assigned tests exactly once'
-Assert-Scenario 'tests before validation' ($workflow.Replace($testStep, '').Replace('      - name: Build', $testStep + '      - name: Build')) 'Ordinary tests must follow their successful Release analyzer build'
-Assert-Scenario 'redundant ordinary test build' ($workflow.Replace($testStep, "      - name: Rebuild`n        run: dotnet build tests/JetDatabaseWriter.Tests -c Release`n" + $testStep)) 'Ordinary tests must execute the validated binaries without rebuilding'
-Assert-Scenario 'redundant multiline test build' ($workflow.Replace($testStep, "      - name: Rebuild`n        run: >-`n          dotnet build tests/JetDatabaseWriter.Tests -c Release`n" + $testStep)) 'Ordinary tests must execute the validated binaries without rebuilding'
+$testJob = Get-CiJob $workflow 'test'
+$testStep = [regex]::Match($testJob, '(?ms)^      - name: Test\n.*?(?=^      - |\z)').Value
+Assert-Scenario 'test runner download binding omitted' ($workflow.Replace('path: artifacts/test-runner', 'path: artifacts/unbound-runner')) 'Each test partition must download its exact analyzed asset'
+Assert-Scenario 'test consumer ignores analyzed build failure' ($workflow.Replace("  test:`n    needs: [changes, analyze]", "  test:`n    needs: changes")) 'Test consumers must wait for successful analyzed artifacts'
+$analyzerJob = Get-CiJob $workflow 'analyze'
+$uploadStep = [regex]::Match($analyzerJob, '(?ms)^      - name: Upload analyzed test runner\n.*?(?=^      - |\z)').Value
+Assert-Scenario 'runner uploaded before analysis' ($workflow.Replace($uploadStep, '').Replace('      - name: Build', $uploadStep + '      - name: Build')) 'Analyzed runners may publish only after their successful Release build'
+Assert-Scenario 'failed analysis publishes runner' ($workflow.Replace('if: matrix.runner', 'if: always() && matrix.runner')) 'Each analyzed test asset must publish its complete runner exactly once'
+Assert-Scenario 'missing ordinary suite' ($workflow.Replace($testStep, '')) 'Every test partition must execute its assigned tests exactly once'
+Assert-Scenario 'duplicate ordinary suite' ($workflow.Replace($testStep, $testStep + $testStep)) 'Every test partition must execute its assigned tests exactly once'
+Assert-Scenario 'tests before validation' ($workflow.Replace($testStep, '').Replace('      - name: Download analyzed test runner', $testStep + '      - name: Download analyzed test runner')) 'Ordinary tests must follow acquisition of their analyzed runner'
+Assert-Scenario 'redundant ordinary test build' ($workflow.Replace($testStep, "      - name: Rebuild`n        run: dotnet build tests/JetDatabaseWriter.Tests -c Release`n" + $testStep)) 'Ordinary tests must execute the analyzed binaries without rebuilding'
+Assert-Scenario 'redundant multiline test build' ($workflow.Replace($testStep, "      - name: Rebuild`n        run: >-`n          dotnet build tests/JetDatabaseWriter.Tests -c Release`n" + $testStep)) 'Ordinary tests must execute the analyzed binaries without rebuilding'
 Assert-Scenario 'empty test discovery accepted' ($workflow.Replace('--minimum-expected-tests 48', '--minimum-expected-tests 0')) 'Every partition must launch the validated module and require at least all 48 fault theory rows'
 Assert-Scenario 'incomplete fault discovery accepted' ($workflow.Replace('--minimum-expected-tests 48', '--minimum-expected-tests 47')) 'Every partition must launch the validated module and require at least all 48 fault theory rows'
 Assert-Scenario 'partial ordinary test selection' ($workflow.Replace('--minimum-expected-tests 48', '--minimum-expected-tests 48 --filter-class Example')) 'Test partitions must use only their reviewed exhaustive matrix filters'
 Assert-Scenario 'partition filters unused' ($workflow.Replace('${{ matrix.test-options }}', '')) 'Test partitions must use only their reviewed exhaustive matrix filters'
-Assert-MatrixScenario 'unexpected ordinary exclusion' { param($lanes) $lanes[2]['test-options'] += ' Example'; $lanes } 'filter must retain the exhaustive, disjoint partition'
-Assert-MatrixScenario 'namespace gap omits schema cases' { param($lanes) $lanes[3]['test-options'] = $lanes[3]['test-options'].Replace('JetDatabaseWriter.Tests.Schema ', ''); $lanes } 'filter must retain the exhaustive, disjoint partition'
-Assert-MatrixScenario 'namespace overlap repeats schema cases' { param($lanes) $lanes[2]['test-options'] = $lanes[2]['test-options'].Replace('JetDatabaseWriter.Tests.Schema ', ''); $lanes } 'filter must retain the exhaustive, disjoint partition'
-Assert-MatrixScenario 'unreviewed namespace inclusion repeats ordinary cases' { param($lanes) $lanes[3]['test-options'] = $lanes[3]['test-options'].Replace('--filter-namespace ', '--filter-namespace JetDatabaseWriter.Tests.Encryption '); $lanes } 'filter must retain the exhaustive, disjoint partition'
-Assert-MatrixScenario 'sweep partition selects wrong class' { param($lanes) $lanes[4]['test-options'] = $lanes[4]['test-options'].Replace('StatementAtomicityJet3Tests', 'StatementAtomicityJet4Tests'); $lanes } 'filter must retain the exhaustive, disjoint partition'
-Assert-MatrixScenario 'sweep partition disables explicit cases' { param($lanes) $lanes[4]['test-options'] += ' --explicit off'; $lanes } 'filter must retain the exhaustive, disjoint partition'
-Assert-MatrixScenario 'schema writer partition duplicates sweep cases' { param($lanes) $lanes[3]['test-options'] = $lanes[3]['test-options'].Replace('JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests ', ''); $lanes } 'filter must retain the exhaustive, disjoint partition'
+Assert-MatrixScenario 'unexpected ordinary exclusion' { param($lanes) $lanes[4]['test-options'] += ' Example'; $lanes } 'filter must retain the exhaustive, disjoint partition'
+Assert-MatrixScenario 'namespace gap omits schema cases' { param($lanes) $lanes[5]['test-options'] = $lanes[5]['test-options'].Replace('JetDatabaseWriter.Tests.Schema ', ''); $lanes } 'filter must retain the exhaustive, disjoint partition'
+Assert-MatrixScenario 'namespace overlap repeats schema cases' { param($lanes) $lanes[4]['test-options'] = $lanes[4]['test-options'].Replace('JetDatabaseWriter.Tests.Schema ', ''); $lanes } 'filter must retain the exhaustive, disjoint partition'
+Assert-MatrixScenario 'unreviewed namespace inclusion repeats ordinary cases' { param($lanes) $lanes[5]['test-options'] = $lanes[5]['test-options'].Replace('--filter-namespace ', '--filter-namespace JetDatabaseWriter.Tests.Encryption '); $lanes } 'filter must retain the exhaustive, disjoint partition'
+Assert-MatrixScenario 'sweep partition selects wrong class' { param($lanes) $lanes[6]['test-options'] = $lanes[6]['test-options'].Replace('StatementAtomicityJet3Tests', 'StatementAtomicityJet4Tests'); $lanes } 'filter must retain the exhaustive, disjoint partition'
+Assert-MatrixScenario 'sweep partition disables explicit cases' { param($lanes) $lanes[6]['test-options'] += ' --explicit off'; $lanes } 'filter must retain the exhaustive, disjoint partition'
+Assert-MatrixScenario 'schema writer partition duplicates sweep cases' { param($lanes) $lanes[5]['test-options'] = $lanes[5]['test-options'].Replace('JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests ', ''); $lanes } 'filter must retain the exhaustive, disjoint partition'
 Assert-Scenario 'framework partitions collide in result directory' ($workflow.Replace('--results-directory artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}', '--results-directory artifacts/test-results/${{ matrix.tf }}')) 'Test result directories must distinguish every framework and partition'
 Assert-Scenario 'partition results collide in artifact name' ($workflow.Replace('name: test-results-${{ matrix.tf }}-${{ matrix.partition }}', 'name: test-results-${{ matrix.tf }}')) 'Every partition must retain uniquely named test results'
-Assert-Scenario 'partition runner artifacts collide' ($workflow.Replace("if: matrix.runner && matrix.partition == 'ordinary'", 'if: matrix.runner')) 'Ordinary partitions must publish the complete matching test runner exactly once'
+Assert-Scenario 'runner artifact binding omitted' ($workflow.Replace('name: analyzed-runner-${{ matrix.asset }}', 'name: unbound-runner')) 'Each analyzed test asset must publish its complete runner exactly once'
 Assert-Scenario 'golden evidence disabled' ($workflow.Replace('JDW_GOLDEN_OUTPUT_DIRECTORY:', 'REMOVED_GOLDEN_OUTPUT_DIRECTORY:')) 'Ordinary tests must retain normalized golden specimens'
-Assert-Scenario 'test result evidence only on success' ($workflow.Replace('if: ${{ !cancelled() && matrix.runner }}', 'if: matrix.runner')) 'Every partition must retain uniquely named test results'
-Assert-Scenario 'golden evidence only on success' ($workflow.Replace("      - name: Upload golden diagnostics`n        if: `${{ !cancelled() && matrix.runner }}", "      - name: Upload golden diagnostics`n        if: matrix.runner")) 'Every partition must retain uniquely named golden diagnostics'
+Assert-Scenario 'test result evidence only on success' ($workflow.Replace("      - name: Upload test results`n        if: `${{ !cancelled() }}", "      - name: Upload test results`n        if: success()")) 'Every partition must retain uniquely named test results'
+Assert-Scenario 'golden evidence only on success' ($workflow.Replace("      - name: Upload golden diagnostics`n        if: `${{ !cancelled() }}", "      - name: Upload golden diagnostics`n        if: success()")) 'Every partition must retain uniquely named golden diagnostics'
 Assert-Scenario 'partition golden artifacts collide' ($workflow.Replace('name: golden-bytes-${{ matrix.tf }}-${{ matrix.partition }}', 'name: golden-bytes-${{ matrix.tf }}')) 'Every partition must retain uniquely named golden diagnostics'
 
 $weakenedProps = [xml]$buildProps.OuterXml
@@ -234,18 +248,18 @@ $suppressedWarning = [xml]$testProject.OuterXml
 $suppressedWarning.SelectSingleNode('/Project/PropertyGroup/NoWarn').InnerText += ';CA2000'
 Assert-Scenario 'blanket suppression hides disposal analysis' $workflow 'The test project must not add blanket warning suppressions' -Tests $suppressedWarning
 
-Assert-MatrixScenario 'missing standard asset partition' { param($lanes) $lanes | Where-Object name -CNE 'tests net10.0 netstandard ordinary' } 'Native .NET 10, netstandard and .NET 11 must each have five analyzed test partitions'
-Assert-MatrixScenario 'duplicate standard asset partition' { param($lanes) $lanes; $lanes[7] } 'Native .NET 10, netstandard and .NET 11 must each have five analyzed test partitions'
-Assert-MatrixScenario 'duplicate namespace partition misses ordinary tests' { param($lanes) $lanes[2].partition = 'schema-writer'; $lanes } "The 'net10.0/ordinary' test partition must analyze"
-Assert-MatrixScenario 'wrong standard analyzer project' { param($lanes) $lanes[7].options = '-f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Test -p:TestNetStandard=true'; $lanes } "The 'net10.0-netstandard/ordinary' test partition must analyze"
-Assert-MatrixScenario 'mismatched runtime runner' { param($lanes) $lanes[12].tf = 'net10.0'; $lanes } "The 'net10.0/ordinary' test partition must analyze"
-Assert-MatrixScenario 'duplicate sweep format misses another partition' { param($lanes) $lanes[6].partition = 'jet4'; $lanes } "The 'net10.0/jet4' test partition must analyze"
-Assert-MatrixScenario 'unknown sweep partition omits a format' { param($lanes) $lanes[6].partition = 'other'; $lanes } "The 'net10.0/ace' test partition must analyze"
-Assert-MatrixScenario 'renamed job no longer matches ancestor inventory' { param($lanes) $lanes[2].name = 'tests net10.0 renamed'; $lanes } 'Test partition job names must match the validated ancestor job inventory'
-Assert-MatrixScenario 'standard graph not restored' { param($lanes) $lanes[7]['restore-options'] = 'removed'; $lanes } 'The netstandard lane must restore its matching dependency graph'
+Assert-MatrixScenario 'missing standard asset partition' { param($lanes) $lanes | Where-Object name -CNE 'tests net10.0 netstandard ordinary' } 'Native .NET 10, netstandard and .NET 11 must each have five test partitions'
+Assert-MatrixScenario 'duplicate standard asset partition' { param($lanes) $lanes; $lanes[9] } 'Native .NET 10, netstandard and .NET 11 must each have five test partitions'
+Assert-MatrixScenario 'duplicate namespace partition misses ordinary tests' { param($lanes) $lanes[4].partition = 'schema-writer'; $lanes } "The 'net10.0/ordinary' test partition must execute"
+Assert-MatrixScenario 'wrong standard analyzer project' { param($lanes) $lanes[3].options = '-f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Test -p:TestNetStandard=true'; $lanes } 'The two test assets must restore and analyze'
+Assert-MatrixScenario 'mismatched runtime runner' { param($lanes) $lanes[14].tf = 'net10.0'; $lanes } "The 'net10.0/ordinary' test partition must execute"
+Assert-MatrixScenario 'duplicate sweep format misses another partition' { param($lanes) $lanes[8].partition = 'jet4'; $lanes } "The 'net10.0/jet4' test partition must execute"
+Assert-MatrixScenario 'unknown sweep partition omits a format' { param($lanes) $lanes[8].partition = 'other'; $lanes } "The 'net10.0/ace' test partition must execute"
+Assert-MatrixScenario 'renamed job no longer matches ancestor inventory' { param($lanes) $lanes[4].name = 'tests net10.0 renamed'; $lanes } 'Test partition job names must match the validated ancestor job inventory'
+Assert-MatrixScenario 'standard graph not restored' { param($lanes) $lanes[3]['restore-options'] = 'removed'; $lanes } 'The two test assets must restore and analyze'
 Assert-MatrixScenario 'package creation omitted' { param($lanes) $lanes[0].pack = $false; $lanes } 'Library and tools job names and package creation must match'
 Assert-MatrixScenario 'package condition is a truthy string' { param($lanes) $lanes[0].pack = 'true'; $lanes } 'Library and tools job names and package creation must match'
-Assert-MatrixScenario 'runner condition is a truthy string' { param($lanes) $lanes[2].runner = 'true'; $lanes } "The 'net10.0/ordinary' test partition must analyze"
+Assert-MatrixScenario 'runner condition is a truthy string' { param($lanes) $lanes[2].runner = 'true'; $lanes } 'The two test assets must restore and analyze'
 Assert-Scenario 'missing prerelease installation' ($workflow.Replace('global-json-file: .github/dotnet11/global.json', 'global-json-file: global.json')) 'The .NET 11 lane must install'
 Assert-Scenario 'runtime stays on installed 10' ($workflow.Replace("'LatestMajor'", "'Major'")) 'Test lanes must select and verify their intended runtime'
 Assert-Scenario 'prerelease runtime excluded' ($workflow.Replace("DOTNET_ROLL_FORWARD_TO_PRERELEASE:", 'REMOVED_PRERELEASE:')) 'Test lanes must select and verify their intended runtime'

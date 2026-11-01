@@ -11,7 +11,7 @@ function Get-CiLanes([string[]] $Paths) {
     foreach ($path in $Paths) {
         if ($path -imatch '\.dfy$' -or $path -cmatch '^verification/' -or
             $path -cmatch '^scripts/(?:install-dafny|verify-proofs|check-proof-review|select-ci-lanes|test-scripts)\.ps1$' -or
-            $path -cmatch '^scripts/tests/(?:verify-proofs|proof-review|formal-workflow|select-ci-lanes|ci-workflow|ci-tools|test-scripts)\.tests\.ps1$' -or
+            $path -cmatch '^scripts/tests/(?:verify-proofs|proof-review|formal-workflow|select-ci-lanes|ci-matrix|ci-workflow|ci-tools|test-scripts)\.tests\.ps1$' -or
             $path -cmatch '^docs/design/(?:formal-verification|proof-trust-review|recovery-storage-contract|verification-[^/]+)\.md$') {
             $formal = $true
         } elseif ($path -cin 'README.md', 'THIRD-PARTY-NOTICES.md') {
@@ -47,8 +47,9 @@ function Get-CiLaneJobs([ValidateSet('dotnet', 'formal')][string] $Lane) {
     if ($Lane -eq 'formal') { return @('Verify recovery models (Dafny)') }
     return @(
         foreach ($entry in (Get-CiAnalyzerMatrix).include) {
-            if ($entry.runner) { "Analyze and test ($($entry.name))" } else { "Analyze ($($entry.name))" }
+            "Analyze ($($entry.name))"
         }
+        foreach ($entry in (Get-CiTestMatrix).include) { "Test ($($entry.name))" }
         'Trimmed and NativeAOT consumers'
         'Native Access compatibility (net10.0)', 'Native Access compatibility (net10.0-netstandard)', 'Native Access compatibility (net11.0)'
         'Encryption replacement (ubuntu-latest, net10.0)', 'Encryption replacement (ubuntu-latest, net11.0)',
@@ -122,8 +123,8 @@ function Get-CiBaseline([string] $Event, [string] $Ref, [string] $Sha, [string] 
 }
 
 function Assert-CiResults($Lanes, $Results) {
-    foreach ($job in 'changes', 'checks', 'formal', 'analyze', 'aot', 'native-access', 'encryption-replacement', 'package') {
-        $required = $job -in 'changes', 'checks' -or ($job -eq 'formal' -and $Lanes.formal) -or ($job -in 'analyze', 'aot', 'native-access', 'encryption-replacement' -and $Lanes.dotnet) -or ($job -eq 'package' -and $Lanes.package)
+    foreach ($job in 'changes', 'checks', 'formal', 'analyze', 'test', 'aot', 'native-access', 'encryption-replacement', 'package') {
+        $required = $job -in 'changes', 'checks' -or ($job -eq 'formal' -and $Lanes.formal) -or ($job -in 'analyze', 'test', 'aot', 'native-access', 'encryption-replacement' -and $Lanes.dotnet) -or ($job -eq 'package' -and $Lanes.package)
         $expected = if ($required) { 'success' } else { 'skipped' }
         if ($Results[$job] -ne $expected) { throw "CI job '$job' reported '$($Results[$job])'; required '$expected'." }
     }
@@ -171,6 +172,7 @@ Write-Output $json
 if ($env:GITHUB_OUTPUT) {
     foreach ($lane in 'dotnet', 'formal', 'package') { "$lane=$($lanes[$lane].ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8NoBOM }
     "matrix=$(Get-CiAnalyzerMatrix | ConvertTo-Json -Depth 4 -Compress)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8NoBOM
+    "test-matrix=$(Get-CiTestMatrix | ConvertTo-Json -Depth 4 -Compress)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8NoBOM
 }
 if ($env:GITHUB_STEP_SUMMARY) {
     $summary = "### CI lane selection`n`nRevision: ``$($env:GITHUB_SHA)```n`n.NET/package ancestor: ``$($baselines.dotnet.sha)`` $($baselines.dotnet.url)`n`nDafny ancestor: ``$($baselines.formal.sha)`` $($baselines.formal.url)`n`n.NET: $($lanes.dotnet); Dafny: $($lanes.formal); documentation package: $($lanes.package). Review, script and security checks always run.`n"
