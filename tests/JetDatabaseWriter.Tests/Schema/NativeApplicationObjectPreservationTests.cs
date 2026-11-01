@@ -20,6 +20,8 @@ using Xunit;
 /// <summary>Public mutations preserve frozen native application objects without invoking their content.</summary>
 public sealed class NativeApplicationObjectPreservationTests
 {
+    private static readonly string[] LinkedTableNames = ["ScratchAccessLink", "ScratchTextLink", "ScratchOdbcLink"];
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>Gets both native specimens, every public write mode and the independent mutation paths.</summary>
@@ -355,11 +357,12 @@ public sealed class NativeApplicationObjectPreservationTests
                         await writer.CreateLinkedTableAsync("ScratchAccessLink", path, tableName, Ct);
                         await writer.CreateLinkedTextTableAsync("ScratchTextLink", Path.GetDirectoryName(path)!, "inert.csv", "Text;HDR=YES;FMT=Delimited", Ct);
                         await writer.CreateLinkedOdbcTableAsync("ScratchOdbcLink", "ODBC;DSN=InertPreservationControl", "dbo.Inert", Ct);
-                        foreach (string link in new[] { "ScratchAccessLink", "ScratchTextLink", "ScratchOdbcLink" })
+                        foreach (string link in LinkedTableNames)
                         {
                             await writer.RenameTableAsync(link, link + "Renamed", Ct);
                             await writer.DropTableAsync(link + "Renamed", Ct);
                         }
+
                         break;
                     default:
                         throw new ArgumentOutOfRangeException(nameof(operation));

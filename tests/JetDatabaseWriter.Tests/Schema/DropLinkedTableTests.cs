@@ -85,7 +85,7 @@ public sealed class DropLinkedTableTests
         Snapshot expected = await ReadAsync(stream, [kind.ToString()]);
         await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, WriteModes.WriterOptions(mode), cancellationToken: Ct))
         {
-            await WriteModes.RunAsync(writer, mode, async () => await writer.DropTableAsync(kind.ToString().ToLowerInvariant(), Ct), Ct);
+            await WriteModes.RunAsync(writer, mode, async () => await writer.DropTableAsync(kind.ToString().ToUpperInvariant(), Ct), Ct);
             await Assert.ThrowsAsync<JetOperationException>(async () => await writer.DropTableAsync(kind.ToString(), Ct));
         }
 
@@ -409,7 +409,7 @@ public sealed class DropLinkedTableTests
         stream.Position = 0;
         await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         using DataTable catalog = await reader.ReadTableAsync("MSysObjects", cancellationToken: Ct);
-        HashSet<int> ids = catalog.AsEnumerable().Where(row => removedNames.Contains((string)row["Name"], StringComparer.Ordinal))
+        var ids = catalog.AsEnumerable().Where(row => removedNames.Contains((string)row["Name"], StringComparer.Ordinal))
             .Select(row => (int)row["Id"]).ToHashSet();
         string[] retained = catalog.AsEnumerable().Where(row => !ids.Contains((int)row["Id"]))
             .Select(Encode).Order(StringComparer.Ordinal).ToArray();
