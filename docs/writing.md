@@ -164,6 +164,19 @@ the table's rows. Existing indexes, relationships, the table identity and its
 unchanged column `NameMap` survive.
 An explicit transaction can roll the operation back.
 
+Use `RenameIndexAsync` to change an ordinary or primary-key index name:
+
+```csharp
+await writer.RenameIndexAsync("Contacts", "IX_Name", "IX_ContactName");
+```
+
+Renaming changes the logical definition and matching index property targets;
+the table rows, index trees and foreign-key partner identities stay in place.
+Case-only renames change the stored spelling. Names must follow Access naming
+rules and be unique within the table, ignoring case. Conflicting orphan index
+property targets refuse the rename before mutation. Rename relationship indexes
+through `RenameRelationshipAsync`. Explicit rollback restores the original bytes.
+
 ### Insert rows — generic POCO
 
 ```csharp

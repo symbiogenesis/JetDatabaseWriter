@@ -100,6 +100,22 @@ public interface IAccessSchema : IAccessBase
     public ValueTask CreateIndexAsync(string tableName, IndexDefinition index, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Renames an ordinary or primary-key index on a local table. The existing rows,
+    /// index trees and relationship identities are retained; only logical names and
+    /// matching persisted index property targets change. Relationship indexes must
+    /// be renamed through <see cref="RenameRelationshipAsync"/> instead.
+    /// </summary>
+    /// <param name="tableName">The existing local table.</param>
+    /// <param name="oldName">The existing index name, compared ignoring case.</param>
+    /// <param name="newName">The replacement name, following Access naming rules. A case-only rename changes the stored spelling.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">The replacement name is invalid or cannot be represented by the database code page.</exception>
+    /// <exception cref="Exceptions.JetOperationException">The table or index is absent, or the index belongs to a relationship.</exception>
+    /// <exception cref="Exceptions.JetObjectExistsException">Another index has the replacement name, compared ignoring case.</exception>
+    public ValueTask RenameIndexAsync(string tableName, string oldName, string newName, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Asynchronously drops (deletes) the specified table and all of its data.
     /// An enforced relationship to another table blocks the drop. Self relationships
     /// and relationships without integrity enforcement are removed with the table.

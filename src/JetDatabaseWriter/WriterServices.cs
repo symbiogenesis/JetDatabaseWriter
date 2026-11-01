@@ -107,6 +107,7 @@ internal sealed class WriterServices : IDisposable
         var catalogWriter = new CatalogWriter(db.Format, db.TableDefs, db.OwnedPages, catalog, this.Indexes, this.Mutations, longValueEncoder, this.CatalogRows, pager, snapshots);
         this.CatalogWriter = catalogWriter;
         this.CatalogArtifacts = new CatalogArtifactWriter(db.Format, pager, catalog, this.PageAllocator, tdefPageBuilder, dataPages, this.OwnedMaps, catalogWriter, constraints);
+        this.IndexSchema = new IndexSchemaEditor(db.Format, pager, db.TableDefs, this.PageAllocator, catalog, this.CatalogArtifacts, catalogWriter, snapshots);
         this.SystemCatalog = new SystemCatalogBootstrapper(db.Format, db.TableDefs, pager, this.Mutations, this.CatalogArtifacts);
         var uniqueIndexes = new UniqueIndexChecker(db.Format, db.Pages, db.TableDefs, snapshots);
         var complexReader = new ComplexColumnReader(db.Format, db.TableDefs, snapshotCatalog, snapshotRows, diagnosticsEnabled: false);
@@ -207,6 +208,9 @@ internal sealed class WriterServices : IDisposable
 
     /// <summary>Gets the index B-tree maintainer.</summary>
     internal IndexMaintainer Indexes { get; }
+
+    /// <summary>Gets the metadata-only logical index editor.</summary>
+    internal IndexSchemaEditor IndexSchema { get; }
 
     /// <summary>Gets the shared prepared-row mutation executor.</summary>
     internal MutationExecutor Mutations { get; }

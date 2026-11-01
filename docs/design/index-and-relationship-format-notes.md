@@ -1211,6 +1211,17 @@ Every new writer phase landing on disk format should be validated against:
 
 Automated DAO coverage now exists for the matrix rows covering the highest-risk PK/FK compact paths, multi-table index/FK stress, storage-maintenance index-page reuse and TDEF-chain reclamation, encrypted compact, fresh ACCDB bootstrap, a representative Northwind-hosted complex-column/LVAL compact path, representative ACE/Jet4 advanced index key encodings plus B-tree maintenance, and conditional Jet3 writer-emitted primary/normal index maintenance in an Access-authored `.mdb` host when the installed DAO engine can open Access 97 files. Treat remaining §7 validation-gap notes as byte-level parity or per-format residual gaps, not as blanket statements that DAO compact coverage is absent. Promote any remaining high-risk residual gap into [DaoValidationTests.cs](../../tests/JetDatabaseWriter.Tests/RoundTrip/DaoValidationTests.cs), [DaoStorageMaintenanceTests.cs](../../tests/JetDatabaseWriter.Tests/RoundTrip/DaoStorageMaintenanceTests.cs), or [AccessRoundTripTests.cs](../../tests/JetDatabaseWriter.Tests/RoundTrip/AccessRoundTripTests.cs).
 
+`RenameIndexAsync` rewrites only logical index name records and their ordering,
+preserving each entry's `index_num`, physical descriptors, roots, data and partner
+references. The bounded logical-chain writer handles continuation growth/shrink
+and retains uninterpreted trailing bytes and original padding. Matching subtype-2
+index property targets follow the rename; column/object targets with the same
+name remain unchanged. Orphan destination index properties refuse before writes
+to avoid rebinding unknown metadata. Both definition and schema-traversal byte
+budgets apply before growth. `RenameIndexTests` checks exact unrelated-page and
+descriptor preservation, wide definitions with LVAL maps, metadata-target
+identity, PK/FK constraints, byte-exact rollback and partial-write retry.
+
 ## 9. Residual work and compatibility gaps
 
 The W-table in §7 records both historical shipped phases and current behavior. All W4 B-tree maintenance follow-ups listed in earlier revisions are now shipped: tail-page append handling, single-leaf mutation, same-leaf and cross-leaf surgical mutation, leaf merge, N-way leaf/intermediate split, and recursive intermediate collapse. Keep the detailed phase notes in §7 as implementation history; treat the items below as the remaining live follow-ups.

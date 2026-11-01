@@ -264,6 +264,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => this.RunAutoCommitAsync(_ => this.Services.Schema.CreateIndexAsync(tableName, index, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
+    public ValueTask RenameIndexAsync(string tableName, string oldName, string newName, CancellationToken cancellationToken = default)
+        => this.RunAutoCommitAsync(_ => this.Services.IndexSchema.RenameIndexAsync(tableName, oldName, newName, cancellationToken), cancellationToken);
+
+    /// <inheritdoc/>
     public ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken = default)
         => this.RunAutoCommitAsync(_ => this.Services.Schema.DropTableAsync(tableName, cancellationToken), cancellationToken);
 
