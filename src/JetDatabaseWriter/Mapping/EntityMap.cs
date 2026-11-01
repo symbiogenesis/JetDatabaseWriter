@@ -1,11 +1,11 @@
 namespace JetDatabaseWriter.Mapping;
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 
@@ -35,7 +35,7 @@ using JetDatabaseWriter.Infrastructure;
 /// </remarks>
 internal sealed class EntityMap
 {
-    private static readonly ConcurrentDictionary<Type, EntityMap> Cache = new();
+    private static readonly ConditionalWeakTable<Type, EntityMap> Cache = [];
 
     private readonly Dictionary<string, EntityProperty> byColumn;
     private readonly Dictionary<string, EntityProperty> byPropertyName;
@@ -100,7 +100,24 @@ internal sealed class EntityMap
     public static EntityMap For([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type type)
     {
         Guard.NotNull(type, nameof(type));
-        return Cache.TryGetValue(type, out EntityMap? map) ? map : Cache.GetOrAdd(type, new EntityMap(type));
+        if (Cache.TryGetValue(type, out EntityMap? map))
+        {
+            return map;
+        }
+
+        // Construct from the annotated caller's type, outside the cache lock.
+        // The ephemeron releases reflected members along with collectible types.
+        var created = new EntityMap(type);
+        lock (Cache)
+        {
+            if (Cache.TryGetValue(type, out map))
+            {
+                return map;
+            }
+
+            Cache.Add(type, created);
+            return created;
+        }
     }
 
     /// <summary>Finds the property bound to <paramref name="columnName"/> (case-insensitive).</summary>
