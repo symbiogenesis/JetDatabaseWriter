@@ -64,6 +64,9 @@ public sealed class TableSnapshotDiagnosticsTests
         Assert.IsType<ArgumentException>(scalar.InnerException, exactMatch: false);
         JetCorruptDataException buffered = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await harness.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct));
         Assert.Equal(failure.ErrorInfo, buffered.ErrorInfo);
+        var unmatched = RowCriteriaEvaluator.Compile(RowCriteria.Where("Id", -1), resolved.Definition, TableName, "criteria");
+        JetCorruptDataException filtered = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await harness.Services.Snapshots.ReadMatchingRowsAsync(resolved, unmatched, ct));
+        Assert.Equal(failure.ErrorInfo, filtered.ErrorInfo);
         Assert.Equal(before, stream.ToArray());
     }
 

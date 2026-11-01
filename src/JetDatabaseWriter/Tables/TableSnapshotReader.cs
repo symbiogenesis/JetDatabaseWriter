@@ -63,6 +63,15 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
             : await this.DecodeRowsAsync(tdefPage, tableDef, tableName: null, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Decodes every live row, evaluates its predicate once, and retains only matching snapshots.</summary>
+    /// <param name="table">The independently resolved table.</param>
+    /// <param name="predicate">The compiled predicate evaluated in traversal order.</param>
+    /// <param name="cancellationToken">Cancels acquisition and decoding.</param>
+    /// <returns>Complete matching rows, including their original stored descriptors.</returns>
+    /// <exception cref="JetCorruptDataException">Any live row cannot be decoded for write-back, including a nonmatching row.</exception>
+    internal ValueTask<List<LocatedRow>> ReadMatchingRowsAsync(ResolvedTable table, RowCriteriaEvaluator predicate, CancellationToken cancellationToken)
+        => this.DecodeRowsAsync(table.Entry.TDefPage, table.Definition, table.Entry.Name, cancellationToken, predicate: predicate);
+
     /// <summary>Reads a validated full unique equality target, retaining residual filtering at the caller.</summary>
     /// <param name="table">The independently resolved table.</param>
     /// <param name="criteria">Necessary equality conditions.</param>
@@ -336,8 +345,9 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
     /// <param name="tableName">The table name when the caller resolved it by name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="selected">Validated index bookmarks, or null for complete table traversal.</param>
+    /// <param name="predicate">An optional filter evaluated after complete row decoding and before snapshot retention.</param>
     /// <exception cref="JetCorruptDataException">A live row cannot be decoded for write-back.</exception>
-    private async ValueTask<List<LocatedRow>> DecodeRowsAsync(long tdefPage, TableDef tableDef, string? tableName, CancellationToken cancellationToken, IReadOnlyList<(long DataPage, int RowIndex)>? selected = null)
+    private async ValueTask<List<LocatedRow>> DecodeRowsAsync(long tdefPage, TableDef tableDef, string? tableName, CancellationToken cancellationToken, IReadOnlyList<(long DataPage, int RowIndex)>? selected = null, RowCriteriaEvaluator? predicate = null)
     {
         var result = new List<LocatedRow>();
 
@@ -368,6 +378,11 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                 for (int i = 0; i < values.Length; i++)
                 {
                     values[i] ??= DBNull.Value;
+                }
+
+                if (predicate?.Matches(values) == false)
+                {
+                    return true;
                 }
 
                 Dictionary<int, byte[]>? textBytes = null;

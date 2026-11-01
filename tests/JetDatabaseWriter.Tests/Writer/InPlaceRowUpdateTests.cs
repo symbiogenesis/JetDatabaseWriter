@@ -16,6 +16,7 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 /// <summary>Small non-key edits retain physical identity, long values and index pages.</summary>
@@ -370,6 +371,35 @@ public sealed class InPlaceRowUpdateTests
 
         Assert.Equal(2, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Token", null), new RowValues { ["Name"] = "missing" }, ct));
         Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Token", token.ToString()), new RowValues { ["Name"] = "coerced" }, ct));
+    }
+
+    /// <summary>Scan snapshots retain full stored values and descriptors only for matching rows.</summary>
+    /// <param name="format">The native file generation.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task MatchingSnapshots_RetainOnlySelectedRowsAndPreserveTheirLongValues(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var stream = new MemoryStream();
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+        await writer.CreateTableAsync("Items", [new ColumnDefinition("Name", typeof(string), maxLength: 30), new ColumnDefinition("Score", typeof(int)), new ColumnDefinition("Note", typeof(string))], ct);
+        string memo = new('m', 12_000);
+        await writer.InsertRowsAsync("Items", Enumerable.Range(1, 32).Select(id => new object[] { $"item{id}", 0, memo }), ct);
+        ResolvedTable? table = await writer.Services.Snapshots.ResolveTableAsync("Items", ct);
+        Assert.NotNull(table);
+        var criteria = RowCriteria.Where("Name", "item1");
+        var predicate = RowCriteriaEvaluator.Compile(criteria, table.Definition, "Items", nameof(criteria));
+        List<LocatedRow> retained = await writer.Services.Snapshots.ReadMatchingRowsAsync(table, predicate, ct);
+        LocatedRow selected = Assert.Single(retained);
+        Assert.Equal("item1", selected.Values[0]);
+        Assert.Equal(memo, selected.Values[2]);
+        Assert.NotNull(selected.TextBytes);
+        Assert.NotNull(selected.LongValues);
+        Assert.Equal(1, await writer.UpdateRowsAsync("Items", criteria, new RowValues { ["Score"] = 4 }, ct));
+        Assert.Equal(1, await writer.DeleteRowsAsync("Items", criteria.And("Score", 4), ct));
+        Assert.Empty(await writer.Services.Snapshots.ReadMatchingRowsAsync(table, predicate, ct));
     }
 
     /// <summary>Contradictory unique-index bookmarks refuse before any row or index byte changes.</summary>

@@ -292,7 +292,10 @@ internal sealed class TableDataWriter(
         }
 
         List<LocatedRow>? selected = canSeek ? await snapshots.TryReadIndexedRowsAsync(table, criteria, cancellationToken).ConfigureAwait(false) : null;
-        List<LocatedRow> rows = selected ?? await snapshots.ReadRowsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        bool predicatesEvaluated = selected is null && canSeek;
+        List<LocatedRow> rows = selected ?? (predicatesEvaluated
+            ? await snapshots.ReadMatchingRowsAsync(table, predicate, cancellationToken).ConfigureAwait(false)
+            : await snapshots.ReadRowsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false));
 
         // Stage every matching row so FK / unique-index checks complete before
         // any disk page is mutated.
@@ -302,7 +305,7 @@ internal sealed class TableDataWriter(
             cancellationToken.ThrowIfCancellationRequested();
 
             object[] oldRow = rows[i].Values;
-            if (!predicate.Matches(oldRow))
+            if (!predicatesEvaluated && !predicate.Matches(oldRow))
             {
                 continue;
             }
@@ -431,8 +434,7 @@ internal sealed class TableDataWriter(
         TableDef tableDef = table.Definition;
         var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
 
-        List<LocatedRow> rows = await snapshots.TryReadIndexedRowsAsync(table, criteria, cancellationToken).ConfigureAwait(false)
-            ?? await snapshots.ReadRowsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        List<LocatedRow>? selected = await snapshots.TryReadIndexedRowsAsync(table, criteria, cancellationToken).ConfigureAwait(false);
 
         // FK enforcement: identify the rows we are about to delete; if any
         // FK relationship names this table as the primary side, capture the
@@ -441,13 +443,18 @@ internal sealed class TableDataWriter(
         // disabled). It finds and checks every dependent row, at every
         // cascade level, before anything is deleted, so a refused delete
         // leaves the database unchanged.
-        var matchingRows = new List<LocatedRow>();
-        foreach (LocatedRow row in rows)
+        List<LocatedRow> matchingRows = selected is null
+            ? await snapshots.ReadMatchingRowsAsync(table, predicate, cancellationToken).ConfigureAwait(false)
+            : [];
+        if (selected is not null)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (predicate.Matches(row.Values))
+            foreach (LocatedRow row in selected)
             {
-                matchingRows.Add(row);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (predicate.Matches(row.Values))
+                {
+                    matchingRows.Add(row);
+                }
             }
         }
 
