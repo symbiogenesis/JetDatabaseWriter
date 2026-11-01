@@ -27,6 +27,8 @@ function Get-CiJob([string] $Workflow, [string] $Name) {
 }
 
 function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProps, [xml] $TestProject, [object[]] $Lanes) {
+    $events = [regex]::Match($Workflow, '(?ms)^on:\n(?<events>.*?)^permissions:\n').Groups['events'].Value
+    Assert-Contract ($events -match '(?m)^  push:$' -and $events -match '(?m)^      - main$' -and $events -match '(?m)^  pull_request:$' -and $events -match '(?m)^  workflow_dispatch:$' -and $events -notmatch '(?m)^    paths(?:-ignore)?:') 'Push and PR triggers must retain the required gate for every content type; select jobs inside the workflow.'
     Assert-Contract ($Workflow.Contains('group: ci-${{ github.ref }}') -and $Workflow.Contains("cancel-in-progress: `${{ !startsWith(github.ref, 'refs/tags/') }}")) 'Superseded branch runs must be cancelled without cancelling release runs.'
     $analyze = Get-CiJob $Workflow 'analyze'
     $test = $analyze
@@ -130,12 +132,17 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
 
     $changes = Get-CiJob $Workflow 'changes'
     Assert-Contract ($changes.Contains('matrix: ${{ steps.select.outputs.matrix }}')) 'The selection job must expose the complete shared analyzer matrix.'
+    Assert-Contract ($changes.Contains('package: ${{ steps.select.outputs.package }}')) 'The selection job must expose documentation package selection.'
     Assert-Contract ($changes.Contains('fetch-depth: 0') -and $changes.Contains('run: ./scripts/select-ci-lanes.ps1') -and $changes.Contains('GITHUB_TOKEN: ${{ github.token }}') -and $changes -notmatch '(?m)^    (?:if|needs):') 'Path selection must inspect complete history and run unconditionally.'
     Assert-Contract ($Workflow.Contains("  workflow_call:`n    inputs:`n      full:") -and $Workflow.Contains('        default: true') -and $changes.Contains('JDW_CI_FORCE_FULL: ${{ inputs.full || false }}')) 'Reusable workflow calls must default to complete validation.'
     $checks = Get-CiJob $Workflow 'checks'
     Assert-Contract ($checks -notmatch '(?m)^    (?:if|needs):' -and $checks.Contains('run: ./scripts/test-scripts.ps1') -and $checks.Contains('run: ./scripts/check-security-traceability.ps1')) 'Script and security checks must remain unconditional.'
+    $package = Get-CiJob $Workflow 'package'
+    Assert-Contract ($package -match '(?m)^    needs: changes$' -and $package -match "(?m)^    if: needs\.changes\.outputs\.package == 'true'$" -and $package.Contains('name: Package documentation')) 'Packed documentation must use the focused package selection.'
+    Assert-Contract ($package.Contains('fetch-depth: 0') -and $package.Contains('global-json-file: global.json') -and $package.Contains('dotnet restore src/JetDatabaseWriter/JetDatabaseWriter.csproj --locked-mode') -and $package.Contains('dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-restore -o artifacts/nupkg') -and $package -notmatch 'dotnet test|--no-build|continue-on-error:') 'Documentation packaging must restore locked dependencies and build the strict Release library without running the test suite.'
+    Assert-Contract ($package.Contains('name: nupkg') -and $package.Contains('path: artifacts/nupkg/*.nupkg') -and $package.Contains('if-no-files-found: error')) 'Documentation packaging must retain its package artifact.'
     $gate = Get-CiJob $Workflow 'gate'
-    Assert-Contract ($gate.Contains('needs: [changes, checks, formal, analyze, aot, encryption-replacement]') -and $gate.Contains('if: always()') -and $gate.Contains('JDW_CI_NEEDS: ${{ toJSON(needs) }}') -and $gate.Contains('run: ./scripts/select-ci-lanes.ps1 -CheckResults')) 'The aggregate gate must reject failure, cancellation and missing selected jobs.'
+    Assert-Contract ($gate.Contains('needs: [changes, checks, formal, analyze, aot, encryption-replacement, package]') -and $gate.Contains('if: always()') -and $gate.Contains('JDW_CI_NEEDS: ${{ toJSON(needs) }}') -and $gate.Contains('run: ./scripts/select-ci-lanes.ps1 -CheckResults')) 'The aggregate gate must reject failure, cancellation and missing selected jobs.'
 }
 
 function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedError, [xml] $Props = $buildProps, [xml] $Tests = $testProject, [object[]] $Lanes = $matrix) {
@@ -156,6 +163,12 @@ function Assert-MatrixScenario([string] $Name, [scriptblock] $Change, [string] $
 }
 
 Assert-Scenario 'hosted coverage and immediate validated binary execution' $workflow
+Assert-Scenario 'docs hidden from required push gate' ($workflow.Replace("  push:`n", "  push:`n    paths-ignore:`n      - '**.md'`n")) 'Push and PR triggers must retain the required gate'
+Assert-Scenario 'PR content filter suppresses required gate' ($workflow.Replace("  pull_request:`n", "  pull_request:`n    paths:`n      - 'src/**'`n")) 'Push and PR triggers must retain the required gate'
+Assert-Scenario 'package selection omitted' ($workflow.Replace('package: ${{ steps.select.outputs.package }}', 'removed: value')) 'The selection job must expose documentation package selection'
+Assert-Scenario 'documentation packaging disabled' ($workflow.Replace("if: needs.changes.outputs.package == 'true'", 'if: false')) 'Packed documentation must use the focused package selection'
+Assert-Scenario 'documentation package reuses missing binaries' ($workflow.Replace('-c Release --no-restore -o artifacts/nupkg', '-c Release --no-build -o artifacts/nupkg')) 'Documentation packaging must restore locked dependencies'
+Assert-Scenario 'documentation package omitted from gate' ($workflow.Replace('encryption-replacement, package]', 'encryption-replacement]')) 'The aggregate gate must reject failure'
 Assert-Scenario 'obsolete branch runs block current validation' ($workflow.Replace("cancel-in-progress: `${{ !startsWith(github.ref, 'refs/tags/') }}", 'cancel-in-progress: false')) 'Superseded branch runs must be cancelled'
 Assert-MatrixScenario 'incomplete solution analysis' { param($lanes) $lanes[1].project = 'tests/JetDatabaseWriter.TestSupport'; $lanes } 'The tools lane must analyze the complete tools filter'
 Assert-Scenario 'shared matrix ignored' ($workflow.Replace('matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}', 'matrix: {}')) 'The analyzer matrix must consume the complete shared definition'

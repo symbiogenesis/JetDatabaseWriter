@@ -7,12 +7,26 @@ $ErrorActionPreference = 'Stop'
 function Get-CiLanes([string[]] $Paths) {
     $dotnet = $false
     $formal = $false
+    $package = $false
     foreach ($path in $Paths) {
         if ($path -imatch '\.dfy$' -or $path -cmatch '^verification/' -or
-            $path -cmatch '^scripts/(?:install-dafny|verify-proofs|check-proof-review|select-ci-lanes)\.ps1$' -or
-            $path -cmatch '^scripts/tests/(?:verify-proofs|proof-review|formal-workflow|select-ci-lanes)\.tests\.ps1$' -or
+            $path -cmatch '^scripts/(?:install-dafny|verify-proofs|check-proof-review|select-ci-lanes|test-scripts)\.ps1$' -or
+            $path -cmatch '^scripts/tests/(?:verify-proofs|proof-review|formal-workflow|select-ci-lanes|ci-workflow|ci-tools|test-scripts)\.tests\.ps1$' -or
             $path -cmatch '^docs/design/(?:formal-verification|proof-trust-review|recovery-storage-contract|verification-[^/]+)\.md$') {
             $formal = $true
+        } elseif ($path -cin 'README.md', 'THIRD-PARTY-NOTICES.md') {
+            # These documents ship in NuGet, but cannot change test binaries.
+            $package = $true
+        } elseif ($path -cmatch '^(?:(?:docs|src|tests|tools|benchmarks|Databases|\.github)/[^"\\]+\.md|[^/"\\]+\.md|LICENSE(?:\.txt)?)$') {
+            # Recognize prose before its enclosing project/fixture directory.
+            # Proof/trust documents above retain their stronger obligations.
+        } elseif ($path -cmatch '^scripts/(?:AotSmoke/|(?:test-aot|restore-dependencies|new-native-calculated-choose-fixtures)\.ps1$)' -or
+            $path -cmatch '^scripts/tests/(?:test-aot|restore-dependencies)\.tests\.ps1$') {
+            $dotnet = $true
+        } elseif ($path -cmatch '^scripts/tests/[^/"\\]+\.tests\.ps1$' -or
+            $path -cmatch '^scripts/(?:assert-benchmark-baseline|assert-ci-success|assert-infersharp|check-security-traceability|ci-gate|compare-benchmarks|resolve-benchmark-project|run-benchmark-comparison|run-candidate-checks|run-hosted-fuzz|submit-candidate|update-sdk)\.ps1$') {
+            # These tools and their regressions run in the unconditional checks.
+            # Keep standalone helpers explicit; new build inputs fail closed.
         } elseif ($path -cmatch '^src/JetDatabaseWriter/') {
             # The unconditional review job checks inventory and mapped C# contracts.
             # Generated code also needs the independent Dafny freshness comparison.
@@ -20,15 +34,13 @@ function Get-CiLanes([string[]] $Paths) {
             if ($path -cmatch '^src/JetDatabaseWriter/Verification/') { $formal = $true }
         } elseif ($path -cmatch '^(?:src/|tests/|tools/|benchmarks/|Databases/)') {
             $dotnet = $true
-        } elseif ($path -cmatch '^(?:docs/[^"\\]+|[^/"\\]+\.md|LICENSE(?:\.txt)?)$') {
-            # Documentation still receives the unconditional review/traceability checks.
         } else {
             # Build configuration, workflow/tooling changes and unknown paths fail closed.
             $dotnet = $true
             $formal = $true
         }
     }
-    return [ordered]@{ dotnet = $dotnet; formal = $formal }
+    return [ordered]@{ dotnet = $dotnet; formal = $formal; package = $package }
 }
 
 function Get-CiLaneJobs([ValidateSet('dotnet', 'formal')][string] $Lane) {
@@ -59,7 +71,9 @@ function Test-CiLaneSuccess($Run, [ValidateSet('dotnet', 'formal')][string] $Lan
         if ($matching.Count -ne 1 -or $matching[0].status -ne 'completed' -or $matching[0].conclusion -ne 'success') { return $false }
     }
     $otherLane = if ($Lane -eq 'dotnet') { 'formal' } else { 'dotnet' }
-    $allowedFailures = @('CI gate') + @(Get-CiLaneJobs $otherLane)
+    # Full .NET validation already packs the exact tree. A separate documentation
+    # pack may be skipped there, or fail independently of a successful proof lane.
+    $allowedFailures = @('CI gate', 'Package documentation') + @(Get-CiLaneJobs $otherLane)
     # New or unclassified jobs must pass too; an expanded gate cannot silently
     # inherit a result that omits a newly introduced failing obligation.
     foreach ($job in $jobs) {
@@ -107,8 +121,8 @@ function Get-CiBaseline([string] $Event, [string] $Ref, [string] $Sha, [string] 
 }
 
 function Assert-CiResults($Lanes, $Results) {
-    foreach ($job in 'changes', 'checks', 'formal', 'analyze', 'aot', 'encryption-replacement') {
-        $required = $job -in 'changes', 'checks' -or ($job -eq 'formal' -and $Lanes.formal) -or ($job -in 'analyze', 'aot', 'encryption-replacement' -and $Lanes.dotnet)
+    foreach ($job in 'changes', 'checks', 'formal', 'analyze', 'aot', 'encryption-replacement', 'package') {
+        $required = $job -in 'changes', 'checks' -or ($job -eq 'formal' -and $Lanes.formal) -or ($job -in 'analyze', 'aot', 'encryption-replacement' -and $Lanes.dotnet) -or ($job -eq 'package' -and $Lanes.package)
         $expected = if ($required) { 'success' } else { 'skipped' }
         if ($Results[$job] -ne $expected) { throw "CI job '$job' reported '$($Results[$job])'; required '$expected'." }
     }
@@ -116,8 +130,11 @@ function Assert-CiResults($Lanes, $Results) {
 
 if ($CheckResults) {
     $needs = $env:JDW_CI_NEEDS | ConvertFrom-Json -AsHashtable
-    if ($needs.changes.outputs.dotnet -notin 'true', 'false' -or $needs.changes.outputs.formal -notin 'true', 'false') { throw 'Missing CI lane selection.' }
-    $lanes = @{ dotnet = $needs.changes.outputs.dotnet -eq 'true'; formal = $needs.changes.outputs.formal -eq 'true' }
+    foreach ($lane in 'dotnet', 'formal', 'package') {
+        if ($needs.changes.outputs[$lane] -notin 'true', 'false') { throw 'Missing CI lane selection.' }
+    }
+    $lanes = @{ dotnet = $needs.changes.outputs.dotnet -eq 'true'; formal = $needs.changes.outputs.formal -eq 'true'; package = $needs.changes.outputs.package -eq 'true' }
+    if ($lanes.dotnet -and $lanes.package) { throw 'Full .NET validation already includes package validation.' }
     $results = @{}
     foreach ($job in $needs.Keys) { $results[$job] = $needs[$job].result }
     Assert-CiResults $lanes $results
@@ -128,6 +145,7 @@ if ($CheckResults) {
 $baselines = [ordered]@{}
 $paths = [ordered]@{}
 $lanes = [ordered]@{}
+$packageInputsChanged = $false
 foreach ($lane in 'dotnet', 'formal') {
     $baseline = Get-CiBaseline $env:GITHUB_EVENT_NAME $env:GITHUB_REF $env:GITHUB_SHA $env:GITHUB_REPOSITORY $env:GITHUB_TOKEN ($env:JDW_CI_FORCE_FULL -eq 'true') $lane
     $baselines[$lane] = $baseline
@@ -138,18 +156,23 @@ foreach ($lane in 'dotnet', 'formal') {
         # Quoted unusual filenames fail the allowlist and run every lane.
         $paths[$lane] = @(git -c core.quotepath=true diff --no-renames --name-only $baseline.sha $env:GITHUB_SHA)
         if ($LASTEXITCODE -ne 0) { throw 'Cannot compare the validated CI ancestor with this revision.' }
-        $lanes[$lane] = (Get-CiLanes $paths[$lane])[$lane]
+        $classified = Get-CiLanes $paths[$lane]
+        $lanes[$lane] = $classified[$lane]
+        if ($lane -eq 'dotnet') { $packageInputsChanged = $classified.package }
     }
 }
-$selection = [ordered]@{ revision = $env:GITHUB_SHA; baselines = $baselines; dotnet = $lanes.dotnet; formal = $lanes.formal; paths = $paths }
+# Documentation packaging shares the .NET ancestor: a successful full lane has
+# packed these same inputs, and missing evidence already selects the full lane.
+$lanes.package = -not $lanes.dotnet -and $packageInputsChanged
+$selection = [ordered]@{ revision = $env:GITHUB_SHA; baselines = $baselines; dotnet = $lanes.dotnet; formal = $lanes.formal; package = $lanes.package; paths = $paths }
 $json = $selection | ConvertTo-Json -Depth 4
 Write-Output $json
 if ($env:GITHUB_OUTPUT) {
-    foreach ($lane in 'dotnet', 'formal') { "$lane=$($lanes[$lane].ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8NoBOM }
+    foreach ($lane in 'dotnet', 'formal', 'package') { "$lane=$($lanes[$lane].ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8NoBOM }
     "matrix=$(Get-CiAnalyzerMatrix | ConvertTo-Json -Depth 4 -Compress)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8NoBOM
 }
 if ($env:GITHUB_STEP_SUMMARY) {
-    $summary = "### CI lane selection`n`nRevision: ``$($env:GITHUB_SHA)```n`n.NET ancestor: ``$($baselines.dotnet.sha)`` $($baselines.dotnet.url)`n`nDafny ancestor: ``$($baselines.formal.sha)`` $($baselines.formal.url)`n`n.NET: $($lanes.dotnet); Dafny: $($lanes.formal). Review, script and security checks always run.`n"
+    $summary = "### CI lane selection`n`nRevision: ``$($env:GITHUB_SHA)```n`n.NET/package ancestor: ``$($baselines.dotnet.sha)`` $($baselines.dotnet.url)`n`nDafny ancestor: ``$($baselines.formal.sha)`` $($baselines.formal.url)`n`n.NET: $($lanes.dotnet); Dafny: $($lanes.formal); documentation package: $($lanes.package). Review, script and security checks always run.`n"
     Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary -Encoding utf8NoBOM
 }
 if ($env:RUNNER_TEMP) { [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'ci-selection.json'), $json) }

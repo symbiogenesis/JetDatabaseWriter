@@ -3,6 +3,8 @@ name: CI
 on:
   # Pushes to other branches run CI through their pull request (or workflow_dispatch),
   # so a pull request from a branch in this repository runs once, not twice.
+  # Keep path filters out of these triggers: content selection below preserves the
+  # required gate and common review checks even for documentation-only changes.
   push:
     branches:
       - main
@@ -42,13 +44,14 @@ jobs:
     outputs:
       dotnet: ${{ steps.select.outputs.dotnet }}
       formal: ${{ steps.select.outputs.formal }}
+      package: ${{ steps.select.outputs.package }}
       matrix: ${{ steps.select.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Select lanes since successful CI ancestor
+      - name: Select validation by content since validated CI ancestors
         id: select
         shell: pwsh
         env:
@@ -219,6 +222,37 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Packed prose needs current package validation without unrelated test/AOT jobs.
+  # Full .NET runs already pack, so selection never schedules both package paths.
+  package:
+    needs: changes
+    if: needs.changes.outputs.package == 'true'
+    name: Package documentation
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      - name: Restore
+        run: dotnet restore src/JetDatabaseWriter/JetDatabaseWriter.csproj --locked-mode
+      - name: Pack
+        run: dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-restore -o artifacts/nupkg
+      - name: Upload package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nupkg
+          path: artifacts/nupkg/*.nupkg
+          if-no-files-found: error
+          retention-days: 7
+
   aot:
     needs: changes
     if: needs.changes.outputs.dotnet == 'true'
@@ -311,7 +345,7 @@ jobs:
 
   gate:
     name: CI gate
-    needs: [changes, checks, formal, analyze, aot, encryption-replacement]
+    needs: [changes, checks, formal, analyze, aot, encryption-replacement, package]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
