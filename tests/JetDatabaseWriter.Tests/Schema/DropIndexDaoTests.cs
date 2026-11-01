@@ -1,9 +1,11 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.TestSupport;
 using Xunit;
@@ -53,11 +55,27 @@ public sealed class DropIndexDaoTests
                 $db.TableDefs('Oracle').Indexes.Delete('PrimaryKey')
                 $db.Execute('INSERT INTO [Oracle] ([Id]) VALUES (1)', 128)
                 if ($db.TableDefs('Oracle').Indexes.Count -ne 0) { throw 'Native primary-key deletion failed.' }
+                $db.Execute('CREATE TABLE [Parents] ([Id] LONG CONSTRAINT [ParentPK] PRIMARY KEY)', 128)
+                $db.Execute('CREATE TABLE [Children] ([ParentId] LONG)', 128)
+                $db.Execute('ALTER TABLE [Children] ADD CONSTRAINT [FK_Children_Parents] FOREIGN KEY ([ParentId]) REFERENCES [Parents] ([Id])', 128)
+                foreach ($entry in @(@('Parents','ParentPK'), @('Children','FK_Children_Parents'))) {
+                    $refused = $false
+                    try { $db.TableDefs($entry[0]).Indexes.Delete($entry[1]) } catch { $refused = $true }
+                    if (!$refused) { throw ('Native engine deleted a relationship index: ' + $entry[1]) }
+                }
             } finally { $db.Close() }
             Write-Output 'NATIVE_DROP_CONTROL_OK'
             """,
             "NATIVE_DROP_CONTROL_OK");
 
+        byte[] original = await File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken);
+        await using (AccessWriter writer = await session.OpenWriterAsync(TestContext.Current.CancellationToken))
+        {
+            await Assert.ThrowsAsync<JetOperationException>(async () => await writer.DropIndexAsync("Parents", "ParentPK", TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<JetOperationException>(async () => await writer.DropIndexAsync("Children", "FK_Children_Parents", TestContext.Current.CancellationToken));
+        }
+
+        Assert.Equal(original, await File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken));
         await using (AccessWriter writer = await session.OpenWriterAsync(TestContext.Current.CancellationToken))
         {
             await writer.DropIndexAsync("Items", "UniqueValue", TestContext.Current.CancellationToken);
