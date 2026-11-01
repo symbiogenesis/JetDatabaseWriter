@@ -143,11 +143,12 @@ public static class AccessDatabaseEncryption
         options.Validate();
         _ = EncryptionReplacementIntent.Recover(path, cancellationToken: cancellationToken);
         Guard.RequireExistingDatabaseFile(path, nameof(path));
-        using var fileLock = LockFileCoordinator.ForReencrypt(path, options);
-        FileShare sharing = Path.DirectorySeparatorChar == '\\' ? FileShare.Delete : FileShare.None;
-        FileStream source = FileStreamFactory.Open(path, FileMode.Open, FileAccess.Read, sharing, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var fileLock = LockFileCoordinator.ForReencrypt(path, options);
+        FileStream? source = null;
         try
         {
+            FileShare sharing = Path.DirectorySeparatorChar == '\\' ? FileShare.Delete : FileShare.None;
+            source = FileStreamFactory.Open(path, FileMode.Open, FileAccess.Read, sharing, FileOptions.Asynchronous | FileOptions.SequentialScan);
             _ = RecoverableWriterLock.Recover(path);
             PersistentRollbackJournal.RejectHotJournal(source);
             fileLock.Acquire();
@@ -207,7 +208,17 @@ public static class AccessDatabaseEncryption
         }
         finally
         {
-            await source.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                if (source is not null)
+                {
+                    await source.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                fileLock.Dispose();
+            }
         }
     }
 
