@@ -40,6 +40,76 @@ namespace JetDatabaseWriter.Verification {
       admitted = _2_found;
       return admitted;
     }
+    public static bool AdmitLeafNeighbor(long source, long neighbor, long pageCount, long owner, long neighborOwner, byte kind, bool sourceMember, bool neighborMember, long reciprocal, long replacement)
+    {
+      return (((((((((((2L) < (source)) && ((source) < (pageCount))) && (((2L) < (neighbor)) && ((neighbor) < (pageCount)))) && ((source) != (neighbor))) && (((0L) < (owner)) && ((owner) < (pageCount)))) && ((neighborOwner) == (owner))) && ((kind) == ((byte)(4)))) && (sourceMember)) && (neighborMember)) && ((reciprocal) == (source))) && (((0L) <= (replacement)) && ((replacement) <= (4294967295L)));
+    }
+    public static uint FindLeafIndex(long[] pages, long pointer)
+    {
+      uint index = 0;
+      uint _0_lower;
+      _0_lower = 0U;
+      uint _1_upper;
+      _1_upper = (uint)(pages).LongLength;
+      while ((_0_lower) < (_1_upper)) {
+        uint _2_middle;
+        _2_middle = (_0_lower) + (((_1_upper) - (_0_lower)) / (2U));
+        if (((pages)[(int)(_2_middle)]) < (pointer)) {
+          _0_lower = (_2_middle) + (1U);
+        } else if ((pointer) < ((pages)[(int)(_2_middle)])) {
+          _1_upper = _2_middle;
+        } else {
+          index = _2_middle;
+          return index;
+        }
+      }
+      index = (uint)(pages).LongLength;
+      return index;
+    }
+    public static bool ValidateLeafChain(long[] members, long[] chain, long[] previous, long[] next, long[] owners, byte[] kinds, long owner, long pageCount, byte[] scratch)
+    {
+      bool admitted = false;
+      admitted = false;
+      if (((((((((((scratch) == (object) (kinds)) || (((uint)(members).LongLength) == (0U))) || (((uint)(chain).LongLength) != ((uint)(members).LongLength))) || (((uint)(previous).LongLength) != ((uint)(members).LongLength))) || (((uint)(next).LongLength) != ((uint)(members).LongLength))) || (((uint)(owners).LongLength) != ((uint)(members).LongLength))) || (((uint)(kinds).LongLength) != ((uint)(members).LongLength))) || (((uint)(scratch).LongLength) != ((uint)(members).LongLength))) || ((owner) <= (0L))) || ((owner) >= (pageCount))) {
+        return admitted;
+      }
+      uint _0_offset;
+      _0_offset = 0U;
+      while ((_0_offset) < ((uint)(members).LongLength)) {
+        if (((((members)[(int)(_0_offset)]) <= (2L)) || (((members)[(int)(_0_offset)]) >= (pageCount))) || (((_0_offset) > (0U)) && (((members)[(int)((_0_offset) - (1U))]) >= ((members)[(int)(_0_offset)])))) {
+          return admitted;
+        }
+        (scratch)[(int)((_0_offset))] = (byte)(0);
+        _0_offset = (_0_offset) + (1U);
+      }
+      _0_offset = 0U;
+      while ((_0_offset) < ((uint)(chain).LongLength)) {
+        if ((((((owners)[(int)(_0_offset)]) != (owner)) || (((kinds)[(int)(_0_offset)]) != ((byte)(4)))) || (((previous)[(int)(_0_offset)]) != ((((_0_offset) == (0U)) ? (0L) : ((chain)[(int)((_0_offset) - (1U))]))))) || (((next)[(int)(_0_offset)]) != (((((_0_offset) + (1U)) == ((uint)(chain).LongLength)) ? (0L) : ((chain)[(int)((_0_offset) + (1U))]))))) {
+          return admitted;
+        }
+        uint _1_member;
+        uint _out0;
+        _out0 = JetDatabaseWriter.Verification.IndexMutationKernel.FindLeafIndex(members, (chain)[(int)(_0_offset)]);
+        _1_member = _out0;
+        if ((_1_member) == ((uint)(members).LongLength)) {
+          return admitted;
+        }
+        if (((scratch)[(int)(_1_member)]) != ((byte)(0))) {
+          return admitted;
+        }
+        (scratch)[(int)((_1_member))] = (byte)(1);
+        _0_offset = (_0_offset) + (1U);
+      }
+      _0_offset = 0U;
+      while ((_0_offset) < ((uint)(members).LongLength)) {
+        if (((scratch)[(int)(_0_offset)]) != ((byte)(1))) {
+          return admitted;
+        }
+        _0_offset = (_0_offset) + (1U);
+      }
+      admitted = true;
+      return admitted;
+    }
     public static long CompareEntries(byte[] left, long leftPage, byte leftRow, byte[] right, long rightPage, byte rightRow)
     {
       long comparison = 0;

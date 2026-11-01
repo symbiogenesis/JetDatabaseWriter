@@ -83,6 +83,201 @@ module IndexMutationKernel {
     assert tree == mapped;
   }
 
+  function AdmitLeafNeighbor(source: I64, neighbor: I64, pageCount: I64,
+      owner: I64, neighborOwner: I64, kind: Byte, sourceMember: bool,
+      neighborMember: bool, reciprocal: I64, replacement: I64): bool {
+    2 < source < pageCount && 2 < neighbor < pageCount && source != neighbor &&
+      0 < owner < pageCount && neighborOwner == owner && kind == 4 &&
+      sourceMember && neighborMember && reciprocal == source &&
+      0 <= replacement <= 4294967295
+  }
+
+  ghost predicate StrictlySortedPages(pages: seq<I64>) {
+    forall first: nat, second: nat :: first < second < |pages| ==> pages[first] < pages[second]
+  }
+
+  // A missing pointer returns the length sentinel. The caller must establish
+  // sorting, for example by a successful complete chain admission below.
+  method FindLeafIndex(pages: array<I64>, pointer: I64) returns (index: U32)
+    requires pages.Length <= 2147483647
+    requires StrictlySortedPages(pages[..])
+    ensures index as int <= pages.Length
+    ensures index as int < pages.Length ==> pages[index] == pointer
+    ensures index as int == pages.Length <==> pointer !in pages[..]
+  {
+    var lower: U32 := 0;
+    var upper: U32 := pages.Length as U32;
+    while lower < upper
+      invariant lower <= upper <= pages.Length as U32
+      invariant forall prior: nat :: prior < lower as int ==> pages[prior] < pointer
+      invariant forall later: nat :: upper as int <= later < pages.Length ==> pointer < pages[later]
+      decreases upper as int - lower as int
+    {
+      var middle: U32 := lower + (upper - lower) / 2;
+      if pages[middle] < pointer {
+        forall prior: nat | lower as int <= prior <= middle as int
+          ensures pages[prior] < pointer
+        {
+          if prior < middle as int { assert pages[prior] < pages[middle]; }
+        }
+        lower := middle + 1;
+      } else if pointer < pages[middle] {
+        forall later: nat | middle as int <= later < upper as int
+          ensures pointer < pages[later]
+        {
+          if middle as int < later { assert pages[middle] < pages[later]; }
+        }
+        upper := middle;
+      } else {
+        index := middle;
+        return;
+      }
+    }
+    assert pointer !in pages[..];
+    index := pages.Length as U32;
+  }
+
+  ghost predicate LeafRecord(members: seq<I64>, chain: seq<I64>, previous: seq<I64>,
+      next: seq<I64>, owners: seq<I64>, kinds: seq<Byte>, owner: I64, offset: nat) {
+    offset < |chain| == |previous| == |next| == |owners| == |kinds| &&
+      chain[offset] in members && owners[offset] == owner && kinds[offset] == 4 &&
+      previous[offset] == (if offset == 0 then 0 else chain[offset - 1]) &&
+      next[offset] == (if offset + 1 == |chain| then 0 else chain[offset + 1])
+  }
+
+  ghost predicate ExactLeafChain(members: seq<I64>, chain: seq<I64>, previous: seq<I64>,
+      next: seq<I64>, owners: seq<I64>, kinds: seq<Byte>, owner: I64, pageCount: I64) {
+    0 < |members| == |chain| == |previous| == |next| == |owners| == |kinds| &&
+      0 < owner < pageCount && StrictlySortedPages(members) &&
+      (forall member: nat :: member < |members| ==> 2 < members[member] < pageCount) &&
+      (forall offset: nat :: offset < |chain| ==>
+        LeafRecord(members, chain, previous, next, owners, kinds, owner, offset)) &&
+      (forall first: nat, second: nat :: first < second < |chain| ==> chain[first] != chain[second]) &&
+      (forall member: nat :: member < |members| ==> members[member] in chain)
+  }
+
+  // Arrays transport the actual captured headers in chain order; their
+  // acquisition from the complete physical root remains the adapter contract.
+  // Every membership lookup is binary, and the initialized scratch marks give
+  // duplicate rejection and explicit complete-member coverage in linear space.
+  method ValidateLeafChain(members: array<I64>, chain: array<I64>, previous: array<I64>,
+      next: array<I64>, owners: array<I64>, kinds: array<Byte>, owner: I64,
+      pageCount: I64, scratch: array<Byte>) returns (admitted: bool)
+    requires members.Length <= 2147483647 && chain.Length <= 2147483647
+    requires previous.Length <= 2147483647 && next.Length <= 2147483647
+    requires owners.Length <= 2147483647 && kinds.Length <= 2147483647 && scratch.Length <= 2147483647
+    modifies scratch
+    ensures admitted <==> (scratch != kinds && scratch.Length == members.Length &&
+      ExactLeafChain(members[..], chain[..], previous[..], next[..], owners[..], old(kinds[..]), owner, pageCount))
+  {
+    admitted := false;
+    if scratch == kinds || members.Length as U32 == 0 ||
+        chain.Length as U32 != members.Length as U32 || previous.Length as U32 != members.Length as U32 ||
+        next.Length as U32 != members.Length as U32 || owners.Length as U32 != members.Length as U32 ||
+        kinds.Length as U32 != members.Length as U32 || scratch.Length as U32 != members.Length as U32 ||
+        owner <= 0 || owner >= pageCount { return; }
+    var offset: U32 := 0;
+    while offset < members.Length as U32
+      invariant offset <= members.Length as U32
+      invariant forall member: nat :: member < offset as int ==> 2 < members[member] < pageCount
+      invariant forall first: nat, second: nat :: first < second < offset as int ==> members[first] < members[second]
+      invariant forall member: nat :: member < offset as int ==> scratch[member] == 0
+      decreases members.Length - offset as int
+    {
+      if members[offset] <= 2 || members[offset] >= pageCount ||
+          (offset > 0 && members[offset - 1] >= members[offset]) {
+        assert !ExactLeafChain(members[..], chain[..], previous[..], next[..], owners[..], kinds[..], owner, pageCount);
+        return;
+      }
+      forall first: nat | first < offset as int
+        ensures members[first] < members[offset]
+      {
+        if first < offset as int - 1 { assert members[first] < members[offset - 1]; }
+      }
+      scratch[offset] := 0;
+      offset := offset + 1;
+    }
+    assert StrictlySortedPages(members[..]);
+    offset := 0;
+    while offset < chain.Length as U32
+      invariant offset <= chain.Length as U32
+      invariant StrictlySortedPages(members[..])
+      invariant forall member: nat :: member < members.Length ==> 2 < members[member] < pageCount
+      invariant forall prior: nat :: prior < offset as int ==>
+        LeafRecord(members[..], chain[..], previous[..], next[..], owners[..], kinds[..], owner, prior)
+      invariant forall first: nat, second: nat :: first < second < offset as int ==> chain[first] != chain[second]
+      invariant forall member: nat :: member < members.Length ==> (scratch[member] <= 1 &&
+        (scratch[member] == 1 <==> members[member] in chain[..offset as int]))
+      decreases chain.Length - offset as int
+    {
+      if owners[offset] != owner || kinds[offset] != 4 ||
+          previous[offset] != (if offset == 0 then 0 else chain[offset - 1]) ||
+          next[offset] != (if offset + 1 == chain.Length as U32 then 0 else chain[offset + 1]) {
+        assert !LeafRecord(members[..], chain[..], previous[..], next[..], owners[..], kinds[..], owner, offset as int);
+        assert !ExactLeafChain(members[..], chain[..], previous[..], next[..], owners[..], kinds[..], owner, pageCount);
+        return;
+      }
+      var member := FindLeafIndex(members, chain[offset]);
+      if member == members.Length as U32 {
+        assert !LeafRecord(members[..], chain[..], previous[..], next[..], owners[..], kinds[..], owner, offset as int);
+        assert !ExactLeafChain(members[..], chain[..], previous[..], next[..], owners[..], kinds[..], owner, pageCount);
+        return;
+      }
+      if scratch[member] != 0 {
+        assert chain[offset] in chain[..offset as int];
+        assert exists prior: nat :: prior < offset as int && chain[prior] == chain[offset];
+        assert !ExactLeafChain(members[..], chain[..], previous[..], next[..], owners[..], kinds[..], owner, pageCount);
+        return;
+      }
+      assert chain[offset] !in chain[..offset as int];
+      scratch[member] := 1;
+      offset := offset + 1;
+    }
+    offset := 0;
+    while offset < members.Length as U32
+      invariant offset <= members.Length as U32
+      invariant forall member: nat :: member < offset as int ==> members[member] in chain[..]
+      invariant forall member: nat :: member < members.Length ==>
+        scratch[member] <= 1 && (scratch[member] == 1 <==> members[member] in chain[..])
+      invariant forall prior: nat :: prior < chain.Length ==>
+        LeafRecord(members[..], chain[..], previous[..], next[..], owners[..], kinds[..], owner, prior)
+      invariant forall first: nat, second: nat :: first < second < chain.Length ==> chain[first] != chain[second]
+      invariant StrictlySortedPages(members[..])
+      invariant forall member: nat :: member < members.Length ==> 2 < members[member] < pageCount
+      decreases members.Length - offset as int
+    {
+      if scratch[offset] != 1 {
+        assert members[offset] !in chain[..];
+        assert !ExactLeafChain(members[..], chain[..], previous[..], next[..], owners[..], kinds[..], owner, pageCount);
+        return;
+      }
+      offset := offset + 1;
+    }
+    assert ExactLeafChain(members[..], chain[..], previous[..], next[..], owners[..], kinds[..], owner, pageCount);
+    admitted := true;
+  }
+
+  lemma AdmittedNeighborExcludesDisjointInventory(source: I64, neighbor: I64, pageCount: I64,
+      owner: I64, neighborOwner: I64, kind: Byte, reciprocal: I64, replacement: I64,
+      inventory: seq<I64>, otherInventory: seq<I64>)
+    requires AdmitLeafNeighbor(source, neighbor, pageCount, owner, neighborOwner, kind,
+      source in inventory, neighbor in inventory, reciprocal, replacement)
+    requires forall page: I64 :: page in inventory ==> page !in otherInventory
+    ensures neighbor in inventory && neighbor !in otherInventory
+  { }
+
+  lemma ExactDisjointIndexMapsExcludeNeighbor(root: I64, tree: seq<I64>, mapped: seq<I64>,
+      otherRoot: I64, otherTree: seq<I64>, otherMapped: seq<I64>, neighbor: I64)
+    requires ExactIndexPageSet(root, tree, mapped)
+    requires ExactIndexPageSet(otherRoot, otherTree, otherMapped)
+    requires forall page: I64 :: page in mapped ==> page !in otherMapped
+    requires neighbor in tree
+    ensures neighbor in mapped && neighbor !in otherTree
+  {
+    assert tree == mapped;
+    assert otherTree == otherMapped;
+  }
+
   ghost function KeyOrder(left: seq<Byte>, right: seq<Byte>): int
     decreases |left| + |right|
   {
