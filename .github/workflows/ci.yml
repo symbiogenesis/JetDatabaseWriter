@@ -36,8 +36,8 @@ env:
 # ordinary analyzer partitions skip DAO cases without Access; the native lane installs
 # the pinned runtime and requires its selected compatibility inventory without skips.
 # The jobs run in
-# parallel. Every test partition retains strict Release analysis and executes its own
-# analyzed binaries immediately. Format fault sweeps run beside the remaining suite.
+# parallel. Two strict Release test builds supply their exact analyzed binaries to
+# all runtime partitions and native Access checks. No consumer rebuilds the runner.
 jobs:
   changes:
     name: Select CI lanes
@@ -48,6 +48,7 @@ jobs:
       formal: ${{ steps.select.outputs.formal }}
       package: ${{ steps.select.outputs.package }}
       matrix: ${{ steps.select.outputs.matrix }}
+      test-matrix: ${{ steps.select.outputs.test-matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -131,24 +132,19 @@ jobs:
   analyze:
     needs: changes
     if: needs.changes.outputs.dotnet == 'true'
-    name: Analyze${{ matrix.runner && ' and test' || '' }} (${{ matrix.name }})
+    name: Analyze (${{ matrix.name }})
     runs-on: windows-latest
-    # Exhaustive statement fault sweeps need longer than analyzer-only lanes.
-    timeout-minutes: ${{ matrix.runner && 90 || 30 }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
-      # Library/tools plus every runtime and partition, from the shared definition.
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
-
     steps:
-      # MinVer computes the package version from the tags, so fetch the full history.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
 
-      # global.json pins the .NET 10 SDK; .NET 11 is installed only to run compatibility tests.
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -156,68 +152,18 @@ jobs:
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
-      - name: Setup .NET 11 runtime
-        if: matrix.tf == 'net11.0'
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          global-json-file: .github/dotnet11/global.json
       - name: Restore
         run: dotnet restore ${{ matrix.project }} --locked-mode ${{ matrix.restore-options }}
-
-      # Release turns on every analyzer, code-style rule and XML-doc check as an error,
-      # including in the test project.
       - name: Build
         run: dotnet build ${{ matrix.project }} -c Release --no-restore ${{ matrix.options }}
-
-      # Tests and Access hosts execute these exact analyzed binaries.
-      - name: Upload DAO test runner
-        if: matrix.runner && matrix.partition == 'ordinary'
+      - name: Upload analyzed test runner
+        if: matrix.runner
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: dao-test-runner-${{ matrix.tf }}
+          name: analyzed-runner-${{ matrix.asset }}
           path: tests/JetDatabaseWriter.Tests/bin/Release/net10.0/
           if-no-files-found: error
           retention-days: 3
-
-      # The five partitions cover every test once per runtime/library pair. Each starts
-      # after its own analyzer build, without waiting for other lanes or rebuilding.
-      - name: Test
-        if: matrix.runner
-        env:
-          JDW_EXPECTED_RUNTIME_MAJOR: ${{ matrix.tf == 'net11.0' && '11' || '10' }}
-          DOTNET_ROLL_FORWARD: ${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}
-          DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
-          JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}-${{ matrix.partition }}
-        run: >-
-          dotnet test --test-modules JetDatabaseWriter.Tests.dll
-          --root-directory tests/JetDatabaseWriter.Tests/bin/Release/net10.0
-          --minimum-expected-tests 48 ${{ matrix.test-options }}
-          --long-running 60 --xunit-diagnostics on --no-ansi --output Detailed --timeout 80m
-          --report-xunit-xml --report-xunit-xml-filename tests.xml
-          --results-directory artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}
-
-      - name: Validate test outcomes
-        if: ${{ !cancelled() && matrix.runner }}
-        shell: pwsh
-        run: ./scripts/assert-test-results.ps1 -ResultsDirectory artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}
-
-      - name: Upload test results
-        if: ${{ !cancelled() && matrix.runner }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: test-results-${{ matrix.tf }}-${{ matrix.partition }}
-          path: artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}/
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Upload golden diagnostics
-        if: ${{ !cancelled() && matrix.runner }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: golden-bytes-${{ matrix.tf }}-${{ matrix.partition }}
-          path: artifacts/golden/${{ matrix.tf }}-${{ matrix.partition }}/
-          if-no-files-found: warn
-          retention-days: 7
 
       - name: Pack
         if: matrix.pack
@@ -233,6 +179,72 @@ jobs:
           name: nupkg
           path: artifacts/nupkg/*.nupkg
           if-no-files-found: error
+          retention-days: 7
+
+  test:
+    needs: [changes, analyze]
+    if: needs.changes.outputs.dotnet == 'true'
+    name: Test (${{ matrix.name }})
+    runs-on: windows-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.test-matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Setup .NET 11 runtime
+        if: matrix.tf == 'net11.0'
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: .github/dotnet11/global.json
+      - name: Download analyzed test runner
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: analyzed-runner-${{ matrix.asset }}
+          path: artifacts/test-runner
+
+      - name: Test
+        env:
+          JDW_EXPECTED_RUNTIME_MAJOR: ${{ matrix.tf == 'net11.0' && '11' || '10' }}
+          DOTNET_ROLL_FORWARD: ${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}
+          DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
+          JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}-${{ matrix.partition }}
+        run: >-
+          dotnet test --test-modules JetDatabaseWriter.Tests.dll
+          --root-directory artifacts/test-runner
+          --minimum-expected-tests 48 ${{ matrix.test-options }}
+          --long-running 60 --xunit-diagnostics on --no-ansi --output Detailed --timeout 80m
+          --report-xunit-xml --report-xunit-xml-filename tests.xml
+          --results-directory artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}
+
+      - name: Validate test outcomes
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./scripts/assert-test-results.ps1 -ResultsDirectory artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-${{ matrix.tf }}-${{ matrix.partition }}
+          path: artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload golden diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: golden-bytes-${{ matrix.tf }}-${{ matrix.partition }}
+          path: artifacts/golden/${{ matrix.tf }}-${{ matrix.partition }}/
+          if-no-files-found: warn
           retention-days: 7
 
   # Packed prose needs current package validation without unrelated test/AOT jobs.
@@ -294,7 +306,7 @@ jobs:
       - name: Download analyzed DAO runner
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: dao-test-runner-${{ matrix.tf }}
+          name: analyzed-runner-${{ matrix.tf == 'net10.0-netstandard' && 'standard' || 'native' }}
           path: artifacts/native-runner
       - name: Install pinned Microsoft Access Runtime
         shell: pwsh
@@ -409,7 +421,7 @@ jobs:
 
   gate:
     name: CI gate
-    needs: [changes, checks, formal, analyze, native-access, aot, encryption-replacement, package]
+    needs: [changes, checks, formal, analyze, test, native-access, aot, encryption-replacement, package]
     # Evaluate failed/skipped dependencies, but release superseded branch runs promptly.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest

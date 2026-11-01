@@ -1,8 +1,8 @@
 # Adversarial fuzzing
 
-The explicit reader, writer and delimited-text harnesses run only through the
+The explicit reader, writer and delimited-text harnesses run through the
 hosted [fuzz workflow](../../.github/workflows/fuzz.yml), after ordinary CI has
-passed for the exact main revision. Ordinary regression tests exercise the
+passed for the exact main revision. Eligible successful main CI starts a bounded campaign automatically; manual dispatch remains available for focused evidence. Ordinary regression tests exercise the
 harness contracts and the coordinator with synthetic inputs and process doubles;
 they do not launch a fuzz campaign.
 
