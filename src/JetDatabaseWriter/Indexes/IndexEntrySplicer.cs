@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Indexes;
 
 using System.Collections.Generic;
-using System.Linq;
 using JetDatabaseWriter.Indexes.Models;
 
 /// <summary>
@@ -79,7 +78,10 @@ internal static class IndexEntrySplicer
 
         working.AddRange(adds);
 
-        return working.OrderBy(static entry => entry, EntryComparer).ToList();
+        // Complete-entry ties encode identical key/bookmark bytes, so this
+        // private result buffer does not require a stable sorting algorithm.
+        working.Sort(EntryComparer);
+        return working;
     }
 
     private static bool IsSorted(IReadOnlyList<IndexEntry> entries)

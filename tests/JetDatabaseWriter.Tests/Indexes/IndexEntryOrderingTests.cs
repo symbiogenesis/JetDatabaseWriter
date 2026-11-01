@@ -146,6 +146,98 @@ public sealed class IndexEntryOrderingTests
         Assert.InRange(allocated, 0, ((entryCount + 1L) * 32) + 4096);
     }
 
+    /// <summary>Unordered runs sort the private result buffer without a second entry or projected-key buffer.</summary>
+    [Fact]
+    public void Splice_UnorderedRunsAllocateOnlyTheResultStorage()
+    {
+        const int existingCount = 4096;
+        const int addedCount = 128;
+        byte[] key = new byte[128];
+        Array.Fill(key, (byte)0x80);
+        byte[] originalKey = [.. key];
+        var existing = new List<IndexEntry>(existingCount);
+        var adds = new List<IndexEntry>(addedCount);
+        for (int index = existingCount - 1; index >= 0; index--)
+        {
+            existing.Add(new(key, 100 + index, 0));
+        }
+
+        for (int index = addedCount - 1; index >= 0; index--)
+        {
+            adds.Add(new(key, 5000 + index, 0));
+        }
+
+        IndexEntry[] original = [.. existing];
+        IndexEntry[] additions = [.. adds];
+        _ = IndexEntrySplicer.Splice(existing, adds, []);
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        List<IndexEntry>? result = IndexEntrySplicer.Splice(existing, adds, []);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.NotNull(result);
+        Assert.Equal(existingCount + addedCount, result.Count);
+        Assert.InRange(allocated, 0, ((existingCount + addedCount) * 32L) + 4096);
+        for (int index = 0; index < result.Count; index++)
+        {
+            Assert.Same(key, result[index].Key);
+            Assert.Equal(index < existingCount ? 100 + index : 5000 + index - existingCount, result[index].DataPage);
+            Assert.Equal(0, result[index].DataRow);
+        }
+
+        Assert.Equal(original, existing);
+        Assert.Equal(additions, adds);
+        Assert.Equal(originalKey, key);
+    }
+
+    /// <summary>Distinct arrays with equal complete native entries retain their bytes and member identities.</summary>
+    /// <param name="format">The leaf encoding format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public void Splice_CompleteEntryTiesPreserveNativeBytesAndInputKeys(DatabaseFormat format)
+    {
+        var entries = new List<IndexEntry>();
+        for (int index = 0; index < 96; index++)
+        {
+            entries.Add(new([checked((byte)(index % 4)), 0x80], 100 + (index % 3), checked((byte)(index % 2))));
+        }
+
+        List<IndexEntry> existing = entries.GetRange(0, 64);
+        List<IndexEntry> adds = entries.GetRange(64, 32);
+        IndexEntry[] original = [.. existing];
+        IndexEntry[] additions = [.. adds];
+        byte[][] originalKeys = entries.Select(static entry => entry.Key.ToArray()).ToArray();
+        var expected = new List<IndexEntry>();
+        for (byte key = 0; key < 4; key++)
+        {
+            for (long page = 100; page < 103; page++)
+            {
+                for (byte row = 0; row < 2; row++)
+                {
+                    expected.AddRange(entries.Where(entry => entry.Key[0] == key && entry.DataPage == page && entry.DataRow == row));
+                }
+            }
+        }
+
+        List<IndexEntry>? result = IndexEntrySplicer.Splice(existing, adds, []);
+
+        Assert.NotNull(result);
+        Assert.Equal(entries.Count, result.Count);
+        Assert.True(entries.Select(static entry => entry.Key).ToHashSet().SetEquals(result.Select(static entry => entry.Key)));
+        var profile = JetFormat.ForNewDatabase(format);
+        byte[] expectedPage = IndexPageCodec.BuildLeafPage(profile.IndexPage, profile.PageSize, 7, expected, enablePrefixCompression: true);
+        byte[] actualPage = IndexPageCodec.BuildLeafPage(profile.IndexPage, profile.PageSize, 7, result, enablePrefixCompression: true);
+        Assert.Equal(expectedPage, actualPage);
+        Assert.Equal(original, existing);
+        Assert.Equal(additions, adds);
+        for (int index = 0; index < entries.Count; index++)
+        {
+            Assert.Equal(originalKeys[index], entries[index].Key);
+        }
+    }
+
     [Fact]
     public void Splice_SortsUnorderedInputsByKeyAndBookmark()
     {

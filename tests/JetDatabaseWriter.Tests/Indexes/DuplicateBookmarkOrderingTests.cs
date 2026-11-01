@@ -116,7 +116,8 @@ public sealed class DuplicateBookmarkOrderingTests
         {
             for (int first = 1537; first <= 2560; first += 128)
             {
-                await writer.InsertRowsAsync("T", Enumerable.Range(first, 128).Select(static id => new object[] { id, new DateTime(2020, 1, 1), 1 }), Ct);
+                // Descending primary keys also exercise unordered index maintenance.
+                await writer.InsertRowsAsync("T", Enumerable.Range(first, 128).Reverse().Select(static id => new object[] { id, new DateTime(2020, 1, 1), 1 }), Ct);
             }
 
             Assert.Equal(1, await writer.UpdateRowsAsync("T", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 99_000 }, Ct));
