@@ -1,7 +1,7 @@
 {
   "version": 1,
   "analyzer": "InferSharp v1.5",
-  "reviewedRevision": "369cbb83bfd629301099e710babfb8b086ceb3be",
+  "reviewedRevision": "0200b4cd94a4550d21c577583e3eb4d5b91c4d17",
   "sources": {
     "src/JetDatabaseWriter/AccessDatabaseEncryption.cs": "99e0df82c3685583315fc330ef55671f20a887e5d8ab3c5aac30e9fb2b47c1d6",
     "src/JetDatabaseWriter/AccessReader.cs": "bd87b92591a34043048cebbef35b5c44dd4161b20dff83f9ac1175953d73720c",
@@ -45,10 +45,10 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/AccessDatabaseEncryption.cs",
-        "line": 212,
-        "fingerprint": "affad7599a1cd1453ca2d5550957f975",
+        "line": 223,
+        "fingerprint": "1c2beef51215b1078b79fa10612eeb0f",
         "symbol": "AccessDatabaseEncryption.cs|ConvertFileAsync|PULSE_RESOURCE_LEAK",
-        "reason": "The trace follows source from FileStreamFactory.Open at line 148, not the lock coordinator. ConvertFileAsync immediately encloses every use in try/finally and awaits source.DisposeAsync in that finally. EncryptionFileReplacement also receives source ownership through its using-owned EncryptionReplacementIntent. InferSharp loses the async-finally disposal summary."
+        "reason": "The actual trace allocates the managed LockFileCoordinator wrapper through ForReencrypt at line 146, not a FileStream. ConvertFileAsync calls its concrete Dispose at line 220 from an outer finally, even when source acquisition or awaited source disposal fails. LockFileCoordinator.Dispose releases its mutually exclusive writerLock or slot. Focused best-effort maintenance success and password-refusal controls verify source handle release, clearing only the owned slot and preserving another live slot. InferSharp v1.5 loses this nested async-finally ownership summary."
       },
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
@@ -215,10 +215,10 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/AccessDatabaseEncryption.cs",
-        "line": 212,
-        "fingerprint": "affad7599a1cd1453ca2d5550957f975",
+        "line": 223,
+        "fingerprint": "1c2beef51215b1078b79fa10612eeb0f",
         "symbol": "AccessDatabaseEncryption.cs|ConvertFileAsync|PULSE_RESOURCE_LEAK",
-        "reason": "The trace follows source from FileStreamFactory.Open at line 148, not the lock coordinator. ConvertFileAsync immediately encloses every use in try/finally and awaits source.DisposeAsync in that finally. EncryptionFileReplacement also receives source ownership through its using-owned EncryptionReplacementIntent. InferSharp loses the async-finally disposal summary."
+        "reason": "The actual trace allocates the managed LockFileCoordinator wrapper through ForReencrypt at line 146, not a FileStream. ConvertFileAsync calls its concrete Dispose at line 220 from an outer finally, even when source acquisition or awaited source disposal fails. LockFileCoordinator.Dispose releases its mutually exclusive writerLock or slot. Focused best-effort maintenance success and password-refusal controls verify source handle release, clearing only the owned slot and preserving another live slot. InferSharp v1.5 loses this nested async-finally ownership summary."
       },
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
