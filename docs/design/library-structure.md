@@ -17,7 +17,8 @@ row operations build `MutationPlan` changes grouped by TDEF in first-use order.
 Contributors retain their validation and assignment policy and must resolve the
 same native layout. Conflicting index policies refuse before application.
 Rows carry their original locations/values, final replacements, frozen explicit
-ordinary Text bytes, erase policy and count adjustments. Text snapshots retain
+assignment indexes for public updates, unassigned ordinary Text bytes, erase
+policy and count adjustments. Text snapshots retain
 both fixed and variable slots; assignments and changed cascade keys use the
 encoder while unchanged slots keep their original stored representation.
 

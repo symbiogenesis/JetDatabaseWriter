@@ -333,6 +333,8 @@ passing an `int` operand against a `decimal` column compares correctly.
 Compatible direct-row updates preserve the existing row slot and every
 unassigned stored byte, including retained MEMO/OLE descriptors. Equal-width
 field edits and their null/Boolean bits use generated bounded patch operations.
+Explicit assignments use the field encoder even when decoded values compare
+equal; only unassigned storage retains its original representation.
 If the row location and all encoded index keys remain unchanged, the writer
 leaves index pages alone, including relationship-backed indexes. Unsupported
 layouts, overflow rows and incompatible widths retain the replacement path;
@@ -341,6 +343,8 @@ original roots is safe.
 
 A necessary equality on a single-column ascending unique Int32 index can seek
 update/delete candidates, with residual criteria and bookmark checks. Every live
+row layout on a selected mutation page is checked before target admission;
+unrelated row values and LVAL payloads are not decoded. Updates
 that assign index keys or involve calculated columns retain complete validation
 scans. Deletion still performs the ownership work required to reclaim storage;
 an indexed target does not imply bounded total delete I/O.
