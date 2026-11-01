@@ -91,15 +91,15 @@ internal sealed class MutationPlan
         internal void Insert(object[] values, bool updateRowCount = true)
             => this.Rows.Add(new RowChange(null, null, values, null, DeletedRowDataMode.Default, updateRowCount ? 1 : 0));
 
-        /// <summary>Stages a replacement while retaining unassigned fixed Text and long-value storage.</summary>
+        /// <summary>Stages a replacement while retaining unassigned Text and long-value storage.</summary>
         /// <param name="location">The original row slot.</param>
         /// <param name="original">The original decoded or index values.</param>
         /// <param name="replacement">The final prepared values.</param>
-        /// <param name="fixedText">Unassigned fixed Text slots copied without encoding.</param>
+        /// <param name="textBytes">Unassigned Text slots copied without encoding.</param>
         /// <param name="dataMode">The original payload's erase policy.</param>
         /// <param name="longValues">Unassigned long-value slots whose storage remains owned by this table.</param>
-        internal void Update(RowLocation location, object[] original, object[] replacement, IReadOnlyDictionary<int, byte[]>? fixedText = null, DeletedRowDataMode dataMode = DeletedRowDataMode.Default, IReadOnlyDictionary<int, byte[]>? longValues = null)
-            => this.Rows.Add(new RowChange(location, original, replacement, fixedText, dataMode, 0) { LongValues = longValues });
+        internal void Update(RowLocation location, object[] original, object[] replacement, IReadOnlyDictionary<int, byte[]>? textBytes = null, DeletedRowDataMode dataMode = DeletedRowDataMode.Default, IReadOnlyDictionary<int, byte[]>? longValues = null)
+            => this.Rows.Add(new RowChange(location, original, replacement, textBytes, dataMode, 0) { LongValues = longValues });
 
         /// <summary>Stages a deletion; absent original values retain the rebuild fallback.</summary>
         /// <param name="location">The original row slot.</param>
@@ -113,10 +113,10 @@ internal sealed class MutationPlan
     /// <param name="Location">The original row slot, absent for an insert.</param>
     /// <param name="Original">Original values used for index removal, when known.</param>
     /// <param name="Replacement">The final values, absent for a deletion.</param>
-    /// <param name="FixedText">Unassigned fixed Text storage retained by a replacement.</param>
+    /// <param name="TextBytes">Unassigned Text storage retained by a replacement.</param>
     /// <param name="DataMode">The original payload's erase policy.</param>
     /// <param name="CountDelta">The row-count adjustment.</param>
-    internal readonly record struct RowChange(RowLocation? Location, object[]? Original, object[]? Replacement, IReadOnlyDictionary<int, byte[]>? FixedText, DeletedRowDataMode DataMode, int CountDelta)
+    internal readonly record struct RowChange(RowLocation? Location, object[]? Original, object[]? Replacement, IReadOnlyDictionary<int, byte[]>? TextBytes, DeletedRowDataMode DataMode, int CountDelta)
     {
         /// <summary>Gets unchanged long-value slots retained byte-for-byte without reallocating their payloads.</summary>
         internal IReadOnlyDictionary<int, byte[]>? LongValues { get; init; }

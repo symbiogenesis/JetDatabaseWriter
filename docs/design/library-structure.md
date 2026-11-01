@@ -16,8 +16,10 @@ Ordinary rows, cascades, complex values, append-only history and catalog/system
 row operations build `MutationPlan` changes grouped by TDEF in first-use order.
 Contributors retain their validation and assignment policy and must resolve the
 same native layout. Conflicting index policies refuse before application.
-Rows carry their original locations/values, final replacements, unassigned fixed
-Text bytes, erase policy and count adjustments.
+Rows carry their original locations/values, final replacements, unassigned
+ordinary Text bytes, erase policy and count adjustments. Text snapshots retain
+both fixed and variable slots; assignments and changed cascade keys use the
+encoder while unchanged slots keep their original stored representation.
 
 `MutationExecutor.ApplyAsync` checks every replacement's arity, unreadable-value
 admission and encoded capacity before the first row effect. It applies the

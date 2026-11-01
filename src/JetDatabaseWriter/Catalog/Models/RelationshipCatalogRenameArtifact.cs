@@ -7,7 +7,7 @@ using JetDatabaseWriter.Pages.Models;
 /// <param name="Definition">The catalog definition.</param>
 /// <param name="Original">The original object row.</param>
 /// <param name="Replacement">The renamed row values.</param>
-/// <param name="TextBytes">Unchanged fixed text to preserve byte-for-byte.</param>
+/// <param name="TextBytes">Unchanged Text slots to preserve byte-for-byte.</param>
 internal sealed record RelationshipCatalogRenameArtifact(
     TableDef Definition,
     LocatedRow Original,
