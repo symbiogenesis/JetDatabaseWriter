@@ -63,6 +63,7 @@ internal sealed class ColumnValidationRule
     {
         try
         {
+            TableExpressionFunctionPolicy.Validate(rule);
             CalculatedExpressionLimits.ValidateExpressionShape(rule, CalculatedExpressionLimits.MaxExpressionLength, "Validation rule");
             List<Token> tokens = Tokenize(rule, isCalculatedColumn: false);
             var parser = new Parser(rule, tokens, new CalculatedExpressionFieldNode(columnName));

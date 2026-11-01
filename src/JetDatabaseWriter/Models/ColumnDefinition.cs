@@ -260,12 +260,13 @@ public sealed record ColumnDefinition
     /// </para>
     /// <para>
     /// The expression is evaluated with this library's calculated-column expression engine.
-    /// Unsupported syntax or functions (for example <c>DLookUp</c>), failed evaluation, or
+    /// Unsupported stored syntax or functions, failed evaluation, or
     /// a result that cannot be converted to the column's type refuses the write with
     /// <see cref="JetDatabaseWriter.Exceptions.JetValidationRuleException"/> before mutation.
     /// A Null result is subject to the column's nullability constraint. <c>GenGUID()</c>
-    /// generates a GUID; <c>CurrentUser()</c> returns <c>Admin</c> for the library session
-    /// without workgroup authentication. Native/workgroup equivalence is unverified.
+    /// generates a GUID. Native table defaults and validation rules exclude application
+    /// functions such as <c>CurrentUser()</c>, <c>Eval()</c> and domain aggregates;
+    /// <c>CreateTableAsync</c> and <c>AddColumnAsync</c> refuse those calls before mutation.
     /// </para>
     /// <para>
     /// Not allowed on <see cref="IsAutoIncrement"/>, <see cref="IsCalculated"/>,

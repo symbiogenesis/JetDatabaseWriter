@@ -864,3 +864,12 @@ the same bytes and passes native reopen/compact beside its new index.
 Fresh x86 DAO3.6 (`dao360.dll` 10.0.26100.5074) controls passed on 2026-10-31.
 DAO120 Jet4/ACE checks remain guarded; these controls do not establish complete
 schema/application preservation or untested native index variants.
+
+`TableExpressionFunctionPolicyTests` checks declaration-time and imported-property
+refusal for application functions in stored defaults and field/table validation
+rules, including unused branches, while retaining ordinary scalar expressions.
+Fresh x86 DAO3.6 Jet3/Jet4 controls on 2026-10-31 reject `CurrentUser`, `Eval`,
+the domain aggregates and a nested `CurrentUser` call in all three constraint
+contexts with error 3388. Native `Abs(-3)` defaults/rules and insertion succeed.
+DAO120 checks remain guarded. These table-constraint observations do not define
+the functions' separate query/application or workgroup behavior.

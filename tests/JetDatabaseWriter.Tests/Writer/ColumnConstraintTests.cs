@@ -1191,7 +1191,7 @@ public sealed class ColumnConstraintTests
                 table,
                 [
                     new("Id", typeof(int)),
-                    new("Score", typeof(int)) { ValidationRuleExpression = "DLookUp(\"Id\",\"Other\") > 0" },
+                    new("Score", typeof(int)) { ValidationRuleExpression = "UnknownRule([Score]) > 0" },
                 ],
                 TestContext.Current.CancellationToken);
         }

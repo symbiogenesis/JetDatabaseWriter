@@ -67,6 +67,7 @@ internal sealed class ColumnDefaultValue
 
         try
         {
+            TableExpressionFunctionPolicy.Validate(text);
             return new ColumnDefaultValue(null, null, CalculatedExpressionParser.Parse(text, isCalculatedColumn: false));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or InvalidOperationException or FormatException)

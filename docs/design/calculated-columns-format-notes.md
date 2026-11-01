@@ -344,8 +344,15 @@ semantics, and numeric text preserves the qualified native notation boundaries.
 DateSerial uses rounded Integer arguments; TimeSerial retains day-zero OLE date
 behavior. These contexts retain their own Variant subtype, error and native-version
 qualification in R4. Their larger function set does not expand table calculated
-field admission. Domain aggregates and Eval remain open work outside table fields;
-no embedded code or cross-table expression execution is enabled.
+field admission. Stored defaults, field validation rules and table validation
+rules also exclude `CurrentUser`, `Eval` and domain aggregates. A bounded lexical
+scan rejects these calls at public schema declaration and when compiling stored
+constraints, including calls in branches whose values would not be evaluated.
+Quoted strings and field names do not become function calls. Native DAO3.6 Jet3
+and Jet4 controls reject the same default/field/table assignments with error
+3388 and accept ordinary scalar `Abs` defaults/rules. ACE confirmation remains
+guarded. Query/application contexts retain their separate R4 scope; no embedded
+code or cross-table expression execution is enabled.
 
 ## Native row counts and schema preservation
 

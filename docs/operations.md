@@ -290,7 +290,13 @@ See [Transactions](#transactions) for commit, recovery and faulted-writer behavi
 
 Persisted `DefaultValue` and `ValidationRule` expressions run on the library's expression engine. Unsupported syntax or functions, such as `DLookUp`, refuse the write before mutation.
 
-`GenGUID()` generates a GUID; `CurrentUser()` returns `Admin` for the supported session without workgroup authentication. Table-level rules check complete post-update rows. A CLR `ValidationRule` delegate applies only to the writer that created it. See [column constraints](writing.md#column-constraints).
+`GenGUID()` generates a GUID. Stored defaults, field rules and table rules reject
+Access application functions such as `CurrentUser()`, `Eval()` and domain
+aggregates, including calls in unused expression branches. Native DAO table
+constraints reject those functions too; they are separate from Access
+application/query expression contexts. Table-level rules check complete
+post-update rows. A CLR `ValidationRule` delegate applies only to the writer that
+created it. See [column constraints](writing.md#column-constraints).
 
 ### Table and row size
 

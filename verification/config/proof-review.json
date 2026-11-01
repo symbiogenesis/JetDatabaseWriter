@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "productionInventorySha256": "83f47f5383c52c14c31777fae1fa5ebeffe74ba32360ce9b4ec96423f14baa86",
-  "inventoryReview": "Reviewed three generated production sources: Verification/DataPageKernel.g.cs, IndexMutationKernel.g.cs and UsageMapKernel.g.cs. They contain deterministic pinned-Dafny native primitive operations without runtime support, package references, I/O or ownership authority. Existing DataPageRows, IndexPageCodec and UsageMap supply the executing adapters; source classifications elsewhere remain unchanged. New test and benchmark sources are evidence only. The exact manifest, generated-source/caller discovery and retained failure inputs cover all five kernels. Native signed long preserves the existing page-number domain without narrowing. Public parser, tree edit, statement rollback, native compatibility and platform durability obligations remain scoped in the design and open plan. Existing IndexSeekFilter and CompactRowRelocationMap now invoke reviewed generated decisions; no production source paths, modules, runtime requirements or dependencies were added. Numeric admission remains pure query policy at priority2; relocation remains a bounded B4 ledger decision without reclamation authority. Reviewed the added existing-table index API: no new production source path, native format, proof module or recovery controller is introduced.",
+  "productionInventorySha256": "7a79c258ebc1c2dff688319a970e567467c20613ffa7d93ebacf9e24d792f4ad",
+  "inventoryReview": "Reviewed three generated production sources: Verification/DataPageKernel.g.cs, IndexMutationKernel.g.cs and UsageMapKernel.g.cs. They contain deterministic pinned-Dafny native primitive operations without runtime support, package references, I/O or ownership authority. Existing DataPageRows, IndexPageCodec and UsageMap supply the executing adapters; source classifications elsewhere remain unchanged. New test and benchmark sources are evidence only. The exact manifest, generated-source/caller discovery and retained failure inputs cover all five kernels. Native signed long preserves the existing page-number domain without narrowing. Public parser, tree edit, statement rollback, native compatibility and platform durability obligations remain scoped in the design and open plan. Existing IndexSeekFilter and CompactRowRelocationMap now invoke reviewed generated decisions; no production source paths, modules, runtime requirements or dependencies were added. Numeric admission remains pure query policy at priority2; relocation remains a bounded B4 ledger decision without reclamation authority. Reviewed the added existing-table index API: no new production source path, native format, proof module or recovery controller is introduced. Classified the new TableExpressionFunctionPolicy source as bounded handwritten native table-constraint admission; it adds no execution capability, recovery authority or proof module.",
   "reviews": [
     {
       "boundary": "implementation",
-      "obligations": "Reviewed complete pre-mutation row-compaction admission, minimum/next-distinct boundary selection, conditional selected/relocated directory writes, hoisted-width native flag updates, free-header accounting and composition with modeled overlapping copy/clear. Preserve surviving slot flags, alias policy, surviving byte intervals, secure erase and untouched pooled suffix; actual CLR bulk effects remain contracts. Reviewed maximal index prefix scanning, bounded entry capacity/progress, direct fixed-position header/prefix/bookmark/child/boundary byte extraction under the unchanged ghost byte law, finite payload composition and sentinel/free-space finalization. Pointer widths/layouts are unchanged; stable list acquisition, metadata preflight and exact key-suffix copy remain premises. Reviewed exact ordered usage-bitmap selection, direct cursor/member-mask/status/computed-page-base outputs, exact byte-mask selection and byte-index zero skipping, decreasing rank, tolerant invalid-member skipping and strict first-failure prefix retention. Production establishes range admission once, retains an admitted byte-aligned cursor and immutable array, and appends selected bits in order through a compact partial-mask loop or full-mask straight appends before terminal refusal handling; list effects and reference-page cancellation/return remain contracts. The shared index-entry scan must bind a found non-sentinel boundary to the negated exhaustion statement under its original bounded-array contract. Existing recovery/replacement/descriptor/visited/frame/lifecycle boundaries remain documented in formal-verification.md and their model sources; no additional recovery or page-release authority follows. Reviewed outward nearest-even integral/Currency/Decimal/Single bounds with exact equality, lossless comparison domains, overflow/NaN refusal and signed-zero rank admission. The original residual predicate and descending-range refusal remain. Reviewed monotone native bookmark admission, injective ordered destinations, overflow-safe long pivot and exact half-open search transitions in the immutable disk ledger. Unsigned distance division preserves the signed API without compiler runtime helpers. Repeated cleanup interruptions retain the selected image/decision and reacquire recorded authority only while its receipt survives. Exact reviewed inputs also bind predicate operator codes, lossless widening, scalar conversion, native key encoding, descending-range/encode refusal and bookmark representation to the numeric/relocation adapter contracts. Reviewed CreateIndexAsync through serialized statement/savepoint preparation, complete logical-name collision and key declaration checks, required-key null preflight, private row/tree assembly, surviving descriptor and relationship mapping, original-root publication and rollback. It reuses handwritten whole-table replacement and grants no new page-release or recovery authority. Index-only replacement retains the opaque table NameMap because column names and identities are unchanged; existing column-edit invalidation remains scoped to column edits.",
-      "conformance": "Independent complete-page row-compaction oracles cover Jet3/Jet4/ACE slots, aliases/flags, erase policies, malformed bounds, native widths, short images and untouched bytes. Index byte vectors cover leaf/intermediate headers, compressed payloads, extreme pointers, bitmap boundaries, empty keys/full pages and refusal; existing structural/native controls retain their evidence level. Bitmap tests compare every byte pattern and signed bounds against independent expansion, strict retained prefixes, reference-page return and cancellation. Focused local checks provide development feedback; settled-main CI, target/analyzer/package/trimming/NativeAOT and hosted measurements remain required. Original-algorithm microbenchmark controls and paired existing workloads retain performance evidence without treating generated code as a timing theorem. Existing cited recovery, lifecycle, parser, native and fault-injection evidence remains applicable within its stated scope. Independent stable key buckets cover every three-existing/two-added splice run over four mixed-length keys and every removal subset, including tie order and unchanged inputs. Independent visited-set traces compare exact membership/count and production adapter decisions through repeated collisions, duplicates, zero inputs and growth; exact-budget colliding chains preserve payloads and lease handoff. Concurrent lease disposal/acquisition checks exactly-once accounting and retained reader/producer ownership; delayed lease loads refuse stale cache publication while live images survive invalidation/disposal. Independent encoded-key oracles cover supported orders and both Decimal key forms, with an explicit legacy-descending cross-sign negative control and planner refusal/equality-prefix tests. Public indexed-versus-scan regressions retain exact positive/negative zero bits. Relocation tests cover native endpoints, independent sparse mappings, logarithmic record reads and unchanged key identity. Repeated cleanup tests check receipt bytes, fresh-generation reconstruction, live exclusion and successor ownership. Colliding-chain cancellation tests cover growth boundaries and row-lease release. Exact settled-main CI remains required. CreateIndexTests covers existing rows, composite/directional/unique/primary/required/ignored-null keys, refusal byte equality and explicit rollback. RelationshipSchemaRewriteTests checks both FK endpoints and cascades. DaoCreateIndexTests independently checks fresh DAO3.6 Jet3/Jet4 seek, native constraints/mutations, property/primary preservation and compact; guarded DAO120 remains a distinct gap.",
+      "obligations": "Reviewed complete pre-mutation row-compaction admission, minimum/next-distinct boundary selection, conditional selected/relocated directory writes, hoisted-width native flag updates, free-header accounting and composition with modeled overlapping copy/clear. Preserve surviving slot flags, alias policy, surviving byte intervals, secure erase and untouched pooled suffix; actual CLR bulk effects remain contracts. Reviewed maximal index prefix scanning, bounded entry capacity/progress, direct fixed-position header/prefix/bookmark/child/boundary byte extraction under the unchanged ghost byte law, finite payload composition and sentinel/free-space finalization. Pointer widths/layouts are unchanged; stable list acquisition, metadata preflight and exact key-suffix copy remain premises. Reviewed exact ordered usage-bitmap selection, direct cursor/member-mask/status/computed-page-base outputs, exact byte-mask selection and byte-index zero skipping, decreasing rank, tolerant invalid-member skipping and strict first-failure prefix retention. Production establishes range admission once, retains an admitted byte-aligned cursor and immutable array, and appends selected bits in order through a compact partial-mask loop or full-mask straight appends before terminal refusal handling; list effects and reference-page cancellation/return remain contracts. The shared index-entry scan must bind a found non-sentinel boundary to the negated exhaustion statement under its original bounded-array contract. Existing recovery/replacement/descriptor/visited/frame/lifecycle boundaries remain documented in formal-verification.md and their model sources; no additional recovery or page-release authority follows. Reviewed outward nearest-even integral/Currency/Decimal/Single bounds with exact equality, lossless comparison domains, overflow/NaN refusal and signed-zero rank admission. The original residual predicate and descending-range refusal remain. Reviewed monotone native bookmark admission, injective ordered destinations, overflow-safe long pivot and exact half-open search transitions in the immutable disk ledger. Unsigned distance division preserves the signed API without compiler runtime helpers. Repeated cleanup interruptions retain the selected image/decision and reacquire recorded authority only while its receipt survives. Exact reviewed inputs also bind predicate operator codes, lossless widening, scalar conversion, native key encoding, descending-range/encode refusal and bookmark representation to the numeric/relocation adapter contracts. Reviewed CreateIndexAsync through serialized statement/savepoint preparation, complete logical-name collision and key declaration checks, required-key null preflight, private row/tree assembly, surviving descriptor and relationship mapping, original-root publication and rollback. It reuses handwritten whole-table replacement and grants no new page-release or recovery authority. Index-only replacement retains the opaque table NameMap because column names and identities are unchanged; existing column-edit invalidation remains scoped to column edits. Reviewed table-expression function admission at Create/Add/SetTableValidationRule and imported default/field/table compilation. The lexical scan retains length/shape bounds, skips quoted text, field names and date literals, and rejects native-prohibited application calls independently of lazy evaluation. Generic interpreter/query function registration and all effect/recovery boundaries remain unchanged.",
+      "conformance": "Independent complete-page row-compaction oracles cover Jet3/Jet4/ACE slots, aliases/flags, erase policies, malformed bounds, native widths, short images and untouched bytes. Index byte vectors cover leaf/intermediate headers, compressed payloads, extreme pointers, bitmap boundaries, empty keys/full pages and refusal; existing structural/native controls retain their evidence level. Bitmap tests compare every byte pattern and signed bounds against independent expansion, strict retained prefixes, reference-page return and cancellation. Focused local checks provide development feedback; settled-main CI, target/analyzer/package/trimming/NativeAOT and hosted measurements remain required. Original-algorithm microbenchmark controls and paired existing workloads retain performance evidence without treating generated code as a timing theorem. Existing cited recovery, lifecycle, parser, native and fault-injection evidence remains applicable within its stated scope. Independent stable key buckets cover every three-existing/two-added splice run over four mixed-length keys and every removal subset, including tie order and unchanged inputs. Independent visited-set traces compare exact membership/count and production adapter decisions through repeated collisions, duplicates, zero inputs and growth; exact-budget colliding chains preserve payloads and lease handoff. Concurrent lease disposal/acquisition checks exactly-once accounting and retained reader/producer ownership; delayed lease loads refuse stale cache publication while live images survive invalidation/disposal. Independent encoded-key oracles cover supported orders and both Decimal key forms, with an explicit legacy-descending cross-sign negative control and planner refusal/equality-prefix tests. Public indexed-versus-scan regressions retain exact positive/negative zero bits. Relocation tests cover native endpoints, independent sparse mappings, logarithmic record reads and unchanged key identity. Repeated cleanup tests check receipt bytes, fresh-generation reconstruction, live exclusion and successor ownership. Colliding-chain cancellation tests cover growth boundaries and row-lease release. Exact settled-main CI remains required. CreateIndexTests covers existing rows, composite/directional/unique/primary/required/ignored-null keys, refusal byte equality and explicit rollback. RelationshipSchemaRewriteTests checks both FK endpoints and cascades. DaoCreateIndexTests independently checks fresh DAO3.6 Jet3/Jet4 seek, native constraints/mutations, property/primary preservation and compact; guarded DAO120 remains a distinct gap. TableExpressionFunctionPolicyTests covers refusal before byte mutation, imported unused branches, literals/field names and fresh DAO3.6 default/field/table assignment controls with a native scalar success witness. DAO120 remains guarded and query/application semantics remain separate.",
       "remainingAssumptions": "Stable exclusive page/array identity, retained admitted byte cursor and faithful ordered mask emission, correct supplied native layouts, exact CLR bulk copy/clear, list append and stable entry acquisition remain adapter contracts. Reference reads, cancellation/pool effects, complete public parser resources, ordered trees/separators, allocator ownership and containing mutation/rollback require composition. Membership and row-space compaction grant no page-release authority. Existing I/O/hash/path/snapshot/coordinator/OS and compiler/runtime contracts remain. Physical persistence, directory durability, stale-I/O fencing and fresh native-engine gaps retain E4/F6/I15/V7 and their feature requirements. No whole-library proof, new native form or unconditional performance/durability guarantee is inferred. CLR conversions/comparison signs and supported native key ordering remain adapter contracts; complete planner/predicate refinement and legacy-descending Numeric qualification remain I9/F9. Exact immutable ledger reads, byte decoding and C# loop sequencing do not follow from scalar controls. Root/reference completeness, native row/key identity, page-release authority and physical compact publication remain I17/V9. Modeled cleanup does not establish GUID collision resistance, OS exclusion or namespace durability.",
       "evidence": [
         "benchmarks/JetDatabaseWriter.Benchmarks/Indexes/IndexMutationBenchmarks.cs",
@@ -295,7 +295,9 @@
         "tests/JetDatabaseWriter.Tests/Writer/StatementAtomicityTests.cs",
         "tests/JetDatabaseWriter.Tests/Writer/WriterLifecycleConformanceTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/CreateIndexTests.cs",
-        "tests/JetDatabaseWriter.Tests/RoundTrip/DaoCreateIndexTests.cs"
+        "tests/JetDatabaseWriter.Tests/RoundTrip/DaoCreateIndexTests.cs",
+        "src/JetDatabaseWriter/Schema/Expressions/TableExpressionFunctionPolicy.cs",
+        "tests/JetDatabaseWriter.Tests/Schema/TableExpressionFunctionPolicyTests.cs"
       ],
       "inputs": [
         {
@@ -336,7 +338,7 @@
         },
         {
           "path": "docs/design/calculated-columns-format-notes.md",
-          "sha256": "6140b7970f891885c93ac0a19e13cd8fadeb9c4885a4a4864fbd5a600bff486e"
+          "sha256": "6a8d402288601af3265c1276be6db4201ccb04bd0a3fa4871451256444c23289"
         },
         {
           "path": "docs/design/caller-stream-recovery.md",
@@ -400,7 +402,7 @@
         },
         {
           "path": "docs/design/writer-disk-format-validation-matrix.md",
-          "sha256": "c8f355c6a6acf41330d433c7ce83f1c9cd9e28b0554a75afb4fc0769f040fd55"
+          "sha256": "0ac25678c0d39f0d028f4fadffc103f27187e41b1cd7df6932ba45c5b595a748"
         },
         {
           "path": "docs/design/writer-lifecycle.md",
@@ -672,7 +674,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Models/ColumnDefinition.cs",
-          "sha256": "456d0b083da4ab82127be8dd4f9caa2ac2055e5201e875630e857393bc1a0589"
+          "sha256": "c815c195d7f87491adec34b8e602470de01aa78297300fb6ef8141aa310635cf"
         },
         {
           "path": "src/JetDatabaseWriter/Models/ColumnMetadata.cs",
@@ -840,7 +842,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Schema/ConstraintRegistry.cs",
-          "sha256": "adb032851c5b7693a3d0e7bb9ceb4e0ca812beca5f2ebfb9c4dfde5f0eea83ab"
+          "sha256": "8b2b7c3443d4b4d02470e846f81343d01922f9f736fc1f452b4c5e4e1427fa39"
         },
         {
           "path": "src/JetDatabaseWriter/Schema/Expressions/AccessLikeMatcher.cs",
@@ -923,6 +925,10 @@
           "sha256": "50c5a5d8e67f34f46de380bad07d07ada901d834b7372fa0c37aa98435a56993"
         },
         {
+          "path": "src/JetDatabaseWriter/Schema/Expressions/TableExpressionFunctionPolicy.cs",
+          "sha256": "63404e3b39781e2525bbc1a75884be3d2ea944bcdba1df22afb8c44d38e64d2a"
+        },
+        {
           "path": "src/JetDatabaseWriter/Schema/JetTypeInfo.cs",
           "sha256": "b14617b0f74cf75f6b8e966c7f7ec5575408b4156a96871963e4429d5d55298a"
         },
@@ -964,7 +970,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableSchemaEditor.cs",
-          "sha256": "20bf5f6e38e6040a22d2d71a9376b0b961a93bc64b8b1f95f62bc49ac3c6584a"
+          "sha256": "0cbd9ead87974b4f07c48c1a2b7718f4dcd305e717e60229e2f70932f7d1b316"
         },
         {
           "path": "src/JetDatabaseWriter/Transactions/LockFileCoordinator.cs",
@@ -1515,6 +1521,10 @@
           "sha256": "8d9babf5b6e6aa164c095fb621d10ae667979a49e4601d7fbc286674179bce97"
         },
         {
+          "path": "tests/JetDatabaseWriter.Tests/Schema/TableExpressionFunctionPolicyTests.cs",
+          "sha256": "8d3a233cbb7ea79eb6c2d7a7cc25ef460cbf548e8ba7ccf52289ab2252c6eb21"
+        },
+        {
           "path": "tests/JetDatabaseWriter.Tests/Schema/TableRenamedQualifiedExpressionTests.cs",
           "sha256": "4f55d6a2163867a620ea5c20fa933dc24099e35c55618d8832270ea3de6c4998"
         },
@@ -1740,7 +1750,7 @@
         },
         {
           "path": "docs/design/calculated-columns-format-notes.md",
-          "sha256": "6140b7970f891885c93ac0a19e13cd8fadeb9c4885a4a4864fbd5a600bff486e"
+          "sha256": "6a8d402288601af3265c1276be6db4201ccb04bd0a3fa4871451256444c23289"
         },
         {
           "path": "docs/design/caller-stream-recovery.md",

@@ -75,6 +75,7 @@ internal sealed class TableSchemaEditor(
     internal async ValueTask SetTableValidationRuleAsync(string tableName, TableValidationRule? rule, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        TableExpressionFunctionPolicy.Validate(rule?.Expression);
         await catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
         ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ColumnPropertyBlock? properties = await snapshots.ReadLvPropBlockAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
@@ -165,7 +166,7 @@ internal sealed class TableSchemaEditor(
         {
             ValidateDeclaredAutoIncrement(columns[i], nameof(columns));
             ValidateDeclaredCalculatedExpression(columns[i], nameof(columns), tableName);
-            ValidateDeclaredDefault(columns[i], nameof(columns));
+            ValidateDeclaredTableExpressions(columns[i], nameof(columns));
         }
 
         CalculatedExpressionBindings.ValidateDeclarations(columns, nameof(columns));
@@ -350,7 +351,7 @@ internal sealed class TableSchemaEditor(
         _ = TDefPageBuilder.ValidateColumnForFormat(column, format, nameof(column));
         ValidateDeclaredAutoIncrement(column, nameof(column));
         ValidateDeclaredCalculatedExpression(column, nameof(column), tableName);
-        ValidateDeclaredDefault(column, nameof(column));
+        ValidateDeclaredTableExpressions(column, nameof(column));
         IndexHelpers.ValidateCalculatedIndexDeclarations([column], [], tableName);
         _ = JetExpressionConverter.BuildLvPropBlob([column], format);
 
@@ -643,6 +644,18 @@ internal sealed class TableSchemaEditor(
                 $"Column '{column.Name}' is marked IsAutoIncrement=true but its CLR type '{column.ClrType}' is not an integer or GUID type.",
                 paramName);
         }
+    }
+
+    /// <summary>
+    /// Checks native function admission for declared defaults and validation rules.
+    /// </summary>
+    /// <param name="column">The column being declared.</param>
+    /// <param name="paramName">The public parameter name.</param>
+    private static void ValidateDeclaredTableExpressions(ColumnDefinition? column, string paramName)
+    {
+        ValidateDeclaredDefault(column, paramName);
+        TableExpressionFunctionPolicy.Validate(column?.DefaultValueExpression);
+        TableExpressionFunctionPolicy.Validate(column?.ValidationRuleExpression);
     }
 
     /// <summary>

@@ -449,16 +449,32 @@ public sealed class ConstraintRegistryTests
         Assert.NotEqual(first[0], second[0]);
     }
 
-    /// <summary>The unauthenticated Access session uses the Admin account.</summary>
+    /// <summary>Native table defaults cannot invoke the application's CurrentUser function.</summary>
     /// <returns>The asynchronous test.</returns>
     [Fact]
-    public async Task ApplyAsync_CurrentUserDefault_IsAdmin()
+    public async Task ApplyAsync_CurrentUserDefault_IsRefused()
     {
         TableDef tableDef = SingleColumnTable(ColumnType.TextType);
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "CurrentUser()")));
         object[] values = [DbDefault.Value];
-        _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
-        Assert.Equal("Admin", values[0]);
+        _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
+            await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken));
+        Assert.Equal(DBNull.Value, values[0]);
+    }
+
+    /// <summary>Application-host functions in stored table rules never become library-only constraints.</summary>
+    /// <param name="expression">The invalid native table rule.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [InlineData("CurrentUser()=\"Admin\"")]
+    [InlineData("IIf(True,True,CurrentUser()=\"Admin\")")]
+    [InlineData("IIf(True,True,DCount(\"*\",\"T\")>0)")]
+    public async Task ApplyAsync_StoredHostFunctionTableRule_IsRefused(string expression)
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties((string.Empty, Constants.ColumnPropertyNames.ValidationRule, expression)));
+        _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
+            await registry.ApplyAsync("T", tableDef, [1], TestContext.Current.CancellationToken));
     }
 
     /// <summary>A row with the wrong width cannot bypass persisted constraints.</summary>

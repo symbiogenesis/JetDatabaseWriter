@@ -901,7 +901,12 @@ internal sealed class ConstraintRegistry(
     {
         try
         {
-            rule.Plan ??= CalculatedExpressionParser.Parse(rule.Expression, isCalculatedColumn: false);
+            if (rule.Plan is null)
+            {
+                TableExpressionFunctionPolicy.Validate(rule.Expression);
+                rule.Plan = CalculatedExpressionParser.Parse(rule.Expression, isCalculatedColumn: false);
+            }
+
             var context = CalculatedExpressionEvaluationContext.FromCalculatedRow(tableDef, columns, values, tableName, textCollation, liveStaleReferences: true);
             object result = rule.Plan.Evaluate(context);
             if (result is not CalculatedError && (CalculatedExpressionCoercion.IsNull(result) || CalculatedExpressionCoercion.ToBoolean(result)))
