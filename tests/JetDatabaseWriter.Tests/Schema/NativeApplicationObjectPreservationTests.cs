@@ -30,7 +30,7 @@ public sealed class NativeApplicationObjectPreservationTests
         {
             foreach (WriteMode mode in Enum.GetValues<WriteMode>())
             {
-                foreach (string operation in new[] { "rows", "columns", "table" })
+                foreach (string operation in new[] { "rows", "columns", "table", "indexes" })
                 {
                     cases.Add(codeObjects, mode, operation);
                 }
@@ -63,29 +63,28 @@ public sealed class NativeApplicationObjectPreservationTests
 
         await MutateAsync(session.SourcePath, mode, operation);
         Snapshot actual = await ReadSnapshotAsync(session.SourcePath);
-        Assert.Equal(original.Catalog, actual.Catalog);
-        Assert.Equal(original.Tables.Keys, actual.Tables.Keys);
-        foreach (KeyValuePair<string, string[]> table in original.Tables)
-        {
-            Assert.Equal(table.Value, actual.Tables[table.Key]);
-        }
-
-        Assert.Equal(original.Pages.Keys, actual.Pages.Keys);
-        foreach (KeyValuePair<long, byte[]> page in original.Pages)
-        {
-            Assert.Equal(page.Value, actual.Pages[page.Key]);
-        }
-
-        Assert.Equal(original.Permissions, actual.Permissions);
-        Assert.Equal(original.PermissionRows, actual.PermissionRows);
-        if (operation == "rows")
-        {
-            Assert.Equal(original.PermissionPages, actual.PermissionPages);
-        }
-        Assert.Equal(original.LongValueDescriptors, actual.LongValueDescriptors);
-        Assert.Equal(original.LongValueRows, actual.LongValueRows);
+        AssertSnapshotsEqual(original, actual, operation);
 
         await AssertItemsAsync(session.SourcePath, operation);
+    }
+
+    [Theory]
+    [MemberData(nameof(Mutations))]
+    public async Task PublicMutation_PreservesNativeWorkgroupSecurityStorage(bool changedPassword, WriteMode mode, string operation)
+    {
+        await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.WorkgroupPreservation", databaseExtension: ".mdb");
+        string password = await SeedWorkgroupAsync(session.SourcePath, changedPassword);
+        Snapshot original = await ReadSnapshotAsync(session.SourcePath, password, "T");
+        Assert.True(original.SharedPermissionPages > 0);
+        Assert.NotEmpty(original.PermissionRows);
+        await MutateAsync(session.SourcePath, mode, operation, password, "T");
+        Snapshot actual = await ReadSnapshotAsync(session.SourcePath, password, "T");
+        AssertSnapshotsEqual(original, actual, operation);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(session.SourcePath, new(password) { UseLockFile = false }, Ct);
+        using DataTable table = await reader.ReadTableAsync("T", cancellationToken: Ct);
+        DataRow row = Assert.Single(table.AsEnumerable());
+        Assert.Equal(7, row["Id"]);
+        Assert.Equal(operation == "rows" ? "updated" : "Native encrypted row", row["Label"]);
     }
 
     [Theory(
@@ -96,9 +95,11 @@ public sealed class NativeApplicationObjectPreservationTests
     [InlineData(false, "rows")]
     [InlineData(false, "columns")]
     [InlineData(false, "table")]
+    [InlineData(false, "indexes")]
     [InlineData(true, "rows")]
     [InlineData(true, "columns")]
     [InlineData(true, "table")]
+    [InlineData(true, "indexes")]
     public async Task Dao120_PublicMutationPreservesInertDefinitionsThroughCompact(bool codeObjects, string operation)
     {
         await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.ApplicationPreservation.Native");
@@ -118,6 +119,8 @@ public sealed class NativeApplicationObjectPreservationTests
                     if ($db.Containers('Forms').Documents('EvidenceForm').Name -cne 'EvidenceForm') { throw 'Form identity changed' }
                     if ($db.Containers('Reports').Documents('EvidenceReport').Name -cne 'EvidenceReport') { throw 'Report identity changed' }
                     {{codeChecks}}
+                    $indexes = $db.TableDefs('Items').Indexes
+                    if ($indexes.Count -ne 1 -or !$indexes.Item(0).Primary -or $indexes.Item(0).Fields.Count -ne 1 -or $indexes.Item(0).Fields.Item(0).Name -cne 'Id') { throw 'Original primary index changed' }
                     $sql = $db.QueryDefs('EvidenceQuery').SQL
                     $rs = $db.OpenRecordset('SELECT [Id],[Label] FROM [Items]', 4)
                     try {
@@ -177,6 +180,96 @@ public sealed class NativeApplicationObjectPreservationTests
         }
     }
 
+    [Theory(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    [Trait("Category", "RequiresMicrosoftAccess")]
+    [InlineData(false, "rows")]
+    [InlineData(false, "columns")]
+    [InlineData(false, "table")]
+    [InlineData(false, "indexes")]
+    [InlineData(true, "rows")]
+    [InlineData(true, "columns")]
+    [InlineData(true, "table")]
+    [InlineData(true, "indexes")]
+    public async Task Dao120_PublicMutationPreservesWorkgroupOwnersAndGrantsThroughCompact(bool changedPassword, string operation)
+    {
+        await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.WorkgroupPreservation.Native", databaseExtension: ".mdb");
+        string password = await SeedWorkgroupAsync(session.SourcePath, changedPassword);
+        string control = session.CreateDatabasePath("control");
+        string compactedControl = session.CreateDatabasePath("control-compact");
+        string workgroup = Path.Combine(session.WorkDir, "workgroup.mdw");
+        File.Copy(session.SourcePath, control);
+        File.Copy(Path.Combine(TestDatabases.EncryptedRoot, "NativeJetWorkgroup.mdw"), workgroup);
+        await MutateAsync(session.SourcePath, WriteMode.AutoCommit, operation, password, "T");
+        string expectedLabel = operation == "rows" ? "updated" : "Native encrypted row";
+        string script = $$"""
+            $engine.SystemDB = {{Literal(workgroup)}}
+            $engine.DefaultUser = 'NativeOwner'
+            $engine.DefaultPassword = 'Owner123'
+            function Read-Security([string]$path, [string]$label) {
+                $workspace = $engine.CreateWorkspace('OwnerCheck', 'NativeOwner', 'Owner123', 2)
+                try {
+                    $db = $workspace.OpenDatabase($path, $false, $true, {{Literal(";PWD=" + password)}})
+                    try {
+                        $document = $db.Containers('Tables').Documents('T')
+                        if ($document.Owner -cne 'NativeOwner') { throw 'Custom table owner changed' }
+                        $values = @('OWNER=' + $document.Owner)
+                        foreach ($principal in @('NativeOwner', 'Users', 'admin')) {
+                            $document.UserName = $principal
+                            $values += ($principal + '=' + $document.Permissions)
+                        }
+                        $rs = $db.OpenRecordset('T', 1)
+                        try {
+                            if ($rs.EOF -or $rs.Fields('Id').Value -ne 7 -or $rs.Fields('Label').Value -cne $label) { throw 'Expected secured row changed' }
+                            $rs.MoveNext()
+                            if (!$rs.EOF) { throw 'Unexpected secured row' }
+                        } finally { $rs.Close() }
+                        return ($values -join '|')
+                    } finally { $db.Close() }
+                } finally { $workspace.Close() }
+            }
+            $expected = Read-Security {{Literal(control)}} 'Native encrypted row'
+            if ((Read-Security {{Literal(session.SourcePath)}} '{{expectedLabel}}') -cne $expected) { throw 'Public mutation changed native security' }
+            $engine.CompactDatabase({{Literal(control)}}, {{Literal(compactedControl)}}, {{Literal(";LANGID=0x0409;CP=1252;COUNTRY=0;PWD=" + password)}}, 64, {{Literal(";PWD=" + password)}})
+            $engine.CompactDatabase({{Literal(session.SourcePath)}}, {{Literal(session.CompactedPath)}}, {{Literal(";LANGID=0x0409;CP=1252;COUNTRY=0;PWD=" + password)}}, 64, {{Literal(";PWD=" + password)}})
+            if ((Read-Security {{Literal(compactedControl)}} 'Native encrypted row') -cne $expected) { throw 'Native control compact changed security' }
+            if ((Read-Security {{Literal(session.CompactedPath)}} '{{expectedLabel}}') -cne $expected) { throw 'Public mutation compact changed security' }
+            Write-Output 'NATIVE_PUBLIC_MUTATION_SECURITY_PRESERVED=OK'
+            """;
+        AccessRoundTripEnvironment.CompactResult result = session.RunDaoEngineScript(script, TimeSpan.FromMinutes(2));
+        Assert.True(result.ExitCode == 0, $"Native secured public mutation failed: {result.StdOut}\n{result.StdErr}");
+        Assert.Contains("NATIVE_PUBLIC_MUTATION_SECURITY_PRESERVED=OK", result.StdOut, StringComparison.Ordinal);
+    }
+
+    private static void AssertSnapshotsEqual(Snapshot original, Snapshot actual, string operation)
+    {
+        Assert.Equal(original.Catalog, actual.Catalog);
+        Assert.Equal(original.EditedCatalogFields, actual.EditedCatalogFields);
+        Assert.Equal(original.Tables.Keys, actual.Tables.Keys);
+        foreach (KeyValuePair<string, string[]> table in original.Tables)
+        {
+            Assert.Equal(table.Value, actual.Tables[table.Key]);
+        }
+
+        Assert.Equal(original.Pages.Keys, actual.Pages.Keys);
+        foreach (KeyValuePair<long, byte[]> page in original.Pages)
+        {
+            Assert.Equal(page.Value, actual.Pages[page.Key]);
+        }
+
+        Assert.Equal(original.Permissions, actual.Permissions);
+        Assert.Equal(original.PermissionRows, actual.PermissionRows);
+        if (operation == "rows")
+        {
+            Assert.Equal(original.PermissionPages, actual.PermissionPages);
+        }
+
+        Assert.Equal(original.LongValueDescriptors, actual.LongValueDescriptors);
+        Assert.Equal(original.LongValueRows, actual.LongValueRows);
+    }
+
     private static async Task SeedAsync(string path, bool codeObjects)
     {
         string name = codeObjects ? "NativeInertCodeObjects.accdb" : "NativeInertApplicationObjects.accdb";
@@ -188,9 +281,28 @@ public sealed class NativeApplicationObjectPreservationTests
         await File.WriteAllBytesAsync(path, bytes, Ct);
     }
 
-    private static async Task MutateAsync(string path, WriteMode mode, string operation)
+    private static async Task<string> SeedWorkgroupAsync(string path, bool changedPassword)
     {
-        await using AccessWriter writer = await AccessWriter.OpenAsync(path, WriteModes.WriterOptions(mode), Ct);
+        string fixture = changedPassword ? "NativeJet4WorkgroupChanged.mdb" : "NativeJet4Workgroup.mdb";
+        byte[] frozen = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, fixture), Ct);
+        Assert.Equal(
+            changedPassword ? "6FE02A19F4F24F299EF908F40D1A87F3A1952BF375B2F4B144647D98EC29DDFB" : "A84688D1EE0F394C8C1B36AC8996749B662DD8268AB0A099F5DE69B507FC5D10",
+            Convert.ToHexString(SHA256.HashData(frozen)));
+        await File.WriteAllBytesAsync(path, frozen, Ct);
+        return changedPassword ? "Changed123" : "Native123";
+    }
+
+    private static async Task MutateAsync(string path, WriteMode mode, string operation, string? password = null, string tableName = "Items")
+    {
+        await using AccessWriter writer = await AccessWriter.OpenAsync(
+            path,
+            new AccessWriterOptions(password)
+            {
+                UseLockFile = false,
+                UseByteRangeLocks = false,
+                UseTransactionalWrites = mode == WriteMode.AutoCommit,
+            },
+            Ct);
         await WriteModes.RunAsync(
             writer,
             mode,
@@ -199,19 +311,25 @@ public sealed class NativeApplicationObjectPreservationTests
                 switch (operation)
                 {
                     case "rows":
-                        await writer.InsertRowAsync("Items", [2, "temporary"], Ct);
-                        Assert.Equal(1, await writer.UpdateRowsAsync("Items", "Id", 1, new Dictionary<string, object?> { ["Label"] = "updated" }, Ct));
-                        Assert.Equal(1, await writer.DeleteRowsAsync("Items", "Id", 2, Ct));
+                        int id = tableName == "Items" ? 1 : 7;
+                        await writer.InsertRowAsync(tableName, [id + 1, "temporary"], Ct);
+                        Assert.Equal(1, await writer.UpdateRowsAsync(tableName, "Id", id, new Dictionary<string, object?> { ["Label"] = "updated" }, Ct));
+                        Assert.Equal(1, await writer.DeleteRowsAsync(tableName, "Id", id + 1, Ct));
                         break;
                     case "columns":
-                        await writer.AddColumnAsync("Items", new ColumnDefinition("Extra", typeof(int)), Ct);
-                        await writer.RenameColumnAsync("Items", "Extra", "Renamed", Ct);
-                        await writer.DropColumnAsync("Items", "Renamed", Ct);
+                        await writer.AddColumnAsync(tableName, new ColumnDefinition("Extra", typeof(int)), Ct);
+                        await writer.RenameColumnAsync(tableName, "Extra", "Renamed", Ct);
+                        await writer.DropColumnAsync(tableName, "Renamed", Ct);
                         break;
                     case "table":
                         await writer.CreateTableAsync("Scratch", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], Ct);
                         await writer.InsertRowAsync("Scratch", [1], Ct);
                         await writer.DropTableAsync("Scratch", Ct);
+                        break;
+                    case "indexes":
+                        await writer.CreateIndexAsync(tableName, new("ScratchIndex", "Label"), Ct);
+                        await writer.RenameIndexAsync(tableName, "ScratchIndex", "RenamedIndex", Ct);
+                        await writer.DropIndexAsync(tableName, "RenamedIndex", Ct);
                         break;
                     default:
                         throw new ArgumentOutOfRangeException(nameof(operation));
@@ -231,25 +349,37 @@ public sealed class NativeApplicationObjectPreservationTests
         Assert.DoesNotContain(await reader.ListTablesAsync(Ct), name => name == "Scratch");
     }
 
-    private static async Task<Snapshot> ReadSnapshotAsync(string path)
+    private static async Task<Snapshot> ReadSnapshotAsync(string path, string? password = null, string editedTable = "Items")
     {
-        await using AccessReader reader = await TestDatabase.OpenReaderAsync(path, cancellationToken: Ct);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(path, new(password) { UseLockFile = false }, Ct);
         using DataTable catalog = await reader.ReadTableAsync("MSysObjects", cancellationToken: Ct);
-        string[] identities = catalog.AsEnumerable().Where(row => (string)row["Name"] != "Items")
+        string[] identities = catalog.AsEnumerable().Where(row => (string)row["Name"] != editedTable)
             .Select(EncodeRow).Order(StringComparer.Ordinal).ToArray();
         var tables = new SortedDictionary<string, string[]>(StringComparer.Ordinal);
         var owners = new HashSet<int>();
         var longValues = new SortedDictionary<uint, string>();
         var descriptors = new List<string>();
         byte[] bytes = await File.ReadAllBytesAsync(path, Ct);
-        int itemId = (int)Assert.Single(catalog.AsEnumerable(), row => (string)row["Name"] == "Items")["Id"];
+        if (password is not null)
+        {
+            for (int page = 1; page < bytes.Length / reader.PageSize; page++)
+            {
+                byte[] decoded = await reader.ReadPageCopyAsync(page, Ct);
+                decoded.CopyTo(bytes, page * reader.PageSize);
+            }
+        }
+
+        DataRow edited = Assert.Single(catalog.AsEnumerable(), row => (string)row["Name"] == editedTable);
+        int itemId = (int)edited["Id"];
+        string[] editedCatalogFields = catalog.Columns.Cast<DataColumn>().Where(column => column.ColumnName != "LvProp")
+            .Select(column => Hex(column.ColumnName) + "=" + EncodeValue(edited[column])).ToArray();
         using DataTable permissions = await reader.ReadTableAsync("MSysACEs", cancellationToken: Ct);
         string[] retainedPermissions = permissions.AsEnumerable().Select(EncodeRow).Order(StringComparer.Ordinal).ToArray();
         PermissionStorage permissionStorage = await SnapshotPermissionsAsync(reader);
         foreach (DataRow row in catalog.AsEnumerable().Where(row => (short)row["Type"] == Constants.SystemObjects.UserTableType))
         {
             string name = (string)row["Name"];
-            if (name is "Items" or "MSysObjects" or "MSysACEs")
+            if (name == editedTable || name is "MSysObjects" or "MSysACEs")
             {
                 continue;
             }
@@ -281,7 +411,7 @@ public sealed class NativeApplicationObjectPreservationTests
             }
         }
 
-        return new(identities, tables, pages, retainedPermissions, permissionStorage.Rows, permissionStorage.Pages, permissionStorage.SharedPages, descriptors.Order(StringComparer.Ordinal).ToArray(), longValues);
+        return new(identities, editedCatalogFields, tables, pages, retainedPermissions, permissionStorage.Rows, permissionStorage.Pages, permissionStorage.SharedPages, descriptors.Order(StringComparer.Ordinal).ToArray(), longValues);
     }
 
     private static async Task<PermissionStorage> SnapshotPermissionsAsync(AccessReader reader)
@@ -323,11 +453,10 @@ public sealed class NativeApplicationObjectPreservationTests
 
                 objectIds.Add(objectId.Value);
                 int slotOffset = reader.Database.Format.DataPage.RowsStart + (row.Location.RowIndex * sizeof(ushort));
-                rows.Add(
-                    $"{number}:{row.Location.RowIndex}",
-                    Convert.ToHexString(row.Page.AsSpan(4, 8)) + "|"
-                        + Convert.ToHexString(row.Page.AsSpan(slotOffset, sizeof(ushort))) + "|"
-                        + Convert.ToHexString(row.Page.AsSpan(row.Location.RowStart, row.Location.RowSize)));
+                string snapshot = Convert.ToHexString(row.Page.AsSpan(4, 8)) + "|"
+                    + Convert.ToHexString(row.Page.AsSpan(slotOffset, sizeof(ushort))) + "|"
+                    + Convert.ToHexString(row.Page.AsSpan(row.Location.RowStart, row.Location.RowSize));
+                rows.Add($"{number}:{row.Location.RowIndex}", snapshot);
                 return true;
             },
             Ct,
@@ -482,6 +611,7 @@ public sealed class NativeApplicationObjectPreservationTests
 
     private sealed record Snapshot(
         string[] Catalog,
+        string[] EditedCatalogFields,
         SortedDictionary<string, string[]> Tables,
         SortedDictionary<long, byte[]> Pages,
         string[] Permissions,
