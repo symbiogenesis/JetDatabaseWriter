@@ -47,6 +47,13 @@ public interface IAccessReader : IAccessBase
     public string LastDiagnostics { get; }
 
     /// <summary>
+    /// Gets the cumulative number of unreadable rows omitted by explicitly lenient reads on this reader and its authorized linked sources.
+    /// Repeated scans count repeated omissions; the count saturates at <see cref="long.MaxValue"/>.
+    /// Strict reads throw instead. The count is available even when verbose diagnostics are disabled.
+    /// </summary>
+    public long OmittedRowCount { get; }
+
+    /// <summary>
     /// Asynchronously returns up to <paramref name="maxRows"/> rows (as strings)
     /// from the first user table.
     /// </summary>

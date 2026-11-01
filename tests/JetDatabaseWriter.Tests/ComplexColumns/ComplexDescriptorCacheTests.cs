@@ -66,7 +66,7 @@ public sealed class ComplexDescriptorCacheTests
         await using MemoryStream database = await CreateDatabaseAsync();
         await using AccessWriter writer = await AccessWriter.OpenAsync(database, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct);
         using var pages = new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity: 0);
-        var rows = new RowDecoder(writer.Database.Format, writer.Database.OwnedPages, pages, new LongValueDecoder(writer.Database.Format, pages), strictParsing: true);
+        var rows = new RowDecoder(writer.Database.Format, writer.Database.OwnedPages, pages, new LongValueDecoder(writer.Database.Format, pages), strictParsing: true, new RowReadAccounting());
         var catalog = new CatalogReader(writer.Database.Format, writer.Database.TableDefs, writer.Services.Catalog, writer.Services.CatalogRows, rows);
         var complex = new ComplexColumnReader(writer.Database.Format, writer.Database.TableDefs, catalog, rows, diagnosticsEnabled: false);
         Assert.Contains(await complex.GetComplexColumnsAsync("Docs", Ct), column => column.ColumnName == "Files");
@@ -94,7 +94,7 @@ public sealed class ComplexDescriptorCacheTests
         await using AccessWriter writer = await AccessWriter.OpenAsync(database, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct);
         writer.Database.TableDefs.VerifyOnHit = false;
         using var pages = new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity: 0);
-        var rows = new RowDecoder(writer.Database.Format, writer.Database.OwnedPages, pages, new LongValueDecoder(writer.Database.Format, pages), strictParsing: true);
+        var rows = new RowDecoder(writer.Database.Format, writer.Database.OwnedPages, pages, new LongValueDecoder(writer.Database.Format, pages), strictParsing: true, new RowReadAccounting());
         var catalog = new CatalogReader(writer.Database.Format, writer.Database.TableDefs, writer.Services.Catalog, writer.Services.CatalogRows, rows);
         var complex = new ComplexColumnReader(writer.Database.Format, writer.Database.TableDefs, catalog, rows, diagnosticsEnabled: false);
         IReadOnlyList<ComplexColumnInfo> original = await complex.GetComplexColumnsAsync("Docs", Ct);

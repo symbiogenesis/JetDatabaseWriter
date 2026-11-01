@@ -297,12 +297,12 @@ internal sealed class TableReader(
 
             foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
             {
-                using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, cancellationToken).ConfigureAwait(false);
+                using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, tableName, cancellationToken).ConfigureAwait(false);
                 byte[] rowPage = sourceRow.Page;
                 RowBound rb = sourceRow.Bound;
 
                 if (sourceRow.IsReadable(format)
-                    && decodePlan.CanDecodeRow(format, rowPage, rb.RowStart, rb.RowSize))
+                    && rows.AdmitRow(decodePlan.CanDecodeRow(format, rowPage, rb.RowStart, rb.RowSize), scanPage.PageNumber, slot, tableName))
                 {
                     count++;
                 }
@@ -452,7 +452,7 @@ internal sealed class TableReader(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            await foreach (string[] row in rows.EnumerateRowsAsync(scanPage.Lease, decodePlan, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in rows.EnumerateRowsAsync(scanPage.Lease, scanPage.PageNumber, decodePlan, cancellationToken).ConfigureAwait(false))
             {
                 if (td.HasComplexColumns)
                 {
@@ -761,7 +761,7 @@ internal sealed class TableReader(
 
                     foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
                     {
-                        using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, cancellationToken).ConfigureAwait(false);
+                        using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, tableName, cancellationToken).ConfigureAwait(false);
                         byte[] rowPage = sourceRow.Page;
                         RowBound rb = sourceRow.Bound;
 
@@ -773,6 +773,7 @@ internal sealed class TableReader(
                         bool ok = await rows.CrackRowTypedIntoBufferAsync(rowPage, rb.RowStart, rb.RowSize, decodePlan, rowBuffer, cancellationToken).ConfigureAwait(false);
                         if (!ok)
                         {
+                            _ = rows.AdmitRow(readable: false, scanPage.PageNumber, slot, tableName);
                             continue;
                         }
 
@@ -923,7 +924,7 @@ internal sealed class TableReader(
 
                 foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
                 {
-                    using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, cancellationToken).ConfigureAwait(false);
+                    using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, tableName, cancellationToken).ConfigureAwait(false);
                     byte[] rowPage = sourceRow.Page;
                     RowBound rb = sourceRow.Bound;
 
@@ -935,6 +936,7 @@ internal sealed class TableReader(
                     bool ok = await rows.CrackRowTypedIntoBufferAsync(rowPage, rb.RowStart, rb.RowSize, decodePlan, rowBuffer, cancellationToken).ConfigureAwait(false);
                     if (!ok)
                     {
+                        _ = rows.AdmitRow(readable: false, scanPage.PageNumber, slot, tableName);
                         continue;
                     }
 
@@ -989,7 +991,7 @@ internal sealed class TableReader(
 
             foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
             {
-                using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, cancellationToken).ConfigureAwait(false);
+                using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, tableName, cancellationToken).ConfigureAwait(false);
                 byte[] rowPage = sourceRow.Page;
                 RowBound rb = sourceRow.Bound;
 
@@ -1001,6 +1003,7 @@ internal sealed class TableReader(
                 object?[]? row = await rows.CrackRowTypedAsync(rowPage, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
                 if (row == null)
                 {
+                    _ = rows.AdmitRow(readable: false, scanPage.PageNumber, slot, tableName);
                     continue;
                 }
 
@@ -1051,7 +1054,7 @@ internal sealed class TableReader(
             foreach (RowBound slot in scanPage.Lease.GetRowDirectory(format))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, cancellationToken).ConfigureAwait(false);
+                using TableScanRow sourceRow = await this.ReadTableScanRowAsync(scanPage, slot, entry.Name, cancellationToken).ConfigureAwait(false);
                 byte[] rowPage = sourceRow.Page;
                 RowBound rb = sourceRow.Bound;
 
@@ -1065,6 +1068,7 @@ internal sealed class TableReader(
                 {
                     if (!hybridPlan.TryDecode(format, decodePlan, rowPage, rb.RowStart, rb.RowSize, target, oleSlices))
                     {
+                        _ = rows.AdmitRow(readable: false, scanPage.PageNumber, slot, entry.Name);
                         continue;
                     }
 
@@ -1072,6 +1076,7 @@ internal sealed class TableReader(
                 }
                 else if (!decodePlan.TryDecodeDirect(format, rowPage, rb.RowStart, rb.RowSize, directDecoder!, target))
                 {
+                    _ = rows.AdmitRow(readable: false, scanPage.PageNumber, slot, entry.Name);
                     continue;
                 }
 
@@ -1104,17 +1109,38 @@ internal sealed class TableReader(
     /// <summary>Prepares a row synchronously unless its overflow target needs resolving.</summary>
     /// <param name="page">The leased page containing the slot.</param>
     /// <param name="slot">The live slot or overflow header.</param>
+    /// <param name="tableName">The resolved table name for corruption context.</param>
     /// <param name="cancellationToken">Cancels overflow traversal.</param>
     /// <returns>A borrowed row scope; an unreadable target produces an empty scope.</returns>
-    private ValueTask<TableScanRow> ReadTableScanRowAsync(TableScanPage page, RowBound slot, CancellationToken cancellationToken)
+    private ValueTask<TableScanRow> ReadTableScanRowAsync(TableScanPage page, RowBound slot, string tableName, CancellationToken cancellationToken)
         => slot.IsOverflowPointer
-            ? this.ResolveTableScanOverflowAsync(page, slot, cancellationToken)
-            : new ValueTask<TableScanRow>(new TableScanRow(page.Page, slot));
+            ? this.ResolveTableScanOverflowAsync(page, slot, tableName, cancellationToken)
+            : new ValueTask<TableScanRow>(this.AdmitTableScanRow(new TableScanRow(page.Page, slot), page.PageNumber, slot, tableName));
 
-    private async ValueTask<TableScanRow> ResolveTableScanOverflowAsync(TableScanPage page, RowBound slot, CancellationToken cancellationToken)
+    private async ValueTask<TableScanRow> ResolveTableScanOverflowAsync(TableScanPage page, RowBound slot, string tableName, CancellationToken cancellationToken)
     {
         OverflowRowTarget? overflow = await rows.ResolveOverflowAsync(page.Page, slot, cancellationToken).ConfigureAwait(false);
-        return overflow is { } target ? new TableScanRow(target.Page, target.Bound, target.Lease) : default;
+        TableScanRow result = overflow is { } target ? new TableScanRow(target.Page, target.Bound, target.Lease) : default;
+        return this.AdmitTableScanRow(result, page.PageNumber, slot, tableName);
+    }
+
+    private TableScanRow AdmitTableScanRow(TableScanRow row, long pageNumber, RowBound slot, string tableName)
+    {
+        try
+        {
+            if (rows.AdmitRow(row.IsReadable(format), pageNumber, slot, tableName))
+            {
+                return row;
+            }
+        }
+        catch
+        {
+            row.Dispose();
+            throw;
+        }
+
+        row.Dispose();
+        return default;
     }
 
     private async IAsyncEnumerable<TableScanPage> EnumerateTableScanPagesAsync(

@@ -47,6 +47,13 @@ admission/selection and complete journal page-byte authorization scans. The
 distinguishes generated execution from the span-load/store, vectorized comparison,
 record-acquisition and I/O contracts retained by their production adapters.
 
+`RecoveryKernel` also supplies strict/lenient row admission, saturating omission
+accounting and complete bounded row-trailer geometry. Production strict scans,
+counts and indexed materialization refuse unreadable layouts/overflow rows;
+explicitly lenient reads expose cumulative omission counts, including linked
+sources. Byte acquisition, C# site coverage and atomic publication remain
+separate from these generated decisions.
+
 | Model | Main checked properties | Deliberate boundary |
 |---|---|---|
 | [DataPageKernel.dfy](Pages/DataPageKernel.dfy) | Complete row-compaction admission, minimum/next boundary selection and exact directory/free-space rewriting with preservation outside written metadata. Modeled overlapping move/clear preserves surviving bytes. | Production retains optimized CLR bulk effects, stable exclusive page/layout identity and containing mutation/rollback contracts. Row-space compaction grants no page-release authority. |

@@ -497,11 +497,13 @@ internal sealed class IndexRowReader(
         byte[] page = lease.Buffer;
         if (page[0] != Constants.PageTypes.Data || Ri32(page, format.DataPage.TDefOff) != expectedTDefPage)
         {
+            _ = rows.AdmitRow(readable: false, dataPage, new RowBound(rowIndex, 0, 0));
             return null;
         }
 
         if (!this.TryFindRowEntry(lease, rowIndex, out RowBound rowBound))
         {
+            _ = rows.AdmitRow(readable: false, dataPage, new RowBound(rowIndex, 0, 0));
             return null;
         }
 
@@ -514,6 +516,7 @@ internal sealed class IndexRowReader(
         {
             if (resolved is not { } target)
             {
+                _ = rows.AdmitRow(readable: false, dataPage, rowBound);
                 return null;
             }
 
@@ -522,12 +525,14 @@ internal sealed class IndexRowReader(
 
         if (rowBound.RowSize < format.RowFields.NumCols)
         {
+            _ = rows.AdmitRow(readable: false, dataPage, rowBound);
             return null;
         }
 
         object?[]? row = await rows.CrackRowTypedAsync(page, rowBound.RowStart, rowBound.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
         if (row == null)
         {
+            _ = rows.AdmitRow(readable: false, dataPage, rowBound);
             return null;
         }
 

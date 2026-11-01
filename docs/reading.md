@@ -30,6 +30,19 @@ this check reads the catalog without opening a linked source and returns
 `false` only for an absent name. An unusable catalog entry reports
 `CorruptCatalog`; an existing empty table still returns an empty result.
 
+Default strict reads refuse unreadable row layouts and unresolved overflow rows
+with `JetCorruptDataException`, `MalformedValue` and page/slot context. This applies
+to row streams, counts, DataTable/POCO reads and indexed reads. A stream can yield
+an intact prefix before encountering corruption; consume it to successful
+completion before treating an export as complete for the rows encountered.
+
+For explicit salvage, set `StrictParsing = false`. Each unreadable row omission
+emits a warning even when verbose diagnostics are disabled and increments
+`reader.OmittedRowCount`. The cumulative counter includes authorized linked
+sources, counts repeated omissions on repeated scans and saturates at
+`long.MaxValue`. It reports encountered row omissions; it does not certify a
+damaged ownership map or reconstruct rows whose membership cannot be established.
+
 A structurally readable owned-pages map that references an unrecognized page type
 with matching table ownership prevents strict table reads and write-back, with
 `MalformedValue` and page context. Lenient reads emit an incomplete-table trace

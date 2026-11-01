@@ -43,7 +43,7 @@ internal sealed class WriterServices : IDisposable
         // leave a stale snapshot behind.
         this.SnapshotPages = new ReaderPageCache(db.Format, db.Pages, capacity: 0);
         ReaderPageCache snapshotPages = this.SnapshotPages;
-        var snapshotRows = new RowDecoder(db.Format, db.OwnedPages, snapshotPages, new LongValueDecoder(db.Format, snapshotPages), strictParsing: true);
+        var snapshotRows = new RowDecoder(db.Format, db.OwnedPages, snapshotPages, new LongValueDecoder(db.Format, snapshotPages), strictParsing: true, new RowReadAccounting());
         var columnProperties = new ColumnPropertyReader(db.Format, db.TableDefs, snapshotRows);
 
         this.CatalogRows = new CatalogRowReader(db.Format, db.TableDefs, db.OwnedPages);

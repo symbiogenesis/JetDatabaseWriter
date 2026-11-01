@@ -120,7 +120,7 @@ public sealed class ResolvedCatalogCacheTests
         await using MemoryStream file = await CreateDatabaseAsync(ct);
         await using AccessWriter writer = await TestDatabase.OpenWriterAsync(file, cancellationToken: ct);
         using var pages = new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity: 0);
-        var rows = new RowDecoder(writer.Database.Format, writer.Database.OwnedPages, pages, new LongValueDecoder(writer.Database.Format, pages), strictParsing: true);
+        var rows = new RowDecoder(writer.Database.Format, writer.Database.OwnedPages, pages, new LongValueDecoder(writer.Database.Format, pages), strictParsing: true, new RowReadAccounting());
         var catalog = new CatalogReader(writer.Database.Format, writer.Database.TableDefs, writer.Services.Catalog, writer.Services.CatalogRows, rows);
         Assert.Null(await catalog.ResolveTableAsync("Added", ct));
         ResolvedTable original = Assert.IsType<ResolvedTable>(await catalog.ResolveTableAsync("T", ct));
@@ -140,7 +140,7 @@ public sealed class ResolvedCatalogCacheTests
         await using MemoryStream file = await CreateDatabaseAsync(ct);
         await using AccessWriter writer = await TestDatabase.OpenWriterAsync(file, WriteModes.WriterOptions(WriteMode.ExplicitCommit), cancellationToken: ct);
         using var pages = new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity: 0);
-        var rows = new RowDecoder(writer.Database.Format, writer.Database.OwnedPages, pages, new LongValueDecoder(writer.Database.Format, pages), strictParsing: true);
+        var rows = new RowDecoder(writer.Database.Format, writer.Database.OwnedPages, pages, new LongValueDecoder(writer.Database.Format, pages), strictParsing: true, new RowReadAccounting());
         var catalog = new CatalogReader(writer.Database.Format, writer.Database.TableDefs, writer.Services.Catalog, writer.Services.CatalogRows, rows);
         Assert.Null(await catalog.ResolveTableAsync("Added", ct));
         await using JetTransaction transaction = await writer.BeginTransactionAsync(ct);

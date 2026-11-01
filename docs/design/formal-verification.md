@@ -126,6 +126,20 @@ The shared primitive boundary covers range admission, slice composition and posi
 
 Production buffer slices and exact-read adapters use these decisions on both library targets. The bounds and cursor decisions are total on their native input domains. Exact source-byte acquisition additionally depends on the stream's read-effect contract: a successful read supplies the reported next source prefix and does not mutate outside its requested destination. EOF, cancellation and exceptions remain effectful outcomes; a proof about successful chunks does not establish filesystem persistence or arbitrary custom-stream behavior. Parser traversal, aggregate allocation budgets and format interpretation remain separate obligations.
 
+## Row read admission
+
+The generated row-read boundary supplies `RowReadDisposition`, saturating
+`NextOmittedRowCount` and widened `RowNullMaskStart`, `RowVariableCountStart` and
+`RowVariableDataEnd` geometry. Strict refusal and lenient omission are distinct
+outcomes; strict admission never selects omission. The native geometry functions
+admit only complete bounded null-mask/count/offset-table intervals and refuse
+underflow or overlapping metadata before a row is decoded. Production scans,
+counts, direct/hybrid POCO and index materialization execute these decisions.
+`RowReadAccounting` publishes the bounded counter atomically across a reader and
+its authorized linked sources. Exact acquired bytes, complete C# call-site
+coverage, diagnostic delivery and atomic publication remain adapter contracts;
+these functions do not establish damaged-map membership or a complete parser.
+
 ## Writer lifecycle specification
 
 [The writer lifecycle specification](writer-lifecycle.md) records the legal serialized writer, transaction and lease states, terminal transaction identities, nested savepoint behavior, disposal and cache invalidation. The checked model describes the protocol; it adds no shipping code or runtime dependency. Its successful effects and exclusive ownership are explicit premises, and focused production traces support only the named correspondence boundaries.

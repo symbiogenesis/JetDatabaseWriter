@@ -44,7 +44,8 @@ internal sealed class ReaderServices : IDisposable
         TableDefReader tableDefs = db.TableDefs;
         this.PageCache = new ReaderPageCache(format, db.Pages, options.PageCacheSize);
 
-        var rows = new RowDecoder(db.Format, db.OwnedPages, this.PageCache, new LongValueDecoder(format, this.PageCache, options.MaxLongValueBytes), options.StrictParsing);
+        var rows = new RowDecoder(db.Format, db.OwnedPages, this.PageCache, new LongValueDecoder(format, this.PageCache, options.MaxLongValueBytes), options.StrictParsing, context.RowReads);
+        this.Rows = rows;
         var catalogRows = new CatalogRowReader(format, tableDefs, db.OwnedPages);
         var columnProperties = new ColumnPropertyReader(format, tableDefs, rows);
         this.TableCatalog = new TableCatalog(db.Pages, tableDefs, catalogRows, columnProperties);
@@ -84,6 +85,9 @@ internal sealed class ReaderServices : IDisposable
 
     /// <summary>Gets the page and row-bound caches.</summary>
     internal ReaderPageCache PageCache { get; }
+
+    /// <summary>Gets shared row decoding and incomplete-read diagnostics.</summary>
+    internal RowDecoder Rows { get; }
 
     /// <summary>Releases the page caches and drops the cached catalog lists.</summary>
     public void Dispose()

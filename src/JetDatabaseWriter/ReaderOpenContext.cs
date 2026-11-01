@@ -4,11 +4,12 @@ using System;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Relationships;
+using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>One reader's credentials and source provenance, with shared budgets for its linked readers.</summary>
 internal sealed class ReaderOpenContext
 {
-    private ReaderOpenContext(AccessReaderOptions options, ReadOnlyMemory<char> password, string? sourceHint, LinkedSourceTraversal? traversal, EncryptionWorkBudget encryptionWorkBudget, AttachmentReadContext attachmentReadContext)
+    private ReaderOpenContext(AccessReaderOptions options, ReadOnlyMemory<char> password, string? sourceHint, LinkedSourceTraversal? traversal, EncryptionWorkBudget encryptionWorkBudget, AttachmentReadContext attachmentReadContext, RowReadAccounting rowReads)
     {
         this.Options = options;
         this.Password = password;
@@ -16,6 +17,7 @@ internal sealed class ReaderOpenContext
         this.Traversal = traversal;
         this.EncryptionWorkBudget = encryptionWorkBudget;
         this.AttachmentReadContext = attachmentReadContext;
+        this.RowReads = rowReads;
     }
 
     /// <summary>Gets unchanged init-only configuration; source credentials come from <see cref="Password"/>.</summary>
@@ -36,6 +38,9 @@ internal sealed class ReaderOpenContext
     /// <summary>Gets attachment operation scopes shared by nested and linked reads.</summary>
     internal AttachmentReadContext AttachmentReadContext { get; }
 
+    /// <summary>Gets omission accounting shared by the root reader and authorized linked sources.</summary>
+    internal RowReadAccounting RowReads { get; }
+
     /// <summary>Creates a fresh root context; an explicit password-work budget supports bounded internal password attempts.</summary>
     /// <param name="options">The caller's configuration.</param>
     /// <param name="workBudget">An explicitly shared internal password-work budget, or null for a new root budget.</param>
@@ -43,7 +48,7 @@ internal sealed class ReaderOpenContext
     internal static ReaderOpenContext CreateRoot(AccessReaderOptions options, EncryptionWorkBudget? workBudget = null)
     {
         Guard.NotNull(options, nameof(options));
-        return new(options, options.Password, null, null, workBudget ?? new EncryptionWorkBudget(options.MaxTotalEncryptionSpinCount), new AttachmentReadContext(options.MaxAttachmentContentBytesPerOperation, options.MaxAttachmentDecodeWorkBytesPerOperation));
+        return new(options, options.Password, null, null, workBudget ?? new EncryptionWorkBudget(options.MaxTotalEncryptionSpinCount), new AttachmentReadContext(options.MaxAttachmentContentBytesPerOperation, options.MaxAttachmentDecodeWorkBytesPerOperation), new RowReadAccounting());
     }
 
     /// <summary>Derives a linked open without inheriting the host password or copying configuration.</summary>
@@ -52,5 +57,5 @@ internal sealed class ReaderOpenContext
     /// <param name="password">Credentials explicitly resolved for this source; empty when none were supplied.</param>
     /// <returns>The linked context with the same aggregate budgets.</returns>
     internal ReaderOpenContext ForLinkedSource(string sourceHint, LinkedSourceTraversal traversal, ReadOnlyMemory<char> password = default)
-        => new(this.Options, password, sourceHint, traversal, this.EncryptionWorkBudget, this.AttachmentReadContext);
+        => new(this.Options, password, sourceHint, traversal, this.EncryptionWorkBudget, this.AttachmentReadContext, this.RowReads);
 }

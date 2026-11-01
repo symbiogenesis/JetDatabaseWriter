@@ -8,11 +8,13 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueDecoding.Models;
+using Kernel = JetDatabaseWriter.Verification.RecoveryKernel;
 
 /// <summary>
 /// Decodes the rows of a cached data page into typed values or strings,
@@ -23,10 +25,44 @@ using JetDatabaseWriter.ValueDecoding.Models;
 /// <param name="pages">The reader's page cache.</param>
 /// <param name="longValues">Resolves MEMO / OLE long-value chains.</param>
 /// <param name="strictParsing">Whether malformed values throw instead of decoding to a fallback.</param>
-internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, ReaderPageCache pages, LongValueDecoder longValues, bool strictParsing)
+/// <param name="readAccounting">Omission accounting shared by the root and linked readers.</param>
+internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, ReaderPageCache pages, LongValueDecoder longValues, bool strictParsing, RowReadAccounting readAccounting)
 {
     /// <summary>Gets a value indicating whether malformed values throw instead of decoding to a fallback.</summary>
     internal bool StrictParsing => strictParsing;
+
+    /// <summary>Gets the cumulative number of unreadable rows omitted by explicitly lenient reads.</summary>
+    internal long OmittedRowCount => readAccounting.OmittedRowCount;
+
+    /// <summary>Requires a readable row in strict mode and records every explicitly lenient omission.</summary>
+    /// <param name="readable">Whether the complete row layout or referenced row was acquired.</param>
+    /// <param name="pageNumber">The page holding the original live slot.</param>
+    /// <param name="bound">The original live slot.</param>
+    /// <param name="tableName">The table name, when known.</param>
+    /// <param name="requireReadable">Whether an authoritative internal scan forbids omission even in lenient mode.</param>
+    /// <returns>Whether the caller may decode and return this row.</returns>
+    /// <exception cref="JetCorruptDataException">A strict read cannot acquire a complete row.</exception>
+    internal bool AdmitRow(bool readable, long pageNumber, RowBound bound, string? tableName = null, bool requireReadable = false)
+    {
+        uint disposition = Kernel.RowReadDisposition(readable, strictParsing || requireReadable);
+        if (disposition == 0)
+        {
+            return true;
+        }
+
+        string reason = $"Row slot {bound.RowIndex} at offset {bound.RowStart} occupies {bound.RowSize} bytes; its layout or overflow target is unreadable.";
+        if (disposition == 1)
+        {
+            throw new JetCorruptDataException(
+                requireReadable ? JetErrorCode.CorruptCatalog : JetErrorCode.MalformedValue,
+                "A live table row cannot be read completely.",
+                new JetErrorInfo { TableName = tableName, PageNumber = pageNumber, Reason = reason });
+        }
+
+        readAccounting.RecordOmission();
+        DiagnosticTrace.Warning($"An unreadable row on page {pageNumber}, slot {bound.RowIndex}, was omitted; the table result is incomplete.");
+        return false;
+    }
 
     /// <summary>Resolves a hybrid row's bound OLE slices before yielding its target.</summary>
     /// <typeparam name="T">The mapped row type.</typeparam>
@@ -109,7 +145,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
 
             using PageLease lease = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
 
-            await foreach (string[] row in this.EnumerateRowsAsync(lease, decodePlan, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in this.EnumerateRowsAsync(lease, pageNumber, decodePlan, cancellationToken).ConfigureAwait(false))
             {
                 yield return row;
             }
@@ -209,6 +245,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
                 {
                     if (resolved is not { } target)
                     {
+                        _ = this.AdmitRow(readable: false, pageNumber, entry, requireReadable: requireReadableMatch);
                         continue;
                     }
 
@@ -217,6 +254,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
 
                 if (rb.RowSize < format.RowFields.NumCols)
                 {
+                    _ = this.AdmitRow(readable: false, pageNumber, entry, requireReadable: requireReadableMatch);
                     continue;
                 }
 
@@ -258,25 +296,31 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
                 {
                     yield return row;
                 }
+                else
+                {
+                    _ = this.AdmitRow(readable: false, pageNumber, entry, requireReadable: requireReadableMatch);
+                }
             }
         }
     }
 
     /// <summary>Yields decoded rows from a single data page.</summary>
     /// <param name="lease">The data page lease, held throughout enumeration.</param>
+    /// <param name="pageNumber">The physical page holding the live slots.</param>
     /// <param name="td">The table definition containing column information.</param>
     /// <param name="cancellationToken">A cancellation token to observe while waiting for rows.</param>
-    internal IAsyncEnumerable<string[]> EnumerateRowsAsync(PageLease lease, TableDef td, CancellationToken cancellationToken)
+    internal IAsyncEnumerable<string[]> EnumerateRowsAsync(PageLease lease, long pageNumber, TableDef td, CancellationToken cancellationToken)
     {
         var decodePlan = RowDecodePlan.CreateStrings(td, strictParsing);
-        return this.EnumerateRowsAsync(lease, decodePlan, cancellationToken);
+        return this.EnumerateRowsAsync(lease, pageNumber, decodePlan, cancellationToken);
     }
 
     /// <summary>Yields the rows of a single data page decoded as strings.</summary>
     /// <param name="lease">The data page lease, held throughout enumeration.</param>
+    /// <param name="pageNumber">The physical page holding the live slots.</param>
     /// <param name="decodePlan">The string decode plan.</param>
     /// <param name="cancellationToken">A cancellation token to observe while waiting for rows.</param>
-    internal async IAsyncEnumerable<string[]> EnumerateRowsAsync(PageLease lease, RowDecodePlan decodePlan, [EnumeratorCancellation] CancellationToken cancellationToken)
+    internal async IAsyncEnumerable<string[]> EnumerateRowsAsync(PageLease lease, long pageNumber, RowDecodePlan decodePlan, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         byte[] page = lease.Buffer;
         foreach (RowBound entry in lease.GetRowDirectory(format))
@@ -292,6 +336,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
             {
                 if (resolved is not { } target)
                 {
+                    _ = this.AdmitRow(readable: false, pageNumber, entry);
                     continue;
                 }
 
@@ -300,6 +345,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
 
             if (rb.RowSize < format.RowFields.NumCols)
             {
+                _ = this.AdmitRow(readable: false, pageNumber, entry);
                 continue;
             }
 
@@ -307,6 +353,10 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
             if (values != null)
             {
                 yield return values;
+            }
+            else
+            {
+                _ = this.AdmitRow(readable: false, pageNumber, entry);
             }
         }
     }

@@ -4,6 +4,52 @@
 namespace JetDatabaseWriter.Verification {
 
   internal static class RecoveryKernel {
+    public static uint RowReadDisposition(bool readable, bool strict)
+    {
+      if (readable) {
+        return 0U;
+      } else if (strict) {
+        return 1U;
+      } else {
+        return 2U;
+      }
+    }
+    public static ulong NextOmittedRowCount(ulong count) {
+      if ((count) < (9223372036854775807UL)) {
+        return (count) + (1UL);
+      } else {
+        return 9223372036854775807UL;
+      }
+    }
+    public static uint RowNullMaskStart(uint rowSize, uint headerWidth, uint columns)
+    {
+      if (((((((headerWidth) == (1U)) || ((headerWidth) == (2U))) && (((0U) < (columns)) && ((columns) <= (65535U)))) && ((rowSize) <= (2147483647U))) && ((((columns) + (7U)) / (8U)) <= (rowSize))) && ((headerWidth) <= ((rowSize) - (((columns) + (7U)) / (8U))))) {
+        return (rowSize) - (((columns) + (7U)) / (8U));
+      } else {
+        return 0U;
+      }
+    }
+    public static uint RowVariableCountStart(uint nullStart, uint headerWidth, uint countWidth)
+    {
+      if ((((((headerWidth) == (1U)) || ((headerWidth) == (2U))) && (((countWidth) == (1U)) || ((countWidth) == (2U)))) && ((countWidth) <= (nullStart))) && ((headerWidth) <= ((nullStart) - (countWidth)))) {
+        return (nullStart) - (countWidth);
+      } else {
+        return 0U;
+      }
+    }
+    public static uint RowVariableDataEnd(uint countStart, uint headerWidth, uint variables, uint entryWidth, uint jumps, uint endWidth)
+    {
+      if ((((!(((headerWidth) == (1U)) || ((headerWidth) == (2U)))) || (!(((entryWidth) == (1U)) || ((entryWidth) == (2U))))) || (!(((endWidth) == (1U)) || ((endWidth) == (2U))))) || ((variables) > (65535U))) {
+        return 0U;
+      } else {
+        ulong _0_metadata = (((ulong)(jumps)) + (((ulong)(variables)) * ((ulong)(entryWidth)))) + ((ulong)(endWidth));
+        if (((_0_metadata) <= ((ulong)(countStart))) && (((ulong)(headerWidth)) <= (((ulong)(countStart)) - (_0_metadata)))) {
+          return (uint)(((ulong)(countStart)) - (_0_metadata));
+        } else {
+          return 0U;
+        }
+      }
+    }
     public static bool IsOutwardSeekBound(uint op, int comparison)
     {
       if ((op) == (0U)) {

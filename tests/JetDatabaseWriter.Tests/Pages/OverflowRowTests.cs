@@ -9,6 +9,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -160,34 +162,31 @@ public sealed class OverflowRowTests(GeneratedDatabaseCache seeds) : IClassFixtu
     }
 
     /// <summary>
-    /// An overflow pointer that cannot be resolved (past the end of the file, into
-    /// another table, too short, or a cycle) skips the row, as an undecodable row
-    /// is skipped, and nothing throws.
+    /// An overflow pointer that cannot be resolved refuses strict reads before an incomplete result succeeds.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="layout">How the pointer is corrupt.</param>
     /// <param name="readMode">The table-scan read-ahead mode.</param>
     [Theory]
     [MemberData(nameof(CorruptLayouts))]
-    public async Task CorruptOverflowPointer_SkipsTheRow(DatabaseFormat format, OverflowRowLayout layout, PageReadOptimizationMode readMode)
+    public async Task CorruptOverflowPointer_RefusesStrictReads(DatabaseFormat format, OverflowRowLayout layout, PageReadOptimizationMode readMode)
     {
         byte[] bytes = await this.CopySeedAsync(format);
         List<int> originalIds = await this.ReadIdsAsync(bytes, readMode);
 
         _ = await SyntheticOverflowRows.MoveRowAsync(bytes, TableName, layout, this.ct);
 
-        List<int> ids = await this.ReadIdsAsync(bytes, readMode);
-        Assert.Equal(originalIds.Skip(1), ids);
-        Assert.All(await this.CountThroughReadApisAsync(bytes, readMode), pair => Assert.True(pair.Value == ids.Count, $"{pair.Key} returned {pair.Value} rows; expected {ids.Count}."));
+        await this.AssertStrictPublicReadsAsync(bytes, readMode);
+        Assert.True(originalIds.Count > 0);
     }
 
-    /// <summary>Diagnostics expose a skipped overflow row only when enabled.</summary>
+    /// <summary>Explicitly lenient reads report omissions even when verbose diagnostics are disabled.</summary>
     /// <param name="format">The database format.</param>
     /// <param name="layout">The corrupt pointer layout.</param>
     /// <param name="readMode">The scan read mode.</param>
     [Theory]
     [MemberData(nameof(CorruptLayouts))]
-    public async Task CorruptOverflowPointer_TracesOnlyWithDiagnostics(DatabaseFormat format, OverflowRowLayout layout, PageReadOptimizationMode readMode)
+    public async Task CorruptOverflowPointer_LenientReadsAlwaysReportOmissions(DatabaseFormat format, OverflowRowLayout layout, PageReadOptimizationMode readMode)
     {
         byte[] bytes = await this.CopySeedAsync(format);
         int originalCount = (await this.ReadIdsAsync(bytes, readMode)).Count;
@@ -204,12 +203,14 @@ public sealed class OverflowRowTests(GeneratedDatabaseCache seeds) : IClassFixtu
                 await using var stream = new MemoryStream(bytes, writable: false);
                 await using AccessReader reader = await AccessReader.OpenAsync(
                     stream,
-                    new AccessReaderOptions { UseLockFile = false, DiagnosticsEnabled = enabled, PageReadOptimizationMode = readMode },
+                    new AccessReaderOptions { UseLockFile = false, StrictParsing = false, DiagnosticsEnabled = enabled, PageReadOptimizationMode = readMode },
                     leaveOpen: true,
                     this.ct);
                 using DataTable rows = await reader.ReadTableAsync(TableName, cancellationToken: this.ct);
                 Assert.Equal(originalCount - 1, rows.Rows.Count);
+                Assert.Equal(1, reader.OmittedRowCount);
                 listener.Flush();
+                Assert.Contains("table result is incomplete", messages.ToString(), StringComparison.Ordinal);
                 Assert.Equal(enabled, messages.ToString().Contains("Skipped corrupt overflow row", StringComparison.Ordinal));
                 if (enabled)
                 {
@@ -222,6 +223,87 @@ public sealed class OverflowRowTests(GeneratedDatabaseCache seeds) : IClassFixtu
         {
             traceScope.Dispose();
         }
+    }
+
+    /// <summary>Malformed trailers refuse every complete public row read and do not cache partial counts.</summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task MalformedRowLayout_RefusesAllPublicReads(DatabaseFormat format)
+    {
+        byte[] bytes = await this.CopySeedAsync(format);
+        SyntheticOverflowRow moved = await SyntheticOverflowRows.MoveRowAsync(bytes, TableName, OverflowRowLayout.CrossPage, this.ct);
+        int pageSize = format == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
+        int offset = checked((int)(moved.DataPage * pageSize)) + moved.DataStart;
+        bytes[offset] = 0;
+        if (format != DatabaseFormat.Jet3Mdb)
+        {
+            bytes[offset + 1] = 0;
+        }
+
+        await this.AssertStrictPublicReadsAsync(bytes, PageReadOptimizationMode.Disabled);
+        await using AccessReader reader = await this.OpenAsync(bytes, PageReadOptimizationMode.Disabled);
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.GetRealRowCountAsync(TableName, this.ct));
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.GetRealRowCountAsync(TableName, this.ct));
+        Assert.Equal(0, reader.OmittedRowCount);
+
+        await using AccessReader lenient = await AccessReader.OpenAsync(
+            new MemoryStream(bytes, writable: false),
+            new AccessReaderOptions { UseLockFile = false, StrictParsing = false },
+            leaveOpen: false,
+            this.ct);
+        Assert.NotEmpty(await lenient.Rows<ItemRow>(TableName, cancellationToken: this.ct).ToListAsync(this.ct));
+        Assert.Equal(1, lenient.OmittedRowCount);
+    }
+
+    /// <summary>An exact indexed read refuses the referenced corrupt row instead of returning no matches.</summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CorruptOverflowPointer_RefusesIndexedReads(DatabaseFormat format)
+    {
+        byte[] bytes = await seeds.CopyToArrayAsync(
+            $"{format}/{TableName}/{MinimumRows}/primary-key",
+            () => SyntheticOverflowRows.CreateTableAsync(format, TableName, MinimumRows, primaryKey: true, CancellationToken.None).AsTask());
+        _ = await SyntheticOverflowRows.MoveRowAsync(bytes, TableName, OverflowRowLayout.PointerPastEndOfFile, this.ct);
+        await using AccessReader reader = await this.OpenAsync(bytes, PageReadOptimizationMode.Disabled);
+        IndexMetadata primary = (await reader.ListIndexesAsync(TableName, this.ct)).Single(index => index.Kind == IndexKind.PrimaryKey);
+        JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+            await reader.SeekRowsAsync(TableName, primary.Name, [1], this.ct).ToListAsync(this.ct));
+        Assert.Equal(JetErrorCode.MalformedValue, failure.ErrorCode);
+        Assert.NotNull(failure.ErrorInfo.PageNumber);
+    }
+
+    /// <summary>Lenient omissions in authorized linked sources remain observable on the root reader.</summary>
+    [Fact]
+    public async Task LenientLinkedReads_AggregateOmissionsOnRootReader()
+    {
+        byte[] source = await this.CopySeedAsync(DatabaseFormat.Jet4Mdb);
+        int originalCount = (await this.ReadIdsAsync(source, PageReadOptimizationMode.Disabled)).Count;
+        _ = await SyntheticOverflowRows.MoveRowAsync(source, TableName, OverflowRowLayout.PointerPastEndOfFile, this.ct);
+        await using var host = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(host, DatabaseFormat.Jet4Mdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, this.ct))
+        {
+            await writer.CreateLinkedTableAsync("LinkedItems", "source.mdb", TableName, this.ct);
+        }
+
+        host.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            host,
+            new AccessReaderOptions
+            {
+                UseLockFile = false,
+                StrictParsing = false,
+                LinkedSourceResolver = (_, _, _) => new ValueTask<Stream>(new MemoryStream(source, writable: false)),
+            },
+            leaveOpen: true,
+            this.ct);
+        Assert.Equal(originalCount - 1, (await reader.Rows("LinkedItems", cancellationToken: this.ct).ToListAsync(this.ct)).Count);
+        Assert.Equal(1, reader.OmittedRowCount);
     }
 
     private static TheoryData<DatabaseFormat, OverflowRowLayout, PageReadOptimizationMode> Combine(params OverflowRowLayout[] layouts)
@@ -237,6 +319,63 @@ public sealed class OverflowRowTests(GeneratedDatabaseCache seeds) : IClassFixtu
         }
 
         return data;
+    }
+
+    private async ValueTask AssertStrictPublicReadsAsync(byte[] bytes, PageReadOptimizationMode readMode)
+    {
+        for (int surface = 0; surface < 9; surface++)
+        {
+            await using AccessReader reader = await this.OpenAsync(bytes, readMode);
+            JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(() => this.ReadSurfaceAsync(reader, surface));
+            Assert.Equal(JetErrorCode.MalformedValue, failure.ErrorCode);
+            Assert.NotNull(failure.ErrorInfo.PageNumber);
+            Assert.Contains("slot", failure.ErrorInfo.Reason, StringComparison.Ordinal);
+            Assert.Equal(0, reader.OmittedRowCount);
+        }
+    }
+
+    private async Task ReadSurfaceAsync(AccessReader reader, int surface)
+    {
+        switch (surface)
+        {
+            case 0:
+                _ = await reader.GetRealRowCountAsync(TableName, this.ct);
+                break;
+            case 1:
+                _ = await reader.Rows(TableName, cancellationToken: this.ct).ToListAsync(this.ct);
+                break;
+            case 2:
+                _ = await reader.RowsAsStrings(TableName, cancellationToken: this.ct).ToListAsync(this.ct);
+                break;
+            case 3:
+                using (DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: this.ct))
+                {
+                    _ = table.Rows.Count;
+                }
+
+                break;
+            case 4:
+                using (DataTable table = await reader.ReadTableAsStringsAsync(TableName, cancellationToken: this.ct))
+                {
+                    _ = table.Rows.Count;
+                }
+
+                break;
+            case 5:
+                _ = await reader.ReadTableAsync<ItemRow>(TableName, cancellationToken: this.ct);
+                break;
+            case 6:
+                _ = await reader.Query<ItemRow>(TableName).CountAsync(this.ct);
+                break;
+            case 7:
+                _ = await reader.Rows<ItemRow>(TableName, cancellationToken: this.ct).ToListAsync(this.ct);
+                break;
+            case 8:
+                _ = await reader.Services.Tables.RowsWithDecoder<ItemRow>(TableName, forceProjection: true, progress: null, this.ct).ToListAsync(this.ct);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(surface));
+        }
     }
 
     private ValueTask<byte[]> CopySeedAsync(DatabaseFormat format) =>
@@ -279,4 +418,16 @@ public sealed class OverflowRowTests(GeneratedDatabaseCache seeds) : IClassFixtu
 
         return counts;
     }
+
+    /// <summary>A scalar mapped row that exercises the direct decoder.</summary>
+#pragma warning disable CA1812 // Rows<T> and its generated decoder construct this POCO.
+    private sealed class ItemRow
+    {
+        /// <summary>Gets or sets the row identity.</summary>
+        public int Id { get; set; }
+
+        /// <summary>Gets or sets the row name.</summary>
+        public string? Name { get; set; }
+    }
+#pragma warning restore CA1812
 }

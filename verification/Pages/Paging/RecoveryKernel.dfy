@@ -29,6 +29,69 @@ module RecoveryKernel {
   import Replacement = ReplacementProtocol
   import Admission = JournalAdmissionModel
 
+  // Zero is a readable row, one is a strict refusal and two is an explicitly
+  // lenient omission. Layout/overflow acquisition remains the caller's effect.
+  function RowReadDisposition(readable: bool, strict: bool): U32
+    ensures RowReadDisposition(readable, strict) == 0 <==> readable
+    ensures RowReadDisposition(readable, strict) == 1 <==> !readable && strict
+    ensures RowReadDisposition(readable, strict) == 2 <==> !readable && !strict
+  {
+    if readable then 0 else if strict then 1 else 2
+  }
+
+  lemma StrictRowReadsNeverOmit(readable: bool)
+    ensures RowReadDisposition(readable, true) != 2
+  { }
+
+  function NextOmittedRowCount(count: U64): U64
+    ensures NextOmittedRowCount(count) <= 9223372036854775807
+    ensures count < 9223372036854775807 ==>
+      NextOmittedRowCount(count) == count + 1
+    ensures count >= 9223372036854775807 ==>
+      NextOmittedRowCount(count) == 9223372036854775807
+  {
+    if count < 9223372036854775807 then count + 1 else 9223372036854775807
+  }
+
+  function RowNullMaskStart(rowSize: U32, headerWidth: U32, columns: U32): U32
+    ensures RowNullMaskStart(rowSize, headerWidth, columns) != 0 ==>
+      headerWidth <= RowNullMaskStart(rowSize, headerWidth, columns) < rowSize
+    ensures RowNullMaskStart(rowSize, headerWidth, columns) != 0 ==>
+      (RowNullMaskStart(rowSize, headerWidth, columns) as int) + ((columns as int) + 7) / 8 == (rowSize as int)
+  {
+    if (headerWidth == 1 || headerWidth == 2) && 0 < columns <= 65535 &&
+       rowSize <= 2147483647 && (columns + 7) / 8 <= rowSize &&
+       headerWidth <= rowSize - (columns + 7) / 8
+    then rowSize - (columns + 7) / 8 else 0
+  }
+
+  function RowVariableCountStart(nullStart: U32, headerWidth: U32, countWidth: U32): U32
+    ensures RowVariableCountStart(nullStart, headerWidth, countWidth) != 0 ==>
+      headerWidth <= RowVariableCountStart(nullStart, headerWidth, countWidth) < nullStart
+    ensures RowVariableCountStart(nullStart, headerWidth, countWidth) != 0 ==>
+      (RowVariableCountStart(nullStart, headerWidth, countWidth) as int) + (countWidth as int) == (nullStart as int)
+  {
+    if (headerWidth == 1 || headerWidth == 2) && (countWidth == 1 || countWidth == 2) &&
+       countWidth <= nullStart && headerWidth <= nullStart - countWidth
+    then nullStart - countWidth else 0
+  }
+
+  function RowVariableDataEnd(countStart: U32, headerWidth: U32,
+      variables: U32, entryWidth: U32, jumps: U32, endWidth: U32): U32
+    ensures RowVariableDataEnd(countStart, headerWidth, variables, entryWidth, jumps, endWidth) != 0 ==>
+      headerWidth <= RowVariableDataEnd(countStart, headerWidth, variables, entryWidth, jumps, endWidth) < countStart
+    ensures RowVariableDataEnd(countStart, headerWidth, variables, entryWidth, jumps, endWidth) != 0 ==>
+      (RowVariableDataEnd(countStart, headerWidth, variables, entryWidth, jumps, endWidth) as int) +
+        (jumps as int) + (variables as int) * (entryWidth as int) + (endWidth as int) == (countStart as int)
+  {
+    if !(headerWidth == 1 || headerWidth == 2) || !(entryWidth == 1 || entryWidth == 2) ||
+       !(endWidth == 1 || endWidth == 2) || variables > 65535 then 0
+    else
+      var metadata: U64 := (jumps as U64) + (variables as U64) * (entryWidth as U64) + (endWidth as U64);
+      if metadata <= (countStart as U64) && (headerWidth as U64) <= (countStart as U64) - metadata
+      then ((countStart as U64) - metadata) as U32 else 0
+  }
+
   // The adapter compares the encoded bound with the original operand in the
   // predicate's lossless comparison domain. Keep equality exact; a range may
   // broaden only away from matching keys, retaining the original predicate.

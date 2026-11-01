@@ -45,8 +45,8 @@ using JetDatabaseWriter.Transactions;
 /// Keep the source unchanged throughout the reader lifetime; its caches do not refresh.
 /// File sharing excludes cooperating writers, subject to platform enforcement. Custom streams
 /// require caller-managed isolation. See <see cref="AccessReaderOptions.StrictParsing"/>
-/// for malformed-value behavior; unreadable row layouts and unresolved overflow rows can
-/// still be omitted by table scans.
+/// for malformed-value behavior. Strict reads refuse unreadable row layouts and unresolved
+/// overflow rows; explicitly lenient reads report omissions through <see cref="OmittedRowCount"/>.
 /// </para>
 /// </remarks>
 public sealed class AccessReader : AccessBase, IAccessReader
@@ -129,6 +129,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     /// <summary>Gets diagnostic output populated after each call to <see cref="ListTablesAsync"/>.</summary>
     public string LastDiagnostics => this.Services.Catalog.FormatDiagnostics(this.DiagnosticsEnabled);
+
+    /// <summary>
+    /// Gets the cumulative number of unreadable rows omitted by explicitly lenient reads on this reader and its authorized linked sources.
+    /// Repeated scans count repeated omissions. The count saturates at <see cref="long.MaxValue"/>;
+    /// strict reads throw instead of omitting rows. Verbose diagnostics need not be enabled.
+    /// </summary>
+    public long OmittedRowCount => this.Services.Rows.OmittedRowCount;
 
     /// <summary>Gets the reader services for internal inspection.</summary>
     internal ReaderServices Services { get; }

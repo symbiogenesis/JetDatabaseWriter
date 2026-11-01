@@ -113,6 +113,9 @@ public sealed class AccessReaderOptions : AccessOptions
     /// Type-specific decoding coverage remains incomplete; this option does not make every
     /// malformed database readable. Underlying I/O failures and resource-budget refusals
     /// propagate in both modes. POCO assignment-conversion failures remain separate errors.
+    /// Unreadable row layouts and unresolved overflow rows throw in strict mode. Explicitly
+    /// lenient reads omit those rows, emit a warning and increment <see cref="AccessReader.OmittedRowCount"/>
+    /// regardless of <see cref="DiagnosticsEnabled"/>.
     /// </summary>
     public bool StrictParsing { get; init; } = true;
 

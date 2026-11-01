@@ -17,6 +17,7 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
+using Kernel = JetDatabaseWriter.Verification.RecoveryKernel;
 
 internal sealed class RowDecodePlan
 {
@@ -149,7 +150,7 @@ internal sealed class RowDecodePlan
         out RowLayout layout)
     {
         layout = default;
-        if (rowSize < rowFields.NumCols)
+        if (rowSize < rowFields.NumCols || !BinaryBuffer.IsRange(page.Length, rowStart, rowSize))
         {
             return false;
         }
@@ -160,9 +161,8 @@ internal sealed class RowDecodePlan
             return false;
         }
 
-        int nullMaskSz = JetFormat.GetNullMaskSizeBytes(numCols);
-        int nullMaskPos = rowSize - nullMaskSz;
-        if (nullMaskPos < rowFields.NumCols)
+        int nullMaskPos = (int)Kernel.RowNullMaskStart((uint)rowSize, (uint)rowFields.NumCols, (uint)numCols);
+        if (nullMaskPos == 0)
         {
             return false;
         }
@@ -173,20 +173,21 @@ internal sealed class RowDecodePlan
             return true;
         }
 
-        int varLenPos = nullMaskPos - rowFields.VarLen;
-        if (varLenPos < rowFields.NumCols)
+        int varLenPos = (int)Kernel.RowVariableCountStart((uint)nullMaskPos, (uint)rowFields.NumCols, (uint)rowFields.VarLen);
+        if (varLenPos == 0)
         {
             return false;
         }
 
         int varLen = rowFields.ReadVarLen(page, rowStart + varLenPos);
         int jumpEntries = rowFields.HasJumpTable ? Jet3JumpTable.EntryCount(rowSize) : 0;
-        int varTableStart = varLenPos - jumpEntries - (varLen * rowFields.VarEntry);
-        int eodPos = varTableStart - rowFields.Eod;
-        if (eodPos < rowFields.NumCols)
+        int eodPos = (int)Kernel.RowVariableDataEnd((uint)varLenPos, (uint)rowFields.NumCols, (uint)varLen, (uint)rowFields.VarEntry, (uint)jumpEntries, (uint)rowFields.Eod);
+        if (eodPos == 0)
         {
             return false;
         }
+
+        int varTableStart = eodPos + rowFields.Eod;
 
         // Every jump entry lies between the EOD byte and var_len, inside the row.
         int usableJumps = Jet3JumpTable.UsableEntryCount(jumpEntries, eodPos);

@@ -17,6 +17,12 @@ Every critical-behavior ID in the [scope inventory](verification-scope.md) maps 
 | A5 resources/ownership | Borrowed bytes stay stable until release; locator/pool/destination ownership and admitted aggregate work/storage bounds hold. CLR overhead, shared pools and caller resources need separate scope. Logical snapshot/allocation effects do not prove C# bookkeeping. |
 | A6 compilation/runtime | Reviewed Dafny/Z3, projection including the three exact-signature controller inlining annotations, C# compiler and .NET JIT/AOT preserve generated semantics. The [trust policy](proof-trust-review.md) binds reviewed content; hashes attest freshness, not reviewer judgment, tool soundness or specification adequacy. |
 
+Row-read admission and trailer geometry execute through `RecoveryKernel` in
+scans, counts, POCO and index paths. `OverflowRowTests` and
+`RowReadAdmissionKernelTests` supply independent strict refusal, explicit lenient
+warning/accounting and native-width geometry controls. Linked omission accounting
+shares the root reader's counter. Row acquisition, C# call-site composition and
+physical map completeness retain their separate parser/ownership obligations.
 ## Creation and journals
 
 `PageDigestKernel` adds executable digest-slot admission and failure-atomic byte
