@@ -25,7 +25,7 @@ Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from yo
 | Support | Feature | Description |
 |:---:|---|---|
 | ✅ | **Pure&nbsp;managed&nbsp;.NET** | Uses .NET APIs; no OleDB, ODBC, ACE/Jet driver, library P/Invoke, or native helper binaries |
-| Partial | **JET/ACE&nbsp;formats** | Jet3, Jet4 and ACE `.mdb` / `.accdb` files; feature and generation coverage is incomplete. Pre-Jet3 formats are not supported. See the [validation matrix](docs/design/writer-disk-format-validation-matrix.md). |
+| ✅ | **JET3/JET4&nbsp;&&nbsp;ACE&nbsp;formats** | Read, write and create Jet3/Jet4 `.mdb` and ACE `.accdb` databases. Pre-Jet3 formats are unsupported. Feature-specific limits apply; see [limitations](#limitations) and the [validation matrix](docs/design/writer-disk-format-validation-matrix.md). |
 | ✅ | **Read&nbsp;&&nbsp;write** | Create databases and tables; insert/update/delete rows; add/drop/rename columns |
 | ✅ | **Typed&nbsp;values** | `int`, `DateTime`, `decimal`, `Guid`, MEMO, OLE, Hyperlink — not just strings |
 | ✅ | **POCO&nbsp;+&nbsp;LINQ** | `Rows<T>("...", o => …)` auto-infers an index; `FromIndex<T>(...)` to override; async LINQ (`Where`/`Take`/`FirstOrDefaultAsync`/…) over `IAsyncEnumerable<T>` |
