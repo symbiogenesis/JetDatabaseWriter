@@ -12,9 +12,9 @@ namespace JetDatabaseWriter.Verification {
     {
       return (((((((format) == (0U)) && ((pageSize) == (2048U))) && ((physicalSize) == (39U))) && ((logicalSize) == (20U))) || ((((((format) == (1U)) || ((format) == (2U))) && ((pageSize) == (4096U))) && ((physicalSize) == (52U))) && ((logicalSize) == (28U)))) && (completeSlots)) && (ordinaryKeys);
     }
-    public static bool AdmitRelationshipKey(byte columnType, uint keyCount, bool @ascending, bool isFixed, bool calculated, byte flags)
+    public static bool AdmitRelationshipKey(uint format, byte columnType, uint keyCount, bool @ascending, bool isFixed, bool calculated, byte flags)
     {
-      return (((((((columnType) == ((byte)(4))) && ((keyCount) == (1U))) && (@ascending)) && (isFixed)) && (!(calculated))) && (((byte)((flags) % ((byte)(128)))) < ((byte)(16)))) && (((byte)((flags) % ((byte)(8)))) < ((byte)(4)));
+      return ((((((((((format) == (0U)) && ((flags) < ((byte)(128)))) || ((((format) == (1U)) || ((format) == (2U))) && (((byte)(128)) <= (flags)))) && ((columnType) == ((byte)(4)))) && ((keyCount) == (1U))) && (@ascending)) && (isFixed)) && (!(calculated))) && (((byte)((flags) % ((byte)(128)))) < ((byte)(16)))) && (((byte)((flags) % ((byte)(8)))) < ((byte)(4)));
     }
     public static bool ValidateIndexPageSet(long root, long[] tree, long[] mapped)
     {

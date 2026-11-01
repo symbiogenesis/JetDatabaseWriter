@@ -265,7 +265,7 @@ internal sealed class IndexMaintainer(
                 return false;
             }
 
-            long firstDp = (uint)Ri32(td, slot.FirstDpOffset);
+            long firstDp = Ru32(td, slot.FirstDpOffset);
             if (firstDp <= 0 || firstDp >= totalPages)
             {
                 return false;
@@ -890,7 +890,7 @@ internal sealed class IndexMaintainer(
     {
         foreach ((int indexNumber, RealIdxEntry index) in catalog.RealIdxByNum)
         {
-            long root = (uint)Ri32(preamble.Buffer, index.FirstDpOffset);
+            long root = Ru32(preamble.Buffer, index.FirstDpOffset);
             var pending = new Stack<long>();
             var seen = new HashSet<long>();
             pending.Push(root);
@@ -1063,7 +1063,7 @@ internal sealed class IndexMaintainer(
         long[][] groups = CreateEmptyPageGroups(numRealIdx);
         foreach ((int realIdxNum, RealIdxEntry entry) in realIdxByNum)
         {
-            long rootPage = (uint)Ri32(tdefBuffer, entry.FirstDpOffset);
+            long rootPage = Ru32(tdefBuffer, entry.FirstDpOffset);
             if (realIdxNum < 0 || realIdxNum >= numRealIdx || rootPage == 0
                 || (Ri32(tdefBuffer, entry.FirstDpOffset - 4) != 0 && mappedGroups[realIdxNum].Length == 0))
             {
@@ -1143,7 +1143,7 @@ internal sealed class IndexMaintainer(
                 return;
             }
 
-            long rootPage = (uint)Ri32(current.Buffer, slot.FirstDpOffset);
+            long rootPage = Ru32(current.Buffer, slot.FirstDpOffset);
             if (rootPage == 0)
             {
                 continue;
@@ -1268,7 +1268,7 @@ internal sealed class IndexMaintainer(
                 return null;
             }
 
-            long rootPage = (uint)Ri32(tdefBuffer, entry.FirstDpOffset);
+            long rootPage = Ru32(tdefBuffer, entry.FirstDpOffset);
             if (rootPage <= 0)
             {
                 continue;
@@ -1413,7 +1413,7 @@ internal sealed class IndexMaintainer(
                 long[] mapped = members.ToArray();
                 Array.Sort(tree);
                 Array.Sort(mapped);
-                if (!IndexMutationKernel.ValidateIndexPageSet((uint)Ri32(definition, entry.FirstDpOffset), tree, mapped))
+                if (!IndexMutationKernel.ValidateIndexPageSet(Ru32(definition, entry.FirstDpOffset), tree, mapped))
                 {
                     return false;
                 }
@@ -2013,7 +2013,7 @@ internal sealed class IndexMaintainer(
                 ordinaryKeys &= idxLayout.TryReadRealIdxSlot(metadata.Buffer, realIdxDescStart, realIndex, out RealIdxSlot slot)
                     && IndexLayout.TryResolveKeyColumnInfos(entry.IndexKeyColumns, tableDef.Columns, columns, out List<KeyColumnInfo>? keys)
                     && keys.Count > 0
-                    && IndexMutationKernel.AdmitRelationshipKey((byte)keys[0].Col.Type, checked((uint)keys.Count), keys[0].Ascending, keys[0].Col.IsFixed, keys[0].Col.IsCalculated, slot.Flags);
+                    && IndexMutationKernel.AdmitRelationshipKey(checked((uint)format.Kind), (byte)keys[0].Col.Type, checked((uint)keys.Count), keys[0].Ascending, keys[0].Col.IsFixed, keys[0].Col.IsCalculated, slot.Flags);
             }
 
             if (!IndexMutationKernel.AdmitRelationshipIndexForm(checked((uint)format.Kind), checked((uint)format.PageSize), checked((uint)idxLayout.RealIdxPhysSize), checked((uint)idxLayout.LogicalEntrySize), slots.Count == numRealIdx, ordinaryKeys))
@@ -2061,7 +2061,7 @@ internal sealed class IndexMaintainer(
             }
 
             // Read the index root; require a single-leaf root.
-            long firstDp = (uint)Ri32(metadata.Buffer, rie.FirstDpOffset);
+            long firstDp = Ru32(metadata.Buffer, rie.FirstDpOffset);
             if (firstDp <= 0)
             {
                 this.LastIncrementalBail = $"C3 firstDp={firstDp}";
@@ -2535,7 +2535,7 @@ internal sealed class IndexMaintainer(
 
         foreach ((int ri, RealIdxEntry rie) in catalog.RealIdxByNum)
         {
-            long firstDp = (uint)Ri32(tdefBuf, rie.FirstDpOffset);
+            long firstDp = Ru32(tdefBuf, rie.FirstDpOffset);
             if (firstDp <= 0)
             {
                 this.LastIncrementalBail = $"S2 ri={ri} firstDp=0";
@@ -2594,6 +2594,11 @@ internal sealed class IndexMaintainer(
         long[][]? indexPageGroups = await this.TryCollectIncrementalIndexPageGroupsAsync(tdefPage, metadata.Buffer, layout, slots, numRealIdx, cancellationToken).ConfigureAwait(false);
         if (indexPageGroups is null)
         {
+            if (metadata.RequireExactRelationshipMaps)
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "An admitted relationship index tree cannot be traversed after incremental maintenance.", new JetErrorInfo { PageNumber = tdefPage });
+            }
+
             this.LastIncrementalBail = "C14 usage-map refresh failed";
             return false;
         }

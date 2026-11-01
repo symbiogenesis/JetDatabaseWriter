@@ -27,9 +27,10 @@ module IndexMutationKernel {
       completeSlots && ordinaryKeys
   }
 
-  function AdmitRelationshipKey(columnType: Byte, keyCount: U32, ascending: bool,
+  function AdmitRelationshipKey(format: U32, columnType: Byte, keyCount: U32, ascending: bool,
       isFixed: bool, calculated: bool, flags: Byte): bool {
-    columnType == 4 && keyCount == 1 && ascending && isFixed && !calculated &&
+    ((format == 0 && flags < 128) || ((format == 1 || format == 2) && 128 <= flags)) &&
+      columnType == 4 && keyCount == 1 && ascending && isFixed && !calculated &&
       flags % 128 < 16 && flags % 8 < 4
   }
 

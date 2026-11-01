@@ -267,7 +267,7 @@ internal static class IndexPageCodec
             return 0;
         }
 
-        return (uint)Ri32(page, layout.NextPageOffset);
+        return Ru32(page, layout.NextPageOffset);
     }
 
     /// <summary>
@@ -282,7 +282,7 @@ internal static class IndexPageCodec
             return 0;
         }
 
-        return (uint)Ri32(page, layout.TailPageOffset);
+        return Ru32(page, layout.TailPageOffset);
     }
 
     /// <summary>
@@ -297,7 +297,7 @@ internal static class IndexPageCodec
             return 0;
         }
 
-        return (uint)Ri32(page, layout.PrevPageOffset);
+        return Ru32(page, layout.PrevPageOffset);
     }
 
     /// <summary>
@@ -314,9 +314,9 @@ internal static class IndexPageCodec
             return (0, 0, 0);
         }
 
-        long previousPage = (uint)Ri32(page, layout.PrevPageOffset);
-        long nextPage = (uint)Ri32(page, layout.NextPageOffset);
-        long tailPage = (uint)Ri32(page, layout.TailPageOffset);
+        long previousPage = Ru32(page, layout.PrevPageOffset);
+        long nextPage = Ru32(page, layout.NextPageOffset);
+        long tailPage = Ru32(page, layout.TailPageOffset);
         return (previousPage, nextPage, tailPage);
     }
 
