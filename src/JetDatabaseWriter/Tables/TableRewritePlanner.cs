@@ -46,6 +46,7 @@ internal sealed class TableRewritePlanner(
     /// <param name="mapColumnName">The column identity projection.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="addedIndex">An index to add to the existing table, when requested.</param>
+    /// <param name="droppedIndexName">An existing independent index to remove, when requested.</param>
     /// <returns>The validated replacement and dependent metadata.</returns>
     /// <exception cref="JetOperationException">The projection removes the last column.</exception>
     /// <exception cref="JetLimitationException">The projection exceeds the column limit.</exception>
@@ -67,7 +68,8 @@ internal sealed class TableRewritePlanner(
         Func<object[], TableDef, object[]> projectRow,
         Func<string, string?> mapColumnName,
         CancellationToken cancellationToken,
-        IndexDefinition? addedIndex = null)
+        IndexDefinition? addedIndex = null,
+        string? droppedIndexName = null)
     {
         await catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
         ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -172,6 +174,12 @@ internal sealed class TableRewritePlanner(
         // renamed through mapColumnName, with its flags. FK indexes are
         // re-emitted below by the relationship manager.
         List<IndexDefinition> projectedIndexes = IndexHelpers.ProjectIndexes(existingIndexes, newDefs, mapColumnName);
+        if (droppedIndexName is not null)
+        {
+            ValidateDroppedIndex(tableName, droppedIndexName, existingIndexes, relationshipState, newDefs);
+            _ = projectedIndexes.RemoveAll(index => string.Equals(index.Name, droppedIndexName, StringComparison.OrdinalIgnoreCase));
+        }
+
         ReserveShortcutPrimaryKeyName(newDefs, projectedIndexes, existingIndexes, originalProperties);
         if (addedIndex is not null)
         {
@@ -202,7 +210,7 @@ internal sealed class TableRewritePlanner(
         }
 
         ColumnPropertyBlock persistedProperties =
-            PersistedPropertyProjector.ProjectForRewrite(originalProperties, existingDefs, newDefs, mapColumnName, format, droppedIndexNames, preserveNameMap: addedIndex is not null);
+            PersistedPropertyProjector.ProjectForRewrite(originalProperties, existingDefs, newDefs, mapColumnName, format, droppedIndexNames, preserveNameMap: addedIndex is not null || droppedIndexName is not null);
         byte[]? persistedLvProp = persistedProperties.ToBytes(format);
 
         // Project every row before creating the temp table, so a MEMO / OLE value
@@ -314,6 +322,59 @@ internal sealed class TableRewritePlanner(
             renamedComplex,
             autoNumberHighWater,
             complexHighWater);
+    }
+
+    /// <summary>Refuses deletion of an index required by a relationship or complex reference.</summary>
+    /// <param name="tableName">The existing table.</param>
+    /// <param name="indexName">The requested index.</param>
+    /// <param name="existingIndexes">Every original logical index.</param>
+    /// <param name="relationships">The original relationship descriptors.</param>
+    /// <param name="columns">The surviving column definitions.</param>
+    /// <exception cref="JetObjectNotFoundException">The requested logical index does not exist.</exception>
+    /// <exception cref="JetOperationException">The index has a dependent relationship or complex column.</exception>
+    private static void ValidateDroppedIndex(
+        string tableName,
+        string indexName,
+        IReadOnlyList<IndexMetadata> existingIndexes,
+        RelationshipRewriteState relationships,
+        IReadOnlyList<ColumnDefinition> columns)
+    {
+        IndexMetadata? target = null;
+        foreach (IndexMetadata index in existingIndexes)
+        {
+            if (string.Equals(index.Name, indexName, StringComparison.OrdinalIgnoreCase))
+            {
+                target = index;
+                break;
+            }
+        }
+
+        if (target is null)
+        {
+            throw new JetObjectNotFoundException(JetErrorCode.IndexNotFound, $"Index '{indexName}' was not found in table '{tableName}'.", nameof(indexName), errorInfo: new JetErrorInfo { TableName = tableName, IndexName = indexName });
+        }
+
+        bool requiredByRelationship = target.IsForeignKey || target.Kind == IndexKind.ForeignKey;
+        foreach (FkLogicalIndexSnapshot relationship in relationships.FkEntries)
+        {
+            requiredByRelationship |= relationship.RealIndexNumber == target.RealIndexNumber;
+        }
+
+        if (requiredByRelationship)
+        {
+            throw new JetOperationException(JetErrorCode.IndexInRelationship, $"Index '{indexName}' of table '{tableName}' is required by a relationship. Drop the relationship before dropping the index.", errorInfo: new JetErrorInfo { TableName = tableName, IndexName = indexName });
+        }
+
+        if (target.EnforcesUniqueness && target.IsRequired && target.Columns.Count == 1)
+        {
+            foreach (ColumnDefinition column in columns)
+            {
+                if ((column.IsAttachment || column.IsMultiValue) && string.Equals(column.Name, target.Columns[0].Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new JetOperationException(JetErrorCode.IndexRequiredByColumn, $"Index '{indexName}' of table '{tableName}' is required by complex column '{column.Name}'.", errorInfo: new JetErrorInfo { TableName = tableName, IndexName = indexName, ColumnName = column.Name });
+                }
+            }
+        }
     }
 
     /// <summary>Checks the new index name against every existing logical index, including relationship indexes.</summary>

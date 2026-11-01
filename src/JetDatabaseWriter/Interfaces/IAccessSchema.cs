@@ -116,6 +116,20 @@ public interface IAccessSchema : IAccessBase
     public ValueTask RenameIndexAsync(string tableName, string oldName, string newName, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Drops an ordinary index or an unreferenced primary key from an existing table.
+    /// The operation preserves all rows and surviving schema atomically. An index
+    /// required by a relationship or complex column cannot be dropped independently.
+    /// Dropping an index leaves the column's own Required property unchanged.
+    /// </summary>
+    /// <param name="tableName">The existing local table.</param>
+    /// <param name="indexName">The existing logical index name, matched ignoring case.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The asynchronous operation.</returns>
+    /// <exception cref="Exceptions.JetObjectNotFoundException">The table or index does not exist.</exception>
+    /// <exception cref="Exceptions.JetOperationException">The index is required by a relationship or complex column.</exception>
+    public ValueTask DropIndexAsync(string tableName, string indexName, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Asynchronously drops (deletes) the specified table and all of its data.
     /// An enforced relationship to another table blocks the drop. Self relationships
     /// and relationships without integrity enforcement are removed with the table.

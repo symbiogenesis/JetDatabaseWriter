@@ -96,6 +96,12 @@ public enum JetErrorCode
     /// <summary>Identifies DefaultNotAllowed.</summary>
     DefaultNotAllowed = 408,
 
+    /// <summary>An index is required by a foreign-key relationship.</summary>
+    IndexInRelationship = 409,
+
+    /// <summary>An index is required by a complex column.</summary>
+    IndexRequiredByColumn = 410,
+
     /// <summary>Identifies DatabaseInUse.</summary>
     DatabaseInUse = 501,
 

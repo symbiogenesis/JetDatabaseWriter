@@ -177,6 +177,13 @@ rules and be unique within the table, ignoring case. Conflicting orphan index
 property targets refuse the rename before mutation. Rename relationship indexes
 through `RenameRelationshipAsync`. Explicit rollback restores the original bytes.
 
+Use `DropIndexAsync("Contacts", "IX_ContactName")` to remove an ordinary index or
+an unreferenced primary key. A relationship or complex-column reference index
+must remain until its owning relationship or column is removed. Dropping an
+index leaves each column's own `Required` property unchanged. Index deletion
+uses the table rewrite path, preserving rows, other indexes and the column
+`NameMap`; explicit rollback restores the original database.
+
 ### Insert rows — generic POCO
 
 ```csharp

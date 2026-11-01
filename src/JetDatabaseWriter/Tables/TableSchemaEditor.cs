@@ -337,6 +337,18 @@ internal sealed class TableSchemaEditor(
         return this.RewriteTableAsync(tableName, static (columns, _) => columns, static (values, _) => values, static name => name, cancellationToken, index);
     }
 
+    /// <summary>Drops an independent logical index through the atomic table rewrite.</summary>
+    /// <param name="tableName">The existing table.</param>
+    /// <param name="indexName">The existing index name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal ValueTask DropIndexAsync(string tableName, string indexName, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNullOrEmpty(indexName, nameof(indexName));
+        pager.ThrowIfDisposedOrCancelled(cancellationToken);
+        return this.RewriteTableAsync(tableName, static (columns, _) => columns, static (values, _) => values, static name => name, cancellationToken, droppedIndexName: indexName);
+    }
+
     internal ValueTask AddColumnAsync(string tableName, ColumnDefinition column, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
@@ -756,6 +768,7 @@ internal sealed class TableSchemaEditor(
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="addedIndex">An index to build over the replacement rows, when requested.</param>
+    /// <param name="droppedIndexName">An existing independent logical index to remove, when requested.</param>
     /// <exception cref="JetOperationException">Thrown when the projection leaves no columns, or drops a relationship key column or a column another column's expression names.</exception>
     /// <exception cref="ArgumentException">Thrown, before anything is written, when a renamed column's new name would push an expression that names it past the expression limits.</exception>
     /// <exception cref="JetCorruptDataException">Thrown, before anything is written, when a row holds a MEMO or OLE value in a kept column whose stored data cannot be read.</exception>
@@ -767,9 +780,10 @@ internal sealed class TableSchemaEditor(
         Func<object[], TableDef, object[]> projectRow,
         Func<string, string?> mapColumnName,
         CancellationToken cancellationToken,
-        IndexDefinition? addedIndex = null)
+        IndexDefinition? addedIndex = null,
+        string? droppedIndexName = null)
     {
-        TableRewritePlan plan = await rewritePlanner.PrepareAsync(tableName, projectColumns, projectRow, mapColumnName, cancellationToken, addedIndex).ConfigureAwait(false);
+        TableRewritePlan plan = await rewritePlanner.PrepareAsync(tableName, projectColumns, projectRow, mapColumnName, cancellationToken, addedIndex, droppedIndexName).ConfigureAwait(false);
         string tempName = $"~tmp_{Guid.NewGuid():N}"[..18];
         await this.CreateTableAsync(tempName, plan.Columns, plan.Indexes, plan.Properties, cancellationToken).ConfigureAwait(false);
         await tableStorage.ApplyAsync(plan, tempName, cancellationToken).ConfigureAwait(false);
