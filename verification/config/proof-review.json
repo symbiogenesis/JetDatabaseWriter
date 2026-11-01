@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "productionInventorySha256": "a809bc0c17529f1c566344b6802d714559abd08d1194f867aa3fc5baaa2a6244",
-  "inventoryReview": "Reviewed the production source-name inventory and direct generated-kernel callers. RowEncoder now executes value-width admission; ReaderPageCache and IncludeLoader execute bounded reservations; TableSnapshotReader executes complete unique-key and bookmark admission. Existing recovery, descriptor, parsing, page/index/usage and digest boundaries retain their explicit adapter contracts. New tests and workflow helpers are conformance/tooling inputs rather than shipping proof code. The inventory hash establishes source-name freshness only.",
+  "inventoryReview": "Reviewed the production source-name inventory and direct generated-kernel callers. RowEncoder now executes value-width admission; ReaderPageCache and IncludeLoader execute bounded reservations; TableSnapshotReader executes complete unique-key and bookmark admission. Existing recovery, descriptor, parsing, page/index/usage and digest boundaries retain their explicit adapter contracts. New tests and workflow helpers are conformance/tooling inputs rather than shipping proof code. The inventory hash establishes source-name freshness only. IndexHelpers and IndexPageCodec execute the generated complete-entry comparator; IndexMaintainer executes conservative relationship form/reference/key and exact tree/map admission. Full C# tree composition remains outside the generated boundary. The shared physical-root collector now supplies immutable actual leaf headers to generated complete chain admission; staged sibling targets execute generated membership/owner/type/reciprocal checks.",
   "reviews": [
     {
       "boundary": "implementation",
-      "obligations": "Reviewed journal/replacement acquisition, byte authorization, replay selection, generation ownership, conditional markers, flush ordering, uncertain outcomes and cleanup against the existing mapping. Reviewed generated descriptor/range/row/page/index/usage/digest callers and their exact input/ownership contracts. Ordinary variable Text/Binary admission refuses complete oversized values before storage mutation; no clipping remains in those paths, and the pooled fixed workspace returns through finally. Complete unique nonnull scalar/composite equality admission retains prefix evaluation, native key eligibility, streaming duplicate-bookmark refusal and re-encoded live-row identity. Safe mutation scan fallbacks decode every visited row and retain matching snapshots; key-changing/calculated paths retain complete-set checks. Reader admission counts pending/live leases, coalesces per-page misses, balances cancellation/disposal and refuses capacity immediately. Include shares its mapped-entity budget across navigation paths before callbacks. Weak type retention relies on CLR ephemeron semantics. Prior native format, preservation and recovery contracts remain in the evidence map.",
-      "conformance": "Focused failing-first width regressions reproduced silent Text/Binary clipping across supported formats and write modes, then passed with boundary Unicode, exact byte/AutoNumber rollback and valid index lookup checks. Focused indexed-target, unmatched-corruption, snapshot-retention, coalescing/cancellation, Include-budget and collectible-type tests exercise the changed C# adapters. Pinned kernel verification/audit and generated freshness establish only their declared executable properties. The PageFrameOwnership aggregate theorem bounds retained plus ticket-covered frame identities under the stated ownership coverage contract. Strict Release build and focused results are development evidence; settled-main CI, native interoperability and specialized campaigns remain independent acceptance gates.",
-      "remainingAssumptions": "Specification adequacy, Dafny/Z3 soundness, generated projection, C# compilation, CLR/JIT/AOT and BCL implementations remain trusted. Native key/codec semantics, complete index membership and ownership, hashing/identity, actual read/write/partial-failure effects and full public operation composition remain explicit contracts. Count admission is verified; CAS, locks, coalesced ownership coverage, pool/array identity, ephemeron lifetime, decoded payload bytes and complete aggregate CLR memory are reviewed/tested implementation obligations. Text criteria do not yet establish a necessary native-collation seek; key-changing/calculated full-set operations, schema rewrites and native FK rebuild fallbacks remain separate work. Process kills and managed flush acknowledgements do not qualify physical namespace/device persistence. Exact native fixture/version/locale and physical storage coverage remain scoped by the validation matrix and storage contract. No whole-engine, complete parser, complete concurrency refinement or power-loss claim follows from this receipt.",
+      "obligations": "Reviewed journal/replacement acquisition, byte authorization, replay selection, generation ownership, conditional markers, flush ordering, uncertain outcomes and cleanup against the existing mapping. Reviewed generated descriptor/range/row/page/index/usage/digest callers and their exact input/ownership contracts. Ordinary variable Text/Binary admission refuses complete oversized values before storage mutation; no clipping remains in those paths, and the pooled fixed workspace returns through finally. Complete unique nonnull scalar/composite equality admission retains prefix evaluation, native key eligibility, streaming duplicate-bookmark refusal and re-encoded live-row identity. Safe mutation scan fallbacks decode every visited row and retain matching snapshots; key-changing/calculated paths retain complete-set checks. Reader admission counts pending/live leases, coalesces per-page misses, balances cancellation/disposal and refuses capacity immediately. Include shares its mapped-entity budget across navigation paths before callbacks. Weak type retention relies on CLR ephemeron semantics. Prior native format, preservation and recovery contracts remain in the evidence map. Reviewed complete encoded-key/page/row comparison through bulk sorting, survivor/addition splicing, mutation-only descent and maximum-entry ancestor propagation. Relationship incremental eligibility is restricted to local valid references, native layout/flags and ascending fixed noncalculated Int32 keys. Every physical slot has an exact reachable/map set and disjoint ownership before edits and at successful completion; post-edit acquisition failure throws for rollback rather than selecting bulk fallback. Unsigned native pointer reads preserve corrupt-high-bit refusal. Root publication during surgery is not claimed to satisfy a completed-statement map invariant. Reviewed shared root-child/tail acquisition, exact captured-header transport into generated leaf-chain validation and verified sorted membership lookup. Neighbor staging re-reads target headers and checks original reciprocal source, owner/type and membership in that physical tree before any append/link write, including catalog splits. The generated chain validator initializes scratch, rejects aliases, requires unique complete coverage and checks actual adjacency. Disjoint-inventory composition excludes another physical index under the explicit complete-root and inventory-separation premises.",
+      "conformance": "Focused failing-first width regressions reproduced silent Text/Binary clipping across supported formats and write modes, then passed with boundary Unicode, exact byte/AutoNumber rollback and valid index lookup checks. Focused indexed-target, unmatched-corruption, snapshot-retention, coalescing/cancellation, Include-budget and collectible-type tests exercise the changed C# adapters. Pinned kernel verification/audit and generated freshness establish only their declared executable properties. The PageFrameOwnership aggregate theorem bounds retained plus ticket-covered frame identities under the stated ownership coverage contract. Strict Release build and focused results are development evidence; settled-main CI, native interoperability and specialized campaigns remain independent acceptance gates. Native-authored Text(5) controls refuse oversized assignment with error 3163 and preserve valid unique-index seeks through compact. Jet3/Jet4 DAO3.6 controls establish this independently. Failing-first bulk/incremental duplicate-tree tests reproduced native bookmark disorder; complete-entry ordering permits native insert/update/delete/compact, including the preserved constant-DateTime mixed FK fixture. Relationship admission regressions cover post-edit unreadable trees, high-bit pointers and generation flags; random managed write modes retain exact map and row coverage. DAO120 width, duplicate and relationship controls are in the required hosted inventory. The calculated-source width test now requires refusal without persisted cache values. Native and managed results apply only to their named fixtures and engines. Failing-first surgical cases overwrote foreign leaf headers across all formats and owner variants; public FK statement cases silently succeeded on the same malformed pointers. Focused corrected cases require structured corruption refusal, unchanged foreign bytes and full-image restoration across Direct, AutoCommit and ExplicitCommit. Native-authored Jet3/Jet4 constant-date relationship trees still accept further native DML and compact under the stricter guard. Generated-chain conformance includes incomplete coverage, cycles, owner/type mismatches and scratch alias refusal.",
+      "remainingAssumptions": "Specification adequacy, Dafny/Z3 soundness, generated projection, C# compilation, CLR/JIT/AOT and BCL implementations remain trusted. Native key/codec semantics, complete index membership and ownership, hashing/identity, actual read/write/partial-failure effects and full public operation composition remain explicit contracts. Count admission is verified; CAS, locks, coalesced ownership coverage, pool/array identity, ephemeron lifetime, decoded payload bytes and complete aggregate CLR memory are reviewed/tested implementation obligations. Text criteria do not yet establish a necessary native-collation seek; key-changing/calculated full-set operations, schema rewrites and unsupported native FK rebuild fallbacks remain separate work. Process kills and managed flush acknowledgements do not qualify physical namespace/device persistence. Exact native fixture/version/locale and physical storage coverage remain scoped by the validation matrix and storage contract. No whole-engine, complete parser, complete concurrency refinement or power-loss claim follows from this receipt. Generated key/bookmark comparison laws do not verify C# sort algorithms, full tree separators/siblings, reciprocal relationship links or complete acquisition. Whole-tree ownership acquisition and O(n log n) sorting/membership remain, and duplicate append cases may rebuild. Scalar long-prefix comparison performance requires hosted paired measurements; correctness controls do not establish a timing improvement. Leaf-chain proof requires complete acquired physical membership and exact immutable header correspondence. It does not establish separator order, child-graph alias freedom, complete native layouts, C# publication effects or aggregate temporary-array byte budgets.",
       "evidence": [
         ".github/workflows/calculated-native-profiles.yml",
         "AGENTS.md",
@@ -225,15 +225,21 @@
         "tests/JetDatabaseWriter.Tests/Indexes/Collation/PublicTextCollationTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/Collation/TextCollationIndexMaintenanceTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/Collation/TextSortOrderFixtureTests.cs",
+        "tests/JetDatabaseWriter.Tests/Indexes/DuplicateBookmarkOrderingTests.cs",
+        "tests/JetDatabaseWriter.Tests/Indexes/ForeignKeyIncrementalEvidenceTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/IndexChildSelectionKernelTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/IndexCursorTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/IndexEntryBoundaryKernelTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/IndexEntryOrderingTests.cs",
+        "tests/JetDatabaseWriter.Tests/Indexes/IndexMaintenanceInTransactionTests.cs",
+        "tests/JetDatabaseWriter.Tests/Indexes/IndexMutationPhaseTests.cs",
+        "tests/JetDatabaseWriter.Tests/Indexes/IndexNeighborOwnershipTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/IndexPageEmissionKernelTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/IndexPlannerTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/IndexSeekFilterTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/IndexSeekRoundingTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/IntermediateIndexCycleTests.cs",
+        "tests/JetDatabaseWriter.Tests/Indexes/RelationshipIndexAdmissionTests.cs",
         "tests/JetDatabaseWriter.Tests/Indexes/SystemTableIndexMaintenanceTests.cs",
         "tests/JetDatabaseWriter.Tests/Infrastructure/BoundedCacheTests.cs",
         "tests/JetDatabaseWriter.Tests/Infrastructure/DiagnosticSafetyTests.cs",
@@ -291,10 +297,12 @@
         "tests/JetDatabaseWriter.Tests/Relationships/ForeignKeyEnforcementTests.cs",
         "tests/JetDatabaseWriter.Tests/Relationships/ForeignKeyPartialNullTests.cs",
         "tests/JetDatabaseWriter.Tests/Relationships/ForeignKeyTestDatabase.cs",
+        "tests/JetDatabaseWriter.Tests/Relationships/Jet3ForeignKeyIndexTests.cs",
         "tests/JetDatabaseWriter.Tests/Relationships/LinkedSourceCapabilityTests.cs",
         "tests/JetDatabaseWriter.Tests/RoundTrip/DaoCreateIndexTests.cs",
         "tests/JetDatabaseWriter.Tests/RoundTrip/DaoPropertyMutationTests.cs",
         "tests/JetDatabaseWriter.Tests/RoundTrip/PublicTextCollationDaoTests.cs",
+        "tests/JetDatabaseWriter.Tests/RoundTrip/VariableValueWidthDaoTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/AllowZeroLengthTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/CalculatedBinaryResultTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/CalculatedBooleanComparisonTests.cs",
@@ -323,6 +331,7 @@
         "tests/JetDatabaseWriter.Tests/Schema/CalculatedRegionalProfileTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/CalculatedSpaceFunctionTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/CalculatedStaleCacheTests.cs",
+        "tests/JetDatabaseWriter.Tests/Schema/CalculatedTextStorageProjectionTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/CalculatedUnambiguousDateTextTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/CatalogLongValuePreservationTests.cs",
         "tests/JetDatabaseWriter.Tests/Schema/CreateIndexTests.cs",
@@ -437,7 +446,7 @@
         },
         {
           "path": "docs/ci.md",
-          "sha256": "44905c84abc1dea703e90fd2da230bb70ce061749ad156a1fc7e9f947ca248ef"
+          "sha256": "40c109045ed937c028848d935b6f4b321a616596d182f54d6475f816882f8a94"
         },
         {
           "path": "docs/design/calculated-columns-format-notes.md",
@@ -465,15 +474,15 @@
         },
         {
           "path": "docs/design/formal-verification.md",
-          "sha256": "1c91e37b6ebd28495e214b32238ac1f483fbf190e1328f0335cce94d05f6d692"
+          "sha256": "9121e2846acfd68f9378b798316d46c0876e5310f7dc0c3a706cf3224d2966a2"
         },
         {
           "path": "docs/design/index-and-relationship-format-notes.md",
-          "sha256": "594c9b8a09eb87defd820002dd48345f60b220976651e2b9690c2160c5891b2e"
+          "sha256": "1bf1209847bb72f1ed857f05092571a225a462ed1af71e8ab263fafbcd73be4a"
         },
         {
           "path": "docs/design/library-structure.md",
-          "sha256": "7278591b3ff94839c405973b03cc60e4c62cd2541e91b98ce985f982c054af02"
+          "sha256": "d4d7f28167927534ba078104b786ca105d9c47e6343dc933ec3f19792462f041"
         },
         {
           "path": "docs/design/long-value-traversal.md",
@@ -505,7 +514,7 @@
         },
         {
           "path": "docs/design/verification-evidence-map.md",
-          "sha256": "d391a6fb3ee353a6265b8342661a614e0e3d52d521a610a0e7648eb2ad51466c"
+          "sha256": "974a47b8ccb0a5978736f8fd6242bdebef749a476d19a413b2ad782b56a7e7f0"
         },
         {
           "path": "docs/design/verification-scope.md",
@@ -513,7 +522,7 @@
         },
         {
           "path": "docs/design/writer-disk-format-validation-matrix.md",
-          "sha256": "35ced93940a9923a054b194df97f97b4fb7c758928ff72f45fee901f4548fb58"
+          "sha256": "bc15e4a67bb1e57acbebe1bb13d24ca70c1e03491360e3e628114ee14c7d1cb3"
         },
         {
           "path": "docs/design/writer-lifecycle.md",
@@ -549,7 +558,7 @@
         },
         {
           "path": "scripts/run-native-compatibility.ps1",
-          "sha256": "34a37c4a25fdf6639bc0c31eb06e774d5f33d40190de84c110d622df7fdfe80a"
+          "sha256": "728dc95c5108d72a84c21c0ad25c5621a41c574e18b8892f1e7210c43315c889"
         },
         {
           "path": "scripts/tests/calculated-native-profiles.tests.ps1",
@@ -657,7 +666,11 @@
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/Helpers/IndexHelpers.cs",
-          "sha256": "d998b6e2a4afdcbab0ad77598f5fee6695c5c1b8f46018f8def58fbceadf40d5"
+          "sha256": "586f7bfa7bd17a76a9db7f6d21adcb0b2865b6f62957bb51f012073ba95df194"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Indexes/IndexBTreeEditor.cs",
+          "sha256": "21b67438ec172bc08618900ff329f313bd99cbdca437b22574ca3951c1d18f77"
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexCursor.cs",
@@ -665,7 +678,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexEntrySplicer.cs",
-          "sha256": "16484e88038b3360a9524560c4f6ccc148ec5961153da47654e850ff27041aed"
+          "sha256": "1fceaf2932f6c50b968bf54b35bfc574eaae7870678355d85f8c50aec78535e1"
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexKeyEncoder.cs",
@@ -673,11 +686,11 @@
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexMaintainer.cs",
-          "sha256": "648938bf96768cb918153625d8b48332dc3d8e180adbd1b6bea4dafa45433ba9"
+          "sha256": "31a8a1851d0d538e98574a952396180cb45388bf96e8376cff9adc517c3cd49f"
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexPageCodec.cs",
-          "sha256": "7d3ac3ac306595d020f0106ec80cdf3d414e138c0bf2ceac602175aae990d4bc"
+          "sha256": "6555532edb0ae29d5c0c044bac7edbbcf2629480181e2f1be8ccab2323f5e1d9"
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexPageLayout.cs",
@@ -1261,7 +1274,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Verification/IndexMutationKernel.g.cs",
-          "sha256": "6882a2536bb14032115e6ceb7eedc013332728fde95a6e97cd5ab65ae6283b33"
+          "sha256": "545c53c24a1816d362e9785e0b327b16a495700d81fe24b74b9fc2148a7fcb06"
         },
         {
           "path": "src/JetDatabaseWriter/Verification/LongValueKernel.g.cs",
@@ -1428,6 +1441,14 @@
           "sha256": "3e9ff4476f04a6e99311fbfd5d475855682cfc09ffd319900e7dffc31e5e8ec1"
         },
         {
+          "path": "tests/JetDatabaseWriter.Tests/Indexes/DuplicateBookmarkOrderingTests.cs",
+          "sha256": "c53cd651ee47d1ed1882bfd9cc4ccfa5ead2672deed50f5172195e615004b427"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Indexes/ForeignKeyIncrementalEvidenceTests.cs",
+          "sha256": "5b89f2e2d44435d7994dfb18706debf852e4e8360dc1b54fe492b1cdb05bd376"
+        },
+        {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexChildSelectionKernelTests.cs",
           "sha256": "c51b2b4d5f05ac77ca4bc3b6e3e7c4d47efc74465df4966639241825bedc4700"
         },
@@ -1441,7 +1462,19 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexEntryOrderingTests.cs",
-          "sha256": "e234090a45104631fd3e20ac2133d61c141c907351fa30c0f8e71a1f8a8e6108"
+          "sha256": "05a9639b7439a30420b78d1d88a7bc1ec1cc109e767c44b1d68f8cf9e7b023db"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexMaintenanceInTransactionTests.cs",
+          "sha256": "0d5d32e86c8199a1a2e81060042bab932bd0e22c59a0b2d23e3e78497de48c55"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexMutationPhaseTests.cs",
+          "sha256": "cf49946189262c8481c222ef9fca452e6a6e0ed6f8bb1df688e6e8683aadf386"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexNeighborOwnershipTests.cs",
+          "sha256": "9bc8e93b09cb5a25128eb8c475502e50b7c7450c90869b1e6ecf8240106ac616"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexPageEmissionKernelTests.cs",
@@ -1462,6 +1495,10 @@
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IntermediateIndexCycleTests.cs",
           "sha256": "66fb5ee99224fee41660c1175f2a24b43d61db7c4113ede146c777c844cdd8bb"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Indexes/RelationshipIndexAdmissionTests.cs",
+          "sha256": "9c3f7356f303a1d01f6ed112962593cafa178d0a393213daadf7ac3b45b751de"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/SystemTableIndexMaintenanceTests.cs",
@@ -1692,6 +1729,10 @@
           "sha256": "222d89678af5eb5252802bfa8a828044bc1090e7122f6848d531226c922b1d7e"
         },
         {
+          "path": "tests/JetDatabaseWriter.Tests/Relationships/Jet3ForeignKeyIndexTests.cs",
+          "sha256": "f94f80b30fd72bef295df4c79d25c9ff43a127f5e9f1c544d7c74ee15fb3c252"
+        },
+        {
           "path": "tests/JetDatabaseWriter.Tests/Relationships/LinkedSourceCapabilityTests.cs",
           "sha256": "d6fbb2c2c0e7624c910ef71ad283cdfc62f5c78827d475ae3abc6ff9d05a6ba9"
         },
@@ -1706,6 +1747,10 @@
         {
           "path": "tests/JetDatabaseWriter.Tests/RoundTrip/PublicTextCollationDaoTests.cs",
           "sha256": "7280ac1c74e56b86db36257c03850f7e097dc09031a7f39bd77afc3b7aad927d"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/RoundTrip/VariableValueWidthDaoTests.cs",
+          "sha256": "4eab91c7baa8dce2971cef79c52a262ad3ddabbb8519f2c357fba13f0797229d"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Schema/AllowZeroLengthTests.cs",
@@ -1818,6 +1863,10 @@
         {
           "path": "tests/JetDatabaseWriter.Tests/Schema/CalculatedStaleCacheTests.cs",
           "sha256": "62b433b1fe12930ea3c696de94095f4712bce4da773bb5beb93d9babe589a926"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Schema/CalculatedTextStorageProjectionTests.cs",
+          "sha256": "4732c90e0064e5e0bd74f04a35997a0cd5b81b1c29d8861df592d6257a085ac7"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Schema/CalculatedUnambiguousDateTextTests.cs",
@@ -2073,7 +2122,7 @@
         },
         {
           "path": "verification/LongValues/LongValueTraversal.dfy",
-          "sha256": "fc8e4001923ac1b0fa28a5029ce0f0c6988239bbd51437d3817178b78d7e631f"
+          "sha256": "0378e091fad8e0218587b6fb5bca810ff0f324d0824d7fb415e43ba08b50ebc7"
         },
         {
           "path": "verification/Pages/Paging/PageDigestKernel.dfy",
@@ -2087,8 +2136,8 @@
     },
     {
       "boundary": "proof-trust",
-      "obligations": "Reviewed the exact normal-source proof manifest, dependency closure, pinned Dafny/Z3 distribution, native projection inventory, deterministic translation, audit policy, negative controls and generated freshness. Reviewed value-width, count-reservation, full-key/bookmark and aggregate frame-cardinality obligations for meaningful admitted/refused cases without new assumptions or unchecked contracts. Four analyzed CI producers supply two exact test assets to fifteen runtime/partition consumers and required native checks; aggregate and ancestor inventories retain every required job. Automatic specialized campaigns bind trusted successful same-repository main CI, immutable checkout and exact-run Boolean content receipts; malformed/missing evidence refuses selection. Tooling regressions cover producer/consumer omissions, stale or foreign evidence, skipped/failed lanes, runtime binding and artifact retention.",
-      "conformance": "Pinned complete-inventory verification, audit, false-theorem and assumption negative controls plus exact generated-source comparison are required for these changes. Focused matrix, ancestor-selection, workflow, specialized-selection, proof-review and proof-tool regressions exercise accepting and refusing controls with synthetic external processes and receipts. Source inspection confirms unchanged compiler projection and runtime dependencies. Local evidence does not replace the exact settled-main CI gate or its native and specialized results.",
+      "obligations": "Reviewed the exact normal-source proof manifest, dependency closure, pinned Dafny/Z3 distribution, native projection inventory, deterministic translation, audit policy, negative controls and generated freshness. Reviewed value-width, count-reservation, full-key/bookmark and aggregate frame-cardinality obligations for meaningful admitted/refused cases without new assumptions or unchecked contracts. Four analyzed CI producers supply two exact test assets to fifteen runtime/partition consumers and required native checks; aggregate and ancestor inventories retain every required job. Automatic specialized campaigns bind trusted successful same-repository main CI, immutable checkout and exact-run Boolean content receipts; malformed/missing evidence refuses selection. Tooling regressions cover producer/consumer omissions, stale or foreign evidence, skipped/failed lanes, runtime binding and artifact retention. Reviewed exact complete-entry identity/order/antisymmetry/transitivity and emitted-bookmark correspondence, meaningful relationship admission and exact page-set membership/refusal. The traversal resource assertion is isolated into a separate verification batch without changing execution, contracts or timeouts; independent seeds and the unchanged baseline demonstrate the residual-batch timeout and improved proof stability. Specialized fuzz receipts bind the validated triggering SHA to actual Git HEAD before process execution, with an explicit manual-only fallback; workflow guards accept supported exact-path ref suffixes while rejecting lookalikes. The runner and its SHA/trigger controls are fixed trust inputs and explicit formal-role paths. Reviewed total exact leaf-chain admission/refusal, initialized scratch and alias guards, binary membership, unique complete coverage and disjoint-index composition without assumptions or unchecked contracts. Reviewed ReplaceRow entry replacement snapshot and explicit source-frame/copied-prefix invariants. The alias guard and empty PrepareReclaim frame justify unchanged source bytes; ghost annotations erase without changing executable projection or contracts.",
+      "conformance": "Pinned complete-inventory verification, audit, false-theorem and assumption negative controls plus exact generated-source comparison are required for these changes. Focused matrix, ancestor-selection, workflow, specialized-selection, proof-review and proof-tool regressions exercise accepting and refusing controls with synthetic external processes and receipts. Source inspection confirms unchanged compiler projection and runtime dependencies. Local evidence does not replace the exact settled-main CI gate or its native and specialized results. Complete combined verification includes relationship admission and complete-entry comparison after deterministic regeneration. The resource-batch change has accepting seed controls and retains the original failing baseline diagnostics. Differing trigger-tip/validated SHA, wrong checkout, missing automatic SHA and supported manual suffix payload regressions distinguish accepting and refusing evidence. Per-file stale-review and formal-lane controls retain the provenance boundary. The expanded complete inventory reproduced a postcondition failure in the unchanged ReplaceRow proof. The snapshot/frame candidate verifies the complete inventory and audit. Focused three-seed runs pass both baseline and candidate, so those controls do not independently reproduce the full-context failure or establish a performance improvement. Full-context before/after inputs and diagnostics are retained.",
       "remainingAssumptions": "Verifier/solver soundness, specification adequacy, compiler projection and the C# compiler/runtime remain trusted. The proof and freshness gates verify their declared inputs and properties, not reviewer judgment or full handwritten C# refinement. Model cardinalities depend on the explicitly supplied ownership relation; actual synchronization/resource lifetime remains a C#/CLR obligation. Native format/collation/codec correctness, cryptographic primitives, physical I/O outcomes, OS/filesystem/device ordering and qualified platform durability require independent evidence. Hosted performance, native compatibility and complete source-to-model composition remain separate work; no proof or benchmark acceptance is inferred from a source hash or a pending workflow.",
       "evidence": [
         ".github/workflows/calculated-native-profiles.yml",
@@ -2245,11 +2294,11 @@
         },
         {
           "path": ".github/workflows/fuzz.yml",
-          "sha256": "815e81d5d706c427ade391e8c6736fe0aee09103f700107e897c6d32d960486e"
+          "sha256": "ad172aeaf24cc037e63709769b4ba86ba13d5173377dfbe6700813e27f68f745"
         },
         {
           "path": ".github/workflows/portability.yml",
-          "sha256": "bd2563bc94e8ef31f0fece5387e8f01537594dc3adf2e89861ad5f2683eed17f"
+          "sha256": "fe5564cc35d2b163aaf31f31dceab8692f6864d4422e65d7d237125a196e88b1"
         },
         {
           "path": "AGENTS.md",
@@ -2289,7 +2338,7 @@
         },
         {
           "path": "docs/ci.md",
-          "sha256": "44905c84abc1dea703e90fd2da230bb70ce061749ad156a1fc7e9f947ca248ef"
+          "sha256": "40c109045ed937c028848d935b6f4b321a616596d182f54d6475f816882f8a94"
         },
         {
           "path": "docs/design/calculated-columns-format-notes.md",
@@ -2313,15 +2362,15 @@
         },
         {
           "path": "docs/design/formal-verification.md",
-          "sha256": "1c91e37b6ebd28495e214b32238ac1f483fbf190e1328f0335cce94d05f6d692"
+          "sha256": "9121e2846acfd68f9378b798316d46c0876e5310f7dc0c3a706cf3224d2966a2"
         },
         {
           "path": "docs/design/index-and-relationship-format-notes.md",
-          "sha256": "594c9b8a09eb87defd820002dd48345f60b220976651e2b9690c2160c5891b2e"
+          "sha256": "1bf1209847bb72f1ed857f05092571a225a462ed1af71e8ab263fafbcd73be4a"
         },
         {
           "path": "docs/design/library-structure.md",
-          "sha256": "7278591b3ff94839c405973b03cc60e4c62cd2541e91b98ce985f982c054af02"
+          "sha256": "d4d7f28167927534ba078104b786ca105d9c47e6343dc933ec3f19792462f041"
         },
         {
           "path": "docs/design/long-value-traversal.md",
@@ -2345,7 +2394,7 @@
         },
         {
           "path": "docs/design/proof-survey.md",
-          "sha256": "dd90d4310aba37f166163534d5ce7c37a5e06ae2af11cb4ac6fac8719bb358ce"
+          "sha256": "ce1e710d41620b0470e2c1c0949d26a6ae742151ae338868b0e931927e20b454"
         },
         {
           "path": "docs/design/proof-trust-review.md",
@@ -2365,7 +2414,7 @@
         },
         {
           "path": "docs/design/verification-evidence-map.md",
-          "sha256": "d391a6fb3ee353a6265b8342661a614e0e3d52d521a610a0e7648eb2ad51466c"
+          "sha256": "974a47b8ccb0a5978736f8fd6242bdebef749a476d19a413b2ad782b56a7e7f0"
         },
         {
           "path": "docs/design/verification-scope.md",
@@ -2401,7 +2450,7 @@
         },
         {
           "path": "scripts/check-proof-review.ps1",
-          "sha256": "6b3b1fb3257ba8751ca6829bf82175921286794cce08ddd1a6ecdfe8df3b7ad9"
+          "sha256": "967deb2a3961893d7687381a1d98e66ed14148b97fa68d970a1f185daba53276"
         },
         {
           "path": "scripts/ci-matrix.ps1",
@@ -2416,12 +2465,16 @@
           "sha256": "8d9d56df2aeeca0f95ac47d0a17b11cefb4c26f7b9c2f8510721a461a48f0d47"
         },
         {
+          "path": "scripts/run-hosted-fuzz.ps1",
+          "sha256": "225cb505621122ad7d9b7594c60692dd14f69bdbfbc8b1a96e1da2b1adf2f87b"
+        },
+        {
           "path": "scripts/run-native-compatibility.ps1",
-          "sha256": "34a37c4a25fdf6639bc0c31eb06e774d5f33d40190de84c110d622df7fdfe80a"
+          "sha256": "728dc95c5108d72a84c21c0ad25c5621a41c574e18b8892f1e7210c43315c889"
         },
         {
           "path": "scripts/select-ci-lanes.ps1",
-          "sha256": "8a9cbae0a0b41852a5d5550164161315c1bf496dd1c2b44b18d05e567cece1da"
+          "sha256": "c47aba7b21833f3a2607002c6c73784bac5336312d1d116437e4c92518f81892"
         },
         {
           "path": "scripts/select-specialized-validation.ps1",
@@ -2453,7 +2506,7 @@
         },
         {
           "path": "scripts/tests/fuzz-workflow.tests.ps1",
-          "sha256": "4f7ab973dc1d00509bad56c1df65f7ee1b1bfb837710558d9102bff6f104a183"
+          "sha256": "a14b88a0b159aea31c932d2ffcd51b84943d003750c2b14d323380a73b47df0a"
         },
         {
           "path": "scripts/tests/native-access.tests.ps1",
@@ -2461,19 +2514,27 @@
         },
         {
           "path": "scripts/tests/portability-workflow.tests.ps1",
-          "sha256": "083b6a4f363d42a1371d847912e9df103800b2c0c46fd1ddeebfdea2bb766864"
+          "sha256": "4c64ab29f183303a221b5a085e940cb32e12c0744358b4835f0d8e410c78e10e"
         },
         {
           "path": "scripts/tests/proof-review.tests.ps1",
-          "sha256": "62561a15eb4cd69c99dd17237b6925d8dae2f62fcec2a8aff27aa76f8804d4a3"
+          "sha256": "1e83fd0b67677a85d493c36ddba19be0a3b09ad1d7e96e71ec41f221aa41f82d"
+        },
+        {
+          "path": "scripts/tests/run-hosted-fuzz.tests.ps1",
+          "sha256": "c9e2c8c47f697e7585457d4113f9fea56c465ef5d2667e212032cd43e0d05d30"
         },
         {
           "path": "scripts/tests/select-ci-lanes.tests.ps1",
-          "sha256": "023e688f7ef0aae7aba1ece427249ae1061c9945ec51c88ee1b5aff895f8cb5b"
+          "sha256": "280fd8d15ff1d7364895d61a48776a0282a9b1794f1e9338049b28c9e13ddc57"
         },
         {
           "path": "scripts/tests/select-specialized-validation.tests.ps1",
           "sha256": "425501ad4e352aa711dc37fdcd695d463d1331e1b87e497f21d9679e61936f00"
+        },
+        {
+          "path": "scripts/tests/specialized-workflow-trigger.tests.ps1",
+          "sha256": "cf80ff1da8f4205fe0705969054a6d1c1a02439fb196eb7a59acd7965d74a969"
         },
         {
           "path": "scripts/tests/test-results.tests.ps1",
@@ -2525,7 +2586,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexPageCodec.cs",
-          "sha256": "7d3ac3ac306595d020f0106ec80cdf3d414e138c0bf2ceac602175aae990d4bc"
+          "sha256": "6555532edb0ae29d5c0c044bac7edbbcf2629480181e2f1be8ccab2323f5e1d9"
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexPageLayout.cs",
@@ -2869,7 +2930,7 @@
         },
         {
           "path": "verification/Indexes/IndexMutationKernel.dfy",
-          "sha256": "4c086e0b963dcef244293fc3a8bf05254c5d10fa957b8ccd24f709e892c8bb4e"
+          "sha256": "db52123ee4c64a572a1c4ff72329512423ce1999baeb6b5ae16cbfede0c64962"
         },
         {
           "path": "verification/LongValues/LongValueKernel.dfy",
@@ -2877,11 +2938,11 @@
         },
         {
           "path": "verification/LongValues/LongValueTraversal.dfy",
-          "sha256": "fc8e4001923ac1b0fa28a5029ce0f0c6988239bbd51437d3817178b78d7e631f"
+          "sha256": "0378e091fad8e0218587b6fb5bca810ff0f324d0824d7fb415e43ba08b50ebc7"
         },
         {
           "path": "verification/Pages/DataPageKernel.dfy",
-          "sha256": "ad9f18545e38626ca6cb9fb83f6e0ad73e48c8ec0482d40ee29da0d00a2714cf"
+          "sha256": "7e25838437d330df8d8cc0c3f778db166223ad08c5d1c02518c7ab58ba38c96d"
         },
         {
           "path": "verification/Pages/Paging/PageDigestKernel.dfy",
@@ -2905,7 +2966,7 @@
         },
         {
           "path": "verification/README.md",
-          "sha256": "fb9b5ce2ae4075dc2e11eb65ec086b8a8c4427c4be78094c8f177579a348fb98"
+          "sha256": "36680104bf1cc5d4d785c6c449720c6347c3e6edbceab77a388f715a7167fa75"
         },
         {
           "path": "verification/Transactions/GenerationOwnership.dfy",

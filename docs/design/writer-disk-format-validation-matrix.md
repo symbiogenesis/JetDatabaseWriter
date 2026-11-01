@@ -27,6 +27,33 @@ correspondence for the retained layouts; the existing Microsoft-authored/native
 controls below remain the independent format evidence. Generated execution does
 not broaden interoperability or page-reclamation authority.
 
+## Width refusal and duplicate index maintenance
+
+[VariableValueWidthDaoTests](../../tests/JetDatabaseWriter.Tests/RoundTrip/VariableValueWidthDaoTests.cs)
+creates native Text(5) tables and unique indexes. Native oversized assignments
+refuse with DAO error 3163. Writer refusal preserves the complete image; valid
+inserts remain seekable before and after native compaction. Local x86 DAO3.6
+`dao360.dll` version `10.0.26100.5074` supplies independent Jet3 and Jet4 controls.
+The required hosted DAO120 inventory supplies separate Jet4 and ACE controls;
+their presence in the inventory is not itself a passing native result.
+
+[DuplicateBookmarkOrderingTests](../../tests/JetDatabaseWriter.Tests/Indexes/DuplicateBookmarkOrderingTests.cs)
+requires equal encoded keys to retain ascending page/row bookmarks through bulk
+and incremental edits. Native-authored duplicate DateTime trees accept further
+native insert/update/delete and CompactDatabase after writer mutation. The
+preserved mixed FK fixture has 1,536 original rows and 1,024 additions, repeated
+DateTime keys, Text indexes, key changes and cascades. Local DAO3.6 Jet3 and Jet4
+controls pass with complete tree/map audits; the DAO120 method is required on
+hosted Jet4/ACE lanes. This qualifies those layouts and operations, not every
+collation, relationship form or tree topology.
+
+[ForeignKeyIncrementalEvidenceTests](../../tests/JetDatabaseWriter.Tests/Indexes/ForeignKeyIncrementalEvidenceTests.cs)
+and [RelationshipIndexAdmissionTests](../../tests/JetDatabaseWriter.Tests/Indexes/RelationshipIndexAdmissionTests.cs)
+exercise the admitted ascending fixed Int32 subset, generation-specific flags,
+exact reachable/map membership and byte-preserving refusal. Unsupported forms
+retain rebuilds. Each mutation still acquires full tree/map inventories and sorts/checks membership; native
+acceptance does not establish bounded per-item I/O or a whole-tree proof. [IndexNeighborOwnershipTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexNeighborOwnershipTests.cs) forges sibling pointers into foreign-table and same-table other-index leaves; structured refusal preserves the complete image in every format and write mode. Generated chain admission checks exact supplied header membership and links, while root acquisition and full tree semantics remain explicit adapter obligations.
+
 ## Individual complex items and append-only Memo history
 
 `ComplexItemIdentityTests` compares native AutoNumber identities with direct reads,

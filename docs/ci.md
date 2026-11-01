@@ -22,7 +22,7 @@ artifacts exist. This preserves independent evidence for diagnosing golden-byte
 or runtime failures; the aggregate gate still requires every selected lane to
 succeed. Cancellation stops superseded native runs.
 
-Two strict Release test builds produce the native and standard runner artifacts. Fifteen runtime/partition jobs and the three native compatibility jobs download those exact outputs; they do not repeat compiler or analyzer work. Automatic fuzz and portability runs bind checkout and prerequisite validation to the successful CI run SHA, rather than the current main tip. The exact run selection receipt must select .NET validation; documentation/proof-only runs skip those expensive campaigns, while manual dispatch remains explicit.
+Two strict Release test builds produce the native and standard runner artifacts. Fifteen runtime/partition jobs and the three native compatibility jobs download those exact outputs; they do not repeat compiler or analyzer work. Automatic fuzz and portability runs bind checkout and prerequisite validation to the successful CI run SHA, rather than the current main tip. The exact run selection receipt must select .NET validation; documentation/proof-only runs skip those expensive campaigns, while manual dispatch remains explicit. Fuzz coverage receipts name the validated SHA and refuse a mismatched checkout; a workflow_run trigger's default-branch SHA cannot label that evidence. Guards accept the exact CI workflow path with its supported manual ref suffix and retain same-repository, main-branch and successful-event checks.
 
 ## Developer maintenance
 

@@ -243,7 +243,7 @@ src/JetDatabaseWriter/
 │   ├── IndexPlanner.cs                    (chooses the best index for a predicate; builds the seek criteria)
 │   ├── IndexPlan.cs                       (chosen index + seek criteria + matched key-column count)
 │   ├── IndexCatalogReader.cs              (reads index definitions from system tables)
-│   ├── IndexEntrySplicer.cs               (stable in-memory index entry add/remove splicing)
+│   ├── IndexEntrySplicer.cs               (native key/bookmark ordered entry add/remove splicing)
 │   ├── IndexMaintainer.cs                 (TDEF/catalog orchestration for index maintenance)
 │   ├── IndexLayout.cs                     (index page byte-offset structs)
 │   ├── UniqueIndexChecker.cs              (validates uniqueness constraints)

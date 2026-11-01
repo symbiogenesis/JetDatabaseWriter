@@ -352,13 +352,13 @@ earlier Powersort implementations. The
 links the implementation and experimental material.
 
 [IndexEntrySplicer](../../src/JetDatabaseWriter/Indexes/IndexEntrySplicer.cs)
-requires stable ties, including preexisting equal keys before additions and
-declaration order within each input. It also accepts unordered inputs and must
-leave them unchanged, as specified by
-[IndexEntryOrderingTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexEntryOrderingTests.cs).
+orders equal encoded keys by ascending data-page and row bookmark, as required
+by native indexes. It accepts unordered inputs and leaves them unchanged, as
+specified by [IndexEntryOrderingTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexEntryOrderingTests.cs).
 A merge may be used only after establishing sorted survivor and addition
-sequences. The existing stable full-sort behavior remains necessary for the
-general input contract.
+sequences under this complete order. Unordered runs require the complete-entry
+sort fallback. Stability by declaration order alone is insufficient for native
+duplicate-key trees.
 
 Prefer the smallest compatible representation change: reuse the private
 survivor buffer and merge already ordered additions. A full Powersort port is
@@ -371,7 +371,7 @@ deferred execution, multikey ordering, selector invocation and exceptions.
 The production splicer implements this ordered-run merge. It tests additions
 first so unordered additions can reach the fallback without scanning the
 survivor run. Backward merging reuses the private result buffer and preserves
-existing-before-added equal keys. The general stable sort remains available
+native bookmark order for equal keys. The general sort remains available
 for either unordered run. Focused tests cover long shared-prefix keys,
 duplicates, removals, input immutability and the result's allocation bound.
 
@@ -429,6 +429,14 @@ head cross-leaf distribution is multimodal. All six logs warn about short
 support neither causal attribution of the timing differences nor a public
 speedup or no-slowdown guarantee. Retain the measured allocation benefit;
 isolate source effects and runner variation before expanding the optimization.
+
+The complete key/bookmark comparator now executes generated scalar byte
+comparison. The historical measurements above do not qualify its timing.
+Repeat `*IndexMutationBenchmarks.Splice*`, `InsertSameLeaf` and `InsertCrossLeaf`
+against a successful main baseline using hosted paired default adaptive runs.
+The existing sort controls retain monotone bookmarks and remain comparable.
+Long shared-prefix and duplicate-heavy cases require explicit review before
+claiming preserved performance; correctness takes precedence over old timings.
 
 ### Exact visited-set behavior in generated production code
 
@@ -694,7 +702,7 @@ identified workload and computational model.
 | [Optimal-order randomized k-server](https://github.com/openai/math/blob/main/lean/docs/110.md), September manuscript and Lean scope | See [cache movement versus live storage](#cache-movement-versus-live-storage). The metric movement bound does not supply the current cache's aggregate memory or ownership contract. |
 | [Unbounded bin-packing configuration-LP gaps](https://github.com/openai/math/blob/main/lean/docs/118.md), September manuscript and Lean scope | Useful caution for I17: a configuration-LP estimate has no universal fixed additive guarantee in the theorem's general setting. It supplies no faster compact implementation or lower bound specialized to fixed-size Access pages. |
 | [Braided cuckoo hashing](https://arxiv.org/abs/2610.33229v1), October 23 preprint, stated to appear at SODA 2027 | Its near-full-table high-probability bounds assume a specified randomized model and operation sequence. The deterministic half-full visited set does not inherit them. No table replacement is selected. |
-| [Near-Optimal In-Place Sorting](https://arxiv.org/abs/2607.27040v2), July 29 preprint, revised October 11 | Its main algorithms are unstable. Direct use violates splice/query tie contracts. Ordinal decoration costs storage; consider only at independently justified unstable-sort sites. |
+| [Near-Optimal In-Place Sorting](https://arxiv.org/abs/2607.27040v2), July 29 preprint, revised October 11 | Its main algorithms are unstable. Direct use must respect complete key/bookmark index order and stable query ties. Ordinal decoration costs storage; consider only at independently justified unstable-sort sites. |
 | [Space-Efficient Lock-Free Linear-Probing Hash Table](https://arxiv.org/abs/2606.17315v1), June 15 preprint | Its expected amortized step analysis assumes no concurrent insertions of the same key and depends on point contention. Reader misses can target the same page; table linearizability also does not establish frame ownership, eviction or publication. No concurrency is needed in the per-traversal visited set. |
 | [Locality in Open Addressing Hash Tables](https://arxiv.org/abs/2607.16390), July 17 preprint | High-occupancy probe/locality tradeoffs caution against saving array space by raising load without measuring collision behavior. The current half-occupancy policy remains. |
 | [Consensus for Compressed Static Functions](https://arxiv.org/abs/2609.39557), September 30 preprint | Queries outside the fixed domain can return arbitrary values. This cannot replace exact ownership, corruption or visited-set membership. |
@@ -766,7 +774,7 @@ retains the complete production mappings and remaining obligations.
 
 | Relied-on behavior or model boundary | Relevant regression evidence |
 |---|---|
-| Stable ordered-run merge and general splice fallback | [IndexEntryOrderingTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexEntryOrderingTests.cs) checks existing-before-added ties, declaration order, input/key immutability and the result-storage allocation bound. `Splice_MatchesIndependentStableBucketsForEverySmallRunAndRemovalSubset` compares every three-existing/two-added run over four empty/prefix/high-byte keys against independent stable buckets, with every removal subset. [IndexPageCodecAndEntrySplicerTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexPageCodecAndEntrySplicerTests.cs) retains missing-removal refusal. |
+| Stable ordered-run merge and general splice fallback | [IndexEntryOrderingTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexEntryOrderingTests.cs) checks native bookmark ties, input/key immutability and the result-storage allocation bound. `Splice_MatchesIndependentNativeBucketsForEverySmallRunAndRemovalSubset` compares every three-existing/two-added run over four empty/prefix/high-byte keys against independent key/bookmark-ordered buckets, with every removal subset. [DuplicateBookmarkOrderingTests](../../tests/JetDatabaseWriter.Tests/Indexes/DuplicateBookmarkOrderingTests.cs) checks bulk/incremental duplicate trees and native edit/compact acceptance. [IndexPageCodecAndEntrySplicerTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexPageCodecAndEntrySplicerTests.cs) retains missing-removal refusal. |
 | Existing query ordering contract | [QueryPipelineParityTests](../../tests/JetDatabaseWriter.Tests/Queries/QueryPipelineParityTests.cs) checks stable multikey ties, paging, live captures, deferred evaluation and selector failures across root/include/tail paths. This remains tested handwritten behavior. |
 | Generated numeric admission, relocation and conservative ownership | [IndexSeekRoundingTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexSeekRoundingTests.cs), [IndexSeekFilterTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexSeekFilterTests.cs) and [TypedMappingCoercionTests](../../tests/JetDatabaseWriter.Tests/Queries/TypedMappingCoercionTests.cs) compare outward rounding and signed-zero admission with independent native-key/full-scan oracles, retaining unsafe-bound refusal. [CompactRowRelocationMapTests](../../tests/JetDatabaseWriter.Tests/Maintenance/CompactRowRelocationMapTests.cs) checks native endpoints, exact identity/order, sparse independent dictionaries, logarithmic record reads, budgets and partial reads. [UsageMapOwnershipTests](../../tests/JetDatabaseWriter.Tests/Pages/UsageMapOwnershipTests.cs) and [UsageMapNonliveAliasTests](../../tests/JetDatabaseWriter.Tests/Pages/UsageMapNonliveAliasTests.cs) retain opaque-reference protection and source-preserving refusal. Full planner, rooted graph and effects refinement remain open. |
 | Exact visited membership, probing, rehash and count/growth orchestration (`LongValueKernel`) | [LongValueTraversalTests](../../tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueTraversalTests.cs) checks wrapped/full probes, duplicate-source rehash, native decision boundaries, null/empty initialization, count retention and duplicate/growth allocation boundaries. Independent multi-step controller traces compare membership and count through repeated growth with a `HashSet<uint>` oracle and the production wrapper. |
@@ -815,7 +823,7 @@ scope and native/platform evidence limits described above.
 | V8/S1 | Compose generated visited-set count/growth orchestration with actual allocation/adapter effects, acquisition and the containing parser's complete resource/ownership bounds, including collision probes, rehash overlap and cancellation latency. Production executes generated verified behavior or a checked refinement. |
 | I5/V6/V10 | Use transaction and concurrency refinement to cover auxiliary-state restoration, generation authority, actual CAS/cache-lock steps and producer/lease compensation. Include state outside page transactions explicitly; abstract ownership alone does not verify C# interleavings. |
 | V12 | Review the pinned verifier's dependency diagnostics against independent examples. Consider optional ProofPulse only for a concrete attribution gap and demonstrate exact-pin compatibility. Preserve ordinary verification and negative controls; coverage alone cannot promote a guarantee. |
-| I2/V9/I13 | Stable splice behavior and verified native incremental edits before proactive splitting. Compose exact tree/leaf-chain correspondence and local split/merge/deletion contracts; retain fallbacks, ordering, ownership, byte-capacity and DAO checks. |
+| I2/V9/I13 | Native key/bookmark splice order and verified incremental edits before proactive splitting. Compose exact tree/leaf-chain correspondence and local split/merge/deletion contracts; retain fallbacks, ordering, ownership, byte-capacity and DAO checks. |
 | I17/V9 | Establish complete roots and incoming/potential references, then prove injective relocation preserves rooted object identity, edges and sharing before reclamation. Collector graph proofs do not discover unknown native references or establish crash-safe publication. |
 | I7/S1/I17 | Evidence-led metadata representations with peak aggregate accounting, including pinned/evicted images, in-flight loads, live leases, suspended traversals, pool retention and growth overlap; compare immutable disk-ledger and simple bitmap/range baselines before dynamic compression. |
 | I9 | Instantiate rounding bounds and prove no false negatives under native key/CLR numeric semantics, strict/inclusive endpoints and preserved predicate evaluation. Flocq supplies mathematical ingredients, not a refinement of the seek planner. |
