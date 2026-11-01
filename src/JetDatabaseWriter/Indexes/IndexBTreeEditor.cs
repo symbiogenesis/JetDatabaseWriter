@@ -5,12 +5,15 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Verification;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Plans and applies in-place JET index B-tree mutations for <see cref="IndexMaintainer"/>.
@@ -21,6 +24,16 @@ using JetDatabaseWriter.Schema;
 /// <param name="pageAllocator">The page allocator.</param>
 internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter tdefWriter, PageAllocator pageAllocator)
 {
+    /// <summary>Acquires physical tree pages and validates their leaf sibling topology before mutation.</summary>
+    /// <param name="layout">The index page layout.</param>
+    /// <param name="tdefPage">The owning definition.</param>
+    /// <param name="rootPage">The physical index root.</param>
+    /// <param name="cancellationToken">Cancels acquisition.</param>
+    /// <returns>The acquired tree pages, or null when its child graph cannot be read.</returns>
+    /// <exception cref="JetCorruptDataException">A sibling is outside this physical tree or its leaf chain is inconsistent.</exception>
+    internal async ValueTask<long[]?> TryCollectIndexTreePagesAsync(IndexPageLayout layout, long tdefPage, long rootPage, CancellationToken cancellationToken)
+        => (await this.ReadIndexInventoryAsync(layout, tdefPage, rootPage, cancellationToken).ConfigureAwait(false))?.Pages;
+
     internal async ValueTask<bool> TryRebuildCatalogIndexTreeAsync(
         IndexPageLayout layout,
         long tdefPage,
@@ -590,6 +603,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// <param name="removeEntries">The encoded removals.</param>
     /// <param name="cancellationToken">Cancels before publication and between writes.</param>
     /// <returns>Whether maintenance completed and whether it installed a new root.</returns>
+    /// <exception cref="JetCorruptDataException">The physical tree or its leaf sibling links cannot authorize the mutation.</exception>
     internal async ValueTask<(bool Handled, bool RootChanged)> TrySurgicalMultiLevelMaintainAsync(
         IndexPageLayout layout,
         long tdefPage,
@@ -604,6 +618,8 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             return (true, false);
         }
 
+        IndexTreeInventory inventory = await this.ReadIndexInventoryAsync(layout, tdefPage, firstDp, cancellationToken).ConfigureAwait(false)
+            ?? throw CorruptNeighbor(firstDp, "The mutation's physical index tree cannot be acquired.");
         IndexEntry firstEntry = addEntries.Count > 0 ? addEntries[0] : removeEntries[0];
         var path = new List<DescentStep>();
         long leafPage = await this.DescendCapturingAsync(layout, firstDp, firstEntry, path, cancellationToken).ConfigureAwait(false);
@@ -646,20 +662,20 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 return (false, false);
             }
 
-            plan = await this.PrepareSingleLeafPlanAsync(layout, tdefPage, leafPage, path, prepared, cancellationToken).ConfigureAwait(false);
+            plan = await this.PrepareSingleLeafPlanAsync(layout, tdefPage, leafPage, path, prepared, inventory, cancellationToken).ConfigureAwait(false);
             if (plan is null)
             {
                 var group = new LeafGroup(leafPage, path, addEntries, removePtrs);
 
                 // Parent overflow or an empty leaf needs the general ancestor planner,
                 // but its leaf bytes and splice have already been read and validated.
-                plan = await this.PrepareCrossLeafPlanAsync(layout, tdefPage, new() { [leafPage] = group }, new() { [leafPage] = prepared }, cancellationToken).ConfigureAwait(false);
+                plan = await this.PrepareCrossLeafPlanAsync(layout, tdefPage, new() { [leafPage] = group }, new() { [leafPage] = prepared }, inventory, cancellationToken).ConfigureAwait(false);
             }
         }
         else
         {
             Dictionary<long, LeafGroup>? groups = await this.GroupChangesByTargetLeafAsync(layout, firstDp, addEntries, removeEntries, new LeafGroup(leafPage, path), cancellationToken).ConfigureAwait(false);
-            plan = groups is null ? null : await this.PrepareCrossLeafPlanAsync(layout, tdefPage, groups, null, cancellationToken).ConfigureAwait(false);
+            plan = groups is null ? null : await this.PrepareCrossLeafPlanAsync(layout, tdefPage, groups, null, inventory, cancellationToken).ConfigureAwait(false);
         }
 
         if (plan is null)
@@ -684,7 +700,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         return spliced is null ? null : new LeafSplicePlan(spliced, IndexPageCodec.ReadPrevPage(layout, leaf), IndexPageCodec.ReadNextPage(layout, leaf), IndexPageCodec.ReadTailPage(layout, leaf), IndexPageCodec.ReadPrefixLength(layout, leaf), existing[^1]);
     }
 
-    private async ValueTask<IndexMutationPlan?> PrepareSingleLeafPlanAsync(IndexPageLayout layout, long tdefPage, long leafPage, List<DescentStep> path, LeafSplicePlan splice, CancellationToken cancellationToken)
+    private async ValueTask<IndexMutationPlan?> PrepareSingleLeafPlanAsync(IndexPageLayout layout, long tdefPage, long leafPage, List<DescentStep> path, LeafSplicePlan splice, IndexTreeInventory inventory, CancellationToken cancellationToken)
     {
         List<IndexEntry> spliced = splice.Spliced;
         if (spliced.Count == 0)
@@ -733,7 +749,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             return null;
         }
 
-        List<(long PageNum, byte[] Bytes)> neighbors = await this.StageNeighborWritesAsync(layout, splice.Next > 0 ? new Dictionary<long, long> { [splice.Next] = pageNumbers[^1] } : [], [], cancellationToken).ConfigureAwait(false);
+        List<(long PageNum, byte[] Bytes)> neighbors = await this.StageNeighborWritesAsync(layout, tdefPage, inventory, splice.Next > 0 ? new Dictionary<long, long> { [splice.Next] = pageNumbers[^1] } : [], [], cancellationToken).ConfigureAwait(false);
         ancestorWrites.Insert(0, (leafPage, bytes[0]));
         return new(firstFreshPage, new ArraySegment<byte[]>(bytes, 1, bytes.Length - 1), ancestorWrites, neighbors, null);
     }
@@ -1032,12 +1048,14 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// <param name="tdefPage">The owner table definition.</param>
     /// <param name="groups">Changes grouped by target leaf.</param>
     /// <param name="preparedPlans">Previously read and spliced leaves, or null.</param>
+    /// <param name="inventory">Acquired physical-tree membership and original sibling links.</param>
     /// <param name="cancellationToken">Cancels planning before any publication.</param>
     private async ValueTask<IndexMutationPlan?> PrepareCrossLeafPlanAsync(
         IndexPageLayout layout,
         long tdefPage,
         Dictionary<long, LeafGroup> groups,
         Dictionary<long, LeafSplicePlan>? preparedPlans,
+        IndexTreeInventory inventory,
         CancellationToken cancellationToken)
     {
         // ── Phase B: per-leaf splice + classify outcome ──────────────
@@ -1286,7 +1304,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             return null;
         }
 
-        List<(long PageNum, byte[] Bytes)> neighborWrites = await this.StageNeighborWritesAsync(layout, leafNextPointerPatches, leafPrevPointerPatches, cancellationToken).ConfigureAwait(false);
+        List<(long PageNum, byte[] Bytes)> neighborWrites = await this.StageNeighborWritesAsync(layout, tdefPage, inventory, leafNextPointerPatches, leafPrevPointerPatches, cancellationToken).ConfigureAwait(false);
         foreach ((long page, _) in neighborWrites)
         {
             if (existingPageRewrites.ContainsKey(page))
@@ -1717,6 +1735,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// <param name="composite">The composite for this phase.</param>
     /// <param name="newRowLoc">The newRowLoc for this phase.</param>
     /// <param name="cancellationToken">The cancellationToken for this phase.</param>
+    /// <exception cref="JetCorruptDataException">The physical catalog tree or its leaf sibling links cannot authorize the mutation.</exception>
     internal async ValueTask<bool> TryInsertCatalogEntryAsync(
         IndexPageLayout layout,
         long tdefPage,
@@ -1726,6 +1745,9 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         RowLocation newRowLoc,
         CancellationToken cancellationToken)
     {
+        IndexTreeInventory inventory = await this.ReadIndexInventoryAsync(layout, tdefPage, firstDp, cancellationToken).ConfigureAwait(false)
+            ?? throw CorruptNeighbor(firstDp, "The catalog mutation's physical index tree cannot be acquired.");
+
         // Descend by binary-searching child summaries. First try
         // without tail overshoot so we capture a clean path for
         // ancestor updates (needed when the leaf splits). Fall back
@@ -1881,8 +1903,9 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 byte[]? nextLeafBytes = null;
                 if (leafNext > 0)
                 {
-                    nextLeafBytes = await pager.ReadPageCopyAsync(leafNext, cancellationToken).ConfigureAwait(false);
-                    IndexPageCodec.WritePrevPage(layout, nextLeafBytes, plan.PageNumbers[splitCount - 1]);
+                    List<(long PageNum, byte[] Bytes)> neighbors = await this.StageNeighborWritesAsync(
+                        layout, tdefPage, inventory, new() { [leafNext] = plan.PageNumbers[splitCount - 1] }, [], cancellationToken).ConfigureAwait(false);
+                    nextLeafBytes = neighbors[0].Bytes;
                 }
 
                 await this.CommitCatalogSplitAsync(targetLeafPage, leafNext, plan, nextLeafBytes, ancestorWrites, runs, cancellationToken).ConfigureAwait(false);
@@ -1957,13 +1980,141 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         byte[][] Pages,
         List<(long PageNum, byte[] Bytes)>? AncestorWrites);
 
-    /// <summary>Stages every fallible sibling read before appending or linking pages.</summary>
+    private static JetCorruptDataException CorruptNeighbor(long page, string message)
+        => new(JetErrorCode.CorruptIndex, message, new JetErrorInfo { PageNumber = page });
+
+    private static void ValidateLeafChain(long owner, long pageCount, IndexTreeInventory inventory, CancellationToken cancellationToken)
+    {
+        int count = inventory.LeafPages.Length;
+        long[] chain = new long[count];
+        long[] previous = new long[count];
+        long[] next = new long[count];
+        long[] owners = new long[count];
+        byte[] kinds = new byte[count];
+        byte[] scratch = new byte[count];
+        long first = count == 0 ? 0 : inventory.LeafPages[0];
+        foreach ((long page, LeafLinks links) in inventory.Leaves)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (links.Prev == 0)
+            {
+                first = page;
+                break;
+            }
+        }
+
+        // This bounded transport supplies actual captured headers in candidate
+        // chain order. Only the generated validator can admit their membership,
+        // uniqueness, owner, reciprocal adjacency and complete coverage.
+        long current = first;
+        for (int index = 0; index < count && inventory.Leaves.TryGetValue(current, out LeafLinks links); index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            chain[index] = current;
+            previous[index] = links.Prev;
+            next[index] = links.Next;
+            owners[index] = links.Owner;
+            kinds[index] = links.Kind;
+            current = links.Next;
+        }
+
+        if (!IndexMutationKernel.ValidateLeafChain(inventory.LeafPages, chain, previous, next, owners, kinds, owner, pageCount, scratch))
+        {
+            throw CorruptNeighbor(first, "Index leaves must form one complete reciprocal chain within their physical tree.");
+        }
+    }
+
+    private static bool IsLeafMember(IndexTreeInventory inventory, long page)
+        => IndexMutationKernel.FindLeafIndex(inventory.LeafPages, page) < inventory.LeafPages.Length;
+
+    private async ValueTask<IndexTreeInventory?> ReadIndexInventoryAsync(IndexPageLayout layout, long tdefPage, long rootPage, CancellationToken cancellationToken)
+    {
+        long pageCount = pager.PageCount;
+        var pages = new List<long>();
+        var seen = new HashSet<long>();
+        var stack = new Stack<long>();
+        var leaves = new Dictionary<long, LeafLinks>();
+        stack.Push(rootPage);
+        while (stack.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            long pageNumber = stack.Pop();
+            if (pageNumber <= 2 || pageNumber >= pageCount)
+            {
+                return null;
+            }
+
+            if (!seen.Add(pageNumber))
+            {
+                continue;
+            }
+
+            byte[] page = await pager.ReadPageCopyAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            long owner = Ru32(page, 4);
+            if (owner != tdefPage)
+            {
+                return null;
+            }
+
+            pages.Add(pageNumber);
+            if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
+            {
+                leaves.Add(pageNumber, new(owner, page[0], IndexPageCodec.ReadPrevPage(layout, page), IndexPageCodec.ReadNextPage(layout, page)));
+                continue;
+            }
+
+            if (page[0] != Constants.IndexLeafPage.PageTypeIntermediate
+                || !IndexPageCodec.TryDecodeIntermediateEntries(layout, page, format.PageSize, out List<DecodedIntermediateEntry> entries))
+            {
+                return null;
+            }
+
+            long tailPage = IndexPageCodec.ReadTailPage(layout, page);
+            if (tailPage != 0)
+            {
+                stack.Push(tailPage);
+            }
+
+            if (entries.Count == 0 && tailPage == 0)
+            {
+                return null;
+            }
+
+            for (int index = entries.Count - 1; index >= 0; index--)
+            {
+                stack.Push(entries[index].ChildPage);
+            }
+        }
+
+        long[] leafPages = new long[leaves.Count];
+        leaves.Keys.CopyTo(leafPages, 0);
+        Array.Sort(leafPages);
+        var inventory = new IndexTreeInventory(pages.ToArray(), leaves, leafPages);
+        ValidateLeafChain(tdefPage, pageCount, inventory, cancellationToken);
+        Array.Sort(inventory.Pages);
+        return inventory;
+    }
+
+    /// <summary>Acquired root membership and original native leaf headers, before any page effect.</summary>
+    /// <param name="Pages">Every page reached through root children and tail pointers.</param>
+    /// <param name="Leaves">The leaf headers belonging to those pages.</param>
+    /// <param name="LeafPages">The sorted leaf identities validated by the generated chain controller.</param>
+    private sealed record IndexTreeInventory(long[] Pages, Dictionary<long, LeafLinks> Leaves, long[] LeafPages);
+
+    private readonly record struct LeafLinks(long Owner, byte Kind, long Prev, long Next);
+
+    /// <summary>Stages every fallible sibling read and authority check before appending or linking pages.</summary>
     /// <param name="layout">The index header layout.</param>
+    /// <param name="tdefPage">The original owning definition.</param>
+    /// <param name="inventory">Acquired physical-tree membership and reciprocal leaf headers.</param>
     /// <param name="previousPointers">Pages whose previous pointer changes.</param>
     /// <param name="nextPointers">Pages whose next pointer changes.</param>
     /// <param name="cancellationToken">Cancels sibling preparation.</param>
+    /// <exception cref="JetCorruptDataException">A sibling is outside the acquired physical tree or its native header changed.</exception>
     private async ValueTask<List<(long PageNum, byte[] Bytes)>> StageNeighborWritesAsync(
         IndexPageLayout layout,
+        long tdefPage,
+        IndexTreeInventory inventory,
         Dictionary<long, long> previousPointers,
         Dictionary<long, long> nextPointers,
         CancellationToken cancellationToken)
@@ -1973,6 +2124,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         {
             cancellationToken.ThrowIfCancellationRequested();
             byte[] bytes = await pager.ReadPageCopyAsync(page, cancellationToken).ConfigureAwait(false);
+            ValidatePatch(page, bytes, previous, previousPointer: true);
             IndexPageCodec.WritePrevPage(layout, bytes, previous);
             staged.Add(page, bytes);
         }
@@ -1986,6 +2138,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 staged.Add(page, bytes);
             }
 
+            ValidatePatch(page, bytes, next, previousPointer: false);
             IndexPageCodec.WriteNextPage(layout, bytes, next);
         }
 
@@ -1996,6 +2149,17 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         }
 
         return writes;
+
+        void ValidatePatch(long page, byte[] bytes, long replacement, bool previousPointer)
+        {
+            bool member = inventory.Leaves.TryGetValue(page, out LeafLinks original);
+            long source = previousPointer ? original.Prev : original.Next;
+            long reciprocal = previousPointer ? IndexPageCodec.ReadPrevPage(layout, bytes) : IndexPageCodec.ReadNextPage(layout, bytes);
+            if (!IndexMutationKernel.AdmitLeafNeighbor(source, page, pager.PageCount, tdefPage, Ru32(bytes, 4), bytes[0], IsLeafMember(inventory, source), member && IsLeafMember(inventory, page), reciprocal, replacement))
+            {
+                throw CorruptNeighbor(page, "An index neighbor changed owner, type, membership or reciprocal link before publication.");
+            }
+        }
     }
 
     private bool ValidateIndexMutationPlan(IndexMutationPlan plan)

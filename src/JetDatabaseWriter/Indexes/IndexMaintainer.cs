@@ -1687,74 +1687,12 @@ internal sealed class IndexMaintainer(
         }
     }
 
-    private async ValueTask<long[]?> TryCollectIndexTreePagesAsync(
+    private ValueTask<long[]?> TryCollectIndexTreePagesAsync(
         IndexPageLayout layout,
         long tdefPage,
         long rootPage,
         CancellationToken cancellationToken)
-    {
-        long pageCount = pager.PageCount;
-        var pages = new List<long>();
-        var seen = new HashSet<long>();
-        var stack = new Stack<long>();
-        stack.Push(rootPage);
-
-        while (stack.Count > 0)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            long pageNumber = stack.Pop();
-            if (pageNumber <= 2 || pageNumber >= pageCount)
-            {
-                return null;
-            }
-
-            if (!seen.Add(pageNumber))
-            {
-                continue;
-            }
-
-            byte[] page = await pager.ReadPageCopyAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            if (Ri32(page, 4) != tdefPage)
-            {
-                return null;
-            }
-
-            pages.Add(pageNumber);
-            if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
-            {
-                continue;
-            }
-
-            if (page[0] != Constants.IndexLeafPage.PageTypeIntermediate)
-            {
-                return null;
-            }
-
-            if (!IndexPageCodec.TryDecodeIntermediateEntries(layout, page, format.PageSize, out List<DecodedIntermediateEntry> entries))
-            {
-                return null;
-            }
-
-            long tailPage = IndexPageCodec.ReadTailPage(layout, page);
-            if (tailPage != 0)
-            {
-                stack.Push(tailPage);
-            }
-
-            if (entries.Count == 0 && tailPage == 0)
-            {
-                return null;
-            }
-
-            for (int i = entries.Count - 1; i >= 0; i--)
-            {
-                stack.Push(entries[i].ChildPage);
-            }
-        }
-
-        pages.Sort();
-        return pages.ToArray();
-    }
+        => this.btreeEditor.TryCollectIndexTreePagesAsync(layout, tdefPage, rootPage, cancellationToken);
 
     /// <summary>
     /// Incremental fast path: when the change since the previous index
