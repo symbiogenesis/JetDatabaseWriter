@@ -1,17 +1,27 @@
-# Run through x86 Windows PowerShell with DAO3.6. Stored definitions are never executed.
+# Run through a bitness-matched PowerShell host. Stored definitions are never executed.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$OutputDirectory
+    [string]$OutputDirectory,
+
+    [ValidateSet('Dao36', 'Dao120')]
+    [string]$Provider = 'Dao36'
 )
 
 $ErrorActionPreference = 'Stop'
-if ($env:OS -ne 'Windows_NT' -or [Environment]::Is64BitProcess) {
-    throw 'Run this fixture producer through x86 Windows PowerShell with DAO3.6 installed.'
+if ($env:OS -ne 'Windows_NT' -or ($Provider -eq 'Dao36' -and [Environment]::Is64BitProcess)) {
+    throw 'Run through a Windows PowerShell host matching the provider bitness; DAO3.6 requires x86.'
 }
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 [System.IO.Directory]::CreateDirectory($OutputDirectory) | Out-Null
-foreach ($name in @('NativeSqlSpecificQueriesV1997.mdb', 'NativeSqlSpecificQueriesV2000.mdb')) {
+$formats = if ($Provider -eq 'Dao36') {
+    [pscustomobject]@{ Name = 'V1997'; Version = 32; Extension = '.mdb' }
+    [pscustomobject]@{ Name = 'V2000'; Version = 64; Extension = '.mdb' }
+} else {
+    [pscustomobject]@{ Name = 'V2007'; Version = 128; Extension = '.accdb' }
+}
+foreach ($entry in $formats) {
+    $name = 'NativeSqlSpecificQueries' + $entry.Name + $entry.Extension
     if (Test-Path -LiteralPath (Join-Path $OutputDirectory $name)) {
         throw "Output already exists: $name"
     }
@@ -20,11 +30,11 @@ $previousDirectory = [Environment]::CurrentDirectory
 Push-Location -LiteralPath $OutputDirectory
 try {
     [Environment]::CurrentDirectory = $OutputDirectory
-    $engine = New-Object -ComObject DAO.DBEngine.36
+    $engine = New-Object -ComObject $(if ($Provider -eq 'Dao36') { 'DAO.DBEngine.36' } else { 'DAO.DBEngine.120' })
     try {
-        foreach ($entry in @(@('V1997',32),@('V2000',64))) {
-            $path = Join-Path $OutputDirectory ('NativeSqlSpecificQueries' + $entry[0] + '.mdb')
-            $db = $engine.CreateDatabase($path, ';LANGID=0x0409;CP=1252;COUNTRY=0', $entry[1])
+        foreach ($entry in $formats) {
+            $path = Join-Path $OutputDirectory ('NativeSqlSpecificQueries' + $entry.Name + $entry.Extension)
+            $db = $engine.CreateDatabase($path, ';LANGID=0x0409;CP=1252;COUNTRY=0', $entry.Version)
             try {
                 $db.Execute('CREATE TABLE [T] ([Id] LONG, [Note] LONG, [Keep] LONG)', 128)
                 $db.Execute('INSERT INTO [T] ([Id],[Note],[Keep]) VALUES (1,2,9)', 128)
