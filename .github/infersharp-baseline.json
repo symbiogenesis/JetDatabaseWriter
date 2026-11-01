@@ -1,7 +1,7 @@
 {
   "version": 1,
   "analyzer": "InferSharp v1.5",
-  "reviewedRevision": "95cdb05518ea19ce596117880915e00dd60fbac9",
+  "reviewedRevision": "77d016543e3259fefc856ad60250dce8fdaf1f7f",
   "sources": {
     "src/JetDatabaseWriter/AccessDatabaseEncryption.cs": "f8710fc7b726fe16646c991d91724abf568bf0b83793665849cc4c6b0d57a14f",
     "src/JetDatabaseWriter/AccessReader.cs": "bd87b92591a34043048cebbef35b5c44dd4161b20dff83f9ac1175953d73720c",
@@ -355,6 +355,14 @@
         "fingerprint": "319f863f209b3ff0ff6f409a387e9dcf",
         "symbol": "TableReader.cs|ReadFirstTableAsStringsAsync|THREAD_SAFETY_VIOLATION",
         "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
+      },
+      {
+        "ruleId": "PULSE_RESOURCE_LEAK",
+        "path": "src/JetDatabaseWriter/Tables/TableReader.cs",
+        "line": 256,
+        "fingerprint": "45b0178912f299d4cfda72a10c586c8e",
+        "symbol": "TableReader.cs|ReadFirstTableAsStringsAsync|PULSE_RESOURCE_LEAK",
+        "reason": "The trace follows DataTable allocation in ReadTableAsStringsAsync at line 553 through the immediate awaited return in ReadFirstTableAsStringsAsync at line 256. ReadTableAsStringsAsync owns the table in try/finally and disposes it if strict decoding or any other operation fails; only a successful return clears its local owner. ReadFirstTableAsStringsAsync immediately transfers the returned table to its caller. ReadSurfaceConsistencyTests.ReadFirstTableAsStrings_CalculatedColumns_MatchesReadTableAsStrings uses using DataTable for both public results, demonstrating caller disposal. InferSharp loses this interprocedural awaited-return ownership transfer."
       },
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
