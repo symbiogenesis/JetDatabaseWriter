@@ -40,6 +40,43 @@ namespace JetDatabaseWriter.Verification {
       admitted = _2_found;
       return admitted;
     }
+    public static long CompareEntries(byte[] left, long leftPage, byte leftRow, byte[] right, long rightPage, byte rightRow)
+    {
+      long comparison = 0;
+      uint _0_offset;
+      _0_offset = 0U;
+      while (((_0_offset) < ((uint)(left).LongLength)) && ((_0_offset) < ((uint)(right).LongLength))) {
+        if (((left)[(int)(_0_offset)]) < ((right)[(int)(_0_offset)])) {
+          comparison = -1L;
+          return comparison;
+        }
+        if (((left)[(int)(_0_offset)]) > ((right)[(int)(_0_offset)])) {
+          comparison = 1L;
+          return comparison;
+        }
+        _0_offset = (_0_offset) + (1U);
+      }
+      if ((_0_offset) < ((uint)(left).LongLength)) {
+        comparison = 1L;
+        return comparison;
+      }
+      if ((_0_offset) < ((uint)(right).LongLength)) {
+        comparison = -1L;
+        return comparison;
+      }
+      if ((leftPage) < (rightPage)) {
+        comparison = -1L;
+      } else if ((leftPage) > (rightPage)) {
+        comparison = 1L;
+      } else if ((leftRow) < (rightRow)) {
+        comparison = -1L;
+      } else if ((leftRow) > (rightRow)) {
+        comparison = 1L;
+      } else {
+        comparison = 0L;
+      }
+      return comparison;
+    }
     public static bool SelectMutationPredicates(bool unique, uint[] keys, uint[] columns, byte[] eligible, uint[] selected)
     {
       bool admitted = false;

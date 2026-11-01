@@ -82,6 +82,97 @@ module IndexMutationKernel {
     assert tree == mapped;
   }
 
+  ghost function KeyOrder(left: seq<Byte>, right: seq<Byte>): int
+    decreases |left| + |right|
+  {
+    if |left| == 0 then (if |right| == 0 then 0 else -1)
+    else if |right| == 0 then 1
+    else if left[0] < right[0] then -1
+    else if left[0] > right[0] then 1
+    else KeyOrder(left[1..], right[1..])
+  }
+
+  ghost function EntryOrder(left: seq<Byte>, leftPage: I64, leftRow: Byte,
+      right: seq<Byte>, rightPage: I64, rightRow: Byte): int
+  {
+    if KeyOrder(left, right) != 0 then KeyOrder(left, right)
+    else if leftPage < rightPage then -1 else if leftPage > rightPage then 1
+    else if leftRow < rightRow then -1 else if leftRow > rightRow then 1 else 0
+  }
+
+  lemma KeyOrderIdentity(left: seq<Byte>, right: seq<Byte>)
+    ensures -1 <= KeyOrder(left, right) <= 1
+    ensures KeyOrder(left, right) == 0 <==> left == right
+    ensures KeyOrder(left, right) == -KeyOrder(right, left)
+    decreases |left| + |right|
+  {
+    if |left| > 0 && |right| > 0 && left[0] == right[0] {
+      KeyOrderIdentity(left[1..], right[1..]);
+    }
+  }
+
+  lemma KeyOrderTransitive(first: seq<Byte>, second: seq<Byte>, third: seq<Byte>)
+    requires KeyOrder(first, second) <= 0 && KeyOrder(second, third) <= 0
+    ensures KeyOrder(first, third) <= 0
+    decreases |first| + |second| + |third|
+  {
+    if |first| > 0 {
+      assert |second| > 0 && |third| > 0;
+      assert first[0] <= second[0] <= third[0];
+      if first[0] == third[0] {
+        KeyOrderTransitive(first[1..], second[1..], third[1..]);
+      }
+    }
+  }
+
+  lemma EntryOrderTransitive(first: seq<Byte>, firstPage: I64, firstRow: Byte,
+      second: seq<Byte>, secondPage: I64, secondRow: Byte,
+      third: seq<Byte>, thirdPage: I64, thirdRow: Byte)
+    requires EntryOrder(first, firstPage, firstRow, second, secondPage, secondRow) <= 0
+    requires EntryOrder(second, secondPage, secondRow, third, thirdPage, thirdRow) <= 0
+    ensures EntryOrder(first, firstPage, firstRow, third, thirdPage, thirdRow) <= 0
+  {
+    KeyOrderIdentity(first, second);
+    KeyOrderIdentity(second, third);
+    KeyOrderIdentity(first, third);
+    KeyOrderTransitive(first, second, third);
+    if KeyOrder(first, third) == 0 {
+      KeyOrderTransitive(second, third, first);
+      assert first == second == third;
+    }
+  }
+
+  // Row bookmarks are part of the native ordering even when encoded keys
+  // are equal. The same complete comparison controls bulk sorting, leaf
+  // insertion, mutation descent and ancestor maximum-entry replacement.
+  method CompareEntries(left: array<Byte>, leftPage: I64, leftRow: Byte,
+      right: array<Byte>, rightPage: I64, rightRow: Byte) returns (comparison: I64)
+    requires left.Length <= 2147483647 && right.Length <= 2147483647
+    ensures comparison as int == EntryOrder(left[..], leftPage, leftRow, right[..], rightPage, rightRow)
+    ensures -1 <= comparison <= 1
+    ensures comparison == 0 <==> left[..] == right[..] && leftPage == rightPage && leftRow == rightRow
+    ensures comparison as int == -EntryOrder(right[..], rightPage, rightRow, left[..], leftPage, leftRow)
+  {
+    KeyOrderIdentity(left[..], right[..]);
+    var offset: U32 := 0;
+    while offset < left.Length as U32 && offset < right.Length as U32
+      invariant offset <= left.Length as U32 && offset <= right.Length as U32
+      invariant KeyOrder(left[..], right[..]) == KeyOrder(left[offset as int..], right[offset as int..])
+      decreases left.Length - offset as int
+    {
+      if left[offset] < right[offset] { comparison := -1; return; }
+      if left[offset] > right[offset] { comparison := 1; return; }
+      offset := offset + 1;
+    }
+    if offset < left.Length as U32 { comparison := 1; return; }
+    if offset < right.Length as U32 { comparison := -1; return; }
+    if leftPage < rightPage { comparison := -1; }
+    else if leftPage > rightPage { comparison := 1; }
+    else if leftRow < rightRow { comparison := -1; }
+    else if leftRow > rightRow { comparison := 1; }
+    else { comparison := 0; }
+  }
+
   ghost predicate HasMutationComponent(columns: seq<U32>, eligible: seq<Byte>, column: U32) {
     |columns| == |eligible| &&
       exists candidate: nat :: candidate < |columns| && eligible[candidate] == 1 && columns[candidate] == column
@@ -687,6 +778,36 @@ module IndexMutationKernel {
     ensures (WordByte(child, 3) as U32) * 16777216 + (WordByte(child, 2) as U32) * 65536 +
       (WordByte(child, 1) as U32) * 256 + WordByte(child, 0) as U32 == child
   {}
+
+  // The page/row tie breaker agrees with the four-byte big-endian bookmark
+  // physically emitted by Trailer. Child pointers are not part of this order.
+  lemma BookmarkOrderMatchesEmission(leftPage: U32, leftRow: Byte, rightPage: U32, rightRow: Byte)
+    requires leftPage < 16777216 && rightPage < 16777216
+    ensures KeyOrder([WordByte(leftPage, 2), WordByte(leftPage, 1), WordByte(leftPage, 0), leftRow],
+      [WordByte(rightPage, 2), WordByte(rightPage, 1), WordByte(rightPage, 0), rightRow]) ==
+      (if leftPage < rightPage then -1 else if leftPage > rightPage then 1
+        else if leftRow < rightRow then -1 else if leftRow > rightRow then 1 else 0)
+  {
+    PointerFieldsExact(leftPage, 0);
+    PointerFieldsExact(rightPage, 0);
+    var left := [WordByte(leftPage, 2), WordByte(leftPage, 1), WordByte(leftPage, 0), leftRow];
+    var right := [WordByte(rightPage, 2), WordByte(rightPage, 1), WordByte(rightPage, 0), rightRow];
+    assert KeyOrder(left[3..], right[3..]) ==
+      (if leftRow < rightRow then -1 else if leftRow > rightRow then 1 else 0);
+    assert KeyOrder(left[2..], right[2..]) ==
+      (if left[2] < right[2] then -1 else if left[2] > right[2] then 1 else KeyOrder(left[3..], right[3..]));
+    assert KeyOrder(left[1..], right[1..]) ==
+      (if left[1] < right[1] then -1 else if left[1] > right[1] then 1 else KeyOrder(left[2..], right[2..]));
+    if left[0] != right[0] {
+      assert left[0] < right[0] <==> leftPage < rightPage;
+    } else if left[1] != right[1] {
+      assert left[1] < right[1] <==> leftPage < rightPage;
+    } else if left[2] != right[2] {
+      assert left[2] < right[2] <==> leftPage < rightPage;
+    } else {
+      assert leftPage == rightPage;
+    }
+  }
 
   lemma ReachableCompleteEmission()
   {

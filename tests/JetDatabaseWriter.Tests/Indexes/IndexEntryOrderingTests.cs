@@ -9,7 +9,7 @@ using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using Xunit;
 
-/// <summary>Stable ordering during leaf splices and intermediate mutations.</summary>
+/// <summary>Native key/bookmark ordering during leaf splices and intermediate mutations.</summary>
 public sealed class IndexEntryOrderingTests
 {
     [Theory]
@@ -17,7 +17,7 @@ public sealed class IndexEntryOrderingTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public void Splice_PreservesTieOrderAcrossSortedAndUnorderedRuns(bool reverseExisting, bool reverseAdds)
+    public void Splice_OrdersBookmarksAcrossSortedAndUnorderedRuns(bool reverseExisting, bool reverseAdds)
     {
         List<IndexEntry> existing = [Entry(0, 0), Entry(2, 1), Entry(2, 2), Entry(4, 3)];
         List<IndexEntry> adds = [Entry(0, 4), Entry(2, 5), Entry(2, 6), Entry(5, 7)];
@@ -38,7 +38,7 @@ public sealed class IndexEntryOrderingTests
 
         Assert.NotNull(result);
         Assert.Equal<int>(
-            [0, 4, reverseExisting ? 2 : 1, reverseExisting ? 1 : 2, reverseAdds ? 6 : 5, reverseAdds ? 5 : 6, 3, 7],
+            [0, 4, 1, 2, 5, 6, 3, 7],
             result.Select(entry => (int)entry.DataRow));
         Assert.Equal(original, existing);
         Assert.Equal(additions, adds);
@@ -147,7 +147,7 @@ public sealed class IndexEntryOrderingTests
     }
 
     [Fact]
-    public void Splice_SortsUnorderedInputsAndPreservesEqualKeyDeclarationOrder()
+    public void Splice_SortsUnorderedInputsByKeyAndBookmark()
     {
         List<IndexEntry> existing = [Entry(3, 0), Entry(1, 1), Entry(3, 2), Entry(2, 3)];
         List<IndexEntry> adds = [Entry(3, 4), Entry(0, 5), Entry(3, 6), Entry(2, 7)];
@@ -178,7 +178,7 @@ public sealed class IndexEntryOrderingTests
     [InlineData(5)]
     [InlineData(6)]
     [InlineData(7)]
-    public void Splice_MatchesIndependentStableBucketsForEverySmallRunAndRemovalSubset(int removalMask)
+    public void Splice_MatchesIndependentNativeBucketsForEverySmallRunAndRemovalSubset(int removalMask)
     {
         // This alphabet orders empty, prefix, longer-prefix and high-byte keys
         // independently of the production comparator and sorting algorithm.
@@ -262,6 +262,47 @@ public sealed class IndexEntryOrderingTests
         List<IntermediateOp> operations = [new(0, first, Child(2)), new(0, second, Child(3))];
 
         Assert.Empty(IndexHelpers.ApplyIntermediateOps([Child(1)], operations));
+    }
+
+    [Fact]
+    public void CompareEntries_OrdersUnsignedKeyBytesThenPageAndRow()
+    {
+        byte[][] keys = [[], [0], [0, 0], [0x7F], [0x80], [0xFF]];
+        long[] pages = [1, 255, 256, 65536, 0xFFFFFF];
+        byte[] rows = [0, 1, 255];
+        var entries = new List<IndexEntry>();
+        foreach (byte[] key in keys)
+        {
+            foreach (long page in pages)
+            {
+                foreach (byte row in rows)
+                {
+                    entries.Add(new(key, page, row));
+                }
+            }
+        }
+
+        for (int left = 0; left < entries.Count; left++)
+        {
+            for (int right = 0; right < entries.Count; right++)
+            {
+                Assert.Equal(Math.Sign(left - right), IndexPageCodec.CompareEntries(entries[left], entries[right]));
+            }
+        }
+    }
+
+    [Fact]
+    public void MutationDescent_SeparatesDuplicateKeysByBookmark()
+    {
+        List<DecodedIntermediateEntry> summaries = [new(new([1], 100, 10), 2), new(new([1], 100, 20), 3), new(new([1], 101, 0), 4)];
+        Assert.Equal(0, IndexHelpers.SelectChildIndexFromDecoded(summaries, new([1], 100, 10)));
+        Assert.Equal(1, IndexHelpers.SelectChildIndexFromDecoded(summaries, new([1], 100, 11)));
+        Assert.Equal(2, IndexHelpers.SelectChildIndexFromDecoded(summaries, new([1], 100, 21)));
+        Assert.Equal(-1, IndexHelpers.SelectChildIndexFromDecoded(summaries, new([1], 101, 1)));
+        List<DescentStep> path = [new(1, [], summaries, 1)];
+        Assert.True(IndexHelpers.ConfirmEntryTargetsSamePath(path, new([1], 100, 20)));
+        Assert.False(IndexHelpers.ConfirmEntryTargetsSamePath(path, new([1], 100, 10)));
+        Assert.False(IndexHelpers.ConfirmEntryTargetsSamePath(path, new([1], 100, 21)));
     }
 
     private static IndexEntry Entry(byte key, byte row) => new([key], 100, row);

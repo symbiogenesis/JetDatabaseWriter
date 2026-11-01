@@ -829,6 +829,12 @@ internal static class IndexPageCodec
     public static int CompareKeyBytes(byte[] left, byte[] right)
         => left.AsSpan().SequenceCompareTo(right);
 
+    /// <summary>Compares native index keys followed by their ascending page/row bookmarks.</summary>
+    /// <param name="left">The first entry.</param>
+    /// <param name="right">The second entry.</param>
+    public static int CompareEntries(IndexEntry left, IndexEntry right)
+        => checked((int)IndexMutationKernel.CompareEntries(left.Key, left.DataPage, left.DataRow, right.Key, right.DataPage, right.DataRow));
+
     /// <summary>Measures a valid leaf without allocating or emitting its page bytes.</summary>
     /// <param name="layout">The page layout.</param>
     /// <param name="pageSize">The page size.</param>

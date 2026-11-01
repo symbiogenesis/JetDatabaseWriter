@@ -655,7 +655,7 @@ internal sealed class IndexMaintainer(
                     entries.Add(new IndexEntry(composite, location.PageNumber, (byte)location.RowIndex));
                 }
 
-                entries.Sort(static (a, b) => IndexHelpers.CompareKeyBytes(a.Key, b.Key));
+                entries.Sort(IndexPageCodec.CompareEntries);
 
                 // Unique-violation detection. This is a post-write defense-in-depth
                 // check; public mutations normally run pre-write uniqueness checks

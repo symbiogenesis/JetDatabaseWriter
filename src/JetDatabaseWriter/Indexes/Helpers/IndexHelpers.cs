@@ -633,20 +633,20 @@ internal static class IndexHelpers
         => IndexPageCodec.CompareKeyBytes(a, b);
 
     /// <summary>
-    /// Returns the index of the first intermediate entry whose summary key
-    /// sorts &gt;= <paramref name="searchKey"/>, or <c>-1</c> when every
-    /// summary is &lt; searchKey (the descent would have to follow
+    /// Returns the index of the first intermediate entry whose key/bookmark
+    /// sorts &gt;= <paramref name="searchEntry"/>, or <c>-1</c> when every
+    /// summary is &lt; searchEntry (the descent would have to follow
     /// <c>tail_page</c>, which the surgical path rejects).
     /// </summary>
     /// <param name="entries">The entries.</param>
-    /// <param name="searchKey">The search key.</param>
+    /// <param name="searchEntry">The mutation key and row bookmark.</param>
     public static int SelectChildIndexFromDecoded(
         List<DecodedIntermediateEntry> entries,
-        byte[] searchKey)
+        IndexEntry searchEntry)
     {
         for (int i = 0; i < entries.Count; i++)
         {
-            if (CompareKeyBytes(searchKey, entries[i].Entry.Key) <= 0)
+            if (IndexPageCodec.CompareEntries(searchEntry, entries[i].Entry) <= 0)
             {
                 return i;
             }
@@ -699,21 +699,20 @@ internal static class IndexHelpers
     }
 
     /// <summary>
-    /// Re-walks a captured <paramref name="path"/> with a different search
-    /// key, returning <see langword="true"/> only when every level picks the
+    /// Re-walks a captured <paramref name="path"/> with a different key and
+    /// bookmark, returning <see langword="true"/> only when every level picks the
     /// same child entry that was originally followed. Used to confirm that
     /// every change in the batch lands on the same leaf as the first one
-    /// (surgical mutation requires this; multi-leaf change-sets bail to
-    /// the bulk path).
+    /// before grouping changes for the surgical mutation planner.
     /// </summary>
     /// <param name="path">Captured root-to-leaf descent path to replay.</param>
-    /// <param name="searchKey">The search key.</param>
-    public static bool ConfirmKeyTargetsSamePath(List<DescentStep> path, byte[] searchKey)
+    /// <param name="searchEntry">The mutation key and row bookmark.</param>
+    public static bool ConfirmEntryTargetsSamePath(List<DescentStep> path, IndexEntry searchEntry)
     {
         for (int level = 0; level < path.Count; level++)
         {
             DescentStep step = path[level];
-            int idx = SelectChildIndexFromDecoded(step.Entries, searchKey);
+            int idx = SelectChildIndexFromDecoded(step.Entries, searchEntry);
             if (idx != step.TakenIndex)
             {
                 return false;

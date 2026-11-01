@@ -604,9 +604,9 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             return (true, false);
         }
 
-        byte[] firstKey = addEntries.Count > 0 ? addEntries[0].Key : removeEntries[0].Key;
+        IndexEntry firstEntry = addEntries.Count > 0 ? addEntries[0] : removeEntries[0];
         var path = new List<DescentStep>();
-        long leafPage = await this.DescendCapturingAsync(layout, firstDp, firstKey, path, cancellationToken).ConfigureAwait(false);
+        long leafPage = await this.DescendCapturingAsync(layout, firstDp, firstEntry, path, cancellationToken).ConfigureAwait(false);
         if (leafPage <= 0 || path.Count == 0)
         {
             return (false, false);
@@ -615,7 +615,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         bool singleGroup = true;
         foreach (IndexEntry entry in addEntries)
         {
-            if (!IndexHelpers.ConfirmKeyTargetsSamePath(path, entry.Key))
+            if (!IndexHelpers.ConfirmEntryTargetsSamePath(path, entry))
             {
                 singleGroup = false;
                 break;
@@ -624,7 +624,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
 
         foreach (IndexEntry entry in singleGroup ? removeEntries : [])
         {
-            if (!IndexHelpers.ConfirmKeyTargetsSamePath(path, entry.Key))
+            if (!IndexHelpers.ConfirmEntryTargetsSamePath(path, entry))
             {
                 singleGroup = false;
                 break;
@@ -681,7 +681,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
 
         List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
         List<IndexEntry>? spliced = existing.Count == 0 ? null : IndexEntrySplicer.Splice(existing, additions, removals);
-        return spliced is null ? null : new LeafSplicePlan(spliced, IndexPageCodec.ReadPrevPage(layout, leaf), IndexPageCodec.ReadNextPage(layout, leaf), IndexPageCodec.ReadTailPage(layout, leaf), IndexPageCodec.ReadPrefixLength(layout, leaf), existing[^1].Key);
+        return spliced is null ? null : new LeafSplicePlan(spliced, IndexPageCodec.ReadPrevPage(layout, leaf), IndexPageCodec.ReadNextPage(layout, leaf), IndexPageCodec.ReadTailPage(layout, leaf), IndexPageCodec.ReadPrefixLength(layout, leaf), existing[^1]);
     }
 
     private async ValueTask<IndexMutationPlan?> PrepareSingleLeafPlanAsync(IndexPageLayout layout, long tdefPage, long leafPage, List<DescentStep> path, LeafSplicePlan splice, CancellationToken cancellationToken)
@@ -697,7 +697,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         {
             IndexEntry newLast = spliced[^1];
             List<(long PageNum, byte[] Bytes)>? writes = null;
-            if (IndexHelpers.CompareKeyBytes(newLast.Key, splice.OldMaxKey) != 0)
+            if (IndexPageCodec.CompareEntries(newLast, splice.OldMaxEntry) != 0)
             {
                 var summary = new DecodedIntermediateEntry(newLast, leafPage);
                 List<(long PageNum, byte[] Bytes)>? ancestors = this.PrepareAncestorReplaceWrites(layout, tdefPage, path, summary);
@@ -740,9 +740,8 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
 
     /// <summary>
     /// Descends an index B-tree from <paramref name="rootPage"/>, picking the
-    /// child at each intermediate level by <paramref name="searchKey"/> (first
-    /// summary &gt;= key wins, mirroring
-    /// <see cref="IndexCursor.ContainsKeyAsync"/>) and pushing each level
+    /// child at each intermediate level by <paramref name="searchEntry"/> (first
+    /// complete key/bookmark summary &gt;= entry wins) and pushing each level
     /// (page number, raw bytes, decoded entries, followed-child index) onto
     /// <paramref name="path"/>. Returns the leaf page reached, or 0 on any
     /// failure (overshoot, malformed page, excessive depth) — surgical
@@ -753,14 +752,14 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// </summary>
     /// <param name="layout">The layout.</param>
     /// <param name="rootPage">The root page.</param>
-    /// <param name="searchKey">The search key.</param>
+    /// <param name="searchEntry">The mutation key and row bookmark.</param>
     /// <param name="path">Optional collector for the descent steps taken.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="allowTailOvershoot">Whether to follow the page tail pointer when the search key is beyond the last entry.</param>
     internal async ValueTask<long> DescendCapturingAsync(
         IndexPageLayout layout,
         long rootPage,
-        byte[] searchKey,
+        IndexEntry searchEntry,
         List<DescentStep> path,
         CancellationToken cancellationToken,
         bool allowTailOvershoot = false)
@@ -788,7 +787,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 return 0;
             }
 
-            int idx = IndexHelpers.SelectChildIndexFromDecoded(entries, searchKey);
+            int idx = IndexHelpers.SelectChildIndexFromDecoded(entries, searchEntry);
             if (idx < 0)
             {
                 if (!allowTailOvershoot)
@@ -1019,14 +1018,14 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// <param name="Next">The leaf's next_page sibling pointer.</param>
     /// <param name="Tail">The leaf's tail_page header.</param>
     /// <param name="PrefLen">The leaf's original prefix-compression length.</param>
-    /// <param name="OldMaxKey">The leaf's pre-splice maximum key.</param>
+    /// <param name="OldMaxEntry">The leaf's pre-splice maximum key and bookmark.</param>
     private readonly record struct LeafSplicePlan(
         List<IndexEntry> Spliced,
         long Prev,
         long Next,
         long Tail,
         int PrefLen,
-        byte[] OldMaxKey);
+        IndexEntry OldMaxEntry);
 
     /// <summary>Aggregates leaf changes and ancestor rewrites, reusing any prepared single-leaf splice.</summary>
     /// <param name="layout">The index layout.</param>
@@ -1131,7 +1130,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 continue;
             }
 
-            byte[] oldMaxKey = plan.OldMaxKey;
+            IndexEntry oldMaxEntry = plan.OldMaxEntry;
 
             DescentStep parentStep = group.Path[^1];
 
@@ -1148,7 +1147,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 }
 
                 IndexEntry newLast = spliced[^1];
-                if (IndexHelpers.CompareKeyBytes(newLast.Key, oldMaxKey) != 0)
+                if (IndexPageCodec.CompareEntries(newLast, oldMaxEntry) != 0)
                 {
                     // Parent's summary entry for this leaf must be replaced.
                     AddParentOp(parentOps, parentStep.PageNumber, parentStep.TakenIndex, IntermediateOpType.Replace, new(newLast, group.LeafPage));
@@ -1334,7 +1333,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         for (int i = 0; i < addEntries.Count; i++)
         {
             (byte[] key, long dp, byte dr) = addEntries[i];
-            LeafGroup? g = await this.DescendOrLookupGroupAsync(layout, firstDp, key, groups, previous, cancellationToken).ConfigureAwait(false);
+            LeafGroup? g = await this.DescendOrLookupGroupAsync(layout, firstDp, addEntries[i], groups, previous, cancellationToken).ConfigureAwait(false);
             if (g is null)
             {
                 return null;
@@ -1353,7 +1352,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         for (int i = 0; i < removeEntries.Count; i++)
         {
             (byte[] key, long dp, byte dr) = removeEntries[i];
-            LeafGroup? g = await this.DescendOrLookupGroupAsync(layout, firstDp, key, groups, previous, cancellationToken).ConfigureAwait(false);
+            LeafGroup? g = await this.DescendOrLookupGroupAsync(layout, firstDp, removeEntries[i], groups, previous, cancellationToken).ConfigureAwait(false);
             if (g is null)
             {
                 return null;
@@ -1373,13 +1372,13 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     private async ValueTask<LeafGroup?> DescendOrLookupGroupAsync(
         IndexPageLayout layout,
         long firstDp,
-        byte[] key,
+        IndexEntry entry,
         Dictionary<long, LeafGroup> groups,
         LeafGroup previous,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (IndexHelpers.ConfirmKeyTargetsSamePath(previous.Path, key))
+        if (IndexHelpers.ConfirmEntryTargetsSamePath(previous.Path, entry))
         {
             return previous;
         }
@@ -1387,7 +1386,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         // No writes occur during grouping, so a path is reusable only when
         // every original ancestor selects the same child for this key.
         var path = new List<DescentStep>();
-        long leafPage = await this.DescendCapturingAsync(layout, firstDp, key, path, cancellationToken).ConfigureAwait(false);
+        long leafPage = await this.DescendCapturingAsync(layout, firstDp, entry, path, cancellationToken).ConfigureAwait(false);
         if (leafPage <= 0 || path.Count == 0)
         {
             return null;
@@ -1735,9 +1734,10 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         // finds the correct leaf and we accept that ancestor updates
         // won't be possible (but a split can still chain-append).
         var descentPath = new List<DescentStep>();
+        var insertion = new IndexEntry(composite, newRowLoc.PageNumber, (byte)newRowLoc.RowIndex);
         bool hasCleanPath = true;
         long targetLeafPage = await this.DescendCapturingAsync(
-            layout, firstDp, composite, descentPath, cancellationToken, allowTailOvershoot: false).ConfigureAwait(false);
+            layout, firstDp, insertion, descentPath, cancellationToken, allowTailOvershoot: false).ConfigureAwait(false);
         if (targetLeafPage <= 0)
         {
             // Overshoot — retry with tail following. Path will be
@@ -1745,7 +1745,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             descentPath.Clear();
             hasCleanPath = false;
             targetLeafPage = await this.DescendCapturingAsync(
-                layout, firstDp, composite, descentPath, cancellationToken, allowTailOvershoot: true).ConfigureAwait(false);
+                layout, firstDp, insertion, descentPath, cancellationToken, allowTailOvershoot: true).ConfigureAwait(false);
             if (targetLeafPage <= 0)
             {
                 return false;
@@ -1775,7 +1775,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             }
 
             List<IndexEntry> probe = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
-            if (probe.Count == 0 || IndexHelpers.CompareKeyBytes(composite, probe[^1].Key) <= 0)
+            if (probe.Count == 0 || IndexPageCodec.CompareEntries(insertion, probe[^1]) <= 0)
             {
                 // composite belongs in this leaf (or earlier).
                 break;

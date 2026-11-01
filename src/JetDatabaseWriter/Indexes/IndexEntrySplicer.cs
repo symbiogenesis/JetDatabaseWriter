@@ -6,11 +6,11 @@ using JetDatabaseWriter.Indexes.Models;
 
 /// <summary>
 /// Builds a post-mutation index entry list by removing row pointers and
-/// inserting new entries while preserving deterministic equal-key ordering.
+/// inserting new entries in native key/page/row order.
 /// </summary>
 internal static class IndexEntrySplicer
 {
-    private static readonly IComparer<byte[]> KeyComparer = Comparer<byte[]>.Create(IndexPageCodec.CompareKeyBytes);
+    private static readonly IComparer<IndexEntry> EntryComparer = Comparer<IndexEntry>.Create(IndexPageCodec.CompareEntries);
 
     /// <summary>
     /// Builds the post-mutation entry list by inserting <paramref name="adds"/>
@@ -64,8 +64,7 @@ internal static class IndexEntrySplicer
             int destination = working.Count - 1;
             while (addedIndex >= 0)
             {
-                // Merging backward places additions after existing equal keys.
-                if (existingIndex >= 0 && IndexPageCodec.CompareKeyBytes(working[existingIndex].Key, adds[addedIndex].Key) > 0)
+                if (existingIndex >= 0 && IndexPageCodec.CompareEntries(working[existingIndex], adds[addedIndex]) > 0)
                 {
                     working[destination--] = working[existingIndex--];
                 }
@@ -80,15 +79,14 @@ internal static class IndexEntrySplicer
 
         working.AddRange(adds);
 
-        // OrderBy is stable: existing equal keys precede additions, whose input order is retained.
-        return working.OrderBy(static entry => entry.Key, KeyComparer).ToList();
+        return working.OrderBy(static entry => entry, EntryComparer).ToList();
     }
 
     private static bool IsSorted(IReadOnlyList<IndexEntry> entries)
     {
         for (int i = 1; i < entries.Count; i++)
         {
-            if (IndexPageCodec.CompareKeyBytes(entries[i - 1].Key, entries[i].Key) > 0)
+            if (IndexPageCodec.CompareEntries(entries[i - 1], entries[i]) > 0)
             {
                 return false;
             }
