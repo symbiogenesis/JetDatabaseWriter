@@ -134,6 +134,11 @@ text, month/day names and system week starts. To select a profile explicitly,
 set `AccessWriterOptions.CalculatedExpressionCulture`, for example to
 `CultureInfo.GetCultureInfo("de-DE")`. The default captures `CurrentCulture`
 when the writer opens. Each writer owns a snapshot of those settings.
+The six native-qualified profiles use captured Access date/name defaults across
+platforms; observable differences from runtime defaults remain caller overrides.
+Invariant and other profiles retain their runtime-based behavior. See
+[regional settings](design/calculated-columns-format-notes.md#regional-settings)
+for the exact normalization boundary.
 
 Access table calculations have their own expression language: they do not admit
 every function available in queries, defaults or validation rules. Jet3 and Jet4

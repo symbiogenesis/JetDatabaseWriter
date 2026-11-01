@@ -55,7 +55,7 @@ The current applicability decisions, in order of practical relevance, are:
 | Explicit peak-space and work budgets | IrisFit and time-credit proofs inform I7/S1/V8/V10: account for suspended owners, pool retention, growth overlap and adversarial probes before removing copies or tightening limits. |
 | Native tree and relocation semantics | Verified B+ trees and CertiGC inform I2/I17/V9: tree descent must agree with leaf iteration, and relocation must preserve all rooted references before reclamation. |
 | Rounded numeric seek bounds | Flocq supplies relevant rounding lemmas for I9, conditional on matching native key and CLR comparison semantics and proving no false negatives. |
-| Reuse ordered runs before general stable sorting | Existing splice measurements establish a named allocation benefit. I12 still owns public timing acceptance; a full sorting implementation needs a remaining measured bottleneck. |
+| Reuse ordered runs before general native-entry sorting | Existing splice measurements establish a named allocation benefit. I12 still owns public timing acceptance; a full sorting implementation needs a remaining measured bottleneck. |
 | Compose visited-set orchestration with the containing parser | Generated count/growth decisions retain exact membership and the single-scan path under V8/S1. Compose allocation effects, adversarial probe work, growth overlap and cancellation; exact membership alone is insufficient. |
 | Fixed-contract proof repair and dependency review | Less proof-maintenance work under V6/V12, while preserving supported behavior and independently reviewed specifications. A benchmark solve rate is not repository acceptance. |
 | Compact metadata and cache accounting | Possible allocation reductions under I7/I17/S1. Compare existing disk ledgers, ranges and bitmaps first; account for in-flight and leased storage as well as retained entries. |
@@ -362,7 +362,7 @@ duplicate-key trees.
 
 Prefer the smallest compatible representation change: reuse the private
 survivor buffer and merge already ordered additions. A full Powersort port is
-justified only if large general stable sorts remain material after profiling.
+justified only if large general sorts remain material after profiling.
 Sort scratch is distinct from the result buffer, materialized rows and encoded
 key bytes. [QueryOrdering](../../src/JetDatabaseWriter/Queries/QueryOrdering.cs)
 also preserves stable ties, but a replacement must additionally preserve
@@ -430,13 +430,23 @@ support neither causal attribution of the timing differences nor a public
 speedup or no-slowdown guarantee. Retain the measured allocation benefit;
 isolate source effects and runner variation before expanding the optimization.
 
-The complete key/bookmark comparator now executes generated scalar byte
-comparison. The historical measurements above do not qualify its timing.
-Repeat `*IndexMutationBenchmarks.Splice*`, `InsertSameLeaf` and `InsertCrossLeaf`
-against a successful main baseline using hosted paired default adaptive runs.
-The existing sort controls retain monotone bookmarks and remain comparable.
-Long shared-prefix and duplicate-heavy cases require explicit review before
-claiming preserved performance; correctness takes precedence over old timings.
+The [paired default-adaptive run](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/41345899605)
+compared `93706992d6574b187d6f40791c4a3dbee430ea5b` with
+`2d7d28c24c9b50466796bbfaef6794110708b8e4` on the same host. The generated
+scalar byte scan made ordered splices 19.70 times slower (10.11 to 199.21
+microseconds) and unordered splices 14.67 times slower (49.69 to 728.93
+microseconds). Unchanged sort controls had ratios 1.02 and 0.99. Unordered
+allocation rose from 54.54 to 64.85 KB because projecting complete entries
+expanded the sort scratch.
+
+Production retains the vectorized span key adapter and executes generated
+sign/bookmark completion; the full scalar comparator remains a verified
+conformance reference under an explicit adapter-correspondence contract.
+Unordered splices sort their private result buffer by complete native order.
+Equal complete entries encode identical key/bookmark bytes. Input lists and
+key arrays remain unchanged; BCL sorting and containing tree edits remain
+reviewed/tested effects. Paired qualification of the revised paths remains
+under I12, using the same controls and representative workloads.
 
 ### Exact visited-set behavior in generated production code
 
@@ -774,7 +784,7 @@ retains the complete production mappings and remaining obligations.
 
 | Relied-on behavior or model boundary | Relevant regression evidence |
 |---|---|
-| Stable ordered-run merge and general splice fallback | [IndexEntryOrderingTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexEntryOrderingTests.cs) checks native bookmark ties, input/key immutability and the result-storage allocation bound. `Splice_MatchesIndependentNativeBucketsForEverySmallRunAndRemovalSubset` compares every three-existing/two-added run over four empty/prefix/high-byte keys against independent key/bookmark-ordered buckets, with every removal subset. [DuplicateBookmarkOrderingTests](../../tests/JetDatabaseWriter.Tests/Indexes/DuplicateBookmarkOrderingTests.cs) checks bulk/incremental duplicate trees and native edit/compact acceptance. [IndexPageCodecAndEntrySplicerTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexPageCodecAndEntrySplicerTests.cs) retains missing-removal refusal. |
+| Native ordered-run merge and private-buffer sort | [IndexEntryOrderingTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexEntryOrderingTests.cs) checks native bookmark ties, input/key immutability and the result-storage allocation bound. `Splice_MatchesIndependentNativeBucketsForEverySmallRunAndRemovalSubset` compares every three-existing/two-added run over four empty/prefix/high-byte keys against independent key/bookmark-ordered buckets, with every removal subset. [DuplicateBookmarkOrderingTests](../../tests/JetDatabaseWriter.Tests/Indexes/DuplicateBookmarkOrderingTests.cs) checks bulk/incremental duplicate trees and native edit/compact acceptance. [IndexPageCodecAndEntrySplicerTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexPageCodecAndEntrySplicerTests.cs) retains missing-removal refusal. |
 | Existing query ordering contract | [QueryPipelineParityTests](../../tests/JetDatabaseWriter.Tests/Queries/QueryPipelineParityTests.cs) checks stable multikey ties, paging, live captures, deferred evaluation and selector failures across root/include/tail paths. This remains tested handwritten behavior. |
 | Generated numeric admission, relocation and conservative ownership | [IndexSeekRoundingTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexSeekRoundingTests.cs), [IndexSeekFilterTests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexSeekFilterTests.cs) and [TypedMappingCoercionTests](../../tests/JetDatabaseWriter.Tests/Queries/TypedMappingCoercionTests.cs) compare outward rounding and signed-zero admission with independent native-key/full-scan oracles, retaining unsafe-bound refusal. [CompactRowRelocationMapTests](../../tests/JetDatabaseWriter.Tests/Maintenance/CompactRowRelocationMapTests.cs) checks native endpoints, exact identity/order, sparse independent dictionaries, logarithmic record reads, budgets and partial reads. [UsageMapOwnershipTests](../../tests/JetDatabaseWriter.Tests/Pages/UsageMapOwnershipTests.cs) and [UsageMapNonliveAliasTests](../../tests/JetDatabaseWriter.Tests/Pages/UsageMapNonliveAliasTests.cs) retain opaque-reference protection and source-preserving refusal. Full planner, rooted graph and effects refinement remain open. |
 | Exact visited membership, probing, rehash and count/growth orchestration (`LongValueKernel`) | [LongValueTraversalTests](../../tests/JetDatabaseWriter.Tests/ValueEncoding/LongValueTraversalTests.cs) checks wrapped/full probes, duplicate-source rehash, native decision boundaries, null/empty initialization, count retention and duplicate/growth allocation boundaries. Independent multi-step controller traces compare membership and count through repeated growth with a `HashSet<uint>` oracle and the production wrapper. |

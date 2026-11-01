@@ -824,6 +824,17 @@ concurrent writers do not share a mutable culture. Defaults and validation rules
 keep their separate shared expression profile. Hash-delimited date literals
 retain invariant Access grammar.
 
+The en-US, fr-FR, de-DE, tr-TR, ja-JP and ar-SA snapshots use the captured
+Access date defaults and month/day tables. Their default patterns, designators,
+separators and names therefore remain stable across NLS and ICU. Fields and
+individual names that differ ordinally from the named culture's host defaults
+remain caller overrides, including fields retained across Gregorian calendar
+conversion. `CultureInfo` cannot distinguish an explicitly assigned value from
+an equal host default; such equal values select the captured native default.
+Invariant and uncaptured cultures retain the existing runtime-based path.
+Date parsing still uses the documented `DateTime.TryParse`/exact-format
+composition; pinned formatting data does not prove all native parsing grammar.
+
 Native table calculations use regional numeric parsing, number/date text,
 intrinsic Boolean text, month/day names and system week starts. `Str` parses
 numeric text regionally but formats its result with a decimal point. Gregorian
@@ -842,6 +853,13 @@ all 256 ANSI byte values, best-fit Asc and Unicode case controls.
 year window, concurrent writers and the unchanged shared default profile.
 The [fixture provenance](../../tests/JetDatabaseWriter.Tests/Databases/CalculatedRegionalProfiles/README.md)
 records engine versions, hashes, observations and the native workflow.
+
+`CalculatedRegionalPortabilityTests` injects differing host tables and compares
+the resulting defaults to the unchanged native observations. It also checks
+caller and partial-name overrides, invariant/uncaptured cultures and calendar
+conversion. `CalculatedDateRoundingKernelTests` checks the generated General
+Date tick controller's half-second and final-day boundaries; native OLE serial
+rounding retains its separate semantics.
 
 ## Unary values and membership
 
