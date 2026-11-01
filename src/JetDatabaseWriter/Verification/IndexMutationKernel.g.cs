@@ -4,6 +4,37 @@
 namespace JetDatabaseWriter.Verification {
 
   internal static class IndexMutationKernel {
+    public static bool SelectMutationPredicates(bool unique, uint[] keys, uint[] columns, byte[] eligible, uint[] selected)
+    {
+      bool admitted = false;
+      admitted = false;
+      if (((!(unique)) || (((uint)(keys).LongLength) == (0U))) || (((uint)(keys).LongLength) > (10U))) {
+        return admitted;
+      }
+      uint _0_key;
+      _0_key = 0U;
+      while ((_0_key) < ((uint)(keys).LongLength)) {
+        uint _1_candidate;
+        _1_candidate = 0U;
+        while (((_1_candidate) < ((uint)(columns).LongLength)) && ((((eligible)[(int)(_1_candidate)]) != ((byte)(1))) || (((columns)[(int)(_1_candidate)]) != ((keys)[(int)(_0_key)])))) {
+          _1_candidate = (_1_candidate) + (1U);
+        }
+        if ((_1_candidate) == ((uint)(columns).LongLength)) {
+          return admitted;
+        }
+        (selected)[(int)((_0_key))] = _1_candidate;
+        _0_key = (_0_key) + (1U);
+      }
+      admitted = true;
+      return admitted;
+    }
+    public static bool AdmitMutationBookmarkCount(uint bookmarks) {
+      return (bookmarks) <= (1U);
+    }
+    public static bool AdmitMutationBookmarks(uint bookmarks, uint decoded, bool equalKey)
+    {
+      return ((JetDatabaseWriter.Verification.IndexMutationKernel.AdmitMutationBookmarkCount(bookmarks)) && ((decoded) == (bookmarks))) && (((decoded) == (0U)) || (equalKey));
+    }
     public static bool AdmitRelocationPair(uint source, uint destination, uint priorSource, uint priorDestination)
     {
       return (((((source) / (256U)) != (0U)) && (((destination) / (256U)) != (0U))) && ((priorSource) < (source))) && ((priorDestination) < (destination));

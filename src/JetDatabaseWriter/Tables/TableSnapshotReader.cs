@@ -9,6 +9,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
@@ -18,6 +19,7 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueDecoding.Models;
+using JetDatabaseWriter.Verification;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -61,7 +63,7 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
             : await this.DecodeRowsAsync(tdefPage, tableDef, tableName: null, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Reads a validated unique ascending Int32 equality target, retaining residual filtering at the caller.</summary>
+    /// <summary>Reads a validated full unique equality target, retaining residual filtering at the caller.</summary>
     /// <param name="table">The independently resolved table.</param>
     /// <param name="criteria">Necessary equality conditions.</param>
     /// <param name="cancellationToken">Cancels cursor and row acquisition.</param>
@@ -69,47 +71,107 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
     /// <exception cref="JetCorruptDataException">An index bookmark or its row contradicts the declared identity.</exception>
     internal async ValueTask<List<LocatedRow>?> TryReadIndexedRowsAsync(ResolvedTable table, RowCriteria criteria, CancellationToken cancellationToken)
     {
+        uint[] predicateColumns = new uint[criteria.Count];
+        byte[] eligible = new byte[criteria.Count];
+        for (int position = 0; position < criteria.Count; position++)
+        {
+            ColumnPredicate condition = criteria.Predicates[position];
+            ColumnInfo? column = table.Definition.FindColumn(condition.ColumnName);
+            if (column is null || !IsExactMutationEquality(column, condition))
+            {
+                // A later seek must not suppress an earlier coercion, custom
+                // comparison or unsupported predicate's observable behavior.
+                break;
+            }
+
+            predicateColumns[position] = checked((uint)column.ColNum);
+            eligible[position] = 1;
+        }
+
         IReadOnlyList<IndexMetadata> indexes = await this.ReadIndexMetadataSnapshotAsync(table.Entry.Name, cancellationToken).ConfigureAwait(false);
         foreach (IndexMetadata index in indexes)
         {
-            if (!index.EnforcesUniqueness || index.Columns.Count != 1 || !index.Columns[0].IsAscending || index.FirstDp <= 0)
+            if (index.FirstDp <= 0)
             {
                 continue;
             }
 
-            int columnIndex = table.Definition.FindColumnIndex(index.Columns[0].Name);
-            if (columnIndex < 0 || table.Definition.Columns[columnIndex].IsCalculated || table.Definition.Columns[columnIndex].Type != LongIntegerType)
+            uint[] keyColumns = new uint[index.Columns.Count];
+            for (int component = 0; component < keyColumns.Length; component++)
+            {
+                keyColumns[component] = checked((uint)index.Columns[component].ColumnNumber);
+            }
+
+            uint[] selectedPredicates = new uint[keyColumns.Length];
+            if (!IndexMutationKernel.SelectMutationPredicates(index.EnforcesUniqueness, keyColumns, predicateColumns, eligible, selectedPredicates))
             {
                 continue;
             }
 
-            foreach (ColumnPredicate condition in criteria.Predicates)
+            object?[] keyValues = new object?[keyColumns.Length];
+            bool supported = true;
+            for (int component = 0; component < keyColumns.Length; component++)
             {
-                if (condition.Operator != ColumnPredicateOperator.Equal || condition.Operand is not int value
-                    || !string.Equals(condition.ColumnName, index.Columns[0].Name, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                using var cursor = new IndexCursor(format.IndexPage, pages.ReadPageLeaseAsync, format.PageSize);
-                byte[] key = IndexKeyEncoder.EncodeColumnEntry(format, table.Definition.Columns[columnIndex], value, ascending: true);
-                List<(long DataPage, int RowIndex)> selected = await cursor.FindRowLocationsAsync(index.FirstDp, key, cancellationToken).ConfigureAwait(false);
-                if (selected.Count > 1)
-                {
-                    throw CreateIndexedRowException(table, "A unique index contains multiple bookmarks for the same non-null Int32 key.");
-                }
-
-                List<LocatedRow> result = await this.DecodeRowsAsync(table.Entry.TDefPage, table.Definition, table.Entry.Name, cancellationToken, selected).ConfigureAwait(false);
-                if (result.Count != selected.Count || (result.Count == 1 && (result[0].Values[columnIndex] is not int stored || stored != value)))
-                {
-                    throw CreateIndexedRowException(table, "An index bookmark does not identify the requested live Int32 key.");
-                }
-
-                return result;
+                ColumnPredicate condition = criteria.Predicates[checked((int)selectedPredicates[component])];
+                keyValues[component] = condition.Operand;
+                ColumnInfo? column = table.Definition.FindColumn(condition.ColumnName);
+                supported &= column is not null && !(format.LegacyNumericIndexKeys && column.Type == NumericType && !index.Columns[component].IsAscending);
             }
+
+            if (!supported || !IndexKeyEncoder.CanEncodeIndexKeyPrefix(format, table.Entry.Name, index, table.Definition, keyValues))
+            {
+                continue;
+            }
+
+            byte[] key = IndexKeyEncoder.EncodeIndexSeekKey(format, table.Entry.Name, index, table.Definition, keyValues);
+            using var cursor = new IndexCursor(format.IndexPage, pages.ReadPageLeaseAsync, format.PageSize);
+            var selected = new List<(long DataPage, int RowIndex)>(1);
+            var range = new EncodedIndexRange(new EncodedIndexBound(key, true, false), new EncodedIndexBound(key, true, false));
+            await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(index.FirstDp, range, cancellationToken).ConfigureAwait(false))
+            {
+                selected.Add(location);
+                if (!IndexMutationKernel.AdmitMutationBookmarkCount(checked((uint)selected.Count)))
+                {
+                    throw CreateIndexedRowException(table, "A unique index contains multiple bookmarks for the same non-null key.");
+                }
+            }
+
+            List<LocatedRow> result = await this.DecodeRowsAsync(table.Entry.TDefPage, table.Definition, table.Entry.Name, cancellationToken, selected).ConfigureAwait(false);
+            bool equalKey = result.Count == 0 || this.HasMutationKey(table.Definition, index, result[0].Values, key);
+            if (!IndexMutationKernel.AdmitMutationBookmarks(checked((uint)selected.Count), checked((uint)result.Count), equalKey))
+            {
+                throw CreateIndexedRowException(table, "An index bookmark does not identify the requested live key.");
+            }
+
+            return result;
         }
 
         return null;
+    }
+
+    private static bool IsExactMutationEquality(ColumnInfo column, ColumnPredicate condition)
+        => !column.IsCalculated && condition.Operator == ColumnPredicateOperator.Equal
+            && condition.Operand is not (null or DBNull)
+            && column.Type is ByteType or IntegerType or LongIntegerType or BigIntType or GuidType or BinaryType or MoneyType or NumericType
+            && GetClrType(column.Type) is Type keyType && condition.Operand.GetType() == keyType
+            && IndexSeekFilter.IsSeekable(column, keyType, ColumnPredicateOperator.Equal, condition.Operand);
+
+    private bool HasMutationKey(TableDef definition, IndexMetadata index, object[] values, byte[] key)
+    {
+        object?[] storedValues = new object?[index.Columns.Count];
+        for (int component = 0; component < storedValues.Length; component++)
+        {
+            int column = definition.FindColumnIndex(index.Columns[component].Name);
+            if (column < 0)
+            {
+                return false;
+            }
+
+            storedValues[component] = values[column];
+        }
+
+        return IndexKeyEncoder.CanEncodeIndexKeyPrefix(format, string.Empty, index, definition, storedValues)
+            && IndexKeyEncoder.EncodeIndexSeekKey(format, string.Empty, index, definition, storedValues).AsSpan().SequenceEqual(key);
     }
 
     /// <summary>

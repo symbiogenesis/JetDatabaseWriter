@@ -11,6 +11,93 @@ module IndexMutationNativeTypes {
 module IndexMutationKernel {
   import opened IndexMutationNativeTypes
 
+  ghost predicate HasMutationComponent(columns: seq<U32>, eligible: seq<Byte>, column: U32) {
+    |columns| == |eligible| &&
+      exists candidate: nat :: candidate < |columns| && eligible[candidate] == 1 && columns[candidate] == column
+  }
+
+  ghost predicate CompleteMutationKey(keys: seq<U32>, columns: seq<U32>, eligible: seq<Byte>) {
+    0 < |keys| <= 10 &&
+      forall key: nat :: key < |keys| ==> HasMutationComponent(columns, eligible, keys[key])
+  }
+
+  lemma MutationKeyHasComponent(keys: seq<U32>, columns: seq<U32>, eligible: seq<Byte>, component: nat)
+    requires CompleteMutationKey(keys, columns, eligible)
+    requires component < |keys|
+    ensures HasMutationComponent(columns, eligible, keys[component])
+  { }
+
+  // The caller supplies canonical native column identities and marks only
+  // non-null, exact equality operands. Every component must be present before
+  // a unique-index bookmark can replace a complete table snapshot.
+  method SelectMutationPredicates(unique: bool, keys: array<U32>, columns: array<U32>,
+      eligible: array<Byte>, selected: array<U32>) returns (admitted: bool)
+    requires keys.Length <= 2147483647 && columns.Length <= 2147483647
+    requires columns.Length == eligible.Length && selected.Length == keys.Length
+    requires selected != keys && selected != columns
+    modifies selected
+    ensures admitted <==> unique && CompleteMutationKey(keys[..], columns[..], eligible[..])
+    ensures admitted ==> forall key: nat :: key < keys.Length ==>
+      selected[key] as int < columns.Length && eligible[selected[key]] == 1 && columns[selected[key]] == keys[key]
+  {
+    admitted := false;
+    if !unique || keys.Length as U32 == 0 || keys.Length as U32 > 10 {
+      assert !(unique && CompleteMutationKey(keys[..], columns[..], eligible[..]));
+      return;
+    }
+    var key: U32 := 0;
+    while key < keys.Length as U32
+      invariant key <= keys.Length as U32
+      invariant 0 < keys.Length <= 10
+      invariant forall prior: nat :: prior < key as int ==>
+        selected[prior] as int < columns.Length && eligible[selected[prior]] == 1 && columns[selected[prior]] == keys[prior]
+      decreases keys.Length - key as int
+    {
+      var candidate: U32 := 0;
+      while candidate < columns.Length as U32 &&
+          (eligible[candidate] != 1 || columns[candidate] != keys[key])
+        invariant candidate <= columns.Length as U32
+        invariant forall prior: nat :: prior < candidate as int ==>
+          eligible[prior] != 1 || columns[prior] != keys[key]
+        decreases columns.Length - candidate as int
+      {
+        candidate := candidate + 1;
+      }
+      if candidate == columns.Length as U32 {
+        assert !(exists foundIndex: nat :: foundIndex < columns.Length && eligible[foundIndex] == 1 && columns[foundIndex] == keys[key]);
+        if CompleteMutationKey(keys[..], columns[..], eligible[..]) {
+          MutationKeyHasComponent(keys[..], columns[..], eligible[..], key as int);
+        }
+        assert !CompleteMutationKey(keys[..], columns[..], eligible[..]);
+        return;
+      }
+      selected[key] := candidate;
+      key := key + 1;
+    }
+    forall component: nat | component < keys.Length
+      ensures HasMutationComponent(columns[..], eligible[..], keys[component])
+    {
+      assert selected[component] as int < columns.Length;
+      assert eligible[selected[component]] == 1 && columns[selected[component]] == keys[component];
+    }
+    assert unique;
+    assert CompleteMutationKey(keys[..], columns[..], eligible[..]);
+    admitted := true;
+  }
+
+  function AdmitMutationBookmarkCount(bookmarks: U32): bool { bookmarks <= 1 }
+
+  function AdmitMutationBookmarks(bookmarks: U32, decoded: U32, equalKey: bool): bool {
+    AdmitMutationBookmarkCount(bookmarks) && decoded == bookmarks && (decoded == 0 || equalKey)
+  }
+
+  lemma MutationBookmarksAreExact(bookmarks: U32, decoded: U32, equalKey: bool)
+    requires AdmitMutationBookmarks(bookmarks, decoded, equalKey)
+    ensures decoded <= 1
+    ensures decoded == bookmarks
+    ensures decoded != 0 ==> equalKey
+  { }
+
   // The disk-backed relocation adapter supplies complete immutable records.
   // These controls retain a monotone injective identity map without allocating
   // an executing sequence or retaining its contents in memory.

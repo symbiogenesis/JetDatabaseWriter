@@ -289,6 +289,89 @@ public sealed class InPlaceRowUpdateTests
         Assert.Equal(1, await writer.DeleteRowsAsync("Items", RowCriteria.Where("Id", 1).And("Score", 4), ct));
     }
 
+    /// <summary>Unique scalar and composite keys select only their matching row in either index direction.</summary>
+    /// <param name="format">The native file generation.</param>
+    /// <param name="descending">Whether the GUID component is descending.</param>
+    /// <param name="composite">Whether the index includes an integer component.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, false, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, true, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true, false)]
+    [InlineData(DatabaseFormat.AceAccdb, false, false)]
+    [InlineData(DatabaseFormat.AceAccdb, true, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, false, true)]
+    [InlineData(DatabaseFormat.Jet3Mdb, true, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true, true)]
+    [InlineData(DatabaseFormat.AceAccdb, false, true)]
+    [InlineData(DatabaseFormat.AceAccdb, true, true)]
+    public async Task UniqueGuidAndCompositeTargets_AvoidWholeTableSnapshots(DatabaseFormat format, bool descending, bool composite)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var source = new MemoryStream();
+        await using (AccessWriter creator = await AccessWriter.CreateDatabaseAsync(source, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            var index = new IndexDefinition("Target", composite ? ["Part", "Token"] : ["Token"])
+            {
+                IsUnique = true,
+                DescendingColumns = descending ? ["Token"] : [],
+            };
+            await creator.CreateTableAsync("Items", [new ColumnDefinition("Part", typeof(int)), new ColumnDefinition("Token", typeof(Guid)), new ColumnDefinition("Score", typeof(int)), new ColumnDefinition("Note", typeof(string))], [index], ct);
+            await creator.InsertRowsAsync("Items", Enumerable.Range(1, 64).Select(id => new object[] { id % 3, new Guid(id, 0, 0, new byte[8]), 0, new string('m', 12_000) }), ct);
+        }
+
+        await using var trace = new CountingStream(source);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(trace, new AccessWriterOptions { UseLockFile = false, PageCacheSize = 0 }, leaveOpen: true, ct);
+        ResolvedTable? table = await writer.Services.Snapshots.ResolveTableAsync("Items", ct);
+        Assert.NotNull(table);
+        var criteria = RowCriteria.Where("Token", new Guid(1, 0, 0, new byte[8]));
+        if (composite)
+        {
+            criteria.And("Part", 1);
+            Assert.Null(await writer.Services.Snapshots.TryReadIndexedRowsAsync(table, RowCriteria.Where("Token", new Guid(1, 0, 0, new byte[8])), ct));
+        }
+
+        trace.Reset();
+        List<LocatedRow>? targets = await writer.Services.Snapshots.TryReadIndexedRowsAsync(table, criteria, ct);
+        Assert.NotNull(targets);
+        Assert.Equal(new Guid(1, 0, 0, new byte[8]), Assert.Single(targets).Values[1]);
+        Assert.True(trace.BytesRead < source.Length / 3, $"Target discovery read {trace.BytesRead} bytes from a {source.Length}-byte database.");
+
+        trace.Reset();
+        Assert.Equal(1, await writer.UpdateRowsAsync("Items", criteria.And("Score", 0), new RowValues { ["Score"] = 4 }, ct));
+        Assert.True(trace.BytesRead < source.Length / 3, $"Point update read {trace.BytesRead} bytes from a {source.Length}-byte database.");
+        Assert.Equal(0, await writer.UpdateRowsAsync("Items", criteria, new RowValues { ["Score"] = 5 }, ct));
+        Assert.Equal(1, await writer.DeleteRowsAsync("Items", RowCriteria.Where("Token", new Guid(1, 0, 0, new byte[8])).And("Part", 1), ct));
+    }
+
+    /// <summary>Null keys, coercions and earlier unsupported comparisons retain complete residual evaluation.</summary>
+    [Fact]
+    public async Task UniqueTargets_KeepUnsafeAndIncompleteCriteriaOnTheScanPath()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var stream = new MemoryStream();
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.Jet4Mdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+        await writer.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Token", typeof(Guid)), new ColumnDefinition("Name", typeof(string), maxLength: 30)], [new IndexDefinition("TokenKey", "Token") { IsUnique = true }], ct);
+        Guid token = new(1, 0, 0, new byte[8]);
+        await writer.InsertRowsAsync("Items", [[1, token, "first"], [2, DBNull.Value, "second"], [3, DBNull.Value, "third"]], ct);
+        ResolvedTable? table = await writer.Services.Snapshots.ResolveTableAsync("Items", ct);
+        Assert.NotNull(table);
+        foreach (RowCriteria criteria in new[]
+        {
+            RowCriteria.Where("Token", null),
+            RowCriteria.Where("Token", token.ToString()),
+            RowCriteria.Where(ColumnPredicate.GreaterThan("Id", 0)).And("Token", token),
+            RowCriteria.Where("Name", "first").And("Token", token),
+        })
+        {
+            Assert.Null(await writer.Services.Snapshots.TryReadIndexedRowsAsync(table, criteria, ct));
+        }
+
+        Assert.Equal(2, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Token", null), new RowValues { ["Name"] = "missing" }, ct));
+        Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Token", token.ToString()), new RowValues { ["Name"] = "coerced" }, ct));
+    }
+
     /// <summary>Contradictory unique-index bookmarks refuse before any row or index byte changes.</summary>
     /// <param name="fault">The synthetic bookmark contradiction.</param>
     [Theory]
