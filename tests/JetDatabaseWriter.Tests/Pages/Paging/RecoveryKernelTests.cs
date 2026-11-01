@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Verification;
 using Xunit;
 
@@ -954,7 +955,7 @@ public sealed class RecoveryKernelTests
             BinaryPrimitives.WriteInt64LittleEndian(record, tag);
             if (tag == -1)
             {
-                SHA256.HashData(this.ReadDatabase()).CopyTo(record, 8);
+                JournalFixtureHash.Compute(this.ReadDatabase(), this.pageSize).CopyTo(record, 8);
             }
 
             SHA256.HashData(record.AsSpan(0, record.Length - 32)).CopyTo(record.AsSpan(record.Length - 32));

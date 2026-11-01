@@ -6,6 +6,7 @@ using System.IO;
 using System.Security.Cryptography;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>Checks durable raw rollback and refusal of conflicting content.</summary>
@@ -366,19 +367,7 @@ public sealed class PersistentRollbackJournalTests
 
             byte[] marker = new byte[2088];
             BinaryPrimitives.WriteInt64LittleEndian(marker, -1);
-            using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
-            {
-                byte[] identity = new byte[16];
-                BinaryPrimitives.WriteInt64LittleEndian(identity, committed.Length);
-                BinaryPrimitives.WriteInt32LittleEndian(identity.AsSpan(8), 2048);
-                hash.AppendData(identity);
-                for (int offset = 0; offset < committed.Length; offset += 2048)
-                {
-                    hash.AppendData(SHA256.HashData(committed.AsSpan(offset, Math.Min(2048, committed.Length - offset))));
-                }
-
-                hash.GetHashAndReset().CopyTo(marker, 8);
-            }
+            JournalFixtureHash.Compute(committed, 2048).CopyTo(marker, 8);
 
             SHA256.HashData(marker.AsSpan(0, 2056)).CopyTo(marker, 2056);
             if (corrupt)

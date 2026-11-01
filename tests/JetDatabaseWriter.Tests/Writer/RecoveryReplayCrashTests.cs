@@ -301,7 +301,7 @@ public sealed class RecoveryReplayCrashTests(ITestOutputHelper output)
         // journal format tests. The committed database itself is writer-authored.
         byte[] decision = new byte[pageSize + 40];
         BinaryPrimitives.WriteInt64LittleEndian(decision, -1);
-        SHA256.HashData(committed).CopyTo(decision, 8);
+        JournalFixtureHash.Compute(committed, pageSize).CopyTo(decision, 8);
         SHA256.HashData(decision.AsSpan(0, decision.Length - 32)).CopyTo(decision, decision.Length - 32);
         using (var journal = new FileStream(PersistentRollbackJournal.JournalPath(path), FileMode.Append, FileAccess.Write, FileShare.None))
         {
