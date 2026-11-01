@@ -395,6 +395,7 @@ module DataPageKernel {
     applied := false;
     if page == replacement { return; }
     ghost var original := page[..];
+    ghost var replacementEntry := replacement[..];
     var rows, first, start, end := PrepareReclaim(page, pageSize, countOffset, rowsStart, rowIndex);
     if rows == 0 || start != expectedStart || end - start != replacement.Length as U32 ||
         ReadWord(page, rowsStart + rowIndex * 2) != start {
@@ -421,7 +422,8 @@ module DataPageKernel {
     while cursor < replacement.Length as U32
       invariant cursor <= replacement.Length as U32
       invariant start == expectedStart && start as int + replacement.Length <= page.Length
-      invariant page[start as int..start as int + cursor as int] == replacement[..cursor as int]
+      invariant replacement[..] == replacementEntry
+      invariant page[start as int..start as int + cursor as int] == replacementEntry[..cursor as int]
       invariant forall position | 0 <= position < page.Length &&
         !(start as int <= position < start as int + cursor as int) :: page[position] == original[position]
       decreases replacement.Length as U32 - cursor
