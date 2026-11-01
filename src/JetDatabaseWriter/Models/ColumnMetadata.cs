@@ -33,6 +33,13 @@ public sealed record ColumnMetadata
     /// <summary>Gets a value indicating whether null is permitted by the persisted Required property and integer AutoNumber flags. Missing Required metadata defaults to nullable for other columns, including generated GUIDs; primary-key indexes impose their own null refusal.</summary>
     public bool IsNullable { get; init; }
 
+    /// <summary>
+    /// Gets the persisted <c>AllowZeroLength</c> Boolean for a Text, Memo or
+    /// Hyperlink field, or null for other types or when the property is absent.
+    /// An absent property does not impose an empty-string constraint.
+    /// </summary>
+    public bool? AllowZeroLength { get; init; }
+
     /// <summary>Gets a value indicating whether the column is fixed-length.</summary>
     public bool IsFixedLength { get; init; }
 

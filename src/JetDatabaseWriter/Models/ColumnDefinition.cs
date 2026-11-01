@@ -53,6 +53,16 @@ public sealed record ColumnDefinition
     public bool IsNullable { get; init; } = true;
 
     /// <summary>
+    /// Gets a value indicating whether a Text, Memo or Hyperlink field accepts an empty
+    /// string. Defaults to <see langword="false"/>, matching DAO field creation.
+    /// This is independent of <see cref="IsNullable"/>: a required field can allow
+    /// an empty string, and a nullable field can refuse one. Persisted as the native
+    /// <c>AllowZeroLength</c> Boolean property and restored on reopen. Enabling it on
+    /// a non-text column is refused before mutation.
+    /// </summary>
+    public bool AllowZeroLength { get; init; }
+
+    /// <summary>
     /// Gets an optional default value, stored when an insert leaves the column out: a
     /// <see cref="RowValues"/> row that does not name it, a POCO with no property for it,
     /// or <see cref="DbDefault.Value"/> in any insert. An explicit <see langword="null"/> or

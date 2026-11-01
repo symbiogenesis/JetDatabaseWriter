@@ -72,6 +72,9 @@ public enum JetErrorCode
     /// <summary>Identifies TableValidationRuleViolation.</summary>
     TableValidationRuleViolation = 308,
 
+    /// <summary>A text field does not permit a zero-length string.</summary>
+    ZeroLengthViolation = 309,
+
     /// <summary>Identifies LastColumn.</summary>
     LastColumn = 401,
 

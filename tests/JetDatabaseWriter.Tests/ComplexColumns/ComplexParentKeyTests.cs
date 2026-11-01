@@ -170,7 +170,7 @@ public sealed class ComplexParentKeyTests
         {
             "binary" => (new("Key", typeof(byte[]), 4), (byte[])[1, 0, 0, 0], (byte[])[2, 0, 0, 0]),
             "memo" => (new("Key", typeof(string)), new string('x', 600) + "one", new string('x', 600) + "two"),
-            "null-empty" => (new("Key", typeof(string), 32), DBNull.Value, string.Empty),
+            "null-empty" => (new("Key", typeof(string), 32) { AllowZeroLength = true }, DBNull.Value, string.Empty),
             "guid" => (new("Key", typeof(Guid)), Guid.Parse("00000000-0000-0000-0000-000000000001"), Guid.Parse("00000000-0000-0000-0000-000000000002")),
             "decimal" => (new("Key", typeof(decimal)) { NumericPrecision = 18, NumericScale = 2 }, 1.25m, 1.5m),
             "date" => (new("Key", typeof(DateTime)), new DateTime(2026, 1, 1, 0, 0, 1), new DateTime(2026, 1, 1, 0, 0, 2)),

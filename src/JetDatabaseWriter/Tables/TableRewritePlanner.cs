@@ -916,6 +916,8 @@ internal sealed class TableRewritePlanner(
         ColumnDefinition def = baseDef with
         {
             IsNullable = isNullable,
+            AllowZeroLength = column.Type is TextType or MemoType
+                && properties?.FindPropertyTarget(column.Name, Constants.ColumnPropertyNames.AllowZeroLength)?.GetBooleanValue(Constants.ColumnPropertyNames.AllowZeroLength) is not false,
             IsAutoIncrement = isAutoIncrement,
             IsHyperlink = column.Type == MemoType && (column.Flags & Constants.ColumnDescriptorFlags.Hyperlink) != 0,
             IsDateTimeExtended = valueType == DateTimeExtendedType,

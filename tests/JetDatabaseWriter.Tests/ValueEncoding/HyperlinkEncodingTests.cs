@@ -57,10 +57,33 @@ public sealed class HyperlinkEncodingTests
     }
 
     [Fact]
-    public void Parse_NullOrEmpty_ReturnsNull()
+    public void Parse_NullAndEmptyRemainDistinct()
     {
         Assert.Null(Hyperlink.Parse(null));
-        Assert.Null(Hyperlink.Parse(string.Empty));
+        Hyperlink empty = Assert.IsType<Hyperlink>(Hyperlink.Parse(string.Empty));
+        Assert.Equal(new Hyperlink(), empty);
+        Assert.Equal(string.Empty, empty.ToString());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("#")]
+    [InlineData("##")]
+    [InlineData("###")]
+    [InlineData("####")]
+    [InlineData("https://example.com")]
+    [InlineData("Docs#https://example.com#")]
+    [InlineData("Click##anchor#")]
+    public void Parse_PreservesStoredSpellingAndSemanticEquality(string stored)
+    {
+        Hyperlink parsed = Assert.IsType<Hyperlink>(Hyperlink.Parse(stored));
+        var constructed = new Hyperlink(parsed.DisplayText, parsed.Address, parsed.SubAddress, parsed.ScreenTip);
+        Assert.Equal(stored, parsed.ToString());
+        Assert.Equal(constructed, parsed);
+        Assert.Equal(constructed.GetHashCode(), parsed.GetHashCode());
+        Assert.Single(new HashSet<Hyperlink> { parsed, constructed });
+        Hyperlink edited = parsed with { Address = "changed" };
+        Assert.Equal(new Hyperlink(parsed.DisplayText, "changed", parsed.SubAddress, parsed.ScreenTip).ToString(), edited.ToString());
     }
 
     [Fact]

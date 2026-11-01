@@ -243,10 +243,20 @@ internal sealed class ConstraintRegistry(
 
             foreach (ColumnPropertyEntry entry in target.Entries)
             {
+                if (target.Name.Length != 0 && string.Equals(entry.Name, Constants.ColumnPropertyNames.AllowZeroLength, StringComparison.OrdinalIgnoreCase)
+                    && (entry.DataType != BooleanType || entry.Value.Length != 1))
+                {
+                    throw new JetCorruptDataException(
+                        JetErrorCode.CorruptTableDefinition,
+                        $"Table '{tableName}' has an invalid AllowZeroLength property for column '{target.Name}'.",
+                        new JetErrorInfo { TableName = tableName, ColumnName = target.Name, Reason = "AllowZeroLength must contain one Boolean byte" });
+                }
+
                 bool modelled = string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationText, StringComparison.OrdinalIgnoreCase)
                     || (target.Name.Length != 0 && (string.Equals(entry.Name, Constants.ColumnPropertyNames.DefaultValue, StringComparison.OrdinalIgnoreCase)
                         || string.Equals(entry.Name, Constants.ColumnPropertyNames.Required, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(entry.Name, Constants.ColumnPropertyNames.AllowZeroLength, StringComparison.OrdinalIgnoreCase)
                         || string.Equals(entry.Name, Constants.ColumnPropertyNames.Expression, StringComparison.OrdinalIgnoreCase)
                         || string.Equals(entry.Name, Constants.ColumnPropertyNames.ResultType, StringComparison.OrdinalIgnoreCase)));
                 if (!modelled)
@@ -450,6 +460,8 @@ internal sealed class ConstraintRegistry(
                     throw new JetConstraintException(JetErrorCode.NotNullViolation, takeDefault ? $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and no value was supplied." : $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and cannot be set to null.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
                 }
 
+                ValidateZeroLength(tableName, c, value);
+
                 if (!isNull && c.ValidationRule != null && !c.ValidationRule(value is NativeDate nativeDate ? nativeDate.Value : value))
                 {
                     throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Validation rule for column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
@@ -533,6 +545,8 @@ internal sealed class ConstraintRegistry(
                 throw new JetConstraintException(JetErrorCode.NotNullViolation, $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and cannot be set to null.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
             }
 
+            ValidateZeroLength(tableName, c, value);
+
             if (!isNull && c.ValidationRule != null && !c.ValidationRule(value is NativeDate nativeDate ? nativeDate.Value : value))
             {
                 throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Validation rule for column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
@@ -582,6 +596,23 @@ internal sealed class ConstraintRegistry(
         this.EvaluateTableValidationRule(tableName, tableDef, columns, values, rule);
     }
 
+    /// <summary>Checks the text value that the ordinary field encoder will store.</summary>
+    /// <param name="tableName">The table name for diagnostics.</param>
+    /// <param name="constraint">The field's native constraint.</param>
+    /// <param name="value">The supplied or defaulted value.</param>
+    /// <exception cref="JetConstraintException">The field does not permit an empty string.</exception>
+    private static void ValidateZeroLength(string tableName, ColumnConstraint constraint, object? value)
+    {
+        if (!constraint.AllowZeroLength && value is not null and not DBNull
+            && string.IsNullOrEmpty(Convert.ToString(value, CultureInfo.InvariantCulture)))
+        {
+            throw new JetConstraintException(
+                JetErrorCode.ZeroLengthViolation,
+                $"Column '{constraint.Name}' on table '{tableName}' does not allow a zero-length string.",
+                new JetErrorInfo { TableName = tableName, ColumnName = constraint.Name });
+        }
+    }
+
     private static ColumnConstraint ToConstraint(ColumnDefinition def, JetFormat format)
     {
         // Integer AutoNumber, calculated and complex columns take no default.
@@ -601,6 +632,8 @@ internal sealed class ConstraintRegistry(
             StorageType = JetTypeInfo.ResolveStorageType(def, JetTypeInfo.TypeCodeFromDefinition(def), format, nameof(def)),
             ClrType = def.ClrType,
             IsNullable = def.IsNullable,
+            AllowZeroLength = (def.ClrType != typeof(string) && def.ClrType != typeof(Hyperlink))
+                || def.IsCalculated || def.IsAttachment || def.IsMultiValue || def.AllowZeroLength,
             DefaultValue = takesDefault ? ToAppliedClrDefault(def) : null,
             IsAutoIncrement = def.IsAutoIncrement,
             ValidationRule = def.ValidationRule,
@@ -1077,6 +1110,8 @@ internal sealed class ConstraintRegistry(
                 StorageType = col.Type,
                 ClrType = JetTypeInfo.GetClrType(constraintType) ?? typeof(object),
                 IsNullable = isNullable,
+                AllowZeroLength = col.IsCalculated || col.Type is not (TextType or MemoType)
+                    || properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.AllowZeroLength)?.GetBooleanValue(Constants.ColumnPropertyNames.AllowZeroLength) is not false,
                 IsAutoIncrement = isAutoIncrement,
                 DefaultValueExpression = takesDefault
                     ? NullIfBlank(PersistedExpressionText.Normalize(properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.DefaultValue)?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, propertyFormat!)))

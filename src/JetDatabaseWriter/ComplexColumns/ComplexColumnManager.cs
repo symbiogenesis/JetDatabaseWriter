@@ -523,7 +523,11 @@ internal sealed class ComplexColumnManager(
                             flatIndexes,
                             Constants.SystemObjects.ComplexFlatTableFlags,
                             MarkSystemTableTdef: false,
-                            EmitAceRows: true),
+                            EmitAceRows: true,
+                            RegisterConstraints: false)
+                        {
+                            PersistedProperties = BuildFlatTableProperties(flatCols, this.format),
+                        },
                     ],
                     []),
                 cancellationToken).ConfigureAwait(false);
@@ -551,6 +555,28 @@ internal sealed class ComplexColumnManager(
         // share a name across tables.
         string guid = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture).ToUpperInvariant();
         return TruncateGeneratedName($"f_{guid}_{userColumnName}");
+    }
+
+    /// <summary>Emits child properties without imposing an ordinary field's empty-string restriction.</summary>
+    /// <param name="columns">The generated child fields.</param>
+    /// <param name="format">The database format.</param>
+    /// <returns>The native property shape used to hydrate child constraints.</returns>
+    private static ColumnPropertyBlock BuildFlatTableProperties(IReadOnlyList<ColumnDefinition> columns, JetFormat format)
+    {
+        var builder = new ColumnPropertyBlockBuilder();
+        foreach (ColumnDefinition column in columns)
+        {
+            JetExpressionConverter.ApplyColumn(builder, column, format);
+        }
+
+        // DAO-created complex payload fields have no stored AllowZeroLength
+        // entry. An explicit False changes native child recordset behavior.
+        foreach (ColumnPropertyTargetBuilder target in builder.Targets)
+        {
+            _ = target.Entries.RemoveAll(static entry => string.Equals(entry.Name, Constants.ColumnPropertyNames.AllowZeroLength, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return ColumnPropertyBlock.Parse(builder.ToBytes(format), format) ?? ColumnPropertyBlock.Empty(format);
     }
 
     private static string TruncateGeneratedName(string name, int maxLength = AccessObjectName.MaxLength)

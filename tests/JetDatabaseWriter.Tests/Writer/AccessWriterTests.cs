@@ -2161,7 +2161,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             var columns = new List<ColumnDefinition> { new("Id", typeof(int)) };
             if (wideRows)
             {
-                columns.AddRange(Enumerable.Range(0, 8).Select(id => new ColumnDefinition($"Padding{id}", typeof(string), 200)));
+                columns.AddRange(Enumerable.Range(0, 8).Select(id => new ColumnDefinition($"Padding{id}", typeof(string), 200) { AllowZeroLength = true }));
             }
 
             await writer.CreateTableAsync(

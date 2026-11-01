@@ -32,6 +32,8 @@ using System.Text;
 /// </remarks>
 public sealed record Hyperlink
 {
+    private StoredRepresentation? storedRepresentation;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="Hyperlink"/> class.
     /// </summary>
@@ -64,17 +66,18 @@ public sealed record Hyperlink
     /// a hyperlink-flagged column) into a <see cref="Hyperlink"/> value.
     /// </summary>
     /// <param name="value">
-    /// The encoded hyperlink string. <see langword="null"/> or empty returns
-    /// <see langword="null"/>. A string with no <c>#</c> delimiters is treated
+    /// The encoded hyperlink string. <see langword="null"/> returns
+    /// <see langword="null"/>; an empty string returns an empty hyperlink.
+    /// A string with no <c>#</c> delimiters is treated
     /// as a bare address (<see cref="DisplayText"/> empty).
     /// </param>
     /// <returns>
-    /// A populated <see cref="Hyperlink"/>, or <see langword="null"/> when
-    /// <paramref name="value"/> is null or empty.
+    /// A <see cref="Hyperlink"/>, or <see langword="null"/> when
+    /// <paramref name="value"/> is null.
     /// </returns>
     public static Hyperlink? Parse(string? value)
     {
-        if (string.IsNullOrEmpty(value))
+        if (value is null)
         {
             return null;
         }
@@ -102,21 +105,48 @@ public sealed record Hyperlink
         // address, not the display text. Matches DAO behaviour.
         if (partCount == 1)
         {
-            return new Hyperlink(string.Empty, display);
+            return PreserveRepresentation(new Hyperlink(string.Empty, display), value);
         }
 
-        return new Hyperlink(display, address, subAddr, tip);
+        return PreserveRepresentation(new Hyperlink(display, address, subAddr, tip), value);
     }
+
+    /// <inheritdoc/>
+    public bool Equals(Hyperlink? other)
+        => other is not null
+            && string.Equals(this.DisplayText, other.DisplayText, StringComparison.Ordinal)
+            && string.Equals(this.Address, other.Address, StringComparison.Ordinal)
+            && string.Equals(this.SubAddress, other.SubAddress, StringComparison.Ordinal)
+            && string.Equals(this.ScreenTip, other.ScreenTip, StringComparison.Ordinal);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => HashCode.Combine(this.DisplayText, this.Address, this.SubAddress, this.ScreenTip);
 
     /// <summary>
     /// Returns the encoded <c>displaytext#address#subaddress#screentip</c>
     /// representation suitable for storage in a hyperlink-flagged MEMO column.
-    /// Trailing empty parts beyond <see cref="Address"/> are omitted to match
-    /// the form Microsoft Access emits when those fields are blank.
+    /// An unchanged parsed value retains its stored spelling. Newly constructed
+    /// or edited values omit trailing empty parts beyond <see cref="Address"/>;
+    /// a newly constructed empty link serializes as an empty string.
     /// </summary>
     /// <returns>The encoded hyperlink string. Never <see langword="null"/>.</returns>
     public override string ToString()
     {
+        if (this.storedRepresentation is { } stored
+            && string.Equals(this.DisplayText, stored.DisplayText, StringComparison.Ordinal)
+            && string.Equals(this.Address, stored.Address, StringComparison.Ordinal)
+            && string.Equals(this.SubAddress, stored.SubAddress, StringComparison.Ordinal)
+            && string.Equals(this.ScreenTip, stored.ScreenTip, StringComparison.Ordinal))
+        {
+            return stored.Text;
+        }
+
+        if (string.IsNullOrEmpty(this.DisplayText) && string.IsNullOrEmpty(this.Address)
+            && string.IsNullOrEmpty(this.SubAddress) && string.IsNullOrEmpty(this.ScreenTip))
+        {
+            return string.Empty;
+        }
+
         var sb = new StringBuilder();
         _ = sb.Append(Encode(this.DisplayText));
         _ = sb.Append('#');
@@ -142,4 +172,12 @@ public sealed record Hyperlink
     private static string Encode(string s) => string.IsNullOrEmpty(s) ? string.Empty : s.Replace("#", "%23", StringComparison.Ordinal);
 
     private static string Decode(string s) => string.IsNullOrEmpty(s) ? string.Empty : s.Replace("%23", "#", StringComparison.Ordinal);
+
+    private static Hyperlink PreserveRepresentation(Hyperlink value, string text)
+    {
+        value.storedRepresentation = new StoredRepresentation(text, value.DisplayText, value.Address, value.SubAddress, value.ScreenTip);
+        return value;
+    }
+
+    private readonly record struct StoredRepresentation(string Text, string DisplayText, string Address, string SubAddress, string ScreenTip);
 }

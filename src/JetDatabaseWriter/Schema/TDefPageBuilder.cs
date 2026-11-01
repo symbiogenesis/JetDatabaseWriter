@@ -49,6 +49,11 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
         ValidateCalculatedColumn(definition, format, paramName);
         ColumnType type = ResolveStorageType(definition, TypeCodeFromDefinition(definition, paramName), format, paramName);
 
+        if (definition.AllowZeroLength && type is not (TextType or MemoType))
+        {
+            throw new ArgumentException($"Column '{definition.Name}': AllowZeroLength requires a Text, Memo or Hyperlink field.", paramName);
+        }
+
         if (definition.TextCollation is { } collation)
         {
             var requested = TextSortOrder.FromCollation(collation, paramName);

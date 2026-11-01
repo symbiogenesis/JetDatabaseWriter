@@ -223,6 +223,9 @@ internal sealed class SchemaReader(
                 ClrType = ResolveClrType(col),
                 MaxLength = GetMetadataMaxLength(col),
                 IsNullable = ResolveIsNullable(col, properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.Required)),
+                AllowZeroLength = col.Type is TextType or MemoType
+                    ? properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.AllowZeroLength)?.GetBooleanValue(Constants.ColumnPropertyNames.AllowZeroLength)
+                    : null,
                 IsFixedLength = col.IsFixed,
                 TextCollation = col.Type is TextType or MemoType ? col.TextSortOrder.Collation : null,
                 TextSortOrderId = col.Type is TextType or MemoType ? col.TextSortOrder.Value : null,

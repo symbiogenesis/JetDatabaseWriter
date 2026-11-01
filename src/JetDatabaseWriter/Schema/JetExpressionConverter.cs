@@ -122,7 +122,7 @@ internal static class JetExpressionConverter
         ColumnPropertyTargetBuilder target = builder.GetOrAddTarget(col.Name);
         if (emitAllowZeroLength)
         {
-            target.AddBoolean(Constants.ColumnPropertyNames.AllowZeroLength, false);
+            target.AddBoolean(Constants.ColumnPropertyNames.AllowZeroLength, col.AllowZeroLength);
         }
 
         if (emitRequired)

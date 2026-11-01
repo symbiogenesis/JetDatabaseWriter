@@ -24,6 +24,9 @@ internal sealed class ColumnConstraint
 
     public bool IsNullable { get; set; } = true;
 
+    /// <summary>Gets or sets a value indicating whether the field accepts an empty string.</summary>
+    public bool AllowZeroLength { get; set; } = true;
+
     public object? DefaultValue { get; set; }
 
     public bool IsAutoIncrement { get; set; }
@@ -96,6 +99,7 @@ internal sealed class ColumnConstraint
 
     public bool HasAnyConstraint =>
         !this.IsNullable
+        || !this.AllowZeroLength
         || this.DefaultValue != null
         || this.IsAutoIncrement
         || this.ValidationRule != null

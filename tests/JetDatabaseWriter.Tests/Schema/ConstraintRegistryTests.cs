@@ -789,7 +789,15 @@ public sealed class ConstraintRegistryTests
     private static async Task AssertRuleAsync(string rule, ColumnType type, object? value, bool accepted)
     {
         TableDef tableDef = SingleColumnTable(type);
-        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.ValidationRule, rule)));
+        ColumnPropertyBlock properties = BuildColumnProperties("Score", (Constants.ColumnPropertyNames.ValidationRule, rule));
+        if (type is ColumnType.TextType or ColumnType.MemoType)
+        {
+            var builder = ColumnPropertyBlockBuilder.FromBlock(properties);
+            builder.GetOrAddTarget("Score").AddBoolean(Constants.ColumnPropertyNames.AllowZeroLength, true);
+            properties = Assert.IsType<ColumnPropertyBlock>(ColumnPropertyBlock.Parse(builder.ToBytes(properties.Format), properties.Format));
+        }
+
+        ConstraintRegistry registry = RegistryWithProperties(properties);
         object[] values = [value ?? DBNull.Value];
 
         if (accepted)

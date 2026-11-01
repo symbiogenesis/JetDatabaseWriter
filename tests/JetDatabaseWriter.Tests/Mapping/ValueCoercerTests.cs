@@ -74,8 +74,8 @@ public sealed class ValueCoercerTests
 
         Assert.Equal(link.ToString(), ValueCoercer.Coerce(link, typeof(string), Column, Property));
 
-        // An empty string parses to no hyperlink, which skips the assignment.
-        Assert.Null(ValueCoercer.Coerce(string.Empty, typeof(Hyperlink), Column, Property));
+        // An empty link remains distinct from a missing value.
+        Assert.Equal(new Hyperlink(), ValueCoercer.Coerce(string.Empty, typeof(Hyperlink), Column, Property));
     }
 
     [Theory]

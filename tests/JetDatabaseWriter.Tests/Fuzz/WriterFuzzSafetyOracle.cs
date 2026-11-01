@@ -54,7 +54,7 @@ internal static class WriterFuzzSafetyOracle
 
     private static bool IsExpectedRejection(Exception exception) => exception is IJetException jet && jet.ErrorCode is
         JetErrorCode.TableNotFound or JetErrorCode.ColumnNotFound or JetErrorCode.TableExists or JetErrorCode.ColumnExists
-        or JetErrorCode.UniqueViolation or JetErrorCode.NotNullViolation or JetErrorCode.ForeignKeyMissingParent
+        or JetErrorCode.UniqueViolation or JetErrorCode.NotNullViolation or JetErrorCode.ZeroLengthViolation or JetErrorCode.ForeignKeyMissingParent
         or JetErrorCode.ForeignKeyRestrictDelete or JetErrorCode.ForeignKeyRestrictUpdate or JetErrorCode.LastColumn
         or JetErrorCode.InvalidObjectName or JetErrorCode.DefaultNotAllowed or JetErrorCode.InvalidExpression
         or JetErrorCode.UnsupportedExpression or JetErrorCode.ColumnReferencedByExpression or JetErrorCode.TableInRelationship
