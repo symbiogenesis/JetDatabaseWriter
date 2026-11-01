@@ -32,6 +32,12 @@ Write-Fixture 'verification/Pages/Paging/Example.dfy' 'lemma Example() ensures t
 Write-Fixture 'src/JetDatabaseWriter/Verification/RecoveryKernel.g.cs' 'class RecoveryKernel {}' | Out-Null
 Write-Fixture 'src/JetDatabaseWriter/Unmapped.cs' 'class Unmapped {}' | Out-Null
 Write-Fixture 'scripts/ci-matrix.ps1' 'function Get-CiAnalyzerMatrix {}' | Out-Null
+$specializedProvenanceInputs = @(
+    'scripts/run-hosted-fuzz.ps1'
+    'scripts/tests/run-hosted-fuzz.tests.ps1'
+    'scripts/tests/specialized-workflow-trigger.tests.ps1'
+)
+foreach ($path in $specializedProvenanceInputs) { Write-Fixture $path "reviewed provenance fixture $path`n" | Out-Null }
 function New-Receipt {
     $reviews = foreach ($boundary in 'implementation', 'proof-trust') {
         $inputs = foreach ($path in Get-ProofReviewInputs $fixture $boundary) {
@@ -70,6 +76,14 @@ Assert-Scenario 'CI matrix update requires trust review' {
     try { [IO.File]::WriteAllText($path, 'function Get-CiAnalyzerMatrix { @() }'); Assert-ProofReview $fixture $reviewPath }
     finally { [IO.File]::WriteAllText($path, $original) }
 } 'Stale proof review'
+foreach ($relative in $specializedProvenanceInputs) {
+    Assert-Scenario "$relative update requires trust review" {
+        $path = Join-Path $fixture $relative
+        $original = [IO.File]::ReadAllText($path)
+        try { [IO.File]::WriteAllText($path, 'changed evidence provenance'); Assert-ProofReview $fixture $reviewPath }
+        finally { [IO.File]::WriteAllText($path, $original) }
+    } 'Stale proof review'
+}
 Assert-Scenario 'proof edit requires review' {
     $path = Join-Path $fixture 'verification/Pages/Paging/Example.dfy'
     try { [IO.File]::WriteAllText($path, 'lemma Example() ensures false {}'); Assert-ProofReview $fixture $reviewPath }

@@ -10,8 +10,8 @@ function Get-CiLanes([string[]] $Paths) {
     $package = $false
     foreach ($path in $Paths) {
         if ($path -imatch '\.dfy$' -or $path -cmatch '^verification/' -or
-            $path -cmatch '^scripts/(?:install-dafny|verify-proofs|check-proof-review|select-ci-lanes|select-specialized-validation|test-scripts)\.ps1$' -or
-            $path -cmatch '^scripts/tests/(?:verify-proofs|proof-review|formal-workflow|select-ci-lanes|select-specialized-validation|fuzz-workflow|portability-workflow|ci-matrix|ci-workflow|ci-tools|test-scripts)\.tests\.ps1$' -or
+            $path -cmatch '^scripts/(?:install-dafny|verify-proofs|check-proof-review|select-ci-lanes|select-specialized-validation|run-hosted-fuzz|test-scripts)\.ps1$' -or
+            $path -cmatch '^scripts/tests/(?:verify-proofs|proof-review|formal-workflow|select-ci-lanes|select-specialized-validation|run-hosted-fuzz|specialized-workflow-trigger|fuzz-workflow|portability-workflow|ci-matrix|ci-workflow|ci-tools|test-scripts)\.tests\.ps1$' -or
             $path -cmatch '^docs/design/(?:formal-verification|proof-trust-review|recovery-storage-contract|verification-[^/]+)\.md$') {
             $formal = $true
         } elseif ($path -cin 'README.md', 'THIRD-PARTY-NOTICES.md') {
@@ -24,7 +24,7 @@ function Get-CiLanes([string[]] $Paths) {
             $path -cmatch '^scripts/tests/(?:test-aot|restore-dependencies)\.tests\.ps1$') {
             $dotnet = $true
         } elseif ($path -cmatch '^scripts/tests/[^/"\\]+\.tests\.ps1$' -or
-            $path -cmatch '^scripts/(?:assert-benchmark-baseline|assert-ci-success|assert-infersharp|check-security-traceability|ci-gate|compare-benchmarks|resolve-benchmark-project|run-benchmark-comparison|run-candidate-checks|run-hosted-fuzz|submit-candidate|update-sdk)\.ps1$') {
+            $path -cmatch '^scripts/(?:assert-benchmark-baseline|assert-ci-success|assert-infersharp|check-security-traceability|ci-gate|compare-benchmarks|resolve-benchmark-project|run-benchmark-comparison|run-candidate-checks|submit-candidate|update-sdk)\.ps1$') {
             # These tools and their regressions run in the unconditional checks.
             # Keep standalone helpers explicit; new build inputs fail closed.
         } elseif ($path -cmatch '^src/JetDatabaseWriter/') {

@@ -46,6 +46,9 @@ Assert-Lanes 'SDK pin affects both' @('global.json') $true $true
 Assert-Lanes 'workflow routing affects both' @('.github/workflows/ci.yml') $true $true
 Assert-Lanes 'shared matrix affects execution and inherited evidence' @('scripts/ci-matrix.ps1') $true $true
 Assert-Lanes 'specialized proof-trust selection uses formal checks' @('scripts/select-specialized-validation.ps1') $false $true
+foreach ($path in 'scripts/run-hosted-fuzz.ps1', 'scripts/tests/run-hosted-fuzz.tests.ps1', 'scripts/tests/specialized-workflow-trigger.tests.ps1') {
+    Assert-Lanes "specialized provenance $path requires formal checks" @($path) $false $true
+}
 Assert-Lanes 'specialized workflow regressions use formal checks' @('scripts/tests/select-specialized-validation.tests.ps1','scripts/tests/fuzz-workflow.tests.ps1','scripts/tests/portability-workflow.tests.ps1') $false $true
 Assert-Lanes 'matrix coverage regression changes proof trust' @('scripts/tests/ci-matrix.tests.ps1') $false $true
 Assert-Lanes 'workflow coverage regression changes proof trust' @('scripts/tests/ci-workflow.tests.ps1', 'scripts/tests/ci-tools.tests.ps1', 'scripts/tests/test-scripts.tests.ps1') $false $true
