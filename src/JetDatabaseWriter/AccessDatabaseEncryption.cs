@@ -18,7 +18,7 @@ using JetDatabaseWriter.Transactions;
 /// from untrusted access. Data is processed one page at a time; the original remains unchanged
 /// until replacement. Incomplete staging is cleaned up before commit; commit failures retain
 /// recovery copies named in the IOException data. File contents are flushed through managed
-/// .NET APIs, but directory entries are not flushed and power-loss persistence is not guaranteed.
+/// .NET APIs; net10.0 on Windows checks directory flush acknowledgements. Power-loss persistence is unqualified.
 /// Supported source providers are JET RC4 and ACE RC4 CryptoAPI, Standard AES and Agile AES;
 /// new encrypted output uses JET RC4 or ACE Agile AES. Third-party extensible providers and
 /// non-AES Agile ciphers are unsupported. Native fixture

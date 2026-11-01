@@ -160,9 +160,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// and returns a new <see cref="AccessWriter"/> ready for table creation and data insertion.
     /// The file must not already exist. Initialization completes in a private adjacent staging file
     /// whose contents are durably flushed before non-overwriting publication. If reopening the
-    /// published database fails, the complete database remains at the destination. Directory
-    /// entries are not durably flushed; power-loss persistence is not guaranteed. Protect the
-    /// containing directory from untrusted access, especially on Unix netstandard2.1.
+    /// published database fails, the complete database remains at the destination. The net10.0
+    /// asset on Windows checks directory flush acknowledgements; power-loss persistence remains
+    /// unqualified. Protect the containing directory from untrusted access, especially on Unix netstandard2.1.
     /// </summary>
     /// <param name="path">Path where the new .mdb or .accdb file will be created.</param>
     /// <param name="format">The database format to use (Jet4 .mdb or ACE .accdb).</param>
