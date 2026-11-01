@@ -132,12 +132,20 @@ row mutation/compact. `NativeJet3SchemaRewriteTests` additionally verifies
 native scalar/wide indexed rewrites, preserved object/security identity and
 unchanged catalog keys through native open, mutation and compact.
 
-Writer snapshots retain original fixed Text slots, including bytes under null
-values. Unrelated updates, schema projections and cascades copy unassigned
+Writer snapshots retain original ordinary fixed and variable Text slots, including
+fixed-slot bytes under null values. Unrelated updates, schema projections and cascades copy unassigned
 slots without decoding and re-encoding them, preserving malformed UTF-16 and
 invalid multibyte sequences. Explicit assignments encode normally, even when
 their decoded values equal the originals. Slot bounds and descriptor widths
 remain validated before mutation.
+
+Variable Text retains the stored compression representation, including a native
+`FF FE 61 00` field that reads as `a` but would otherwise be normalized to
+`61 00`. `NativeVariableTextPreservationTests` compares both frozen native
+specimens through Add/Drop/Rename, index creation and unrelated updates in every
+write mode, checks explicit equal assignment and exact rollback/retry, and uses
+DAO3.6 and DAO120 to read and compact the edited file. Calculated text caches
+retain their separate encoding and recomputation rules.
 
 ## Variable Text compression
 

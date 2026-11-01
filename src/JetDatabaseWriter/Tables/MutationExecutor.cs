@@ -99,7 +99,7 @@ internal sealed class MutationExecutor(JetFormat format, Pager pager, OwnedDataP
 
                 if (change.Replacement is object[] replacement)
                 {
-                    RowLocation added = await rows.InsertRowDataLocAsync(table.Page, table.Definition, StorageValues(replacement, change.LongValues), updateTDefRowCount: false, fixedTextBytes: change.FixedText, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    RowLocation added = await rows.InsertRowDataLocAsync(table.Page, table.Definition, StorageValues(replacement, change.LongValues), updateTDefRowCount: false, textBytes: change.FixedText, cancellationToken: cancellationToken).ConfigureAwait(false);
                     inserted.Add((added, replacement));
                     newRows.Add(replacement);
                 }

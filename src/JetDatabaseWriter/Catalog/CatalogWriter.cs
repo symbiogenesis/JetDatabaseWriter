@@ -326,9 +326,9 @@ internal sealed class CatalogWriter(
         object[] replacement = (object[])original.Values.Clone();
         replacement[nameIndex] = newName;
         UnreadableLongValue.ThrowIfAny(replacement, Constants.SystemTableNames.Objects);
-        IReadOnlyDictionary<int, byte[]>? fixedTextBytes = original.GetPreservedFixedText(replacement, [nameIndex]);
+        IReadOnlyDictionary<int, byte[]>? textBytes = original.GetPreservedText(replacement, [nameIndex]);
 
-        return new RelationshipCatalogRenameArtifact(objects, original, replacement, fixedTextBytes);
+        return new RelationshipCatalogRenameArtifact(objects, original, replacement, textBytes);
     }
 
     /// <summary>Applies a prevalidated catalog rename while preserving its security identity.</summary>
@@ -344,7 +344,7 @@ internal sealed class CatalogWriter(
         var plan = new MutationPlan();
         IReadOnlyDictionary<int, byte[]> longValues = await this.ReadUnassignedLongValuesAsync(rename.Definition, rename.Original, rename.Replacement, cancellationToken).ConfigureAwait(false);
         plan.ForTable(2, rename.Definition, Constants.SystemTableNames.Objects, MutationPlan.IndexPolicy.CatalogChange, "renaming relationship catalog identity")
-            .Update(rename.Original.Location, rename.Original.Values, rename.Replacement, rename.FixedTextBytes, DeletedRowDataMode.Clear, longValues);
+            .Update(rename.Original.Location, rename.Original.Values, rename.Replacement, rename.TextBytes, DeletedRowDataMode.Clear, longValues);
         await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
         catalog.Invalidate();
     }
@@ -736,13 +736,13 @@ internal sealed class CatalogWriter(
         }
 
         UnreadableLongValue.ThrowIfAny(replacement, Constants.SystemTableNames.Objects);
-        IReadOnlyDictionary<int, byte[]>? fixedTextBytes = original.GetPreservedFixedText(replacement, [propertyIndex, flagsIndex]);
+        IReadOnlyDictionary<int, byte[]>? textBytes = original.GetPreservedText(replacement, [propertyIndex, flagsIndex]);
 
         await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
         var plan = new MutationPlan();
         IReadOnlyDictionary<int, byte[]> longValues = await this.ReadUnassignedLongValuesAsync(objects, original, replacement, cancellationToken).ConfigureAwait(false);
         plan.ForTable(2, objects, Constants.SystemTableNames.Objects, MutationPlan.IndexPolicy.CatalogRelocation, tableName)
-            .Update(original.Location, original.Values, replacement, fixedTextBytes, DeletedRowDataMode.Clear, longValues);
+            .Update(original.Location, original.Values, replacement, textBytes, DeletedRowDataMode.Clear, longValues);
         await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
 
         catalog.Invalidate();

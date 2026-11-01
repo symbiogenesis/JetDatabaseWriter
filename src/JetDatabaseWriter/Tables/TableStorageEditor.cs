@@ -133,7 +133,7 @@ internal sealed class TableStorageEditor(
         {
             cancellationToken.ThrowIfCancellationRequested();
             object[] projected = projectedRows[rowIndex];
-            RowLocation location = await tableRows.InsertRowDataLocAsync(tempEntry.TDefPage, tempDef, projected, fixedTextBytes: plan.FixedTextBytes[rowIndex], cancellationToken: cancellationToken).ConfigureAwait(false);
+            RowLocation location = await tableRows.InsertRowDataLocAsync(tempEntry.TDefPage, tempDef, projected, textBytes: plan.TextBytes[rowIndex], cancellationToken: cancellationToken).ConfigureAwait(false);
             writtenRows.Add(new LocatedRow(location, projected));
             storagePages.Add(location.PageNumber);
             storagePages.Add(location.DataPageNumber);

@@ -241,8 +241,8 @@ internal sealed class TableRewritePlanner(
             }
 
             projectedRows.Add(projected);
-            Dictionary<int, byte[]>? fixedTextBytes = null;
-            if (row.FixedTextBytes is not null)
+            Dictionary<int, byte[]>? textBytes = null;
+            if (row.TextBytes is not null)
             {
                 if (targetIndexes is null)
                 {
@@ -253,18 +253,18 @@ internal sealed class TableRewritePlanner(
                     }
                 }
 
-                foreach ((int sourceIndex, byte[] bytes) in row.FixedTextBytes)
+                foreach ((int sourceIndex, byte[] bytes) in row.TextBytes)
                 {
                     string? targetName = mapColumnName(tableDef.Columns[sourceIndex].Name);
                     if (targetName is not null && targetIndexes.TryGetValue(targetName, out int targetIndex))
                     {
-                        fixedTextBytes ??= [];
-                        fixedTextBytes.Add(targetIndex, bytes);
+                        textBytes ??= [];
+                        textBytes.Add(targetIndex, bytes);
                     }
                 }
             }
 
-            projectedFixedText.Add(fixedTextBytes);
+            projectedFixedText.Add(textBytes);
         }
 
         await constraints.PopulateAddedCalculatedColumnsAsync(tableName, newDefs, format, projectedRows, cancellationToken).ConfigureAwait(false);

@@ -101,7 +101,7 @@ internal sealed class RelationshipEnforcer(
             MutationPlan.TableChanges changes = plan.ForTable(table.Entry.TDefPage, table.Definition, cascade.TableName);
             foreach ((RowLocation location, object[] oldRow, object[] newRow) in cascade.Rows)
             {
-                changes.Update(location, oldRow, newRow, cascade.FixedTextBytes[location]);
+                changes.Update(location, oldRow, newRow, cascade.TextBytes[location]);
             }
         }
     }
@@ -689,8 +689,8 @@ internal sealed class RelationshipEnforcer(
             foreach ((RowLocation location, _, object[] newRow) in rewrites)
             {
                 LocatedRow stored = storedRows[location];
-                IReadOnlyDictionary<int, byte[]>? fixedTextBytes = stored.GetPreservedFixedText(newRow, keyAssignments[newRow].Columns);
-                cascade.FixedTextBytes.Add(location, fixedTextBytes);
+                IReadOnlyDictionary<int, byte[]>? textBytes = stored.GetPreservedText(newRow, keyAssignments[newRow].Columns);
+                cascade.TextBytes.Add(location, textBytes);
             }
         }
 

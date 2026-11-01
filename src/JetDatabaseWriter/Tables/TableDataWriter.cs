@@ -302,7 +302,7 @@ internal sealed class TableDataWriter(
             // The new version is encoded and measured once it is final, after
             // the cascade plan.
             UnreadableLongValue.ThrowIfAny(newRow, tableName);
-            this.ThrowIfTextNotStorable(tableName, tableDef, newRow, rows[i].GetPreservedFixedText(newRow, updateIndexes.Keys));
+            this.ThrowIfTextNotStorable(tableName, tableDef, newRow, rows[i].GetPreservedText(newRow, updateIndexes.Keys));
 
             pendingUpdates.Add((i, oldRow, newRow));
         }
@@ -390,7 +390,7 @@ internal sealed class TableDataWriter(
         MutationPlan.TableChanges changes = plan.ForTable(entry.TDefPage, tableDef, tableName);
         foreach ((int i, object[] oldRow, object[] newRow) in pendingUpdates)
         {
-            changes.Update(rows[i].Location, oldRow, newRow, rows[i].GetPreservedFixedText(newRow, updateIndexes.Keys));
+            changes.Update(rows[i].Location, oldRow, newRow, rows[i].GetPreservedText(newRow, updateIndexes.Keys));
         }
 
         changes.RaiseAutoNumbers = AssignsAutoNumberColumn(tableDef, updateIndexes.Keys);
@@ -619,14 +619,14 @@ internal sealed class TableDataWriter(
     /// <param name="tableName">The table name, for the message.</param>
     /// <param name="tableDef">The table definition.</param>
     /// <param name="row">The finished row, after defaults, in table-column order.</param>
-    /// <param name="fixedTextBytes">Unassigned fixed Text slots copied without re-encoding.</param>
+    /// <param name="textBytes">Unassigned Text slots copied without re-encoding.</param>
     /// <exception cref="JetLimitationException">A Text or Memo value has no faithful supported storage encoding.</exception>
-    private void ThrowIfTextNotStorable(string tableName, TableDef tableDef, object[] row, IReadOnlyDictionary<int, byte[]>? fixedTextBytes = null)
+    private void ThrowIfTextNotStorable(string tableName, TableDef tableDef, object[] row, IReadOnlyDictionary<int, byte[]>? textBytes = null)
     {
         for (int i = 0; i < tableDef.Columns.Count && i < row.Length; i++)
         {
             ColumnInfo column = tableDef.Columns[i];
-            if (fixedTextBytes?.ContainsKey(i) == true || row[i] is null or DBNull
+            if (textBytes?.ContainsKey(i) == true || row[i] is null or DBNull
                 || JetTypeInfo.ResolveValueType(column) is not (ColumnType.TextType or ColumnType.MemoType))
             {
                 continue;

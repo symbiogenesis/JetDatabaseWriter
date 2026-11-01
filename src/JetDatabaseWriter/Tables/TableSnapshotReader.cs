@@ -251,27 +251,29 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                     values[i] ??= DBNull.Value;
                 }
 
-                Dictionary<int, byte[]>? fixedTextBytes = null;
+                Dictionary<int, byte[]>? textBytes = null;
                 if (RowDecodePlan.TryParseRowLayout(format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, tableDef.HasVarColumns, out RowLayout layout))
                 {
                     for (int index = 0; index < tableDef.Columns.Count; index++)
                     {
                         ColumnInfo column = tableDef.Columns[index];
-                        if (!column.IsFixed || column.IsCalculated || column.Type != TextType || column.ColNum >= layout.NumCols)
+                        if (column.IsCalculated || column.Type != TextType || column.ColNum >= layout.NumCols)
                         {
                             continue;
                         }
 
-                        ColumnSlice slice = RowDecodePlan.ResolveFixedColumnSlice(format.RowFields, row.Page, row.Location.RowStart, layout, column);
+                        ColumnSlice slice = column.IsFixed
+                            ? RowDecodePlan.ResolveFixedColumnSlice(format.RowFields, row.Page, row.Location.RowStart, layout, column)
+                            : RowDecodePlan.ResolveColumnSlice(format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, layout, column);
                         if (slice.Kind == ColumnSliceKind.Var)
                         {
-                            fixedTextBytes ??= [];
-                            fixedTextBytes.Add(index, row.Page.AsSpan(row.Location.RowStart + slice.DataStart, slice.DataLen).ToArray());
+                            textBytes ??= [];
+                            textBytes.Add(index, row.Page.AsSpan(row.Location.RowStart + slice.DataStart, slice.DataLen).ToArray());
                         }
                     }
                 }
 
-                result.Add(new LocatedRow(row.Location, (object[])values) { FixedTextBytes = fixedTextBytes });
+                result.Add(new LocatedRow(row.Location, (object[])values) { TextBytes = textBytes });
                 return true;
             },
             cancellationToken).ConfigureAwait(false);

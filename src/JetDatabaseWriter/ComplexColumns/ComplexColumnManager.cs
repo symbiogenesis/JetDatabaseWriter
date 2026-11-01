@@ -940,7 +940,7 @@ internal sealed class ComplexColumnManager(
 
             flatValues = replacement;
             await constraints.ApplyUpdateAsync(flatTableName, flatDef, flatValues, assignedColumns, cancellationToken).ConfigureAwait(false);
-            IReadOnlyDictionary<int, byte[]>? fixedText = existingRows[target].GetPreservedFixedText(flatValues, assignedColumns);
+            IReadOnlyDictionary<int, byte[]>? fixedText = existingRows[target].GetPreservedText(flatValues, assignedColumns);
 
             await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(flatTdefPage, flatDef, flatTableName, existingRows!, [(target, existingRows![target].Values, flatValues)], cancellationToken).ConfigureAwait(false);
             var updatePlan = new MutationPlan();
@@ -1375,7 +1375,7 @@ internal sealed class ComplexColumnManager(
 
             object[] values = (object[])original.Values.Clone();
             values[assignedIndex] = value;
-            IReadOnlyDictionary<int, byte[]>? fixedText = original.GetPreservedFixedText(values, [assignedIndex]);
+            IReadOnlyDictionary<int, byte[]>? fixedText = original.GetPreservedText(values, [assignedIndex]);
 
             changes.Update(original.Location, original.Values, values, fixedText, DeletedRowDataMode.Clear);
         }

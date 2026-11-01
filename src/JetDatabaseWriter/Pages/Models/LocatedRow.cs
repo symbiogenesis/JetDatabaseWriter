@@ -12,22 +12,22 @@ using System.Collections.Generic;
 /// <param name="Values">The row's values in table-column order, with <see cref="System.DBNull.Value"/> for nulls.</param>
 internal readonly record struct LocatedRow(RowLocation Location, object[] Values)
 {
-    /// <summary>Gets original fixed Text slots, including bytes under null values.</summary>
-    internal IReadOnlyDictionary<int, byte[]>? FixedTextBytes { get; init; }
+    /// <summary>Gets original Text slots, including fixed-slot bytes under null values.</summary>
+    internal IReadOnlyDictionary<int, byte[]>? TextBytes { get; init; }
 
-    /// <summary>Selects unchanged fixed Text slots that this mutation did not assign.</summary>
+    /// <summary>Selects unchanged Text slots that this mutation did not assign.</summary>
     /// <param name="newValues">The composed replacement values.</param>
     /// <param name="assignedColumns">Columns explicitly assigned by the mutation.</param>
-    internal IReadOnlyDictionary<int, byte[]>? GetPreservedFixedText(object[] newValues, IEnumerable<int>? assignedColumns = null)
+    internal IReadOnlyDictionary<int, byte[]>? GetPreservedText(object[] newValues, IEnumerable<int>? assignedColumns = null)
     {
-        if (this.FixedTextBytes is null)
+        if (this.TextBytes is null)
         {
             return null;
         }
 
         HashSet<int>? assigned = assignedColumns is null ? null : [.. assignedColumns];
         var preserved = new Dictionary<int, byte[]>();
-        foreach ((int column, byte[] bytes) in this.FixedTextBytes)
+        foreach ((int column, byte[] bytes) in this.TextBytes)
         {
             if (assigned?.Contains(column) != true && Equals(this.Values[column], newValues[column]))
             {

@@ -283,7 +283,7 @@ internal sealed class RowEncoder(JetFormat format)
     /// </summary>
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values.</param>
-    /// <param name="fixedTextBytes">Unassigned fixed Text slots copied without re-encoding.</param>
+    /// <param name="textBytes">Unassigned Text slots copied without re-encoding.</param>
     /// <returns>The row's bytes.</returns>
     /// <exception cref="JetLimitationException">
     /// The row is longer than one data page holds
@@ -291,8 +291,8 @@ internal sealed class RowEncoder(JetFormat format)
     /// have more than 255 columns or variable columns, or 255 variable columns
     /// with an EOD the jump table cannot encode.
     /// </exception>
-    internal byte[] SerializeRow(TableDef tableDef, object[] values, IReadOnlyDictionary<int, byte[]>? fixedTextBytes = null)
-        => this.TrySerializeRow(tableDef, values, out int rowLength, fixedTextBytes) ?? throw this.CreateRowTooLongException(rowLength);
+    internal byte[] SerializeRow(TableDef tableDef, object[] values, IReadOnlyDictionary<int, byte[]>? textBytes = null)
+        => this.TrySerializeRow(tableDef, values, out int rowLength, textBytes) ?? throw this.CreateRowTooLongException(rowLength);
 
     /// <summary>
     /// Serializes a typed value array into the binary row format understood
@@ -305,7 +305,7 @@ internal sealed class RowEncoder(JetFormat format)
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values.</param>
     /// <param name="rowLength">The row's length in bytes, whether or not it fits a data page.</param>
-    /// <param name="fixedTextBytes">Unassigned fixed Text slots copied without re-encoding.</param>
+    /// <param name="textBytes">Unassigned Text slots copied without re-encoding.</param>
     /// <returns>The row's bytes, or <see langword="null"/> when the row is longer than one data page holds (<see cref="MaxRowLength"/>).</returns>
     /// <exception cref="JetLimitationException">
     /// A Jet3 row would have more than 255 columns or variable columns, or 255
@@ -315,7 +315,7 @@ internal sealed class RowEncoder(JetFormat format)
     /// <exception cref="JetOperationException">A preserved fixed Text slot does not match its descriptor width.</exception>
     /// <exception cref="JetNotSupportedException">A column has an unknown descriptor or calculated result type, or a fixed Text descriptor cannot hold whole encoded padding spaces.</exception>
     /// <exception cref="JetCorruptDataException">A stored fixed-column descriptor is malformed.</exception>
-    internal byte[]? TrySerializeRow(TableDef tableDef, object[] values, out int rowLength, IReadOnlyDictionary<int, byte[]>? fixedTextBytes = null)
+    internal byte[]? TrySerializeRow(TableDef tableDef, object[] values, out int rowLength, IReadOnlyDictionary<int, byte[]>? textBytes = null)
     {
         int numCols = 0;
         int maxFixedEnd = 0;
@@ -367,7 +367,7 @@ internal sealed class RowEncoder(JetFormat format)
                 throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Fixed Binary column '{column.Name}' holds at most {column.Size} bytes; the value occupies {bytes.Length}.", new JetErrorInfo { ColumnName = column.Name });
             }
 
-            if (column.IsFixed && column.Type == TextType && fixedTextBytes?.ContainsKey(i) != true && values[i] is { } value && value is not DBNull)
+            if (column.IsFixed && column.Type == TextType && textBytes?.ContainsKey(i) != true && values[i] is { } value && value is not DBNull)
             {
                 string text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
                 int byteCount = format.PropertyTextEncoding.GetByteCount(text);
@@ -429,7 +429,7 @@ internal sealed class RowEncoder(JetFormat format)
             if (column.IsFixed && column.Type == TextType)
             {
                 fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + column.Size);
-                if (fixedTextBytes?.TryGetValue(i, out byte[]? stored) == true)
+                if (textBytes?.TryGetValue(i, out byte[]? stored) == true)
                 {
                     if (stored.Length != column.Size)
                     {
@@ -490,7 +490,9 @@ internal sealed class RowEncoder(JetFormat format)
             }
             else
             {
-                byte[]? variableValue = this.EncodeVariableValue(column, value);
+                byte[]? variableValue = !column.IsCalculated && column.Type == TextType && textBytes?.TryGetValue(i, out byte[]? storedText) == true
+                    ? storedText
+                    : this.EncodeVariableValue(column, value);
                 if (variableValue == null)
                 {
                     continue;

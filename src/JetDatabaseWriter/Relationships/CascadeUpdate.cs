@@ -17,6 +17,6 @@ using JetDatabaseWriter.Pages.Models;
 /// </param>
 internal sealed record CascadeUpdate(string TableName, ResolvedTable Table, List<(RowLocation Location, object[] OldRow, object[] NewRow)> Rows)
 {
-    /// <summary>Gets unchanged fixed Text slots retained by each planned row rewrite.</summary>
-    internal Dictionary<RowLocation, IReadOnlyDictionary<int, byte[]>?> FixedTextBytes { get; } = [];
+    /// <summary>Gets unchanged Text slots retained by each planned row rewrite.</summary>
+    internal Dictionary<RowLocation, IReadOnlyDictionary<int, byte[]>?> TextBytes { get; } = [];
 }

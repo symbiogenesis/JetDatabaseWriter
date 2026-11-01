@@ -54,10 +54,10 @@ internal sealed class TableRowStore(
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values.</param>
     /// <param name="updateTDefRowCount">Whether to update the table row count in the TDEF.</param>
-    /// <param name="fixedTextBytes">Unassigned fixed Text slots copied without re-encoding.</param>
+    /// <param name="textBytes">Unassigned Text slots copied without re-encoding.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="values"/> does not contain one value per column in <paramref name="tableDef"/>.</exception>
-    internal async ValueTask<RowLocation> InsertRowDataLocAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, IReadOnlyDictionary<int, byte[]>? fixedTextBytes = null, CancellationToken cancellationToken = default)
+    internal async ValueTask<RowLocation> InsertRowDataLocAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, IReadOnlyDictionary<int, byte[]>? textBytes = null, CancellationToken cancellationToken = default)
     {
         // A MEMO or OLE value over its inline cap goes to LVAL pages, and so
         // do the largest of the others while the row is too long for a page.
@@ -66,10 +66,10 @@ internal sealed class TableRowStore(
         // encoder rejects, or a row too long for a page, throws before
         // anything is written. The real headers have the same size, so the
         // row serialized again with them has the measured length.
-        (object[] prepared, byte[] rowBytes) = this.EncodeRow(tableDef, values, fixedTextBytes);
+        (object[] prepared, byte[] rowBytes) = this.EncodeRow(tableDef, values, textBytes);
         if (await longValueEncoder.WriteLongValuesAsync(prepared, tdefPage, tableDef, cancellationToken).ConfigureAwait(false))
         {
-            rowBytes = rowEncoder.SerializeRow(tableDef, prepared, fixedTextBytes);
+            rowBytes = rowEncoder.SerializeRow(tableDef, prepared, textBytes);
         }
 
         PageInsertTarget target = await dataPages.FindInsertTargetAsync(tdefPage, rowBytes.Length, cancellationToken).ConfigureAwait(false);
@@ -112,7 +112,7 @@ internal sealed class TableRowStore(
     /// </summary>
     /// <param name="tableDef">The row's table.</param>
     /// <param name="values">The row, one value per column; it is not changed.</param>
-    /// <param name="fixedTextBytes">Unassigned fixed Text slots copied without re-encoding.</param>
+    /// <param name="textBytes">Unassigned Text slots copied without re-encoding.</param>
     /// <returns>
     /// The values with the pending long values (<paramref name="values"/>
     /// itself when no value leaves the row) and the serialized row, whose
@@ -126,7 +126,7 @@ internal sealed class TableRowStore(
     /// past the LVAL length limit.
     /// </exception>
     /// <exception cref="OverflowException">A value does not fit its column's type, such as a Currency value past ±922,337,203,685,477.5807.</exception>
-    internal (object[] Values, byte[] RowBytes) EncodeRow(TableDef tableDef, object[] values, IReadOnlyDictionary<int, byte[]>? fixedTextBytes = null)
+    internal (object[] Values, byte[] RowBytes) EncodeRow(TableDef tableDef, object[] values, IReadOnlyDictionary<int, byte[]>? textBytes = null)
     {
         if (values.Length != tableDef.Columns.Count)
         {
@@ -137,7 +137,7 @@ internal sealed class TableRowStore(
 
         UnreadableLongValue.ThrowIfAny(values, tableName: null);
         object[] prepared = longValueEncoder.PrepareLongValues(tableDef, values);
-        if (rowEncoder.TrySerializeRow(tableDef, prepared, out int rowLength, fixedTextBytes) is { } rowBytes)
+        if (rowEncoder.TrySerializeRow(tableDef, prepared, out int rowLength, textBytes) is { } rowBytes)
         {
             return (prepared, rowBytes);
         }
@@ -164,7 +164,7 @@ internal sealed class TableRowStore(
                 excess -= payload.Length;
             }
 
-            if (rowEncoder.TrySerializeRow(tableDef, prepared, out rowLength, fixedTextBytes) is { } fitted)
+            if (rowEncoder.TrySerializeRow(tableDef, prepared, out rowLength, textBytes) is { } fitted)
             {
                 return (prepared, fitted);
             }
