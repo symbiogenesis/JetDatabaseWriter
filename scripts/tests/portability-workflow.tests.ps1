@@ -1,4 +1,4 @@
-# Keep optional portability coverage complementary to the prerequisite main CI run.
+# Keep automated portability coverage bound to the successful prerequisite main CI run.
 [CmdletBinding()]
 param([string] $WorkflowPath)
 
@@ -19,11 +19,12 @@ function Get-WorkflowJob([string] $Workflow, [string] $Name) {
 }
 
 function Assert-Workflow([string] $Workflow) {
-    Assert-Contract ($Workflow.Contains("on:`n  workflow_dispatch:`n`npermissions:")) 'Portability must remain manually dispatched.'
+    Assert-Contract ($Workflow.Contains("  workflow_run:`n    workflows: [CI]`n    types: [completed]`n    branches: [main]") -and $Workflow.Contains('  workflow_dispatch:')) 'Portability must run automatically after main CI and retain manual dispatch.'
     Assert-Contract ($Workflow.Contains('group: portability-${{ github.ref }}') -and $Workflow.Contains("cancel-in-progress: false`n  queue: max")) 'Portability must queue manual requests without discarding pending runs.'
     Assert-Contract ([regex]::Matches($Workflow, '(?m)^          persist-credentials: false$').Count -eq 2) 'Portability checkouts must not persist credentials.'
     $prerequisite = Get-WorkflowJob $Workflow 'prerequisite'
-    Assert-Contract ($prerequisite.Contains("if: github.ref == 'refs/heads/main'") -and $prerequisite.Contains('./scripts/assert-ci-success.ps1') -and $prerequisite.Contains('GITHUB_TOKEN: ${{ github.token }}')) 'Portability must require completed exact-main CI before its expensive jobs.'
+    Assert-Contract ($prerequisite.Contains("github.ref == 'refs/heads/main'") -and $prerequisite.Contains("github.event.workflow_run.conclusion == 'success'") -and $prerequisite.Contains("github.event.workflow_run.head_branch == 'main'") -and $prerequisite.Contains('github.event.workflow_run.head_repository.full_name == github.repository') -and $prerequisite.Contains("github.event.workflow_run.path == '.github/workflows/ci.yml'") -and $prerequisite.Contains("github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch'") -and $prerequisite.Contains('./scripts/assert-ci-success.ps1 -Sha $env:JDW_VALIDATION_SHA') -and $prerequisite.Contains('GITHUB_TOKEN: ${{ github.token }}')) 'Portability must require completed exact-main CI from this repository before its expensive jobs.'
+    Assert-Contract ($Workflow.Contains('JDW_VALIDATION_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}') -and [regex]::Matches($Workflow, '(?m)^          ref: \$\{\{ env.JDW_VALIDATION_SHA \}\}$').Count -eq 2) 'Every portability checkout must use the immutable completed CI revision.'
     $test = Get-WorkflowJob $Workflow 'test'
     Assert-Contract ($test.Contains('needs: prerequisite') -and $test.Contains('fail-fast: false')) 'Portability must retain independent coverage behind its CI prerequisite.'
     Assert-Contract ($test.Contains('os: [ubuntu-latest, macos-latest]') -and $test.Contains('tf: [net10.0, net11.0]') -and -not $test.Contains('windows-latest')) 'Portability must cover Linux and macOS on both runtimes without repeating prerequisite Windows tests.'
@@ -51,7 +52,12 @@ function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedE
 Assert-Scenario 'complementary portability workflow' $workflow
 Assert-Scenario 'pending manual runs discarded' ($workflow.Replace('  queue: max', '  queue: single')) 'queue manual requests'
 Assert-Scenario 'checkout credentials retained' ($workflow.Replace('persist-credentials: false', 'persist-credentials: true')) 'checkouts must not persist credentials'
-Assert-Scenario 'missing prerequisite guard' ($workflow.Replace("if: github.ref == 'refs/heads/main'", 'if: false')) 'completed exact-main CI'
+Assert-Scenario 'missing prerequisite guard' ($workflow.Replace("github.ref == 'refs/heads/main'", 'false')) 'completed exact-main CI'
+Assert-Scenario 'automatic campaign omitted' ($workflow.Replace('types: [completed]', 'types: [requested]')) 'run automatically after main CI'
+Assert-Scenario 'foreign repository accepted' ($workflow.Replace('github.event.workflow_run.head_repository.full_name == github.repository', 'true')) 'from this repository'
+Assert-Scenario 'failed CI accepted' ($workflow.Replace("github.event.workflow_run.conclusion == 'success'", 'true')) 'completed exact-main CI'
+Assert-Scenario 'mutable branch checkout' ($workflow.Replace('ref: ${{ env.JDW_VALIDATION_SHA }}', 'ref: main')) 'immutable completed CI revision'
+Assert-Scenario 'wrong revision preflight' ($workflow.Replace(' -Sha $env:JDW_VALIDATION_SHA', '')) 'completed exact-main CI'
 Assert-Scenario 'repeated Windows coverage' ($workflow.Replace('os: [ubuntu-latest, macos-latest]', 'os: [windows-latest, ubuntu-latest, macos-latest]')) 'without repeating prerequisite Windows tests'
 Assert-Scenario 'missing runtime coverage' ($workflow.Replace('tf: [net10.0, net11.0]', 'tf: [net10.0]')) 'cover Linux and macOS on both runtimes'
 Assert-Scenario 'repeated analyzer work' ($workflow.Replace(' -p:RunAnalyzers=false', '')) 'without repeating prerequisite analyzers'
