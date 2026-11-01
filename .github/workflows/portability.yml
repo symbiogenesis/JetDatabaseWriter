@@ -10,6 +10,7 @@ permissions:
 concurrency:
   group: portability-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 env:
   DOTNET_NOLOGO: true
@@ -17,12 +18,15 @@ env:
 
 jobs:
   prerequisite:
+    if: github.ref == 'refs/heads/main'
     name: Require successful CI
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Verify the exact main revision passed CI
         shell: pwsh
         env:
@@ -33,17 +37,20 @@ jobs:
     needs: prerequisite
     name: Test (${{ matrix.os }}, ${{ matrix.tf }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # The complete suite includes the exhaustive statement fault sweeps.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        # Exact-main CI already covers the full Windows suite and analyzers.
+        os: [ubuntu-latest, macos-latest]
         tf: [net10.0, net11.0]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -58,10 +65,33 @@ jobs:
       - name: Restore
         run: dotnet restore tests/JetDatabaseWriter.Tests --locked-mode
       - name: Build
-        run: dotnet build tests/JetDatabaseWriter.Tests -c Release --no-restore -f net10.0
+        run: dotnet build tests/JetDatabaseWriter.Tests -c Release --no-restore -f net10.0 -p:RunAnalyzers=false
       - name: Test
         env:
           JDW_EXPECTED_RUNTIME_MAJOR: ${{ matrix.tf == 'net11.0' && '11' || '10' }}
           DOTNET_ROLL_FORWARD: ${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}
           DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
-        run: dotnet test --project tests/JetDatabaseWriter.Tests -c Release --no-build -f net10.0
+          JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/portability-${{ matrix.os }}-${{ matrix.tf }}
+        run: >-
+          dotnet test --test-modules JetDatabaseWriter.Tests.dll
+          --root-directory tests/JetDatabaseWriter.Tests/bin/Release/net10.0
+          --minimum-expected-tests 48
+          --long-running 60 --xunit-diagnostics on --no-ansi --output Detailed --timeout 80m
+          --report-xunit-xml --report-xunit-xml-filename tests.xml
+          --results-directory artifacts/test-results/portability-${{ matrix.os }}-${{ matrix.tf }}
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: portability-results-${{ matrix.os }}-${{ matrix.tf }}
+          path: artifacts/test-results/portability-${{ matrix.os }}-${{ matrix.tf }}/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload golden diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: portability-golden-${{ matrix.os }}-${{ matrix.tf }}
+          path: artifacts/golden/portability-${{ matrix.os }}-${{ matrix.tf }}/
+          if-no-files-found: warn
+          retention-days: 7
