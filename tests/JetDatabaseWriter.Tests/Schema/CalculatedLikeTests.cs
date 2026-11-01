@@ -72,7 +72,7 @@ public sealed class CalculatedLikeTests
         using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Fixture("cases.json"), Ct));
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(session.SourcePath, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, Ct))
         {
-            await writer.CreateTableAsync("T", [new("Id", typeof(int)), new("S", typeof(string)), new("P", typeof(string)), new("V", typeof(bool)) { IsCalculated = true, CalculationExpression = "[S] Like [P]" }], Ct);
+            await writer.CreateTableAsync("T", [new("Id", typeof(int)), new("S", typeof(string)) { AllowZeroLength = true }, new("P", typeof(string)) { AllowZeroLength = true }, new("V", typeof(bool)) { IsCalculated = true, CalculationExpression = "[S] Like [P]" }], Ct);
             foreach (JsonElement entry in manifest.RootElement.EnumerateArray())
             {
                 await writer.InsertRowAsync("T", new RowValues { ["Id"] = entry.GetProperty("Id").GetInt32(), ["S"] = ReadText(entry, "Source"), ["P"] = ReadText(entry, "Pattern") }, Ct);
@@ -111,7 +111,7 @@ public sealed class CalculatedLikeTests
         using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Fixture("cases.json"), Ct));
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))
         {
-            await writer.CreateTableAsync("T", [new("Id", typeof(int)), new("S", typeof(string)), new("P", typeof(string)), new("V", typeof(bool)) { IsCalculated = true, CalculationExpression = "[S] Like [P]" }], Ct);
+            await writer.CreateTableAsync("T", [new("Id", typeof(int)), new("S", typeof(string)) { AllowZeroLength = true }, new("P", typeof(string)) { AllowZeroLength = true }, new("V", typeof(bool)) { IsCalculated = true, CalculationExpression = "[S] Like [P]" }], Ct);
             foreach (JsonElement entry in manifest.RootElement.EnumerateArray())
             {
                 await writer.InsertRowAsync("T", new RowValues { ["Id"] = entry.GetProperty("Id").GetInt32(), ["S"] = ReadText(entry, "Source"), ["P"] = ReadText(entry, "Pattern") }, Ct);
