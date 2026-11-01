@@ -1,9 +1,9 @@
 {
   "version": 1,
   "analyzer": "InferSharp v1.5",
-  "reviewedRevision": "77d016543e3259fefc856ad60250dce8fdaf1f7f",
+  "reviewedRevision": "369cbb83bfd629301099e710babfb8b086ceb3be",
   "sources": {
-    "src/JetDatabaseWriter/AccessDatabaseEncryption.cs": "f8710fc7b726fe16646c991d91724abf568bf0b83793665849cc4c6b0d57a14f",
+    "src/JetDatabaseWriter/AccessDatabaseEncryption.cs": "99e0df82c3685583315fc330ef55671f20a887e5d8ab3c5aac30e9fb2b47c1d6",
     "src/JetDatabaseWriter/AccessReader.cs": "bd87b92591a34043048cebbef35b5c44dd4161b20dff83f9ac1175953d73720c",
     "src/JetDatabaseWriter/Catalog/CatalogReader.cs": "6cbff8798b496372086ddde78f3e7e5d9b405a5d1e20bc4bcb2f4c56b87a33d1",
     "src/JetDatabaseWriter/Catalog/TableCatalog.cs": "2dd1c1764ce8a68a6863e2347a0eb0635685d8d90977befd7d0f4256014382f6",
