@@ -36,7 +36,7 @@ public sealed class ForeignKeyIncrementalEvidenceTests(ITestOutputHelper output)
     [InlineData(DatabaseFormat.Jet4Mdb)]
     public Task Dao36_SingleLeaf_InsertUsesIncrementalPathAndBoundedReads(DatabaseFormat format) => this.SingleLeafAsync(format, useDao36: true);
 
-    /// <summary>Native multi-level FK trees retain exact maps through growth, changed keys, deletion and cascade.</summary>
+    /// <summary>Native multi-level FK and duplicate-date trees retain exact maps through growth, changed keys, deletion and cascade.</summary>
     /// <param name="format">The DAO3.6-supported format.</param>
     [Theory(
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
@@ -149,7 +149,7 @@ public sealed class ForeignKeyIncrementalEvidenceTests(ITestOutputHelper output)
             Assert.True(intermediateRoots > 0);
             for (int first = initial + 1; first <= initial + added; first += 128)
             {
-                await writer.InsertRowsAsync("C", Enumerable.Range(first, 128).Select(static id => new object[] { id, 1, "added", new DateTime(2020, 1, 1).AddMinutes(id), $"label-{id}" }), Ct);
+                await writer.InsertRowsAsync("C", Enumerable.Range(first, 128).Select(static id => new object[] { id, 1, "added", new DateTime(2020, 1, 1), $"label-{id}" }), Ct);
                 Assert.Null(writer.Services.Indexes.LastIncrementalBail);
                 await AssertIndexMapsAsync(writer, "C");
             }
@@ -200,7 +200,7 @@ public sealed class ForeignKeyIncrementalEvidenceTests(ITestOutputHelper output)
                 $rel=$db.CreateRelation('FK_C_P','P','C',4352)
                 $field=$rel.CreateField('Id');$field.ForeignName='ParentId';$rel.Fields.Append($field);$db.Relations.Append($rel)
                 $payload=if({{(longValues ? "$true" : "$false")}}){'m'*12000}else{'native'}
-                for($i=1;$i -le {{rows}};$i++){$db.Execute(('INSERT INTO C VALUES ('+$i+',1,'''+$payload+''',DateAdd(''n'','+$i+',#2020-01-01#),''label-'+$i+''')'),128)}
+                for($i=1;$i -le {{rows}};$i++){$db.Execute(('INSERT INTO C VALUES ('+$i+',1,'''+$payload+''',#2020-01-01#,''label-'+$i+''')'),128)}
             } finally {$db.Close()}
             """);
     }
@@ -224,7 +224,7 @@ public sealed class ForeignKeyIncrementalEvidenceTests(ITestOutputHelper output)
                     $rs=$db.OpenRecordset('C',1)
                     try {$rs.Index='IX_C_Label';$rs.Seek('=','label-1');if($rs.NoMatch){throw 'Native text seek missed'} } finally {$rs.Close()}
                     $rs=$db.OpenRecordset('C',1)
-                    try {$rs.Index='IX_C_Stamp';$rs.Seek('=',[DateTime]::new(2020,1,1,0,1,0));if($rs.NoMatch){throw 'Native date seek missed'} } finally {$rs.Close()}
+                    try {$rs.Index='IX_C_Stamp';$rs.Seek('=',[DateTime]::new(2020,1,1));if($rs.NoMatch){throw 'Native date seek missed'} } finally {$rs.Close()}
                     }
                     $refused=$false
                     try {$db.Execute('INSERT INTO C (Id,ParentId,Payload) VALUES (1000000,777,''orphan'')',128)}catch{$refused=$true}
