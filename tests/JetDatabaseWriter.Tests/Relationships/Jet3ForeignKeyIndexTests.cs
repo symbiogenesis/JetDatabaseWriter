@@ -225,11 +225,11 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
 
             await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, Parent, ParentKey, Child, "ParentId") { CascadeDeletes = true }, this.ct);
 
-            // A table with an FK entry takes the full rebuild on every insert.
+            // Ordinary Int32 foreign keys participate in incremental maintenance.
             for (int id = 6; id <= 40; id++)
             {
                 await writer.InsertRowAsync(Child, [id, parentIds[id % parentIds.Count]], this.ct);
-                Assert.StartsWith("C1c", writer.Services.Indexes.LastIncrementalBail, StringComparison.Ordinal);
+                Assert.Null(writer.Services.Indexes.LastIncrementalBail);
                 childIds.Add(id);
             }
 
@@ -249,38 +249,60 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     }
 
     /// <summary>
-    /// A table with a foreign-key entry takes the full index rebuild on every
-    /// insert, update and delete (bail C1c), and each rebuild places its
-    /// multi-page trees on new pages. Replaced pages must return to the global
-    /// usage map. The live index maps follow every rebuilt tree, and no
-    /// replaced page remains allocated outside a live tree.
+    /// Single-column Int32 foreign keys use incremental maintenance; composite
+    /// foreign keys retain full rebuilds. Both paths retain exact live trees,
+    /// and each unsupported-form rebuild returns replaced pages to the global
+    /// usage map before the next statement.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">The write mode.</param>
+    /// <param name="composite">Whether to exercise the unsupported composite FK rebuild path.</param>
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct)]
-    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit)]
-    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit)]
-    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct)]
-    public async Task SingleMutations_InTableWithForeignKeyEntry_FreeTheTreesTheRebuildReplaces(DatabaseFormat format, WriteMode mode)
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit, false)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct, true)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit, true)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit, true)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct, true)]
+    public async Task SingleMutations_InTableWithForeignKeyEntry_ReclaimReplacedTrees(DatabaseFormat format, WriteMode mode, bool composite)
     {
         const int seedRows = 1500;
         bool jet3 = format == DatabaseFormat.Jet3Mdb;
         string parent = jet3 ? Parent : "P";
-        string parentKey = jet3 ? ParentKey : "Id";
+        if (composite)
+        {
+            parent = "CompositeParent";
+        }
+
+        string parentKey = composite || !jet3 ? "Id" : ParentKey;
         await using MemoryStream stream = jet3 ? await this.CopyFixtureAsync() : await CreateAccdbAsync(this.ct);
         List<int> parentIds = jet3 ? await this.ReadParentIdsAsync(stream) : [1, 2, 3];
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            if (!jet3)
+            if (composite)
+            {
+                await writer.CreateTableAsync(parent, [new ColumnDefinition(parentKey, typeof(int)), new ColumnDefinition("Partition", typeof(int))], [new IndexDefinition("PK", [parentKey, "Partition"]) { IsPrimaryKey = true }], this.ct);
+                _ = await writer.InsertRowsAsync(parent, [.. parentIds.Select(id => new object?[] { id, 1 })], this.ct);
+                await writer.CreateTableAsync(Child, [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int)), new ColumnDefinition("Partition", typeof(int))], this.ct);
+            }
+            else if (!jet3)
             {
                 await writer.CreateTableAsync(parent, [new ColumnDefinition(parentKey, typeof(int)) { IsPrimaryKey = true }], this.ct);
                 _ = await writer.InsertRowsAsync(parent, [.. parentIds.Select(id => new object?[] { id })], this.ct);
             }
 
-            await CreateChildAsync(writer, this.ct);
-            _ = await writer.InsertRowsAsync(Child, [.. Enumerable.Range(1, seedRows).Select(id => new object?[] { id, parentIds[id % parentIds.Count] })], this.ct);
-            await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, parent, parentKey, Child, "ParentId"), this.ct);
+            if (!composite)
+            {
+                await CreateChildAsync(writer, this.ct);
+            }
+
+            _ = await writer.InsertRowsAsync(Child, [.. Enumerable.Range(1, seedRows).Select(id => composite ? new object?[] { id, parentIds[id % parentIds.Count], 1 } : [id, parentIds[id % parentIds.Count]])], this.ct);
+            RelationshipDefinition relationship = composite
+                ? new RelationshipDefinition(Relationship, parent, [parentKey, "Partition"], Child, ["ParentId", "Partition"])
+                : new RelationshipDefinition(Relationship, parent, parentKey, Child, "ParentId");
+            await writer.CreateRelationshipAsync(relationship, this.ct);
         }
 
         long childPage = await this.GetTDefPageAsync(stream, Child);
@@ -303,14 +325,17 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         await using (AccessWriter writer = await OpenWriterAsync(stream, mode))
         {
             await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
+            HashSet<long> priorPages = await ReadTreePagesAsync(writer, childPage, this.ct);
             for (int id = seedRows + 1; id <= seedRows + 10; id++)
             {
-                await writer.InsertRowAsync(Child, [id, parentIds[id % parentIds.Count]], this.ct);
-                Assert.StartsWith("C1c", writer.Services.Indexes.LastIncrementalBail, StringComparison.Ordinal);
+                await writer.InsertRowAsync(Child, composite ? [id, parentIds[id % parentIds.Count], 1] : [id, parentIds[id % parentIds.Count]], this.ct);
+                priorPages = await AssertMaintenancePathAsync(writer, childPage, priorPages, composite, this.ct);
             }
 
             Assert.Equal(1, await writer.UpdateRowsAsync(Child, "Id", 5, new Dictionary<string, object?> { ["ParentId"] = parentIds[6 % parentIds.Count] }, this.ct));
+            priorPages = await AssertMaintenancePathAsync(writer, childPage, priorPages, composite, this.ct);
             Assert.Equal(1, await writer.DeleteRowsAsync(Child, "Id", 7, this.ct));
+            _ = await AssertMaintenancePathAsync(writer, childPage, priorPages, composite, this.ct);
             await this.AssertIndexesCoverRowsAsync(writer, Child);
             if (tx is not null)
             {
@@ -804,6 +829,38 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         await writer.InsertRowAsync(Child, [1, 1], this.ct);
         await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync(Child, [2, 999], this.ct));
+    }
+
+    private static async Task<HashSet<long>> AssertMaintenancePathAsync(AccessWriter writer, long tablePage, HashSet<long> priorPages, bool composite, CancellationToken cancellationToken)
+    {
+        HashSet<long> currentPages = await ReadTreePagesAsync(writer, tablePage, cancellationToken);
+        if (composite)
+        {
+            Assert.Equal("C1c unsupported foreign-key index form", writer.Services.Indexes.LastIncrementalBail);
+            long[] retired = [.. priorPages.Except(currentPages)];
+            Assert.NotEmpty(retired);
+            foreach (long page in retired)
+            {
+                Assert.True(await writer.Services.PageAllocator.IsPageFreeAsync(page, cancellationToken), $"Replaced index page {page} remains allocated.");
+            }
+        }
+        else
+        {
+            Assert.Null(writer.Services.Indexes.LastIncrementalBail);
+        }
+
+        return currentPages;
+    }
+
+    private static async Task<HashSet<long>> ReadTreePagesAsync(AccessWriter writer, long tablePage, CancellationToken cancellationToken)
+    {
+        var pages = new HashSet<long>();
+        foreach (long root in await IndexLeafChain.ReadRealIndexRootsAsync(writer.Database, tablePage, cancellationToken))
+        {
+            pages.UnionWith(await IndexLeafChain.ReadTreePagesAsync(writer.Database, tablePage, root, cancellationToken));
+        }
+
+        return pages;
     }
 
     private static async Task<MemoryStream> CreateAccdbAsync(CancellationToken cancellationToken)
