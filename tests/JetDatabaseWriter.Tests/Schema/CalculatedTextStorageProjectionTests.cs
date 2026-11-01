@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
 using Xunit;
@@ -14,13 +15,18 @@ using Xunit;
 public sealed class CalculatedTextStorageProjectionTests
 {
     [Fact]
-    public async Task SourceText_DeclaredWidthAppliesBeforeCalculation()
+    public async Task OversizedSourceText_RefusesWithoutPersistingCalculatedValues()
     {
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync("T", [new("Content", typeof(string), 3), new("Cached", typeof(string), 243) { IsCalculated = true, CalculationExpression = "[Content]" }, new("Length", typeof(int)) { IsCalculated = true, CalculationExpression = "Len([Content])" }], TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync("T", ["abcdef", null, null], TestContext.Current.CancellationToken);
+            byte[] original = stream.ToArray();
+            JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+                await writer.InsertRowAsync("T", ["abcdef", null, null], TestContext.Current.CancellationToken));
+            Assert.Equal(JetErrorCode.ValueTooLarge, error.ErrorCode);
+            Assert.Equal(original, stream.ToArray());
+            await writer.InsertRowAsync("T", ["abc", null, null], TestContext.Current.CancellationToken);
         }
 
         stream.Position = 0;
