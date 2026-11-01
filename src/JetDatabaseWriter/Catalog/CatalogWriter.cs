@@ -37,7 +37,7 @@ using JetDatabaseWriter.ValueEncoding;
 /// <param name="catalogRows">Scans <c>MSysObjects</c> rows and locates system tables.</param>
 /// <param name="pager">The writer page file.</param>
 /// <param name="snapshots">Reads existing catalog values for preservation.</param>
-internal sealed class CatalogWriter(
+internal sealed partial class CatalogWriter(
     JetFormat format,
     TableDefReader tableDefs,
     OwnedDataPages ownedPages,

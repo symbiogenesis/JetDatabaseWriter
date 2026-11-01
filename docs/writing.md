@@ -8,7 +8,7 @@ Keep other writers away from the file while your writer is open. For grouped cha
 
 ## Contents
 
-- [Creating tables](#create--drop-tables)
+- [Creating and renaming tables](#create-rename-and-drop-tables)
 - [Adding indexes](#add-indexes-to-existing-tables)
 - [Column constraints](#column-constraints)
 - [Inserting named values](#insert-rows--named-columns-rowvalues)
@@ -35,7 +35,7 @@ Strings supplied to Binary columns use the database's code page on every format.
 await using var writer = await AccessWriter.OpenAsync("database.mdb");
 ```
 
-### Create & drop tables
+### Create, rename and drop tables
 
 ```csharp
 await writer.CreateTableAsync("Contacts", new[]
@@ -46,12 +46,22 @@ await writer.CreateTableAsync("Contacts", new[]
     new ColumnDefinition("Score",     typeof(decimal)) { NumericPrecision = 5, NumericScale = 1 },
 });
 
-await writer.DropTableAsync("Contacts");
+await writer.RenameTableAsync("Contacts", "People");
+await writer.DropTableAsync("People");
 ```
 
 `DropTableAsync` refuses with `JetOperationException` (`TableInRelationship`) before mutation when an enforced relationship connects the table to another table; drop that relationship first. Unenforced and self-referencing relationships are removed with the table. Targeted DAO `TableDefs.Delete` checks verify these cases (see [Foreign-key relationships](#foreign-key-relationships)).
 
-New table, column, index, relationship and linked-table names follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of `.` `!` `` ` `` `[` `]` or a control character (U+0000–U+001F and U+007F). Spaces inside or at the end of a name, quotes, `#`, `=` and non-ASCII letters are fine. `CreateTableAsync`, `AddColumnAsync`, `RenameColumnAsync` (the new name), `CreateRelationshipAsync`, `RenameRelationshipAsync` (the new name) and the `CreateLinked*TableAsync` methods (the local name) throw `ArgumentException` for any other name before writing anything, and `CreateTableAsync` also rejects two columns whose names differ only by case, since Access compares names ignoring case. A linked table's foreign name, such as `dbo.Orders` or `orders.csv`, is not checked against these rules. On a Jet3 database every new name, and a linked table's foreign name, path and connect string, must also be in the database's code page (see above). Names that an existing database already holds are only looked up, so a table or column written with such a name by another tool can still be read, written, altered and dropped, and a column can be renamed to a valid name.
+`RenameTableAsync` changes the local name of an ordinary or linked table,
+including its spelling in a case-only rename. It preserves the table's native
+identity, rows, index trees, permissions, complex-item IDs and relationship
+bindings. Relationship table names follow the rename. Saved queries, lookup
+sources and stored expression text retain their native definitions; as with a
+DAO rename, a definition can retain an old name. The library never executes
+those definitions or applies Access UI Name AutoCorrect. The operation supports
+statement rollback and explicit transactions.
+
+New table, column, index, relationship and linked-table names follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of `.` `!` `` ` `` `[` `]` or a control character (U+0000–U+001F and U+007F). Spaces inside or at the end of a name, quotes, `#`, `=` and non-ASCII letters are fine. `CreateTableAsync`, `RenameTableAsync` (the new name), `AddColumnAsync`, `RenameColumnAsync` (the new name), `CreateRelationshipAsync`, `RenameRelationshipAsync` (the new name) and the `CreateLinked*TableAsync` methods (the local name) throw `ArgumentException` for any other name before writing anything, and `CreateTableAsync` also rejects two columns whose names differ only by case, since Access compares names ignoring case. A linked table's foreign name, such as `dbo.Orders` or `orders.csv`, is not checked against these rules. On a Jet3 database every new name, and a linked table's foreign name, path and connect string, must also be in the database's code page (see above). Names that an existing database already holds are only looked up, so a table or column written with such a name by another tool can still be read, written, altered and dropped, and a column can be renamed to a valid name.
 
 #### Text collations
 

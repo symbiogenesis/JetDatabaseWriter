@@ -288,6 +288,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => this.RunAutoCommitAsync(_ => this.Services.Schema.RenameColumnAsync(tableName, oldColumnName, newColumnName, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
+    public ValueTask RenameTableAsync(string oldName, string newName, CancellationToken cancellationToken = default)
+        => this.RunAutoCommitAsync(_ => this.Services.Schema.RenameTableAsync(oldName, newName, cancellationToken), cancellationToken);
+
+    /// <inheritdoc/>
     public ValueTask InsertRowAsync(string tableName, object?[] values, CancellationToken cancellationToken = default)
         => this.RunAutoCommitAsync(_ => this.Services.Data.InsertRowAsync(tableName, values, cancellationToken), cancellationToken);
 

@@ -67,6 +67,20 @@ internal sealed class TableSchemaEditor(
     TableStorageEditor tableStorage,
     AppendOnlyHistorySchemaEditor historySchemas)
 {
+    /// <summary>Renames the catalog identity and relationship names without changing table storage.</summary>
+    /// <param name="oldName">The existing local or linked table name.</param>
+    /// <param name="newName">The replacement name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal async ValueTask RenameTableAsync(string oldName, string newName, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(oldName, nameof(oldName));
+        AccessObjectName.ThrowIfInvalid(newName, nameof(newName), "table");
+        AccessObjectName.ThrowIfNotStorable(format, newName, nameof(newName), "table");
+        pager.ThrowIfDisposedOrCancelled(cancellationToken);
+        await catalogWriter.RenameTableAsync(oldName, newName, cancellationToken).ConfigureAwait(false);
+        constraints.Rename(oldName, newName);
+    }
+
     /// <summary>Changes only the table rule properties after validating existing rows.</summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="rule">The proposed rule or removal.</param>

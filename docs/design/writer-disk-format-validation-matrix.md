@@ -885,6 +885,18 @@ unreferenced-PK deletion and relationship-index refusal, then checks managed
 deletions through native duplicate insertion, update, read and compact. Fresh
 controls passed on 2026-10-31 with the producing engines named above.
 
+`RenameTableTests` covers local and Access/text/ODBC linked-table names, case-only
+spelling, stable catalog and TDEF identities, untouched data/index pages,
+relationship endpoints and cascades, complex-item IDs, warmed constraints and
+exact rollback and partial/full-write retry. `RenameTableDaoTests` compares
+DAO3.6 Jet3/Jet4 and DAO120 Jet4/ACE table renames, including saved join,
+correlated-subquery and action-query definitions, native row mutations,
+relationship cascades and compact. Frozen SQL-specific query specimens retain
+their complete metadata through table rename in every write mode. Stored query,
+lookup and expression text follows the established DAO preservation behavior;
+Access UI Name AutoCorrect and arbitrary application rebinding remain separate
+requirements.
+
 `RenameIndexTests` checks logical-name ordering, unchanged physical descriptors
 and unrelated pages, stable PK/FK identities, same-name column versus index
 property targets, wide definitions/LVAL maps, schema-budget and orphan-target

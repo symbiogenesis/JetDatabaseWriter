@@ -141,6 +141,22 @@ public interface IAccessSchema : IAccessBase
     public ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Renames a local or linked table while retaining its catalog identity, rows,
+    /// indexes, permissions and complex-column identities. Relationship table names
+    /// follow the rename. Stored expressions, saved queries and lookup source text
+    /// remain unchanged, as with a native DAO table rename; stale references may
+    /// therefore need editing by the caller. Linked sources are never opened.
+    /// </summary>
+    /// <param name="oldName">The existing table name, compared ignoring case.</param>
+    /// <param name="newName">The replacement name, following Access naming rules. A case-only rename changes the stored spelling.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">The new name is invalid or cannot be stored in the database code page.</exception>
+    /// <exception cref="Exceptions.JetOperationException">The table does not exist or is a system table.</exception>
+    /// <exception cref="Exceptions.JetObjectExistsException">The replacement name is already used by another object in the table catalog container.</exception>
+    public ValueTask RenameTableAsync(string oldName, string newName, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Asynchronously appends a new column to an existing table. Existing rows receive
     /// <see cref="DBNull.Value"/> for an ordinary new column; a calculated column
     /// evaluates its expression against each existing row. Implemented by copying the
