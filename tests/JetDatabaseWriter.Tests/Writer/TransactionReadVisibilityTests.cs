@@ -338,7 +338,7 @@ public sealed class TransactionReadVisibilityTests
         }
 
         // Zero row 1's column count. The row stays live on its page, but no
-        // decoder can read it. Reads omit it; write-back snapshots must refuse it.
+        // decoder can read it. Explicitly lenient reads omit it; write-back snapshots must refuse it.
         await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, WriterOptions(WriteMode.Direct), cancellationToken: Ct))
         {
             CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync("T", Ct);
@@ -373,7 +373,8 @@ public sealed class TransactionReadVisibilityTests
         }
 
         Assert.Equal(baseline, ms.ToArray());
-        Assert.Equal(["2|r2", "3|r3", "4|r4"], await ReadRowsAsync(ms, "T"));
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ReadRowsAsync(ms, "T"));
+        Assert.Equal(["2|r2", "3|r3", "4|r4"], await ReadRowsAsync(ms, "T", new AccessReaderOptions { UseLockFile = false, StrictParsing = false }));
         if (format == DatabaseFormat.Jet3Mdb)
         {
             return;

@@ -287,6 +287,7 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
             tdefPage,
             tableName,
             selected,
+            decodePlan,
             async (row, token) =>
             {
                 if (row.Location.RowSize < format.RowFields.NumCols)
@@ -349,7 +350,7 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
         return result;
     }
 
-    private async ValueTask ForEachSnapshotRowAsync(long tdefPage, string? tableName, IReadOnlyList<(long DataPage, int RowIndex)>? selected, OwnedDataPages.TableRowVisitor visit, CancellationToken cancellationToken)
+    private async ValueTask ForEachSnapshotRowAsync(long tdefPage, string? tableName, IReadOnlyList<(long DataPage, int RowIndex)>? selected, RowDecodePlan plan, OwnedDataPages.TableRowVisitor visit, CancellationToken cancellationToken)
     {
         if (selected is null)
         {
@@ -379,6 +380,13 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                     page,
                     async (row, token) =>
                     {
+                        // A page rewrite can move neighboring rows. Validate their
+                        // layouts before admitting a target, without loading their values.
+                        if (!plan.CanDecodeRow(format, row.Page, row.Location.RowStart, row.Location.RowSize))
+                        {
+                            throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "A live row on the selected mutation page has an unreadable layout", token).ConfigureAwait(false);
+                        }
+
                         if (row.Location.RowIndex == rowIndex)
                         {
                             found = true;

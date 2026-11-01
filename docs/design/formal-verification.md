@@ -167,7 +167,7 @@ candidate byte and mask bit; refusal preserves the complete candidate.
 slots and writes only the admitted live interval, preserving every page byte
 outside it. Production re-resolves current slot geometry after prior batch
 compaction, patches an unpublished row candidate, then publishes through the
-transaction-aware pager. Native field interpretation, snapshot identity,
+transaction-aware pager. Index-directed snapshots check every live layout on
 compatible-width selection, raw LVAL ownership and encoded-key equality remain
 C# contracts. Index-directed writer discovery additionally relies on a correct
 supported index for complete membership; bookmark checks do not reconstruct

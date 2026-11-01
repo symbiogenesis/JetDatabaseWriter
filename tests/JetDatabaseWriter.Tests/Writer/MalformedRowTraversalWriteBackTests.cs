@@ -103,12 +103,13 @@ public sealed class MalformedRowTraversalWriteBackTests
         await stream.WriteAsync(image, ct);
         stream.Position = 0;
 
-        // Reader omission remains deliberate; a writer must not adopt it.
-        await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct))
+        // Explicitly lenient reader omission remains deliberate; a writer must not adopt it.
+        await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = false }, leaveOpen: true, ct))
         {
             using DataTable rows = await reader.ReadTableAsync(TableName, cancellationToken: ct);
             Assert.DoesNotContain(rows.AsEnumerable(), row => (int)row["Id"] == 1);
             Assert.Contains(rows.AsEnumerable(), row => (int)row["Id"] == 2);
+            Assert.Equal(1, reader.OmittedRowCount);
         }
 
         await AssertMutationRefusedAsync(stream, mode, schemaEdit, damaged.HeaderPage, damaged.HeaderRow, ct);

@@ -340,7 +340,7 @@ unchanged external descriptors survive relocation only when retaining all
 original roots is safe.
 
 A necessary equality on a single-column ascending unique Int32 index can seek
-update/delete candidates, with residual criteria and bookmark checks. Updates
+update/delete candidates, with residual criteria and bookmark checks. Every live
 that assign index keys or involve calculated columns retain complete validation
 scans. Deletion still performs the ownership work required to reclaim storage;
 an indexed target does not imply bounded total delete I/O.

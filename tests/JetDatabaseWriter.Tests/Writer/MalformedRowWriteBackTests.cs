@@ -61,12 +61,13 @@ public sealed class MalformedRowWriteBackTests
         // A lenient public read still exposes the intact row. Writer snapshots
         // must not use that omission policy when they will write values back.
         stream.Position = 0;
-        await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct))
+        await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = false }, leaveOpen: true, ct))
         {
             using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
             DataRow row = Assert.Single(table.AsEnumerable());
             Assert.Equal(1, row["Id"]);
             Assert.Equal("keep", row["Note"]);
+            Assert.Equal(1, reader.OmittedRowCount);
         }
 
         stream.Position = 0;
