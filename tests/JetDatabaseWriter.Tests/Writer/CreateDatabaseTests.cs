@@ -465,8 +465,19 @@ public sealed class CreateDatabaseTests
     {
         string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + (format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb"));
         byte[]? publishedBytes = null;
+        List<string> directoryPhases = [];
         void Observe(string phase, string staging)
         {
+            if (phase is "DirectoryFlushing" or "DirectoryFlushed")
+            {
+                Assert.Equal(path, staging);
+                Assert.True(File.Exists(path));
+                Assert.NotNull(publishedBytes);
+                Assert.Equal(publishedBytes, File.ReadAllBytes(path));
+                directoryPhases.Add(phase);
+                return;
+            }
+
             Assert.False(File.Exists(path));
             if (phase == "Publishing")
             {
@@ -482,6 +493,10 @@ public sealed class CreateDatabaseTests
                 Assert.NotNull(created);
             }
 
+            string[] expectedDirectoryPhases = DirectoryPersistence.IsSupported
+                ? ["DirectoryFlushing", "DirectoryFlushed"]
+                : ["DirectoryFlushing"];
+            Assert.Equal(expectedDirectoryPhases, directoryPhases);
             Assert.NotNull(publishedBytes);
             Assert.Equal(publishedBytes, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
             await using (AccessReader reader = await TestDatabase.OpenReaderAsync(path, new AccessReaderOptions("Creation123") { UseLockFile = false }, TestContext.Current.CancellationToken))
