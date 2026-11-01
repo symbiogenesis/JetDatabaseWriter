@@ -39,7 +39,7 @@ public sealed class IndexMutationPhaseTests
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
         await cancellation.CancelAsync();
         int readsBefore = stream.ReadCount;
-        object pending = lookup.Invoke(editor, [harness.Database.Format.IndexPage, 2L, new byte[] { 1 }, groups, previous, cancellation.Token])!;
+        object pending = lookup.Invoke(editor, [harness.Database.Format.IndexPage, 2L, new IndexEntry([1], 1, 0), groups, previous, cancellation.Token])!;
         var task = (Task)pending.GetType().GetMethod("AsTask")!.Invoke(pending, null)!;
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
