@@ -24,7 +24,7 @@ function Get-CiLanes([string[]] $Paths) {
             $path -cmatch '^scripts/tests/(?:test-aot|restore-dependencies)\.tests\.ps1$') {
             $dotnet = $true
         } elseif ($path -cmatch '^scripts/tests/[^/"\\]+\.tests\.ps1$' -or
-            $path -cmatch '^scripts/(?:assert-benchmark-baseline|assert-ci-success|assert-infersharp|check-security-traceability|ci-gate|compare-benchmarks|resolve-benchmark-project|run-benchmark-comparison|run-candidate-checks|run-hosted-fuzz|submit-candidate|update-sdk)\.ps1$') {
+            $path -cmatch '^scripts/(?:assert-benchmark-baseline|assert-ci-success|assert-infersharp|check-security-traceability|ci-gate|compare-benchmarks|resolve-benchmark-project|run-benchmark-comparison|run-candidate-checks|run-hosted-fuzz|select-specialized-validation|submit-candidate|update-sdk)\.ps1$') {
             # These tools and their regressions run in the unconditional checks.
             # Keep standalone helpers explicit; new build inputs fail closed.
         } elseif ($path -cmatch '^src/JetDatabaseWriter/') {
