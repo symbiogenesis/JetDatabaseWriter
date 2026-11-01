@@ -395,7 +395,8 @@ module DataPageKernel {
     applied := false;
     if page == replacement { return; }
     ghost var original := page[..];
-    ghost var replacementEntry := replacement[..];
+    ghost var replacementEntry := old(replacement[..]);
+    assert {:isolate} replacement[..] == replacementEntry;
     var rows, first, start, end := PrepareReclaim(page, pageSize, countOffset, rowsStart, rowIndex);
     if rows == 0 || start != expectedStart || end - start != replacement.Length as U32 ||
         ReadWord(page, rowsStart + rowIndex * 2) != start {
@@ -431,6 +432,9 @@ module DataPageKernel {
       page[start + cursor] := replacement[cursor];
       cursor := cursor + 1;
     }
+    assert {:isolate} cursor as int == replacement.Length;
+    assert {:isolate} replacementEntry[..cursor as int] == replacementEntry;
+    assert {:isolate} page[expectedStart as int..expectedStart as int + replacement.Length] == replacementEntry;
     applied := true;
   }
 }
