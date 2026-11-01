@@ -355,7 +355,8 @@ jobs:
   gate:
     name: CI gate
     needs: [changes, checks, formal, analyze, aot, encryption-replacement, package]
-    if: always()
+    # Evaluate failed/skipped dependencies, but release superseded branch runs promptly.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -142,7 +142,7 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract ($package.Contains('fetch-depth: 0') -and $package.Contains('global-json-file: global.json') -and $package.Contains('dotnet restore src/JetDatabaseWriter/JetDatabaseWriter.csproj --locked-mode') -and $package.Contains('dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-restore -o artifacts/nupkg') -and $package -notmatch 'dotnet test|--no-build|continue-on-error:') 'Documentation packaging must restore locked dependencies and build the strict Release library without running the test suite.'
     Assert-Contract ($package.Contains('name: nupkg') -and $package.Contains('path: artifacts/nupkg/*.nupkg') -and $package.Contains('if-no-files-found: error')) 'Documentation packaging must retain its package artifact.'
     $gate = Get-CiJob $Workflow 'gate'
-    Assert-Contract ($gate.Contains('needs: [changes, checks, formal, analyze, aot, encryption-replacement, package]') -and $gate.Contains('if: always()') -and $gate.Contains('JDW_CI_NEEDS: ${{ toJSON(needs) }}') -and $gate.Contains('run: ./scripts/select-ci-lanes.ps1 -CheckResults')) 'The aggregate gate must reject failure, cancellation and missing selected jobs.'
+    Assert-Contract ($gate.Contains('needs: [changes, checks, formal, analyze, aot, encryption-replacement, package]') -and $gate.Contains('if: ${{ !cancelled() }}') -and $gate.Contains('JDW_CI_NEEDS: ${{ toJSON(needs) }}') -and $gate.Contains('run: ./scripts/select-ci-lanes.ps1 -CheckResults')) 'The aggregate gate must reject failure and missing selected jobs while honoring workflow cancellation.'
 }
 
 function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedError, [xml] $Props = $buildProps, [xml] $Tests = $testProject, [object[]] $Lanes = $matrix) {
@@ -179,7 +179,8 @@ Assert-Scenario 'ordinary suite disabled' ($workflow.Replace("      - name: Test
 Assert-Scenario 'unrelated analyzer barrier' ($workflow.Replace("    name: Analyze", "    needs: another-analyzer`n    name: Analyze")) 'Test analyzer lanes must start independently'
 Assert-Scenario 'dotnet lane selection disabled' ($workflow.Replace("if: needs.changes.outputs.dotnet == 'true'", 'if: false')) 'All .NET jobs must use the same reviewed lane selection'
 Assert-Scenario 'missing aggregate gate' ($workflow.Replace('  gate:', '  removed:')) "The 'gate' CI job is missing"
-Assert-Scenario 'aggregate ignores skipped prerequisites' ($workflow.Replace('if: always()', 'if: success()')) 'The aggregate gate must reject failure'
+Assert-Scenario 'aggregate ignores skipped prerequisites' ($workflow.Replace('if: ${{ !cancelled() }}', 'if: success()')) 'The aggregate gate must reject failure'
+Assert-Scenario 'aggregate blocks superseding runs after cancellation' ($workflow.Replace('if: ${{ !cancelled() }}', 'if: always()')) 'honoring workflow cancellation'
 
 $analyzeJob = Get-CiJob $workflow 'analyze'
 $testStep = [regex]::Match($analyzeJob, '(?ms)^      - name: Test\n.*?(?=^      - |\z)').Value
