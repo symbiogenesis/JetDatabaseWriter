@@ -82,6 +82,7 @@ remaining native query/application forms and Access UI Name AutoCorrect remain
 separate S9/E2 evidence gaps.
 
 `NativeSqlSpecificQueryPreservationTests` adds pinned DAO3.6-authored Jet3/Jet4
+and DAO120-authored ACE
 stored data-definition (Type 96), row-returning pass-through (112) and action
 pass-through (144) specimens. All write modes retain complete query/catalog
 values and every query's permission rows through column rename, case-only
@@ -89,9 +90,10 @@ rename, column drop and referenced-table deletion. Native edits and both native
 and writer-output compact/reopen retain exact SQL, Connect, ReturnsRecords,
 ODBCTimeout, MaxRecords and long Description properties. A deliberate DSN-byte
 change proves that the snapshot detects changed connection metadata. Targeted
-DAO3.6 controls ran successfully with `dao360.dll` 10.0.26100.5074. The inert
+DAO3.6 controls ran successfully with `dao360.dll` 10.0.26100.5074; fresh DAO120
+ACE controls passed on 2026-10-31 with ACEDAO 16.0.20527.20112. The inert
 connections are never opened and the stored definitions are never executed;
-these checks do not establish pass-through execution, ACE variants or UI
+these checks do not establish pass-through execution, other native variants or UI
 behavior. [Fixture provenance and hashes](../../tests/JetDatabaseWriter.Tests/Databases/SqlSpecificQueries/README.md)
 retain the exact native specimen scope.
 
@@ -682,7 +684,17 @@ Independent SaveAsText controls retain exact form/report exports through the
 private assembly and native compact. A separate hashed native specimen adds a named StopMacro-only macro and a constant-only standard module; neither is invoked. Complete raw catalog/application storage and pinned-prefix comparisons preserve both identities, DAO checks Scripts/Modules document names through compact, and same-engine SaveAsText exports of all four application definitions match source, assembly and native-compacted output. The specimen README records producing builds and exact export hashes. Arbitrary application behavior, damaged objects, replication and broader
 security variants remain separate evidence requirements.
 
-`NativeApplicationObjectPreservationTests` extends both pinned inert ACE specimens to public insert/update/delete, unrelated column add/rename/drop and another table's create/drop in every write mode. It compares all unedited catalog field values (including exact timestamp ticks), complete unaffected table values/binary payloads, and selected original owning TDEF/data/index pages. It also compares every original MSysACEs row value, stored long-value descriptors bound to stable object identities, and exact reachable external LVAL rows, including page tokens, directory slots, chain pointers, padding and terminal pointers. Physical shared ACL pages and broader security variants remain outside this evidence. Fresh DAO120 public-mutation/reopen/compact controls passed on 2026-10-31 with ACEDAO 16.0.20527.20112 under x64 PowerShell. Independently compacted native controls establish physical column reordering and query catalog-ID renumbering: post-native comparisons retain every named value/type and resolve only MSysQueries.ObjectId through the catalog query name. Exact original writer-side catalog, permission, page, descriptor and LVAL comparisons remain unchanged; native-only controls also preserve the frozen source values through compact. No embedded content is invoked, and broader application/security/replication variants remain S9 work.
+`NativeApplicationObjectPreservationTests` extends both pinned inert ACE specimens to public insert/update/delete, unrelated column add/rename/drop, another table's create/drop and index create/rename/drop in every write mode. It compares all unedited catalog field values (including exact timestamp ticks), complete unaffected table values/binary payloads, and selected original owning TDEF/data/index pages. It also compares every original MSysACEs row value, stored long-value descriptors bound to stable object identities, and exact reachable external LVAL rows, including page tokens, directory slots, chain pointers, padding and terminal pointers. The specimens explicitly contain permission DATA pages shared by multiple ObjectIds. Every retained permission row keeps its bookmark, directory slot, bytes including padding, and original page-header framing; row-only edits also retain complete permission DATA pages. Fresh DAO120 public-mutation/reopen/compact controls passed on 2026-10-31 with ACEDAO 16.0.20527.20112 under x64 PowerShell. Independently compacted native controls establish physical column reordering and query catalog-ID renumbering: post-native comparisons retain every named value/type and resolve only MSysQueries.ObjectId through the catalog query name. Exact original writer-side catalog, permission, page, descriptor and LVAL comparisons remain unchanged; native-only controls also preserve the frozen source values through compact. No embedded content is invoked, and broader application/security/replication variants remain S9 work.
+
+The same public-mutation checks cover both pinned encrypted Jet4 custom-workgroup
+specimens (`NativeJet4Workgroup.mdb` and `NativeJet4WorkgroupChanged.mdb`). They
+retain unaffected catalog/system-table values and selected owning pages, the
+edited table's other catalog fields, shared permission-row framing and external
+LVAL identities through row, column, table and index edits in every write mode.
+Fresh DAO120 controls on 2026-10-31 compare native authentication, custom owners,
+permissions and row values through separate native-control and writer-output
+compacts. These named native security variants do not close broader security,
+replication or incoming-ownership requirements.
 
 `CompactPinnedReplicationTests` pins native DAO3.6 Jet4 Design Master/full-replica fixtures and compares all 18 local/system tables, 22 catalog identities and 94/95 complete pinned-prefix pages through private assembly. Native read-only identity/replicated metadata/value comparisons and separate compacts of original controls and assembled subjects preserve both ReplicaID and DesignMasterID. No synchronization, transport or stored code is invoked. The default native principal refuses four system-definition inspections with DAO 3110; managed raw/catalog/prefix comparisons still retain their complete storage. Jet3 Replicable conversion refuses with DAO 3703 before replica creation. The fixture README records exact provenance, hashes, identities and limits; general replication semantics, genuine Jet3 variants, ownership and reclaiming compact acceptance remain separate.
 
@@ -864,6 +876,31 @@ the same bytes and passes native reopen/compact beside its new index.
 Fresh x86 DAO3.6 (`dao360.dll` 10.0.26100.5074) controls passed on 2026-10-31.
 Fresh DAO120 Jet4/ACE index checks also passed with ACEDAO 16.0.20527.20112; these controls do not establish complete
 schema/application preservation or untested native index variants.
+
+`DropIndexTests` checks ordinary/unique/primary/composite index deletion, retained
+rows, surviving indexes and properties, all statement modes, exact rollback,
+and refusal of relationship or complex-reference dependencies. `DropIndexDaoTests`
+independently authors Jet3 with DAO3.6 and Jet4/ACE with DAO120, establishes native
+unreferenced-PK deletion and relationship-index refusal, then checks managed
+deletions through native duplicate insertion, update, read and compact. Fresh
+controls passed on 2026-10-31 with the producing engines named above.
+
+`RenameIndexTests` checks logical-name ordering, unchanged physical descriptors
+and unrelated pages, stable PK/FK identities, same-name column versus index
+property targets, wide definitions/LVAL maps, schema-budget and orphan-target
+refusal, explicit rollback and every partial-write position of the combined
+definition/property change. Renames use the original trees and row storage;
+index creation and deletion still use the table rewrite path.
+`RenameIndexDaoTests` independently compares native DAO3.6 Jet3 and DAO120
+Jet4/ACE name changes with the complete managed logical descriptors, including
+referenced primary-key identity and case-only spelling. Native-authored index
+descriptions, multi-page definitions, Memo values, seeks, constraints, native DML
+and both control/output compacts survive. These fresh 2026-10-31 controls use a
+40-character renamed index. Separate diagnostics reproduce DAO seek error -1038
+after a 64-character rename in both native-only and managed trajectories;
+original native indexes and managed insertion without renaming still seek.
+That observation does not establish library-specific corruption or qualify
+every native index-name boundary.
 
 `TableExpressionFunctionPolicyTests` checks declaration-time and imported-property
 refusal for application functions in stored defaults and field/table validation
