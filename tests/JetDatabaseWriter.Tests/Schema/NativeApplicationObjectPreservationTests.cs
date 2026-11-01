@@ -52,6 +52,8 @@ public sealed class NativeApplicationObjectPreservationTests
         Assert.True(original.Pages.Count > 0);
         Assert.True(original.Tables["MSysAccessStorage"].Length > 0);
         Assert.NotEmpty(original.Permissions);
+        Assert.True(original.SharedPermissionPages > 0);
+        Assert.NotEmpty(original.PermissionRows);
         Assert.NotEmpty(original.LongValueRows);
         if (codeObjects)
         {
@@ -75,6 +77,11 @@ public sealed class NativeApplicationObjectPreservationTests
         }
 
         Assert.Equal(original.Permissions, actual.Permissions);
+        Assert.Equal(original.PermissionRows, actual.PermissionRows);
+        if (operation == "rows")
+        {
+            Assert.Equal(original.PermissionPages, actual.PermissionPages);
+        }
         Assert.Equal(original.LongValueDescriptors, actual.LongValueDescriptors);
         Assert.Equal(original.LongValueRows, actual.LongValueRows);
 
@@ -238,6 +245,7 @@ public sealed class NativeApplicationObjectPreservationTests
         int itemId = (int)Assert.Single(catalog.AsEnumerable(), row => (string)row["Name"] == "Items")["Id"];
         using DataTable permissions = await reader.ReadTableAsync("MSysACEs", cancellationToken: Ct);
         string[] retainedPermissions = permissions.AsEnumerable().Select(EncodeRow).Order(StringComparer.Ordinal).ToArray();
+        PermissionStorage permissionStorage = await SnapshotPermissionsAsync(reader);
         foreach (DataRow row in catalog.AsEnumerable().Where(row => (short)row["Type"] == Constants.SystemObjects.UserTableType))
         {
             string name = (string)row["Name"];
@@ -273,7 +281,58 @@ public sealed class NativeApplicationObjectPreservationTests
             }
         }
 
-        return new(identities, tables, pages, retainedPermissions, descriptors.Order(StringComparer.Ordinal).ToArray(), longValues);
+        return new(identities, tables, pages, retainedPermissions, permissionStorage.Rows, permissionStorage.Pages, permissionStorage.SharedPages, descriptors.Order(StringComparer.Ordinal).ToArray(), longValues);
+    }
+
+    private static async Task<PermissionStorage> SnapshotPermissionsAsync(AccessReader reader)
+    {
+        using DataTable catalog = await reader.ReadTableAsync("MSysObjects", cancellationToken: Ct);
+        int owner = (int)Assert.Single(catalog.AsEnumerable(), row => (string)row["Name"] == "MSysACEs")["Id"];
+        TDefImage definition = Assert.IsType<TDefImage>(await reader.Database.TableDefs.ReadImageAsync(owner, Ct));
+        var rows = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        var pages = new SortedDictionary<long, string>();
+        var objectsByPage = new Dictionary<long, HashSet<int>>();
+        await reader.Database.OwnedPages.ForEachLiveTableRowAsync(
+            owner,
+            async (row, token) =>
+            {
+                int? objectId = null;
+                await CompactRawFieldReader.ScanAsync(
+                    reader.Database.Format,
+                    definition,
+                    row.Location,
+                    row.Page.AsMemory(row.Location.RowStart, row.Location.RowSize),
+                    (field, _) =>
+                    {
+                        if (field.Column.Name == "ObjectId")
+                        {
+                            objectId = BinaryPrimitives.ReadInt32LittleEndian(field.RawBytes.Span);
+                        }
+
+                        return ValueTask.CompletedTask;
+                    },
+                    token);
+                Assert.NotNull(objectId);
+                long number = row.Location.PageNumber;
+                if (!objectsByPage.TryGetValue(number, out HashSet<int>? objectIds))
+                {
+                    objectIds = [];
+                    objectsByPage.Add(number, objectIds);
+                    pages.Add(number, Convert.ToHexString(row.Page.AsSpan(0, reader.PageSize)));
+                }
+
+                objectIds.Add(objectId.Value);
+                int slotOffset = reader.Database.Format.DataPage.RowsStart + (row.Location.RowIndex * sizeof(ushort));
+                rows.Add(
+                    $"{number}:{row.Location.RowIndex}",
+                    Convert.ToHexString(row.Page.AsSpan(4, 8)) + "|"
+                        + Convert.ToHexString(row.Page.AsSpan(slotOffset, sizeof(ushort))) + "|"
+                        + Convert.ToHexString(row.Page.AsSpan(row.Location.RowStart, row.Location.RowSize)));
+                return true;
+            },
+            Ct,
+            requireCompleteRows: true);
+        return new(rows, pages, objectsByPage.Values.Count(objects => objects.Count > 1));
     }
 
     private static async Task SnapshotLongValuesAsync(AccessReader reader, byte[] bytes, int owner, int? excludedId, List<string> descriptors, SortedDictionary<uint, string> rows)
@@ -419,11 +478,16 @@ public sealed class NativeApplicationObjectPreservationTests
 
     private sealed record NamedTableSnapshot(string[] Columns, string[] Rows);
 
+    private sealed record PermissionStorage(SortedDictionary<string, string> Rows, SortedDictionary<long, string> Pages, int SharedPages);
+
     private sealed record Snapshot(
         string[] Catalog,
         SortedDictionary<string, string[]> Tables,
         SortedDictionary<long, byte[]> Pages,
         string[] Permissions,
+        SortedDictionary<string, string> PermissionRows,
+        SortedDictionary<long, string> PermissionPages,
+        int SharedPermissionPages,
         string[] LongValueDescriptors,
         SortedDictionary<uint, string> LongValueRows);
 }
