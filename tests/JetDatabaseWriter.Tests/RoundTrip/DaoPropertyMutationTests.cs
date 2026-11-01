@@ -29,6 +29,26 @@ public sealed class DaoPropertyMutationTests
     public static TheoryData<DatabaseFormat, WriteMode> FormatsAndModes()
         => WriteModes.Combine(DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
 
+    /// <summary>The preservation oracle identifies both table and column maps by name and native subtype.</summary>
+    /// <returns>The asynchronous test.</returns>
+    [Fact]
+    public async Task PreservedLayoutOracle_RecognizesTableAndColumnTargetSubtypes()
+    {
+        await using var stream = new MemoryStream();
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.Jet4Mdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct);
+        await writer.CreateTableAsync("PropertyVariants", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Score", typeof(int)) { Description = "score description" }], Ct);
+        await writer.SetTableValidationRuleAsync("PropertyVariants", new TableValidationRule("[Score] > 0", "positive score"), Ct);
+        CatalogEntry entry = Assert.IsType<CatalogEntry>(await writer.Services.Catalog.GetCatalogEntryAsync("PropertyVariants", Ct));
+        ColumnPropertyBlock properties = Assert.IsType<ColumnPropertyBlock>(await writer.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct));
+        Assert.Contains(properties.Targets, target => target.Name.Length == 0 && target.ChunkType == ColumnPropertyChunkType.PropertyBlock);
+        Assert.Contains(properties.Targets, target => target.Name == "Score" && target.ChunkType == ColumnPropertyChunkType.PropertyBlockAlt1);
+
+        await writer.SetTableValidationRuleAsync("PropertyVariants", new TableValidationRule("[Score] >= 0", "nonnegative score"), Ct);
+        ColumnPropertyBlock edited = Assert.IsType<ColumnPropertyBlock>(await writer.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct));
+        Assert.Equal("[Score] >= 0", edited.FindTableTarget()?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, edited.Format));
+        AssertPreservedLayout(properties, edited);
+    }
+
     /// <summary>
     /// DAO creates the schema. Synthetic padding and duplicate/unused names are
     /// planted, accepted by DAO, and preserved through every property edit.
@@ -352,7 +372,7 @@ public sealed class DaoPropertyMutationTests
             }
 
             string name = renamed && originalTarget.Name == "Score" ? "Amount" : originalTarget.Name;
-            ColumnPropertyTarget target = Assert.IsType<ColumnPropertyTarget>(after.FindTarget(name));
+            ColumnPropertyTarget target = Assert.IsType<ColumnPropertyTarget>(after.FindTarget(name, originalTarget.ChunkType));
             Assert.Equal(originalTarget.ChunkType, target.ChunkType);
             Assert.Equal(originalTarget.SourceChunkIndex, target.SourceChunkIndex);
             foreach (ColumnPropertyEntry property in originalTarget.Entries)
