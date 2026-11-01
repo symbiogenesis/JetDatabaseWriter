@@ -15,6 +15,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueEncoding.Models;
+using JetDatabaseWriter.Verification;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -385,201 +386,200 @@ internal sealed class RowEncoder(JetFormat format)
 
         // Use ArrayPool for the fixed-area workspace to avoid per-row heap allocation.
         byte[] fixedArea = maxFixedEnd > 0 ? ArrayPool<byte>.Shared.Rent(maxFixedEnd) : [];
-        if (maxFixedEnd > 0)
+        try
         {
-            fixedArea.AsSpan(0, maxFixedEnd).Clear();
-        }
-
-        // Stack-allocate nullMask for typical table widths (up to 256 columns → 32 bytes).
-        Span<byte> nullMask = nullMaskLen <= 32 ? stackalloc byte[nullMaskLen] : new byte[nullMaskLen];
-        nullMask.Clear();
-
-        // Access reserves every declared fixed slot, including trailing Null scalars.
-        int fixedAreaSize = maxFixedEnd;
-        byte[][] varEntries = varLen > 0 ? new byte[varLen][] : [];
-        int varPayloadSize = 0;
-
-        for (int i = 0; i < tableDef.Columns.Count; i++)
-        {
-            ColumnInfo column = tableDef.Columns[i];
-            object value = values[i] ?? DBNull.Value;
-
-            if (column.Type == BooleanType && !column.IsCalculated)
+            if (maxFixedEnd > 0)
             {
-                if (value is not DBNull && Convert.ToBoolean(value, CultureInfo.InvariantCulture))
-                {
-                    JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
-                }
-
-                continue;
+                fixedArea.AsSpan(0, maxFixedEnd).Clear();
             }
 
-            if (column.IsFixed && column.Type is BinaryType or BigBinaryType)
-            {
-                fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + column.Size);
-                if (value is not DBNull && this.EncodeBinaryValue(value, maxSize: 0) is { } bytes)
-                {
-                    bytes.AsSpan().CopyTo(fixedArea.AsSpan(column.FixedOff, column.Size));
-                    JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
-                }
+            // Stack-allocate nullMask for typical table widths (up to 256 columns → 32 bytes).
+            Span<byte> nullMask = nullMaskLen <= 32 ? stackalloc byte[nullMaskLen] : new byte[nullMaskLen];
+            nullMask.Clear();
 
-                continue;
-            }
+            // Access reserves every declared fixed slot, including trailing Null scalars.
+            int fixedAreaSize = maxFixedEnd;
+            byte[][] varEntries = varLen > 0 ? new byte[varLen][] : [];
+            int varPayloadSize = 0;
 
-            if (column.IsFixed && column.Type == TextType)
+            for (int i = 0; i < tableDef.Columns.Count; i++)
             {
-                fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + column.Size);
-                if (textBytes?.TryGetValue(i, out byte[]? stored) == true)
+                ColumnInfo column = tableDef.Columns[i];
+                object value = values[i] ?? DBNull.Value;
+
+                if (column.Type == BooleanType && !column.IsCalculated)
                 {
-                    if (stored.Length != column.Size)
+                    if (value is not DBNull && Convert.ToBoolean(value, CultureInfo.InvariantCulture))
                     {
-                        throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Preserved fixed Text slot '{column.Name}' does not match its descriptor width.", new JetErrorInfo { ColumnName = column.Name });
+                        JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
                     }
 
-                    stored.AsSpan().CopyTo(fixedArea.AsSpan(column.FixedOff, column.Size));
-                    JetFormat.SetNullMaskBit(nullMask, column.ColNum, value is not DBNull);
+                    continue;
                 }
-                else if (value is not DBNull)
+
+                if (column.IsFixed && column.Type is BinaryType or BigBinaryType)
                 {
-                    string text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
-                    Span<byte> destination = fixedArea.AsSpan(column.FixedOff, column.Size);
-                    int written = format.PropertyTextEncoding.GetBytes(text.AsSpan(), destination);
-                    byte[] space = format.PropertyTextEncoding.GetBytes(" ");
-                    for (int offset = written; offset < destination.Length; offset += space.Length)
+                    fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + column.Size);
+                    if (value is not DBNull && this.EncodeBinaryValue(value, maxSize: 0) is { } bytes)
                     {
-                        space.AsSpan().CopyTo(destination.Slice(offset, space.Length));
+                        bytes.AsSpan().CopyTo(fixedArea.AsSpan(column.FixedOff, column.Size));
+                        JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
                     }
 
+                    continue;
+                }
+
+                if (column.IsFixed && column.Type == TextType)
+                {
+                    fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + column.Size);
+                    if (textBytes?.TryGetValue(i, out byte[]? stored) == true)
+                    {
+                        if (stored.Length != column.Size)
+                        {
+                            throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Preserved fixed Text slot '{column.Name}' does not match its descriptor width.", new JetErrorInfo { ColumnName = column.Name });
+                        }
+
+                        stored.AsSpan().CopyTo(fixedArea.AsSpan(column.FixedOff, column.Size));
+                        JetFormat.SetNullMaskBit(nullMask, column.ColNum, value is not DBNull);
+                    }
+                    else if (value is not DBNull)
+                    {
+                        string text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+                        Span<byte> destination = fixedArea.AsSpan(column.FixedOff, column.Size);
+                        int written = format.PropertyTextEncoding.GetBytes(text.AsSpan(), destination);
+                        byte[] space = format.PropertyTextEncoding.GetBytes(" ");
+                        for (int offset = written; offset < destination.Length; offset += space.Length)
+                        {
+                            space.AsSpan().CopyTo(destination.Slice(offset, space.Length));
+                        }
+
+                        JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
+                    }
+
+                    continue;
+                }
+
+                if (value is DBNull && !column.IsCalculated)
+                {
+                    if (column.IsFixed && (column.Type == ComplexType))
+                    {
+                        fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + JetTypeInfo.GetFixedSize(column.Type));
+                    }
+
+                    continue;
+                }
+
+                if (column.IsFixed)
+                {
+                    if (!this.CanStoreFixedColumn(column))
+                    {
+                        continue;
+                    }
+
+                    int fixedSize = JetTypeInfo.GetFixedSize(column.Type);
+                    if (fixedSize <= 0)
+                    {
+                        continue;
+                    }
+
+                    int written = TryEncodeFixedValue(column.Type, column, value, fixedArea.AsSpan(column.FixedOff, fixedSize));
+                    if (written == 0)
+                    {
+                        continue;
+                    }
+
+                    fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + written);
                     JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
                 }
+                else
+                {
+                    byte[]? variableValue = !column.IsCalculated && column.Type == TextType && textBytes?.TryGetValue(i, out byte[]? storedText) == true
+                        ? storedText
+                        : this.EncodeVariableValue(column, value);
+                    if (variableValue == null)
+                    {
+                        continue;
+                    }
 
-                continue;
+                    varEntries[column.VarIdx] = variableValue;
+                    varPayloadSize += variableValue.Length;
+                    JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
+                }
             }
 
-            if (value is DBNull && !column.IsCalculated)
+            int baseRowLength = format.RowFields.NumCols + fixedAreaSize + varPayloadSize + format.RowFields.Eod + (varLen * format.RowFields.VarEntry) + format.RowFields.VarLen + nullMaskLen;
+            int jumpSize = jet3 ? Jet3JumpTable.CountForLength(baseRowLength) : 0;
+            rowLength = baseRowLength + jumpSize;
+
+            // A row never spans pages. TableRowStore.EncodeRow serializes the row,
+            // with a placeholder header for each value bound for LVAL pages, before
+            // an insert writes any LVAL or data page and before an update deletes
+            // the first row it or its cascades rewrite (TableDataWriter.
+            // UpdateRowsAsync, RelationshipEnforcer.PlanCascadeUpdatesAsync), so
+            // a row too long leaves the file unchanged.
+            if (rowLength > this.MaxRowLength)
             {
-                if (column.IsFixed && (column.Type == ComplexType))
-                {
-                    fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + JetTypeInfo.GetFixedSize(column.Type));
-                }
-
-                continue;
+                return null;
             }
 
-            if (column.IsFixed)
+            byte[] row = new byte[rowLength];
+            int pos = 0;
+
+            WriteField(row, pos, format.RowFields.NumCols, numCols);
+            pos += format.RowFields.NumCols;
+
+            if (fixedAreaSize > 0)
             {
-                if (!this.CanStoreFixedColumn(column))
-                {
-                    continue;
-                }
-
-                int fixedSize = JetTypeInfo.GetFixedSize(column.Type);
-                if (fixedSize <= 0)
-                {
-                    continue;
-                }
-
-                int written = TryEncodeFixedValue(column.Type, column, value, fixedArea.AsSpan(column.FixedOff, fixedSize));
-                if (written == 0)
-                {
-                    continue;
-                }
-
-                fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + written);
-                JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
+                Buffer.BlockCopy(fixedArea, 0, row, pos, fixedAreaSize);
+                pos += fixedAreaSize;
             }
-            else
+
+            int currentOffset = format.RowFields.NumCols + fixedAreaSize;
+
+            // Stack-allocate variable offsets for typical tables (up to 128 var columns).
+            Span<int> variableOffsets = varLen <= 128 ? stackalloc int[varLen] : new int[varLen];
+            for (int varIndex = 0; varIndex < varLen; varIndex++)
             {
-                byte[]? variableValue = !column.IsCalculated && column.Type == TextType && textBytes?.TryGetValue(i, out byte[]? storedText) == true
-                    ? storedText
-                    : this.EncodeVariableValue(column, value);
-                if (variableValue == null)
+                variableOffsets[varIndex] = currentOffset;
+                byte[]? payload = varEntries[varIndex];
+                if (payload != null)
                 {
-                    continue;
+                    Buffer.BlockCopy(payload, 0, row, pos, payload.Length);
+                    pos += payload.Length;
+                    currentOffset += payload.Length;
                 }
-
-                varEntries[column.VarIdx] = variableValue;
-                varPayloadSize += variableValue.Length;
-                JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
             }
+
+            // Jet3 keeps only the low byte of the EOD and each offset; the jump
+            // table below carries their high parts.
+            WriteField(row, pos, format.RowFields.Eod, jet3 ? currentOffset & 0xFF : currentOffset);
+            pos += format.RowFields.Eod;
+
+            for (int varIndex = varLen - 1; varIndex >= 0; varIndex--)
+            {
+                WriteField(row, pos, format.RowFields.VarEntry, jet3 ? variableOffsets[varIndex] & 0xFF : variableOffsets[varIndex]);
+                pos += format.RowFields.VarEntry;
+            }
+
+            if (jumpSize > 0)
+            {
+                Jet3JumpTable.Write(row.AsSpan(pos, jumpSize), variableOffsets, currentOffset);
+                pos += jumpSize;
+            }
+
+            WriteField(row, pos, format.RowFields.VarLen, varLen);
+            pos += format.RowFields.VarLen;
+            nullMask.CopyTo(row.AsSpan(pos));
+
+            return row;
         }
-
-        int baseRowLength = format.RowFields.NumCols + fixedAreaSize + varPayloadSize + format.RowFields.Eod + (varLen * format.RowFields.VarEntry) + format.RowFields.VarLen + nullMaskLen;
-        int jumpSize = jet3 ? Jet3JumpTable.CountForLength(baseRowLength) : 0;
-        rowLength = baseRowLength + jumpSize;
-
-        // A row never spans pages. TableRowStore.EncodeRow serializes the row,
-        // with a placeholder header for each value bound for LVAL pages, before
-        // an insert writes any LVAL or data page and before an update deletes
-        // the first row it or its cascades rewrite (TableDataWriter.
-        // UpdateRowsAsync, RelationshipEnforcer.PlanCascadeUpdatesAsync), so
-        // a row too long leaves the file unchanged.
-        if (rowLength > this.MaxRowLength)
+        finally
         {
             if (maxFixedEnd > 0)
             {
                 ArrayPool<byte>.Shared.Return(fixedArea);
             }
-
-            return null;
         }
-
-        byte[] row = new byte[rowLength];
-        int pos = 0;
-
-        WriteField(row, pos, format.RowFields.NumCols, numCols);
-        pos += format.RowFields.NumCols;
-
-        if (fixedAreaSize > 0)
-        {
-            Buffer.BlockCopy(fixedArea, 0, row, pos, fixedAreaSize);
-            pos += fixedAreaSize;
-        }
-
-        // Return the pooled buffer now that we've copied its contents.
-        if (maxFixedEnd > 0)
-        {
-            ArrayPool<byte>.Shared.Return(fixedArea);
-        }
-
-        int currentOffset = format.RowFields.NumCols + fixedAreaSize;
-
-        // Stack-allocate variable offsets for typical tables (up to 128 var columns).
-        Span<int> variableOffsets = varLen <= 128 ? stackalloc int[varLen] : new int[varLen];
-        for (int varIndex = 0; varIndex < varLen; varIndex++)
-        {
-            variableOffsets[varIndex] = currentOffset;
-            byte[]? payload = varEntries[varIndex];
-            if (payload != null)
-            {
-                Buffer.BlockCopy(payload, 0, row, pos, payload.Length);
-                pos += payload.Length;
-                currentOffset += payload.Length;
-            }
-        }
-
-        // Jet3 keeps only the low byte of the EOD and each offset; the jump
-        // table below carries their high parts.
-        WriteField(row, pos, format.RowFields.Eod, jet3 ? currentOffset & 0xFF : currentOffset);
-        pos += format.RowFields.Eod;
-
-        for (int varIndex = varLen - 1; varIndex >= 0; varIndex--)
-        {
-            WriteField(row, pos, format.RowFields.VarEntry, jet3 ? variableOffsets[varIndex] & 0xFF : variableOffsets[varIndex]);
-            pos += format.RowFields.VarEntry;
-        }
-
-        if (jumpSize > 0)
-        {
-            Jet3JumpTable.Write(row.AsSpan(pos, jumpSize), variableOffsets, currentOffset);
-            pos += jumpSize;
-        }
-
-        WriteField(row, pos, format.RowFields.VarLen, varLen);
-        pos += format.RowFields.VarLen;
-        nullMask.CopyTo(row.AsSpan(pos));
-
-        return row;
     }
 
     private bool CanStoreFixedColumn(ColumnInfo column)
@@ -614,7 +614,7 @@ internal sealed class RowEncoder(JetFormat format)
 
         if (column.Type == TextType)
         {
-            return this.EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), column.Size, column.IsCompressedUnicode);
+            return this.EncodeTextValue(Convert.ToString(value, CultureInfo.InvariantCulture), column);
         }
 
         if (column.Type == BinaryType)
@@ -715,28 +715,25 @@ internal sealed class RowEncoder(JetFormat format)
         return LongValueStore.WrapInlineLongValue(wrapped);
     }
 
-    private byte[]? EncodeTextValue(string? value, int maxSize, bool compress)
+    private byte[]? EncodeTextValue(string? value, ColumnInfo column)
     {
         if (value == null)
         {
             return null;
         }
 
-        if (!format.IsJet3 && compress && value.Length > 0 && value[0] == '\uFEFF')
+        int maximum = column.Size;
+        if (!RecoveryKernel.VariableValueAdmitted((uint)value.Length, 0, (uint)maximum, !format.IsJet3))
         {
-            return JetFormat.EncodeEscapedVariableText(value, maxSize);
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Text column '{column.Name}' cannot store all {value.Length} characters within its {maximum}-byte declared width.", new JetErrorInfo { ColumnName = column.Name });
         }
 
-        if (!format.IsJet3 && maxSize > 0 && value.Length > maxSize / 2)
+        byte[] bytes = !format.IsJet3 && column.IsCompressedUnicode && value.Length > 0 && value[0] == '\uFEFF'
+            ? JetFormat.EncodeEscapedVariableText(value, maximum)
+            : format.EncodeText(value, column.IsCompressedUnicode);
+        if (!RecoveryKernel.VariableValueAdmitted((uint)value.Length, (uint)bytes.Length, (uint)maximum, !format.IsJet3))
         {
-            value = value[..(maxSize / 2)];
-        }
-
-        int limit = maxSize > 0 ? maxSize : int.MaxValue;
-        byte[] bytes = format.EncodeText(value, limit, compress);
-        if (maxSize > 0 && bytes.Length > maxSize)
-        {
-            Array.Resize(ref bytes, maxSize);
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Text column '{column.Name}' holds at most {maximum} encoded bytes; the value occupies {bytes.Length}.", new JetErrorInfo { ColumnName = column.Name });
         }
 
         return bytes;
@@ -756,9 +753,9 @@ internal sealed class RowEncoder(JetFormat format)
             bytes = format.EncodeAnsiText(stringValue);
         }
 
-        if (maxSize > 0 && bytes.Length > maxSize)
+        if (!RecoveryKernel.VariableValueAdmitted(0, (uint)bytes.Length, (uint)maxSize, false))
         {
-            Array.Resize(ref bytes, maxSize);
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Binary value occupies {bytes.Length} bytes, exceeding the {maxSize}-byte declared width.");
         }
 
         return bytes;

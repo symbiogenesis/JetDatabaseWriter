@@ -4,6 +4,10 @@
 namespace JetDatabaseWriter.Verification {
 
   internal static class RecoveryKernel {
+    public static bool VariableValueAdmitted(uint units, uint encodedBytes, uint maximumBytes, bool unicodeText)
+    {
+      return (((maximumBytes) == (0U)) || ((encodedBytes) <= (maximumBytes))) && (((!(unicodeText)) || ((maximumBytes) == (0U))) || ((units) <= ((maximumBytes) / (2U))));
+    }
     public static uint RowReadDisposition(bool readable, bool strict)
     {
       if (readable) {

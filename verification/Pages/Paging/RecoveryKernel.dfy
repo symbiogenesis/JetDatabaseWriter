@@ -29,6 +29,33 @@ module RecoveryKernel {
   import Replacement = ReplacementProtocol
   import Admission = JournalAdmissionModel
 
+  // Ordinary variable values are admitted intact. Unicode Text has both a
+  // logical UTF-16 width and a physical encoded width; compression never
+  // grants permission to discard characters or to exceed the descriptor.
+  function VariableValueAdmitted(units: U32, encodedBytes: U32,
+      maximumBytes: U32, unicodeText: bool): bool
+    ensures VariableValueAdmitted(units, encodedBytes, maximumBytes, unicodeText) <==>
+      (maximumBytes == 0 || encodedBytes <= maximumBytes) &&
+      (!unicodeText || maximumBytes == 0 || units as int * 2 <= maximumBytes as int)
+  {
+    (maximumBytes == 0 || encodedBytes <= maximumBytes) &&
+      (!unicodeText || maximumBytes == 0 || units <= maximumBytes / 2)
+  }
+
+  lemma AdmittedUnicodeWidthRetainsEveryUnit(units: U32, encodedBytes: U32, maximumBytes: U32)
+    requires maximumBytes > 0
+    requires VariableValueAdmitted(units, encodedBytes, maximumBytes, true)
+    ensures units as int * 2 <= maximumBytes as int
+    ensures encodedBytes <= maximumBytes
+  { }
+
+  lemma OversizedVariableValuesRefuse(units: U32, encodedBytes: U32,
+      maximumBytes: U32, unicodeText: bool)
+    requires maximumBytes > 0
+    requires encodedBytes > maximumBytes || (unicodeText && units as int * 2 > maximumBytes as int)
+    ensures !VariableValueAdmitted(units, encodedBytes, maximumBytes, unicodeText)
+  { }
+
   // Zero is a readable row, one is a strict refusal and two is an explicitly
   // lenient omission. Layout/overflow acquisition remains the caller's effect.
   function RowReadDisposition(readable: bool, strict: bool): U32

@@ -32,6 +32,8 @@ Path-based `CreateDatabaseAsync` initializes and flushes an adjacent private sta
 
 Strings supplied to Binary columns use the database's code page on every format. A character that cannot be represented exactly throws `EncoderFallbackException` before that row is written; supply a `byte[]` to store arbitrary bytes.
 
+Ordinary Text and Binary values must fit their declared widths. An oversized value throws `JetLimitationException` with `ValueTooLarge`; the writer does not truncate it. Unicode compression does not increase a Text column's character allowance. A refused insert, update or batch retains the statement's original bytes, indexes and identities under the transaction contract.
+
 ### Schema operations and preservation
 
 The README's schema support covers the operations documented here: local and
