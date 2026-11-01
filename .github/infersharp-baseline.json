@@ -1,9 +1,9 @@
 {
   "version": 1,
   "analyzer": "InferSharp v1.5",
-  "reviewedRevision": "914dc10183d7e8274fa883c8de500437766430be",
+  "reviewedRevision": "95cdb05518ea19ce596117880915e00dd60fbac9",
   "sources": {
-    "src/JetDatabaseWriter/AccessDatabaseEncryption.cs": "23f158e8d939afd81c20e1d2f9256c2ee3ee07067c5afe97b4802bc74fad04a9",
+    "src/JetDatabaseWriter/AccessDatabaseEncryption.cs": "f8710fc7b726fe16646c991d91724abf568bf0b83793665849cc4c6b0d57a14f",
     "src/JetDatabaseWriter/AccessReader.cs": "bd87b92591a34043048cebbef35b5c44dd4161b20dff83f9ac1175953d73720c",
     "src/JetDatabaseWriter/Catalog/CatalogReader.cs": "6cbff8798b496372086ddde78f3e7e5d9b405a5d1e20bc4bcb2f4c56b87a33d1",
     "src/JetDatabaseWriter/Catalog/TableCatalog.cs": "2dd1c1764ce8a68a6863e2347a0eb0635685d8d90977befd7d0f4256014382f6",
@@ -27,7 +27,7 @@
     "src/JetDatabaseWriter/Pages/Paging/StreamPageStore.cs": "64c36259a79cb85367b7a2effb69c76a873179736097d56ec46f49f7e2fce0d2",
     "src/JetDatabaseWriter/Relationships/LinkedTextSourceStream.cs": "42e29a44ddc7c995df717c9d8291dddd248ee9719d9d8f67173166fb6945e583",
     "src/JetDatabaseWriter/AccessWriterOptions.cs": "f8349d9cdfc334f8eba4ff2c9a35a0ecb9e7450a8dfe83f40412e37ef4a52da4",
-    "src/JetDatabaseWriter/AccessWriter.cs": "0a1c00535df2c9a20102998875d7d0a32bdc809184bf2a5b165cd222643a1adc",
+    "src/JetDatabaseWriter/AccessWriter.cs": "a79b9b89a10bf032427ce237a3b1d5bf86b4b501a9acfd14302e3fbb9d90ee9c",
     "src/JetDatabaseWriter/Infrastructure/BoundedCache.cs": "5519f282810e348400a448f37f1dacc90c8bafcc4f5fe4c0206cf2181474d7ad",
     "src/JetDatabaseWriter/Infrastructure/FileStreamFactory.cs": "e46ec3e656fd4c45204b4ca660c084dfe3f26f6db63cceb65eb3aecb51a05347",
     "src/JetDatabaseWriter/Maintenance/CompactActiveCatalogRows.cs": "2ce3ae7a9332361a5daada76c90713630a8555f81c9da986b1a71402b206c61d",
