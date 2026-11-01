@@ -184,6 +184,28 @@ That model assumes an atomic canonical coordinator, fresh tickets/generations, v
 
 ## Storage and integrity assumptions
 
+`GenerationOwnership.DirectoryAcquisition*` gates ready authority on an
+acknowledged preparation-name fence. Its `DirectoryRetirement*` refinement
+requires native-name removal and its acknowledged fence before receipt
+retirement while the receipt lease remains held. `ReplacementProtocol.DirectoryCleanup*`
+requires selected content and name acknowledgements before destroying retained
+copies, then orders copy, ownership and intent retirement fences. Finite traces
+preserve these named-effect ordering invariants and retain failed acknowledgements.
+They are verification-only protocol refinements under explicit host contracts;
+they do not model physical namespace loss or prove the C# syscall sequence.
+
+Production supplies the corresponding directory adapter only in the native
+.NET asset on Windows. Unsupported results preserve the process-only path and
+never emit an acknowledged-directory-fence hook. Prepared copies and the intent
+are fenced before publication; selected destination contents and its parent
+name are fenced before copies are removed. Journal promotion fences before
+physical writes. Ordinary ownership disposal retains the receipt lease until
+native-name retirement finishes, and creation fences the published name without
+deleting a completed destination on a later fence failure. The replacement
+owner device-flushes its caller-written retained replacement itself. Runtime,
+filesystem/device semantics and complete C# refinement remain separate, and no
+power-loss qualification receipt or portable durability claim follows.
+
 `PageDigestKernel` supplies the raw digest ledger's bounded shape/write/resize
 admission and complete failure-atomic 32-byte slot replacement. The generated
 loop proves exact replacement bytes and preservation outside the selected slot,

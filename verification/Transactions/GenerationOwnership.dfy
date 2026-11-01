@@ -400,6 +400,158 @@ module GenerationOwnership {
       assert actions[i+1] == CompleteReceipt;
     }
   }
+  // The supported Windows adapter additionally fences the directory after
+  // complete receipt/native contents. A successful named fence is an explicit
+  // host effect, not a proof of FlushFileBuffers or a device power-loss claim.
+  datatype DirectoryAcquisitionSnapshot = DirectoryAcquisitionSnapshot(
+    contents: AcquisitionSnapshot, namesFenced: bool)
+  datatype DirectoryAcquisitionAction = DirectoryAcquireContent(action: AcquisitionAction)
+    | FenceAcquisitionNames(success: bool) | DirectoryAcquisitionCrash
+
+  predicate DirectoryAcquisitionValid(s: DirectoryAcquisitionSnapshot) {
+    AcquisitionValid(s.contents) && (s.namesFenced ==> s.contents.phase == AuthorityReady)
+  }
+
+  predicate DirectoryAcquisitionEnabled(s: DirectoryAcquisitionSnapshot, a: DirectoryAcquisitionAction) {
+    match a
+      case DirectoryAcquireContent(action) => !s.namesFenced && AcquisitionEnabled(s.contents, action)
+      case FenceAcquisitionNames(success) => s.contents.phase == AuthorityReady
+      case DirectoryAcquisitionCrash => true
+  }
+
+  function ApplyDirectoryAcquisition(s: DirectoryAcquisitionSnapshot,
+      a: DirectoryAcquisitionAction): DirectoryAcquisitionSnapshot
+    requires DirectoryAcquisitionEnabled(s, a)
+  {
+    match a
+      case DirectoryAcquireContent(action) => DirectoryAcquisitionSnapshot(ApplyAcquisition(s.contents, action), false)
+      case FenceAcquisitionNames(success) => s.(namesFenced := success)
+      case DirectoryAcquisitionCrash => DirectoryAcquisitionSnapshot(ApplyAcquisition(s.contents, AcquisitionFailure), false)
+  }
+
+  predicate DirectoryAcquisitionAuthority(s: DirectoryAcquisitionSnapshot, id: nat) {
+    s.namesFenced && AcquisitionAuthority(s.contents, id)
+  }
+
+  lemma DirectoryAcquisitionStepPreserves(s: DirectoryAcquisitionSnapshot, a: DirectoryAcquisitionAction)
+    requires DirectoryAcquisitionValid(s) && DirectoryAcquisitionEnabled(s, a)
+    ensures DirectoryAcquisitionValid(ApplyDirectoryAcquisition(s, a))
+    ensures a == FenceAcquisitionNames(false) ==> (!ApplyDirectoryAcquisition(s, a).namesFenced &&
+      ApplyDirectoryAcquisition(s, a).contents == s.contents)
+  {
+    match a {
+      case DirectoryAcquireContent(action) => AcquisitionStepPreserves(s.contents, action);
+      case FenceAcquisitionNames(success) =>
+      case DirectoryAcquisitionCrash => AcquisitionStepPreserves(s.contents, AcquisitionFailure);
+    }
+  }
+
+  predicate DirectoryAcquisitionPath(states: seq<DirectoryAcquisitionSnapshot>, actions: seq<DirectoryAcquisitionAction>) {
+    |states| == |actions| + 1 && forall i | 0 <= i < |actions| ::
+      DirectoryAcquisitionEnabled(states[i], actions[i]) && states[i+1] == ApplyDirectoryAcquisition(states[i], actions[i])
+  }
+
+  lemma DirectoryAcquisitionTracePreserves(states: seq<DirectoryAcquisitionSnapshot>, actions: seq<DirectoryAcquisitionAction>)
+    requires DirectoryAcquisitionPath(states, actions) && DirectoryAcquisitionValid(states[0])
+    ensures forall i | 0 <= i < |states| :: DirectoryAcquisitionValid(states[i])
+    decreases |actions|
+  {
+    if |actions| > 0 {
+      DirectoryAcquisitionStepPreserves(states[0], actions[0]);
+      DirectoryAcquisitionTracePreserves(states[1..], actions[1..]);
+    }
+  }
+
+  lemma DirectoryAuthorityRequiresAcknowledgedFence(states: seq<DirectoryAcquisitionSnapshot>, actions: seq<DirectoryAcquisitionAction>)
+    requires DirectoryAcquisitionPath(states, actions) && DirectoryAcquisitionValid(states[0])
+    requires !states[0].namesFenced && states[|states|-1].namesFenced
+    ensures exists i | 0 <= i < |actions| :: actions[i] == FenceAcquisitionNames(true)
+    decreases |actions|
+  {
+    DirectoryAcquisitionTracePreserves(states, actions);
+    assert |actions| > 0;
+    if actions[0] != FenceAcquisitionNames(true) {
+      assert !states[1].namesFenced;
+      DirectoryAuthorityRequiresAcknowledgedFence(states[1..], actions[1..]);
+      var i :| 0 <= i < |actions[1..]| && actions[1..][i] == FenceAcquisitionNames(true);
+      assert actions[i+1] == FenceAcquisitionNames(true);
+    }
+  }
+
+  // RecoveryLease.Cleanup and ordinary disposal retain the receipt lease while
+  // native deletion completes and its directory fence is acknowledged. Receipt
+  // deletion and its separate acknowledgement follow before successful release.
+  // Failed fences retain the available evidence; physical namespace rollback,
+  // successor interleavings and unsuccessful retirement remain separate scopes.
+  datatype DirectoryRetirementSnapshot = DirectoryRetirementSnapshot(
+    protocol: Snapshot, nativeFenced: bool, receiptFenced: bool)
+  datatype DirectoryRetirementAction = RetireOwnership(action: Action)
+    | FenceNativeRemoval(success: bool) | FenceReceiptRemoval(success: bool)
+
+  predicate DirectoryRetirementValid(s: DirectoryRetirementSnapshot) {
+    Valid(s.protocol) && (s.nativeFenced ==> s.protocol.nativeName == Absent) &&
+      (s.receiptFenced ==> s.nativeFenced && s.protocol.receiptName == Absent)
+  }
+
+  predicate DirectoryRetirementEnabled(s: DirectoryRetirementSnapshot, a: DirectoryRetirementAction) {
+    match a
+      case RetireOwnership(action) => Enabled(s.protocol, action) &&
+        ((action.StartDispose?) || (action.DeleteNative? && !s.nativeFenced) ||
+          (action.DeleteReceipt? && s.nativeFenced && !s.receiptFenced) ||
+          (action.Release? && s.receiptFenced) || action.Crash? || action.Interrupt? || action.RepeatDispose?)
+      case FenceNativeRemoval(success) => s.protocol.nativeName == Absent
+      case FenceReceiptRemoval(success) => s.nativeFenced && s.protocol.receiptName == Absent
+  }
+
+  function ApplyDirectoryRetirement(s: DirectoryRetirementSnapshot, a: DirectoryRetirementAction): DirectoryRetirementSnapshot
+    requires DirectoryRetirementEnabled(s, a)
+  {
+    match a
+      case RetireOwnership(action) => s.(protocol := Apply(s.protocol, action))
+      case FenceNativeRemoval(success) => s.(nativeFenced := s.nativeFenced || success)
+      case FenceReceiptRemoval(success) => s.(receiptFenced := s.receiptFenced || success)
+  }
+
+  lemma DirectoryRetirementStepPreserves(s: DirectoryRetirementSnapshot, a: DirectoryRetirementAction)
+    requires DirectoryRetirementValid(s) && DirectoryRetirementEnabled(s, a)
+    ensures DirectoryRetirementValid(ApplyDirectoryRetirement(s, a))
+    ensures a.FenceNativeRemoval? && !a.success ==> ApplyDirectoryRetirement(s, a) == s
+    ensures a.FenceReceiptRemoval? && !a.success ==> ApplyDirectoryRetirement(s, a) == s
+  {
+    match a {
+      case RetireOwnership(action) => StepPreserves(s.protocol, action);
+      case FenceNativeRemoval(success) =>
+      case FenceReceiptRemoval(success) =>
+    }
+  }
+
+  predicate DirectoryRetirementPath(states: seq<DirectoryRetirementSnapshot>, actions: seq<DirectoryRetirementAction>) {
+    |states| == |actions| + 1 && forall i | 0 <= i < |actions| ::
+      DirectoryRetirementEnabled(states[i], actions[i]) && states[i+1] == ApplyDirectoryRetirement(states[i], actions[i])
+  }
+
+  lemma DirectoryRetirementTracePreserves(states: seq<DirectoryRetirementSnapshot>, actions: seq<DirectoryRetirementAction>)
+    requires DirectoryRetirementPath(states, actions) && DirectoryRetirementValid(states[0])
+    ensures forall i | 0 <= i < |states| :: DirectoryRetirementValid(states[i])
+    decreases |actions|
+  {
+    if |actions| > 0 {
+      DirectoryRetirementStepPreserves(states[0], actions[0]);
+      DirectoryRetirementTracePreserves(states[1..], actions[1..]);
+    }
+  }
+
+  lemma ReceiptRetirementRequiresNativeFence(s: DirectoryRetirementSnapshot, id: nat)
+    requires DirectoryRetirementEnabled(s, RetireOwnership(DeleteReceipt(id)))
+    ensures s.nativeFenced
+  { }
+
+  lemma GenerationReleaseRequiresBothFences(s: DirectoryRetirementSnapshot, id: nat)
+    requires DirectoryRetirementValid(s) && DirectoryRetirementEnabled(s, RetireOwnership(Release(id)))
+    ensures s.nativeFenced && s.receiptFenced
+    ensures s.protocol.nativeName == Absent && s.protocol.receiptName == Absent
+  { }
+
   function CleanupRank(s: Snapshot, id: nat): nat
     requires Valid(s) && (s.holder == Owned(id) || s.holder == Free)
   {

@@ -6,7 +6,9 @@ The recovery proofs assume exact successful bytes-and-length flush fences, resta
 
 `StreamPageStore.FlushAsync(true)` calls `FileStream.Flush(true)` for a `FileStream`. Other streams receive their own `FlushAsync`; the Boolean request does not give an arbitrary stream device-flush semantics. `PhysicalRollback.BeginWrite` creates persistent recovery evidence only for the file-stream path. In-memory captures and temporary spill files on other paths support rollback within that lifecycle; they do not provide a persistent identity, discovery or reopen protocol.
 
-Journal preparation/records, replacement copies/decisions and ownership receipts flush file contents. Creation, movement, replacement and deletion also change names. The implementation has no explicit parent-directory persistence fence. A successful file-content flush therefore cannot discharge the separate name-discovery premise. A process kill exercises recovery code but leaves the host, its caches and outstanding device work alive.
+Journal preparation/records, replacement copies/decisions and ownership receipts flush file contents. Creation, movement, replacement and deletion also change names. The `net10.0` library asset on Windows uses `DirectoryPersistence` to flush writable parent-directory handles after journal promotion, prepared evidence publication, selected destination publication and ordered retirement. The adapter uses the source-audited backup-semantics option and immediately checks cleared/captured last-error state; a suppressed access-denied result is a failed acknowledgement. The standard asset and other platforms have no directory adapter and retain process-only guarantees.
+
+An acknowledged directory operation is still conditional on the deployed runtime, filesystem and device contracts. It does not itself qualify name discovery after physical power loss. A process kill exercises recovery code but leaves the host, its caches and outstanding device work alive.
 
 A failed flush grants no successful fence. Retain the surviving evidence and distinguish an uncertain decision from a confirmed rollback. The buffered model permits finite reordered/torn persistence before failure; its restart transition additionally assumes that retired effects cannot later overwrite recovery. Tests that throw from a managed flush do not qualify this host contract. The buffered content refinement additionally requires authorization for zeros exposed by reordered reextension before a durable replay marker. An old write persisting after truncation can preserve exact undo evidence while leaving an unrecorded zero gap that production refuses without mutation. Qualification must establish this zero-exposure contract, or a separately justified protocol must handle such survivors; undo recoverability alone does not establish parser admission or recovery availability.
 
@@ -20,7 +22,15 @@ The public [`FileStream.Flush(Boolean)` contract](https://learn.microsoft.com/en
 | Linux file flush | [`FileStreamHelpers.Unix.FlushToDisk`](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/IO/Strategies/FileStreamHelpers.Unix.cs) invokes the runtime synchronization shim. [`SystemNative_FSync`](https://github.com/dotnet/runtime/blob/v10.0.0/src/native/libs/System.Native/pal_io.c) uses `fsync` outside its macOS branch. Linux documents a [separate directory synchronization requirement](https://man7.org/linux/man-pages/man2/fsync.2.html). | Establish directory-entry ordering, successful regular-file synchronization and restart quiescence; qualify mount/storage configuration and error behavior. |
 | macOS file flush | The same pinned [runtime shim](https://github.com/dotnet/runtime/blob/v10.0.0/src/native/libs/System.Native/pal_io.c) selects `F_FULLFSYNC` when built with `TARGET_OSX` and `HAVE_F_FULLFSYNC`. [Apple distinguishes this operation from ordinary `fsync`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fsync.2.html). The managed Unix helper can ignore unsupported-synchronization errors. | Verify the deployed build selects the expected operation and the filesystem supports it. File synchronization alone does not establish this protocol's name lifecycle or cooperating lock semantics. |
 
-The reviewed production calls do not implement a portable directory barrier. This is a conclusion about the current paths, not a proof that no future managed API or protocol can satisfy the requirement. Passing a native directory handle to a managed wrapper would still require platform-specific acquisition and a separate correctness/qualification argument under the unchanged-runtime constraint.
+The production Windows adapter uses `File.OpenHandle` with the unnamed
+`(FileOptions)0x02000000` backup option, writable access and retained sharing,
+then `RandomAccess.FlushToDisk` with an immediate last-error check. The reviewed
+[handle acquisition](https://github.com/dotnet/runtime/blob/v10.0.13/src/libraries/System.Private.CoreLib/src/Microsoft/Win32/SafeHandles/SafeFileHandle.Windows.cs)
+forwards that option, while the
+[10.0.14 flush helper](https://github.com/dotnet/runtime/blob/v10.0.14/src/libraries/System.Private.CoreLib/src/System/IO/Strategies/FileStreamHelpers.Windows.cs)
+suppresses access-denied errors unless the adapter checks them. This is a narrow
+source-audited Windows path, not a named portable BCL directory-barrier contract.
+Standard/Linux/macOS adapters and physical qualification remain E4/F6/I15 work.
 
 ## Qualification receipt
 

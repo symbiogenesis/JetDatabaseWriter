@@ -52,6 +52,11 @@ internal static class DatabaseCreationPublication
             PersistentRollbackJournal.RejectHotJournal(path);
             File.Move(temporary, path);
             created = false;
+            observer?.Invoke("DirectoryFlushing", path);
+            if (DirectoryPersistence.FlushParent(path))
+            {
+                observer?.Invoke("DirectoryFlushed", path);
+            }
         }
         finally
         {
@@ -60,6 +65,7 @@ internal static class DatabaseCreationPublication
                 try
                 {
                     File.Delete(temporary);
+                    _ = DirectoryPersistence.FlushParent(temporary);
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException)
                 {

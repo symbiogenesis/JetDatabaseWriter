@@ -6,6 +6,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Transactions;
 using Xunit;
 
@@ -19,11 +20,17 @@ public sealed class ReplacementPublicationConformanceTests
         get
         {
             var cases = new TheoryData<bool, bool, string, int>();
+            List<string> cuts = ["publication-created", "publication-read", "publication-before-flush", "publication-flush", "publication-ready", "renamed", "destination-before-flush", "destination-before-directory-flush", "destination-flush", "cleanup-before-flush", "cleanup-flush", "cleanup-before-directory-flush"];
+            if (DirectoryPersistence.IsSupported)
+            {
+                cuts.AddRange(["destination-directory-flush", "cleanup-directory-flush"]);
+            }
+
             foreach (bool committed in new[] { false, true })
             {
                 foreach (bool missing in new[] { false, true })
                 {
-                    foreach (string cut in new[] { "publication-created", "publication-read", "publication-before-flush", "publication-flush", "publication-ready", "renamed", "destination-before-flush", "destination-flush", "cleanup-before-flush", "cleanup-flush" })
+                    foreach (string cut in cuts)
                     {
                         cases.Add(committed, missing, cut, 1);
                     }
@@ -69,7 +76,7 @@ public sealed class ReplacementPublicationConformanceTests
         string intentPath = EncryptionReplacementIntent.IntentPath(directory.Path);
         byte[] intent = await File.ReadAllBytesAsync(intentPath, Ct);
         string publication = next.Replace(".new.tmp", ".publish.tmp", StringComparison.Ordinal);
-        bool renamed = cut is "renamed" or "destination-before-flush" or "destination-flush" or "cleanup-before-flush" or "cleanup-flush";
+        bool renamed = cut is "renamed" or "destination-before-flush" or "destination-before-directory-flush" or "destination-directory-flush" or "destination-flush" or "cleanup-before-flush" or "cleanup-flush" or "cleanup-before-directory-flush" or "cleanup-directory-flush";
         for (int attempt = 0; attempt < 2; attempt++)
         {
             // Once rename has selected the right image, retry skips publication and fences it again in Cleanup.
@@ -130,9 +137,19 @@ public sealed class ReplacementPublicationConformanceTests
         Assert.True(EncryptionReplacementIntent.Recover(directory.Path, completed.Add, Ct));
         Assert.Contains("cleanup-before-flush", completed);
         Assert.Contains("cleanup-flush", completed);
+        Assert.Equal(DirectoryPersistence.IsSupported, completed.Contains("cleanup-directory-flush"));
         Assert.Contains("cleanup.old", completed);
         Assert.True(completed.IndexOf("cleanup-before-flush") < completed.IndexOf("cleanup-flush"));
-        Assert.True(completed.IndexOf("cleanup-flush") < completed.IndexOf("cleanup.old"));
+        if (DirectoryPersistence.IsSupported)
+        {
+            Assert.True(completed.IndexOf("cleanup-flush") < completed.IndexOf("cleanup-directory-flush"));
+            Assert.True(completed.IndexOf("cleanup-directory-flush") < completed.IndexOf("cleanup.old"));
+        }
+        else
+        {
+            Assert.True(completed.IndexOf("cleanup-flush") < completed.IndexOf("cleanup.old"));
+        }
+
         Assert.Equal(selected, await File.ReadAllBytesAsync(directory.Path, Ct));
         Assert.Equal(directory.Path, Assert.Single(Directory.GetFiles(directory.DirectoryPath)));
         Assert.False(EncryptionReplacementIntent.Recover(directory.Path, cancellationToken: Ct));
@@ -147,6 +164,8 @@ public sealed class ReplacementPublicationConformanceTests
     [InlineData("publication-before-flush")]
     [InlineData("publication-flush")]
     [InlineData("destination-before-flush")]
+    [InlineData("prepared-before-directory-flush")]
+    [InlineData("destination-before-directory-flush")]
     [InlineData("destination-flush")]
     public async Task Commit_PublicationExceptions_RetainPreparedUntilOldSelectionIsRecovered(string cut)
     {

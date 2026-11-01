@@ -20,6 +20,11 @@ public sealed class RecoverableWriterLockTests
             "user",
             boundary =>
             {
+                if (boundary == "prepared-before-directory-flush")
+                {
+                    return;
+                }
+
                 if (boundary == "prepared")
                 {
                     throw new IOException("Prepared acquisition failed.");

@@ -1654,6 +1654,125 @@ module ReplacementProtocol {
     cleanupStates, cleanupActions := CompleteProductionCleanup(original, next, beginCleanup, id);
   }
 
+  // Supported Windows recovery cleanup additionally acknowledges the selected
+  // directory name before dropping copies, copy removals before ownership
+  // retirement, and each generation-name removal before the next one. These
+  // are named host-effect contracts; this refinement does not prove physical
+  // namespace persistence, arbitrary namespace loss or the C# syscall adapter.
+  datatype DirectoryCleanupSnapshot = DirectoryCleanupSnapshot(protocol: Snapshot,
+    ownership: Ownership.DirectoryRetirementSnapshot, databaseHeld: bool,
+    contentsFlushed: bool, destinationFenced: bool, copiesFenced: bool, intentFenced: bool)
+  datatype DirectoryCleanupAction = FlushDirectoryContents(success: bool)
+    | FenceSelectedName(success: bool) | DeleteDirectoryCopy(action: Action)
+    | FenceCopyRemoval(success: bool)
+    | RetireDirectoryOwnership(ownershipAction: Ownership.DirectoryRetirementAction)
+    | DeleteDirectoryIntent | FenceIntentRemoval(success: bool) | ReleaseDirectoryDatabase
+    | DirectoryCleanupInterrupt
+
+  predicate CopiesAbsent(s: Snapshot) {
+    !s.oldCopy && !s.newCopy && s.publication == Missing
+  }
+
+  predicate DirectoryCleanupValid(original: seq<int>, next: seq<int>, s: DirectoryCleanupSnapshot) {
+    Valid(original, next, s.protocol) && Ownership.DirectoryRetirementValid(s.ownership) &&
+      s.protocol.destination == Present(Selected(original, next, s.protocol)) &&
+      (s.destinationFenced ==> s.contentsFlushed) &&
+      (s.copiesFenced ==> s.destinationFenced && CopiesAbsent(s.protocol)) &&
+      (!s.protocol.intent ==> s.copiesFenced && s.ownership.nativeFenced && s.ownership.receiptFenced) &&
+      (s.intentFenced ==> !s.protocol.intent)
+  }
+
+  predicate DirectoryCleanupEnabled(original: seq<int>, next: seq<int>, s: DirectoryCleanupSnapshot,
+      a: DirectoryCleanupAction) {
+    match a
+      case FlushDirectoryContents(success) => s.databaseHeld
+      case FenceSelectedName(success) => s.databaseHeld && s.contentsFlushed
+      case DeleteDirectoryCopy(action) => s.databaseHeld && s.destinationFenced && s.protocol.intent &&
+        !s.copiesFenced && (action.RemovePublication? || action.RemoveOld? || action.RemoveNew?) &&
+        Enabled(original, next, s.protocol, action)
+      case FenceCopyRemoval(success) => s.databaseHeld && s.destinationFenced && CopiesAbsent(s.protocol)
+      case RetireDirectoryOwnership(action) => s.databaseHeld && s.copiesFenced && s.protocol.intent &&
+        Ownership.DirectoryRetirementEnabled(s.ownership, action)
+      case DeleteDirectoryIntent => s.databaseHeld && s.protocol.intent && s.copiesFenced &&
+        s.ownership.nativeFenced && s.ownership.receiptFenced && s.ownership.protocol.holder == Ownership.Free
+      case FenceIntentRemoval(success) => s.databaseHeld && !s.protocol.intent
+      case ReleaseDirectoryDatabase => s.databaseHeld && s.intentFenced
+      case DirectoryCleanupInterrupt => true
+  }
+
+  function ApplyDirectoryCleanup(original: seq<int>, next: seq<int>, s: DirectoryCleanupSnapshot,
+      a: DirectoryCleanupAction): DirectoryCleanupSnapshot
+    requires DirectoryCleanupEnabled(original, next, s, a)
+  {
+    match a
+      case FlushDirectoryContents(success) => s.(contentsFlushed := s.contentsFlushed || success)
+      case FenceSelectedName(success) => s.(destinationFenced := s.destinationFenced || success)
+      case DeleteDirectoryCopy(action) => s.(protocol := Apply(original, next, s.protocol, action))
+      case FenceCopyRemoval(success) => s.(copiesFenced := s.copiesFenced || success)
+      case RetireDirectoryOwnership(action) => s.(ownership := Ownership.ApplyDirectoryRetirement(s.ownership, action))
+      case DeleteDirectoryIntent => s.(protocol := s.protocol.(intent := false))
+      case FenceIntentRemoval(success) => s.(intentFenced := s.intentFenced || success)
+      case ReleaseDirectoryDatabase => s.(databaseHeld := false)
+      case DirectoryCleanupInterrupt => s
+  }
+
+  lemma DirectoryCleanupStepPreserves(original: seq<int>, next: seq<int>, s: DirectoryCleanupSnapshot,
+      a: DirectoryCleanupAction)
+    requires DirectoryCleanupValid(original, next, s) && DirectoryCleanupEnabled(original, next, s, a)
+    ensures DirectoryCleanupValid(original, next, ApplyDirectoryCleanup(original, next, s, a))
+    ensures ApplyDirectoryCleanup(original, next, s, a).protocol.decision == s.protocol.decision
+    ensures ApplyDirectoryCleanup(original, next, s, a).protocol.destination == s.protocol.destination
+  {
+    match a {
+      case FlushDirectoryContents(success) =>
+      case FenceSelectedName(success) =>
+      case DeleteDirectoryCopy(action) => StepPreserves(original, next, s.protocol, action);
+      case FenceCopyRemoval(success) =>
+      case RetireDirectoryOwnership(action) => Ownership.DirectoryRetirementStepPreserves(s.ownership, action);
+      case DeleteDirectoryIntent =>
+      case FenceIntentRemoval(success) =>
+      case ReleaseDirectoryDatabase =>
+      case DirectoryCleanupInterrupt =>
+    }
+  }
+
+  predicate DirectoryCleanupPath(original: seq<int>, next: seq<int>, states: seq<DirectoryCleanupSnapshot>, actions: seq<DirectoryCleanupAction>) {
+    |states| == |actions| + 1 && forall i | 0 <= i < |actions| ::
+      DirectoryCleanupEnabled(original, next, states[i], actions[i]) &&
+      states[i+1] == ApplyDirectoryCleanup(original, next, states[i], actions[i])
+  }
+
+  lemma DirectoryCleanupTracePreserves(original: seq<int>, next: seq<int>, states: seq<DirectoryCleanupSnapshot>, actions: seq<DirectoryCleanupAction>)
+    requires DirectoryCleanupPath(original, next, states, actions) && DirectoryCleanupValid(original, next, states[0])
+    ensures forall i | 0 <= i < |states| :: DirectoryCleanupValid(original, next, states[i])
+    ensures states[|states|-1].protocol.decision == states[0].protocol.decision
+    ensures states[|states|-1].protocol.destination == states[0].protocol.destination
+    decreases |actions|
+  {
+    if |actions| > 0 {
+      DirectoryCleanupStepPreserves(original, next, states[0], actions[0]);
+      DirectoryCleanupTracePreserves(original, next, states[1..], actions[1..]);
+    }
+  }
+
+  lemma CopyDeletionRequiresBothFences(original: seq<int>, next: seq<int>, s: DirectoryCleanupSnapshot, action: Action)
+    requires DirectoryCleanupValid(original, next, s) && DirectoryCleanupEnabled(original, next, s, DeleteDirectoryCopy(action))
+    ensures s.contentsFlushed && s.destinationFenced && s.databaseHeld
+  { }
+
+  lemma IntentRetirementRequiresEveryPriorFence(original: seq<int>, next: seq<int>, s: DirectoryCleanupSnapshot)
+    requires DirectoryCleanupValid(original, next, s) && DirectoryCleanupEnabled(original, next, s, DeleteDirectoryIntent)
+    ensures s.contentsFlushed && s.destinationFenced && s.copiesFenced
+    ensures s.ownership.nativeFenced && s.ownership.receiptFenced && s.databaseHeld
+  { }
+
+  lemma FailedDirectoryFenceCannotRetireCopies(original: seq<int>, next: seq<int>, s: DirectoryCleanupSnapshot)
+    requires DirectoryCleanupValid(original, next, s) && s.databaseHeld && s.contentsFlushed && !s.destinationFenced
+    ensures ApplyDirectoryCleanup(original, next, s, FenceSelectedName(false)) == s
+    ensures forall action: Action :: !DirectoryCleanupEnabled(original, next,
+      ApplyDirectoryCleanup(original, next, s, FenceSelectedName(false)), DeleteDirectoryCopy(action))
+  { }
+
   // CHL/Argosy-style recovery closure: after any finite production cleanup
   // trace, including repeated crashes and recorded/fresh restarts, a successful
   // continuation still removes the same decision's evidence in actual order.

@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.Verification;
@@ -197,6 +198,13 @@ internal sealed class EncryptionReplacementIntent : IDisposable
     /// <param name="cancellationToken">Cancels before the Prepared record is written.</param>
     internal void Commit(CancellationToken cancellationToken)
     {
+        // CreateReplacement transfers a writable stream to its caller. Closing
+        // that stream does not establish a device fence for the retained copy.
+        using (var retained = new FileStream(this.NewPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            retained.Flush(true);
+        }
+
         Image next = ReadImage(this.NewPath, this.boundary, cancellationToken);
         RequireImage(ReadImage(this.OldPath, this.boundary, cancellationToken), this.original);
         cancellationToken.ThrowIfCancellationRequested();
@@ -205,6 +213,8 @@ internal sealed class EncryptionReplacementIntent : IDisposable
         this.IsPrepared = true; // An uncertain header flush must retain its evidence.
         this.intent.Write(header, 0, header.Length);
         this.intent.Flush(true);
+        this.boundary?.Invoke("prepared-before-directory-flush");
+        _ = DirectoryPersistence.FlushParent(this.path);
         this.boundary?.Invoke("prepared");
         ValidateState(this.path, state, this.source, this.original, cancellationToken: CancellationToken.None);
         using FileStream database = Publish(this.path, state, next, this.NewPath, destinationExisted: true, this.boundary);
@@ -354,6 +364,12 @@ internal sealed class EncryptionReplacementIntent : IDisposable
             RequireImage(Hash(database), selected);
             boundary?.Invoke("destination-before-flush");
             database.Flush(true);
+            boundary?.Invoke("destination-before-directory-flush");
+            if (DirectoryPersistence.FlushParent(path))
+            {
+                boundary?.Invoke("destination-directory-flush");
+            }
+
             boundary?.Invoke("destination-flush");
             return database;
         }
@@ -372,9 +388,16 @@ internal sealed class EncryptionReplacementIntent : IDisposable
         boundary?.Invoke("cleanup-before-flush");
         database.Flush(true);
         boundary?.Invoke("cleanup-flush");
+        boundary?.Invoke("cleanup-before-directory-flush");
+        if (DirectoryPersistence.FlushParent(path))
+        {
+            boundary?.Invoke("cleanup-directory-flush");
+        }
+
         foreach (string suffix in new[] { ".publish.tmp", ".old", ".new.tmp" })
         {
             File.Delete(Candidate(path, state.Generation, suffix));
+            _ = DirectoryPersistence.FlushParent(path);
             boundary?.Invoke("cleanup" + suffix);
         }
 
@@ -387,6 +410,7 @@ internal sealed class EncryptionReplacementIntent : IDisposable
 
         intent.Dispose();
         File.Delete(IntentPath(path)); // Database ownership excludes a successor generation until deletion finishes.
+        _ = DirectoryPersistence.FlushParent(path);
     }
 
     private static State ReadState(string path, FileStream intent)
@@ -649,6 +673,7 @@ internal sealed class EncryptionReplacementIntent : IDisposable
         try
         {
             File.Delete(path);
+            _ = DirectoryPersistence.FlushParent(path);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {

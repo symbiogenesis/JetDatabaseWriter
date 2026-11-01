@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Encryption;
 using System;
 using System.IO;
 using System.Threading;
+using JetDatabaseWriter.Infrastructure;
 
 /// <summary>Orders replacement copies and a persistent process-recovery decision.</summary>
 internal static class EncryptionReplacementCommit
@@ -46,6 +47,7 @@ internal static class EncryptionReplacementCommit
         try
         {
             File.Delete(temporary);
+            _ = DirectoryPersistence.FlushParent(temporary);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {

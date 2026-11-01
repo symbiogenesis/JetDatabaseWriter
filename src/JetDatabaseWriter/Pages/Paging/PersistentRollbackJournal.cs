@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.Verification;
 
@@ -112,6 +113,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             journal.Dispose();
             File.Move(stagingPath, finalPath);
             promoted = true;
+            _ = DirectoryPersistence.FlushParent(finalPath);
             journal = new FileStream(finalPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
             return new PersistentRollbackJournal(database, journal, pageSize, length, tracked);
         }
@@ -199,9 +201,11 @@ internal sealed class PersistentRollbackJournal : IDisposable
         if (matchingPreparation)
         {
             File.Delete(preparation);
+            _ = DirectoryPersistence.FlushParent(preparation);
         }
 
         File.Delete(path);
+        _ = DirectoryPersistence.FlushParent(path);
     }
 
     private static void RestoreBeforeImages(FileStream database, FileStream journal, JournalState state)
@@ -965,6 +969,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         {
             this.journal.Dispose();
             File.Delete(JournalPath(this.database.Name));
+            _ = DirectoryPersistence.FlushParent(this.database.Name);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {

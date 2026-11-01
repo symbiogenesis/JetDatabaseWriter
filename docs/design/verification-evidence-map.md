@@ -45,6 +45,15 @@ remain separate obligations; recovery independently acquires physical content.
 
 ## Replacement and generation ownership
 
+The directory-order refinements in `GenerationOwnership` and
+`ReplacementProtocol` gate preparation authority and copy/native/receipt/intent
+retirement on named acknowledgements. `DirectoryPersistence` supplies the narrow
+Windows adapter in the net10.0 asset; unsupported assets/platforms grant no
+acknowledgement. `DirectoryPersistenceTests`, publication and cleanup conformance
+controls bind the source ordering and suppressed-error refusal. Actual C# effect
+composition, lost names and filesystem/device power-cut qualification remain
+separate A2/A3/E4/F6/I15/V7 obligations.
+
 | ID | Specification/proof and executing implementation | Evidence, dependent contracts and remaining gap |
 |---|---|---|
 | R1 | **Executable field scans/admission + abstract evidence composition.** [RecoveryKernel](../../verification/Pages/Paging/RecoveryKernel.dfy) `CheckReplacementHeader`, `CheckReplacementDecision`, bounded length/read controls and refinement lemmas; [ReplacementProtocol](../../verification/Encryption/ReplacementProtocol.dfy) `BytesRefineEvidenceAdmission`, `PartialDecisionCannotCommit`, `CompleteDecisionRequiresEveryCheckedField`. [EncryptionReplacementIntent](../../src/JetDatabaseWriter/Encryption/EncryptionReplacementIntent.cs) `ReadState` invokes these before bootstrap. | [ReplacementKernelTests](../../tests/JetDatabaseWriter.Tests/Encryption/ReplacementKernelTests.cs), [ReplacementFieldConformanceTests](../../tests/JetDatabaseWriter.Tests/Encryption/ReplacementFieldConformanceTests.cs), [ReplacementIntentTests](../../tests/JetDatabaseWriter.Tests/Encryption/ReplacementIntentTests.cs). A1/A2/A3/A6. Compose actual bytes, digest/path/GUID identity, immutable-copy admission and lease authority through the complete controller; valid prefixes/records cannot independently authorize ownership (V5/V6/V10). |

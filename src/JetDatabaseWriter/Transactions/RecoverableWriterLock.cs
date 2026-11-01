@@ -67,6 +67,8 @@ internal sealed class RecoverableWriterLock : IDisposable
             owner = new FileStream(ReceiptPath(databasePath), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read | FileShare.Delete);
             owner.Write(proof, 0, proof.Length);
             owner.Flush(true);
+            boundary?.Invoke("prepared-before-directory-flush");
+            _ = DirectoryPersistence.FlushParent(databasePath);
             boundary?.Invoke("prepared");
             return new RecoverableWriterLock(lease, owner);
         }
@@ -74,7 +76,12 @@ internal sealed class RecoverableWriterLock : IDisposable
         {
             if (TryDeleteOwned(lease, boundary))
             {
-                _ = TryDeleteOwned(owner);
+                lease?.Dispose();
+                if (TryFenceRetirement(lockPath) && TryDeleteOwned(owner))
+                {
+                    owner?.Dispose();
+                    _ = TryFenceRetirement(ReceiptPath(databasePath));
+                }
             }
 
             owner?.Dispose();
@@ -154,6 +161,8 @@ internal sealed class RecoverableWriterLock : IDisposable
                 owner.Flush(true);
             }
 
+            boundary?.Invoke("recovery-before-directory-flush");
+            _ = DirectoryPersistence.FlushParent(databasePath);
             return new RecoveryLease(native, owner);
         }
         catch
@@ -224,11 +233,19 @@ internal sealed class RecoverableWriterLock : IDisposable
                     File.Delete(lockPath);
                 }
             }
+
+            if (cleanup)
+            {
+                // A previous attempt may already have removed the native name.
+                // Acknowledge that absence while its receipt is still retained.
+                _ = DirectoryPersistence.FlushParent(lockPath);
+            }
         }
 
         if (cleanup)
         {
             File.Delete(ownerPath);
+            _ = DirectoryPersistence.FlushParent(ownerPath);
         }
 
         return true;
@@ -245,17 +262,40 @@ internal sealed class RecoverableWriterLock : IDisposable
         this.disposed = true;
         try
         {
-            // Keep both handles until both names are removed: a concurrent writer may
-            // already own the database once its previous physical store has closed.
-            if (TryDeleteOwned(this.lockFile))
+            // Keep the receipt lease while native deletion is completed and
+            // fenced. A cooperating successor cannot consume that live receipt.
+            string nativePath = this.lockFile.Name;
+            bool nativeDeleted = TryDeleteOwned(this.lockFile);
+            this.lockFile.Dispose();
+            if (nativeDeleted && TryFenceRetirement(nativePath))
             {
-                _ = TryDeleteOwned(this.receipt);
+                string ownerPath = this.receipt.Name;
+                bool ownerDeleted = TryDeleteOwned(this.receipt);
+                this.receipt.Dispose();
+                if (ownerDeleted)
+                {
+                    _ = TryFenceRetirement(ownerPath);
+                }
             }
         }
         finally
         {
             this.receipt.Dispose();
             this.lockFile.Dispose();
+        }
+    }
+
+    private static bool TryFenceRetirement(string path)
+    {
+        try
+        {
+            _ = DirectoryPersistence.FlushParent(path);
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            DiagnosticTrace.WriteLine($"[AccessWriter] Ownership retirement directory fence failed: {error.GetType().Name}.");
+            return false;
         }
     }
 
@@ -363,9 +403,13 @@ internal sealed class RecoverableWriterLock : IDisposable
             string ownerPath = owner.Name;
             native.Dispose();
             File.Delete(nativePath);
+            boundary?.Invoke("cleanup-before-native-directory-flush");
+            _ = DirectoryPersistence.FlushParent(nativePath);
             boundary?.Invoke("cleanup-native");
             owner.Dispose();
             File.Delete(ownerPath);
+            boundary?.Invoke("cleanup-before-receipt-directory-flush");
+            _ = DirectoryPersistence.FlushParent(ownerPath);
             boundary?.Invoke("cleanup-receipt");
         }
 

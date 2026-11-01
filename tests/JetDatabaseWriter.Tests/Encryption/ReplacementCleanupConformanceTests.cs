@@ -14,6 +14,58 @@ public sealed class ReplacementCleanupConformanceTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    /// <summary>Failed generation-name fences retain the intent and the exact selected destination.</summary>
+    /// <param name="committed">Whether recovery selects the replacement.</param>
+    /// <param name="cut">The namespace acknowledgement to interrupt.</param>
+    [Theory]
+    [InlineData(false, "cleanup-before-native-directory-flush")]
+    [InlineData(false, "cleanup-before-receipt-directory-flush")]
+    [InlineData(true, "cleanup-before-native-directory-flush")]
+    [InlineData(true, "cleanup-before-receipt-directory-flush")]
+    public async Task Recover_DirectoryRetirementExceptions_RetainSelection(bool committed, string cut)
+    {
+        using var directory = new CleanupDirectory();
+        byte[] original = [1, 2, 3];
+        byte[] replacement = [4, 5, 6, 7];
+        string stage = directory.Path + ".input.tmp";
+        string intent = EncryptionReplacementIntent.IntentPath(directory.Path);
+        string native = Path.ChangeExtension(directory.Path, ".laccdb");
+        string receipt = RecoverableWriterLock.ReceiptPath(directory.Path);
+        await File.WriteAllBytesAsync(directory.Path, original, Ct);
+        await File.WriteAllBytesAsync(stage, replacement, Ct);
+        Assert.Throws<IOException>(() => EncryptionReplacementCommit.Commit(stage, directory.Path, phase =>
+        {
+            if (phase == (committed ? "committed" : "prepared"))
+            {
+                throw new IOException("Capture a complete replacement decision.");
+            }
+        }));
+        byte[] decision = await File.ReadAllBytesAsync(intent, Ct);
+        File.Delete(directory.Path);
+
+        Assert.Throws<IOException>(() => EncryptionReplacementIntent.Recover(
+        directory.Path,
+        phase =>
+        {
+            if (phase == cut)
+            {
+                throw new IOException("Refuse a generation-name directory acknowledgement.");
+            }
+        },
+        Ct));
+
+        Assert.Equal(committed ? replacement : original, await File.ReadAllBytesAsync(directory.Path, Ct));
+        Assert.Equal(decision, await File.ReadAllBytesAsync(intent, Ct));
+        Assert.False(File.Exists(native));
+        Assert.Equal(cut == "cleanup-before-native-directory-flush", File.Exists(receipt));
+        Assert.Empty(Directory.GetFiles(directory.DirectoryPath, "*.jdw-replace-*"));
+        Assert.True(EncryptionReplacementIntent.Recover(directory.Path, cancellationToken: Ct));
+        Assert.False(File.Exists(intent));
+        Assert.False(File.Exists(native));
+        Assert.False(File.Exists(receipt));
+        Assert.Equal(committed ? replacement : original, await File.ReadAllBytesAsync(directory.Path, Ct));
+    }
+
     /// <summary>Ownership names disappear before intent while the selected destination excludes another opener.</summary>
     /// <param name="committed">Whether the complete decision selects the replacement.</param>
     /// <param name="missingDestination">Whether recovery must first publish the selected image.</param>
