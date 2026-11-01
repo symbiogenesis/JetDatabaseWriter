@@ -108,7 +108,7 @@ Assert-Scenario 'new kernel caller cannot be accepted by inventory hash alone' {
     try { Assert-ProofReview $fixture $reviewPath }
     finally { [IO.File]::Delete($path); Save-Receipt $receipt }
 } 'Proof review input inventory'
-foreach ($adapter in 'BinaryBuffer', 'StreamRead', 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel') {
+foreach ($adapter in 'BinaryBuffer', 'StreamRead', 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel', 'PageDigestKernel') {
     Assert-Scenario "new $adapter caller requires mapped review" {
         $path = Write-Fixture 'src/JetDatabaseWriter/NewAdapterCaller.cs' "class NewAdapterCaller { object X() => $adapter.Read(null); }"
         $changed = New-Receipt

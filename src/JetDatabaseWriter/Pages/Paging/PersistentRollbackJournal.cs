@@ -14,16 +14,17 @@ using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.Verification;
 
 /// <summary>Persists raw rollback bytes and validated intended writes with bounded working buffers.</summary>
-/// <remarks>Preparation hashes every original page; raw before-images are retained only for overwritten or removed pages. File flushes do not establish directory-entry power-loss durability.</remarks>
+/// <remarks>Preparation persists each original page digest, reusing tracked digests under one exclusive store owner. Raw before-images are selective. File flushes do not establish directory-entry power-loss durability.</remarks>
 internal sealed class PersistentRollbackJournal : IDisposable
 {
     private const int HeaderLength = 128;
     private const long MaximumJournalLength = 16L * 1024 * 1024 * 1024;
-    private static readonly byte[] Magic = Encoding.ASCII.GetBytes("JDWUNDO2");
+    private static readonly byte[] Magic = Encoding.ASCII.GetBytes("JDWUNDO3");
     private readonly FileStream database;
     private readonly FileStream journal;
     private readonly int pageSize;
     private readonly long originalLength;
+    private readonly FilePageDigests? pageDigests;
     private readonly Dictionary<long, long> beforeImages = [];
     private bool completed;
     private bool cleanupAttempted;
@@ -48,12 +49,13 @@ internal sealed class PersistentRollbackJournal : IDisposable
         Complete = 5,
     }
 
-    private PersistentRollbackJournal(FileStream database, FileStream journal, int pageSize, long originalLength)
+    private PersistentRollbackJournal(FileStream database, FileStream journal, int pageSize, long originalLength, FilePageDigests? pageDigests)
     {
         this.database = database;
         this.journal = journal;
         this.pageSize = pageSize;
         this.originalLength = originalLength;
+        this.pageDigests = pageDigests;
     }
 
     /// <summary>Gets the sidecar name associated with a database.</summary>
@@ -64,10 +66,11 @@ internal sealed class PersistentRollbackJournal : IDisposable
     /// <summary>Creates and durably prepares the original raw page-hash manifest.</summary>
     /// <param name="database">The exclusively coordinated physical database.</param>
     /// <param name="pageSize">The raw page size.</param>
+    /// <param name="pageDigests">Optional digest reuse owned by the physical store that tracks every successful write.</param>
     /// <returns>The live journal.</returns>
     /// <exception cref="IOException">An existing recovery journal prevents preparation.</exception>
     /// <exception cref="JetOperationException">A recovery journal already exists.</exception>
-    internal static PersistentRollbackJournal Create(FileStream database, int pageSize)
+    internal static PersistentRollbackJournal Create(FileStream database, int pageSize, FilePageDigests? pageDigests = null)
     {
         ValidatePageSize(pageSize);
         long length = database.Length;
@@ -91,26 +94,14 @@ internal sealed class PersistentRollbackJournal : IDisposable
             Identity(database.Name).CopyTo(header, 24);
             RandomNumberGenerator.Fill(header.AsSpan(88, 8));
             journal.Write(header, 0, header.Length);
+            FilePageDigests? tracked = pageDigests is { IsValid: true } && pageDigests.Length == length && pageDigests.PageSize == pageSize
+                ? pageDigests
+                : null;
+            FilePageDigests manifest = tracked ?? FilePageDigests.Load(database, pageSize);
+            journal.Write(manifest.Manifest);
             using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
             {
-                using var pageHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-                byte[] buffer = new byte[pageSize];
-                byte[] digest = new byte[32];
-                for (long offset = 0; offset < length;)
-                {
-                    int count = checked((int)Math.Min(buffer.Length, length - offset));
-                    Read(database, offset, buffer, count);
-                    pageHash.AppendData(buffer, 0, count);
-                    if (!pageHash.TryGetHashAndReset(digest, out int written) || written != digest.Length)
-                    {
-                        throw new CryptographicException("The original page digest could not be prepared.");
-                    }
-
-                    journal.Write(digest, 0, digest.Length);
-                    hash.AppendData(digest);
-                    offset += count;
-                }
-
+                hash.AppendData(manifest.Manifest);
                 hash.GetHashAndReset().CopyTo(header, 56);
             }
 
@@ -122,7 +113,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             File.Move(stagingPath, finalPath);
             promoted = true;
             journal = new FileStream(finalPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            return new PersistentRollbackJournal(database, journal, pageSize, length);
+            return new PersistentRollbackJournal(database, journal, pageSize, length, tracked);
         }
         catch
         {
@@ -246,7 +237,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
                     phase = 2;
                     break;
                 case JournalReplayAction.Complete:
-                    _ = AppendRecord(journal, state.PageSize, -1, DatabaseHash(database));
+                    _ = AppendRecord(journal, state.PageSize, -1, DatabaseHash(database, state.PageSize));
                     return;
                 case JournalReplayAction.Invalid:
                     throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery replay control state is invalid.");
@@ -414,7 +405,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             bool tailCovered = kind != JournalRecordKind.Truncate || HasTruncateCoverage(pageSize, originalLength, truncateLength, beforeImages);
             bool payloadValid = kind switch
             {
-                JournalRecordKind.Commit => record.AsSpan(8, 32).SequenceEqual(DatabaseHash(database)),
+                JournalRecordKind.Commit => record.AsSpan(8, 32).SequenceEqual(DatabaseHash(database, pageSize)),
                 JournalRecordKind.BeforeImage => OriginalPageMatches(journal, pageSize, originalLength, capturedOffset, record.AsSpan(8, pageSize)),
                 JournalRecordKind.Invalid or JournalRecordKind.Replay or JournalRecordKind.Truncate or JournalRecordKind.AfterImage => true,
                 _ => false,
@@ -679,16 +670,17 @@ internal sealed class PersistentRollbackJournal : IDisposable
         return BinaryPrimitives.ReadInt64LittleEndian(record);
     }
 
-    private static byte[] DatabaseHash(FileStream database)
+    private static byte[] DatabaseHash(FileStream database, int pageSize)
     {
         ValidateLength(database.Length);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        byte[] buffer = new byte[8192];
+        FilePageDigests.AppendIdentity(hash, database.Length, pageSize);
+        byte[] buffer = new byte[pageSize];
         for (long offset = 0; offset < database.Length;)
         {
             int count = checked((int)Math.Min(buffer.Length, database.Length - offset));
             Read(database, offset, buffer, count);
-            hash.AppendData(buffer, 0, count);
+            hash.AppendData(Hash(buffer, count));
             offset += count;
         }
 
@@ -939,7 +931,10 @@ internal sealed class PersistentRollbackJournal : IDisposable
     internal void Complete()
     {
         this.database.Flush(true);
-        _ = this.AppendRecord(-1, DatabaseHash(this.database));
+        byte[] digest = this.pageDigests is { IsValid: true } && this.pageDigests.Length == this.database.Length
+            ? this.pageDigests.DatabaseHash()
+            : DatabaseHash(this.database, this.pageSize);
+        _ = this.AppendRecord(-1, digest);
         this.completed = true;
         this.CleanupCompleted();
     }

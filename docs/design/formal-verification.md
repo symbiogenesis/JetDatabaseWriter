@@ -136,6 +136,32 @@ That model assumes an atomic canonical coordinator, fresh tickets/generations, v
 
 ## Storage and integrity assumptions
 
+`PageDigestKernel` supplies the raw digest ledger's bounded shape/write/resize
+admission and complete failure-atomic 32-byte slot replacement. The generated
+loop proves exact replacement bytes and preservation outside the selected slot,
+including aliasing and refused out-of-range input. `FilePageDigests` retains only
+digests, never plaintext pages. One `StreamPageStore` acquires the original ledger
+and tracks successful aligned overwrites, contiguous complete-page appends and truncations under exclusive writer
+ownership; failed or untracked effects, sparse gaps and length extensions invalidate reuse. A partial-page shape
+uses fresh commitment acquisition after mutation rather than guessing preserved
+bytes. SHA-256, CLR allocation, faithful successful I/O and C# effect sequencing
+remain adapter contracts. This is not a proof of the complete cache correspondence.
+Length extensions and sparse gaps always invalidate reuse: the managed
+[FileStream.SetLength contract](https://learn.microsoft.com/en-us/dotnet/api/system.io.filestream.setlength?view=net-10.0)
+does not promise zero-filled expanded bytes on Windows. A fresh acquisition reads
+the actual exposed bytes instead of committing an inferred zero image.
+
+The version-three journal retains its complete original page manifest and
+selective original images. Its commit commitment is SHA-256 over a sixteen-byte
+length/page-size frame followed by the ordered SHA-256 page digests. Recovery
+recomputes that commitment from the actual raw image with a bounded page buffer;
+only a live exclusive store can reuse tracked digests. The frame includes an
+eight-byte little-endian length, four-byte little-endian page size and four zero
+bytes. Framing distinguishes image shapes, while collision resistance retains
+the same cryptographic trust obligation. Manifest serialization and commitment
+folding still scale with page count; neither the kernel nor I/O regression tests
+establish end-to-end performance acceptance or physical durability.
+
 | Boundary | Required assumption or separate obligation |
 |---|---|
 | Bytes and length | Reads report actual bytes; writes/truncation affect only their declared range/length. Torn writes can leave only changes allowed by the model. No atomic page write is assumed. |

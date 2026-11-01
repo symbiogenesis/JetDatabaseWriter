@@ -12,6 +12,7 @@ internal class StreamPageStore : IPageStore
     private readonly SemaphoreSlim ioGate = new(1, 1);
     private readonly bool leaveOpen;
     private bool resourcesDisposed;
+    private FilePageDigests? pageDigests;
 #if NET6_0_OR_GREATER
     private Microsoft.Win32.SafeHandles.SafeFileHandle? handle;
 #endif
@@ -36,6 +37,26 @@ internal class StreamPageStore : IPageStore
 
     /// <summary>Gets or sets the crash journal active during physical transaction writes.</summary>
     internal PersistentRollbackJournal? RollbackJournal { get; set; }
+
+    /// <summary>Acquires raw digest reuse under the writer's exclusive, serialized store ownership.</summary>
+    /// <param name="pageSize">The validated physical page size.</param>
+    /// <returns>The digest ledger for the current physical image.</returns>
+    /// <exception cref="InvalidOperationException">The store is not backed by a file.</exception>
+    internal FilePageDigests GetPageDigests(int pageSize)
+    {
+        if (this.Stream is not FileStream database)
+        {
+            throw new InvalidOperationException("Only an exclusively owned file store can retain raw page digests.");
+        }
+
+        if (this.pageDigests is not { IsValid: true } || this.pageDigests.Length != database.Length || this.pageDigests.PageSize != pageSize)
+        {
+            this.pageDigests?.Invalidate();
+            this.pageDigests = FilePageDigests.Load(database, pageSize);
+        }
+
+        return this.pageDigests;
+    }
 
     /// <summary>Gets a value indicating whether positional reads are enabled.</summary>
     internal bool PositionalReads { get; private set; }
@@ -117,8 +138,15 @@ internal class StreamPageStore : IPageStore
             try
             {
                 this.RollbackJournal?.RecordBeforeWrite(offset, buffer.Span);
+                long oldLength = this.Stream.Length;
                 _ = this.Stream.Seek(offset, SeekOrigin.Begin);
                 await this.Stream.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+                this.pageDigests?.Written(oldLength, offset, buffer.Span);
+            }
+            catch
+            {
+                this.pageDigests?.Invalidate();
+                throw;
             }
             finally
             {
@@ -137,12 +165,19 @@ internal class StreamPageStore : IPageStore
         await this.ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            long oldLength = this.Stream.Length;
             if (length < this.Stream.Length)
             {
                 this.RollbackJournal?.RecordBeforeTruncate(length);
             }
 
             this.Stream.SetLength(length);
+            this.pageDigests?.Resized(oldLength, length);
+        }
+        catch
+        {
+            this.pageDigests?.Invalidate();
+            throw;
         }
         finally
         {

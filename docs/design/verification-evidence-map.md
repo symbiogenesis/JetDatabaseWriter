@@ -19,6 +19,15 @@ Every critical-behavior ID in the [scope inventory](verification-scope.md) maps 
 
 ## Creation and journals
 
+`PageDigestKernel` adds executable digest-slot admission and failure-atomic byte
+replacement to the J1/J5 framing boundary. `FilePageDigests` and
+`StreamPageStore` retain raw digest metadata under one exclusive writer and
+invalidate reuse after uncertain effects, sparse gaps or length extensions. `JournalDigestReuseTests`
+compares commitments with independently framed physical images through overwrite,
+sparse append, shrink, live rollback and a torn-write failure. Complete ledger
+correspondence, SHA-256, returned I/O effects and namespace/storage qualification
+remain separate obligations; recovery independently acquires physical content.
+
 | ID | Specification/proof and executing implementation | Evidence, dependent contracts and remaining gap |
 |---|---|---|
 | C1 | **Unspecified; manual/tested.** [DatabaseCreationPublication](../../src/JetDatabaseWriter/Infrastructure/DatabaseCreationPublication.cs) privately initializes staging before publication; file/stream creation have separate lifecycles. No creation controller is in the proof manifest. | [CreationCrashRecoveryTests](../../tests/JetDatabaseWriter.Tests/Writer/CreationCrashRecoveryTests.cs) terminates initialization/publication, including competing destinations. A2/A3/A4/A5. Specify/refine cancellation, failed publication, competition and cleanup; extend caller-stream creation fault sweeps (I5/V6/V12). Process kills do not qualify namespace persistence (E4/I15/V7). |

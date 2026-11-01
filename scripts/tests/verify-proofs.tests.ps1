@@ -92,7 +92,8 @@ $usageMethod = $usageDeclaration + "`n    {`n      next = cursor;`n      members
 foreach ($kernel in @(
     @{ Name = 'DataPageKernel'; Source = 'Pages/DataPageKernel' },
     @{ Name = 'IndexMutationKernel'; Source = 'Indexes/IndexMutationKernel' },
-    @{ Name = 'UsageMapKernel'; Source = 'Pages/UsageMapKernel' }
+    @{ Name = 'UsageMapKernel'; Source = 'Pages/UsageMapKernel' },
+    @{ Name = 'PageDigestKernel'; Source = 'Pages/Paging/PageDigestKernel' }
 )) {
     $nativeTranslation = $translation.Replace('RecoveryKernel', $kernel.Name)
     if ($kernel.Name -ceq 'UsageMapKernel') {
@@ -378,13 +379,13 @@ $originalVerificationCore = ${function:Invoke-ProofVerificationCore}
 $originalNativeKernelSync = ${function:Sync-NativeKernel}
 $coverageRoot = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-coverage-tests-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory((Join-Path $coverageRoot 'verification/config'))
-$coverageFiles = foreach ($name in 'Good', 'Pages/Paging/RecoveryKernel', 'LongValues/LongValueKernel', 'Pages/DataPageKernel', 'Indexes/IndexMutationKernel', 'Pages/UsageMapKernel') {
+$coverageFiles = foreach ($name in 'Good', 'Pages/Paging/RecoveryKernel', 'LongValues/LongValueKernel', 'Pages/DataPageKernel', 'Indexes/IndexMutationKernel', 'Pages/UsageMapKernel', 'Pages/Paging/PageDigestKernel') {
     $path = Join-Path $coverageRoot "verification/$name.dfy"
     [void][IO.Directory]::CreateDirectory((Split-Path $path -Parent))
     [IO.File]::WriteAllText($path, "module $(Split-Path $name -Leaf) {}")
     $path
 }
-[IO.File]::WriteAllText((Join-Path $coverageRoot 'verification/config/proofs.json'), '{"schemaVersion":1,"files":["verification/Good.dfy","verification/Pages/Paging/RecoveryKernel.dfy","verification/LongValues/LongValueKernel.dfy","verification/Pages/DataPageKernel.dfy","verification/Indexes/IndexMutationKernel.dfy","verification/Pages/UsageMapKernel.dfy"],"dependencies":{"verification/Pages/Paging/RecoveryKernel.dfy":["verification/Good.dfy"]}}')
+[IO.File]::WriteAllText((Join-Path $coverageRoot 'verification/config/proofs.json'), '{"schemaVersion":1,"files":["verification/Good.dfy","verification/Pages/Paging/RecoveryKernel.dfy","verification/LongValues/LongValueKernel.dfy","verification/Pages/DataPageKernel.dfy","verification/Indexes/IndexMutationKernel.dfy","verification/Pages/UsageMapKernel.dfy","verification/Pages/Paging/PageDigestKernel.dfy"],"dependencies":{"verification/Pages/Paging/RecoveryKernel.dfy":["verification/Good.dfy"]}}')
 $coverageToolchain = [IO.File]::ReadAllText((Join-Path $repoRoot 'verification/config/dafny-toolchain.json')) | ConvertFrom-Json
 [IO.File]::WriteAllText((Join-Path $coverageRoot 'verification/config/dafny-toolchain.json'), ($coverageToolchain | ConvertTo-Json -Depth 5))
 $coverageExecutable = Join-Path $coverageRoot 'mock-dafny'
@@ -453,7 +454,7 @@ try {
         $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-default-' + [guid]::NewGuid().ToString('N'))
         Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false
         $names = @($coverageCalls | ForEach-Object Name)
-        if (($names -join ',') -cne 'version,solver-version,negative-false,negative-assume.verify,negative-assume,inventory.verify,inventory.audit,RecoveryKernel.translate,LongValueKernel.translate,DataPageKernel.translate,IndexMutationKernel.translate,UsageMapKernel.translate' -or
+        if (($names -join ',') -cne 'version,solver-version,negative-false,negative-assume.verify,negative-assume,inventory.verify,inventory.audit,RecoveryKernel.translate,LongValueKernel.translate,DataPageKernel.translate,IndexMutationKernel.translate,UsageMapKernel.translate,PageDigestKernel.translate' -or
             [IO.File]::Exists((Join-Path $output 'proof-coverage.json')) -or -not [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw 'The default strict verification flow changed.' }
         foreach ($call in $coverageCalls) {
             if ($call.Arguments -contains '--allow-warnings' -or $call.Arguments -contains '--warn-redundant-assumptions') { throw 'Diagnostic options reached the mandatory checks.' }
@@ -476,9 +477,9 @@ try {
                 $call.Arguments -notcontains '--warn-contradictory-assumptions' -or $call.Arguments -notcontains '--warn-redundant-assumptions' -or
                 $call.Arguments -contains '--library' -or $call.Arguments -contains '--dont-verify-dependencies' -or $call.Arguments -contains '--allow-warnings' -or
                 $analysis.acceptanceEvidence -ne $false -or $analysis.dafny -cne $coverageToolchain.versionOutput -or
-                $analysis.solver -cne $coverageToolchain.solver.versionOutput -or $analysis.proofs.Count -ne 6 -or
+                $analysis.solver -cne $coverageToolchain.solver.versionOutput -or $analysis.proofs.Count -ne 7 -or
                 $analysis.scope -cne 'complete-inventory' -or $analysis.requestedSources.Count -ne 0 -or
-                ($analysis.dependencyClosure -join ',') -cne 'verification/Good.dfy,verification/Pages/Paging/RecoveryKernel.dfy,verification/LongValues/LongValueKernel.dfy,verification/Pages/DataPageKernel.dfy,verification/Indexes/IndexMutationKernel.dfy,verification/Pages/UsageMapKernel.dfy' -or
+                ($analysis.dependencyClosure -join ',') -cne 'verification/Good.dfy,verification/Pages/Paging/RecoveryKernel.dfy,verification/LongValues/LongValueKernel.dfy,verification/Pages/DataPageKernel.dfy,verification/Indexes/IndexMutationKernel.dfy,verification/Pages/UsageMapKernel.dfy,verification/Pages/Paging/PageDigestKernel.dfy' -or
                 $analysis.status -cne $(if ($case -eq 'warnings') { 'warnings' } else { 'complete' }) -or
                 $analysis.warnings.Count -ne $(if ($case -eq 'warnings') { 1 } else { 0 }) -or
                 -not [IO.File]::Exists((Join-Path $output 'summary.json'))) { throw 'Coverage diagnostics changed trust, pins or status.' }
@@ -649,7 +650,7 @@ try {
         'inventory-failure' = 'Verification failed for complete inventory'
         'audit-finding' = 'audit findings for complete inventory'
     }
-    foreach ($kernelName in 'RecoveryKernel', 'LongValueKernel', 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel') {
+    foreach ($kernelName in 'RecoveryKernel', 'LongValueKernel', 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel', 'PageDigestKernel') {
         $strictFailures['stale-' + $kernelName] = "Generated source is stale for $kernelName"
     }
     foreach ($mode in 'coverage', 'complexity') {
@@ -685,7 +686,7 @@ function Invoke-ProofVerificationCore([string] $RepositoryRoot, [string] $DafnyP
     throw 'synthetic failed proof'
 }
 try {
-    foreach ($kernelName in 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel') {
+    foreach ($kernelName in 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel', 'PageDigestKernel') {
         Write-Fixture "src/JetDatabaseWriter/Verification/$kernelName.g.cs" "class $kernelName {}" | Out-Null
     }
     $failureOutput = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-failure-' + [guid]::NewGuid().ToString('N'))
@@ -704,7 +705,7 @@ try {
     }
     Assert-Scenario 'existing result directories remain untouched' { Invoke-ProofVerification $fixture 'mock' $failureOutput 10 $false } 'must not already exist'
     Assert-Scenario 'failure snapshot retains every page kernel generated source' {
-        foreach ($kernelName in 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel') {
+        foreach ($kernelName in 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel', 'PageDigestKernel') {
             if (-not [IO.File]::Exists((Join-Path $failureOutput "inputs/src/JetDatabaseWriter/Verification/$kernelName.g.cs"))) {
                 throw "Missing generated failure input: $kernelName"
             }

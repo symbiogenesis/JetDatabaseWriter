@@ -76,7 +76,7 @@ function Get-ProofDependencies([string] $RepositoryRoot, [string] $ManifestPath,
 }
 
 function Get-NativeKernelNames {
-    return 'RecoveryKernel', 'LongValueKernel', 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel'
+    return 'RecoveryKernel', 'LongValueKernel', 'DataPageKernel', 'IndexMutationKernel', 'UsageMapKernel', 'PageDigestKernel'
 }
 
 function Assert-NativeKernelName([string] $KernelName) {
@@ -91,6 +91,7 @@ function Get-NativeKernelSource([string] $KernelName) {
         'DataPageKernel' { return 'verification/Pages/DataPageKernel.dfy' }
         'IndexMutationKernel' { return 'verification/Indexes/IndexMutationKernel.dfy' }
         'UsageMapKernel' { return 'verification/Pages/UsageMapKernel.dfy' }
+        'PageDigestKernel' { return 'verification/Pages/Paging/PageDigestKernel.dfy' }
     }
 }
 
@@ -106,7 +107,7 @@ function ConvertFrom-NativeKernelTranslation([string] $KernelName, [string] $Tra
     if ($start -lt 0 -or $end -le $start -or $text.Substring($end + $footer.Length).Trim().Length -ne 0) { throw 'Unsupported native kernel translation structure.' }
     $body = $text.Substring($start + $header.Length, $end - $start - $header.Length)
     if (-not $body.EndsWith("  }") -or $body -match '\b(namespace|class|struct|interface)\b') { throw 'Unsupported native kernel translation body.' }
-    if ($body -match '\b(Dafny|BigInteger|System|FuncExtensions|UndoJournal|NativeRecoveryTypes|LongValueNativeTypes|DataPageNativeTypes|IndexMutationNativeTypes|UsageMapNativeTypes)\b') { throw 'The native kernel requires unreviewed runtime support.' }
+    if ($body -match '\b(Dafny|BigInteger|System|FuncExtensions|UndoJournal|NativeRecoveryTypes|LongValueNativeTypes|DataPageNativeTypes|IndexMutationNativeTypes|UsageMapNativeTypes|PageDigestNativeTypes)\b') { throw 'The native kernel requires unreviewed runtime support.' }
     if ($KernelName -cin 'LongValueKernel', 'UsageMapKernel') {
         if ($body -match '\b(MethodImpl(?:Attribute|Options)?|AggressiveInlining)\b') { throw 'Unreviewed native-kernel metadata.' }
         # The raw body has already passed the unchanged runtime-support check.

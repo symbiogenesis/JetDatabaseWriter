@@ -12,7 +12,8 @@
     "verification/Pages/Paging/PageFrameOwnership.dfy",
     "verification/Pages/DataPageKernel.dfy",
     "verification/Indexes/IndexMutationKernel.dfy",
-    "verification/Pages/UsageMapKernel.dfy"
+    "verification/Pages/UsageMapKernel.dfy",
+    "verification/Pages/Paging/PageDigestKernel.dfy"
   ],
   "dependencies": {
     "verification/Encryption/ReplacementProtocol.dfy": ["verification/Transactions/GenerationOwnership.dfy"],

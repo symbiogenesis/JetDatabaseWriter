@@ -99,7 +99,7 @@ function Get-ProofReviewInputs([string] $RepositoryRoot, [string] $Boundary) {
     if ($Boundary -ceq 'implementation') {
         foreach ($path in Get-ProofReviewSourcePaths $RepositoryRoot) {
             if ($path.StartsWith('src/JetDatabaseWriter/Verification/', [StringComparison]::Ordinal) -or
-                [IO.File]::ReadAllText((Join-Path $RepositoryRoot $path)) -match '\b(?:RecoveryKernel|LongValueKernel|DataPageKernel|IndexMutationKernel|UsageMapKernel|BinaryBuffer|StreamRead)\s*\.') {
+                [IO.File]::ReadAllText((Join-Path $RepositoryRoot $path)) -match '\b(?:RecoveryKernel|LongValueKernel|DataPageKernel|IndexMutationKernel|UsageMapKernel|PageDigestKernel|BinaryBuffer|StreamRead)\s*\.') {
                 [void]$paths.Add($path)
             }
         }

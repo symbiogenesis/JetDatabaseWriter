@@ -81,7 +81,7 @@ internal sealed class PhysicalRollback : IAsyncDisposable
         if (this.store is StreamPageStore { Stream: FileStream database } streamStore)
         {
             this.IsFaulted = true;
-            this.recovery ??= PersistentRollbackJournal.Create(database, this.pageSize);
+            this.recovery ??= PersistentRollbackJournal.Create(database, this.pageSize, streamStore.GetPageDigests(this.pageSize));
             streamStore.RollbackJournal = this.recovery;
             this.IsFaulted = false;
         }
