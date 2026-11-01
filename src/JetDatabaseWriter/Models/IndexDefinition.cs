@@ -8,7 +8,7 @@ using JetDatabaseWriter.Interfaces;
 /// <summary>
 /// Defines a logical index that
 /// <see cref="IAccessSchema.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, System.Threading.CancellationToken)"/>
-/// emits into the new table's TDEF page chain.
+/// or <see cref="IAccessSchema.CreateIndexAsync"/> emits into a table's TDEF page chain.
 /// </summary>
 /// <remarks>
 /// <para>

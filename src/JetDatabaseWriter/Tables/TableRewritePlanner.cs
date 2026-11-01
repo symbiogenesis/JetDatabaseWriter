@@ -45,9 +45,11 @@ internal sealed class TableRewritePlanner(
     /// <param name="projectRow">The row projection.</param>
     /// <param name="mapColumnName">The column identity projection.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="addedIndex">An index to add to the existing table, when requested.</param>
     /// <returns>The validated replacement and dependent metadata.</returns>
     /// <exception cref="JetOperationException">The projection removes the last column.</exception>
     /// <exception cref="JetLimitationException">The projection exceeds the column limit.</exception>
+    /// <exception cref="JetConstraintException">An existing row has a null key forbidden by an added index.</exception>
     /// <remarks>
     /// Preparation can reserve complex references in the constraint registry when
     /// no surviving column supplies a row's reference. It writes no pages, but it
@@ -64,7 +66,8 @@ internal sealed class TableRewritePlanner(
         Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
         Func<object[], TableDef, object[]> projectRow,
         Func<string, string?> mapColumnName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IndexDefinition? addedIndex = null)
     {
         await catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
         ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -170,6 +173,13 @@ internal sealed class TableRewritePlanner(
         // re-emitted below by the relationship manager.
         List<IndexDefinition> projectedIndexes = IndexHelpers.ProjectIndexes(existingIndexes, newDefs, mapColumnName);
         ReserveShortcutPrimaryKeyName(newDefs, projectedIndexes, existingIndexes, originalProperties);
+        if (addedIndex is not null)
+        {
+            ValidateAddedIndexName(tableName, addedIndex, existingIndexes);
+            projectedIndexes.Add(addedIndex);
+            _ = IndexHelpers.ResolveIndexes(projectedIndexes, tableDef);
+            IndexHelpers.ValidateCalculatedIndexDeclarations(newDefs, projectedIndexes, tableName);
+        }
 
         var survivingIndexNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (IndexDefinition index in projectedIndexes)
@@ -192,7 +202,7 @@ internal sealed class TableRewritePlanner(
         }
 
         ColumnPropertyBlock persistedProperties =
-            PersistedPropertyProjector.ProjectForRewrite(originalProperties, existingDefs, newDefs, mapColumnName, format, droppedIndexNames);
+            PersistedPropertyProjector.ProjectForRewrite(originalProperties, existingDefs, newDefs, mapColumnName, format, droppedIndexNames, preserveNameMap: addedIndex is not null);
         byte[]? persistedLvProp = persistedProperties.ToBytes(format);
 
         // Project every row before creating the temp table, so a MEMO / OLE value
@@ -200,12 +210,28 @@ internal sealed class TableRewritePlanner(
         // A dropped column's unreadable value is projected away and does not block.
         var projectedRows = new List<object[]>(snapshot.Count);
         var projectedFixedText = new List<IReadOnlyDictionary<int, byte[]>?>(snapshot.Count);
+        int[] requiredKeyPositions = addedIndex is { IsPrimaryKey: true } or { IsRequired: true }
+            ? new int[addedIndex.Columns.Count]
+            : [];
+        for (int key = 0; key < requiredKeyPositions.Length; key++)
+        {
+            requiredKeyPositions[key] = tableDef.FindColumnIndex(addedIndex!.Columns[key]);
+        }
+
         Dictionary<string, int>? targetIndexes = null;
         foreach (LocatedRow row in snapshot)
         {
             cancellationToken.ThrowIfCancellationRequested();
             object[] projected = projectRow(row.Values, tableDef);
             UnreadableLongValue.ThrowIfAny(projected, tableName);
+            foreach (int position in requiredKeyPositions)
+            {
+                if (projected[position] is null or DBNull)
+                {
+                    throw new JetConstraintException(JetErrorCode.NotNullViolation, $"Index '{addedIndex!.Name}' on table '{tableName}' requires a value for every key column.", new JetErrorInfo { TableName = tableName, IndexName = addedIndex.Name });
+                }
+            }
+
             projectedRows.Add(projected);
             Dictionary<int, byte[]>? fixedTextBytes = null;
             if (row.FixedTextBytes is not null)
@@ -288,6 +314,22 @@ internal sealed class TableRewritePlanner(
             renamedComplex,
             autoNumberHighWater,
             complexHighWater);
+    }
+
+    /// <summary>Checks the new index name against every existing logical index, including relationship indexes.</summary>
+    /// <param name="tableName">The existing table.</param>
+    /// <param name="index">The new index declaration.</param>
+    /// <param name="existingIndexes">The complete original logical-index inventory.</param>
+    /// <exception cref="ArgumentException">The new name already belongs to an index.</exception>
+    private static void ValidateAddedIndexName(string tableName, IndexDefinition index, IReadOnlyList<IndexMetadata> existingIndexes)
+    {
+        foreach (IndexMetadata existingIndex in existingIndexes)
+        {
+            if (string.Equals(existingIndex.Name, index.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException($"Index '{index.Name}' already exists in table '{tableName}'.", nameof(index));
+            }
+        }
     }
 
     /// <summary>Names a new shortcut primary key without taking an existing index or opaque index map's identity.</summary>

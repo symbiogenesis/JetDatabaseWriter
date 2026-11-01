@@ -85,6 +85,21 @@ public interface IAccessSchema : IAccessBase
     public ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Creates an index on an existing table, indexing every existing row.
+    /// Supports composite, descending, unique, required and primary-key indexes
+    /// with the same declarations as table creation. Existing rows must satisfy
+    /// the index's uniqueness and null constraints. The operation rewrites the
+    /// table atomically, retaining its identity, surviving schema and relationships.
+    /// </summary>
+    /// <param name="tableName">The existing local table.</param>
+    /// <param name="index">The index to create. Its name must follow the Access naming rules and differ from every existing logical index name, ignoring case.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">The index declaration is invalid, its name already exists or the table already has a primary key and another is requested.</exception>
+    /// <exception cref="Exceptions.JetConstraintException">An existing row violates the new index's constraints.</exception>
+    public ValueTask CreateIndexAsync(string tableName, IndexDefinition index, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Asynchronously drops (deletes) the specified table and all of its data.
     /// An enforced relationship to another table blocks the drop. Self relationships
     /// and relationships without integrity enforcement are removed with the table.

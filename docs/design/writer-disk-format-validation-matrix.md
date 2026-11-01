@@ -848,3 +848,19 @@ Text through Double; invalid numeric storage retains native error statuses.
 coercions, including formatted Date and nonfinite numeric text.
 
 `PublicTextCollationTests` and `TextSortOrderFixtureTests` cover public General97/General Legacy/General choices, raw stored ID/version metadata, null header-default selection, unknown-ID reporting, no-mutation invalid-choice refusal, Text/Memo/calculated Text and schema preservation. `PublicTextCollationDaoTests` independently checks writer-created columns through schema edits and row updates, native case-equivalent seek, duplicate refusal, insert/update and compact/readback. Current x86 DAO3.6 (`dao360.dll` 10.0.26100.5074) controls passed for Jet3 General97 and Jet4 General Legacy. Four fresh DAO120 Jet4/ACE cases remain guarded and skipped on this host. Existing encoders and text code pages are unchanged; broader locale, long-key and native mixed-column coverage remains F9/E2 work.
+
+`CreateIndexTests` exercises indexes added to populated tables across Jet3,
+Jet4 and ACE and all write modes, including composite descending keys, existing
+indexes, primary keys, required/ignored null keys, unchanged bytes on refusal and
+explicit rollback. `RelationshipSchemaRewriteTests` retains enforcement and
+cascades when an index is added to either relationship endpoint.
+`DaoCreateIndexTests` independently authors Jet3/Jet4 source tables with DAO3.6
+and checks added composite unique/IgnoreNulls and nonunique Required indexes,
+native key order and seek, refused duplicate/null inserts, native row mutations,
+original primary-key/property preservation, late primary-key creation and
+CompactDatabase/readback. An independent native index edit retains the exact
+Access-authored nonempty `NameMap` in `testV2000.mdb`; the writer edit retains
+the same bytes and passes native reopen/compact beside its new index.
+Fresh x86 DAO3.6 (`dao360.dll` 10.0.26100.5074) controls passed on 2026-10-31.
+DAO120 Jet4/ACE checks remain guarded; these controls do not establish complete
+schema/application preservation or untested native index variants.

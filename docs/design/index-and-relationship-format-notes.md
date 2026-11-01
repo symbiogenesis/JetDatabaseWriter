@@ -50,6 +50,19 @@ and the validation matrix for controlled native index-byte acceptance.
 
 ## Descriptor preservation during schema rewrites
 
+`CreateIndexAsync` adds a declared index to an existing table through the atomic
+table-replacement path. Preparation checks the complete logical-index inventory
+for name collisions, including relationship indexes, and validates key columns,
+directions and primary-key admission before replacement creation. Copying every
+existing row builds the new tree and enforces uniqueness/required keys under the
+statement rollback or explicit savepoint. Surviving descriptors use the existing
+preservation mapping; the new descriptor uses the ordinary table-creation codec.
+The original table identity, AutoNumber high water and relationships are retained.
+Unlike a column edit, adding an index retains the opaque table `NameMap` because
+the column names and identities do not change.
+This operation has the same whole-table resource and native preservation limits
+as column edits; it does not establish in-place DDL or complete native coverage.
+
 Add/Drop/Rename retains surviving physical and logical index descriptors by
 index name. Physical bookkeeping, native flags, column-order bytes and opaque
 descriptor bytes survive; rebuilt column numbers, usage-map pointers, tree roots,

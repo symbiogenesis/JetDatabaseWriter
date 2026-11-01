@@ -9,6 +9,7 @@ Keep other writers away from the file while your writer is open. For grouped cha
 ## Contents
 
 - [Creating tables](#create--drop-tables)
+- [Adding indexes](#add-indexes-to-existing-tables)
 - [Column constraints](#column-constraints)
 - [Inserting named values](#insert-rows--named-columns-rowvalues)
 - [Defaults and NULL](#defaults-and-explicit-null)
@@ -140,6 +141,28 @@ await writer.CreateTableAsync("Contacts", new[]
 | `Description` | ✅ `MSysObjects.LvProp` (`Description`) | Free-text column description shown in Access Design View. Surfaced via `ColumnMetadata.Description`. Preserved across `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`. |
 
 Stored column defaults and validation rules are enforced when their expressions belong to the supported subset. For example, older versions of Access gave every Number column a default of `0`, so an insert that leaves such a column out stores `0`; an explicit `null` still stores null, as in Access SQL. The writer interprets a supported subset of default and rule expressions with its calculated-column engine. For example, a default of `=Date()+7` stores the date a week from today and a rule of `>=Date()-30` rejects older dates. Native subtype, locale and context-specific function semantics remain under verification; see [calculated expression notes](design/calculated-columns-format-notes.md). It also reads single-quoted text (a default of `'N/A'`) and VBA `&H`/`&O` literals (a rule of `<=&HFF`). An expression that uses unsupported syntax or functions (such as `DLookUp`), or cannot produce a value of the required type, refuses the write before mutation. `GenGUID()` generates a GUID and `CurrentUser()` returns `Admin` for the library session without workgroup authentication; native/workgroup equivalence remains unverified. Table-level validation rules are enforced against complete candidate rows, including unchanged fields on updates. Null rule results are accepted; false or unevaluable rules refuse the write.
+
+### Add indexes to existing tables
+
+Use `CreateIndexAsync` to build an index over rows already in a table:
+
+```csharp
+await writer.CreateIndexAsync("Contacts", new IndexDefinition("IX_Name", "Name")
+{
+    IsUnique = true,
+    IgnoreNulls = true,
+});
+```
+
+The declaration supports the same composite keys, descending columns, primary
+keys and required keys as `CreateTableAsync`. Existing rows must satisfy the new
+index; a duplicate or forbidden null refuses the complete statement. Index names
+are unique within the table, ignoring case, and a table can have one primary key.
+The operation currently rewrites the table using the same preservation path and
+limits as [column changes](#add-drop-and-rename-columns), so its cost scales with
+the table's rows. Existing indexes, relationships, the table identity and its
+unchanged column `NameMap` survive.
+An explicit transaction can roll the operation back.
 
 ### Insert rows — generic POCO
 

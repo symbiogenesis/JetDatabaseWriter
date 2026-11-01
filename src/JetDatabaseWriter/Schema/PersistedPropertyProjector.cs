@@ -18,13 +18,13 @@ using JetDatabaseWriter.Schema.Models;
 /// </summary>
 internal static class PersistedPropertyProjector
 {
-    /// <summary>The table-level name-map property, which a rewrite drops.</summary>
+    /// <summary>The table-level name-map property, which a column rewrite drops.</summary>
     private const string NameMap = "NameMap";
 
     /// <summary>
     /// Returns the persisted properties of the rebuilt table:
     /// <list type="number">
-    /// <item><description>The table-level target (empty name) is kept wherever it is, without its <c>NameMap</c> property, a name map the writer cannot keep in step with the columns.</description></item>
+    /// <item><description>The table-level target (empty name) is kept wherever it is. Column edits remove its <c>NameMap</c>, which the writer cannot keep in step with changed columns; an index-only rewrite retains it.</description></item>
     /// <item><description>A column's target follows <paramref name="mapColumnName"/>: it is removed when the column is dropped and renamed with it.</description></item>
     /// <item><description>A target that names no column is kept, unless a column of the rebuilt table takes its name.</description></item>
     /// <item><description>A surviving column keeps every entry as stored, except an entry the writer models (any property <see cref="JetExpressionConverter.ApplyColumn"/> emits) whose value the rewrite changes, such as an expression that names a renamed column. That entry takes the new value in place, keeping its data type when both are text and its DDL flag.</description></item>
@@ -37,6 +37,7 @@ internal static class PersistedPropertyProjector
     /// <param name="mapColumnName">Maps a current column name to its name after the rewrite, or to <see langword="null"/> for a dropped column.</param>
     /// <param name="format">The database format.</param>
     /// <param name="droppedIndexNames">Names of source logical indexes removed by the rewrite; other index maps survive.</param>
+    /// <param name="preserveNameMap">Whether an index-only rewrite retains the unchanged column name map.</param>
     /// <returns>The projected properties; <see cref="ColumnPropertyBlock.Empty"/> when nothing is left.</returns>
     internal static ColumnPropertyBlock ProjectForRewrite(
         ColumnPropertyBlock? original,
@@ -44,7 +45,8 @@ internal static class PersistedPropertyProjector
         IReadOnlyList<ColumnDefinition> newDefs,
         Func<string, string?> mapColumnName,
         JetFormat format,
-        IReadOnlyCollection<string>? droppedIndexNames = null)
+        IReadOnlyCollection<string>? droppedIndexNames = null,
+        bool preserveNameMap = false)
     {
         Guard.NotNull(existingDefs, nameof(existingDefs));
         Guard.NotNull(newDefs, nameof(newDefs));
@@ -57,7 +59,7 @@ internal static class PersistedPropertyProjector
             _ = newNames.Add(column.Name);
         }
 
-        RetargetColumns(builder, existingDefs, newNames, mapColumnName, droppedIndexNames);
+        RetargetColumns(builder, existingDefs, newNames, mapColumnName, droppedIndexNames, preserveNameMap);
 
         var survivors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (ColumnDefinition existing in existingDefs)
@@ -85,7 +87,7 @@ internal static class PersistedPropertyProjector
     }
 
     /// <summary>
-    /// Drops the table-level <c>NameMap</c>, and renames, drops or keeps each
+    /// Drops the table-level <c>NameMap</c> for a column edit, and renames, drops or keeps each
     /// column target as the rewrite renames, drops or keeps its column.
     /// </summary>
     /// <param name="builder">The properties being projected.</param>
@@ -93,12 +95,14 @@ internal static class PersistedPropertyProjector
     /// <param name="newNames">The rebuilt table's column names.</param>
     /// <param name="mapColumnName">Maps a current column name to its new name, or to <see langword="null"/>.</param>
     /// <param name="droppedIndexNames">Names of source logical indexes removed by the rewrite.</param>
+    /// <param name="preserveNameMap">Whether column identities are unchanged and their name map is retained.</param>
     private static void RetargetColumns(
         ColumnPropertyBlockBuilder builder,
         IReadOnlyList<ColumnDefinition> existingDefs,
         HashSet<string> newNames,
         Func<string, string?> mapColumnName,
-        IReadOnlyCollection<string>? droppedIndexNames)
+        IReadOnlyCollection<string>? droppedIndexNames,
+        bool preserveNameMap)
     {
         HashSet<string>? indexNames = droppedIndexNames is null ? null : new(droppedIndexNames, StringComparer.OrdinalIgnoreCase);
         var kept = new List<ColumnPropertyTargetBuilder>(builder.Targets.Count);
@@ -106,7 +110,11 @@ internal static class PersistedPropertyProjector
         {
             if (target.ChunkType == ColumnPropertyChunkType.PropertyBlock && target.Name.Length == 0)
             {
-                _ = target.Entries.RemoveAll(static e => string.Equals(e.Name, NameMap, StringComparison.OrdinalIgnoreCase));
+                if (!preserveNameMap)
+                {
+                    _ = target.Entries.RemoveAll(static e => string.Equals(e.Name, NameMap, StringComparison.OrdinalIgnoreCase));
+                }
+
                 kept.Add(target);
                 continue;
             }

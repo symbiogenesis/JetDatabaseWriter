@@ -47,12 +47,16 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
     [InlineData(DatabaseFormat.Jet4Mdb, "add", true)]
     [InlineData(DatabaseFormat.Jet4Mdb, "drop", false)]
     [InlineData(DatabaseFormat.Jet4Mdb, "drop", true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, "index", false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, "index", true)]
     [InlineData(DatabaseFormat.AceAccdb, "rename", false)]
     [InlineData(DatabaseFormat.AceAccdb, "rename", true)]
     [InlineData(DatabaseFormat.AceAccdb, "add", false)]
     [InlineData(DatabaseFormat.AceAccdb, "add", true)]
     [InlineData(DatabaseFormat.AceAccdb, "drop", false)]
     [InlineData(DatabaseFormat.AceAccdb, "drop", true)]
+    [InlineData(DatabaseFormat.AceAccdb, "index", false)]
+    [InlineData(DatabaseFormat.AceAccdb, "index", true)]
     public async Task SchemaRewrite_KeepsForeignKeyIndexesAndPartnerLinks(DatabaseFormat format, string operation, bool rewriteParent)
     {
         MemoryStream stream = await this.CreateDatabaseAsync(format);
@@ -72,6 +76,9 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
                     break;
                 case "add":
                     await writer.AddColumnAsync(table, new ColumnDefinition("Extra", typeof(int)), TestContext.Current.CancellationToken);
+                    break;
+                case "index":
+                    await writer.CreateIndexAsync(table, new IndexDefinition("IX_Added", otherColumn), TestContext.Current.CancellationToken);
                     break;
                 default:
                     await writer.DropColumnAsync(table, otherColumn, TestContext.Current.CancellationToken);

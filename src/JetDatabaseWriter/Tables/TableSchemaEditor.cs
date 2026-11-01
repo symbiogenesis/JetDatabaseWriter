@@ -23,7 +23,7 @@ using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
 /// Table DDL workflows behind <see cref="Interfaces.IAccessSchema"/>: create
-/// and drop tables, and add, drop, or rename columns. Column changes rebuild
+/// and drop tables, add indexes, and add, drop, or rename columns. Column changes rebuild
 /// the table through a temporary copy that preserves rows, indexes, every
 /// persisted column and table property except the table's <c>NameMap</c>
 /// (<see cref="PersistedPropertyProjector"/>), client-side constraints,
@@ -320,6 +320,20 @@ internal sealed class TableSchemaEditor(
         }
 
         await tableStorage.DropTableCoreAsync(tableName, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Builds a new logical index over all rows through the atomic schema replacement path.</summary>
+    /// <param name="tableName">The existing table.</param>
+    /// <param name="index">The new index declaration.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal ValueTask CreateIndexAsync(string tableName, IndexDefinition index, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(index, nameof(index));
+        AccessObjectName.ThrowIfInvalidMember(index.Name, nameof(index), "index");
+        AccessObjectName.ThrowIfNotStorable(format, index.Name, nameof(index), "index");
+        pager.ThrowIfDisposedOrCancelled(cancellationToken);
+        return this.RewriteTableAsync(tableName, static (columns, _) => columns, static (values, _) => values, static name => name, cancellationToken, index);
     }
 
     internal ValueTask AddColumnAsync(string tableName, ColumnDefinition column, CancellationToken cancellationToken)
@@ -728,6 +742,7 @@ internal sealed class TableSchemaEditor(
     /// the column references in the table's expressions.
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="addedIndex">An index to build over the replacement rows, when requested.</param>
     /// <exception cref="JetOperationException">Thrown when the projection leaves no columns, or drops a relationship key column or a column another column's expression names.</exception>
     /// <exception cref="ArgumentException">Thrown, before anything is written, when a renamed column's new name would push an expression that names it past the expression limits.</exception>
     /// <exception cref="JetCorruptDataException">Thrown, before anything is written, when a row holds a MEMO or OLE value in a kept column whose stored data cannot be read.</exception>
@@ -738,9 +753,10 @@ internal sealed class TableSchemaEditor(
         Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
         Func<object[], TableDef, object[]> projectRow,
         Func<string, string?> mapColumnName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IndexDefinition? addedIndex = null)
     {
-        TableRewritePlan plan = await rewritePlanner.PrepareAsync(tableName, projectColumns, projectRow, mapColumnName, cancellationToken).ConfigureAwait(false);
+        TableRewritePlan plan = await rewritePlanner.PrepareAsync(tableName, projectColumns, projectRow, mapColumnName, cancellationToken, addedIndex).ConfigureAwait(false);
         string tempName = $"~tmp_{Guid.NewGuid():N}"[..18];
         await this.CreateTableAsync(tempName, plan.Columns, plan.Indexes, plan.Properties, cancellationToken).ConfigureAwait(false);
         await tableStorage.ApplyAsync(plan, tempName, cancellationToken).ConfigureAwait(false);
