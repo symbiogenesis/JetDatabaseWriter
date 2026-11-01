@@ -50,6 +50,15 @@ and the validation matrix for controlled native index-byte acceptance.
 
 ## Descriptor preservation during schema rewrites
 
+Fresh DAO120 controls retain selected General/General Legacy column versions
+through native DML. In the measured compact cases, indexed Text is rebuilt to
+the database header's default version while Memo retains its version.
+`PublicTextCollationDaoTests` establishes this independently with native-authored
+columns and an index: changing only the masked header default changes the
+compacted Text version, while an untouched control remains General and native
+seeks succeed in both. Library schema edits still preserve the explicitly
+requested column descriptors. Broader mixed-column/locale coverage remains F9.
+
 `CreateIndexAsync` adds a declared index to an existing table through the atomic
 table-replacement path. Preparation checks the complete logical-index inventory
 for name collisions, including relationship indexes, and validates key columns,

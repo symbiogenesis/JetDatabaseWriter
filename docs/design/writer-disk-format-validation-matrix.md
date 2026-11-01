@@ -847,7 +847,7 @@ Text through Double; invalid numeric storage retains native error statuses.
 `IN` keeps native early-match/Null/error order and its distinct mixed-type
 coercions, including formatted Date and nonfinite numeric text.
 
-`PublicTextCollationTests` and `TextSortOrderFixtureTests` cover public General97/General Legacy/General choices, raw stored ID/version metadata, null header-default selection, unknown-ID reporting, no-mutation invalid-choice refusal, Text/Memo/calculated Text and schema preservation. `PublicTextCollationDaoTests` independently checks writer-created columns through schema edits and row updates, native case-equivalent seek, duplicate refusal, insert/update and compact/readback. Current x86 DAO3.6 (`dao360.dll` 10.0.26100.5074) controls passed for Jet3 General97 and Jet4 General Legacy. Four fresh DAO120 Jet4/ACE cases remain guarded and skipped on this host. Existing encoders and text code pages are unchanged; broader locale, long-key and native mixed-column coverage remains F9/E2 work.
+`PublicTextCollationTests` and `TextSortOrderFixtureTests` cover public General97/General Legacy/General choices, raw stored ID/version metadata, null header-default selection, unknown-ID reporting, no-mutation invalid-choice refusal, Text/Memo/calculated Text and schema preservation. `PublicTextCollationDaoTests` independently checks writer-created columns through schema edits and row updates, native case-equivalent seek, duplicate refusal, insert/update and compact/readback. Current x86 DAO3.6 (`dao360.dll` 10.0.26100.5074) controls passed for Jet3 General97 and Jet4 General Legacy. All four public Jet4/ACE choices passed fresh DAO120 checks on 2026-10-31 with ACEDAO 16.0.20527.20112. Requested column versions survive native row mutations. A separate native-authored-column/index control changes only the database header default version: native compact rebuilds indexed Text to that default while Memo retains its version; the untouched control keeps General. Compacted metadata expectations follow that measured native behavior. Existing encoders and text code pages are unchanged; broader locale, long-key and native mixed-column coverage remains F9/E2 work.
 
 `CreateIndexTests` exercises indexes added to populated tables across Jet3,
 Jet4 and ACE and all write modes, including composite descending keys, existing
@@ -862,7 +862,7 @@ CompactDatabase/readback. An independent native index edit retains the exact
 Access-authored nonempty `NameMap` in `testV2000.mdb`; the writer edit retains
 the same bytes and passes native reopen/compact beside its new index.
 Fresh x86 DAO3.6 (`dao360.dll` 10.0.26100.5074) controls passed on 2026-10-31.
-DAO120 Jet4/ACE checks remain guarded; these controls do not establish complete
+Fresh DAO120 Jet4/ACE index checks also passed with ACEDAO 16.0.20527.20112; these controls do not establish complete
 schema/application preservation or untested native index variants.
 
 `TableExpressionFunctionPolicyTests` checks declaration-time and imported-property
@@ -871,7 +871,7 @@ rules, including unused branches, while retaining ordinary scalar expressions.
 Fresh x86 DAO3.6 Jet3/Jet4 controls on 2026-10-31 reject `CurrentUser`, `Eval`,
 the domain aggregates and a nested `CurrentUser` call in all three constraint
 contexts with error 3388. Native `Abs(-3)` defaults/rules and insertion succeed.
-DAO120 checks remain guarded. These table-constraint observations do not define
+Fresh DAO120 Jet4/ACE constraint checks also passed with ACEDAO 16.0.20527.20112. These table-constraint observations do not define
 the functions' separate query/application or workgroup behavior.
 
 `CatalogLongValuePreservationTests` independently seeds unassigned catalog OLE

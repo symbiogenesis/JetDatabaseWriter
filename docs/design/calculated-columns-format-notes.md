@@ -350,8 +350,8 @@ scan rejects these calls at public schema declaration and when compiling stored
 constraints, including calls in branches whose values would not be evaluated.
 Quoted strings and field names do not become function calls. Native DAO3.6 Jet3
 and Jet4 controls reject the same default/field/table assignments with error
-3388 and accept ordinary scalar `Abs` defaults/rules. ACE confirmation remains
-guarded. Query/application contexts retain their separate R4 scope; no embedded
+3388 and accept ordinary scalar `Abs` defaults/rules. Fresh DAO120 Jet4/ACE
+controls confirm the same stored-constraint function boundary. Query/application contexts retain their separate R4 scope; no embedded
 code or cross-table expression execution is enabled.
 
 ## Native row counts and schema preservation

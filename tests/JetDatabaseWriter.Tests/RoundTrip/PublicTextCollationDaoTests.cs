@@ -11,8 +11,9 @@ using JetDatabaseWriter.TestSupport;
 using Xunit;
 
 /// <summary>Native engines read, seek, mutate and compact explicitly chosen column collations.</summary>
+/// <param name="output">Receives native engine and module diagnostics.</param>
 [Trait("Category", "RequiresMicrosoftAccess")]
-public sealed class PublicTextCollationDaoTests
+public sealed class PublicTextCollationDaoTests(ITestOutputHelper output)
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -25,7 +26,7 @@ public sealed class PublicTextCollationDaoTests
     [InlineData(DatabaseFormat.AceAccdb, TextCollation.GeneralLegacy)]
     [InlineData(DatabaseFormat.AceAccdb, TextCollation.General)]
     public Task Dao120_ExplicitChoice_SurvivesMutationSeekAndCompact(DatabaseFormat format, TextCollation collation)
-        => VerifyAsync(format, collation, useDao36: false);
+        => this.VerifyAsync(format, collation, useDao36: false);
 
     [Theory(
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
@@ -34,9 +35,86 @@ public sealed class PublicTextCollationDaoTests
     [InlineData(DatabaseFormat.Jet3Mdb, TextCollation.General97)]
     [InlineData(DatabaseFormat.Jet4Mdb, TextCollation.GeneralLegacy)]
     public Task Dao36_ExplicitChoice_SurvivesMutationSeekAndCompact(DatabaseFormat format, TextCollation collation)
-        => VerifyAsync(format, collation, useDao36: true);
+        => this.VerifyAsync(format, collation, useDao36: true);
 
-    private static async Task VerifyAsync(DatabaseFormat format, TextCollation collation, bool useDao36)
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    public async Task Dao120_NativeAuthoredColumns_CompactTextToHeaderDefaultWhileRetainingMemo()
+    {
+        await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.NativeCompactCollation");
+        File.Copy(TestDatabases.TestV2010, session.SourcePath);
+        string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
+        AccessRoundTripEnvironment.CompactResult authored = session.RunDaoEngineScript(
+            $$"""
+            $db=$engine.OpenDatabase({{source}})
+            try {
+                $db.Execute('CREATE TABLE [NativeCompactControl] ([Code] TEXT(40) CONSTRAINT [PK_Control] PRIMARY KEY, [Note] MEMO)',128)
+                $db.Execute("INSERT INTO [NativeCompactControl] VALUES ('caf$([char]0x00E9)','retained')",128)
+            } finally { $db.Close() }
+            """,
+            TimeSpan.FromMinutes(1));
+        Assert.True(authored.ExitCode == 0, authored.StdOut + authored.StdErr);
+        await AssertControlMetadataAsync(session.SourcePath, TextCollation.General, TextCollation.General);
+        string control = session.CreateDatabasePath("native-control");
+        string controlCompacted = session.CreateDatabasePath("native-control-compacted");
+        File.Copy(session.SourcePath, control);
+
+        // Change only the masked database default. All field descriptors, index
+        // keys and rows remain the independent native engine's original bytes.
+        byte[] mixed = await File.ReadAllBytesAsync(session.SourcePath, Ct);
+        int versionOffset = JetFormat.HeaderLayoutOf(DatabaseFormat.AceAccdb).SortVersionOffset;
+        Assert.Equal((byte)1, JetFormat.FromHeader(mixed).DefaultTextSortOrder.Version);
+        mixed[versionOffset] ^= 1;
+        Assert.Equal((byte)0, JetFormat.FromHeader(mixed).DefaultTextSortOrder.Version);
+        await File.WriteAllBytesAsync(session.SourcePath, mixed, Ct);
+        await AssertControlMetadataAsync(session.SourcePath, TextCollation.GeneralLegacy, TextCollation.General);
+        string compacted = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.CompactedPath);
+        AccessRoundTripEnvironment.CompactResult result = session.RunDaoEngineScript(
+            $$"""
+            function Check-Control([string]$path) {
+                $db=$engine.OpenDatabase($path)
+                try {
+                    $rs=$db.OpenRecordset('NativeCompactControl',1)
+                    try {
+                        $rs.Index='PK_Control'
+                        $rs.Seek('=',('CAF'+[char]0x00C9))
+                        if($rs.NoMatch -or $rs.Fields('Note').Value -ne 'retained') { throw 'Native control seek failed' }
+                    } finally { $rs.Close() }
+                } finally { $db.Close() }
+            }
+            Check-Control {{source}}
+            Check-Control {{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(control)}}
+            $engine.CompactDatabase({{source}},{{compacted}})
+            $engine.CompactDatabase({{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(control)}},{{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(controlCompacted)}})
+            Check-Control {{compacted}}
+            Check-Control {{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(controlCompacted)}}
+            Write-Output "DAO_ENGINE_VERSION=$($engine.Version)"
+            foreach($module in ((Get-Process -Id $PID).Modules | Where-Object { $_.ModuleName -match '^ACE|^dao' })) {
+                Write-Output "DAO_MODULE=$($module.FileName)|VERSION=$($module.FileVersionInfo.FileVersion)"
+            }
+            Write-Output 'NATIVE_COMPACT_COLLATION_CONTROL=OK'
+            """,
+            TimeSpan.FromMinutes(2));
+        output.WriteLine(result.StdOut);
+        Assert.True(result.ExitCode == 0, result.StdOut + result.StdErr);
+        Assert.Contains("NATIVE_COMPACT_COLLATION_CONTROL=OK", result.StdOut, StringComparison.Ordinal);
+        await AssertControlMetadataAsync(controlCompacted, TextCollation.General, TextCollation.General);
+        await AssertControlMetadataAsync(session.CompactedPath, TextCollation.GeneralLegacy, TextCollation.GeneralLegacy);
+    }
+
+    private static async Task AssertControlMetadataAsync(string path, TextCollation databaseCollation, TextCollation textCollation)
+    {
+        await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, Ct);
+        Assert.Equal(databaseCollation, reader.Database.Format.DefaultTextSortOrder.Collation);
+        foreach (ColumnMetadata column in await reader.GetColumnMetadataAsync("NativeCompactControl", Ct))
+        {
+            Assert.Equal(column.Name == "Code" ? textCollation : TextCollation.General, column.TextCollation);
+        }
+    }
+
+    private async Task VerifyAsync(DatabaseFormat format, TextCollation collation, bool useDao36)
     {
         await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.PublicTextCollation", databaseExtension: format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb");
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(session.SourcePath, format, new AccessWriterOptions { UseLockFile = false }, Ct))
@@ -47,6 +125,16 @@ public sealed class PublicTextCollationDaoTests
             Assert.Equal(1, await writer.UpdateRowsAsync("Collated", RowCriteria.Where("Code", "caf\u00e9"), new RowValues { ["Note"] = "writer" }, Ct));
             await writer.DropColumnAsync("Collated", "Discard", Ct);
             await writer.RenameColumnAsync("Collated", "Code", "Renamed", Ct);
+        }
+
+        TextCollation compactedTextCollation;
+        await using (AccessReader sourceReader = await AccessReader.OpenAsync(session.SourcePath, new AccessReaderOptions { UseLockFile = false }, Ct))
+        {
+            compactedTextCollation = Assert.IsType<TextCollation>(sourceReader.Database.Format.DefaultTextSortOrder.Collation);
+            foreach (ColumnMetadata column in await sourceReader.GetColumnMetadataAsync("Collated", Ct))
+            {
+                Assert.Equal(collation, column.TextCollation);
+            }
         }
 
         string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
@@ -100,11 +188,20 @@ public sealed class PublicTextCollationDaoTests
         }
 
         Assert.Contains("EXPLICIT_COLLATION_OK", nativeOutput, StringComparison.Ordinal);
+        output.WriteLine(nativeOutput);
         Assert.True(File.Exists(session.CompactedPath));
+        await using (AccessReader sourceReader = await AccessReader.OpenAsync(session.SourcePath, new AccessReaderOptions { UseLockFile = false }, Ct))
+        {
+            foreach (ColumnMetadata column in await sourceReader.GetColumnMetadataAsync("Collated", Ct))
+            {
+                Assert.Equal(collation, column.TextCollation);
+            }
+        }
+
         await using AccessReader reader = await AccessReader.OpenAsync(session.CompactedPath, new AccessReaderOptions { UseLockFile = false }, Ct);
         foreach (ColumnMetadata column in await reader.GetColumnMetadataAsync("Collated", Ct))
         {
-            Assert.Equal(collation, column.TextCollation);
+            Assert.Equal(column.Name == "Renamed" ? compactedTextCollation : collation, column.TextCollation);
         }
 
         int rows = 0;
