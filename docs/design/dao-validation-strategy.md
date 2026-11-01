@@ -11,6 +11,9 @@ Local builds and targeted test runs are allowed for both ordinary regressions an
 Selected .NET validation also requires a hosted DAO120 compatibility inventory
 for each runtime/library combination. Disposable Windows hosts install the pinned
 Microsoft Access Runtime and validate the actual loaded ACEDAO DLL version.
+Office/MSACCESS is pinned to `16.0.20527.20112`; its separately pinned ACEDAO
+component reports `16.0.20527.20016`. The component pin reflects three independent
+installs of that exact release; product and component build numbers are distinct.
 The lane consumes its matching analyzed runner artifact without rebuilding;
 every required method must pass and no skip is accepted. Ordinary partitions
 retain guarded DAO skips where Access is absent. DAO3.6/Jet3 native evidence and

@@ -8,7 +8,8 @@ function Get-NativeDaoModuleReceipt([object[]] $Modules) {
     if ($loaded.Count -ne 1) { throw 'Exactly one loaded ACEDAO.DLL is required after DAO120 activation.' }
     $module = $loaded[0]
     $version = $module.FileVersionInfo.FileVersion
-    if ($version -cne '16.0.20527.20112') { throw "Loaded ACEDAO.DLL version mismatch: '$version'." }
+    # Office/MSACCESS 16.0.20527.20112 ships DAO component 16.0.20527.20016.
+    if ($version -cne '16.0.20527.20016') { throw "Loaded ACEDAO.DLL version mismatch: '$version'." }
     # This policy also runs in Windows PowerShell's .NET Framework child.
     # Rooted-relative and drive-relative paths cannot round-trip as absolute names.
     $absolutePath = $false
@@ -37,7 +38,7 @@ finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($engine) }
 '@
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probe))
     $output = @(& $hostPath -NoProfile -NonInteractive -EncodedCommand $encoded)
-    $receipts = @($output | Where-Object { $_ -cmatch '^DAO120_READY\|16\.0\.20527\.20112\|[^|\r\n]+$' })
+    $receipts = @($output | Where-Object { $_ -cmatch '^DAO120_READY\|16\.0\.20527\.20016\|[^|\r\n]+$' })
     if ($LASTEXITCODE -ne 0 -or $receipts.Count -ne 1) { throw 'Microsoft DAO120 activation or loaded-module pin failed.' }
     Write-Output "Native Microsoft Access Runtime $version; $($output -join ' ')"
 }

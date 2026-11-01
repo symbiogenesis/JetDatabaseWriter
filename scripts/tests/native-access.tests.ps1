@@ -32,14 +32,16 @@ function Assert-Throws([scriptblock]$Action, [string]$Message) {
 }
 
 $daoModulePath = Join-Path $root 'ACEDAO.DLL'
-$daoModule = @{ ModuleName = 'ACEDAO.DLL'; FileName = $daoModulePath; FileVersionInfo = @{ FileVersion = '16.0.20527.20112' } }
+$daoModule = @{ ModuleName = 'ACEDAO.DLL'; FileName = $daoModulePath; FileVersionInfo = @{ FileVersion = '16.0.20527.20016' } }
 $receipt = Get-NativeDaoModuleReceipt @($daoModule)
-if ($receipt -cne "DAO120_READY|16.0.20527.20112|$daoModulePath") { throw 'The native receipt lost the exact loaded DAO module identity.' }
+if ($receipt -cne "DAO120_READY|16.0.20527.20016|$daoModulePath") { throw 'The native receipt lost the exact loaded DAO module identity.' }
 Assert-Throws { Get-NativeDaoModuleReceipt @() } 'Exactly one loaded ACEDAO.DLL'
 Assert-Throws { Get-NativeDaoModuleReceipt @($daoModule, $daoModule) } 'Exactly one loaded ACEDAO.DLL'
 $daoModule.FileVersionInfo.FileVersion = '16.0.20400.10000'
 Assert-Throws { Get-NativeDaoModuleReceipt @($daoModule) } 'Loaded ACEDAO.DLL version mismatch'
 $daoModule.FileVersionInfo.FileVersion = '16.0.20527.20112'
+Assert-Throws { Get-NativeDaoModuleReceipt @($daoModule) } 'Loaded ACEDAO.DLL version mismatch'
+$daoModule.FileVersionInfo.FileVersion = '16.0.20527.20016'
 $daoModule.FileName = 'relative/ACEDAO.DLL'
 Assert-Throws { Get-NativeDaoModuleReceipt @($daoModule) } 'Loaded ACEDAO.DLL path'
 $daoModule.FileName = $daoModulePath
@@ -52,10 +54,10 @@ if ($IsWindows) {
     $policy = ${function:Get-NativeDaoModuleReceipt}.ToString()
     $frameworkChecks = "function Get-NativeDaoModuleReceipt {`n$policy`n}`n" + @'
 $ErrorActionPreference = 'Stop'
-$module = @{ ModuleName = 'ACEDAO.DLL'; FileName = 'C:\Program Files\Microsoft Office\root\Office16\ACEDAO.DLL'; FileVersionInfo = @{ FileVersion = '16.0.20527.20112' } }
+$module = @{ ModuleName = 'ACEDAO.DLL'; FileName = 'C:\Program Files\Microsoft Office\root\Office16\ACEDAO.DLL'; FileVersionInfo = @{ FileVersion = '16.0.20527.20016' } }
 foreach ($valid in 'C:\Program Files\Microsoft Office\root\Office16\ACEDAO.DLL', '\\server\share\ACEDAO.DLL') {
     $module.FileName = $valid
-    if ((Get-NativeDaoModuleReceipt @($module)) -cne "DAO120_READY|16.0.20527.20112|$valid") { throw 'Framework policy lost the module path.' }
+    if ((Get-NativeDaoModuleReceipt @($module)) -cne "DAO120_READY|16.0.20527.20016|$valid") { throw 'Framework policy lost the module path.' }
 }
 foreach ($invalid in 'relative\ACEDAO.DLL', 'C:ACEDAO.DLL', '\ACEDAO.DLL') {
     $module.FileName = $invalid
@@ -64,10 +66,12 @@ foreach ($invalid in 'relative\ACEDAO.DLL', 'C:ACEDAO.DLL', '\ACEDAO.DLL') {
     if (-not $caught.Contains('Loaded ACEDAO.DLL path')) { throw "Framework policy accepted a nonqualified path: $invalid" }
 }
 $module.FileName = 'C:\Program Files\Microsoft Office\root\Office16\ACEDAO.DLL'
-$module.FileVersionInfo.FileVersion = '16.0.20400.10000'
-$caught = ''
-try { Get-NativeDaoModuleReceipt @($module) | Out-Null } catch { $caught = $_.Exception.Message }
-if (-not $caught.Contains('Loaded ACEDAO.DLL version mismatch')) { throw 'Framework policy accepted another native module version.' }
+foreach ($invalidVersion in '16.0.20400.10000', '16.0.20527.20112') {
+    $module.FileVersionInfo.FileVersion = $invalidVersion
+    $caught = ''
+    try { Get-NativeDaoModuleReceipt @($module) | Out-Null } catch { $caught = $_.Exception.Message }
+    if (-not $caught.Contains('Loaded ACEDAO.DLL version mismatch')) { throw "Framework policy accepted another native module version: $invalidVersion" }
+}
 'FRAMEWORK_POLICY_OK'
 '@
     $encodedChecks = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($frameworkChecks))
