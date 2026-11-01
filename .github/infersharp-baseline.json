@@ -1,7 +1,7 @@
 {
   "version": 1,
   "analyzer": "InferSharp v1.5",
-  "reviewedRevision": "209c80c64a7f35ecaabbdce49530edc90f245077",
+  "reviewedRevision": "f909ac71c96cae4ac3fecc2d2e8c0b369f6adbdf",
   "sources": {
     "src/JetDatabaseWriter/AccessDatabaseEncryption.cs": "23f158e8d939afd81c20e1d2f9256c2ee3ee07067c5afe97b4802bc74fad04a9",
     "src/JetDatabaseWriter/AccessReader.cs": "1f482a6d15a90b66ef7b8b48538039a0bd3cb02d5cf8959af4845c9fbc3d7d12",
@@ -22,12 +22,12 @@
     "src/JetDatabaseWriter/Transactions/LockFileSlotWriter.cs": "f0fc65d7098d01f3837978dcc6cffbf34fdfe4915ca05f4306b200d714ae88a8",
     "src/JetDatabaseWriter/Transactions/TransactionLifecycle.cs": "f9a4b3c305b05fad06254f4098105ff2b596c05e40dde2f411b04f3a21b21baa",
     "src/JetDatabaseWriter/ValueDecoding/RowMapper.cs": "ee9f04d270c9964f5bce0cbfdef01bc3bc858a6f72265004d18e1a316f146b18",
-    "src/JetDatabaseWriter/WriterServices.cs": "f86d09af107808dff5d42b8d9038376931534e215e753fbdd63f3619548a975e",
+    "src/JetDatabaseWriter/WriterServices.cs": "ad215b273d51097cc56e6d170b0b082796a783845b7e2a73968bfc69eb897308",
     "src/JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs": "bf810bda25b02f8d17b7e2597729339e5ad70ce3612215250a91e392957b6b61",
     "src/JetDatabaseWriter/Pages/Paging/StreamPageStore.cs": "b1ebe2dcb4f14427bd608faa4610b17e1cfa222eb748495dcedcec7b74f88392",
     "src/JetDatabaseWriter/Relationships/LinkedTextSourceStream.cs": "42e29a44ddc7c995df717c9d8291dddd248ee9719d9d8f67173166fb6945e583",
-    "src/JetDatabaseWriter/AccessWriterOptions.cs": "009f18152d9cd9e848fade74346447433482d43dc0e3d4aaaf5ddb3f20c5d302",
-    "src/JetDatabaseWriter/AccessWriter.cs": "432a8908784a42ce18511f35fc0b2ff16bdcde8290ca0b10c7fb3a059b63478b",
+    "src/JetDatabaseWriter/AccessWriterOptions.cs": "f8349d9cdfc334f8eba4ff2c9a35a0ecb9e7450a8dfe83f40412e37ef4a52da4",
+    "src/JetDatabaseWriter/AccessWriter.cs": "c3406d63893c5ad273dad8c784574e989b18a935db28aef35c9b7c2dadcf646b",
     "src/JetDatabaseWriter/Infrastructure/BoundedCache.cs": "5519f282810e348400a448f37f1dacc90c8bafcc4f5fe4c0206cf2181474d7ad",
     "src/JetDatabaseWriter/Infrastructure/FileStreamFactory.cs": "e46ec3e656fd4c45204b4ca660c084dfe3f26f6db63cceb65eb3aecb51a05347",
     "src/JetDatabaseWriter/Maintenance/CompactActiveCatalogRows.cs": "2ce3ae7a9332361a5daada76c90713630a8555f81c9da986b1a71402b206c61d",
@@ -181,7 +181,7 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/AccessWriter.cs",
-        "line": 560,
+        "line": 564,
         "fingerprint": "e3c8699192fd2e0fc682974b2a829d5e",
         "symbol": "AccessWriter.cs|RewriteNativeSecurityAsync|PULSE_RESOURCE_LEAK",
         "reason": "RewriteNativeSecurityAsync owns services in a synchronous using declaration spanning the awaited rewrite. WriterServices.Dispose explicitly disposes SnapshotPages, whose Dispose releases cache frame ownership. InferSharp loses the using cleanup across the async state machine; the borrowed database and pager remain owned by the caller."
@@ -189,7 +189,7 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/AccessWriter.cs",
-        "line": 560,
+        "line": 564,
         "fingerprint": "53855c432d5091750b4bacc396d4f694",
         "symbol": "AccessWriter.cs|RewriteNativeSecurityAsync|PULSE_RESOURCE_LEAK",
         "reason": "TransactionLifecycle.mutationGate is not explicitly disposed. It is private, never exposed, and its only uses are WaitAsync and finally Release; no AvailableWaitHandle or synchronous Wait is called. It therefore owns no OS wait handle: .NET allocates that event only in AvailableWaitHandle (https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/Threading/SemaphoreSlim.cs). RunDisposalAsync serializes teardown through the same gate, and each successful acquisition releases in finally, including queued calls after teardown. The remaining gate/awaiter graph is managed and collectible; disposing the gate during teardown would conflict with pending releases."
@@ -205,7 +205,7 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/WriterServices.cs",
-        "line": 36,
+        "line": 37,
         "fingerprint": "b1e2d7325caf3c2b374818df3114ec55",
         "symbol": "WriterServices.cs|.ctor|PULSE_RESOURCE_LEAK",
         "reason": "WriterServices transfers SnapshotPages ownership to its completed graph and Dispose explicitly closes it; AccessWriter calls this on normal teardown and failed outer initialization, and RewriteNativeSecurityAsync uses services. This constructor creates a capacity-0 ReaderPageCache and performs no page reads, so that cache has no retained frames or other disposable resources even if later graph construction throws. InferSharp treats allocating the empty managed wrapper as allocating an external resource."
@@ -455,7 +455,7 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/AccessWriter.cs",
-        "line": 560,
+        "line": 564,
         "fingerprint": "e3c8699192fd2e0fc682974b2a829d5e",
         "symbol": "AccessWriter.cs|RewriteNativeSecurityAsync|PULSE_RESOURCE_LEAK",
         "reason": "RewriteNativeSecurityAsync owns services in a synchronous using declaration spanning the awaited rewrite. WriterServices.Dispose explicitly disposes SnapshotPages, whose Dispose releases cache frame ownership. InferSharp loses the using cleanup across the async state machine; the borrowed database and pager remain owned by the caller."
@@ -463,7 +463,7 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/AccessWriter.cs",
-        "line": 560,
+        "line": 564,
         "fingerprint": "53855c432d5091750b4bacc396d4f694",
         "symbol": "AccessWriter.cs|RewriteNativeSecurityAsync|PULSE_RESOURCE_LEAK",
         "reason": "TransactionLifecycle.mutationGate is not explicitly disposed. It is private, never exposed, and its only uses are WaitAsync and finally Release; no AvailableWaitHandle or synchronous Wait is called. It therefore owns no OS wait handle: .NET allocates that event only in AvailableWaitHandle (https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/Threading/SemaphoreSlim.cs). RunDisposalAsync serializes teardown through the same gate, and each successful acquisition releases in finally, including queued calls after teardown. The remaining gate/awaiter graph is managed and collectible; disposing the gate during teardown would conflict with pending releases."
@@ -479,7 +479,7 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/WriterServices.cs",
-        "line": 36,
+        "line": 37,
         "fingerprint": "b1e2d7325caf3c2b374818df3114ec55",
         "symbol": "WriterServices.cs|.ctor|PULSE_RESOURCE_LEAK",
         "reason": "WriterServices transfers SnapshotPages ownership to its completed graph and Dispose explicitly closes it; AccessWriter calls this on normal teardown and failed outer initialization, and RewriteNativeSecurityAsync uses services. This constructor creates a capacity-0 ReaderPageCache and performs no page reads, so that cache has no retained frames or other disposable resources even if later graph construction throws. InferSharp treats allocating the empty managed wrapper as allocating an external resource."
