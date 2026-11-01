@@ -73,7 +73,7 @@ internal sealed class MutationExecutor(JetFormat format, Pager pager, OwnedDataP
                 cancellationToken.ThrowIfCancellationRequested();
                 if (table.Policy == MutationPlan.IndexPolicy.Standard && change.Location is RowLocation retained
                     && change.Original is object[] before && change.Replacement is object[] after
-                    && await rows.TryUpdateRowInPlaceAsync(table.Page, table.Definition, retained, before, after, StorageValues(after, change.LongValues), change.TextBytes, cancellationToken).ConfigureAwait(false))
+                    && await rows.TryUpdateRowInPlaceAsync(table.Page, table.Definition, retained, before, after, StorageValues(after, change.LongValues), change.TextBytes, change.AssignedColumns, cancellationToken).ConfigureAwait(false))
                 {
                     if (!await indexes.HasUnchangedKeysAsync(table.Page, table.Definition, table.Name, before, after, cancellationToken).ConfigureAwait(false))
                     {

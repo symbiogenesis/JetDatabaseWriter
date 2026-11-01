@@ -411,7 +411,7 @@ internal sealed class TableDataWriter(
         MutationPlan.TableChanges changes = plan.ForTable(entry.TDefPage, tableDef, tableName);
         foreach ((int i, object[] oldRow, object[] newRow) in pendingUpdates)
         {
-            changes.Update(rows[i].Location, oldRow, newRow, rows[i].GetPreservedText(newRow, updateIndexes.Keys), longValues: rows[i].GetPreservedLongValues(newRow, updateIndexes.Keys));
+            changes.Update(rows[i].Location, oldRow, newRow, rows[i].GetPreservedText(newRow, updateIndexes.Keys), longValues: rows[i].GetPreservedLongValues(newRow, updateIndexes.Keys), assignedColumns: updateIndexes.Keys);
         }
 
         changes.RaiseAutoNumbers = AssignsAutoNumberColumn(tableDef, updateIndexes.Keys);

@@ -98,8 +98,9 @@ internal sealed class MutationPlan
         /// <param name="textBytes">Unassigned Text slots copied without encoding.</param>
         /// <param name="dataMode">The original payload's erase policy.</param>
         /// <param name="longValues">Unassigned long-value slots whose storage remains owned by this table.</param>
-        internal void Update(RowLocation location, object[] original, object[] replacement, IReadOnlyDictionary<int, byte[]>? textBytes = null, DeletedRowDataMode dataMode = DeletedRowDataMode.Default, IReadOnlyDictionary<int, byte[]>? longValues = null)
-            => this.Rows.Add(new RowChange(location, original, replacement, textBytes, dataMode, 0) { LongValues = longValues });
+        /// <param name="assignedColumns">Explicitly assigned table-column indexes, or null when assignment intent is unavailable.</param>
+        internal void Update(RowLocation location, object[] original, object[] replacement, IReadOnlyDictionary<int, byte[]>? textBytes = null, DeletedRowDataMode dataMode = DeletedRowDataMode.Default, IReadOnlyDictionary<int, byte[]>? longValues = null, IReadOnlyCollection<int>? assignedColumns = null)
+            => this.Rows.Add(new RowChange(location, original, replacement, textBytes, dataMode, 0) { LongValues = longValues, AssignedColumns = assignedColumns is null ? null : [.. assignedColumns] });
 
         /// <summary>Stages a deletion; absent original values retain the rebuild fallback.</summary>
         /// <param name="location">The original row slot.</param>
@@ -121,5 +122,8 @@ internal sealed class MutationPlan
     {
         /// <summary>Gets unchanged long-value slots retained byte-for-byte without reallocating their payloads.</summary>
         internal IReadOnlyDictionary<int, byte[]>? LongValues { get; init; }
+
+        /// <summary>Gets frozen explicit assignment indexes, or null when the planner requires replacement encoding.</summary>
+        internal IReadOnlyCollection<int>? AssignedColumns { get; init; }
     }
 }

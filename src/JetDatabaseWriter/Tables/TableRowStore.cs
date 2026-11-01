@@ -55,18 +55,20 @@ internal sealed class TableRowStore(
     /// <param name="replacement">The final prepared decoded values.</param>
     /// <param name="storedValues">Values carrying preserved long-value descriptors.</param>
     /// <param name="textBytes">Unassigned native Text storage.</param>
+    /// <param name="assignedColumns">Explicit assignments that require encoding even when their logical values are equal.</param>
     /// <param name="cancellationToken">Cancels page acquisition and publication.</param>
     /// <returns>Whether the row retains its original physical location.</returns>
-    internal async ValueTask<bool> TryUpdateRowInPlaceAsync(long tdefPage, TableDef tableDef, RowLocation location, object[] original, object[] replacement, object[] storedValues, IReadOnlyDictionary<int, byte[]>? textBytes, CancellationToken cancellationToken)
+    internal async ValueTask<bool> TryUpdateRowInPlaceAsync(long tdefPage, TableDef tableDef, RowLocation location, object[] original, object[] replacement, object[] storedValues, IReadOnlyDictionary<int, byte[]>? textBytes, IReadOnlyCollection<int>? assignedColumns, CancellationToken cancellationToken)
     {
-        if (location.IsOverflow || location.RowIndex < 0)
+        if (location.IsOverflow || location.RowIndex < 0 || assignedColumns is null)
         {
             return false;
         }
 
+        HashSet<int> assigned = [.. assignedColumns];
         for (int index = 0; index < tableDef.Columns.Count; index++)
         {
-            if (UsesLongValueStorage(tableDef.Columns[index]) && !Equals(original[index], replacement[index]))
+            if (UsesLongValueStorage(tableDef.Columns[index]) && (assigned.Contains(index) || !Equals(original[index], replacement[index])))
             {
                 return false;
             }
@@ -104,7 +106,7 @@ internal sealed class TableRowStore(
                 : updated.NullMaskPos;
             for (int index = 0; index < tableDef.Columns.Count; index++)
             {
-                if (Equals(original[index], replacement[index]))
+                if (!assigned.Contains(index) && Equals(original[index], replacement[index]))
                 {
                     continue;
                 }
