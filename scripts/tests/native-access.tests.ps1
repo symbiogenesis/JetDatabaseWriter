@@ -47,6 +47,35 @@ $daoModule.ModuleName = 'MSACCESS.EXE'
 Assert-Throws { Get-NativeDaoModuleReceipt @($daoModule) } 'Exactly one loaded ACEDAO.DLL'
 $daoModule.ModuleName = 'ACEDAO.DLL'
 
+if ($IsWindows) {
+    # The COM probe runs in Windows PowerShell/.NET Framework, not the pwsh host.
+    $policy = ${function:Get-NativeDaoModuleReceipt}.ToString()
+    $frameworkChecks = "function Get-NativeDaoModuleReceipt {`n$policy`n}`n" + @'
+$ErrorActionPreference = 'Stop'
+$module = @{ ModuleName = 'ACEDAO.DLL'; FileName = 'C:\Program Files\Microsoft Office\root\Office16\ACEDAO.DLL'; FileVersionInfo = @{ FileVersion = '16.0.20527.20112' } }
+foreach ($valid in 'C:\Program Files\Microsoft Office\root\Office16\ACEDAO.DLL', '\\server\share\ACEDAO.DLL') {
+    $module.FileName = $valid
+    if ((Get-NativeDaoModuleReceipt @($module)) -cne "DAO120_READY|16.0.20527.20112|$valid") { throw 'Framework policy lost the module path.' }
+}
+foreach ($invalid in 'relative\ACEDAO.DLL', 'C:ACEDAO.DLL', '\ACEDAO.DLL') {
+    $module.FileName = $invalid
+    $caught = ''
+    try { Get-NativeDaoModuleReceipt @($module) | Out-Null } catch { $caught = $_.Exception.Message }
+    if (-not $caught.Contains('Loaded ACEDAO.DLL path')) { throw "Framework policy accepted a nonqualified path: $invalid" }
+}
+$module.FileName = 'C:\Program Files\Microsoft Office\root\Office16\ACEDAO.DLL'
+$module.FileVersionInfo.FileVersion = '16.0.20400.10000'
+$caught = ''
+try { Get-NativeDaoModuleReceipt @($module) | Out-Null } catch { $caught = $_.Exception.Message }
+if (-not $caught.Contains('Loaded ACEDAO.DLL version mismatch')) { throw 'Framework policy accepted another native module version.' }
+'FRAMEWORK_POLICY_OK'
+'@
+    $encodedChecks = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($frameworkChecks))
+    $frameworkHost = Join-Path $env:windir 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    $frameworkOutput = @(& $frameworkHost -NoProfile -NonInteractive -EncodedCommand $encodedChecks)
+    if ($LASTEXITCODE -ne 0 -or $frameworkOutput.Count -ne 1 -or $frameworkOutput[0] -cne 'FRAMEWORK_POLICY_OK') { throw 'Native module receipt policy failed in the actual Windows PowerShell probe host.' }
+}
+
 $savedEnvironment = @{}
 foreach ($name in 'GITHUB_ACTIONS', 'RUNNER_ENVIRONMENT', 'RUNNER_OS', 'RUNNER_TEMP') { $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name) }
 try {

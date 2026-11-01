@@ -9,7 +9,12 @@ function Get-NativeDaoModuleReceipt([object[]] $Modules) {
     $module = $loaded[0]
     $version = $module.FileVersionInfo.FileVersion
     if ($version -cne '16.0.20527.20112') { throw "Loaded ACEDAO.DLL version mismatch: '$version'." }
-    if (-not [IO.Path]::IsPathFullyQualified($module.FileName) -or $module.FileName.IndexOfAny([char[]]"|`r`n") -ge 0) { throw 'Loaded ACEDAO.DLL path cannot identify a native module receipt.' }
+    # This policy also runs in Windows PowerShell's .NET Framework child.
+    # Rooted-relative and drive-relative paths cannot round-trip as absolute names.
+    $absolutePath = $false
+    try { $absolutePath = [IO.Path]::IsPathRooted($module.FileName) -and [IO.Path]::GetFullPath($module.FileName) -ceq $module.FileName }
+    catch { $absolutePath = $false }
+    if (-not $absolutePath -or $module.FileName.IndexOfAny([char[]]"|`r`n") -ge 0) { throw 'Loaded ACEDAO.DLL path cannot identify a native module receipt.' }
     return "DAO120_READY|$version|$($module.FileName)"
 }
 
