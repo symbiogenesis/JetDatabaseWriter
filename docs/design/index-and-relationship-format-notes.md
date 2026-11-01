@@ -209,7 +209,7 @@ Row enumeration does **not** consume index information today; it remains a linea
 
 The two pinned tests that codify the original limitation, both still passing as of W16:
 
-- `tests/JetDatabaseWriter.Tests/Writer/LimitationsTests.SchemaEvolution_IAccessWriter_DoesNotExposeIndexOrConstraintApis` — the entry points added across W1–W14 are a `CreateTableAsync` overload (parameter type is `IndexDefinition`), `IsPrimaryKey` *properties* on `ColumnDefinition` / `IndexDefinition`, and the `Create/Drop/RenameRelationshipAsync` trio (which carry `Relationship` in their names but are deliberately not matched by the `Index`/`PrimaryKey`/`ForeignKey` substring filter the test uses).
+- `tests/JetDatabaseWriter.Tests/Writer/LimitationsTests.SchemaEvolution_IndexCreationUsesSchemaInterface` checks that `CreateIndexAsync` belongs to `IAccessSchema` and the combined `AccessWriter` facade, while `IAccessWriter` retains its row-mutation scope. `IndexDefinition` declares index and primary-key options; `RelationshipDefinition` declares foreign-key behavior.
 - `tests/JetDatabaseWriter.Tests/Writer/LimitationsTests.SchemaEvolution_FreshlyCreatedTable_HasNoUserDefinedIndexEntries` — asserts that no index/relationship catalog rows reference a freshly-created bare table. `MSysIndexes` is never written (it does not exist in any modern Access fixture — see §6); `MSysRelationships` is only written when the user calls `CreateRelationshipAsync`.
 
 ## 2. Reader-side prerequisite

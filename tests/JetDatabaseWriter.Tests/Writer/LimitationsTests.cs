@@ -19,21 +19,11 @@ public sealed class LimitationsTests
     // ── Schema evolution ──────────────────────────────────────────────
 
     [Fact]
-    public void SchemaEvolution_IAccessWriter_DoesNotExposeIndexOrConstraintApis()
+    public void SchemaEvolution_IndexCreationUsesSchemaInterface()
     {
-        // README: "No index, primary-key, or foreign-key/cascade enforcement creation."
-        // PK creation and MSysRelationships row emission via
-        // CreateRelationshipAsync have been lifted. The remaining pinned
-        // restrictions: no methods exposing "Index" or "PrimaryKey" or
-        // "ForeignKey" — those concepts are configured via property-bearing
-        // model types (IndexDefinition, RelationshipDefinition), not via
-        // methods on the writer itself.
         AssertNoMethodMatching(typeof(IAccessWriter), "Index");
-        AssertNoMethodMatching(typeof(IAccessWriter), "PrimaryKey");
-        AssertNoMethodMatching(typeof(IAccessWriter), "ForeignKey");
-        AssertNoMethodMatching(typeof(AccessWriter), "Index");
-        AssertNoMethodMatching(typeof(AccessWriter), "PrimaryKey");
-        AssertNoMethodMatching(typeof(AccessWriter), "ForeignKey");
+        Assert.NotNull(typeof(IAccessSchema).GetMethod(nameof(IAccessSchema.CreateIndexAsync)));
+        Assert.NotNull(typeof(AccessWriter).GetMethod(nameof(AccessWriter.CreateIndexAsync)));
     }
 
     // ── Specialized column kinds ──────────────────────────────────────
