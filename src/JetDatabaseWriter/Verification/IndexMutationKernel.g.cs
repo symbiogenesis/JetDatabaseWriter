@@ -4,6 +4,42 @@
 namespace JetDatabaseWriter.Verification {
 
   internal static class IndexMutationKernel {
+    public static bool AdmitRelationshipReference(long realIndex, uint realCount, long partner, long partnerPage, long pageCount, byte role, byte cascadeUp, byte cascadeDown)
+    {
+      return (((((((0L) <= (realIndex)) && ((realIndex) < ((long)(realCount)))) && ((0L) <= (partner))) && (((1L) < (partnerPage)) && ((partnerPage) < (pageCount)))) && (((role) == ((byte)(1))) || ((role) == ((byte)(2))))) && ((cascadeUp) <= ((byte)(1)))) && ((cascadeDown) <= ((byte)(1)));
+    }
+    public static bool AdmitRelationshipIndexForm(uint format, uint pageSize, uint physicalSize, uint logicalSize, bool completeSlots, bool ordinaryKeys)
+    {
+      return (((((((format) == (0U)) && ((pageSize) == (2048U))) && ((physicalSize) == (39U))) && ((logicalSize) == (20U))) || ((((((format) == (1U)) || ((format) == (2U))) && ((pageSize) == (4096U))) && ((physicalSize) == (52U))) && ((logicalSize) == (28U)))) && (completeSlots)) && (ordinaryKeys);
+    }
+    public static bool AdmitRelationshipKey(byte columnType, uint keyCount, bool @ascending, bool isFixed, bool calculated, byte flags)
+    {
+      return (((((((columnType) == ((byte)(4))) && ((keyCount) == (1U))) && (@ascending)) && (isFixed)) && (!(calculated))) && (((byte)((flags) % ((byte)(128)))) < ((byte)(16)))) && (((byte)((flags) % ((byte)(8)))) < ((byte)(4)));
+    }
+    public static bool ValidateIndexPageSet(long root, long[] tree, long[] mapped)
+    {
+      bool admitted = false;
+      admitted = false;
+      if ((((uint)(tree).LongLength) == (0U)) || (((uint)(tree).LongLength) != ((uint)(mapped).LongLength))) {
+        return admitted;
+      }
+      uint _0_index;
+      _0_index = 0U;
+      long _1_previous;
+      _1_previous = 0L;
+      bool _2_found;
+      _2_found = false;
+      while ((_0_index) < ((uint)(tree).LongLength)) {
+        if ((((tree)[(int)(_0_index)]) <= (_1_previous)) || (((tree)[(int)(_0_index)]) != ((mapped)[(int)(_0_index)]))) {
+          return admitted;
+        }
+        _2_found = (_2_found) || (((tree)[(int)(_0_index)]) == (root));
+        _1_previous = (tree)[(int)(_0_index)];
+        _0_index = (_0_index) + (1U);
+      }
+      admitted = _2_found;
+      return admitted;
+    }
     public static bool SelectMutationPredicates(bool unique, uint[] keys, uint[] columns, byte[] eligible, uint[] selected)
     {
       bool admitted = false;

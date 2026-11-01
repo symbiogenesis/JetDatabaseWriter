@@ -32,6 +32,9 @@ function Get-NativeCompatibilityMethods {
         'JetDatabaseWriter.Tests.ComplexColumns.AppendOnlyHistoryDaoTests.SharedHistory_LibraryAndNativeAssignmentsKeepEachMemoVersion'
         'JetDatabaseWriter.Tests.ComplexColumns.AppendOnlyHistoryDaoTests.SharedHistoryUniqueIndex_ValidatesTheCombinedStatementBeforeMutation'
         'JetDatabaseWriter.Tests.Writer.InPlaceRowUpdateDaoTests.Dao120_NonKeyEdits_RetainNativeRowsAndCompact'
+        'JetDatabaseWriter.Tests.Indexes.ForeignKeyIncrementalEvidenceTests.Dao120_SingleLeaf_InsertUsesIncrementalPathAndBoundedReads'
+        'JetDatabaseWriter.Tests.Indexes.ForeignKeyIncrementalEvidenceTests.Dao120_MultiLevel_GrowthKeyChangesDeleteAndCompactPreserveMembership'
+        'JetDatabaseWriter.Tests.RoundTrip.VariableValueWidthDaoTests.Dao120_WidthRefusal_RetainsNativeIndexAndCompact'
     )
 }
 

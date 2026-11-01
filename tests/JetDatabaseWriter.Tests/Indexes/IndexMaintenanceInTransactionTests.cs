@@ -204,14 +204,11 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
     [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
     [InlineData(DatabaseFormat.AceAccdb, WriteMode.AutoCommit)]
     [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct)]
-    public async Task SingleInserts_IntoChildWithForeignKeyIndex_TakeFullRebuildAndKeepIndexesConsistent(
+    public async Task SingleInserts_IntoChildWithForeignKeyIndex_StayIncrementalAndKeepIndexesConsistent(
         DatabaseFormat format,
         WriteMode mode)
     {
-        // A foreign-key logical index keeps the table on the full rebuild
-        // for every insert (bail C1c), so each insert rebuilds the primary
-        // key and the foreign-key index from a snapshot of the table the
-        // transaction created.
+        // Random single inserts exercise FK tree splits in each write mode.
         (MemoryStream stream, string parentTable, string parentKey, List<int> parentIds) = await this.CreateParentDatabaseAsync(format);
         await using MemoryStream disposeStream = stream;
         List<int> expectedIds = DistinctRandomIds(400);
@@ -238,10 +235,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
                 int parentId = parentIds[id % parentIds.Count];
                 await writer.InsertRowAsync(ChildTable, [id, parentId, padding], this.ct);
                 expectedParentIds.Add(id, parentId);
-                if (expectedParentIds.Count == 1)
-                {
-                    Assert.StartsWith("C1c", services.Indexes.LastIncrementalBail, StringComparison.Ordinal);
-                }
+                Assert.Null(services.Indexes.LastIncrementalBail);
             }
 
             await AssertChildIndexesMatchAsync(writer.Database, expectedParentIds, this.ct);

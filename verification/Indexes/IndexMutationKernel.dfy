@@ -11,6 +11,77 @@ module IndexMutationNativeTypes {
 module IndexMutationKernel {
   import opened IndexMutationNativeTypes
 
+  // Relationship metadata is admitted only for the native layouts exercised
+  // by the independent engine controls. These are local reference bounds;
+  // partner-table acquisition and relationship enforcement remain adapters.
+  function AdmitRelationshipReference(realIndex: I64, realCount: U32, partner: I64,
+      partnerPage: I64, pageCount: I64, role: Byte, cascadeUp: Byte, cascadeDown: Byte): bool {
+    0 <= realIndex < realCount as I64 && 0 <= partner && 1 < partnerPage < pageCount &&
+      (role == 1 || role == 2) && cascadeUp <= 1 && cascadeDown <= 1
+  }
+
+  function AdmitRelationshipIndexForm(format: U32, pageSize: U32, physicalSize: U32,
+      logicalSize: U32, completeSlots: bool, ordinaryKeys: bool): bool {
+    ((format == 0 && pageSize == 2048 && physicalSize == 39 && logicalSize == 20) ||
+      ((format == 1 || format == 2) && pageSize == 4096 && physicalSize == 52 && logicalSize == 28)) &&
+      completeSlots && ordinaryKeys
+  }
+
+  function AdmitRelationshipKey(columnType: Byte, keyCount: U32, ascending: bool,
+      isFixed: bool, calculated: bool, flags: Byte): bool {
+    columnType == 4 && keyCount == 1 && ascending && isFixed && !calculated &&
+      flags % 128 < 16 && flags % 8 < 4
+  }
+
+  ghost predicate ExactIndexPageSet(root: I64, tree: seq<I64>, mapped: seq<I64>) {
+    0 < |tree| == |mapped| &&
+      (forall index: nat :: index < |tree| ==> (tree[index] == mapped[index] && 0 < tree[index] &&
+        (index == 0 || tree[index - 1] < tree[index]))) && root in tree
+  }
+
+  // The adapter acquires complete owned tree/map arrays and sorts them. This
+  // scan checks every supplied member, duplicates, positivity and root presence;
+  // correctness does not depend on an unchecked sorting contract.
+  method ValidateIndexPageSet(root: I64, tree: array<I64>, mapped: array<I64>) returns (admitted: bool)
+    requires tree.Length <= 2147483647 && mapped.Length <= 2147483647
+    ensures admitted <==> ExactIndexPageSet(root, tree[..], mapped[..])
+  {
+    admitted := false;
+    if tree.Length as U32 == 0 || tree.Length as U32 != mapped.Length as U32 { return; }
+    var index: U32 := 0;
+    var previous: I64 := 0;
+    var found := false;
+    while index < tree.Length as U32
+      invariant index <= tree.Length as U32
+      invariant tree.Length == mapped.Length && 0 < tree.Length
+      invariant forall prior: nat :: prior < index as int ==> (tree[prior] == mapped[prior] &&
+        0 < tree[prior] && (prior == 0 || tree[prior - 1] < tree[prior]))
+      invariant index == 0 ==> previous == 0
+      invariant index > 0 ==> previous == tree[index - 1]
+      invariant found <==> root in tree[..index as int]
+      decreases tree.Length - index as int
+    {
+      if tree[index] <= previous || tree[index] != mapped[index] {
+        assert !(forall prior: nat :: prior < tree.Length ==> (tree[prior] == mapped[prior] &&
+          0 < tree[prior] && (prior == 0 || tree[prior - 1] < tree[prior])));
+        return;
+      }
+      found := found || tree[index] == root;
+      previous := tree[index];
+      index := index + 1;
+    }
+    admitted := found;
+  }
+
+  lemma ExactIndexMapProtectsReachablePages(root: I64, tree: seq<I64>, mapped: seq<I64>, page: I64)
+    requires ExactIndexPageSet(root, tree, mapped)
+    ensures root in mapped
+    ensures page in tree <==> page in mapped
+    ensures page !in mapped ==> page !in tree
+  {
+    assert tree == mapped;
+  }
+
   ghost predicate HasMutationComponent(columns: seq<U32>, eligible: seq<Byte>, column: U32) {
     |columns| == |eligible| &&
       exists candidate: nat :: candidate < |columns| && eligible[candidate] == 1 && columns[candidate] == column

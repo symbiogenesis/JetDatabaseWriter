@@ -17,6 +17,7 @@ using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
+using JetDatabaseWriter.Verification;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -1382,6 +1383,61 @@ internal sealed class IndexMaintainer(
         }
     }
 
+    /// <summary>Checks acquired tree/map ownership before relationship edits and before successful completion.</summary>
+    /// <param name="definition">The latest logical TDEF image.</param>
+    /// <param name="slots">Every maintained physical index.</param>
+    /// <param name="groups">Complete acquired trees, indexed by physical slot.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether every tree has its exact map and distinct physical trees share no pages.</returns>
+    private async ValueTask<bool> HaveExactDisjointIndexMapsAsync(byte[] definition, List<(int RealIdxNum, RealIdxEntry Entry)> slots, long[][] groups, CancellationToken cancellationToken)
+    {
+        var mapPages = new Dictionary<int, byte[]>();
+        var owned = new HashSet<long>();
+        try
+        {
+            foreach ((int realIndex, RealIdxEntry entry) in slots)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!UsageMap.TryReadPointer(definition, entry.FirstDpOffset - 4, out UsageMapPointer pointer))
+                {
+                    return false;
+                }
+
+                List<long>? members = await this.TryReadStrictIndexMapMembersAsync(pointer, mapPages, cancellationToken).ConfigureAwait(false);
+                if (members is null)
+                {
+                    return false;
+                }
+
+                long[] tree = (long[])groups[realIndex].Clone();
+                long[] mapped = members.ToArray();
+                Array.Sort(tree);
+                Array.Sort(mapped);
+                if (!IndexMutationKernel.ValidateIndexPageSet((uint)Ri32(definition, entry.FirstDpOffset), tree, mapped))
+                {
+                    return false;
+                }
+
+                foreach (long page in tree)
+                {
+                    if (!owned.Add(page))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+        finally
+        {
+            foreach (byte[] page in mapPages.Values)
+            {
+                PageBuffers.Return(page);
+            }
+        }
+    }
+
     private async ValueTask<List<long>?> TryReadStrictIndexMapMembersAsync(UsageMapPointer pointer, Dictionary<int, byte[]> mapPages, CancellationToken cancellationToken)
     {
         if (pointer.PageNumber <= 1 || pointer.PageNumber >= pager.PageCount)
@@ -1895,10 +1951,9 @@ internal sealed class IndexMaintainer(
         int realIdxDescStart = preamble.RealIdxDescStart;
         int logIdxStart = idxLayout.LogicalIdxStart(realIdxDescStart, numRealIdx);
 
-        // Access Compact & Repair has rejected incrementally maintained
-        // relationship-backed indexes in probe validation; keep those tables
-        // on the bulk rebuild path until the FK incremental layout is proven
-        // against Access-authored repair output.
+        // Native relationship controls cover ordinary ascending Int32 keys.
+        // Other relationship forms retain the conservative rebuild path.
+        var relationshipSlots = new HashSet<int>();
         for (int li = 0; li < numIdx; li++)
         {
             if (!idxLayout.TryReadLogicalEntry(metadata.Buffer, logIdxStart, li, out LogicalIdxEntry entry))
@@ -1909,8 +1964,14 @@ internal sealed class IndexMaintainer(
 
             if (entry.IndexType == IndexKind.ForeignKey)
             {
-                this.LastIncrementalBail = "C1c foreign-key logical index present";
-                return false;
+                byte role = metadata.Buffer[entry.FieldsOffset + Constants.TableDefinition.Jet3.LogicalIdx.RelTblTypeOffset];
+                if (!IndexMutationKernel.AdmitRelationshipReference(entry.IndexNum2, checked((uint)numRealIdx), entry.RelIdxNum, entry.RelTblPage, pager.PageCount, role, entry.CascadeUps, entry.CascadeDels))
+                {
+                    this.LastIncrementalBail = "C1c unsupported foreign-key reference";
+                    return false;
+                }
+
+                relationshipSlots.Add(entry.IndexNum2);
             }
         }
 
@@ -1936,6 +1997,39 @@ internal sealed class IndexMaintainer(
         {
             this.LastIncrementalBail = $"C1d no usable real-idx slots numIdx={numIdx} numRealIdx={numRealIdx}";
             return false;
+        }
+
+        if (relationshipSlots.Count > 0)
+        {
+            Dictionary<int, int> columns = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
+            bool ordinaryKeys = true;
+            foreach ((int realIndex, RealIdxEntry entry) in slots)
+            {
+                if (!relationshipSlots.Contains(realIndex))
+                {
+                    continue;
+                }
+
+                ordinaryKeys &= idxLayout.TryReadRealIdxSlot(metadata.Buffer, realIdxDescStart, realIndex, out RealIdxSlot slot)
+                    && IndexLayout.TryResolveKeyColumnInfos(entry.IndexKeyColumns, tableDef.Columns, columns, out List<KeyColumnInfo>? keys)
+                    && keys.Count > 0
+                    && IndexMutationKernel.AdmitRelationshipKey((byte)keys[0].Col.Type, checked((uint)keys.Count), keys[0].Ascending, keys[0].Col.IsFixed, keys[0].Col.IsCalculated, slot.Flags);
+            }
+
+            if (!IndexMutationKernel.AdmitRelationshipIndexForm(checked((uint)format.Kind), checked((uint)format.PageSize), checked((uint)idxLayout.RealIdxPhysSize), checked((uint)idxLayout.LogicalEntrySize), slots.Count == numRealIdx, ordinaryKeys))
+            {
+                this.LastIncrementalBail = "C1c unsupported foreign-key index form";
+                return false;
+            }
+
+            long[][]? groups = await this.TryCollectIncrementalIndexPageGroupsAsync(tdefPage, metadata.Buffer, layout, slots, numRealIdx, cancellationToken).ConfigureAwait(false);
+            if (groups is null || !await this.HaveExactDisjointIndexMapsAsync(metadata.Buffer, slots, groups, cancellationToken).ConfigureAwait(false))
+            {
+                this.LastIncrementalBail = "C1c foreign-key tree/map membership mismatch";
+                return false;
+            }
+
+            metadata.RequireExactRelationshipMaps = true;
         }
 
         if (format.IsJet3)
@@ -2479,6 +2573,7 @@ internal sealed class IndexMaintainer(
     }
 
     /// <summary>Links staged trees and refreshes usage maps from the latest TDEF image.</summary>
+    /// <exception cref="JetCorruptDataException">An admitted relationship tree no longer has its exact usage map.</exception>
     /// <param name="tdefPage">The tdefPage for this phase.</param>
     /// <param name="layout">The layout for this phase.</param>
     /// <param name="slots">The slots for this phase.</param>
@@ -2507,6 +2602,11 @@ internal sealed class IndexMaintainer(
         // rebuilt since the last TDEF write.
         runs.MarkLinked();
         await this.WriteIncrementalIndexUsageMapsAsync(tdefPage, metadata.Buffer, slots, indexPageGroups, cancellationToken).ConfigureAwait(false);
+
+        if (metadata.RequireExactRelationshipMaps && !await this.HaveExactDisjointIndexMapsAsync(metadata.Buffer, slots, indexPageGroups, cancellationToken).ConfigureAwait(false))
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "Relationship index trees and usage maps disagree after incremental maintenance.", new JetErrorInfo { PageNumber = tdefPage });
+        }
 
         metadata.Dirty = true;
 
@@ -2538,5 +2638,8 @@ internal sealed class IndexMaintainer(
 
         /// <summary>Gets or sets the traversable trees captured before editing.</summary>
         public long[][]? ReplacedPageGroups { get; set; }
+
+        /// <summary>Gets or sets a value indicating whether native relationship map admission must be retained.</summary>
+        public bool RequireExactRelationshipMaps { get; set; }
     }
 }
