@@ -211,8 +211,18 @@ module LongValueTraversal {
         AccumulateGrowthWork(count as int,growthProbes,allocationSlots,0,0);
         count := K.VisitedAddPayload(decision);
       }
-      assert count as int == previousCount + 1;
+      assert {:isolate} count as int == previousCount + 1;
       seen := seen + {current};
+      // Separate the concrete visited-table handoff from nonlinear resource
+      // accounting before re-establishing the complete traversal invariant.
+      assert {:isolate} K.TrackedVisited(K.VisitedSnapshot(entries),count) &&
+        seen == K.VisitedMembers(K.VisitedSnapshot(entries));
+      assert {:isolate} |seen| == count as int && 0 !in seen;
+      assert {:isolate} capacity as int == |K.VisitedSnapshot(entries)| &&
+        capacity as int <= 16 + 4 * (count as int) &&
+        capacity as int <= allocationSlots &&
+        (capacity > 0 ==> (16 <= capacity && count <= capacity / 2 &&
+          allocationSlots < 2 * (capacity as int)));
       assert {:isolate} preparationProbes <= (count as int) * (16 + 4 * (count as int));
       assert {:isolate} growthProbes <= (2 * (count as int) + 1) * allocationSlots;
       assert {:isolate} scannedSlots <= allocationSlots && peakSlots <= allocationSlots &&
