@@ -60,13 +60,16 @@ public sealed class DataRemanenceTests
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb)]
-    [InlineData(DatabaseFormat.Jet4Mdb)]
-    [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task UpdateRows_ReusesPayloadSpaceWithDistinctSlotIdentity(DatabaseFormat format)
+    [InlineData(DatabaseFormat.Jet3Mdb, 64)]
+    [InlineData(DatabaseFormat.Jet4Mdb, 64)]
+    [InlineData(DatabaseFormat.AceAccdb, 64)]
+    [InlineData(DatabaseFormat.Jet3Mdb, 96)]
+    [InlineData(DatabaseFormat.Jet4Mdb, 96)]
+    [InlineData(DatabaseFormat.AceAccdb, 96)]
+    public async Task UpdateRows_FixedBinaryPayloadPreservesSlotAndOverwritesOldBytes(DatabaseFormat format, int replacementLength)
     {
         byte[] originalPayload = BuildPayload(64, 0x41);
-        byte[] replacementPayload = BuildPayload(64, 0x52);
+        byte[] replacementPayload = BuildPayload(replacementLength, 0x52);
         byte[] originalMarker = MarkerOf(originalPayload);
         byte[] replacementMarker = MarkerOf(replacementPayload);
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
@@ -99,10 +102,18 @@ public sealed class DataRemanenceTests
         RowSnapshot oldSlot = ReadRowSnapshot(afterUpdate, format, originalSlot.PageNumber, originalSlot.RowIndex);
         RowSnapshot replacementSlot = AssertSingleLiveRowContaining(afterUpdate, format, replacementMarker);
 
-        Assert.True(oldSlot.IsDeleted);
-        Assert.Empty(oldSlot.Bytes);
-        Assert.NotEqual((originalSlot.PageNumber, originalSlot.RowIndex), (replacementSlot.PageNumber, replacementSlot.RowIndex));
+        Assert.False(oldSlot.IsDeleted);
+        Assert.Equal(originalSlot.RowIndex, replacementSlot.RowIndex);
+        Assert.Equal(originalSlot.Start, replacementSlot.Start);
+        Assert.Equal(originalSlot.Bytes.Length, replacementSlot.Bytes.Length);
         Assert.Equal(originalSlot.PageNumber, replacementSlot.PageNumber);
+        Assert.False(ContainsSequence(afterUpdate, originalMarker));
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        using DataTable table = await reader.ReadTableAsync("UpdateRows", cancellationToken: TestContext.Current.CancellationToken);
+        byte[] expectedPayload = new byte[128];
+        replacementPayload.CopyTo(expectedPayload, 0);
+        Assert.Equal(expectedPayload, Assert.IsType<byte[]>(Assert.Single(table.Rows.Cast<DataRow>())["Payload"]));
     }
 
     [Theory]
