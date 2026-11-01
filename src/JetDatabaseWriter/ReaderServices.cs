@@ -39,7 +39,7 @@ internal sealed class ReaderServices : IDisposable
             context,
             db.DatabasePath);
 
-        this.Operations = new AsyncReentrantOperationGate(typeof(AccessReader), context.AttachmentReadContext);
+        this.Operations = new AsyncReentrantOperationGate(typeof(AccessReader), context.AttachmentReadContext, context.ComplexItemReads);
         JetFormat format = db.Format;
         TableDefReader tableDefs = db.TableDefs;
         this.PageCache = new ReaderPageCache(format, db.Pages, options.PageCacheSize);
@@ -51,7 +51,7 @@ internal sealed class ReaderServices : IDisposable
         this.TableCatalog = new TableCatalog(db.Pages, tableDefs, catalogRows, columnProperties);
         this.Catalog = new CatalogReader(format, tableDefs, this.TableCatalog, catalogRows, rows);
 
-        var complexColumns = new ComplexColumnReader(format, tableDefs, this.Catalog, rows, options.DiagnosticsEnabled, options.MaxAttachmentContentBytes, options.MaxComplexDiscoveryEntries, options.MaxAttachmentContentBytesPerOperation, options.MaxAttachmentDecodeWorkBytesPerOperation, context.AttachmentReadContext);
+        var complexColumns = new ComplexColumnReader(format, tableDefs, this.Catalog, rows, options.DiagnosticsEnabled, options.MaxAttachmentContentBytes, options.MaxComplexDiscoveryEntries, options.MaxAttachmentContentBytesPerOperation, options.MaxAttachmentDecodeWorkBytesPerOperation, context.AttachmentReadContext, options.MaxComplexItemIdentityEntriesPerOperation, context.ComplexItemReads);
         this.LinkedTables = new LinkedTableReader(this.Catalog, linkedSources);
         this.Tables = new TableReader(db.Format, db.Pages, tableDefs, db.OwnedPages, this.PageCache, rows, this.Catalog, complexColumns, this.LinkedTables, this.Operations, options);
         this.Indexes = new IndexRowReader(format, tableDefs, this.PageCache, rows, this.Catalog, complexColumns, this.Tables, this.LinkedTables, this.Operations);
@@ -119,6 +119,11 @@ internal sealed class ReaderServices : IDisposable
         if (options.MaxComplexDiscoveryEntries <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "MaxComplexDiscoveryEntries must be positive.");
+        }
+
+        if (options.MaxComplexItemIdentityEntriesPerOperation <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxComplexItemIdentityEntriesPerOperation must be positive.");
         }
 
         if (options.MaxAttachmentDecodeWorkBytesPerOperation <= 0)

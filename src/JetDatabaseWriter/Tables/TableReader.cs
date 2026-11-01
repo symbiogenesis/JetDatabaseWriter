@@ -442,8 +442,8 @@ internal sealed class TableReader(
         CatalogEntry entry = resolved.Entry;
         TableDef td = resolved.Definition;
         long rowCount = 0;
-        Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
-            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns: null, cancellationToken).ConfigureAwait(false)
+        ComplexColumnReader.RowResolver? complexResolver = td.HasComplexColumns
+            ? await complexColumns.CreateRowResolverAsync(tableName, td.Columns, wantedColumns: null, cancellationToken).ConfigureAwait(false)
             : null;
         IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateStrings(td, rows.StrictParsing);
@@ -454,9 +454,9 @@ internal sealed class TableReader(
 
             await foreach (string[] row in rows.EnumerateRowsAsync(scanPage.Lease, scanPage.PageNumber, decodePlan, cancellationToken).ConfigureAwait(false))
             {
-                if (td.HasComplexColumns)
+                if (complexResolver is not null)
                 {
-                    ComplexColumnReader.ResolveStringColumns(row, td.Columns, complexData);
+                    await complexResolver.ResolveAsync(row, cancellationToken).ConfigureAwait(false);
                 }
 
                 yield return row;
@@ -777,7 +777,7 @@ internal sealed class TableReader(
                             continue;
                         }
 
-                        scan.Apply(rowBuffer);
+                        await scan.ApplyAsync(rowBuffer, cancellationToken).ConfigureAwait(false);
 
                         DataRow newRow = dt.NewRow();
                         for (int i = 0; i < colCount; i++)
@@ -940,7 +940,7 @@ internal sealed class TableReader(
                         continue;
                     }
 
-                    scan.Apply(rowBuffer);
+                    await scan.ApplyAsync(rowBuffer, cancellationToken).ConfigureAwait(false);
 
                     yield return factory(rowBuffer);
                     rowCount++;
@@ -1007,7 +1007,7 @@ internal sealed class TableReader(
                     continue;
                 }
 
-                scan.Apply(row);
+                await scan.ApplyAsync(row, cancellationToken).ConfigureAwait(false);
 
                 yield return row;
                 rowCount++;
@@ -1099,11 +1099,11 @@ internal sealed class TableReader(
             && (wantedColumns == null || HasWantedColumnOfType(definition.Columns, wantedColumns, ComplexType));
         bool needsHyperlinkPass = definition.HasHyperlinkColumns
             && (wantedColumns == null || HasWantedHyperlinkColumn(definition.ClrTypes, wantedColumns));
-        Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
-            ? await complexColumns.BuildColumnDataAsync(tableName, definition.Columns, wantedColumns, cancellationToken).ConfigureAwait(false)
+        ComplexColumnReader.RowResolver? complexResolver = needsComplexPass
+            ? await complexColumns.CreateRowResolverAsync(tableName, definition.Columns, wantedColumns, cancellationToken).ConfigureAwait(false)
             : null;
         IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        return new TypedTableScan(definition, pageNumbers, complexData, needsComplexPass, needsHyperlinkPass);
+        return new TypedTableScan(definition, pageNumbers, complexResolver, needsHyperlinkPass);
     }
 
     /// <summary>Prepares a row synchronously unless its overflow target needs resolving.</summary>
@@ -1256,15 +1256,14 @@ internal sealed class TableReader(
     private readonly record struct TypedTableScan(
         TableDef Definition,
         IReadOnlyList<long> PageNumbers,
-        Dictionary<int, Dictionary<int, byte[]>>? ComplexData,
-        bool NeedsComplexPass,
+        ComplexColumnReader.RowResolver? ComplexResolver,
         bool NeedsHyperlinkPass)
     {
-        internal void Apply(object?[] row)
+        internal async ValueTask ApplyAsync(object?[] row, CancellationToken cancellationToken)
         {
-            if (this.NeedsComplexPass)
+            if (this.ComplexResolver is not null)
             {
-                ComplexColumnReader.ResolveColumns(row, this.Definition.Columns, this.ComplexData);
+                await this.ComplexResolver.ResolveAsync(row, cancellationToken).ConfigureAwait(false);
             }
 
             if (this.NeedsHyperlinkPass)

@@ -10,7 +10,9 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -35,7 +37,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="maxAttachmentContentBytesPerOperation">The maximum aggregate attachment content length for one attachment read or table scan.</param>
 /// <param name="maxAttachmentDecodeWorkBytesPerOperation">The maximum aggregate attachment byte-processing work.</param>
 /// <param name="attachmentReads">The operation budget context shared by nested and linked reads.</param>
-internal sealed class ComplexColumnReader(JetFormat format, TableDefReader tableDefs, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled, int maxAttachmentContentBytes = 64 * 1024 * 1024, int maxComplexDiscoveryEntries = 65536, long maxAttachmentContentBytesPerOperation = 256 * 1024 * 1024, long maxAttachmentDecodeWorkBytesPerOperation = 2L * 1024 * 1024 * 1024, AttachmentReadContext? attachmentReads = null)
+/// <param name="maxComplexItemIdentityEntriesPerOperation">The aggregate scalar identity inspection allowance.</param>
+/// <param name="complexItemReads">The identity allowance shared by nested and linked operations.</param>
+internal sealed partial class ComplexColumnReader(JetFormat format, TableDefReader tableDefs, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled, int maxAttachmentContentBytes = 64 * 1024 * 1024, int maxComplexDiscoveryEntries = 65536, long maxAttachmentContentBytesPerOperation = 256 * 1024 * 1024, long maxAttachmentDecodeWorkBytesPerOperation = 2L * 1024 * 1024 * 1024, AttachmentReadContext? attachmentReads = null, int maxComplexItemIdentityEntriesPerOperation = 1_048_576, ComplexItemIdentityReadContext? complexItemReads = null)
 {
     private const int DescriptorCacheCapacity = 64;
     private const int ObjectNameCacheCapacity = 4096;
@@ -55,59 +59,6 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     private Dictionary<long, CatalogRow>? objectNames;
     private int metadataGeneration = -1;
     private long metadataWriteEpoch = -1;
-
-    /// <summary>
-    /// Replaces each complex column's <see cref="ComplexIdRef"/> in a typed row
-    /// with the <see cref="ComplexCellValue"/> cell holding every item stored
-    /// for that reference, or <see cref="DBNull"/> when the row has none.
-    /// </summary>
-    /// <param name="typedRow">The decoded row.</param>
-    /// <param name="columns">The table's columns.</param>
-    /// <param name="complexData">Cells by column index and complex reference, from <see cref="BuildColumnDataAsync"/>.</param>
-    internal static void ResolveColumns(object?[] typedRow, IReadOnlyList<ColumnInfo> columns, Dictionary<int, Dictionary<int, byte[]>>? complexData)
-    {
-        int limit = Math.Min(columns.Count, typedRow.Length);
-        for (int i = 0; i < limit; i++)
-        {
-            if (columns[i].Type is ComplexType)
-            {
-                typedRow[i] = typedRow[i] is ComplexIdRef reference && TryGetCell(complexData, i, reference.Id, out byte[] cell)
-                    ? cell
-                    : DBNull.Value;
-            }
-        }
-    }
-
-    /// <summary>
-    /// String-row counterpart of <see cref="ResolveColumns"/>: replaces each
-    /// complex column's reference with its cell as a base64 <c>data:</c> URI,
-    /// or an empty string when the row has no items.
-    /// </summary>
-    /// <param name="row">The decoded string row.</param>
-    /// <param name="columns">The table's columns.</param>
-    /// <param name="complexData">Cells by column index and complex reference, from <see cref="BuildColumnDataAsync"/>.</param>
-    internal static void ResolveStringColumns(string[] row, IReadOnlyList<ColumnInfo> columns, Dictionary<int, Dictionary<int, byte[]>>? complexData)
-    {
-        const string prefix = "__CX:";
-        const string suffix = "__";
-
-        int limit = Math.Min(columns.Count, row.Length);
-        for (int i = 0; i < limit; i++)
-        {
-            if (columns[i].Type is not ComplexType)
-            {
-                continue;
-            }
-
-            string value = row[i] ?? string.Empty;
-            bool isReference = value.Length > prefix.Length + suffix.Length
-                && value.StartsWith(prefix, StringComparison.Ordinal)
-                && value.EndsWith(suffix, StringComparison.Ordinal);
-            row[i] = isReference && int.TryParse(value.AsSpan(prefix.Length, value.Length - prefix.Length - suffix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out int complexId) && TryGetCell(complexData, i, complexId, out byte[] cell)
-                ? "data:application/octet-stream;base64," + Convert.ToBase64String(cell)
-                : string.Empty;
-        }
-    }
 
     internal async ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken)
     {
@@ -215,50 +166,24 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     }
 
     /// <summary>
-    /// Loads the complex columns of <paramref name="tableName"/> into
-    /// <see cref="ComplexCellValue"/> cells: one cell per parent complex
-    /// reference, holding every attachment or value stored for it. Only the
-    /// columns <paramref name="wantedColumns"/> selects are loaded, so a read
-    /// that maps a few columns never reads the flat tables or long values of
-    /// the complex columns it leaves out.
+    /// Creates scan-local resolution of selected complex columns. Metadata is
+    /// retained per column; attachment payloads and cells belong only to the
+    /// parent row currently being resolved.
     /// </summary>
     /// <param name="tableName">The parent table name.</param>
     /// <param name="columns">The parent table's columns.</param>
-    /// <param name="wantedColumns">The columns to load, by column index, or <see langword="null"/> for every complex column.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>Cells by column index and complex reference, or <see langword="null"/> when no loaded complex column has items.</returns>
-    internal async ValueTask<Dictionary<int, Dictionary<int, byte[]>>?> BuildColumnDataAsync(
+    /// <param name="wantedColumns">The columns to resolve, or null for all columns.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The demand-driven resolver.</returns>
+    internal async ValueTask<RowResolver> CreateRowResolverAsync(
         string tableName,
         IReadOnlyList<ColumnInfo> columns,
         bool[]? wantedColumns,
         CancellationToken cancellationToken)
     {
-        Dictionary<int, Dictionary<int, byte[]>>? result = null;
-        IReadOnlyList<ComplexColumnInfo>? complexColumns = null;
-        var discovery = new DiscoveryBudget(maxComplexDiscoveryEntries);
-        AttachmentWrapper.ContentBudget attachmentContent = this.GetAttachmentBudget();
-
-        for (int i = 0; i < columns.Count; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            ColumnInfo col = columns[i];
-            if (col.Type is not ComplexType
-                || (wantedColumns is not null && (i >= wantedColumns.Length || !wantedColumns[i])))
-            {
-                continue;
-            }
-
-            complexColumns ??= await this.TryGetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
-            Dictionary<int, byte[]>? colData = await this.LoadColumnCellsAsync(tableName, col.Name, complexColumns, discovery, attachmentContent, cancellationToken).ConfigureAwait(false);
-            if (colData?.Count > 0)
-            {
-                result ??= [];
-                result[i] = colData;
-            }
-        }
-
-        return result;
+        var resolver = new RowResolver(this, tableName, columns, wantedColumns, maxComplexDiscoveryEntries, this.GetAttachmentBudget());
+        await resolver.PrepareAsync(cancellationToken).ConfigureAwait(false);
+        return resolver;
     }
 
     /// <summary>
@@ -415,48 +340,6 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         "MSYSCOMPLEXTYPE_TEXT" => TextType,
         _ => null,
     };
-
-    private static bool TryGetCell(Dictionary<int, Dictionary<int, byte[]>>? complexData, int columnIndex, int complexId, out byte[] cell)
-    {
-        if (complexId > 0
-            && complexData != null
-            && complexData.TryGetValue(columnIndex, out Dictionary<int, byte[]>? cells)
-            && cells.TryGetValue(complexId, out byte[]? found))
-        {
-            cell = found;
-            return true;
-        }
-
-        cell = [];
-        return false;
-    }
-
-    private static Dictionary<int, byte[]> GroupCells<T>(
-        IReadOnlyList<T> items,
-        Func<T, int> conceptualTableId,
-        Func<int, IReadOnlyList<T>, byte[]> encode)
-    {
-        var byParent = new Dictionary<int, List<T>>();
-        foreach (T item in items)
-        {
-            int parentId = conceptualTableId(item);
-            if (!byParent.TryGetValue(parentId, out List<T>? group))
-            {
-                group = [];
-                byParent[parentId] = group;
-            }
-
-            group.Add(item);
-        }
-
-        var cells = new Dictionary<int, byte[]>(byParent.Count);
-        foreach (KeyValuePair<int, List<T>> pair in byParent)
-        {
-            cells[pair.Key] = encode(pair.Key, pair.Value);
-        }
-
-        return cells;
-    }
 
     /// <summary>
     /// Finds a multi-value flat table's value column: the column named
@@ -1008,7 +891,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     /// <summary>
     /// Best-effort <see cref="GetComplexColumnsAsync"/> for table scans: recoverable damage to a
     /// parent TDEF is traced and
-    /// yields no descriptors, so <see cref="LoadColumnCellsAsync"/> falls back to
+    /// yields no descriptors, so <see cref="PrepareColumnSourceAsync"/> falls back to
     /// finding each flat table through its parent/column catalog mapping instead of failing the whole read.
     /// Missing or ambiguous required catalog structure remains a corruption failure in every mode.
     /// </summary>
@@ -1036,12 +919,11 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         return [];
     }
 
-    private async ValueTask<Dictionary<int, byte[]>?> LoadColumnCellsAsync(
+    private async ValueTask<ColumnSource?> PrepareColumnSourceAsync(
         string tableName,
         string columnName,
         IReadOnlyList<ComplexColumnInfo> complexColumns,
         DiscoveryBudget discovery,
-        AttachmentWrapper.ContentBudget attachmentContent,
         CancellationToken cancellationToken)
     {
         try
@@ -1062,37 +944,65 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                 kind = ClassifyFlatTable(flat.Definition, columnName);
             }
 
-            Dictionary<int, byte[]> cells;
-            if (kind == ComplexColumnKind.Attachment)
+            int foreignKey = FindForeignKeyIndex(flat.Definition, columnName);
+            IndexMetadata? selectedIndex = null;
+            TDefImage? image = await tableDefs.ReadImageAsync(flat.TDefPage, cancellationToken).ConfigureAwait(false);
+            if (foreignKey >= 0 && image is not null)
             {
-                cells = GroupCells(
-                    await this.ReadAttachmentsAsync(flat, columnName, attachmentContent, cancellationToken).ConfigureAwait(false),
-                    static attachment => attachment.ConceptualTableId,
-                    ComplexCellValue.EncodeAttachments);
-            }
-            else
-            {
-                IReadOnlyList<MultiValueItem> items = await this.ReadMultiValueItemsAsync(flat, columnName, kind, cancellationToken).ConfigureAwait(false);
-                cells = kind == ComplexColumnKind.VersionHistory
-                    ? GroupCells(items, static item => item.ConceptualTableId, ComplexCellValue.EncodeVersionHistoryItems)
-                    : GroupCells(items, static item => item.ConceptualTableId, ComplexCellValue.EncodeMultiValueItems);
+                foreach (IndexMetadata index in IndexCatalogReader.ReadMetadata(format, image.CopyBytes(), image.Columns))
+                {
+                    if (index.FirstDp > 0 && index.Columns.Count > 0
+                        && index.Columns[0].ColumnNumber == flat.Definition.Columns[foreignKey].ColNum
+                        && index.Columns[0].IsAscending)
+                    {
+                        selectedIndex = index;
+                        break;
+                    }
+                }
             }
 
-            return cells.Count > 0 ? cells : null;
+            return new ColumnSource(flat, kind, selectedIndex);
         }
         catch (JetCorruptDataException ex) when (!rows.StrictParsing && ex.ErrorCode != JetErrorCode.CorruptCatalog)
         {
-            this.TraceBestEffortFallback(nameof(LoadColumnCellsAsync), ex);
+            this.TraceBestEffortFallback(nameof(PrepareColumnSourceAsync), ex);
             return null;
         }
         catch (IndexOutOfRangeException ex) when (!rows.StrictParsing)
         {
-            this.TraceBestEffortFallback(nameof(LoadColumnCellsAsync), ex);
+            this.TraceBestEffortFallback(nameof(PrepareColumnSourceAsync), ex);
             return null;
         }
         catch (OverflowException ex) when (!rows.StrictParsing)
         {
-            this.TraceBestEffortFallback(nameof(LoadColumnCellsAsync), ex);
+            this.TraceBestEffortFallback(nameof(PrepareColumnSourceAsync), ex);
+            return null;
+        }
+    }
+
+    private async ValueTask<byte[]?> LoadCellAsync(ColumnSource source, string columnName, int parentReference, AttachmentWrapper.ContentBudget attachmentContent, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (source.Kind == ComplexColumnKind.Attachment)
+            {
+                IReadOnlyList<AttachmentRecord> items = await this.ReadAttachmentsAsync(source.Flat, columnName, attachmentContent, parentReference, source.Index, source.Inventory, cancellationToken).ConfigureAwait(false);
+                return items.Count == 0 ? null : ComplexCellValue.EncodeAttachments(parentReference, items);
+            }
+
+            IReadOnlyList<MultiValueItem> values = await this.ReadMultiValueItemsAsync(source.Flat, columnName, source.Kind, parentReference, source.Index, source.Inventory, cancellationToken).ConfigureAwait(false);
+            if (values.Count == 0)
+            {
+                return null;
+            }
+
+            return source.Kind == ComplexColumnKind.VersionHistory
+                ? ComplexCellValue.EncodeVersionHistoryItems(parentReference, values)
+                : ComplexCellValue.EncodeMultiValueItems(parentReference, values);
+        }
+        catch (JetCorruptDataException ex) when (!rows.StrictParsing && ex.ErrorCode is not (JetErrorCode.CorruptCatalog or JetErrorCode.CorruptIndex))
+        {
+            this.TraceBestEffortFallback(nameof(LoadCellAsync), ex);
             return null;
         }
     }
@@ -1123,6 +1033,9 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     }
 
     private async ValueTask<IReadOnlyList<AttachmentRecord>> ReadAttachmentsAsync(FlatTable flat, string columnName, AttachmentWrapper.ContentBudget attachmentContent, CancellationToken cancellationToken)
+        => await this.ReadAttachmentsAsync(flat, columnName, attachmentContent, parentReference: null, index: null, inventory: null, cancellationToken).ConfigureAwait(false);
+
+    private async ValueTask<IReadOnlyList<AttachmentRecord>> ReadAttachmentsAsync(FlatTable flat, string columnName, AttachmentWrapper.ContentBudget attachmentContent, int? parentReference, IndexMetadata? index, ItemInventory? inventory, CancellationToken cancellationToken)
     {
         TableDef td = flat.Definition;
         int idxId = this.FindItemIdentityIndex(flat, columnName);
@@ -1131,8 +1044,6 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             return [];
         }
 
-        var seenIds = new HashSet<int>();
-        var ambiguousIds = new HashSet<int>();
         int idxFk = FindForeignKeyIndex(td, columnName);
         int idxFileUrl = td.FindColumnIndex("FileURL");
         int idxFileName = td.FindColumnIndex("FileName");
@@ -1141,12 +1052,9 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         int idxFileData = td.FindColumnIndex("FileData");
 
         var result = new List<AttachmentRecord>();
-        await foreach (object?[] row in rows.EnumerateTypedRowsForTdefAsync(flat.TDefPage, td, cancellationToken).ConfigureAwait(false))
+        await foreach (object?[] row in this.ReadReferenceRowsAsync(flat, columnName, parentReference, index, inventory, cancellationToken).ConfigureAwait(false))
         {
-            if (!this.AcceptItemIdentity(flat, row, idxId, seenIds, ambiguousIds, out int id))
-            {
-                continue;
-            }
+            int id = (int)row[idxId]!;
 
             byte[] fileData = idxFileData >= 0 && row[idxFileData] is byte[] stored ? stored : [];
             string fileType = ReadStringOrNull(row, idxFileType) ?? string.Empty;
@@ -1176,7 +1084,6 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             });
         }
 
-        result.RemoveAll(item => ambiguousIds.Contains(item.Id));
         return result;
     }
 
@@ -1193,6 +1100,9 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     /// <param name="kind">The column's kind.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<IReadOnlyList<MultiValueItem>> ReadMultiValueItemsAsync(FlatTable flat, string columnName, ComplexColumnKind kind, CancellationToken cancellationToken)
+        => await this.ReadMultiValueItemsAsync(flat, columnName, kind, parentReference: null, index: null, inventory: null, cancellationToken).ConfigureAwait(false);
+
+    private async ValueTask<IReadOnlyList<MultiValueItem>> ReadMultiValueItemsAsync(FlatTable flat, string columnName, ComplexColumnKind kind, int? parentReference, IndexMetadata? index, ItemInventory? inventory, CancellationToken cancellationToken)
     {
         TableDef td = flat.Definition;
         int idxId = this.FindItemIdentityIndex(flat, columnName);
@@ -1201,8 +1111,6 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             return [];
         }
 
-        var seenIds = new HashSet<int>();
-        var ambiguousIds = new HashSet<int>();
         int idxFk = FindForeignKeyIndex(td, columnName);
         int idxValue = -1;
         int idxModified = -1;
@@ -1229,12 +1137,9 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         }
 
         var result = new List<MultiValueItem>();
-        await foreach (object?[] row in rows.EnumerateTypedRowsForTdefAsync(flat.TDefPage, td, cancellationToken).ConfigureAwait(false))
+        await foreach (object?[] row in this.ReadReferenceRowsAsync(flat, columnName, parentReference, index, inventory, cancellationToken).ConfigureAwait(false))
         {
-            if (!this.AcceptItemIdentity(flat, row, idxId, seenIds, ambiguousIds, out int id))
-            {
-                continue;
-            }
+            int id = (int)row[idxId]!;
 
             int valueIndex = kind == ComplexColumnKind.VersionHistory ? this.FindHistoryValueIndex(flat, row, historyValues) : idxValue;
             if (kind == ComplexColumnKind.VersionHistory && valueIndex < 0)
@@ -1254,7 +1159,6 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             });
         }
 
-        result.RemoveAll(item => ambiguousIds.Contains(item.Id));
         return result;
     }
 
@@ -1317,7 +1221,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         return identity;
     }
 
-    private bool AcceptItemIdentity(FlatTable flat, object?[] row, int index, HashSet<int> seen, HashSet<int> ambiguous, out int identity)
+    private bool AcceptItemIdentity(FlatTable flat, object?[] row, int index, ref LongValueVisitedSet seen, HashSet<int> ambiguous, out int identity)
     {
         identity = index < row.Length && row[index] is int value ? value : 0;
         if (identity <= 0)
@@ -1326,7 +1230,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             return false;
         }
 
-        if (!seen.Add(identity))
+        if (!seen.Add((uint)identity))
         {
             ambiguous.Add(identity);
             this.RejectItemIdentity(flat, flat.Definition.Columns[index].Name, "The complex flat table contains duplicate item identities.");
@@ -1383,6 +1287,142 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     /// <param name="ParentImage">The immutable parent layout.</param>
     /// <param name="Columns">The verified complex descriptors.</param>
     private sealed record DescriptorSnapshot(long ParentRoot, TDefImage ParentImage, IReadOnlyList<ComplexColumnInfo> Columns);
+
+    private sealed record ColumnSource(FlatTable Flat, ComplexColumnKind Kind, IndexMetadata? Index, ItemInventory? Inventory = null);
+
+    /// <summary>Resolves one parent at a time without retaining another parent's payloads.</summary>
+    internal sealed class RowResolver
+    {
+        private readonly ComplexColumnReader owner;
+        private readonly string tableName;
+        private readonly IReadOnlyList<ColumnInfo> columns;
+        private readonly bool[] selected;
+        private readonly ColumnSource?[] sources;
+        private readonly bool[] prepared;
+        private readonly DiscoveryBudget discovery;
+        private readonly AttachmentWrapper.ContentBudget attachmentContent;
+        private readonly ComplexItemIdentityBudget identityBudget;
+        private readonly Dictionary<long, ItemInventory> inventories = [];
+        private IReadOnlyList<ComplexColumnInfo>? complexColumns;
+
+        /// <summary>Initializes a new instance of the <see cref="RowResolver"/> class.</summary>
+        /// <param name="owner">The complex reader.</param>
+        /// <param name="tableName">The parent table.</param>
+        /// <param name="columns">The parent columns.</param>
+        /// <param name="wantedColumns">The selected columns.</param>
+        /// <param name="maxDiscoveryEntries">The shared fallback discovery allowance.</param>
+        /// <param name="attachmentContent">The shared attachment allowance.</param>
+        internal RowResolver(ComplexColumnReader owner, string tableName, IReadOnlyList<ColumnInfo> columns, bool[]? wantedColumns, int maxDiscoveryEntries, AttachmentWrapper.ContentBudget attachmentContent)
+        {
+            this.owner = owner;
+            this.tableName = tableName;
+            this.columns = columns;
+            this.discovery = new DiscoveryBudget(maxDiscoveryEntries);
+            this.attachmentContent = attachmentContent;
+            this.identityBudget = owner.GetIdentityBudget();
+            this.selected = new bool[columns.Count];
+            this.sources = new ColumnSource?[columns.Count];
+            this.prepared = new bool[columns.Count];
+            for (int index = 0; index < columns.Count; index++)
+            {
+                this.selected[index] = columns[index].Type == ComplexType
+                    && (wantedColumns is null || (index < wantedColumns.Length && wantedColumns[index]));
+            }
+        }
+
+        /// <summary>Substitutes cells only for this typed parent's selected references.</summary>
+        /// <param name="row">The decoded parent row.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        internal async ValueTask ResolveAsync(object?[] row, CancellationToken cancellationToken)
+        {
+            for (int index = 0; index < Math.Min(this.columns.Count, row.Length); index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (this.selected[index])
+                {
+                    byte[]? cell = row[index] is ComplexIdRef reference && reference.Id > 0
+                        ? await this.ResolveCellAsync(index, reference.Id, cancellationToken).ConfigureAwait(false)
+                        : null;
+                    row[index] = (object?)cell ?? DBNull.Value;
+                }
+            }
+        }
+
+        /// <summary>Validates selected metadata even when the table or its cells are empty.</summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        internal async ValueTask PrepareAsync(CancellationToken cancellationToken)
+        {
+            for (int index = 0; index < this.columns.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (this.selected[index])
+                {
+                    await this.PrepareColumnAsync(index, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+
+        /// <summary>Substitutes data URIs only for this string parent's references.</summary>
+        /// <param name="row">The decoded string row.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        internal async ValueTask ResolveAsync(string[] row, CancellationToken cancellationToken)
+        {
+            const string prefix = "__CX:";
+            const string suffix = "__";
+            for (int index = 0; index < Math.Min(this.columns.Count, row.Length); index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!this.selected[index])
+                {
+                    continue;
+                }
+
+                string value = row[index] ?? string.Empty;
+                bool isReference = value.Length > prefix.Length + suffix.Length
+                    && value.StartsWith(prefix, StringComparison.Ordinal)
+                    && value.EndsWith(suffix, StringComparison.Ordinal);
+                byte[]? cell = isReference && int.TryParse(value.AsSpan(prefix.Length, value.Length - prefix.Length - suffix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out int reference) && reference > 0
+                    ? await this.ResolveCellAsync(index, reference, cancellationToken).ConfigureAwait(false)
+                    : null;
+                row[index] = cell is null ? string.Empty : "data:application/octet-stream;base64," + Convert.ToBase64String(cell);
+            }
+        }
+
+        private async ValueTask<byte[]?> ResolveCellAsync(int columnIndex, int reference, CancellationToken cancellationToken)
+        {
+            await this.PrepareColumnAsync(columnIndex, cancellationToken).ConfigureAwait(false);
+            return this.sources[columnIndex] is ColumnSource retained
+                ? await this.owner.LoadCellAsync(retained, this.columns[columnIndex].Name, reference, this.attachmentContent, cancellationToken).ConfigureAwait(false)
+                : null;
+        }
+
+        private async ValueTask PrepareColumnAsync(int columnIndex, CancellationToken cancellationToken)
+        {
+            if (!this.prepared[columnIndex])
+            {
+                this.complexColumns ??= await this.owner.TryGetComplexColumnsAsync(this.tableName, cancellationToken).ConfigureAwait(false);
+                ColumnSource? source = await this.owner.PrepareColumnSourceAsync(this.tableName, this.columns[columnIndex].Name, this.complexColumns, this.discovery, cancellationToken).ConfigureAwait(false);
+                if (source is not null)
+                {
+                    if (!this.inventories.TryGetValue(source.Flat.TDefPage, out ItemInventory? inventory))
+                    {
+                        inventory = await this.owner.ReadItemInventoryAsync(source.Flat, this.columns[columnIndex].Name, this.identityBudget, cancellationToken).ConfigureAwait(false);
+                        this.inventories.Add(source.Flat.TDefPage, inventory);
+                    }
+
+                    if (FindForeignKeyIndex(source.Flat.Definition, this.columns[columnIndex].Name) != inventory.ParentColumn)
+                    {
+                        throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "Shared complex storage has inconsistent parent-reference metadata.", new JetErrorInfo { TableName = source.Flat.Name, ColumnName = this.columns[columnIndex].Name, PageNumber = source.Flat.TDefPage });
+                    }
+
+                    source = source with { Inventory = inventory };
+                }
+
+                this.sources[columnIndex] = source;
+                this.prepared[columnIndex] = true;
+            }
+        }
+    }
 
     /// <summary>A complex column's hidden flat child table.</summary>
     /// <param name="TDefPage">The flat table's TDEF page.</param>

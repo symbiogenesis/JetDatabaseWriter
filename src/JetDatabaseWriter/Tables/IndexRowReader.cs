@@ -454,8 +454,8 @@ internal sealed class IndexRowReader(
             && (wantedColumns == null || TableReader.HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType));
         bool needsHyperlinkPass = td.HasHyperlinkColumns
             && (wantedColumns == null || TableReader.HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
-        Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
-            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns, cancellationToken).ConfigureAwait(false)
+        ComplexColumnReader.RowResolver? complexResolver = needsComplexPass
+            ? await complexColumns.CreateRowResolverAsync(tableName, td.Columns, wantedColumns, cancellationToken).ConfigureAwait(false)
             : null;
         var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
 
@@ -469,8 +469,7 @@ internal sealed class IndexRowReader(
                 dataPage,
                 rowIndex,
                 decodePlan,
-                complexData,
-                needsComplexPass,
+                complexResolver,
                 needsHyperlinkPass,
                 cancellationToken).ConfigureAwait(false);
             if (row == null)
@@ -488,8 +487,7 @@ internal sealed class IndexRowReader(
         long dataPage,
         int rowIndex,
         RowDecodePlan decodePlan,
-        Dictionary<int, Dictionary<int, byte[]>>? complexData,
-        bool needsComplexPass,
+        ComplexColumnReader.RowResolver? complexResolver,
         bool needsHyperlinkPass,
         CancellationToken cancellationToken)
     {
@@ -536,9 +534,9 @@ internal sealed class IndexRowReader(
             return null;
         }
 
-        if (needsComplexPass)
+        if (complexResolver is not null)
         {
-            ComplexColumnReader.ResolveColumns(row, td.Columns, complexData);
+            await complexResolver.ResolveAsync(row, cancellationToken).ConfigureAwait(false);
         }
 
         if (needsHyperlinkPass)

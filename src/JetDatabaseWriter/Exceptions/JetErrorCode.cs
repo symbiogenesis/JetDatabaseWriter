@@ -240,6 +240,9 @@ public enum JetErrorCode
     /// <summary>The linked source exceeds the configured read budget.</summary>
     LinkedSourceBudgetExceeded = 812,
 
+    /// <summary>The complex-item identity inspection allowance for one operation is exhausted.</summary>
+    ComplexItemIdentityBudgetExceeded = 813,
+
     /// <summary>Identifies FeatureNotSupported.</summary>
     FeatureNotSupported = 901,
 

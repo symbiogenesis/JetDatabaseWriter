@@ -140,6 +140,23 @@ its authorized linked sources. Exact acquired bytes, complete C# call-site
 coverage, diagnostic delivery and atomic publication remain adapter contracts;
 these functions do not establish damaged-map membership or a complete parser.
 
+## Complex cell admission
+
+Complex row cells retain a bounded scalar item-ID/reference/location inventory
+before admitting payloads. The inventory reuses generated `LongValueKernel`
+nonzero integer membership/growth operations for flat-table-global identity
+checks; `ComplexItemIdentityBudget` uses generated `RecoveryKernel.IsByteRange`
+admission before adding inspected records. The operation quota is shared across
+selected columns, nested calls and authorized linked readers. Grouped locations
+avoid repeated fallback scans, and requested FK-index bookmarks must match the
+independent scalar inventory before payload decoding. Typed item identity and
+parent reference are checked again at acquired locations. These generated
+collection/range decisions do not prove C# inventory construction, index
+completeness, native field roles or whole-process memory; those remain explicit
+composition and resource obligations. Payload materialization is bounded to the
+consumed parent cell for row streams, while whole-column item-list APIs still
+materialize their requested items.
+
 ## Writer lifecycle specification
 
 [The writer lifecycle specification](writer-lifecycle.md) records the legal serialized writer, transaction and lease states, terminal transaction identities, nested savepoint behavior, disposal and cache invalidation. The checked model describes the protocol; it adds no shipping code or runtime dependency. Its successful effects and exclusive ownership are explicit premises, and focused production traces support only the named correspondence boundaries.

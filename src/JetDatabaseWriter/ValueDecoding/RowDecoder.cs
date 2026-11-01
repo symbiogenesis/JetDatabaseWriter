@@ -2,11 +2,13 @@ namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages;
@@ -33,6 +35,13 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
 
     /// <summary>Gets the cumulative number of unreadable rows omitted by explicitly lenient reads.</summary>
     internal long OmittedRowCount => readAccounting.OmittedRowCount;
+
+    /// <summary>Acquires a retained raw page for independently checked index traversal.</summary>
+    /// <param name="pageNumber">The physical page number.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The retained immutable page image.</returns>
+    internal ValueTask<PageLease> ReadPageAsync(long pageNumber, CancellationToken cancellationToken)
+        => pages.ReadPageAsync(pageNumber, cancellationToken);
 
     /// <summary>Requires a readable row in strict mode and records every explicitly lenient omission.</summary>
     /// <param name="readable">Whether the complete row layout or referenced row was acquired.</param>
@@ -201,6 +210,146 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
         object matchValue,
         CancellationToken cancellationToken)
         => this.EnumerateFilteredTypedRowsAsync(tdefPage, td, wantedColumns, matchColumn, matchValue, requireReadableMatch: true, cancellationToken);
+
+    /// <summary>Acquires selected scalar identities and physical locations without following unselected long values.</summary>
+    /// <param name="tdefPage">The owning flat table.</param>
+    /// <param name="td">The flat-table definition.</param>
+    /// <param name="wantedColumns">The identity/reference column mask.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="JetCorruptDataException">A complete scalar inventory cannot be acquired.</exception>
+    internal async IAsyncEnumerable<(RowLocation Location, object?[] Values)> EnumerateLocatedScalarRowsAsync(
+        long tdefPage,
+        TableDef td,
+        bool[] wantedColumns,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var plan = RowDecodePlan.CreateTyped(td, wantedColumns, strictParsing: true);
+        foreach (long pageNumber in await ownedPages.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using PageLease lease = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            if (lease.Buffer[0] != Constants.PageTypes.Data
+                || BinaryPrimitives.ReadInt32LittleEndian(lease.Buffer.AsSpan(format.DataPage.TDefOff, 4)) != tdefPage)
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The complex-item identity inventory includes an unowned page.", new JetErrorInfo { PageNumber = pageNumber });
+            }
+
+            foreach (RowBound entry in lease.GetRowDirectory(format))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                byte[] page = lease.Buffer;
+                RowBound bound = entry;
+                long dataPage = pageNumber;
+                using OverflowRowTarget? resolved = entry.IsOverflowPointer
+                    ? await this.ResolveOverflowAsync(page, entry, cancellationToken).ConfigureAwait(false)
+                    : null;
+                if (entry.IsOverflowPointer)
+                {
+                    if (resolved is not OverflowRowTarget target)
+                    {
+                        throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The complex-item identity inventory has an unreadable overflow row.", new JetErrorInfo { PageNumber = pageNumber });
+                    }
+
+                    (page, bound, dataPage) = (target.Page, target.Bound, target.PageNumber);
+                }
+
+                object?[] values = await this.CrackRowTypedAsync(page, bound.RowStart, bound.RowSize, plan, cancellationToken).ConfigureAwait(false)
+                    ?? throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "The complex-item identity inventory has an unreadable row layout.", new JetErrorInfo { PageNumber = pageNumber });
+                var location = new RowLocation(pageNumber, entry.RowIndex, bound.RowStart, bound.RowSize)
+                {
+                    DataPageNumber = dataPage,
+                    DataRowIndex = bound.RowIndex,
+                };
+                yield return (location, values);
+            }
+        }
+    }
+
+    /// <summary>Reads admitted physical items in flat-table order, checking scalar identity before payload decoding.</summary>
+    /// <param name="tdefPage">The owning flat table.</param>
+    /// <param name="td">The flat-table definition.</param>
+    /// <param name="locations">The admitted scalar inventory for one parent group or the whole table.</param>
+    /// <param name="identityColumn">The item AutoNumber ordinal.</param>
+    /// <param name="parentColumn">The parent reference ordinal.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="JetCorruptDataException">A retained item no longer matches its admitted identity.</exception>
+    internal async IAsyncEnumerable<object?[]> EnumerateTypedRowsAtLocationsAsync(
+        long tdefPage,
+        TableDef td,
+        IReadOnlyList<ComplexItemLocation> locations,
+        int identityColumn,
+        int parentColumn,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        bool[] selected = new bool[td.Columns.Count];
+        selected[identityColumn] = true;
+        selected[parentColumn] = true;
+        var identityPlan = RowDecodePlan.CreateTyped(td, selected, strictParsing: true);
+        var valuePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, strictParsing);
+        PageLease? lease = null;
+        long currentPage = -1;
+        try
+        {
+            foreach (ComplexItemLocation item in locations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ComplexItemLocation location = item;
+                if (lease is null || currentPage != location.PageNumber)
+                {
+                    lease?.Dispose();
+                    lease = null;
+                    lease = await pages.ReadPageAsync(location.PageNumber, cancellationToken).ConfigureAwait(false);
+                    currentPage = location.PageNumber;
+                }
+
+                byte[] page = lease.Buffer;
+                RowBound? selectedRow = null;
+                if (page[0] == Constants.PageTypes.Data
+                    && BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(format.DataPage.TDefOff, 4)) == tdefPage)
+                {
+                    foreach (RowBound bound in lease.GetRowDirectory(format))
+                    {
+                        if (bound.RowIndex == location.RowIndex)
+                        {
+                            selectedRow = bound;
+                            break;
+                        }
+                    }
+                }
+
+                if (selectedRow is not RowBound row)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "An admitted complex item has no live owned row.", new JetErrorInfo { PageNumber = location.PageNumber });
+                }
+
+                using OverflowRowTarget? overflow = row.IsOverflowPointer
+                    ? await this.ResolveOverflowAsync(page, row, cancellationToken).ConfigureAwait(false)
+                    : null;
+                if (row.IsOverflowPointer)
+                {
+                    if (overflow is not OverflowRowTarget target)
+                    {
+                        throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "An admitted complex item's overflow row is unreadable.", new JetErrorInfo { PageNumber = location.PageNumber });
+                    }
+
+                    (page, row) = (target.Page, target.Bound);
+                }
+
+                object?[]? scalar = await this.CrackRowTypedAsync(page, row.RowStart, row.RowSize, identityPlan, cancellationToken).ConfigureAwait(false);
+                if (scalar is null || !Equals(scalar[identityColumn], item.Id) || !Equals(scalar[parentColumn], item.ParentReference))
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "An admitted complex item's scalar identity changed before payload acquisition.", new JetErrorInfo { PageNumber = location.PageNumber });
+                }
+
+                yield return await this.CrackRowTypedAsync(page, row.RowStart, row.RowSize, valuePlan, cancellationToken).ConfigureAwait(false)
+                    ?? throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "An admitted complex item's layout is unreadable.", new JetErrorInfo { PageNumber = location.PageNumber });
+            }
+        }
+        finally
+        {
+            lease?.Dispose();
+        }
+    }
 
     private async IAsyncEnumerable<object?[]> EnumerateFilteredTypedRowsAsync(
         long tdefPage,

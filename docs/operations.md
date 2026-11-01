@@ -129,6 +129,7 @@ var options = new AccessReaderOptions("secretPassword")
     PageReadOptimizationMode = PageReadOptimizationMode.Auto, // random-access/read-ahead policy (default)
     DiagnosticsEnabled       = false,  // verbose logging (default: false)
     MaxComplexDiscoveryEntries = 65_536, // aggregate metadata work per complex-column discovery
+    MaxComplexItemIdentityEntriesPerOperation = 1_048_576, // scalar item metadata across nested/linked reads
     MaxAttachmentContentBytes = 64 * 1024 * 1024, // uncompressed content per attachment
     MaxAttachmentContentBytesPerOperation = 256L * 1024 * 1024, // shared across one attachment read/table scan
     ValidateOnOpen           = true,   // format check on open (default: true)
@@ -199,7 +200,9 @@ and its authorized stream close when the operation or enumeration ends, includin
 early disposal and failures. Text links expose no indexes or complex columns; ODBC
 links retain cached metadata and refuse data execution.
 
-`MaxAttachmentContentBytesPerOperation` includes extension headers and is shared across attachment columns during one table scan. Each table in a multi-table read starts a fresh budget. Set a positive larger limit for trusted reads that exceed the 256 MiB default; `ValueTooLarge` refusals propagate in strict and lenient modes. Inflation checks cancellation between output chunks and before its final excess-byte check. A single decompressor read, checksum or copy remains a synchronous interval.
+`MaxAttachmentContentBytesPerOperation` includes extension headers and is shared across attachment columns during one table scan. Each table in a multi-table read starts a fresh attachment budget. Set a positive larger limit for trusted reads that exceed the 256 MiB default; `ValueTooLarge` refusals propagate in strict and lenient modes. Inflation checks cancellation between output chunks and before its final excess-byte check. A single decompressor read, checksum or copy remains a synchronous interval.
+
+Complex row scans validate bounded scalar item identity/reference metadata, then decode only consumed parent cells. Early termination avoids unrelated external attachment payloads and decompression. `MaxComplexItemIdentityEntriesPerOperation` defaults to 1,048,576 inspected records and must be positive. Exhaustion raises `ComplexItemIdentityBudgetExceeded` (813) in either parsing mode. Nested calls and authorized linked reads share the operation allowance; independent operations start fresh. This bounds retained metadata counts, not whole-process memory. Whole-column `GetAttachmentsAsync` and `GetMultiValueItemsAsync` still materialize their requested items.
 
 ---
 

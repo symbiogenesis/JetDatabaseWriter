@@ -77,6 +77,14 @@ public sealed class AccessReaderOptions : AccessOptions
     public int MaxComplexDiscoveryEntries { get; init; } = 65536;
 
     /// <summary>
+    /// Gets the maximum aggregate complex-item identity/reference records inspected in one reader operation.
+    /// Default: 1,048,576. Scalar preflight inventories share this positive allowance across selected
+    /// columns, nested reads and authorized linked sources; independent operations start fresh allowances.
+    /// This bounds record counts, not whole-process memory. Resource refusals propagate in both parsing modes.
+    /// </summary>
+    public int MaxComplexItemIdentityEntriesPerOperation { get; init; } = 1_048_576;
+
+    /// <summary>
     /// Gets the maximum cumulative password-hash iterations for this reader and
     /// every linked source it opens during its lifetime. Default: 10,000,000.
     /// Must be nonnegative. Repeated or failed password attempts consume this

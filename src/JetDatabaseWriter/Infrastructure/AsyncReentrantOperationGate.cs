@@ -11,7 +11,8 @@ using System.Threading.Tasks;
 /// </summary>
 /// <param name="ownerType">The public type named by the <see cref="ObjectDisposedException"/> raised after disposal.</param>
 /// <param name="attachmentReads">The optional attachment budget context shared by linked readers.</param>
-internal sealed class AsyncReentrantOperationGate(Type ownerType, AttachmentReadContext? attachmentReads = null)
+/// <param name="complexItemReads">The optional complex-item identity allowance shared by linked readers.</param>
+internal sealed class AsyncReentrantOperationGate(Type ownerType, AttachmentReadContext? attachmentReads = null, ComplexItemIdentityReadContext? complexItemReads = null)
 {
     private const int StateOpen = 0;
     private const int StateDisposing = 1;
@@ -32,7 +33,7 @@ internal sealed class AsyncReentrantOperationGate(Type ownerType, AttachmentRead
         if (depth > 0)
         {
             this.operationDepth.Value = depth + 1;
-            return new Lease(this, isRoot: false, depth + 1, attachmentReads?.Enter() ?? default);
+            return new Lease(this, isRoot: false, depth + 1, attachmentReads?.Enter() ?? default, complexItemReads?.Enter() ?? default);
         }
 
         if (!this.TryEnterRootOperation())
@@ -41,7 +42,7 @@ internal sealed class AsyncReentrantOperationGate(Type ownerType, AttachmentRead
         }
 
         this.operationDepth.Value = 1;
-        return new Lease(this, isRoot: true, 1, attachmentReads?.Enter() ?? default);
+        return new Lease(this, isRoot: true, 1, attachmentReads?.Enter() ?? default, complexItemReads?.Enter() ?? default);
     }
 
     public bool TryBeginDispose(out Task waitForOperations)
@@ -122,18 +123,20 @@ internal sealed class AsyncReentrantOperationGate(Type ownerType, AttachmentRead
         Volatile.Read(ref this.operationsDrained)?.TrySetResult(null);
     }
 
-    internal readonly struct Lease(AsyncReentrantOperationGate owner, bool isRoot, int depth, AttachmentReadContext.Lease attachmentRead) : IDisposable
+    internal readonly struct Lease(AsyncReentrantOperationGate owner, bool isRoot, int depth, AttachmentReadContext.Lease attachmentRead, ComplexItemIdentityReadContext.Lease complexItemRead) : IDisposable
     {
         /// <summary>Restores this operation's flow context after an iterator yield.</summary>
         internal void Resume()
         {
             owner.operationDepth.Value = depth;
             attachmentRead.Resume();
+            complexItemRead.Resume();
         }
 
         public void Dispose()
         {
             attachmentRead.Dispose();
+            complexItemRead.Dispose();
             owner.ReleaseOperation(isRoot);
         }
     }
