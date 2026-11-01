@@ -14,6 +14,15 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'fuzz-inputs.ps1')
 $repoRoot = Split-Path $PSScriptRoot -Parent
+# workflow_run's GITHUB_SHA follows the default branch rather than the completed CI checkout.
+$revisionSha = $env:JDW_VALIDATION_SHA
+if ([string]::IsNullOrWhiteSpace($revisionSha)) {
+    if ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch') { throw 'Automatic fuzzing requires the validated revision from the completed CI run.' }
+    $revisionSha = $env:GITHUB_SHA
+}
+if ($revisionSha -cnotmatch '^[0-9a-f]{40}$') { throw 'The fuzz evidence revision must be a full commit ID.' }
+$checkoutRevision = @(& git -C $repoRoot rev-parse HEAD)
+if ($LASTEXITCODE -ne 0 -or $checkoutRevision.Count -ne 1 -or $checkoutRevision[0] -cne $revisionSha) { throw 'Fuzz evidence must match the checked-out revision.' }
 $outputPath = [IO.Path]::GetFullPath($OutputDirectory)
 if ($outputPath -match '%[^%]+%') { throw 'The output path contains an unresolved environment variable.' }
 [IO.Directory]::CreateDirectory($outputPath) | Out-Null
@@ -35,7 +44,7 @@ function Save-Manifests {
     $executedGroups = @($manifest | Where-Object { $_.Kind -eq 'Reader' -and $_.Mutation.Family -notin 'Control', 'Random', 'Truncate' } | ForEach-Object { "$($_.Mutation.Format)/$($_.Mutation.Family)" } | Sort-Object -Unique)
     $availableGroups = if ($null -ne $plan) { @($plan.AvailableGroups) } else { @() }
     $coverage = [ordered]@{
-        SchemaVersion = 2; Seed = $Seed; Revision = $env:GITHUB_SHA; Runner = $Runner
+        SchemaVersion = 2; Seed = $Seed; Revision = $revisionSha; Runner = $Runner
         CasesPerHarness = $Cases; TimeoutSeconds = $TimeoutSeconds; MemoryLimitMiB = $MemoryLimitMiB
         MinimizeAttempts = $MinimizeAttempts; MinimizeSeconds = $MinimizeSeconds; FailureLimit = $FailureLimit
         AvailableGroups = $availableGroups; ExecutedGroups = $executedGroups

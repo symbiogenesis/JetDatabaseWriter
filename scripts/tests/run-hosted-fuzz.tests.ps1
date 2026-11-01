@@ -14,10 +14,15 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../fuzz-inputs.ps1') -Destinati
 [IO.File]::WriteAllBytes((Join-Path $fixtureCorpus 'sample.mdb'), [byte[]](0..255))
 $runner = Join-Path $fixtureRoot 'mock-runner.exe'
 [IO.File]::WriteAllText($runner, 'Not executable; Start-Process is mocked.')
-$fuzzTestContext = [pscustomobject]@{ Processes = [Collections.Generic.List[object]]::new(); Mode = 'Pass' }
+$fuzzTestContext = [pscustomobject]@{ Processes = [Collections.Generic.List[object]]::new(); Mode = 'Pass'; Revision = 'a' * 40 }
 $fuzzChecks = [Collections.Generic.List[string]]::new()
 function Assert-Check([bool] $Condition, [string] $Message) {
     if (-not $Condition) { $fuzzChecks.Add($Message) }
+}
+function git {
+    if (($args -join ' ') -cne "-C $fixtureRoot rev-parse HEAD") { throw 'Fuzz provenance must inspect the runner checkout.' }
+    $global:LASTEXITCODE = 0
+    return $fuzzTestContext.Revision
 }
 function Start-Process {
     [CmdletBinding()]
@@ -114,13 +119,44 @@ function Invoke-Scenario([string] $Name, [string] $Mode, [int] $Cases, [int] $Ex
     }
     return [pscustomobject]@{ Output = $output; Manifest = $manifest; Error = $caught }
 }
+$savedEnvironment = @{}
+foreach ($name in 'GITHUB_EVENT_NAME', 'GITHUB_SHA', 'JDW_VALIDATION_SHA') { $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name) }
+try {
+$env:GITHUB_EVENT_NAME = 'workflow_run'
+$env:GITHUB_SHA = 'b' * 40
+$env:JDW_VALIDATION_SHA = $fuzzTestContext.Revision
 $pass = Invoke-Scenario 'pass' 'Pass' 4
+$passCoverage = Get-Content -LiteralPath (Join-Path $pass.Output 'coverage-manifest.json') -Raw | ConvertFrom-Json
+Assert-Check ($passCoverage.Revision -ceq $env:JDW_VALIDATION_SHA) 'Automatic fuzz evidence used the mutable default-branch tip instead of the validated checkout.'
 Assert-Check ($null -eq $pass.Error) "Passing cases failed: $($pass.Error)"
 Assert-Check (@($pass.Manifest | Where-Object Status -ne 'Passed').Count -eq 0) 'A passing case had the wrong status.'
 Assert-Check (@(Get-ChildItem -LiteralPath $pass.Output -Filter '*.bin').Count -eq 0) 'Passing inputs were retained.'
 Assert-Check (@($pass.Manifest | Where-Object { $_.OperationCoverage -contains 'reader:open' }).Count -eq 12) 'Operation reachability tags were not recorded.'
 $repeat = Invoke-Scenario 'repeat' 'Pass' 4
 Assert-Check (($pass.Manifest.SHA256 -join ',') -eq ($repeat.Manifest.SHA256 -join ',')) 'The seed did not reproduce the same input hashes.'
+$env:GITHUB_EVENT_NAME = 'workflow_dispatch'
+$env:GITHUB_SHA = $fuzzTestContext.Revision
+$env:JDW_VALIDATION_SHA = ''
+$manual = Invoke-Scenario 'manual-revision' 'Pass' 1
+$manualCoverage = Get-Content -LiteralPath (Join-Path $manual.Output 'coverage-manifest.json') -Raw | ConvertFrom-Json
+Assert-Check ($null -eq $manual.Error -and $manualCoverage.Revision -ceq $env:GITHUB_SHA) 'Explicit manual fuzz evidence lost its dispatched revision fallback.'
+foreach ($case in @(
+    @{ Name = 'missing-automatic-revision'; Event = 'workflow_run'; Sha = ''; Expected = 'validated revision' }
+    @{ Name = 'invalid-validated-revision'; Event = 'workflow_run'; Sha = 'invalid'; Expected = 'full commit ID' }
+    @{ Name = 'different-checkout'; Event = 'workflow_run'; Sha = 'c' * 40; Expected = 'checked-out revision' }
+    @{ Name = 'different-manual-checkout'; Event = 'workflow_dispatch'; Sha = ''; Expected = 'checked-out revision' }
+)) {
+    $env:GITHUB_EVENT_NAME = $case.Event
+    $env:GITHUB_SHA = 'b' * 40
+    $env:JDW_VALIDATION_SHA = $case.Sha
+    $fuzzTestContext.Processes.Clear()
+    $caught = $null
+    try { & $subject -Runner $runner -Cases 1 -OutputDirectory (Join-Path $testRoot $case.Name) }
+    catch { $caught = $_.Exception.Message }
+    Assert-Check ($caught -and $caught.Contains($case.Expected) -and $fuzzTestContext.Processes.Count -eq 0) "$($case.Name) started fuzzing without exact revision authority: $caught"
+}
+$env:GITHUB_EVENT_NAME = 'workflow_run'
+$env:JDW_VALIDATION_SHA = $fuzzTestContext.Revision
 $xmlCoverage = Invoke-Scenario 'xml-coverage' 'XmlCoverage' 1
 Assert-Check ($null -eq $xmlCoverage.Error -and @($xmlCoverage.Manifest | Where-Object { $_.OperationCoverage -contains 'reader:seek:completed' }).Count -eq 3) 'Passing xUnit XML output did not contribute operation coverage.'
 Assert-Check (@($xmlCoverage.Manifest | Where-Object { $_.OperationCoverage -contains 'writer.insert.succeeded' -and $_.OperationCoverage -contains 'schema.write.refused' }).Count -eq 3) 'Dotted writer operation/outcome markers were truncated.'
@@ -185,3 +221,6 @@ Assert-Check (@($complete.Manifest | Where-Object { $_.Mutation.Family -notin 'C
 Write-Host "Mocked fuzz artifacts: $testRoot"
 if ($fuzzChecks.Count -gt 0) { throw ($fuzzChecks -join [Environment]::NewLine) }
 Write-Host 'All mocked hosted fuzz checks passed.'
+} finally {
+    foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name]) }
+}
