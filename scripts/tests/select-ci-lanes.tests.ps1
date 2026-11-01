@@ -148,6 +148,7 @@ $dotnetNames = @(
         foreach ($partition in 'ordinary', 'schema-writer', 'jet3', 'jet4', 'ace') { "Analyze and test (tests $runtime $partition)" }
     }
     'Trimmed and NativeAOT consumers'
+    'Native Access compatibility (net10.0)', 'Native Access compatibility (net10.0-netstandard)', 'Native Access compatibility (net11.0)'
     'Encryption replacement (ubuntu-latest, net10.0)', 'Encryption replacement (ubuntu-latest, net11.0)',
     'Encryption replacement (macos-latest, net10.0)', 'Encryption replacement (macos-latest, net11.0)'
 )
@@ -171,6 +172,18 @@ foreach ($runtime in 'net10.0', 'net10.0 netstandard', 'net11.0') {
         Assert-Baseline "$name cannot inherit missing partition" $base
         $script:jobs += $selectedJob
     }
+}
+foreach ($runtime in 'net10.0', 'net10.0-netstandard', 'net11.0') {
+    $name = "Native Access compatibility ($runtime)"
+    $selectedJob = $script:jobs | Where-Object name -CEQ $name
+    foreach ($verdict in 'failure', 'skipped', 'cancelled') {
+        $selectedJob.conclusion = $verdict
+        Assert-Baseline "$name cannot inherit '$verdict'" $base
+    }
+    $selectedJob.conclusion = 'success'
+    $script:jobs = @($script:jobs | Where-Object name -CNE $name)
+    Assert-Baseline "$name cannot inherit missing native evidence" $base
+    $script:jobs += $selectedJob
 }
 Assert-Baseline 'failed proof still needs an older verified ancestor' $base -Lane 'formal'
 ($script:jobs | Where-Object name -EQ 'Verify recovery models (Dafny)').status = 'queued'
@@ -214,27 +227,33 @@ $script:jobs += @{ name = 'Analyze (library)'; status = 'completed'; conclusion 
 Assert-Baseline 'duplicate analyzer cannot certify dotnet' $base
 
 # Reject a missing or extra lane result even when a workflow would otherwise report success.
-Assert-CiResults @{ dotnet = $false; formal = $true; package = $false } @{ changes = 'success'; checks = 'success'; formal = 'success'; analyze = 'skipped'; aot = 'skipped'; 'encryption-replacement' = 'skipped'; package = 'skipped' }
-Assert-CiResults @{ dotnet = $false; formal = $false; package = $true } @{ changes = 'success'; checks = 'success'; formal = 'skipped'; analyze = 'skipped'; aot = 'skipped'; 'encryption-replacement' = 'skipped'; package = 'success' }
+Assert-CiResults @{ dotnet = $false; formal = $true; package = $false } @{ changes = 'success'; checks = 'success'; formal = 'success'; analyze = 'skipped'; aot = 'skipped'; 'native-access' = 'skipped'; 'encryption-replacement' = 'skipped'; package = 'skipped' }
+Assert-CiResults @{ dotnet = $false; formal = $false; package = $true } @{ changes = 'success'; checks = 'success'; formal = 'skipped'; analyze = 'skipped'; aot = 'skipped'; 'native-access' = 'skipped'; 'encryption-replacement' = 'skipped'; package = 'success' }
 foreach ($dotnet in $false, $true) {
     foreach ($formal in $false, $true) {
         foreach ($package in $false, $true) {
             if ($dotnet -and $package) { continue }
             $results = @{ changes = 'success'; checks = 'success'; formal = $(if ($formal) { 'success' } else { 'skipped' }); package = $(if ($package) { 'success' } else { 'skipped' }) }
-            foreach ($job in 'analyze', 'aot', 'encryption-replacement') { $results[$job] = if ($dotnet) { 'success' } else { 'skipped' } }
+            foreach ($job in 'analyze', 'aot', 'native-access', 'encryption-replacement') { $results[$job] = if ($dotnet) { 'success' } else { 'skipped' } }
             Assert-CiResults @{ dotnet = $dotnet; formal = $formal; package = $package } $results
         }
     }
 }
 foreach ($bad in 'failure', 'cancelled', 'skipped', '') {
     $caught = $false
-    try { Assert-CiResults @{ dotnet = $true; formal = $true; package = $false } @{ changes = 'success'; checks = 'success'; formal = 'success'; analyze = $bad; aot = 'success'; 'encryption-replacement' = 'success'; package = 'skipped' } } catch { $caught = $true }
+    try { Assert-CiResults @{ dotnet = $true; formal = $true; package = $false } @{ changes = 'success'; checks = 'success'; formal = 'success'; analyze = $bad; aot = 'success'; 'native-access' = 'success'; 'encryption-replacement' = 'success'; package = 'skipped' } } catch { $caught = $true }
     if (-not $caught) { throw "Aggregate gate accepted required analyzer verdict '$bad'." }
 }
 'PASS: aggregate gate requires all selected lanes'
 foreach ($bad in 'failure', 'cancelled', 'skipped', '') {
     $caught = $false
-    try { Assert-CiResults @{ dotnet = $false; formal = $false; package = $true } @{ changes = 'success'; checks = 'success'; formal = 'skipped'; analyze = 'skipped'; aot = 'skipped'; 'encryption-replacement' = 'skipped'; package = $bad } } catch { $caught = $true }
+    try { Assert-CiResults @{ dotnet = $true; formal = $false; package = $false } @{ changes = 'success'; checks = 'success'; formal = 'skipped'; analyze = 'success'; aot = 'success'; 'native-access' = $bad; 'encryption-replacement' = 'success'; package = 'skipped' } } catch { $caught = $true }
+    if (-not $caught) { throw "Aggregate gate accepted required native compatibility verdict '$bad'." }
+}
+'PASS: aggregate gate requires native compatibility'
+foreach ($bad in 'failure', 'cancelled', 'skipped', '') {
+    $caught = $false
+    try { Assert-CiResults @{ dotnet = $false; formal = $false; package = $true } @{ changes = 'success'; checks = 'success'; formal = 'skipped'; analyze = 'skipped'; aot = 'skipped'; 'native-access' = 'skipped'; 'encryption-replacement' = 'skipped'; package = $bad } } catch { $caught = $true }
     if (-not $caught) { throw "Aggregate gate accepted required documentation package verdict '$bad'." }
 }
 'PASS: aggregate gate requires documentation packaging when selected'
@@ -297,6 +316,7 @@ try {
         formal = @{ result = 'success' }
         analyze = @{ result = 'skipped' }
         aot = @{ result = 'skipped' }
+        'native-access' = @{ result = 'skipped' }
         'encryption-replacement' = @{ result = 'skipped' }
         package = @{ result = 'skipped' }
     } | ConvertTo-Json -Depth 4

@@ -4,7 +4,7 @@ The required [CI workflow](../.github/workflows/ci.yml) owns ordinary validation
 
 | Workflow | Trigger | Responsibility |
 |---|---|---|
-| [CI](../.github/workflows/ci.yml) | Main pushes, pull requests, manual dispatch and release calls | Common script/security/proof-review checks and the aggregate `CI gate`; content-selected Release analyzers, complete Windows suites, proofs, package validation, generated consumers and focused Linux/macOS recovery checks. |
+| [CI](../.github/workflows/ci.yml) | Main pushes, pull requests, manual dispatch and release calls | Common script/security/proof-review checks and the aggregate `CI gate`; content-selected Release analyzers, complete Windows suites, pinned no-skip DAO120 compatibility against matching analyzed runner artifacts, proofs, package validation, generated consumers and focused Linux/macOS recovery checks. |
 | [Publish NuGet Package](../.github/workflows/publish.yml) | `v*` tags | Calls full CI, then publishes its exact package artifact from a bounded Linux job. |
 | [Benchmarks](../.github/workflows/benchmarks.yml) | Manual, main only | Hosted measurements, with optional validated baseline and controlled comparisons. Requires successful CI for each measured revision. |
 | [Adversarial fuzz](../.github/workflows/fuzz.yml) | Manual, main only | Bounded mutation cases on .NET 10 and 11, with retained reproductions and coverage. Requires successful exact-revision CI. |
@@ -12,6 +12,8 @@ The required [CI workflow](../.github/workflows/ci.yml) owns ordinary validation
 | [InferSharp](../.github/workflows/infersharp.yml) | Manual | Independent analysis of both library assets with pinned tooling, reviewed findings and retained translation diagnostics. |
 | [Calculated native profiles](../.github/workflows/calculated-native-profiles.yml) | Manual, main only | Independent Access Runtime controls under six regional profiles on disposable Windows hosts. Requires successful exact-revision CI. |
 | [Maintenance](../.github/workflows/maintenance.yml) | Manual, main only | Candidate compiler/analyzer feedback or an SDK lock refresh; returns reviewable artifacts without publishing Git refs. |
+
+Ordinary partition results are checked from xUnit XML: failures, infrastructure errors, unknown skip reasons and unapproved explicit not-run identities fail acceptance. The native inventory additionally requires every named method to pass, verifies the actual loaded ACEDAO DLL version and permits no skips. Its scope is DAO120; native Jet3/DAO3.6 and unlisted feature variants remain separate evidence obligations.
 
 CI selects expensive lanes against validated main ancestors, retaining unconditional checks and the aggregate gate even for documentation changes. Manual CI and release calls validate every lane. Optional workflows add evidence after that gate; their results do not replace it. See [AGENTS.md](../AGENTS.md#gating-a-commit-on-ci) for the acceptance and reporting rules.
 

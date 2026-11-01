@@ -8,6 +8,14 @@ This note holds durable validation rules for writer-emitted Access disk-format b
 
 Local builds and targeted test runs are allowed for both ordinary regressions and DAO checks. Select the methods or classes relevant to the change; DAO tests need an Access-equipped host and may use locally built or matching CI-built binaries. Full test suites and all benchmarks run only on CI. Required hosted acceptance gates still apply; see [AGENTS.md](../../AGENTS.md#local-execution-and-ci).
 
+Selected .NET validation also requires a hosted DAO120 compatibility inventory
+for each runtime/library combination. Disposable Windows hosts install the pinned
+Microsoft Access Runtime and validate the actual loaded ACEDAO DLL version.
+The lane consumes its matching analyzed runner artifact without rebuilding;
+every required method must pass and no skip is accepted. Ordinary partitions
+retain guarded DAO skips where Access is absent. DAO3.6/Jet3 native evidence and
+feature variants outside the required inventory remain separate obligations.
+
 ## Validation Ladder
 
 Use the strongest feasible automated signal for the mutation under test:

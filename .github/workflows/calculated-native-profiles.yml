@@ -45,20 +45,7 @@ jobs:
           persist-credentials: false
       - name: Install signed Microsoft Access Runtime on disposable runner
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $installer = Join-Path $env:RUNNER_TEMP 'officedeploymenttool.exe'
-          Invoke-WebRequest 'https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20430-20146.exe' -OutFile $installer
-          if ((Get-FileHash $installer -Algorithm SHA256).Hash -cne 'AF1594121AB610CD8ABC3DD6FF0A504E0CBC6CE54372E5C3813926352D1179C6') { throw 'Office Deployment Tool digest mismatch.' }
-          $signature = Get-AuthenticodeSignature $installer
-          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notlike 'CN=Microsoft Corporation,*') { throw 'Office Deployment Tool signature mismatch.' }
-          $deployment = Join-Path $env:RUNNER_TEMP 'office-deployment'
-          $extract = Start-Process $installer -ArgumentList @('/quiet', "/extract:`"$deployment`"") -WindowStyle Hidden -Wait -PassThru
-          if ($extract.ExitCode -ne 0) { throw "Office Deployment Tool extraction failed: $($extract.ExitCode)" }
-          $configuration = Join-Path $deployment 'access-runtime.xml'
-          [IO.File]::WriteAllText($configuration, '<Configuration><Add OfficeClientEdition="64" Channel="Current" Version="16.0.20527.20112"><Product ID="AccessRuntimeRetail"><Language ID="en-us"/><ExcludeApp ID="OneDrive"/></Product></Add><Display Level="None" AcceptEULA="TRUE"/></Configuration>')
-          $install = Start-Process (Join-Path $deployment 'setup.exe') -ArgumentList @('/configure', "`"$configuration`"") -WindowStyle Hidden -Wait -PassThru
-          if ($install.ExitCode -notin @(0,3010)) { throw "Access Runtime installation failed: $($install.ExitCode)" }
+        run: ./scripts/install-native-access.ps1
       - name: Set disposable runner user regional profile
         shell: pwsh
         run: Set-Culture -CultureInfo $env:NATIVE_CULTURE

@@ -50,6 +50,7 @@ function Get-CiLaneJobs([ValidateSet('dotnet', 'formal')][string] $Lane) {
             if ($entry.runner) { "Analyze and test ($($entry.name))" } else { "Analyze ($($entry.name))" }
         }
         'Trimmed and NativeAOT consumers'
+        'Native Access compatibility (net10.0)', 'Native Access compatibility (net10.0-netstandard)', 'Native Access compatibility (net11.0)'
         'Encryption replacement (ubuntu-latest, net10.0)', 'Encryption replacement (ubuntu-latest, net11.0)',
         'Encryption replacement (macos-latest, net10.0)', 'Encryption replacement (macos-latest, net11.0)'
     )
@@ -121,8 +122,8 @@ function Get-CiBaseline([string] $Event, [string] $Ref, [string] $Sha, [string] 
 }
 
 function Assert-CiResults($Lanes, $Results) {
-    foreach ($job in 'changes', 'checks', 'formal', 'analyze', 'aot', 'encryption-replacement', 'package') {
-        $required = $job -in 'changes', 'checks' -or ($job -eq 'formal' -and $Lanes.formal) -or ($job -in 'analyze', 'aot', 'encryption-replacement' -and $Lanes.dotnet) -or ($job -eq 'package' -and $Lanes.package)
+    foreach ($job in 'changes', 'checks', 'formal', 'analyze', 'aot', 'native-access', 'encryption-replacement', 'package') {
+        $required = $job -in 'changes', 'checks' -or ($job -eq 'formal' -and $Lanes.formal) -or ($job -in 'analyze', 'aot', 'native-access', 'encryption-replacement' -and $Lanes.dotnet) -or ($job -eq 'package' -and $Lanes.package)
         $expected = if ($required) { 'success' } else { 'skipped' }
         if ($Results[$job] -ne $expected) { throw "CI job '$job' reported '$($Results[$job])'; required '$expected'." }
     }
