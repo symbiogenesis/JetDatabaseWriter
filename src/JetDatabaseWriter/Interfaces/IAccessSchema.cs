@@ -130,7 +130,10 @@ public interface IAccessSchema : IAccessBase
     public ValueTask DropIndexAsync(string tableName, string indexName, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Asynchronously drops (deletes) the specified table and all of its data.
+    /// Asynchronously drops the specified local table and its data, or removes
+    /// a linked table's local catalog entry and permissions without opening or
+    /// changing its external source. Native cached linked storage is retained
+    /// when its incoming ownership cannot be established.
     /// An enforced relationship to another table blocks the drop. Self relationships
     /// and relationships without integrity enforcement are removed with the table.
     /// </summary>

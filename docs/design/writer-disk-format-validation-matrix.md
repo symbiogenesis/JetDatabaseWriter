@@ -960,3 +960,14 @@ permits retry. Fresh DAO3.6 and DAO120 checks read the edited values and compact
 output after the combined schema changes. This extends raw-slot preservation to
 ordinary Text; other scalar representations and original user LVAL identities
 remain I6 work.
+
+`AllowZeroLengthTests` and `NativeAllowZeroLengthTests` distinguish explicitly
+stored False, True and absent properties in ordinary Text/Memo/Hyperlink fields.
+Defaults and supplied empty strings obey the declaration independently of
+Required; malformed declared policies refuse before mutation. Native controls
+cover DAO3.6 Jet3/Jet4 and DAO120 ACE through reopen, schema changes and compact.
+Empty Hyperlinks remain distinct from Null, and parsed `#`, `##` and `###`
+spellings retain their exact native text through schema edits. Generated complex
+child fields omit the property as native children do; empty items survive
+managed add/replacement and native mutation/compact without a constraint bypass.
+Hyperlink semantic equality and hashing remain independent of the stored spelling.

@@ -147,6 +147,14 @@ The flat table also requires:
 
 ### 2.4 Per-kind flat-table schemas
 
+Generated flat-table text fields omit `AllowZeroLength`, matching the native
+child-field property shape. DAO120 child recordsets accept empty items when
+that property is absent even though their property getter reports False;
+persisting an explicit False changes assignment behavior. Required, defaults,
+AutoNumber and index constraints remain independently enforced through ordinary
+constraint hydration. `NativeAllowZeroLengthTests` checks native-created and
+generated children through item replacement, native mutation and compact.
+
 #### 2.4.1 Attachment (`MSysComplexColumns.Type = 4`, on-disk `col_type = 0x12`)
 
 Per Jackcess [`AttachmentColumnInfoImpl`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/impl/complex/AttachmentColumnInfoImpl.java):

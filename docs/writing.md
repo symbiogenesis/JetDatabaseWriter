@@ -8,6 +8,7 @@ Keep other writers away from the file while your writer is open. For grouped cha
 
 ## Contents
 
+- [Schema support](#schema-operations-and-preservation)
 - [Creating and renaming tables](#create-rename-and-drop-tables)
 - [Adding indexes](#add-indexes-to-existing-tables)
 - [Column constraints](#column-constraints)
@@ -30,6 +31,25 @@ Ordinary Jet4/ACE Memo text beginning with U+FEFF is writable at 6 through 2048 
 Path-based `CreateDatabaseAsync` initializes and flushes an adjacent private staging file before publishing the complete database. Publication refuses an existing destination and retains the staging file's [private-file permissions](operations.md#encryption-options). A failure reopening the published file leaves the completed database in place; a crash before publication may leave an unused staging file. Caller-supplied streams keep their separate in-process failure contract.
 
 Strings supplied to Binary columns use the database's code page on every format. A character that cannot be represented exactly throws `EncoderFallbackException` before that row is written; supply a `byte[]` to store arbitrary bytes.
+
+### Schema operations and preservation
+
+The README's schema support covers the operations documented here: local and
+linked-table creation, rename and deletion; column add/rename/drop; index
+create/rename/drop on populated tables; supported text-collation choices;
+defaults, validation and empty-string constraints; and primary/foreign keys with
+referential integrity and cascading updates/deletes. Format-specific column types
+and supported expression and collation families follow their documented limits.
+Mutations preserve surviving identities and metadata through their supported
+paths and refuse schemas whose required storage or indexes cannot be maintained.
+
+Preservation checks include native properties, query definitions, complex items,
+permissions and inert application objects. Coverage of every native property
+layout, application dependency, replication variant and unknown system object
+remains open in the [compatibility matrix](design/writer-disk-format-validation-matrix.md)
+and [schema-preservation plan](../PLAN.md#s--hostile-file-parsing-and-schema-preservation).
+The schema check does not promise Access application execution or UI Name
+AutoCorrect behavior.
 
 ```csharp
 await using var writer = await AccessWriter.OpenAsync("database.mdb");
@@ -61,7 +81,7 @@ DAO rename, a definition can retain an old name. The library never executes
 those definitions or applies Access UI Name AutoCorrect. The operation supports
 statement rollback and explicit transactions.
 
-New table, column, index, relationship and linked-table names follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of `.` `!` `` ` `` `[` `]` or a control character (U+0000–U+001F and U+007F). Spaces inside or at the end of a name, quotes, `#`, `=` and non-ASCII letters are fine. `CreateTableAsync`, `RenameTableAsync` (the new name), `AddColumnAsync`, `RenameColumnAsync` (the new name), `CreateRelationshipAsync`, `RenameRelationshipAsync` (the new name) and the `CreateLinked*TableAsync` methods (the local name) throw `ArgumentException` for any other name before writing anything, and `CreateTableAsync` also rejects two columns whose names differ only by case, since Access compares names ignoring case. A linked table's foreign name, such as `dbo.Orders` or `orders.csv`, is not checked against these rules. On a Jet3 database every new name, and a linked table's foreign name, path and connect string, must also be in the database's code page (see above). Names that an existing database already holds are only looked up, so a table or column written with such a name by another tool can still be read, written, altered and dropped, and a column can be renamed to a valid name.
+New table, column, index, relationship and linked-table names follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of `.` `!` `` ` `` `[` `]` or a control character (U+0000–U+001F and U+007F). Spaces inside or at the end of a name, quotes, `#`, `=` and non-ASCII letters are fine. `CreateTableAsync`, `RenameTableAsync` (the new name), `AddColumnAsync`, `RenameColumnAsync` (the new name), `CreateIndexAsync`, `RenameIndexAsync` (the new name), `CreateRelationshipAsync`, `RenameRelationshipAsync` (the new name) and the `CreateLinked*TableAsync` methods (the local name) throw `ArgumentException` for any other name before writing anything, and `CreateTableAsync` also rejects two columns whose names differ only by case, since Access compares names ignoring case. A linked table's foreign name, such as `dbo.Orders` or `orders.csv`, is not checked against these rules. On a Jet3 database every new name, and a linked table's foreign name, path and connect string, must also be in the database's code page (see above). Names that an existing database already holds are only looked up, so a table or column written with such a name by another tool can still be read, written, altered and dropped, and a column can be renamed to a valid name.
 
 #### Text collations
 
@@ -141,6 +161,7 @@ await writer.CreateTableAsync("Contacts", new[]
 | Constraint | Persisted in the file? | Notes |
 |---|---|---|
 | `IsNullable` | ✅ `MSysObjects.LvProp` (`Required`) | An insert whose value is still null after defaults and AutoNumber values are applied, and an update that sets the column to null, throw `InvalidOperationException`. An explicit `null` on insert is never replaced by a default, so it is rejected even when the column has one, as in Access. Restored on reopen; surfaced to readers via `ColumnMetadata.IsNullable`. |
+| `AllowZeroLength` | ✅ `MSysObjects.LvProp` | Controls empty strings independently of Null for ordinary Text, Memo and Hyperlink fields. New declarations default to `false`; set `true` to accept `""`, including in a required field. An explicit stored False rejects an empty supplied/defaulted string with `JetConstraintException` (`ZeroLengthViolation`). Imported fields with no stored property impose no empty-string constraint. `ColumnMetadata.AllowZeroLength` returns the stored Boolean, or null when absent or inapplicable. |
 | `IsAutoIncrement` | ✅ TDEF flags: integer `0x04`, GUID `0x40`; GUID default in `MSysObjects.LvProp` | Supported for `short`, `int` and `Guid`; declaring it on `byte` or `long` is refused. Integer inserts generate for null, `DBNull.Value`, `DbDefault.Value` or omission; the next value follows `max(TDEF counter, existing values)`, and deleting a high value does not rewind it. New GUID declarations persist `GenGUID()` and generate only for omission or `DbDefault.Value`; imported GUID fields honor their actual default, including its absence; explicit Null follows the field's nullability and primary-key constraints. A non-nullable CLR POCO property holding 0 (integer) or `Guid.Empty` is omitted as a mapping convention; positional/named rows can store `Guid.Empty` explicitly. GUID keys may be updated, subject to indexes/relationships. Integer updates can assign explicit values and raise the high-water counter, but cannot assign Null. |
 | `IsPrimaryKey` | ✅ TDEF logical-index entry with `index_type = 0x01` | Shortcut for synthesizing a PK `IndexDefinition` named `"PrimaryKey"` from one or more columns (in declaration order). Forces the PK key columns to `IsNullable = false` on the emitted TDEF. Mixing this with an explicit PK `IndexDefinition` in the same call throws `ArgumentException`. Single- and multi-column PKs both participate in live B-tree leaf maintenance (composite-key path). |
 | `DefaultValue` | ✅ as a literal `DefaultValue` expression in `MSysObjects.LvProp` | CLR object stored when an insert leaves the column out (a `RowValues` row that does not name it, a POCO with no property for it, or `DbDefault.Value`); an explicit `null` / `DBNull.Value` stores null. Unless `DefaultValueExpression` is set, it is also persisted as a literal expression (`7`, `"text"`, `True`, `#2024-02-29 08:30:00#`), for later readers; native acceptance remains type/context-specific. Text, Boolean, numeric, `DateTime` and `Guid` values persist; other types such as `byte[]` throw `NotSupportedException` at table creation. Every writer evaluates the literal and converts it to the column's type: a `DateTime` default to the whole second, and a number of any CLR type as its literal reads back in the column's type. A number the column's type cannot hold (1e39 on a Single column, 300 on a Byte column), NaN and infinities throw `ArgumentException`. `DBNull.Value` means no default. Updates never apply defaults. Not allowed on AutoNumber, calculated, Attachment or multi-value columns (`CreateTableAsync` and `AddColumnAsync` throw `ArgumentException`); stored defaults on integer AutoNumber, calculated and complex columns are kept but never applied. New GUID generated columns persist the native `GenGUID()` default for omitted/defaulted inserts; imported GUID fields honor their actual stored default or its absence. |
@@ -407,6 +428,12 @@ DataTable csvRows = await reader.ReadTableAsync("LinkedOrdersCsv", cancellationT
 ```
 
 > ODBC links remain metadata-only. Fixed-width text links and schema.ini type inference are not part of the managed text reader. Use `ListLinkedTablesAsync()` to enumerate linked entries and inspect their `Kind`, `ConnectString`, `SourcePath`, and `SourceObjectName` metadata.
+
+`RenameTableAsync` changes a link's local name. `DropTableAsync` removes its local
+catalog entry, permissions and unenforced relationship references. Neither
+operation opens the linked source or changes its rows. Native cached definitions
+and external metadata remain allocated when complete incoming-reference evidence
+is unavailable; removing a link does not promise to scrub that retained storage.
 
 ### Complex-item mutation
 

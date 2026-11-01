@@ -206,6 +206,22 @@ Observed DAO `MSysObjects.LvProp` facts:
 
 These LvProp differences were real DAO deltas, but matching them was not sufficient by itself to make writer-created FK tables survive DAO Compact & Repair. The final compact fix also required system-table row placement, Type=8 relationship catalog objects, relationship ACE rows, shared table/index usage-map rows, and in-place single-leaf reuse. Treat the LvProp shape as a compatibility fact, not as the whole compact root cause.
 
+`ColumnDefinition.AllowZeroLength` exposes the ordinary Text/Memo/Hyperlink
+constraint and defaults to False for new fields. The writer checks supplied and
+defaulted empty strings independently of Required, reloads the persisted Boolean
+on reopen and retains it through schema projection. `ColumnMetadata.AllowZeroLength`
+is null when the property is absent or inapplicable. DAO120-created Memo and
+complex-child controls distinguish absent metadata, which permits empty values,
+from an explicitly stored False. The writer imposes no empty-string constraint
+when the property is absent. Generated complex-child schemas omit this property
+to retain their native empty-item semantics; they do not bypass an explicit
+stored False. An empty Hyperlink materializes as an empty `Hyperlink`, distinct
+from Null, so a rewrite cannot replace an allowed empty value with Null.
+Unchanged parsed hyperlinks retain their original spelling, including native
+nonempty `#`, `##` and `###` values that an explicit False permits. Equality
+and hashing compare the four hyperlink parts; editing a part serializes the
+new value rather than reusing the original spelling.
+
 ## 6. Linked-table property-cache facts (2026-05-24)
 
 `linked-odbc-lvprop` compares the Jackcess V2007 ODBC linked-table fixture with the Access-linked-table fixture and writes [format-probe-linked-odbc-lvprop.md](../format-probe/format-probe-linked-odbc-lvprop.md).
