@@ -84,13 +84,14 @@ public sealed class DiagnosticSafetyTests
         byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(DatabaseFormat.AceAccdb, "Items", 300, primaryKey: false, TestContext.Current.CancellationToken);
         _ = await SyntheticOverflowRows.MoveRowAsync(bytes, "Items", OverflowRowLayout.PointerPastEndOfFile, TestContext.Current.CancellationToken);
         await using var stream = new MemoryStream(bytes, writable: false);
-        await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, DiagnosticsEnabled = true, PageReadOptimizationMode = readMode }, leaveOpen: true, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = false, DiagnosticsEnabled = true, PageReadOptimizationMode = readMode }, leaveOpen: true, TestContext.Current.CancellationToken);
         using var listener = new RecordingListener(throwFromListener: true);
         var scope = new TestTraceScope(listener);
         try
         {
             using DataTable rows = await reader.ReadTableAsync("Items", cancellationToken: TestContext.Current.CancellationToken);
             Assert.True(rows.Rows.Count >= 299);
+            Assert.Equal(1, reader.OmittedRowCount);
             Assert.Contains("Skipped corrupt overflow row", listener.Messages.ToString(), StringComparison.Ordinal);
         }
         finally

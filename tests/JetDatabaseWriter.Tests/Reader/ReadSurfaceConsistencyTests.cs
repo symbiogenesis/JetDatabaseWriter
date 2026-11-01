@@ -13,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -256,7 +257,7 @@ public sealed class ReadSurfaceConsistencyTests
 
     [Theory]
     [MemberData(nameof(FormatsAndReadModes))]
-    public async Task ReadApis_RowWithZeroColumnCount_AllSkipItAndAgreeOnCount(DatabaseFormat format, PageReadOptimizationMode readMode)
+    public async Task ReadApis_LenientRowWithZeroColumnCount_ReportOmissionsAndAgreeOnCount(DatabaseFormat format, PageReadOptimizationMode readMode)
     {
         byte[] bytes = await this.CreateItemsDatabaseAsync(format);
         await CorruptAsync(bytes, CorruptFirstRowColumnCount, this.ct);
@@ -264,13 +265,14 @@ public sealed class ReadSurfaceConsistencyTests
         await using var ms = new MemoryStream(bytes, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(
             ms,
-            new AccessReaderOptions { UseLockFile = false, PageReadOptimizationMode = readMode },
+            new AccessReaderOptions { UseLockFile = false, StrictParsing = false, PageReadOptimizationMode = readMode },
             leaveOpen: true,
             this.ct);
 
         Dictionary<string, long> counts = await this.CountThroughEveryApiAsync(reader);
 
         Assert.All(counts, pair => Assert.True(pair.Value == ItemCount - 1, $"{pair.Key} returned {pair.Value} rows; expected {ItemCount - 1}."));
+        Assert.Equal(counts.Count, reader.OmittedRowCount);
     }
 
     [Theory]
@@ -302,7 +304,7 @@ public sealed class ReadSurfaceConsistencyTests
 
     [Theory]
     [MemberData(nameof(Formats))]
-    public async Task ReadApis_DataPageRowCountPastPageCapacity_AgreeOnCount(DatabaseFormat format)
+    public async Task ReadApis_DataPageRowCountPastPageCapacity_RefuseIncompleteResults(DatabaseFormat format)
     {
         byte[] bytes = await this.CreateItemsDatabaseAsync(format);
         await CorruptAsync(bytes, CorruptRowCountPastCapacity, this.ct);
@@ -310,12 +312,17 @@ public sealed class ReadSurfaceConsistencyTests
         await using var ms = new MemoryStream(bytes, writable: false);
         await using AccessReader reader = await OpenReaderAsync(ms, this.ct);
 
-        long realCount = await reader.GetRealRowCountAsync(TableName, this.ct);
-        List<object[]> rows = await reader.Rows(TableName, cancellationToken: this.ct).ToListAsync(this.ct);
-        List<string[]> stringRows = await reader.RowsAsStrings(TableName, cancellationToken: this.ct).ToListAsync(this.ct);
+        JetCorruptDataException count = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.GetRealRowCountAsync(TableName, this.ct));
+        JetCorruptDataException rows = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows(TableName, cancellationToken: this.ct).ToListAsync(this.ct));
+        JetCorruptDataException strings = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.RowsAsStrings(TableName, cancellationToken: this.ct).ToListAsync(this.ct));
 
-        Assert.Equal(rows.Count, realCount);
-        Assert.Equal(rows.Count, stringRows.Count);
+        foreach (JetCorruptDataException failure in new[] { count, rows, strings })
+        {
+            Assert.Equal(JetErrorCode.MalformedValue, failure.ErrorCode);
+            Assert.NotNull(failure.ErrorInfo.PageNumber);
+        }
+
+        Assert.Equal(0, reader.OmittedRowCount);
     }
 
     [Theory]
