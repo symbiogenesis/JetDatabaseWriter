@@ -230,6 +230,7 @@ module LongValueTraversal {
       // Acquisition's bounded page is borrowed rather than retained per row.
       K.AccumulateProbeWork(acquired,previousCount,pageSize as int,pageSize as int);
       acquired := acquired + pageSize as int;
+      assert {:isolate} acquired <= (pageSize as int) * (count as int);
       if current !in graph {
         ResourceMetersFit(count as int,capacity as int,allocationSlots,preparationProbes,growthProbes,peakSlots);
         result := Result(copied as int,count as int,seen,capacity as int,allocationSlots,acquired,
