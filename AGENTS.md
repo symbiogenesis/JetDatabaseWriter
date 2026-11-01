@@ -49,6 +49,8 @@ When a design decision is left to you, choose what Microsoft Access does, then t
 
 ## Gating a commit on CI
 
+See [the workflow guide](docs/ci.md) for workflow responsibilities and manual dispatch commands.
+
 Gate every commit using the validation selected for its contents by GitHub CI. Local builds and targeted test runs are allowed during development, but do not replace that gate. Documentation and standalone tooling changes keep the lightweight script/security/proof-review checks and aggregate gate; they do not require unrelated builds, tests, AOT consumers or proofs. Several agents often share one machine, so full test suites and all benchmark runs stay on CI. Report gate results from CI.
 
 `ci.yml` runs on every push to `main` and every pull request. Keep content selection inside the workflow: trigger-level `paths` or `paths-ignore` filters would suppress the required gate and common checks. Integrate the reviewed work into local `main`, then publish only that branch:

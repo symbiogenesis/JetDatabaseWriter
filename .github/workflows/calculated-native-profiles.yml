@@ -10,14 +10,18 @@ permissions:
 concurrency:
   group: calculated-native-profiles-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   prerequisite:
+    if: github.ref == 'refs/heads/main'
     name: Require successful CI
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Verify the exact main revision passed CI
         shell: pwsh
         env:
@@ -37,6 +41,8 @@ jobs:
         culture: [en-US, fr-FR, de-DE, tr-TR, ja-JP, ar-SA]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install signed Microsoft Access Runtime on disposable runner
         shell: pwsh
         run: |
