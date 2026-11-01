@@ -338,9 +338,37 @@ module IndexMutationKernel {
     }
   }
 
-  // Row bookmarks are part of the native ordering even when encoded keys
-  // are equal. The same complete comparison controls bulk sorting, leaf
-  // insertion, mutation descent and ancestor maximum-entry replacement.
+  // The key adapter supplies its signed unsigned-byte comparison. Generated
+  // control normalizes that sign and appends native page/row tie ordering.
+  function CompleteEntryComparison(keyComparison: I64, leftPage: I64, leftRow: Byte,
+      rightPage: I64, rightRow: Byte): I64
+    ensures -1 <= CompleteEntryComparison(keyComparison, leftPage, leftRow, rightPage, rightRow) <= 1
+    ensures CompleteEntryComparison(keyComparison, leftPage, leftRow, rightPage, rightRow) == 0 <==>
+      keyComparison == 0 && leftPage == rightPage && leftRow == rightRow
+    ensures keyComparison < 0 ==> CompleteEntryComparison(keyComparison, leftPage, leftRow, rightPage, rightRow) == -1
+    ensures keyComparison > 0 ==> CompleteEntryComparison(keyComparison, leftPage, leftRow, rightPage, rightRow) == 1
+  {
+    if keyComparison < 0 then -1 else if keyComparison > 0 then 1
+    else if leftPage < rightPage then -1 else if leftPage > rightPage then 1
+    else if leftRow < rightRow then -1 else if leftRow > rightRow then 1 else 0
+  }
+
+  // This is a conditional composition theorem, not a proof of the BCL
+  // adapter: its comparison sign must agree with KeyOrder on stable bytes.
+  lemma CompleteEntryComparisonMatchesOrder(keyComparison: I64,
+      left: seq<Byte>, leftPage: I64, leftRow: Byte,
+      right: seq<Byte>, rightPage: I64, rightRow: Byte)
+    requires keyComparison < 0 <==> KeyOrder(left, right) < 0
+    requires keyComparison == 0 <==> KeyOrder(left, right) == 0
+    requires keyComparison > 0 <==> KeyOrder(left, right) > 0
+    ensures CompleteEntryComparison(keyComparison, leftPage, leftRow, rightPage, rightRow) as int ==
+      EntryOrder(left, leftPage, leftRow, right, rightPage, rightRow)
+  {
+    KeyOrderIdentity(left, right);
+  }
+
+  // The fully verified scalar scan remains an executable reference for the
+  // vectorized key adapter. Both paths execute the same completion policy.
   method CompareEntries(left: array<Byte>, leftPage: I64, leftRow: Byte,
       right: array<Byte>, rightPage: I64, rightRow: Byte) returns (comparison: I64)
     requires left.Length <= 2147483647 && right.Length <= 2147483647
@@ -356,17 +384,21 @@ module IndexMutationKernel {
       invariant KeyOrder(left[..], right[..]) == KeyOrder(left[offset as int..], right[offset as int..])
       decreases left.Length - offset as int
     {
-      if left[offset] < right[offset] { comparison := -1; return; }
-      if left[offset] > right[offset] { comparison := 1; return; }
+      if left[offset] < right[offset] {
+        comparison := CompleteEntryComparison(-1, leftPage, leftRow, rightPage, rightRow); return;
+      }
+      if left[offset] > right[offset] {
+        comparison := CompleteEntryComparison(1, leftPage, leftRow, rightPage, rightRow); return;
+      }
       offset := offset + 1;
     }
-    if offset < left.Length as U32 { comparison := 1; return; }
-    if offset < right.Length as U32 { comparison := -1; return; }
-    if leftPage < rightPage { comparison := -1; }
-    else if leftPage > rightPage { comparison := 1; }
-    else if leftRow < rightRow { comparison := -1; }
-    else if leftRow > rightRow { comparison := 1; }
-    else { comparison := 0; }
+    if offset < left.Length as U32 {
+      comparison := CompleteEntryComparison(1, leftPage, leftRow, rightPage, rightRow); return;
+    }
+    if offset < right.Length as U32 {
+      comparison := CompleteEntryComparison(-1, leftPage, leftRow, rightPage, rightRow); return;
+    }
+    comparison := CompleteEntryComparison(0, leftPage, leftRow, rightPage, rightRow);
   }
 
   ghost predicate HasMutationComponent(columns: seq<U32>, eligible: seq<Byte>, column: U32) {

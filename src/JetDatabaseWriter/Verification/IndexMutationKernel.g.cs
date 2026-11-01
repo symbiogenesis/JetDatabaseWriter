@@ -110,6 +110,24 @@ namespace JetDatabaseWriter.Verification {
       admitted = true;
       return admitted;
     }
+    public static long CompleteEntryComparison(long keyComparison, long leftPage, byte leftRow, long rightPage, byte rightRow)
+    {
+      if ((keyComparison) < (0L)) {
+        return -1L;
+      } else if ((keyComparison) > (0L)) {
+        return 1L;
+      } else if ((leftPage) < (rightPage)) {
+        return -1L;
+      } else if ((leftPage) > (rightPage)) {
+        return 1L;
+      } else if ((leftRow) < (rightRow)) {
+        return -1L;
+      } else if ((leftRow) > (rightRow)) {
+        return 1L;
+      } else {
+        return 0L;
+      }
+    }
     public static long CompareEntries(byte[] left, long leftPage, byte leftRow, byte[] right, long rightPage, byte rightRow)
     {
       long comparison = 0;
@@ -117,34 +135,24 @@ namespace JetDatabaseWriter.Verification {
       _0_offset = 0U;
       while (((_0_offset) < ((uint)(left).LongLength)) && ((_0_offset) < ((uint)(right).LongLength))) {
         if (((left)[(int)(_0_offset)]) < ((right)[(int)(_0_offset)])) {
-          comparison = -1L;
+          comparison = JetDatabaseWriter.Verification.IndexMutationKernel.CompleteEntryComparison(-1L, leftPage, leftRow, rightPage, rightRow);
           return comparison;
         }
         if (((left)[(int)(_0_offset)]) > ((right)[(int)(_0_offset)])) {
-          comparison = 1L;
+          comparison = JetDatabaseWriter.Verification.IndexMutationKernel.CompleteEntryComparison(1L, leftPage, leftRow, rightPage, rightRow);
           return comparison;
         }
         _0_offset = (_0_offset) + (1U);
       }
       if ((_0_offset) < ((uint)(left).LongLength)) {
-        comparison = 1L;
+        comparison = JetDatabaseWriter.Verification.IndexMutationKernel.CompleteEntryComparison(1L, leftPage, leftRow, rightPage, rightRow);
         return comparison;
       }
       if ((_0_offset) < ((uint)(right).LongLength)) {
-        comparison = -1L;
+        comparison = JetDatabaseWriter.Verification.IndexMutationKernel.CompleteEntryComparison(-1L, leftPage, leftRow, rightPage, rightRow);
         return comparison;
       }
-      if ((leftPage) < (rightPage)) {
-        comparison = -1L;
-      } else if ((leftPage) > (rightPage)) {
-        comparison = 1L;
-      } else if ((leftRow) < (rightRow)) {
-        comparison = -1L;
-      } else if ((leftRow) > (rightRow)) {
-        comparison = 1L;
-      } else {
-        comparison = 0L;
-      }
+      comparison = JetDatabaseWriter.Verification.IndexMutationKernel.CompleteEntryComparison(0L, leftPage, leftRow, rightPage, rightRow);
       return comparison;
     }
     public static bool SelectMutationPredicates(bool unique, uint[] keys, uint[] columns, byte[] eligible, uint[] selected)

@@ -832,8 +832,9 @@ internal static class IndexPageCodec
     /// <summary>Compares native index keys followed by their ascending page/row bookmarks.</summary>
     /// <param name="left">The first entry.</param>
     /// <param name="right">The second entry.</param>
+    /// <remarks>The span adapter supplies unsigned key-order sign; generated control normalizes it and compares bookmarks only for equal keys.</remarks>
     public static int CompareEntries(IndexEntry left, IndexEntry right)
-        => checked((int)IndexMutationKernel.CompareEntries(left.Key, left.DataPage, left.DataRow, right.Key, right.DataPage, right.DataRow));
+        => checked((int)IndexMutationKernel.CompleteEntryComparison(CompareKeyBytes(left.Key, right.Key), left.DataPage, left.DataRow, right.DataPage, right.DataRow));
 
     /// <summary>Measures a valid leaf without allocating or emitting its page bytes.</summary>
     /// <param name="layout">The page layout.</param>
