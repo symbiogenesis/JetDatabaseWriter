@@ -96,6 +96,26 @@ public sealed class AccessReaderOptions : AccessOptions
     /// <summary>Gets the maximum number of pages to keep in cache. Positive values enable caching; 0 or negative disables it. Default: 256 (1 MB for 4K pages).</summary>
     public int PageCacheSize { get; init; } = 256;
 
+    /// <summary>
+    /// Gets the maximum combined pending and live reader page leases. Default: 4096.
+    /// The positive allowance is shared by concurrent operations on this reader.
+    /// Exhaustion refuses immediately, including cache hits, instead of waiting
+    /// while a traversal holds other leases. Together with retained cache capacity
+    /// this bounds page images owned through the reader cache; pooled array sizes,
+    /// direct page-source reads, writer Pager storage, decoded values and caller-owned
+    /// memory remain separate resources.
+    /// </summary>
+    public int MaxActivePageLeases { get; init; } = 4096;
+
+    /// <summary>
+    /// Gets the maximum related entities materialized by one Include execution,
+    /// shared across its navigation paths and ThenInclude levels. Default: 65,536.
+    /// Filtering, sorting and paging run after loading and do not reduce this
+    /// positive allowance. Refusal occurs before mapping the next entity.
+    /// This counts entity instances, not their payload bytes or root query rows.
+    /// </summary>
+    public int MaxIncludeMaterializedRowsPerOperation { get; init; } = 65536;
+
     /// <summary>Gets a value indicating whether verbose diagnostic information is logged. Default: false.</summary>
     public bool DiagnosticsEnabled { get; init; }
 

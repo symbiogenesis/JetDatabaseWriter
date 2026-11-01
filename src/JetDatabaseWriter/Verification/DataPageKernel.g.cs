@@ -4,6 +4,16 @@
 namespace JetDatabaseWriter.Verification {
 
   internal static class DataPageKernel {
+    public static void TryReserveCount(uint current, uint limit, out bool admitted, out uint next)
+    {
+      admitted = false;
+      next = 0;
+      admitted = (current) < (limit);
+      next = current;
+      if (admitted) {
+        next = (current) + (1U);
+      }
+    }
     public static uint ReadWord(byte[] page, uint position)
     {
       return ((uint)((page)[(int)(position)])) + ((256U) * ((uint)((page)[(int)((position) + (1U))])));

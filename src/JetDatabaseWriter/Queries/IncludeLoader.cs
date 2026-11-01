@@ -17,6 +17,7 @@ using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tables;
+using JetDatabaseWriter.Verification;
 
 /// <summary>
 /// Eagerly loads navigation properties for a set of already-materialized root
@@ -277,6 +278,7 @@ internal static class IncludeLoader
             }
 
             mapper ??= RuntimeRowMapper.Build(type, headers);
+            metadata.ReserveMaterializedRow();
             map.Add(key, mapper(row));
             if (map.Count == distinctKeys.Count)
             {
@@ -300,6 +302,7 @@ internal static class IncludeLoader
         await foreach ((string key, string[] headers, object[] row) in ReadMatchesAsync(
             metadata, table, keyColumns, distinctKeys, firstPerKey: false, cancellationToken).ConfigureAwait(false))
         {
+            metadata.ReserveMaterializedRow();
             if (!map.TryGetValue(key, out List<object>? list))
             {
                 list = [];
@@ -784,12 +787,24 @@ internal static class IncludeLoader
         private readonly Dictionary<string, IReadOnlyList<IndexMetadata>> indexes = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string[]> headers = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, long> rowCounts = new(StringComparer.OrdinalIgnoreCase);
+        private uint materializedRows;
 
         public TableReader Tables { get; } = tables;
 
         public IndexRowReader Indexes { get; } = indexes;
 
         public TextSortOrder TextSortOrder => this.Indexes.DefaultTextSortOrder;
+
+        public void ReserveMaterializedRow()
+        {
+            DataPageKernel.TryReserveCount(this.materializedRows, checked((uint)this.Tables.MaxIncludeMaterializedRowsPerOperation), out bool admitted, out uint next);
+            if (!admitted)
+            {
+                throw new JetLimitationException(JetErrorCode.IncludeMaterializationBudgetExceeded, $"The Include execution permits at most {this.Tables.MaxIncludeMaterializedRowsPerOperation} related entities before filtering and paging.");
+            }
+
+            this.materializedRows = next;
+        }
 
         public async ValueTask<IReadOnlyList<IndexMetadata>> GetIndexesAsync(string table, CancellationToken cancellationToken)
         {

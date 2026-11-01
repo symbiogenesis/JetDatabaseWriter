@@ -1,10 +1,13 @@
 namespace JetDatabaseWriter.Pages;
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Verification;
 
 /// <summary>Retains immutable page images and their row directories; each read owns a disposable lease.</summary>
 internal sealed class ReaderPageCache : IDisposable
@@ -16,6 +19,8 @@ internal sealed class ReaderPageCache : IDisposable
 #endif
     private readonly IPageSource pages;
     private readonly LruCache<long, PageFrame>? cache;
+    private readonly Dictionary<long, PageLoad> loads = [];
+    private readonly int maxActiveLeases;
     private readonly Action releaseLease;
     private int outstandingLeases;
     private bool disposed;
@@ -24,14 +29,18 @@ internal sealed class ReaderPageCache : IDisposable
     /// <param name="format">The database format.</param>
     /// <param name="pages">The source of owned page copies.</param>
     /// <param name="capacity">The retained image count; zero or negative disables reader retention.</param>
-    internal ReaderPageCache(JetFormat format, IPageSource pages, int capacity)
+    /// <param name="maxActiveLeases">The positive combined pending and live reader lease allowance.</param>
+    internal ReaderPageCache(JetFormat format, IPageSource pages, int capacity, int maxActiveLeases = 4096)
     {
         if (format.PageSize != pages.PageSize)
         {
             throw new ArgumentException("The page source and database format must have the same page size.", nameof(pages));
         }
 
+        Guard.Positive(maxActiveLeases, nameof(maxActiveLeases));
+
         this.pages = pages;
+        this.maxActiveLeases = maxActiveLeases;
         this.releaseLease = () => Interlocked.Decrement(ref this.outstandingLeases);
         if (capacity > 0 && pages is not Pager)
         {
@@ -48,7 +57,7 @@ internal sealed class ReaderPageCache : IDisposable
     /// <summary>Gets the readable page count, including pending appended pages.</summary>
     internal long PageCount => this.pages.PageCount;
 
-    /// <summary>Gets the number of reader leases not yet released.</summary>
+    /// <summary>Gets admitted pending acquisitions and reader leases not yet released.</summary>
     internal int OutstandingLeases => Volatile.Read(ref this.outstandingLeases);
 
     /// <summary>Acquires immutable page bytes, valid until the returned lease is disposed.</summary>
@@ -61,18 +70,13 @@ internal sealed class ReaderPageCache : IDisposable
         lock (this.sync)
         {
             this.ThrowIfDisposed();
-            if (this.cache is not null && this.cache.TryGetValue(number, out PageFrame frame))
-            {
-                return this.Acquire(frame);
-            }
-        }
-
-        if (this.pages is Pager pager)
-        {
             this.CountLease();
             try
             {
-                return await pager.ReadPageLeaseAsync(number, this.releaseLease, cancellationToken).ConfigureAwait(false);
+                if (this.cache is not null && this.cache.TryGetValue(number, out PageFrame frame))
+                {
+                    return frame.Acquire(this.releaseLease);
+                }
             }
             catch
             {
@@ -81,28 +85,21 @@ internal sealed class ReaderPageCache : IDisposable
             }
         }
 
-        byte[] bytes = await this.pages.ReadPageAsync(number, cancellationToken).ConfigureAwait(false);
-        var loaded = PageFrame.Own(bytes, this.pages.PageSize);
-        bool retained = false;
+        PageLease? lease = null;
         try
         {
-            lock (this.sync)
+            if (this.pages is Pager pager)
             {
-                this.ThrowIfDisposed();
-                if (this.cache is not null)
-                {
-                    this.cache.Add(number, loaded);
-                    retained = true;
-                }
-
-                return this.Acquire(loaded);
+                return lease = await pager.ReadPageLeaseAsync(number, this.releaseLease, cancellationToken).ConfigureAwait(false);
             }
+
+            return lease = await this.ReadMissAsync(number, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            if (!retained)
+            if (lease is null)
             {
-                loaded.Release();
+                Interlocked.Decrement(ref this.outstandingLeases);
             }
         }
     }
@@ -122,17 +119,93 @@ internal sealed class ReaderPageCache : IDisposable
         }
     }
 
-    private PageLease Acquire(PageFrame frame)
+    private async ValueTask<PageLease> ReadMissAsync(long number, CancellationToken cancellationToken)
     {
-        this.CountLease();
+        PageLoad load;
+        lock (this.sync)
+        {
+            this.ThrowIfDisposed();
+            if (!this.loads.TryGetValue(number, out PageLoad? existing))
+            {
+                load = new PageLoad();
+                this.loads.Add(number, load);
+            }
+            else
+            {
+                load = existing;
+            }
+
+            load.Users++;
+        }
+
+        bool entered = false;
         try
         {
-            return frame.Acquire(this.releaseLease);
+            await load.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            entered = true;
+            lock (this.sync)
+            {
+                this.ThrowIfDisposed();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (load.Frame is { } shared)
+                {
+                    return shared.Acquire(this.releaseLease);
+                }
+
+                if (this.cache is not null && this.cache.TryGetValue(number, out PageFrame cached))
+                {
+                    return cached.Acquire(this.releaseLease);
+                }
+            }
+
+            byte[] bytes = await this.pages.ReadPageAsync(number, cancellationToken).ConfigureAwait(false);
+            var loaded = PageFrame.Own(bytes, this.pages.PageSize);
+            PageLease? hold = null;
+            bool retained = false;
+            try
+            {
+                hold = loaded.Acquire();
+                lock (this.sync)
+                {
+                    this.ThrowIfDisposed();
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (this.cache is not null)
+                    {
+                        this.cache.Add(number, loaded);
+                        retained = true;
+                    }
+
+                    load.Frame = loaded;
+                    load.Hold = hold;
+                    hold = null;
+                    return loaded.Acquire(this.releaseLease);
+                }
+            }
+            finally
+            {
+                hold?.Dispose();
+                if (!retained)
+                {
+                    loaded.Release();
+                }
+            }
         }
-        catch
+        finally
         {
-            Interlocked.Decrement(ref this.outstandingLeases);
-            throw;
+            if (entered)
+            {
+                load.Gate.Release();
+            }
+
+            lock (this.sync)
+            {
+                load.Users--;
+                if (load.Users == 0)
+                {
+                    this.loads.Remove(number);
+                    load.Dispose();
+                }
+            }
         }
     }
 
@@ -142,8 +215,18 @@ internal sealed class ReaderPageCache : IDisposable
         do
         {
             current = Volatile.Read(ref this.outstandingLeases);
+            DataPageKernel.TryReserveCount(checked((uint)current), checked((uint)this.maxActiveLeases), out bool admitted, out uint next);
+            if (!admitted)
+            {
+                throw new JetLimitationException(JetErrorCode.PageLeaseBudgetExceeded, $"The reader permits at most {this.maxActiveLeases} pending and live page leases.");
+            }
+
+            if (Interlocked.CompareExchange(ref this.outstandingLeases, checked((int)next), current) == current)
+            {
+                return;
+            }
         }
-        while (Interlocked.CompareExchange(ref this.outstandingLeases, checked(current + 1), current) != current);
+        while (true);
     }
 
     private void ThrowIfDisposed()
@@ -157,4 +240,21 @@ internal sealed class ReaderPageCache : IDisposable
         }
     }
 #endif
+
+    private sealed class PageLoad : IDisposable
+    {
+        internal SemaphoreSlim Gate { get; } = new(1, 1);
+
+        internal int Users { get; set; }
+
+        internal PageFrame? Frame { get; set; }
+
+        internal PageLease? Hold { get; set; }
+
+        public void Dispose()
+        {
+            this.Hold?.Dispose();
+            this.Gate.Dispose();
+        }
+    }
 }

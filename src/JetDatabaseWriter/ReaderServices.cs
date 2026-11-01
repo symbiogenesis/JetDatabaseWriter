@@ -42,7 +42,7 @@ internal sealed class ReaderServices : IDisposable
         this.Operations = new AsyncReentrantOperationGate(typeof(AccessReader), context.AttachmentReadContext, context.ComplexItemReads);
         JetFormat format = db.Format;
         TableDefReader tableDefs = db.TableDefs;
-        this.PageCache = new ReaderPageCache(format, db.Pages, options.PageCacheSize);
+        this.PageCache = new ReaderPageCache(format, db.Pages, options.PageCacheSize, options.MaxActivePageLeases);
 
         var rows = new RowDecoder(db.Format, db.OwnedPages, this.PageCache, new LongValueDecoder(format, this.PageCache, options.MaxLongValueBytes), options.StrictParsing, context.RowReads);
         this.Rows = rows;
@@ -100,6 +100,16 @@ internal sealed class ReaderServices : IDisposable
     private static void ValidateOptions(AccessReaderOptions options)
     {
         Guard.NotNull(options, nameof(options));
+
+        if (options.MaxActivePageLeases <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxActivePageLeases must be positive.");
+        }
+
+        if (options.MaxIncludeMaterializedRowsPerOperation <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxIncludeMaterializedRowsPerOperation must be positive.");
+        }
 
         if (options.MaxLongValueBytes is <= 0 or > LongValueDescriptor.MaxLength)
         {

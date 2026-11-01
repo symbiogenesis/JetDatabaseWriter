@@ -64,6 +64,9 @@ internal sealed class TableReader(
     private readonly Dictionary<string, (int Generation, bool Exists)> tableLookups = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<long, (int Generation, long Count)> rowCounts = [];
 
+    /// <summary>Gets the related-entity allowance shared across one Include execution.</summary>
+    internal int MaxIncludeMaterializedRowsPerOperation => options.MaxIncludeMaterializedRowsPerOperation;
+
     /// <summary>
     /// Returns <see langword="true"/> when any column flagged in
     /// <paramref name="wantedColumns"/> has type <paramref name="type"/>.

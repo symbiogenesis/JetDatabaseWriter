@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -219,6 +220,52 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
         Assert.Equal([11, 13], alice.Orders.Select(o => o.Id));
         FiOrder onlyBob = Assert.Single(bob.Orders);
         Assert.Equal(20, onlyBob.Id);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IncludeMaterializationBudget_ChargesChildrenBeforePagingInBothParsingModes(bool strict)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        temp.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            temp, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict, MaxIncludeMaterializedRowsPerOperation = 8 }, leaveOpen: true, ct);
+
+        JetLimitationException failure = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+            await reader.Query<FiCustomer>("FiCustomer").Include(customer => customer.Orders.Take(1)).ToListAsync(ct));
+        Assert.Equal(JetErrorCode.IncludeMaterializationBudgetExceeded, failure.ErrorCode);
+
+        // A failed query cannot consume another execution's fresh allowance.
+        List<FiCustomer> retry = await reader.Query<FiCustomer>("FiCustomer")
+            .Where(customer => customer.Id == 2).Include(customer => customer.Orders).ToListAsync(ct);
+        Assert.Equal(2, Assert.Single(retry).Orders.Count);
+    }
+
+    [Theory]
+    [InlineData(10, false)]
+    [InlineData(11, true)]
+    public async Task IncludeMaterializationBudget_IsSharedAcrossThenIncludeLevels(int budget, bool succeeds)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        temp.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            temp, new AccessReaderOptions { UseLockFile = false, MaxIncludeMaterializedRowsPerOperation = budget }, leaveOpen: true, ct);
+
+        async Task<List<FiRegion>> ReadAsync() => await reader.Query<FiRegion>("FiRegion")
+            .Include(region => region.Customers).ThenInclude(customer => customer.Orders).ToListAsync(ct);
+        if (succeeds)
+        {
+            FiRegion region = Assert.Single(await ReadAsync());
+            Assert.Equal(9, region.Customers.Sum(customer => customer.Orders.Count));
+        }
+        else
+        {
+            JetLimitationException failure = await Assert.ThrowsAsync<JetLimitationException>(ReadAsync);
+            Assert.Equal(JetErrorCode.IncludeMaterializationBudgetExceeded, failure.ErrorCode);
+        }
     }
 
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)

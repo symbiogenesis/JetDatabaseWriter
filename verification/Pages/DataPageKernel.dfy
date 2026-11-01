@@ -9,6 +9,18 @@ module DataPageNativeTypes {
 module DataPageKernel {
   import opened DataPageNativeTypes
 
+  // Admission is immediate: callers never wait for capacity while holding
+  // existing leases. The adapter atomically installs the returned count.
+  method TryReserveCount(current: U32, limit: U32) returns (admitted: bool, next: U32)
+    ensures admitted <==> current < limit
+    ensures admitted ==> next as int == current as int + 1 && next <= limit
+    ensures !admitted ==> next == current
+  {
+    admitted := current < limit;
+    next := current;
+    if admitted { next := current + 1; }
+  }
+
   ghost function Word(bytes: seq<Byte>, position: int): U32
     requires 0 <= position && position + 2 <= |bytes|
   { bytes[position] as U32 + 256 * (bytes[position + 1] as U32) }

@@ -243,6 +243,12 @@ public enum JetErrorCode
     /// <summary>The complex-item identity inspection allowance for one operation is exhausted.</summary>
     ComplexItemIdentityBudgetExceeded = 813,
 
+    /// <summary>The reader's pending and live page lease allowance is exhausted.</summary>
+    PageLeaseBudgetExceeded = 814,
+
+    /// <summary>The related-entity materialization allowance for one Include execution is exhausted.</summary>
+    IncludeMaterializationBudgetExceeded = 815,
+
     /// <summary>Identifies FeatureNotSupported.</summary>
     FeatureNotSupported = 901,
 
