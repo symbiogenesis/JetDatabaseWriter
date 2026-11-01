@@ -55,7 +55,7 @@ public sealed class MixedOleScalarTypeTests
                     new("DateValue", typeof(DateTime)),
                     new("GuidValue", typeof(Guid)),
                     new("BoolValue", typeof(bool)),
-                    new("TextValue", typeof(string), 100),
+                    new("TextValue", typeof(string), 100) { AllowZeroLength = true },
                     new("BinaryValue", typeof(byte[]), 30) { ColumnTypeOverride = BinaryType },
                     new("OleValue", typeof(byte[])),
                 ],
