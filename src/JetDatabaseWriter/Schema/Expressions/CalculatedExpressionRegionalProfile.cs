@@ -162,8 +162,12 @@ internal static class CalculatedExpressionRegionalProfile
     }
 
     internal static CultureInfo Snapshot(CultureInfo culture)
+        => SnapshotWithPlatformDefaults(culture, new CultureInfo(culture.Name, useUserOverride: false));
+
+    internal static CultureInfo SnapshotWithPlatformDefaults(CultureInfo culture, CultureInfo platformDefaults)
     {
         var copy = (CultureInfo)culture.Clone();
+        var requested = (DateTimeFormatInfo)copy.DateTimeFormat.Clone();
 
         // Table calculations use Gregorian OLE dates even under an Islamic user calendar.
         string shortDatePattern = copy.DateTimeFormat.ShortDatePattern;
@@ -177,6 +181,14 @@ internal static class CalculatedExpressionRegionalProfile
         copy.DateTimeFormat.LongTimePattern = longTimePattern;
         copy.DateTimeFormat.AMDesignator = amDesignator;
         copy.DateTimeFormat.PMDesignator = pmDesignator;
+        if (CalculatedNativeRegionalDefaults.Apply(copy.Name, copy.DateTimeFormat, requested, platformDefaults.DateTimeFormat))
+        {
+            return CultureInfo.ReadOnly(copy);
+        }
+
+        // Calendar replacement resets separators as well as name tables.
+        copy.DateTimeFormat.DateSeparator = requested.DateSeparator;
+        copy.DateTimeFormat.TimeSeparator = requested.TimeSeparator;
         copy.DateTimeFormat.DateSeparator = copy.DateTimeFormat.DateSeparator
             .Replace("\u200F", string.Empty, StringComparison.Ordinal)
             .Replace("\u200E", string.Empty, StringComparison.Ordinal);

@@ -15,6 +15,8 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
 internal sealed class CalculatedExpressionEvaluationContext
 {
+    private static readonly CultureInfo DefaultCalculatedCulture = CalculatedExpressionRegionalProfile.Snapshot(CultureInfo.GetCultureInfo("en-US"));
+
     private readonly IReadOnlyList<ColumnConstraint> constraints;
     private readonly IReadOnlyList<ColumnInfo> columns;
     private readonly object[] values;
@@ -30,7 +32,7 @@ internal sealed class CalculatedExpressionEvaluationContext
     public CalculatedExpressionEvaluationContext(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null, CultureInfo? calculatedCulture = null)
     {
         this.tableName = tableName;
-        this.calculatedCulture = calculatedCulture ?? CultureInfo.GetCultureInfo("en-US");
+        this.calculatedCulture = calculatedCulture ?? DefaultCalculatedCulture;
         this.TextCollation = textCollation ?? JetDatabaseWriter.Indexes.Collation.JetTextCollation.GeneralLegacy;
         this.constraints = constraints;
         this.columns = tableDef.Columns;

@@ -4,6 +4,18 @@
 namespace JetDatabaseWriter.Verification {
 
   internal static class RecoveryKernel {
+    public static ulong RoundGeneralDateTicks(ulong ticks) {
+      if ((ticks) > (3155378975999999999UL)) {
+        return 0UL;
+      } else {
+        ulong _0_whole = (ticks) - ((ticks) % (10000000UL));
+        if ((((ticks) % (10000000UL)) > (5000000UL)) && ((_0_whole) <= (3155378975989999999UL))) {
+          return (_0_whole) + (10000000UL);
+        } else {
+          return _0_whole;
+        }
+      }
+    }
     public static bool VariableValueAdmitted(uint units, uint encodedBytes, uint maximumBytes, bool unicodeText)
     {
       return (((maximumBytes) == (0U)) || ((encodedBytes) <= (maximumBytes))) && (((!(unicodeText)) || ((maximumBytes) == (0U))) || ((units) <= ((maximumBytes) / (2U))));

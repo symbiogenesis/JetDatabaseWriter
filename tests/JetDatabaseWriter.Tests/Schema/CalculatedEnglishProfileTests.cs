@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -29,7 +30,7 @@ public sealed class CalculatedEnglishProfileTests
         await using var stream = new MemoryStream();
         stream.Write(original);
         stream.Position = 0;
-        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false, CalculatedExpressionCulture = CultureInfo.GetCultureInfo("en-US") }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.InsertRowAsync("T", new object?[] { 1, 1234.5d, new DateTime(2020, 3, 4, 13, 45, 0), "iIıİäÄéÉßœ漢" }.Concat(Enumerable.Repeat<object?>(null, 22)).ToArray(), TestContext.Current.CancellationToken);
             Assert.Equal(2, await writer.UpdateRowsAsync("T", "N", 1234.5d, new Dictionary<string, object?> { ["N"] = 1234.5d }, TestContext.Current.CancellationToken));

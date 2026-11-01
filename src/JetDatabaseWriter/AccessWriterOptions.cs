@@ -62,6 +62,9 @@ public sealed class AccessWriterOptions : AccessOptions
     /// Gets the regional settings used for calculated-column date and number conversions
     /// and month/weekday names. Null uses the current culture, including user overrides,
     /// when the writer opens. Settings are copied for the writer's lifetime.
+    /// For the six native-qualified regional profiles, date defaults and names
+    /// use captured Access settings. Observable differences from runtime defaults
+    /// are retained as caller overrides.
     /// The database's text collation independently controls text comparisons.
     /// </summary>
     public CultureInfo? CalculatedExpressionCulture { get; init; }

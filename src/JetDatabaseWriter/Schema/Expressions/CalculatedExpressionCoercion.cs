@@ -495,12 +495,8 @@ internal static class CalculatedExpressionCoercion
     /// <returns>The General Date text.</returns>
     internal static string ToGeneralDateText(DateTime value)
     {
-        long fraction = value.Ticks % TimeSpan.TicksPerSecond;
-        DateTime rounded = value.AddTicks(-fraction);
-        if (fraction > TimeSpan.TicksPerSecond / 2 && (DateTime.MaxValue - rounded).Ticks >= TimeSpan.TicksPerSecond)
-        {
-            rounded = rounded.AddSeconds(1);
-        }
+        long roundedTicks = checked((long)JetDatabaseWriter.Verification.RecoveryKernel.RoundGeneralDateTicks((ulong)value.Ticks));
+        DateTime rounded = value.AddTicks(roundedTicks - value.Ticks);
 
         if (CalculatedExpressionRegionalProfile.IsActive)
         {

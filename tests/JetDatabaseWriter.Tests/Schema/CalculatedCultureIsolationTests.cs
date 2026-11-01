@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
+using System;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -44,6 +45,33 @@ public sealed class CalculatedCultureIsolationTests
         }
 
         Assert.Equal<object>([1.5d, "1,5", "mars", 1.5d], await ReadRowAsync(stream));
+    }
+
+    [Fact]
+    public async Task DefaultInvariantCulture_RetainsItsDateProfile()
+    {
+        CultureInfo previous = CultureInfo.CurrentCulture;
+        await using var stream = new MemoryStream();
+        var date = new DateTime(2020, 3, 4, 13, 45, 0);
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+            await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new("D", typeof(DateTime)),
+                    new("Text", typeof(string)) { IsCalculated = true, CalculationExpression = "[D]&\"\"" },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", [date, null], TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+
+        Assert.Equal<object>([date, "03/04/2020 13:45:00"], await ReadRowAsync(stream));
     }
 
     [Fact]

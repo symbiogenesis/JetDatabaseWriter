@@ -29,6 +29,36 @@ module RecoveryKernel {
   import Replacement = ReplacementProtocol
   import Admission = JournalAdmissionModel
 
+  // General Date formatting rounds managed DateTime ticks to whole seconds.
+  // Native OLE serials have a separate, earlier ties-up projection; this
+  // controller preserves the managed strictly-greater-than-half rule and
+  // refuses a carry beyond DateTime's final whole second without overflow.
+  function RoundGeneralDateTicks(ticks: U64): U64
+    ensures RoundGeneralDateTicks(ticks) <= 3155378975999999999
+    ensures RoundGeneralDateTicks(ticks) % 10000000 == 0
+    ensures ticks > 3155378975999999999 ==> RoundGeneralDateTicks(ticks) == 0
+    ensures ticks <= 3155378975999999999 ==>
+      RoundGeneralDateTicks(ticks) ==
+        (if ticks % 10000000 > 5000000 && ticks - ticks % 10000000 <= 3155378975989999999
+         then ticks - ticks % 10000000 + 10000000
+         else ticks - ticks % 10000000)
+  {
+    if ticks > 3155378975999999999 then 0 else
+      var whole := ticks - ticks % 10000000;
+      if ticks % 10000000 > 5000000 && whole <= 3155378975989999999
+      then whole + 10000000 else whole
+  }
+
+  lemma GeneralDateRoundingIsIdempotent(ticks: U64)
+    ensures RoundGeneralDateTicks(RoundGeneralDateTicks(ticks)) == RoundGeneralDateTicks(ticks)
+  { }
+
+  lemma GeneralDateHalfSecondRoundsDown(ticks: U64)
+    requires ticks <= 3155378975999999999
+    requires ticks % 10000000 <= 5000000
+    ensures RoundGeneralDateTicks(ticks) == ticks - ticks % 10000000
+  { }
+
   // Ordinary variable values are admitted intact. Unicode Text has both a
   // logical UTF-16 width and a physical encoded width; compression never
   // grants permission to discard characters or to exceed the descriptor.
