@@ -97,6 +97,7 @@ public sealed class NativeApplicationObjectPreservationTests
         await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.ApplicationPreservation.Native");
         await SeedAsync(session.SourcePath, codeObjects);
         string control = session.CreateDatabasePath("control");
+        string compactedControl = session.CreateDatabasePath("control-compact");
         File.Copy(session.SourcePath, control);
         await MutateAsync(session.SourcePath, WriteMode.AutoCommit, operation);
         string codeChecks = codeObjects
@@ -121,6 +122,9 @@ public sealed class NativeApplicationObjectPreservationTests
                 } finally { $db.Close() }
             }
             $expected = Read-Definitions {{Literal(control)}} 'retained'
+            $engine.CompactDatabase({{Literal(control)}}, {{Literal(compactedControl)}})
+            $nativeCompacted = Read-Definitions {{Literal(compactedControl)}} 'retained'
+            if ($nativeCompacted -cne $expected) { throw 'Native control compact changed the saved-query definition' }
             $actual = Read-Definitions {{Literal(session.SourcePath)}} '{{expectedLabel}}'
             if ($actual -cne $expected) { throw 'Saved-query definition changed' }
             $engine.CompactDatabase({{Literal(session.SourcePath)}}, {{Literal(session.CompactedPath)}})
@@ -131,11 +135,38 @@ public sealed class NativeApplicationObjectPreservationTests
         AccessRoundTripEnvironment.CompactResult result = session.RunDaoEngineScript(script, TimeSpan.FromMinutes(2));
         Assert.True(result.ExitCode == 0, $"Native application preservation failed: {result.StdOut}\n{result.StdErr}");
         Assert.Contains("INERT_APPLICATION_PUBLIC_MUTATION=OK", result.StdOut, StringComparison.Ordinal);
-        Snapshot original = await ReadSnapshotAsync(control);
-        Snapshot compacted = await ReadSnapshotAsync(session.CompactedPath);
         foreach (string name in new[] { "MSysAccessStorage", "MSysQueries", "f_C54F32B8B3CB4285928325593DE12252_Data" })
         {
-            Assert.Equal(original.Tables[name], compacted.Tables[name]);
+            NamedTableSnapshot original = await ReadNamedTableAsync(compactedControl, name);
+            NamedTableSnapshot compacted = await ReadNamedTableAsync(session.CompactedPath, name);
+            Assert.Equal(original.Columns, compacted.Columns);
+            Assert.Equal(original.Rows, compacted.Rows);
+        }
+    }
+
+    [Theory(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    [Trait("Category", "RequiresMicrosoftAccess")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Dao120_NativeCompactPreservesApplicationValuesByColumnName(bool codeObjects)
+    {
+        await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.ApplicationPreservation.NativeControl");
+        await SeedAsync(session.SourcePath, codeObjects);
+        AccessRoundTripEnvironment.CompactResult result = session.RunDaoEngineScript(
+            $$"""
+            $engine.CompactDatabase({{Literal(session.SourcePath)}}, {{Literal(session.CompactedPath)}})
+            """,
+            TimeSpan.FromMinutes(2));
+        Assert.True(result.ExitCode == 0, $"Native control compact failed: {result.StdOut}\n{result.StdErr}");
+        foreach (string name in new[] { "MSysAccessStorage", "MSysQueries", "f_C54F32B8B3CB4285928325593DE12252_Data" })
+        {
+            NamedTableSnapshot original = await ReadNamedTableAsync(session.SourcePath, name);
+            NamedTableSnapshot compacted = await ReadNamedTableAsync(session.CompactedPath, name);
+            Assert.Equal(original.Columns, compacted.Columns);
+            Assert.Equal(original.Rows, compacted.Rows);
         }
     }
 
@@ -345,17 +376,48 @@ public sealed class NativeApplicationObjectPreservationTests
         Assert.Equal(0u, pointer);
     }
 
-    private static string EncodeRow(DataRow row) => string.Join("|", row.ItemArray.Select(value => value switch
+    private static async Task<NamedTableSnapshot> ReadNamedTableAsync(string path, string name)
+    {
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(path, cancellationToken: Ct);
+        using DataTable table = await reader.ReadTableAsync(name, cancellationToken: Ct);
+        Dictionary<int, string>? queryNames = null;
+        if (name == "MSysQueries")
+        {
+            using DataTable catalog = await reader.ReadTableAsync("MSysObjects", cancellationToken: Ct);
+            queryNames = catalog.AsEnumerable().Where(row => (short)row["Type"] == 5)
+                .ToDictionary(row => (int)row["Id"], row => (string)row["Name"]);
+        }
+
+        DataColumn[] columns = table.Columns.Cast<DataColumn>().OrderBy(column => column.ColumnName, StringComparer.Ordinal).ToArray();
+        string[] schema = columns.Select(column => Hex(column.ColumnName) + ":" + column.DataType.FullName).ToArray();
+
+        // Native compact may reorder physical descriptors and renumber query
+        // catalog identities. Compare each exact named value, resolving only
+        // the query definition's catalog foreign key to its stable query name.
+        string[] rows = table.AsEnumerable()
+            .Select(row => string.Join("|", columns.Select(column => Hex(column.ColumnName) + "="
+                + (queryNames is not null && column.ColumnName == "ObjectId"
+                    ? "query:" + Hex(queryNames[(int)row[column]])
+                    : EncodeValue(row[column])))))
+            .Order(StringComparer.Ordinal).ToArray();
+        return new(schema, rows);
+    }
+
+    private static string EncodeRow(DataRow row) => string.Join("|", row.ItemArray.Select(EncodeValue));
+
+    private static string EncodeValue(object? value) => value switch
     {
         null or DBNull => "null",
         byte[] bytes => "bytes:" + Convert.ToHexString(bytes),
         DateTime date => "date:" + date.ToBinary().ToString(CultureInfo.InvariantCulture),
         _ => value.GetType().Name + ":" + Hex(Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty),
-    }));
+    };
 
     private static string Hex(string text) => Convert.ToHexString(Encoding.UTF8.GetBytes(text));
 
     private static string Literal(string path) => AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(path);
+
+    private sealed record NamedTableSnapshot(string[] Columns, string[] Rows);
 
     private sealed record Snapshot(
         string[] Catalog,
