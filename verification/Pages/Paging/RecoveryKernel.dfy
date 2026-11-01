@@ -9,10 +9,25 @@ module NativeRecoveryTypes {
   newtype {:nativeType "int"} I32 = x: int | -2147483648 <= x < 2147483648
 }
 
+// Proof-only prefix bookkeeping. Production retains its acquired record bytes,
+// hash operations and sparse dictionary; none of these datatypes is an
+// executable-kernel parameter or a shipping runtime dependency.
+module JournalAdmissionModel {
+  import opened NativeRecoveryTypes
+  import Undo = UndoJournal
+
+  datatype State = State(minimum: U64, maximum: U64, recovering: bool,
+    authorized: bool, committed: bool, captures: set<U64>, writes: set<U64>,
+    controls: seq<Undo.JournalRecord>)
+  datatype Outcome = Outcome(tag: U64, length: U64, finalRecord: bool,
+    capturePresent: bool, tailCovered: bool, payloadValid: bool)
+}
+
 module RecoveryKernel {
   import opened NativeRecoveryTypes
   import Undo = UndoJournal
   import Replacement = ReplacementProtocol
+  import Admission = JournalAdmissionModel
 
   // The adapter compares the encoded bound with the original operand in the
   // predicate's lossless comparison domain. Keep equality exact; a range may
@@ -730,6 +745,272 @@ module RecoveryKernel {
     ensures ClassifyJournalRecord(tag, pageSize, originalLength, true, removedTail, finalRecord) <= 2
     ensures !removedTail ==>
       ClassifyJournalRecord(tag, pageSize, originalLength, true, removedTail, finalRecord) != 2
+  { }
+
+  function IsJournalAdmissionState(originalLength: U64, currentLength: U64,
+      minimumLength: U64, maximumLength: U64, recovering: bool): bool {
+    IsDatabaseLength(originalLength) && IsDatabaseLength(currentLength) &&
+      IsDatabaseLength(maximumLength) && minimumLength <= originalLength <= maximumLength &&
+      (!recovering || minimumLength < originalLength)
+  }
+
+  // Complete-record checks and exact hash/map effects are supplied by the
+  // acquisition adapter. Only accepted outcomes can change prefix authority.
+  function JournalAdmissionKind(pageSize: U32, originalLength: U64, currentLength: U64,
+      minimumLength: U64, maximumLength: U64, recovering: bool, tag: U64,
+      truncateLength: U64, finalRecord: bool, capturePresent: bool,
+      tailCovered: bool, payloadValid: bool): Byte {
+    if !IsPageSize(pageSize) ||
+      !IsJournalAdmissionState(originalLength, currentLength, minimumLength, maximumLength, recovering)
+    then 0
+    else
+      var kind := ClassifyJournalRecord(tag, pageSize, originalLength, recovering,
+        minimumLength < originalLength, finalRecord);
+      if kind == 1 && !payloadValid then 0
+      else if kind == 3 && (!IsTruncateLength(truncateLength, pageSize, maximumLength) || !tailCovered) then 0
+      else if kind == 4 && (capturePresent || !payloadValid) then 0
+      else if kind == 5 && tag < originalLength && !capturePresent then 0
+      else kind
+  }
+
+  method AdvanceJournalAdmission(pageSize: U32, originalLength: U64, currentLength: U64,
+      minimumLength: U64, maximumLength: U64, recovering: bool, authorizedLength: bool,
+      tag: U64, truncateLength: U64, finalRecord: bool, capturePresent: bool,
+      tailCovered: bool, payloadValid: bool)
+      returns (kind: Byte, nextMinimum: U64, nextMaximum: U64,
+        nextRecovering: bool, nextAuthorized: bool)
+    ensures kind == JournalAdmissionKind(pageSize, originalLength, currentLength,
+      minimumLength, maximumLength, recovering, tag, truncateLength, finalRecord,
+      capturePresent, tailCovered, payloadValid)
+    ensures nextMinimum == (if kind == 3 && truncateLength < minimumLength then truncateLength else minimumLength)
+    ensures nextMaximum == (if kind == 5 && tag + pageSize as U64 > maximumLength then tag + pageSize as U64 else maximumLength)
+    ensures nextRecovering == (recovering || kind == 2)
+    ensures nextAuthorized == (authorizedLength ||
+      (kind == 3 && currentLength == truncateLength) ||
+      (kind == 5 && IsAfterImageLength(currentLength, tag, pageSize)))
+    ensures kind == 0 ==> (nextMinimum == minimumLength && nextMaximum == maximumLength &&
+      nextRecovering == recovering && nextAuthorized == authorizedLength)
+    ensures kind != 0 ==> (IsPageSize(pageSize) &&
+      IsJournalAdmissionState(originalLength, currentLength, nextMinimum, nextMaximum, nextRecovering))
+    ensures kind == 1 ==> payloadValid && finalRecord
+    ensures kind == 3 ==> !recovering && tailCovered && IsTruncateLength(truncateLength, pageSize, maximumLength)
+    ensures kind == 4 ==> !recovering && !capturePresent && payloadValid
+    ensures kind == 5 ==> !recovering && (tag >= originalLength || capturePresent)
+    ensures kind != 0 ==> (forall state: Admission.State |
+      !state.committed && state.minimum == minimumLength && state.maximum == maximumLength &&
+        state.recovering == recovering && state.authorized == authorizedLength ::
+      var next := ApplyJournalAdmission(pageSize, originalLength, currentLength, state,
+        Admission.Outcome(tag, truncateLength, finalRecord, capturePresent, tailCovered, payloadValid));
+      next.minimum == nextMinimum && next.maximum == nextMaximum &&
+        next.recovering == nextRecovering && next.authorized == nextAuthorized &&
+        next.committed == (kind == 1))
+  {
+    nextMinimum, nextMaximum := minimumLength, maximumLength;
+    nextRecovering, nextAuthorized := recovering, authorizedLength;
+    kind := JournalAdmissionKind(pageSize, originalLength, currentLength,
+      minimumLength, maximumLength, recovering, tag, truncateLength, finalRecord,
+      capturePresent, tailCovered, payloadValid);
+    if kind == 2 {
+      nextRecovering := true;
+    } else if kind == 3 {
+      if truncateLength < minimumLength { nextMinimum := truncateLength; }
+      nextAuthorized := authorizedLength || currentLength == truncateLength;
+    } else if kind == 5 {
+      if tag + pageSize as U64 > maximumLength { nextMaximum := tag + pageSize as U64; }
+      nextAuthorized := authorizedLength || IsAfterImageLength(currentLength, tag, pageSize);
+    }
+  }
+
+  function CompleteJournalAdmission(originalLength: U64, currentLength: U64,
+      minimumLength: U64, maximumLength: U64, recovering: bool,
+      authorizedLength: bool, committed: bool): bool {
+    IsJournalAdmissionState(originalLength, currentLength, minimumLength, maximumLength, recovering) &&
+      (committed || (minimumLength <= currentLength <= maximumLength && (authorizedLength || recovering)))
+  }
+
+  ghost function InitialJournalAdmission(originalLength: U64, currentLength: U64): Admission.State {
+    Admission.State(originalLength, originalLength, false, currentLength >= originalLength,
+      false, {}, {}, [])
+  }
+
+  ghost function PrefixAdmissionKind(pageSize: U32, originalLength: U64, currentLength: U64,
+      state: Admission.State, outcome: Admission.Outcome): Byte {
+    if state.committed then 0 else
+      JournalAdmissionKind(pageSize, originalLength, currentLength, state.minimum, state.maximum,
+        state.recovering, outcome.tag, outcome.length, outcome.finalRecord,
+        outcome.capturePresent, outcome.tailCovered, outcome.payloadValid)
+  }
+
+  ghost predicate AdmissionEffectsMatchPrefix(pageSize: U32, originalLength: U64,
+      state: Admission.State, outcome: Admission.Outcome) {
+    (IsBeforeImageRecord(outcome.tag, pageSize, originalLength) ==>
+      outcome.capturePresent == (outcome.tag - 9223372036854775808 in state.captures)) &&
+    (IsPageOffset(outcome.tag, pageSize) ==>
+      outcome.capturePresent == (outcome.tag in state.captures)) &&
+    (outcome.tag == 18446744073709551614 ==>
+      outcome.tailCovered ==
+        (forall offset: U64 | IsPageOffset(offset, pageSize) && outcome.length <= offset < originalLength ::
+          offset in state.captures))
+  }
+
+  ghost function ApplyJournalAdmission(pageSize: U32, originalLength: U64, currentLength: U64,
+      state: Admission.State, outcome: Admission.Outcome): Admission.State
+    requires PrefixAdmissionKind(pageSize, originalLength, currentLength, state, outcome) != 0
+  {
+    var kind := PrefixAdmissionKind(pageSize, originalLength, currentLength, state, outcome);
+    Admission.State(
+      if kind == 3 && outcome.length < state.minimum then outcome.length else state.minimum,
+      if kind == 5 && outcome.tag + pageSize as U64 > state.maximum then outcome.tag + pageSize as U64 else state.maximum,
+      state.recovering || kind == 2,
+      state.authorized || (kind == 3 && currentLength == outcome.length) ||
+        (kind == 5 && IsAfterImageLength(currentLength, outcome.tag, pageSize)),
+      kind == 1,
+      if kind == 4 then state.captures + {outcome.tag - 9223372036854775808} else state.captures,
+      if kind == 5 then state.writes + {outcome.tag} else state.writes,
+      if kind == 3 then state.controls + [Undo.LengthIntent(outcome.length as int)]
+      else if kind == 2 then state.controls + [Undo.RecoveryRecord] else state.controls)
+  }
+
+  ghost predicate JournalAdmissionInvariant(pageSize: U32, originalLength: U64,
+      currentLength: U64, state: Admission.State) {
+    IsPageSize(pageSize) &&
+    IsJournalAdmissionState(originalLength, currentLength, state.minimum, state.maximum, state.recovering) &&
+    state.minimum as int == Undo.RecordedMinimum(originalLength as int, state.controls) &&
+    state.recovering == (Undo.RecoveryRecord in state.controls) &&
+    (forall offset | offset in state.captures :: IsPageOffset(offset, pageSize) && offset < originalLength) &&
+    (forall offset: U64 | IsPageOffset(offset, pageSize) && state.minimum <= offset < originalLength ::
+      offset in state.captures) &&
+    (forall offset | offset in state.writes :: IsPageOffset(offset, pageSize)) &&
+    (forall offset | offset in state.writes :: offset + pageSize as U64 <= state.maximum) &&
+    (state.maximum == originalLength ||
+      (exists offset | offset in state.writes :: state.maximum == offset + pageSize as U64)) &&
+    state.authorized == (currentLength >= originalLength ||
+      (exists index | 0 <= index < |state.controls| ::
+        state.controls[index].LengthIntent? && state.controls[index].length == currentLength as int) ||
+      (exists offset | offset in state.writes :: IsAfterImageLength(currentLength, offset, pageSize)))
+  }
+
+  lemma InitialJournalAdmissionHasNoMutationAuthority(pageSize: U32, originalLength: U64, currentLength: U64)
+    requires IsPageSize(pageSize) && IsDatabaseLength(originalLength) && IsDatabaseLength(currentLength)
+    ensures JournalAdmissionInvariant(pageSize, originalLength, currentLength,
+      InitialJournalAdmission(originalLength, currentLength))
+  { }
+
+  lemma JournalAdmissionStepPreservesPrefix(pageSize: U32, originalLength: U64, currentLength: U64,
+      state: Admission.State, outcome: Admission.Outcome)
+    requires JournalAdmissionInvariant(pageSize, originalLength, currentLength, state)
+    requires AdmissionEffectsMatchPrefix(pageSize, originalLength, state, outcome)
+    requires PrefixAdmissionKind(pageSize, originalLength, currentLength, state, outcome) != 0
+    ensures JournalAdmissionInvariant(pageSize, originalLength, currentLength,
+      ApplyJournalAdmission(pageSize, originalLength, currentLength, state, outcome))
+    ensures state.recovering ==> PrefixAdmissionKind(pageSize, originalLength, currentLength, state, outcome) <= 2
+    ensures PrefixAdmissionKind(pageSize, originalLength, currentLength, state, outcome) == 1 ==>
+      outcome.finalRecord && outcome.payloadValid
+    ensures PrefixAdmissionKind(pageSize, originalLength, currentLength, state, outcome) == 4 ==>
+      !outcome.capturePresent && outcome.payloadValid
+  {
+    var kind := PrefixAdmissionKind(pageSize, originalLength, currentLength, state, outcome);
+    var next := ApplyJournalAdmission(pageSize, originalLength, currentLength, state, outcome);
+    if kind == 4 {
+      BeforeImageRecordsAuthorizeOnlyOriginalAlignedPages(outcome.tag, pageSize, originalLength);
+    }
+    if kind == 3 {
+      assert next.controls[..|next.controls|-1] == state.controls;
+      assert next.controls[|next.controls|-1] == Undo.LengthIntent(outcome.length as int);
+    } else if kind == 2 {
+      assert next.controls[..|next.controls|-1] == state.controls;
+      assert next.controls[|next.controls|-1] == Undo.RecoveryRecord;
+    }
+    forall offset: U64 | IsPageOffset(offset, pageSize) && next.minimum <= offset < originalLength
+      ensures offset in next.captures
+    {
+      if kind == 3 && outcome.length < state.minimum {
+        assert outcome.tailCovered;
+      } else {
+        assert state.minimum <= offset;
+      }
+    }
+    if kind == 5 {
+      PageOffsetAuthorizesOnlyCompleteBoundedPages(outcome.tag, pageSize);
+      forall offset | offset in next.writes
+        ensures offset + pageSize as U64 <= next.maximum
+      {
+        if offset != outcome.tag {
+          assert offset in state.writes;
+          assert offset + pageSize as U64 <= state.maximum <= next.maximum;
+        }
+      }
+      if next.maximum != originalLength {
+        if next.maximum == outcome.tag + pageSize as U64 {
+          assert outcome.tag in next.writes;
+        } else {
+          assert next.maximum == state.maximum;
+          var offset :| offset in state.writes && state.maximum == offset + pageSize as U64;
+          assert offset in next.writes;
+        }
+      }
+    }
+    if kind == 1 { return {:isolate}; }
+    if kind == 2 { return {:isolate}; }
+    if kind == 3 { return {:isolate}; }
+    if kind == 4 { return {:isolate}; }
+    assert kind == 5;
+  }
+
+  ghost predicate JournalAdmissionPath(pageSize: U32, originalLength: U64, currentLength: U64,
+      states: seq<Admission.State>, outcomes: seq<Admission.Outcome>) {
+    |states| == |outcomes| + 1 &&
+      (forall index | 0 <= index < |outcomes| ::
+        AdmissionEffectsMatchPrefix(pageSize, originalLength, states[index], outcomes[index]) &&
+        PrefixAdmissionKind(pageSize, originalLength, currentLength, states[index], outcomes[index]) != 0 &&
+        states[index+1] == ApplyJournalAdmission(pageSize, originalLength, currentLength, states[index], outcomes[index]))
+  }
+
+  // The induction composes the executing native admission fold with exact
+  // prefix-map/tail outcomes. It does not establish those outcomes from raw
+  // record reads or prove cryptographic identity and physical I/O effects.
+  lemma JournalAdmissionTracePreservesPrefix(pageSize: U32, originalLength: U64, currentLength: U64,
+      states: seq<Admission.State>, outcomes: seq<Admission.Outcome>)
+    requires JournalAdmissionPath(pageSize, originalLength, currentLength, states, outcomes)
+    requires JournalAdmissionInvariant(pageSize, originalLength, currentLength, states[0])
+    ensures JournalAdmissionInvariant(pageSize, originalLength, currentLength, states[|states|-1])
+    ensures states[|states|-1].committed ==> (states[0].committed || (|outcomes| > 0 &&
+      outcomes[|outcomes|-1].finalRecord && outcomes[|outcomes|-1].payloadValid))
+    decreases |outcomes|
+  {
+    if |outcomes| > 0 {
+      JournalAdmissionStepPreservesPrefix(pageSize, originalLength, currentLength, states[0], outcomes[0]);
+      JournalAdmissionTracePreservesPrefix(pageSize, originalLength, currentLength, states[1..], outcomes[1..]);
+      if |outcomes| == 1 {
+        assert states[1].committed ==> PrefixAdmissionKind(pageSize, originalLength, currentLength, states[0], outcomes[0]) == 1;
+      }
+    }
+  }
+
+  lemma JournalAdmissionAcceptsUnchangedEmptyJournal(pageSize: U32, originalLength: U64)
+    requires IsPageSize(pageSize) && IsDatabaseLength(originalLength)
+    ensures JournalAdmissionInvariant(pageSize, originalLength, originalLength,
+      InitialJournalAdmission(originalLength, originalLength))
+    ensures CompleteJournalAdmission(originalLength, originalLength, originalLength, originalLength,
+      false, true, false)
+    ensures InitialJournalAdmission(originalLength, originalLength).captures == {}
+  {
+    InitialJournalAdmissionHasNoMutationAuthority(pageSize, originalLength, originalLength);
+  }
+
+  lemma CompleteJournalAdmissionHasRecordedLengthAuthority(pageSize: U32,
+      originalLength: U64, currentLength: U64, state: Admission.State)
+    requires JournalAdmissionInvariant(pageSize, originalLength, currentLength, state)
+    requires CompleteJournalAdmission(originalLength, currentLength, state.minimum, state.maximum,
+      state.recovering, state.authorized, state.committed)
+    requires !state.committed
+    ensures Undo.RecordedMinimum(originalLength as int, state.controls) <= currentLength as int <= state.maximum as int
+    ensures currentLength >= originalLength || Undo.RecoveryRecord in state.controls ||
+      (exists index | 0 <= index < |state.controls| ::
+        state.controls[index].LengthIntent? && state.controls[index].length == currentLength as int) ||
+      (exists offset | offset in state.writes :: IsAfterImageLength(currentLength, offset, pageSize))
+    ensures forall offset: U64 | IsPageOffset(offset, pageSize) && state.minimum <= offset < originalLength ::
+      offset in state.captures
   { }
 
   // Production-order replay control after complete evidence/content admission.

@@ -391,93 +391,91 @@ internal sealed class PersistentRollbackJournal : IDisposable
         long completeEnd = CompleteRecordEnd(pageSize, originalLength, journal.Length);
         var beforeImages = new Dictionary<long, long>();
         byte[] record = new byte[recordSize];
-        long maximumLength = originalLength;
-        long minimumLength = originalLength;
+        ulong currentLength = (ulong)database.Length;
+        ulong maximumLength = (ulong)originalLength;
+        ulong minimumLength = (ulong)originalLength;
         bool recovering = false;
-        bool authorizedLength = database.Length >= originalLength;
+        bool authorizedLength = currentLength >= (ulong)originalLength;
         bool committed = false;
         for (long position = start; position < completeEnd; position = NextRecord(pageSize, originalLength, completeEnd, position))
         {
             long offset = ReadRecord(journal, pageSize, originalLength, completeEnd, position, record);
+            bool finalRecord = RecoveryKernel.IsFinalJournalRecord((uint)pageSize, (ulong)originalLength, (ulong)journal.Length, (ulong)position);
             var kind = (JournalRecordKind)RecoveryKernel.ClassifyJournalRecord(
                 unchecked((ulong)offset),
                 (uint)pageSize,
                 (ulong)originalLength,
                 recovering,
-                minimumLength < originalLength,
-                RecoveryKernel.IsFinalJournalRecord((uint)pageSize, (ulong)originalLength, (ulong)journal.Length, (ulong)position));
-            if (kind == JournalRecordKind.Invalid)
+                minimumLength < (ulong)originalLength,
+                finalRecord);
+            long capturedOffset = kind == JournalRecordKind.BeforeImage ? offset - long.MinValue : offset;
+            bool capturePresent = kind is JournalRecordKind.BeforeImage or JournalRecordKind.AfterImage && beforeImages.ContainsKey(capturedOffset);
+            ulong truncateLength = BinaryPrimitives.ReadUInt64LittleEndian(record.AsSpan(8));
+            bool tailCovered = kind != JournalRecordKind.Truncate || HasTruncateCoverage(pageSize, originalLength, truncateLength, beforeImages);
+            bool payloadValid = kind switch
             {
-                throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery record tag, bounds or control-state transition is invalid.");
+                JournalRecordKind.Commit => record.AsSpan(8, 32).SequenceEqual(DatabaseHash(database)),
+                JournalRecordKind.BeforeImage => OriginalPageMatches(journal, pageSize, originalLength, capturedOffset, record.AsSpan(8, pageSize)),
+                JournalRecordKind.Invalid or JournalRecordKind.Replay or JournalRecordKind.Truncate or JournalRecordKind.AfterImage => true,
+                _ => false,
+            };
+            RecoveryKernel.AdvanceJournalAdmission(
+                (uint)pageSize,
+                (ulong)originalLength,
+                currentLength,
+                minimumLength,
+                maximumLength,
+                recovering,
+                authorizedLength,
+                unchecked((ulong)offset),
+                truncateLength,
+                finalRecord,
+                capturePresent,
+                tailCovered,
+                payloadValid,
+                out byte admittedKind,
+                out minimumLength,
+                out maximumLength,
+                out recovering,
+                out authorizedLength);
+            if (admittedKind == (byte)JournalRecordKind.Invalid)
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery record conflicts with its admitted journal prefix or database content.");
             }
 
-            if (kind == JournalRecordKind.Commit)
+            if (admittedKind == (byte)JournalRecordKind.BeforeImage)
             {
-                if (!record.AsSpan(8, 32).SequenceEqual(DatabaseHash(database)))
-                {
-                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery commit decision conflicts with database content.");
-                }
+                beforeImages.Add(capturedOffset, position);
+            }
 
+            if (admittedKind == (byte)JournalRecordKind.Commit)
+            {
                 committed = true;
                 break;
             }
-
-            if (kind == JournalRecordKind.Replay)
-            {
-                recovering = true;
-                continue;
-            }
-
-            if (kind == JournalRecordKind.Truncate)
-            {
-                long length = BinaryPrimitives.ReadInt64LittleEndian(record.AsSpan(8));
-                if (length < 0 || !RecoveryKernel.IsTruncateLength((ulong)length, (uint)pageSize, (ulong)maximumLength))
-                {
-                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery truncate intent is invalid.");
-                }
-
-                uint requiredPages = RecoveryKernel.TruncateOriginalPageCount((uint)pageSize, (ulong)originalLength, (ulong)length);
-                for (uint index = 0; index < requiredPages; index++)
-                {
-                    long removed = TruncatePageOffset(pageSize, originalLength, length, index);
-                    if (!beforeImages.ContainsKey(removed))
-                    {
-                        throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "A recovery truncation is missing an original before-image.");
-                    }
-                }
-
-                minimumLength = Math.Min(minimumLength, length);
-                authorizedLength |= database.Length == length;
-                continue;
-            }
-
-            if (kind == JournalRecordKind.BeforeImage)
-            {
-                long originalOffset = offset - long.MinValue;
-                if (!beforeImages.TryAdd(originalOffset, position))
-                {
-                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery before-image offset is invalid or repeated.");
-                }
-
-                VerifyOriginalPage(journal, pageSize, originalLength, originalOffset, record.AsSpan(8, pageSize));
-                continue;
-            }
-
-            if (kind != JournalRecordKind.AfterImage || (offset < originalLength && !beforeImages.ContainsKey(offset)))
-            {
-                throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery page offset is invalid or has no original before-image.");
-            }
-
-            maximumLength = Math.Max(maximumLength, offset + pageSize);
-            authorizedLength |= RecoveryKernel.IsAfterImageLength((ulong)database.Length, (ulong)offset, (uint)pageSize);
         }
 
-        if (!committed && (database.Length < minimumLength || database.Length > maximumLength || (!authorizedLength && !recovering)))
+        if (!RecoveryKernel.CompleteJournalAdmission((ulong)originalLength, currentLength, minimumLength, maximumLength, recovering, authorizedLength, committed))
         {
             throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The database length conflicts with its recovery journal.");
         }
 
-        return new JournalState(pageSize, originalLength, start, completeEnd, minimumLength, recovering, committed, beforeImages);
+        return new JournalState(pageSize, originalLength, start, completeEnd, checked((long)minimumLength), recovering, committed, beforeImages);
+    }
+
+    private static bool HasTruncateCoverage(int pageSize, long originalLength, ulong length, Dictionary<long, long> beforeImages)
+    {
+        uint requiredPages = RecoveryKernel.TruncateOriginalPageCount((uint)pageSize, (ulong)originalLength, length);
+        for (uint index = 0; index < requiredPages; index++)
+        {
+            ulong offset = RecoveryKernel.TruncateOriginalPageOffset((uint)pageSize, (ulong)originalLength, length, index);
+            if (!beforeImages.ContainsKey(checked((long)offset)))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static void ValidateCurrentContent(FileStream database, FileStream journal, JournalState state)
@@ -617,6 +615,14 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
     private static void VerifyOriginalPage(FileStream journal, int pageSize, long originalLength, long offset, ReadOnlySpan<byte> page)
     {
+        if (!OriginalPageMatches(journal, pageSize, originalLength, offset, page))
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "An original page does not match its prepared recovery manifest.");
+        }
+    }
+
+    private static bool OriginalPageMatches(FileStream journal, int pageSize, long originalLength, long offset, ReadOnlySpan<byte> page)
+    {
         ulong hashOffset = RecoveryKernel.OriginalPageHashOffset(unchecked((uint)pageSize), unchecked((ulong)originalLength), unchecked((ulong)offset));
         if (hashOffset == 0)
         {
@@ -625,10 +631,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
         byte[] expected = new byte[32];
         Read(journal, checked((long)hashOffset), expected, expected.Length);
-        if (!expected.AsSpan().SequenceEqual(Hash(page[..OriginalPageLength(pageSize, originalLength, offset)])))
-        {
-            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "An original page does not match its prepared recovery manifest.");
-        }
+        return expected.AsSpan().SequenceEqual(Hash(page[..OriginalPageLength(pageSize, originalLength, offset)]));
     }
 
     private static long AppendRecord(FileStream journal, int pageSize, long offset, ReadOnlySpan<byte> bytes, bool durable = true)

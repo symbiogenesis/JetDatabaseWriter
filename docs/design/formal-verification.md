@@ -322,6 +322,7 @@ explicit contracts.
 | Ordered INLINE/REFERENCE bitmap member scan and strict prefix refusal | `Pages/UsageMap.cs` `TryEnumerateBitmapPages`; generated `UsageMapKernel` | `UsageMapEnumerationKernelTests`, existing bitmap enumeration and ownership tests | List append, reference-page acquisition/return, cancellation, map identity and complete public resource/ownership composition remain separate. |
 | Jet3 jump sizing, monotone decoding and native dummy/encoding decisions | `Pages/Jet3JumpTable.cs`; generated `Jet3JumpCount`, `Jet3JumpReached` and encoder controls | `Jet3JumpTableKernelTests`, existing native long-row/jump controls | Span access and complete row acquisition remain adapter/containing-parser obligations. No row or offset array copy is introduced. |
 | Compressed intermediate-entry admission, child selection and bounded progress | `Indexes/IndexPageCodec.cs` `SelectChildPage`; generated `ReadIndexChildEntry`, `AdvanceIndexChildSearch` | Focused child-selection, prefix and malformed-entry controls; public seek regressions | Vectorized comparison sign, layout/page identity and containing tree traversal remain explicit contracts. |
+| Journal admission-state transitions and final recorded length authority | `Pages/Paging/PersistentRollbackJournal.cs` `ValidateJournal`; generated `AdvanceJournalAdmission`, `CompleteJournalAdmission` | `JournalAdmissionKernelTests`, `SelectiveRollbackJournalTests`, `BufferedJournalConformanceTests` | Failure-atomic scalar state and prefix controls are verified under exact capture/hash/tail outcomes. Actual record acquisition and map/hash effects remain explicit contracts. |
 | Exact journal page-byte authorization and zero-extension admission | `Pages/Paging/PersistentRollbackJournal.cs` `ValidateCurrentContent`; generated authorization array scans | `JournalContentKernelTests`, `SelectiveRollbackJournalTests`, `BufferedJournalConformanceTests` | Exact acquired record identity, hashes/maps, I/O effects and complete recovery composition remain separate. |
 | Exact bounded data-row slot acquisition and next-distinct offset | `Pages/DataPageRows.cs` `TryGetSlotBound`; generated `ReadDataRowSlot` | `DataRowSlotKernelTests`, `RowDirectoryTests`, overflow/reclamation regressions | The complete slot scan is generated. Other directory builders, row decoding, page identity and overflow traversal remain separate. |
 | Bounded inline/reference bitmap admission and exact bit access/update | `Pages/UsageMap.cs` bitmap state readers/writers; generated usage-position and bit methods | `UsageMapBitmapKernelTests`, `UsageMapBitmapEnumerationTests`, usage-map maintenance regressions | Generated updates preserve unrelated bytes/bits and refuse atomically. Map traversal, alias isolation, page ownership and reclamation authority remain separate. |
@@ -342,6 +343,30 @@ The shared range/read boundary is exercised by `SharedParsingKernelTests`: wide-
 `WriterLifecycle.StepPreserves` and `TracePreserves` preserve legal scope/lease states and terminal transaction identities through arbitrary finite modeled traces. Named rollback, statement, stale-generation and disposal lemmas refine the specification under its explicit successful-effect and bounded-counter contracts. `WriterLifecycleConformanceTests` supplements existing transaction, pager and ownership tests with composed released-child/failed-statement/rollback, maximum-depth disposal and faulted current-generation read/disposal traces. See the [lifecycle mapping](writer-lifecycle.md) for exact operations, assumptions and remaining correspondence gaps.
 
 The recovery-kernel tests exercise the generated boundary and its production callers. `ClassifyJournalRecord` consumes the exact unsigned interpretation of the stored 64-bit tag after framing/checksum validation. Its total native-byte result admits only terminal commits, tail-authorized replay markers, pre-replay truncations, original aligned before-images and bounded after-images. `JournalRecordClassificationIsExact` specifies all result classes; `ReplayStateRefusesFurtherMutations` excludes write/truncate records after replay begins. The handwritten enum-to-result mapping is covered by production conformance tests.
+
+`AdvanceJournalAdmission` owns the journal parser's admission-state transitions:
+duplicate capture refusal, capture-before-overwrite and removed-tail requirements,
+cumulative minimum and historical maximum lengths, observed-length authorization,
+replay restrictions and terminal hash-matched commit selection. Refusal returns
+the unchanged input state. `CompleteJournalAdmission` admits an undecided image
+only within its recorded bounds and with write/truncate length authority or an
+admitted replay marker; a validated commit selects the current image independently
+of those undecided bounds. Both entry points refuse invalid native control states.
+`ValidateJournal` reads and checks records, supplies exact dictionary membership,
+complete tail-coverage and hash-comparison results, and adds a capture only after
+the controller accepts it. It retains the sparse dictionary and bounded record
+buffer. These effects and their association with the acquired record remain
+explicit contracts, alongside checksum/manifest acquisition and exclusive image
+identity. `JournalAdmissionTracePreservesPrefix` connects the executing transition
+to ordered logical length/replay controls, captured tails, exact historical maximum
+and observed-length authority. `CompleteJournalAdmissionHasRecordedLengthAuthority`
+composes that invariant with the final gate;
+`JournalAdmissionAcceptsUnchangedEmptyJournal` establishes a reachable empty-record
+success case. These proofs do not verify the C# read/hash/map adapters or the
+complete recovery path.
+`JournalAdmissionKernelTests` uses independent state-fold oracles and composed
+traces; production duplicate and missing-capture controls require repeated refusal
+with unchanged database and journal evidence.
 
 `JournalRecordStart` computes the bounded rounded-up page-hash manifest end. `CompleteJournalEnd` selects exactly the maximal complete-record prefix and excludes the trailing fragment, under the 16 GiB journal bound. Both are total native functions; zero denotes invalid inputs, while every valid start/end is at least 128. Signed adapters reject that sentinel before narrowing. Production manifest validation, preparation-copy comparison and record append/replacement use these generated decisions. The framing proofs establish arithmetic bounds, page rounding and the exact incomplete suffix; actual byte reads and integrity validation remain handwritten.
 

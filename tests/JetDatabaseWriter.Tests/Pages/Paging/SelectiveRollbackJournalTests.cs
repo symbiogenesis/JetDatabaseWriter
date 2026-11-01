@@ -85,6 +85,28 @@ public sealed class SelectiveRollbackJournalTests
         AssertRefused(fixture, evidence);
     }
 
+    /// <summary>A repeated checksum-valid original capture refuses before recovery effects on every retry.</summary>
+    /// <param name="pageSize">The physical page size.</param>
+    [Theory]
+    [InlineData(2048)]
+    [InlineData(4096)]
+    public void Recover_DuplicateOriginalImage_RefusesRepeatedlyWithoutWrites(int pageSize)
+    {
+        using var fixture = new JournalFixture(pageSize, (pageSize * 3) + 17);
+        fixture.WritePage(pageSize, 83);
+        byte[] evidence = File.ReadAllBytes(fixture.JournalPath);
+        int position = BeforeRecord(evidence, fixture.Original.Length, pageSize, pageSize);
+        int recordSize = RecordSize(pageSize);
+        byte[] duplicated = new byte[evidence.Length + recordSize];
+        evidence.AsSpan(0, position + recordSize).CopyTo(duplicated);
+        evidence.AsSpan(position, recordSize).CopyTo(duplicated.AsSpan(position + recordSize));
+        evidence.AsSpan(position + recordSize).CopyTo(duplicated.AsSpan(position + (recordSize * 2)));
+        File.WriteAllBytes(fixture.JournalPath, duplicated);
+
+        AssertRefused(fixture, duplicated);
+        AssertRefused(fixture, duplicated);
+    }
+
     /// <summary>An incomplete original record authorizes no database change.</summary>
     /// <param name="pageSize">The physical page size.</param>
     /// <param name="changed">Whether unauthorized database bytes also exist.</param>

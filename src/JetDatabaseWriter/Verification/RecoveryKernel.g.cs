@@ -192,6 +192,63 @@ namespace JetDatabaseWriter.Verification {
         return (byte)(0);
       }
     }
+    public static bool IsJournalAdmissionState(ulong originalLength, ulong currentLength, ulong minimumLength, ulong maximumLength, bool recovering)
+    {
+      return ((((JetDatabaseWriter.Verification.RecoveryKernel.IsDatabaseLength(originalLength)) && (JetDatabaseWriter.Verification.RecoveryKernel.IsDatabaseLength(currentLength))) && (JetDatabaseWriter.Verification.RecoveryKernel.IsDatabaseLength(maximumLength))) && (((minimumLength) <= (originalLength)) && ((originalLength) <= (maximumLength)))) && ((!(recovering)) || ((minimumLength) < (originalLength)));
+    }
+    public static byte JournalAdmissionKind(uint pageSize, ulong originalLength, ulong currentLength, ulong minimumLength, ulong maximumLength, bool recovering, ulong tag, ulong truncateLength, bool finalRecord, bool capturePresent, bool tailCovered, bool payloadValid)
+    {
+      if ((!(JetDatabaseWriter.Verification.RecoveryKernel.IsPageSize(pageSize))) || (!(JetDatabaseWriter.Verification.RecoveryKernel.IsJournalAdmissionState(originalLength, currentLength, minimumLength, maximumLength, recovering)))) {
+        return (byte)(0);
+      } else {
+        byte _0_kind = JetDatabaseWriter.Verification.RecoveryKernel.ClassifyJournalRecord(tag, pageSize, originalLength, recovering, (minimumLength) < (originalLength), finalRecord);
+        if (((_0_kind) == ((byte)(1))) && (!(payloadValid))) {
+          return (byte)(0);
+        } else if (((_0_kind) == ((byte)(3))) && ((!(JetDatabaseWriter.Verification.RecoveryKernel.IsTruncateLength(truncateLength, pageSize, maximumLength))) || (!(tailCovered)))) {
+          return (byte)(0);
+        } else if (((_0_kind) == ((byte)(4))) && ((capturePresent) || (!(payloadValid)))) {
+          return (byte)(0);
+        } else if ((((_0_kind) == ((byte)(5))) && ((tag) < (originalLength))) && (!(capturePresent))) {
+          return (byte)(0);
+        } else {
+          return _0_kind;
+        }
+      }
+    }
+    public static void AdvanceJournalAdmission(uint pageSize, ulong originalLength, ulong currentLength, ulong minimumLength, ulong maximumLength, bool recovering, bool authorizedLength, ulong tag, ulong truncateLength, bool finalRecord, bool capturePresent, bool tailCovered, bool payloadValid, out byte kind, out ulong nextMinimum, out ulong nextMaximum, out bool nextRecovering, out bool nextAuthorized)
+    {
+      kind = 0;
+      nextMinimum = 0;
+      nextMaximum = 0;
+      nextRecovering = false;
+      nextAuthorized = false;
+      ulong _rhs0 = minimumLength;
+      ulong _rhs1 = maximumLength;
+      nextMinimum = _rhs0;
+      nextMaximum = _rhs1;
+      bool _rhs2 = recovering;
+      bool _rhs3 = authorizedLength;
+      nextRecovering = _rhs2;
+      nextAuthorized = _rhs3;
+      kind = JetDatabaseWriter.Verification.RecoveryKernel.JournalAdmissionKind(pageSize, originalLength, currentLength, minimumLength, maximumLength, recovering, tag, truncateLength, finalRecord, capturePresent, tailCovered, payloadValid);
+      if ((kind) == ((byte)(2))) {
+        nextRecovering = true;
+      } else if ((kind) == ((byte)(3))) {
+        if ((truncateLength) < (minimumLength)) {
+          nextMinimum = truncateLength;
+        }
+        nextAuthorized = (authorizedLength) || ((currentLength) == (truncateLength));
+      } else if ((kind) == ((byte)(5))) {
+        if (((tag) + ((ulong)(pageSize))) > (maximumLength)) {
+          nextMaximum = (tag) + ((ulong)(pageSize));
+        }
+        nextAuthorized = (authorizedLength) || (JetDatabaseWriter.Verification.RecoveryKernel.IsAfterImageLength(currentLength, tag, pageSize));
+      }
+    }
+    public static bool CompleteJournalAdmission(ulong originalLength, ulong currentLength, ulong minimumLength, ulong maximumLength, bool recovering, bool authorizedLength, bool committed)
+    {
+      return (JetDatabaseWriter.Verification.RecoveryKernel.IsJournalAdmissionState(originalLength, currentLength, minimumLength, maximumLength, recovering)) && ((committed) || ((((minimumLength) <= (currentLength)) && ((currentLength) <= (maximumLength))) && ((authorizedLength) || (recovering))));
+    }
     public static byte JournalReplayAction(uint pageSize, ulong originalLength, ulong minimumLength, bool recovering, uint remainingPages, byte phase)
     {
       ulong _0_start = JetDatabaseWriter.Verification.RecoveryKernel.JournalRecordStart(pageSize, originalLength);
