@@ -1,5 +1,7 @@
 # Page-frame ownership
 
+`AccessReaderOptions.MaxActivePageLeases` bounds pending acquisitions plus live reader-cache leases, with immediate refusal rather than waiting for another held lease. Concurrent non-Pager misses for the same page share one load, including when retention is disabled; a cancelled producer does not poison an uncancelled waiter. With retained capacity C and admitted pending/live leases L, this cache retains at most C + L page frames. Direct `IPageSource` reads, Pager-owned buffers, shared-pool overhead and decoded payloads have separate contracts. `PageFrameOwnership.AggregateFramesFitAdmission` proves the C + L cardinality bound for the union of retained frames and ticket-covered borrowed frames; actual C# coverage of that ownership relation remains a contract. The generated `DataPageKernel.TryReserveCount` proves reservation arithmetic; locks, CAS publication, frame identity and actual lifetime correspondence remain reviewed and tested C# effects.
+
 Read leases keep immutable page bytes alive independently of cache membership.
 `PageFrame` owns one pooled buffer and its lazily parsed row directory;
 `PageLease` exposes the effective page prefix as read-only memory. The internal

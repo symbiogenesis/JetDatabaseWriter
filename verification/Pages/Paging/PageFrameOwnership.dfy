@@ -221,4 +221,34 @@ module PageFrameOwnership {
     ensures Admitted(Created(bytes,generation),[Acquire,DropProducer,Release(0)])
     ensures Run(Created(bytes,generation),[Acquire,DropProducer,Release(0)]).poolReturns == 1
   {}
+
+  // The adapter must account for every live uncached frame with an admitted
+  // acquisition/lease ticket. Several tickets may share one frame; counting
+  // tickets is conservative, including pending coalesced readers.
+  ghost function BorrowedFrames(tickets: seq<nat>): set<nat>
+  { set frame | frame in tickets }
+
+  lemma DistinctBorrowedFramesFitTickets(tickets: seq<nat>)
+    ensures |BorrowedFrames(tickets)| <= |tickets|
+    decreases |tickets|
+  {
+    if |tickets| > 0 {
+      var prefix := tickets[..|tickets|-1];
+      DistinctBorrowedFramesFitTickets(prefix);
+      assert BorrowedFrames(tickets) == BorrowedFrames(prefix) + {tickets[|tickets|-1]};
+    }
+  }
+
+  lemma AggregateFramesFitAdmission(cached: set<nat>, tickets: seq<nat>,
+      cacheCapacity: nat, acquisitionLimit: nat)
+    requires |cached| <= cacheCapacity && |tickets| <= acquisitionLimit
+    ensures |cached + BorrowedFrames(tickets)| <= cacheCapacity + acquisitionLimit
+  {
+    DistinctBorrowedFramesFitTickets(tickets);
+    assert |cached + BorrowedFrames(tickets)| <= |cached| + |BorrowedFrames(tickets)|;
+  }
+
+  lemma CacheCapacityAloneDoesNotBoundBorrowedFrames()
+    ensures |BorrowedFrames([1])| > 0
+  { assert BorrowedFrames([1]) == {1}; }
 }
