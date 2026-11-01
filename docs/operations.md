@@ -206,6 +206,8 @@ Complex row scans validate bounded scalar item identity/reference metadata, then
 
 ---
 
+Reader resource counts have separate scopes. `MaxActivePageLeases` defaults to 4,096 pending/live reader-cache leases and refuses excess acquisition immediately with `PageLeaseBudgetExceeded`. `MaxIncludeMaterializedRowsPerOperation` defaults to 65,536 related entities across one Include execution and refuses with `IncludeMaterializationBudgetExceeded`. Neither budget bounds payload bytes, other caches, caller-owned results or total CLR memory. Both must be positive.
+
 ## Error Handling
 
 Library-detected corruption, encryption, unsupported-format, size, constraint, lookup and state failures implement `IJetException` in `JetDatabaseWriter.Exceptions`. Use `ErrorCode` for programmatic handling and `ErrorInfo` for available table, column, index, relationship, object and page context. Messages describe failures for people; their wording is not a programmatic contract.
@@ -326,7 +328,7 @@ See the [validation matrix](design/writer-disk-format-validation-matrix.md) for 
 
 ### Forms, reports, macros, queries, VBA
 
-The library does not execute forms, reports, macros, modules, saved queries or VBA. Frozen native inert forms, reports, a macro, a constant-only module and saved-query metadata have focused preservation checks through public row and unrelated schema edits in every write mode. Complete preservation of application objects and their dependencies is not established; fresh DAO120 confirmation of those public edits remains guarded. See the [native evidence](design/writer-disk-format-validation-matrix.md). See the [schema-preservation requirements](../PLAN.md#s--hostile-file-parsing-and-schema-preservation).
+The library does not execute forms, reports, macros, modules, saved queries or VBA. Frozen native inert forms, reports, a macro, a constant-only module and saved-query metadata have focused preservation checks through public row and unrelated schema edits in every write mode. Complete preservation of application objects and their dependencies is not established; the native validation matrix records the selected fresh DAO120 confirmations and their remaining feature gaps. See the [native evidence](design/writer-disk-format-validation-matrix.md). See the [schema-preservation requirements](../PLAN.md#s--hostile-file-parsing-and-schema-preservation).
 
 ### SQL and ODBC
 

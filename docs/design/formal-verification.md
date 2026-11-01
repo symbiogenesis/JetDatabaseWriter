@@ -16,6 +16,14 @@ The [critical-behavior inventory](verification-scope.md) defines the required su
 
 The [proof and algorithm survey](proof-survey.md) maps recent research to these boundaries and the existing plan. Verifier-guided annotation search and proof-dependency diagnostics support contract review; their output does not establish specification adequacy or production composition. Keep intended contracts and independent success/refusal witnesses fixed while exploring annotations, and separately review every executable or contract change.
 
+## Value, resource and mutation admission
+
+`RecoveryKernel.VariableValueAdmitted` executes ordinary variable Text/Binary width admission. It proves the exact logical UTF-16 and encoded-byte bounds without overflowing native arithmetic. `RowEncoder` encodes admitted values completely and refuses oversized values instead of clipping them; statement preflight and rollback remain the containing C# contract. Native codecs, index-key construction and their complete correspondence are not proved by this arithmetic predicate. `VariableValueWidthTests` exercises public insert, batch, update, boundary Unicode values, exact byte restoration, AutoNumber restoration and index lookup.
+
+`DataPageKernel.TryReserveCount` proves exact bounded count reservation and unchanged refusal. Reader page acquisition uses it before pending/live leases, and Include uses it before each related entity mapping across navigation paths. Concurrent miss coalescing, CAS publication, cancellation, pool/array identity and payload-byte allocation remain C#/CLR effects. These are named count budgets, not a whole-process memory proof; see the [frame contract](page-frame-ownership.md).
+
+`IndexMutationKernel.SelectMutationPredicates` proves full unique-key equality admission and the exact predicate selected for every component. Generated bookmark decisions reject multiple results and disagreement between acquired and decoded rows. Production re-encodes the live key, retains residual predicates and refuses unsupported key semantics. Native key encoding/comparison, index completeness and the surrounding scan/mutation remain separate contracts. Text criteria continue scanning until their equality semantics can safely imply a native seek.
+
 ## Recovery contract
 
 Let `O` be the exact raw database image and length before a transaction, and `C` the complete image selected by its durable commit decision. Images include encrypted bytes when the database is encrypted. Under validated, discoverable recovery evidence, exclusive cooperating access and the modeled storage contract, a completed recovery must return exactly `O` or `C`. A successfully acknowledged commit must select `C`. An interrupted commit whose decision may have persisted can legitimately have an uncertain outcome; the writer must retain evidence and must not perform a contradictory rollback.

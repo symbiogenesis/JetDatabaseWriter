@@ -16,7 +16,7 @@ CI checks out the full history (`fetch-depth: 0`) so MinVer sees every tag.
 
 ## Releasing a version
 
-1. Make sure the commit you want to release is on `main` and its CI run passed.
+1. Check the [supported operating envelope and release acceptance](docs/support-contract.md), then make sure the commit you want to release is on `main` and its CI run passed.
 2. Tag it and push only that tag:
 
    ```bash

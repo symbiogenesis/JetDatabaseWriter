@@ -9,6 +9,8 @@ Fully managed .NET library for reading and writing Microsoft Access (JET/ACE) da
 
 Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from your .NET applications and tools, without installing Microsoft Access.
 
+The [supported operating envelope](docs/support-contract.md) defines the release scope, resource and recovery contracts, and evidence needed to broaden them.
+
 ## Contents
 
 - [Installation](#installation)

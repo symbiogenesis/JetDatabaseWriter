@@ -30,8 +30,7 @@ unselected null/Boolean bit; `ReplaceRow` admits only the current unaliased live
 interval and preserves the rest of its page. Index maintenance is skipped only
 when the row bookmark and encoded keys remain unchanged. Incompatible layouts
 retain relocation, with external descriptor reuse only under the conservative
-all-surviving-roots policy. A supported unique ascending Int32 equality may seek
-targets; key assignments, calculated fields and unsupported criteria keep scans.
+all-surviving-roots policy. A complete supported unique scalar equality may seek targets in either direction, including composite keys; Text semantics, key assignments, calculated fields and unsupported criteria keep scans. Safe update/delete scan fallbacks decode each visited row completely, evaluate the predicate once in traversal order and retain only matching snapshots. Key-changing/calculated updates retain the complete-set validation path.
 
 `MutationExecutor.ApplyAsync` checks every replacement's arity, unreadable-value
 admission and encoded capacity before the first row effect. It applies the
