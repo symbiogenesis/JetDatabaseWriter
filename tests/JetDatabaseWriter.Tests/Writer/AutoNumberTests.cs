@@ -834,8 +834,9 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     /// the largest value from the rightmost key of the primary-key index and
     /// reads none of the table's data pages. The counter lags the rows, so the
     /// index supplies the value. Each row fills a data page of its own, and a
-    /// warm-up update leaves the writer's insert-page hint on the table, so
-    /// the insert itself reads one data page and a scan would read them all.
+    /// warm-up update through an unindexed label completes owned-page discovery
+    /// before the measured insert, so allocation's initial ownership validation
+    /// does not obscure the AutoNumber seed's index reads.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="idType">The AutoNumber column's CLR type.</param>
@@ -854,7 +855,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         await using (var counting = new CountingStream(ms))
         {
             await using AccessWriter writer = await AccessWriter.OpenAsync(counting, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
-            Assert.Equal(1, await writer.UpdateRowsAsync("Items", "Id", ToId(idType, 1), new Dictionary<string, object?> { ["Label"] = "first" }, ct));
+            Assert.Equal(1, await writer.UpdateRowsAsync("Items", "Label", "r1", new Dictionary<string, object?> { ["Label"] = "first" }, ct));
 
             counting.Reset();
             await writer.InsertRowAsync("Items", NewWideRow("new", format), ct);
