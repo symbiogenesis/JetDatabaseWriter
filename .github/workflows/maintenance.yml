@@ -1,12 +1,28 @@
-name: SDK lock refresh
+name: Maintenance
+run-name: Maintenance - ${{ inputs.task }}
 
 on:
   workflow_dispatch:
     inputs:
-      sdk-version:
-        description: 'Exact .NET 10 SDK version to install and pin'
+      task:
+        description: Artifact-only developer task to run on main
         required: true
-        default: '10.0.402'
+        default: candidate
+        type: choice
+        options:
+          - candidate
+          - sdk-lock-refresh
+      base_sha:
+        description: Published main ancestor the candidate patch applies to
+        required: false
+        type: string
+      patch_base64:
+        description: Base64 encoded candidate diff (submit with scripts/submit-candidate.ps1)
+        required: false
+        type: string
+      sdk-version:
+        description: Exact .NET 10 SDK version to install and pin for SDK lock refresh
+        required: false
         type: string
 
 permissions:
@@ -17,36 +33,86 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
-  refresh:
+  maintenance:
     if: github.ref == 'refs/heads/main'
+    name: ${{ inputs.task }}
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: ${{ inputs.task == 'candidate' && 30 || 15 }}
     steps:
-      - name: Checkout main
+      - name: Validate task inputs
+        shell: pwsh
+        env:
+          MAINTENANCE_TASK: ${{ inputs.task }}
+          CANDIDATE_BASE: ${{ inputs.base_sha }}
+          CANDIDATE_PATCH: ${{ inputs.patch_base64 }}
+          SDK_VERSION: ${{ inputs.sdk-version }}
+        run: |
+          switch ($env:MAINTENANCE_TASK) {
+            'candidate' {
+              if ($env:CANDIDATE_BASE -notmatch '^[0-9a-f]{40}$' -or [string]::IsNullOrWhiteSpace($env:CANDIDATE_PATCH)) {
+                throw 'Candidate checks require base_sha and patch_base64; use scripts/submit-candidate.ps1.'
+              }
+            }
+            'sdk-lock-refresh' {
+              if ($env:SDK_VERSION -notmatch '^10\.0\.\d{3}$') {
+                throw 'Request an exact .NET 10 SDK version, for example 10.0.403.'
+              }
+            }
+            default { throw 'Unknown maintenance task.' }
+          }
+      - name: Checkout trusted main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Validate exact SDK input
+      - name: Prepare candidate with trusted coordinator
+        if: inputs.task == 'candidate'
         shell: pwsh
         env:
-          SDK_VERSION: ${{ inputs.sdk-version }}
+          CANDIDATE_BASE: ${{ inputs.base_sha }}
+          CANDIDATE_PATCH: ${{ inputs.patch_base64 }}
         run: |
-          if ($env:SDK_VERSION -notmatch '^10\.0\.\d{3}$') {
-            throw 'Request an exact .NET 10 SDK version, for example 10.0.402.'
-          }
+          $coordinator = "$env:RUNNER_TEMP/run-candidate-checks.ps1"
+          Copy-Item -LiteralPath ./scripts/run-candidate-checks.ps1 -Destination $coordinator
+          & $coordinator -BaseSha $env:CANDIDATE_BASE -EncodedPatch $env:CANDIDATE_PATCH -PrepareOnly -RepositoryRoot $env:GITHUB_WORKSPACE -OutputDirectory "$env:RUNNER_TEMP/candidate-results"
+      - name: Setup candidate SDK
+        if: inputs.task == 'candidate'
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Check candidate
+        if: inputs.task == 'candidate'
+        shell: pwsh
+        env:
+          CANDIDATE_BASE: ${{ inputs.base_sha }}
+        run: >-
+          & "$env:RUNNER_TEMP/run-candidate-checks.ps1" -BaseSha $env:CANDIDATE_BASE
+          -CheckOnly -RepositoryRoot $env:GITHUB_WORKSPACE
+          -OutputDirectory "$env:RUNNER_TEMP/candidate-results"
+      - name: Upload diagnostics and reviewable patches
+        if: ${{ !cancelled() && inputs.task == 'candidate' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-results
+          path: ${{ runner.temp }}/candidate-results/
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Install requested SDK
+        if: inputs.task == 'sdk-lock-refresh'
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: ${{ inputs.sdk-version }}
           cache: true
           cache-dependency-path: '**/packages*.lock.json'
       - name: Refresh and verify locks without building
+        if: inputs.task == 'sdk-lock-refresh'
         shell: pwsh
         env:
           SDK_VERSION: ${{ inputs.sdk-version }}
         run: ./scripts/update-sdk.ps1 -Version $env:SDK_VERSION
       - name: Create SDK and lock patch
+        if: inputs.task == 'sdk-lock-refresh'
         shell: pwsh
         env:
           SDK_VERSION: ${{ inputs.sdk-version }}
@@ -87,6 +153,7 @@ jobs:
           }
           [IO.File]::WriteAllText((Join-Path $output 'metadata.json'), ($metadata | ConvertTo-Json) + "`r`n", [Text.UTF8Encoding]::new($false))
       - name: Upload reviewable patch
+        if: ${{ !cancelled() && inputs.task == 'sdk-lock-refresh' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sdk-lock-patch

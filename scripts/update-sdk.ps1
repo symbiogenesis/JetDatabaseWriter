@@ -2,7 +2,7 @@
 .SYNOPSIS
 Updates the exact SDK pin and every restore lockfile together, without compiling.
 .DESCRIPTION
-Install the requested SDK first, or use sdk-lock-refresh.yml to receive a hosted patch.
+Install the requested SDK first, or dispatch maintenance.yml with task=sdk-lock-refresh for a hosted patch.
 If any refresh or locked verification fails, the original global.json and lockfile bytes
 are restored. Successful changes stay uncommitted for review and the ordinary main CI gate.
 #>

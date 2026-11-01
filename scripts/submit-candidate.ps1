@@ -24,12 +24,12 @@ git -C $repoRoot diff --binary --full-index $baseSha ('--output=' + $patchPath) 
 if ($LASTEXITCODE -ne 0) { throw 'Cannot create the candidate patch.' }
 $bytes = [IO.File]::ReadAllBytes($patchPath)
 if ($bytes.Length -eq 0) { throw 'There are no candidate changes relative to the base.' }
-$inputs = @{ base_sha = $baseSha; patch_base64 = [Convert]::ToBase64String($bytes) } | ConvertTo-Json -Compress
+$inputs = @{ task = 'candidate'; base_sha = $baseSha; patch_base64 = [Convert]::ToBase64String($bytes) } | ConvertTo-Json -Compress
 if ([Text.Encoding]::UTF8.GetByteCount($inputs) -gt 60000) { throw "The candidate exceeds the workflow input limit. Patch retained at $patchPath." }
 $ghCommand = Get-Command gh -ErrorAction SilentlyContinue
 $gh = if ($ghCommand) { $ghCommand.Name } elseif ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'GitHub CLI/gh.exe' } else { '' }
 if (-not $gh -or (-not $ghCommand -and -not (Test-Path -LiteralPath $gh))) { throw 'GitHub CLI is required to submit a candidate.' }
-$arguments = @('workflow', 'run', 'candidate.yml', '--ref', 'main', '--json')
+$arguments = @('workflow', 'run', 'maintenance.yml', '--ref', 'main', '--json')
 if ($Repo) { $arguments += @('--repo', $Repo) }
 Push-Location $repoRoot
 try {

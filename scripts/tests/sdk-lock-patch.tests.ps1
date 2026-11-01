@@ -56,7 +56,7 @@ function git {
     } elseif ($arguments -notcontains '--check') { throw 'Unexpected Git command.' }
 }
 
-$workflow = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../../.github/workflows/sdk-lock-refresh.yml')).Replace("`r`n", "`n")
+$workflow = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../../.github/workflows/maintenance.yml')).Replace("`r`n", "`n")
 $step = [regex]::Match($workflow, '(?ms)^      - name: Create SDK and lock patch\n(?<body>.*?)(?=^      - |\z)').Groups['body'].Value
 $command = [regex]::Match($step, '(?ms)^        run: \|\n(?<command>.*)$').Groups['command'].Value
 Assert-Check ([bool]$command) 'The SDK patch coordinator is missing.'

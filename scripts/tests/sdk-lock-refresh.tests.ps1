@@ -4,7 +4,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-$workflow = [IO.File]::ReadAllText((Join-Path $root '.github/workflows/sdk-lock-refresh.yml')).Replace("`r`n", "`n")
+$workflow = [IO.File]::ReadAllText((Join-Path $root '.github/workflows/maintenance.yml')).Replace("`r`n", "`n")
 
 function Assert-Contract([bool] $Condition, [string] $Message) {
     if (-not $Condition) { throw $Message }
