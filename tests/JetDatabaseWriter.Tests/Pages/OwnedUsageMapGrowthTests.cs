@@ -180,10 +180,8 @@ public sealed class OwnedUsageMapGrowthTests
     /// A full index rebuild whose tree straddles page 512 lists every page of
     /// each tree in its index's usage-map row, the straddling one as a
     /// REFERENCE row, and the next rebuild, which moves the trees again, keeps
-    /// that row's bitmap pages. The relationship sends every write to Keys
-    /// through the full rebuild; before, the straddling tree threw
-    /// <see cref="NotSupportedException"/>. ACCDB only: the Jet4 files the
-    /// writer creates have no <c>MSysRelationships</c> table.
+    /// that row's bitmap pages. The ACE fixture explicitly requests both full
+    /// rebuilds, independently of the relationship's incremental admission.
     /// </summary>
     [Fact]
     public async Task FullIndexRebuild_AcrossTheInlineWindow_ListsEveryTreePage()
@@ -205,7 +203,8 @@ public sealed class OwnedUsageMapGrowthTests
         CatalogEntry? entry = await writer.Services.Catalog.GetCatalogEntryAsync("Keys", Ct);
         Assert.NotNull(entry);
         long tdefPage = entry.TDefPage;
-        int largestTree = (await ReadIndexMapsAsync(db, tdefPage)).Max(map => map.Tree.Count);
+        List<IndexMap> original = await ReadIndexMapsAsync(db, tdefPage);
+        int largestTree = original.Max(map => map.Tree.Count);
 
         // One-page rows take the end of file to about half a tree below page
         // 512, so the trees the next rebuild appends straddle it.
@@ -219,7 +218,7 @@ public sealed class OwnedUsageMapGrowthTests
             nextId += rows;
         }
 
-        await writer.InsertRowAsync("Keys", KeyRow(keyRows + 1), Ct);
+        await RebuildKeyIndexesAsync(writer, tdefPage);
         List<IndexMap> maps = await ReadIndexMapsAsync(db, tdefPage);
         int code = Enumerable.Range(0, maps.Count).MaxBy(index => maps[index].Tree.Count);
         Assert.Contains(maps[code].Tree, page => page < InlineWindow);
@@ -227,13 +226,21 @@ public sealed class OwnedUsageMapGrowthTests
         Assert.All(maps, map => Assert.Equal(map.Tree.Order(), map.Row.Pages.Order()));
         Assert.Equal(Constants.UsageMap.ReferenceMapType, maps[code].Row.Type);
         await AssertBitmapPagesAsync(db, maps[code].Row);
+        await AssertIndexPageOwnershipAsync(writer, original, maps);
 
-        await writer.InsertRowAsync("Keys", KeyRow(keyRows + 2), Ct);
+        await RebuildKeyIndexesAsync(writer, tdefPage);
         List<IndexMap> rebuilt = await ReadIndexMapsAsync(db, tdefPage);
         Assert.NotEqual(maps[code].Tree.Order(), rebuilt[code].Tree.Order());
         Assert.All(rebuilt, map => Assert.Equal(map.Tree.Order(), map.Row.Pages.Order()));
         Assert.Equal(Constants.UsageMap.ReferenceMapType, rebuilt[code].Row.Type);
         Assert.Equal(maps[code].Row.BitmapPages, rebuilt[code].Row.BitmapPages);
+        await AssertIndexPageOwnershipAsync(writer, maps, rebuilt);
+        foreach (long root in await IndexLeafChain.ReadRealIndexRootsAsync(db, tdefPage, Ct))
+        {
+            await IndexLeafChain.AssertCoversLiveRowsAsync(db, tdefPage, root, Ct);
+        }
+
+        Assert.Equal(keyRows, (await writer.Services.Snapshots.ReadRowsAsync(tdefPage, Ct)).Count);
     }
 
     /// <summary>
@@ -279,6 +286,31 @@ public sealed class OwnedUsageMapGrowthTests
         }
 
         Assert.Equal(WideRowCount, rows);
+    }
+
+    private static ValueTask RebuildKeyIndexesAsync(AccessWriter writer, long tdefPage)
+        => writer.Services.Transactions.RunAutoCommitAsync(
+            async token =>
+            {
+                TableDef definition = await writer.Database.TableDefs.ReadRequiredTableDefAsync(tdefPage, "Keys", token);
+                await writer.Services.Indexes.MaintainIndexesAsync(tdefPage, definition, "Keys", token);
+            },
+            Ct);
+
+    private static async Task AssertIndexPageOwnershipAsync(AccessWriter writer, List<IndexMap> previous, List<IndexMap> current)
+    {
+        var livePages = new HashSet<long>(current.SelectMany(map => map.Tree));
+        long[] retired = [.. previous.SelectMany(map => map.Tree).Except(livePages)];
+        Assert.NotEmpty(retired);
+        foreach (long page in retired)
+        {
+            Assert.True(await writer.Services.PageAllocator.IsPageFreeAsync(page, Ct), $"Replaced index page {page} remains allocated.");
+        }
+
+        foreach (long page in livePages.Concat(current.SelectMany(map => map.Row.BitmapPages).Select(page => (long)page)))
+        {
+            Assert.False(await writer.Services.PageAllocator.IsPageFreeAsync(page, Ct), $"Live index or bitmap page {page} was freed.");
+        }
     }
 
     /// <summary>An Id column and ten 255-byte binary columns, so each full row fills a data page of its own.</summary>
