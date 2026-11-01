@@ -270,7 +270,7 @@ jobs:
   native-access:
     name: Native Access compatibility (${{ matrix.tf }})
     needs: [changes, analyze]
-    if: needs.changes.outputs.dotnet == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.dotnet == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:

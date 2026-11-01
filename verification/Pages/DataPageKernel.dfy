@@ -282,4 +282,141 @@ module DataPageKernel {
     ensures Reclaimable([0, 0, 0, 0, 1, 0, 8, 128, 7, 9], 10, 4, 6, 0)
     ensures !Reclaimable([0, 0, 0, 0, 1, 0, 5, 128, 7, 9], 10, 4, 6, 0)
   { }
+
+  function ColumnMask(bit: U32): U32 {
+    if bit == 0 then 1 else if bit == 1 then 2 else if bit == 2 then 4 else if bit == 3 then 8
+    else if bit == 4 then 16 else if bit == 5 then 32 else if bit == 6 then 64 else 128
+  }
+
+  opaque function MergedColumnBit(before: Byte, source: Byte, bit: U32): Byte {
+    var mask := ColumnMask(bit);
+    (before as U32 / (mask * 2) * (mask * 2) +
+      ((source as U32 / mask) % 2) * mask + before as U32 % mask) as Byte
+  }
+
+  lemma ColumnBitMergePreservesOtherBits(before: Byte, source: Byte, bit: U32)
+    ensures (MergedColumnBit(before, source, bit) as U32 / ColumnMask(bit)) % 2 ==
+      (source as U32 / ColumnMask(bit)) % 2
+    ensures MergedColumnBit(before, source, bit) as U32 % ColumnMask(bit) == before as U32 % ColumnMask(bit)
+    ensures MergedColumnBit(before, source, bit) as U32 / (ColumnMask(bit) * 2) == before as U32 / (ColumnMask(bit) * 2)
+  {
+    reveal MergedColumnBit();
+  }
+
+  function HasColumnPatchRange(targetLength: U32, sourceLength: U32,
+      targetOffset: U32, sourceOffset: U32, count: U32,
+      targetDataEnd: U32, sourceDataEnd: U32, targetMask: U32,
+      sourceMask: U32, bit: U32): bool {
+    targetMask < targetLength && sourceMask < sourceLength &&
+      targetDataEnd <= targetMask && sourceDataEnd <= sourceMask &&
+      targetOffset <= targetDataEnd && count <= targetDataEnd - targetOffset &&
+      sourceOffset <= sourceDataEnd && count <= sourceDataEnd - sourceOffset && bit < 8
+  }
+
+  // A field payload cannot overlap trailer metadata. A Boolean field uses
+  // count zero and still updates exactly one selected mask bit atomically.
+  method PatchColumn(row: array<Byte>, source: array<Byte>,
+      targetOffset: U32, sourceOffset: U32, count: U32,
+      targetDataEnd: U32, sourceDataEnd: U32, targetMask: U32,
+      sourceMask: U32, bit: U32) returns (applied: bool)
+    requires row.Length <= 2147483647 && source.Length <= 2147483647
+    modifies row
+    ensures applied <==> row != source && HasColumnPatchRange(row.Length as U32,
+      source.Length as U32, targetOffset, sourceOffset, count, targetDataEnd,
+      sourceDataEnd, targetMask, sourceMask, bit)
+    ensures !applied ==> row[..] == old(row[..])
+    ensures applied ==> (row[targetOffset as int..targetOffset as int + count as int] ==
+      old(source[sourceOffset as int..sourceOffset as int + count as int]))
+    ensures applied ==> row[targetMask] == MergedColumnBit(old(row[targetMask]), old(source[sourceMask]), bit)
+    ensures applied ==> row[targetMask] as U32 % ColumnMask(bit) == old(row[targetMask]) as U32 % ColumnMask(bit)
+    ensures applied ==> row[targetMask] as U32 / (ColumnMask(bit) * 2) == old(row[targetMask]) as U32 / (ColumnMask(bit) * 2)
+    ensures applied ==> (row[targetMask] as U32 / ColumnMask(bit)) % 2 == (old(source[sourceMask]) as U32 / ColumnMask(bit)) % 2
+    ensures applied ==> forall position | 0 <= position < row.Length &&
+      !(targetOffset as int <= position < targetOffset as int + count as int) && position != targetMask as int ::
+        row[position] == old(row[position])
+  {
+    applied := false;
+    if row == source || !HasColumnPatchRange(row.Length as U32, source.Length as U32,
+        targetOffset, sourceOffset, count, targetDataEnd, sourceDataEnd,
+        targetMask, sourceMask, bit) {
+      return;
+    }
+    ghost var before := row[..];
+    var oldMask := row[targetMask];
+    var nextMask := source[sourceMask];
+    var cursor: U32 := 0;
+    while cursor < count
+      invariant cursor <= count
+      invariant row[targetMask] == oldMask
+      invariant row[targetOffset as int..targetOffset as int + cursor as int] ==
+        source[sourceOffset as int..sourceOffset as int + cursor as int]
+      invariant forall position | 0 <= position < row.Length &&
+        !(targetOffset as int <= position < targetOffset as int + cursor as int) :: row[position] == before[position]
+      decreases count - cursor
+    {
+      row[targetOffset + cursor] := source[sourceOffset + cursor];
+      cursor := cursor + 1;
+    }
+    ColumnBitMergePreservesOtherBits(oldMask, nextMask, bit);
+    row[targetMask] := MergedColumnBit(oldMask, nextMask, bit);
+    applied := true;
+  }
+
+  // Same-width publication retains the complete native slot directory and
+  // every byte outside the one independently owned live physical row.
+  method ReplaceRow(page: array<Byte>, pageSize: U32, countOffset: U32,
+      rowsStart: U32, rowIndex: U32, expectedStart: U32,
+      replacement: array<Byte>) returns (applied: bool)
+    requires page.Length <= 2147483647 && replacement.Length <= 2147483647
+    modifies page
+    ensures !applied ==> page[..] == old(page[..])
+    ensures applied ==> expectedStart as int + replacement.Length <= page.Length
+    ensures applied ==> page[expectedStart as int..expectedStart as int + replacement.Length] == old(replacement[..])
+    ensures applied ==> forall position | 0 <= position < page.Length &&
+      !(expectedStart as int <= position < expectedStart as int + replacement.Length) ::
+        page[position] == old(page[position])
+    ensures applied ==> Reclaimable(old(page[..]), pageSize, countOffset, rowsStart, rowIndex)
+    ensures applied ==> Word(old(page[..]), rowsStart as int + rowIndex as int * 2) == expectedStart
+    ensures applied ==> forall index | 0 <= index < Word(old(page[..]), countOffset as int) as int && index != rowIndex as int ::
+      Slot(old(page[..]), rowsStart, index) != expectedStart
+  {
+    applied := false;
+    if page == replacement { return; }
+    ghost var original := page[..];
+    var rows, first, start, end := PrepareReclaim(page, pageSize, countOffset, rowsStart, rowIndex);
+    if rows == 0 || start != expectedStart || end - start != replacement.Length as U32 ||
+        ReadWord(page, rowsStart + rowIndex * 2) != start {
+      return;
+    }
+    var index: U32 := 0;
+    while index < rows
+      invariant index <= rows
+      invariant page[..] == original
+      invariant Reclaimable(original, pageSize, countOffset, rowsStart, rowIndex)
+      invariant rows == Word(original, countOffset as int)
+      invariant rowsStart as int + rows as int * 2 <= start as int && start < end <= pageSize && pageSize as int <= page.Length
+      invariant start == expectedStart && end - start == replacement.Length as U32
+      invariant forall checked | 0 <= checked < index as int && checked != rowIndex as int ::
+        Slot(original, rowsStart, checked) != start
+      decreases rows - index
+    {
+      if index != rowIndex && ReadWord(page, rowsStart + index * 2) % 8192 == start {
+        return;
+      }
+      index := index + 1;
+    }
+    var cursor: U32 := 0;
+    while cursor < replacement.Length as U32
+      invariant cursor <= replacement.Length as U32
+      invariant start == expectedStart && start as int + replacement.Length <= page.Length
+      invariant page[start as int..start as int + cursor as int] == replacement[..cursor as int]
+      invariant forall position | 0 <= position < page.Length &&
+        !(start as int <= position < start as int + cursor as int) :: page[position] == original[position]
+      decreases replacement.Length as U32 - cursor
+    {
+      page[start + cursor] := replacement[cursor];
+      cursor := cursor + 1;
+    }
+    applied := true;
+  }
 }

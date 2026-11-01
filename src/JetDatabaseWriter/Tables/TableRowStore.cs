@@ -12,9 +12,12 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding;
 using JetDatabaseWriter.ValueEncoding.Models;
+using JetDatabaseWriter.Verification;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -43,6 +46,118 @@ internal sealed class TableRowStore(
     TDefPageBuilder tdefPageBuilder)
 {
     internal async ValueTask InsertRowDataAsync(long tdefPage, TableDef tableDef, object[] values, bool updateTDefRowCount = true, CancellationToken cancellationToken = default) => _ = await this.InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Updates compatible stored slices without moving the row or re-encoding unassigned storage.</summary>
+    /// <param name="tdefPage">The independently resolved table owner.</param>
+    /// <param name="tableDef">The current table definition.</param>
+    /// <param name="location">The original direct live row.</param>
+    /// <param name="original">The original decoded values.</param>
+    /// <param name="replacement">The final prepared decoded values.</param>
+    /// <param name="storedValues">Values carrying preserved long-value descriptors.</param>
+    /// <param name="textBytes">Unassigned native Text storage.</param>
+    /// <param name="cancellationToken">Cancels page acquisition and publication.</param>
+    /// <returns>Whether the row retains its original physical location.</returns>
+    internal async ValueTask<bool> TryUpdateRowInPlaceAsync(long tdefPage, TableDef tableDef, RowLocation location, object[] original, object[] replacement, object[] storedValues, IReadOnlyDictionary<int, byte[]>? textBytes, CancellationToken cancellationToken)
+    {
+        if (location.IsOverflow || location.RowIndex < 0)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < tableDef.Columns.Count; index++)
+        {
+            if (UsesLongValueStorage(tableDef.Columns[index]) && !Equals(original[index], replacement[index]))
+            {
+                return false;
+            }
+        }
+
+        byte[] encoded = this.EncodeRow(tableDef, storedValues, textBytes).RowBytes;
+        byte[] page = await pager.ReadPageAsync(location.PageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (page[0] != Constants.PageTypes.Data || Ri32(page, format.DataPage.TDefOff) != tdefPage)
+            {
+                return false;
+            }
+
+            DataPageKernel.PrepareReclaim(page, checked((uint)format.PageSize), checked((uint)format.DataPage.NumRows), checked((uint)format.DataPage.RowsStart), checked((uint)location.RowIndex), out uint count, out _, out uint start, out uint end);
+            if (count == 0 || Ru16(page, format.DataPage.RowsStart + (location.RowIndex * 2)) != start)
+            {
+                return false;
+            }
+
+            int rowStart = checked((int)start);
+            int rowSize = checked((int)(end - start));
+            if (!RowDecodePlan.TryParseRowLayout(format.RowFields, page, rowStart, rowSize, tableDef.HasVarColumns, out RowLayout current)
+                || !RowDecodePlan.TryParseRowLayout(format.RowFields, encoded, 0, encoded.Length, tableDef.HasVarColumns, out RowLayout updated))
+            {
+                return false;
+            }
+
+            byte[] rowBytes = page.AsSpan(rowStart, rowSize).ToArray();
+            int targetDataEnd = current.VarTableStart < current.NullMaskPos
+                ? Math.Min(current.Eod, current.VarTableStart - format.RowFields.Eod)
+                : current.NullMaskPos;
+            int sourceDataEnd = updated.VarTableStart < updated.NullMaskPos
+                ? Math.Min(updated.Eod, updated.VarTableStart - format.RowFields.Eod)
+                : updated.NullMaskPos;
+            for (int index = 0; index < tableDef.Columns.Count; index++)
+            {
+                if (Equals(original[index], replacement[index]))
+                {
+                    continue;
+                }
+
+                ColumnInfo column = tableDef.Columns[index];
+                if (column.ColNum >= current.NumCols || column.ColNum >= updated.NumCols)
+                {
+                    return false;
+                }
+
+                int targetOffset = 0;
+                int sourceOffset = 0;
+                int width = 0;
+                if (column.Type != JetDatabaseWriter.Enums.ColumnType.BooleanType || column.IsCalculated)
+                {
+                    ColumnSlice before = column.IsFixed
+                        ? RowDecodePlan.ResolveFixedColumnSlice(format.RowFields, page, rowStart, current, column)
+                        : RowDecodePlan.ResolveColumnSlice(format.RowFields, page, rowStart, rowSize, current, column);
+                    ColumnSlice after = column.IsFixed
+                        ? RowDecodePlan.ResolveFixedColumnSlice(format.RowFields, encoded, 0, updated, column)
+                        : RowDecodePlan.ResolveColumnSlice(format.RowFields, encoded, 0, encoded.Length, updated, column);
+                    if (before.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var)
+                        || after.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var)
+                        || before.DataLen != after.DataLen)
+                    {
+                        return false;
+                    }
+
+                    targetOffset = before.DataStart;
+                    sourceOffset = after.DataStart;
+                    width = before.DataLen;
+                }
+
+                int maskByte = column.ColNum >> 3;
+                if (!DataPageKernel.PatchColumn(rowBytes, encoded, checked((uint)targetOffset), checked((uint)sourceOffset), checked((uint)width), checked((uint)targetDataEnd), checked((uint)sourceDataEnd), checked((uint)(current.NullMaskPos + maskByte)), checked((uint)(updated.NullMaskPos + maskByte)), checked((uint)(column.ColNum & 7))))
+                {
+                    return false;
+                }
+            }
+
+            if (!DataPageKernel.ReplaceRow(page, checked((uint)format.PageSize), checked((uint)format.DataPage.NumRows), checked((uint)format.DataPage.RowsStart), checked((uint)location.RowIndex), start, rowBytes))
+            {
+                return false;
+            }
+
+            await pager.WritePageAsync(location.PageNumber, page, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        finally
+        {
+            PageBuffers.Return(page);
+        }
+    }
 
     /// <summary>
     /// Inserts a row and returns its (page, row-index) location so the caller

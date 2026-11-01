@@ -17,6 +17,11 @@ Ordinary partition results are checked from xUnit XML: failures, infrastructure 
 
 CI selects expensive lanes against validated main ancestors, retaining unconditional checks and the aggregate gate even for documentation changes. Manual CI and release calls validate every lane. Optional workflows add evidence after that gate; their results do not replace it. See [AGENTS.md](../AGENTS.md#gating-a-commit-on-ci) for the acceptance and reporting rules.
 
+Native compatibility can still execute after self-test failures when its analyzed
+artifacts exist. This preserves independent evidence for diagnosing golden-byte
+or runtime failures; the aggregate gate still requires every selected lane to
+succeed. Cancellation stops superseded native runs.
+
 ## Developer maintenance
 
 For candidate checks, stage new files and use the helper, which supplies the task, immutable base SHA and encoded patch:

@@ -67,6 +67,83 @@ internal sealed class IndexMaintainer(
     /// </summary>
     public string? LastIncrementalBail { get; private set; }
 
+    /// <summary>Admits bounded target discovery only when assignments cannot change any stored index key.</summary>
+    /// <param name="tdefPage">The resolved table definition.</param>
+    /// <param name="tableDef">The hydrated table metadata.</param>
+    /// <param name="tableName">The diagnostic table name.</param>
+    /// <param name="assigned">Explicitly assigned column positions.</param>
+    /// <param name="cancellationToken">Cancels metadata acquisition.</param>
+    /// <returns>Whether selected rows suffice for unchanged-key uniqueness validation.</returns>
+    internal async ValueTask<bool> CanSeekUpdateTargetsAsync(long tdefPage, TableDef tableDef, string tableName, ICollection<int> assigned, CancellationToken cancellationToken)
+    {
+        foreach (ColumnInfo column in tableDef.Columns)
+        {
+            if (column.IsCalculated)
+            {
+                return false;
+            }
+        }
+
+        (_, IndexCatalogReader.ResolvedIndexCatalog? catalog) = await this.ResolveMaintainableIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        if (catalog is not null)
+        {
+            foreach (List<KeyColumnInfo> columns in catalog.KeyColumnInfosByRealIdx.Values)
+            {
+                foreach (KeyColumnInfo key in columns)
+                {
+                    if (assigned.Contains(key.SnapIdx))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Checks every stored key before retaining an unchanged physical index bookmark.</summary>
+    /// <param name="tdefPage">The resolved table definition.</param>
+    /// <param name="tableDef">The hydrated table metadata.</param>
+    /// <param name="tableName">The diagnostic table name.</param>
+    /// <param name="original">Original decoded cells.</param>
+    /// <param name="replacement">Final prepared cells.</param>
+    /// <param name="cancellationToken">Cancels index metadata acquisition.</param>
+    /// <returns>Whether every real index retains exactly the same encoded key and membership.</returns>
+    internal async ValueTask<bool> HasUnchangedKeysAsync(long tdefPage, TableDef tableDef, string tableName, object[] original, object[] replacement, CancellationToken cancellationToken)
+    {
+        (_, IndexCatalogReader.ResolvedIndexCatalog? catalog) = await this.ResolveMaintainableIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        if (catalog is null)
+        {
+            return true;
+        }
+
+        foreach ((int number, RealIdxEntry entry) in catalog.RealIdxByNum)
+        {
+            List<KeyColumnInfo> columns = catalog.KeyColumnInfosByRealIdx[number];
+            bool oldOmitted = entry.IgnoreNulls && IndexHelpers.CountNullKeyColumns(columns, original) == columns.Count;
+            bool newOmitted = entry.IgnoreNulls && IndexHelpers.CountNullKeyColumns(columns, replacement) == columns.Count;
+            if (oldOmitted != newOmitted)
+            {
+                return false;
+            }
+
+            if (oldOmitted)
+            {
+                continue;
+            }
+
+            byte[]? oldKey = this.TryEncodeCompositeKey(columns, original);
+            byte[]? newKey = this.TryEncodeCompositeKey(columns, replacement);
+            if (oldKey is null || newKey is null || !oldKey.AsSpan().SequenceEqual(newKey))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     internal async ValueTask<SystemTableIndexMaintenancePath> MaintainSystemTableIndexesIncrementallyAsync(
         long tdefPage,
         TableDef tableDef,

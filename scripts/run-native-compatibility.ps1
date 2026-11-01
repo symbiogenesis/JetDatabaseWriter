@@ -31,6 +31,7 @@ function Get-NativeCompatibilityMethods {
         'JetDatabaseWriter.Tests.ComplexColumns.AppendOnlyHistoryDaoTests.LibraryMemoWrites_NativeReadUpdateAndCompactPreserveHistory'
         'JetDatabaseWriter.Tests.ComplexColumns.AppendOnlyHistoryDaoTests.SharedHistory_LibraryAndNativeAssignmentsKeepEachMemoVersion'
         'JetDatabaseWriter.Tests.ComplexColumns.AppendOnlyHistoryDaoTests.SharedHistoryUniqueIndex_ValidatesTheCombinedStatementBeforeMutation'
+        'JetDatabaseWriter.Tests.Writer.InPlaceRowUpdateDaoTests.Dao120_NonKeyEdits_RetainNativeRowsAndCompact'
     )
 }
 

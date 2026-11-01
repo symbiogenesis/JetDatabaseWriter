@@ -157,6 +157,23 @@ composition and resource obligations. Payload materialization is bounded to the
 consumed parent cell for row streams, while whole-column item-list APIs still
 materialize their requested items.
 
+## Compatible row patches
+
+`DataPageKernel.PatchColumn` admits distinct source/destination arrays and
+complete field/metadata bounds before mutation. Its generated loop copies the
+exact payload, merges one selected null/Boolean bit and preserves every other
+candidate byte and mask bit; refusal preserves the complete candidate.
+`ReplaceRow` reacquires bounded directory identity, rejects flagged/aliased
+slots and writes only the admitted live interval, preserving every page byte
+outside it. Production re-resolves current slot geometry after prior batch
+compaction, patches an unpublished row candidate, then publishes through the
+transaction-aware pager. Native field interpretation, snapshot identity,
+compatible-width selection, raw LVAL ownership and encoded-key equality remain
+C# contracts. Index-directed writer discovery additionally relies on a correct
+supported index for complete membership; bookmark checks do not reconstruct
+missing index entries. Full mutation/rollback and native-format correspondence
+retain their separate I2/I5/I6/V6/V9/V10 obligations.
+
 ## Writer lifecycle specification
 
 [The writer lifecycle specification](writer-lifecycle.md) records the legal serialized writer, transaction and lease states, terminal transaction identities, nested savepoint behavior, disposal and cache invalidation. The checked model describes the protocol; it adds no shipping code or runtime dependency. Its successful effects and exclusive ownership are explicit premises, and focused production traces support only the named correspondence boundaries.

@@ -71,6 +71,20 @@ internal sealed class MutationExecutor(JetFormat format, Pager pager, OwnedDataP
             foreach (MutationPlan.RowChange change in table.Rows)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (table.Policy == MutationPlan.IndexPolicy.Standard && change.Location is RowLocation retained
+                    && change.Original is object[] before && change.Replacement is object[] after
+                    && await rows.TryUpdateRowInPlaceAsync(table.Page, table.Definition, retained, before, after, StorageValues(after, change.LongValues), change.TextBytes, cancellationToken).ConfigureAwait(false))
+                {
+                    if (!await indexes.HasUnchangedKeysAsync(table.Page, table.Definition, table.Name, before, after, cancellationToken).ConfigureAwait(false))
+                    {
+                        deleted.Add((retained, before));
+                        inserted.Add((retained, after));
+                    }
+
+                    newRows.Add(after);
+                    continue;
+                }
+
                 if (change.Location is RowLocation location)
                 {
                     bool retainLongValues = false;
@@ -116,7 +130,11 @@ internal sealed class MutationExecutor(JetFormat format, Pager pager, OwnedDataP
                 await rows.AdjustTDefRowCountAsync(table.Page, countDelta, cancellationToken).ConfigureAwait(false);
             }
 
-            await this.MaintainIndexesAsync(table, inserted, deleted, completeHints, cancellationToken).ConfigureAwait(false);
+            if (inserted.Count > 0 || deleted.Count > 0 || !completeHints || table.Policy != MutationPlan.IndexPolicy.Standard)
+            {
+                await this.MaintainIndexesAsync(table, inserted, deleted, completeHints, cancellationToken).ConfigureAwait(false);
+            }
+
             if (table.RaiseAutoNumbers)
             {
                 await autoNumbers.UpdateHighWaterAsync(table.Page, table.Definition, newRows, cancellationToken).ConfigureAwait(false);

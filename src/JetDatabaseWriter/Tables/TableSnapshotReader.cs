@@ -61,6 +61,57 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
             : await this.DecodeRowsAsync(tdefPage, tableDef, tableName: null, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Reads a validated unique ascending Int32 equality target, retaining residual filtering at the caller.</summary>
+    /// <param name="table">The independently resolved table.</param>
+    /// <param name="criteria">Necessary equality conditions.</param>
+    /// <param name="cancellationToken">Cancels cursor and row acquisition.</param>
+    /// <returns>The bounded selected rows, or null when a complete scan is required.</returns>
+    /// <exception cref="JetCorruptDataException">An index bookmark or its row contradicts the declared identity.</exception>
+    internal async ValueTask<List<LocatedRow>?> TryReadIndexedRowsAsync(ResolvedTable table, RowCriteria criteria, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<IndexMetadata> indexes = await this.ReadIndexMetadataSnapshotAsync(table.Entry.Name, cancellationToken).ConfigureAwait(false);
+        foreach (IndexMetadata index in indexes)
+        {
+            if (!index.EnforcesUniqueness || index.Columns.Count != 1 || !index.Columns[0].IsAscending || index.FirstDp <= 0)
+            {
+                continue;
+            }
+
+            int columnIndex = table.Definition.FindColumnIndex(index.Columns[0].Name);
+            if (columnIndex < 0 || table.Definition.Columns[columnIndex].IsCalculated || table.Definition.Columns[columnIndex].Type != LongIntegerType)
+            {
+                continue;
+            }
+
+            foreach (ColumnPredicate condition in criteria.Predicates)
+            {
+                if (condition.Operator != ColumnPredicateOperator.Equal || condition.Operand is not int value
+                    || !string.Equals(condition.ColumnName, index.Columns[0].Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                using var cursor = new IndexCursor(format.IndexPage, pages.ReadPageLeaseAsync, format.PageSize);
+                byte[] key = IndexKeyEncoder.EncodeColumnEntry(format, table.Definition.Columns[columnIndex], value, ascending: true);
+                List<(long DataPage, int RowIndex)> selected = await cursor.FindRowLocationsAsync(index.FirstDp, key, cancellationToken).ConfigureAwait(false);
+                if (selected.Count > 1)
+                {
+                    throw CreateIndexedRowException(table, "A unique index contains multiple bookmarks for the same non-null Int32 key.");
+                }
+
+                List<LocatedRow> result = await this.DecodeRowsAsync(table.Entry.TDefPage, table.Definition, table.Entry.Name, cancellationToken, selected).ConfigureAwait(false);
+                if (result.Count != selected.Count || (result.Count == 1 && (result[0].Values[columnIndex] is not int stored || stored != value)))
+                {
+                    throw CreateIndexedRowException(table, "An index bookmark does not identify the requested live Int32 key.");
+                }
+
+                return result;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Resolves <paramref name="tableName"/>, a user or system table, to its
     /// catalog entry and table definition, with calculated columns' result
@@ -211,6 +262,9 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
             cancellationToken).ConfigureAwait(false);
     }
 
+    private static JetCorruptDataException CreateIndexedRowException(ResolvedTable table, string reason)
+        => new(JetErrorCode.CorruptIndex, "The mutation index cannot identify its live row safely.", new JetErrorInfo { TableName = table.Entry.Name, PageNumber = table.Entry.TDefPage, Reason = reason });
+
     /// <summary>
     /// Decodes every live row on the data pages owned by <paramref name="tdefPage"/>
     /// together with its location, refusing any live row that cannot be decoded.
@@ -219,8 +273,9 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
     /// <param name="tableDef">The table definition, with calculated-column result types hydrated.</param>
     /// <param name="tableName">The table name when the caller resolved it by name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="selected">Validated index bookmarks, or null for complete table traversal.</param>
     /// <exception cref="JetCorruptDataException">A live row cannot be decoded for write-back.</exception>
-    private async ValueTask<List<LocatedRow>> DecodeRowsAsync(long tdefPage, TableDef tableDef, string? tableName, CancellationToken cancellationToken)
+    private async ValueTask<List<LocatedRow>> DecodeRowsAsync(long tdefPage, TableDef tableDef, string? tableName, CancellationToken cancellationToken, IReadOnlyList<(long DataPage, int RowIndex)>? selected = null)
     {
         var result = new List<LocatedRow>();
 
@@ -228,9 +283,10 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
         // OLE cells keep their stored bytes exactly and an unreadable MEMO /
         // OLE value becomes an UnreadableLongValue rather than a placeholder.
         var decodePlan = RowDecodePlan.CreateTypedForWriteBack(tableDef, rows.StrictParsing);
-        await this.ForEachLiveRowForWriteBackAsync(
+        await this.ForEachSnapshotRowAsync(
             tdefPage,
             tableName,
+            selected,
             async (row, token) =>
             {
                 if (row.Location.RowSize < format.RowFields.NumCols)
@@ -252,12 +308,15 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                 }
 
                 Dictionary<int, byte[]>? textBytes = null;
+                Dictionary<int, byte[]>? longValues = null;
                 if (RowDecodePlan.TryParseRowLayout(format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, tableDef.HasVarColumns, out RowLayout layout))
                 {
                     for (int index = 0; index < tableDef.Columns.Count; index++)
                     {
                         ColumnInfo column = tableDef.Columns[index];
-                        if (column.IsCalculated || column.Type != TextType || column.ColNum >= layout.NumCols)
+                        bool longValue = UsesLongValueStorage(column);
+                        bool text = !column.IsCalculated && column.Type == TextType;
+                        if ((!longValue && !text) || column.ColNum >= layout.NumCols)
                         {
                             continue;
                         }
@@ -267,18 +326,79 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                             : RowDecodePlan.ResolveColumnSlice(format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, layout, column);
                         if (slice.Kind == ColumnSliceKind.Var)
                         {
-                            textBytes ??= [];
-                            textBytes.Add(index, row.Page.AsSpan(row.Location.RowStart + slice.DataStart, slice.DataLen).ToArray());
+                            byte[] bytes = row.Page.AsSpan(row.Location.RowStart + slice.DataStart, slice.DataLen).ToArray();
+                            if (longValue)
+                            {
+                                longValues ??= [];
+                                longValues.Add(index, bytes);
+                            }
+                            else
+                            {
+                                textBytes ??= [];
+                                textBytes.Add(index, bytes);
+                            }
                         }
                     }
                 }
 
-                result.Add(new LocatedRow(row.Location, (object[])values) { TextBytes = textBytes });
+                result.Add(new LocatedRow(row.Location, (object[])values) { TextBytes = textBytes, LongValues = longValues });
                 return true;
             },
             cancellationToken).ConfigureAwait(false);
 
         return result;
+    }
+
+    private async ValueTask ForEachSnapshotRowAsync(long tdefPage, string? tableName, IReadOnlyList<(long DataPage, int RowIndex)>? selected, OwnedDataPages.TableRowVisitor visit, CancellationToken cancellationToken)
+    {
+        if (selected is null)
+        {
+            await this.ForEachLiveRowForWriteBackAsync(tdefPage, tableName, visit, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        foreach ((long pageNumber, int rowIndex) in selected)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pageNumber <= 0 || pageNumber >= pages.PageCount || rowIndex < 0 || rowIndex > byte.MaxValue)
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "A mutation index bookmark is outside the database.", new JetErrorInfo { TableName = tableName, PageNumber = pageNumber });
+            }
+
+            byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, format.DataPage.TDefOff) != tdefPage)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "A mutation index bookmark names another table's storage.", new JetErrorInfo { TableName = tableName, PageNumber = pageNumber });
+                }
+
+                bool found = false;
+                await ownedPages.ForEachRowOnPageAsync(
+                    pageNumber,
+                    page,
+                    async (row, token) =>
+                    {
+                        if (row.Location.RowIndex == rowIndex)
+                        {
+                            found = true;
+                            return await visit(row, token).ConfigureAwait(false);
+                        }
+
+                        return true;
+                    },
+                    cancellationToken,
+                    requireCompleteRows: true).ConfigureAwait(false);
+                if (!found)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "A mutation index bookmark names an absent or deleted row.", new JetErrorInfo { TableName = tableName, PageNumber = pageNumber });
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+        }
     }
 
     /// <summary>Adds physical row coordinates to scalar failures that have only column context.</summary>

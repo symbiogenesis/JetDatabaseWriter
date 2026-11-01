@@ -21,6 +21,17 @@ ordinary Text bytes, erase policy and count adjustments. Text snapshots retain
 both fixed and variable slots; assignments and changed cascade keys use the
 encoder while unchanged slots keep their original stored representation.
 
+Snapshots also retain unchanged long-value descriptor bytes. Compatible direct
+updates re-resolve the current live slot by page/row identity, so an earlier
+relocation or compaction in the same prepared batch cannot leave stale geometry.
+Generated `DataPageKernel.PatchColumn` preserves every unassigned field byte and
+unselected null/Boolean bit; `ReplaceRow` admits only the current unaliased live
+interval and preserves the rest of its page. Index maintenance is skipped only
+when the row bookmark and encoded keys remain unchanged. Incompatible layouts
+retain relocation, with external descriptor reuse only under the conservative
+all-surviving-roots policy. A supported unique ascending Int32 equality may seek
+targets; key assignments, calculated fields and unsupported criteria keep scans.
+
 `MutationExecutor.ApplyAsync` checks every replacement's arity, unreadable-value
 admission and encoded capacity before the first row effect. It applies the
 prepared changes and finalizes each reached table's indexes, row count and

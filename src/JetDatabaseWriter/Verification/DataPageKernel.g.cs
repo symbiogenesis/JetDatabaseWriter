@@ -106,5 +106,96 @@ namespace JetDatabaseWriter.Verification {
       uint _index3 = (uint)(3U);
       (page)[(int)(_index3)] = (byte)((_8_free) / (256U));
     }
+    public static uint ColumnMask(uint bit) {
+      if ((bit) == (0U)) {
+        return 1U;
+      } else if ((bit) == (1U)) {
+        return 2U;
+      } else if ((bit) == (2U)) {
+        return 4U;
+      } else if ((bit) == (3U)) {
+        return 8U;
+      } else if ((bit) == (4U)) {
+        return 16U;
+      } else if ((bit) == (5U)) {
+        return 32U;
+      } else if ((bit) == (6U)) {
+        return 64U;
+      } else {
+        return 128U;
+      }
+    }
+    public static byte MergedColumnBit(byte before, byte source, uint bit)
+    {
+      uint _0_mask = JetDatabaseWriter.Verification.DataPageKernel.ColumnMask(bit);
+      return (byte)((((((uint)(before)) / ((_0_mask) * (2U))) * ((_0_mask) * (2U))) + (((((uint)(source)) / (_0_mask)) % (2U)) * (_0_mask))) + (((uint)(before)) % (_0_mask)));
+    }
+    public static bool HasColumnPatchRange(uint targetLength, uint sourceLength, uint targetOffset, uint sourceOffset, uint count, uint targetDataEnd, uint sourceDataEnd, uint targetMask, uint sourceMask, uint bit)
+    {
+      return (((((((((targetMask) < (targetLength)) && ((sourceMask) < (sourceLength))) && ((targetDataEnd) <= (targetMask))) && ((sourceDataEnd) <= (sourceMask))) && ((targetOffset) <= (targetDataEnd))) && ((count) <= ((targetDataEnd) - (targetOffset)))) && ((sourceOffset) <= (sourceDataEnd))) && ((count) <= ((sourceDataEnd) - (sourceOffset)))) && ((bit) < (8U));
+    }
+    public static bool PatchColumn(byte[] row, byte[] source, uint targetOffset, uint sourceOffset, uint count, uint targetDataEnd, uint sourceDataEnd, uint targetMask, uint sourceMask, uint bit)
+    {
+      bool applied = false;
+      applied = false;
+      if (((row) == (object) (source)) || (!(JetDatabaseWriter.Verification.DataPageKernel.HasColumnPatchRange((uint)(row).LongLength, (uint)(source).LongLength, targetOffset, sourceOffset, count, targetDataEnd, sourceDataEnd, targetMask, sourceMask, bit)))) {
+        return applied;
+      }
+      byte _0_oldMask;
+      _0_oldMask = (row)[(int)(targetMask)];
+      byte _1_nextMask;
+      _1_nextMask = (source)[(int)(sourceMask)];
+      uint _2_cursor;
+      _2_cursor = 0U;
+      while ((_2_cursor) < (count)) {
+        uint _index0 = (targetOffset) + (_2_cursor);
+        (row)[(int)(_index0)] = (source)[(int)((sourceOffset) + (_2_cursor))];
+        _2_cursor = (_2_cursor) + (1U);
+      }
+      (row)[(int)((targetMask))] = JetDatabaseWriter.Verification.DataPageKernel.MergedColumnBit(_0_oldMask, _1_nextMask, bit);
+      applied = true;
+      return applied;
+    }
+    public static bool ReplaceRow(byte[] page, uint pageSize, uint countOffset, uint rowsStart, uint rowIndex, uint expectedStart, byte[] replacement)
+    {
+      bool applied = false;
+      applied = false;
+      if ((page) == (object) (replacement)) {
+        return applied;
+      }
+      uint _0_rows;
+      uint _1_first;
+      uint _2_start;
+      uint _3_end;
+      uint _out0;
+      uint _out1;
+      uint _out2;
+      uint _out3;
+      JetDatabaseWriter.Verification.DataPageKernel.PrepareReclaim(page, pageSize, countOffset, rowsStart, rowIndex, out _out0, out _out1, out _out2, out _out3);
+      _0_rows = _out0;
+      _1_first = _out1;
+      _2_start = _out2;
+      _3_end = _out3;
+      if (((((_0_rows) == (0U)) || ((_2_start) != (expectedStart))) || (((_3_end) - (_2_start)) != ((uint)(replacement).LongLength))) || ((JetDatabaseWriter.Verification.DataPageKernel.ReadWord(page, (rowsStart) + ((rowIndex) * (2U)))) != (_2_start))) {
+        return applied;
+      }
+      uint _4_index;
+      _4_index = 0U;
+      while ((_4_index) < (_0_rows)) {
+        if (((_4_index) != (rowIndex)) && (((JetDatabaseWriter.Verification.DataPageKernel.ReadWord(page, (rowsStart) + ((_4_index) * (2U)))) % (8192U)) == (_2_start))) {
+          return applied;
+        }
+        _4_index = (_4_index) + (1U);
+      }
+      uint _5_cursor;
+      _5_cursor = 0U;
+      while ((_5_cursor) < ((uint)(replacement).LongLength)) {
+        uint _index0 = (_2_start) + (_5_cursor);
+        (page)[(int)(_index0)] = (replacement)[(int)(_5_cursor)];
+        _5_cursor = (_5_cursor) + (1U);
+      }
+      applied = true;
+      return applied;
+    }
   }
 }

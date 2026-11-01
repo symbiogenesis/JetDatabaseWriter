@@ -270,7 +270,29 @@ internal sealed class TableDataWriter(
             updateIndexes[columnIndex] = kvp.Value ?? DBNull.Value;
         }
 
-        List<LocatedRow> rows = await snapshots.ReadRowsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<FkRelationship> rels = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
+        bool canSeek = await indexes.CanSeekUpdateTargetsAsync(entry.TDefPage, tableDef, tableName, updateIndexes.Keys, cancellationToken).ConfigureAwait(false);
+        foreach (FkRelationship relationship in rels)
+        {
+            if (string.Equals(relationship.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (string column in relationship.PrimaryColumns)
+                {
+                    canSeek &= !updateIndexes.ContainsKey(tableDef.FindColumnIndex(column));
+                }
+            }
+
+            if (string.Equals(relationship.ForeignTable, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (string column in relationship.ForeignColumns)
+                {
+                    canSeek &= !updateIndexes.ContainsKey(tableDef.FindColumnIndex(column));
+                }
+            }
+        }
+
+        List<LocatedRow>? selected = canSeek ? await snapshots.TryReadIndexedRowsAsync(table, criteria, cancellationToken).ConfigureAwait(false) : null;
+        List<LocatedRow> rows = selected ?? await snapshots.ReadRowsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
         // Stage every matching row so FK / unique-index checks complete before
         // any disk page is mutated.
@@ -296,8 +318,8 @@ internal sealed class TableDataWriter(
             UnreadableLongValue.ThrowIfAny(newRow, tableName);
             await constraints.ApplyUpdateAsync(tableName, tableDef, newRow, updateIndexes.Keys, cancellationToken).ConfigureAwait(false);
 
-            // The row is deleted and re-inserted, so every carried MEMO / OLE
-            // value must have been read and every text value must encode;
+            // Unsupported in-place layouts retain the replacement fallback,
+            // so every carried MEMO / OLE value must have been read;
             // refuse before any page is touched, the cascades below included.
             // The new version is encoded and measured once it is final, after
             // the cascade plan.
@@ -324,7 +346,6 @@ internal sealed class TableDataWriter(
         }
 
         List<CascadeUpdate> cascades = [];
-        IReadOnlyList<FkRelationship> rels = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         if (rels.Count > 0)
         {
             var fkCtx = new FkContext(rels);
@@ -390,7 +411,7 @@ internal sealed class TableDataWriter(
         MutationPlan.TableChanges changes = plan.ForTable(entry.TDefPage, tableDef, tableName);
         foreach ((int i, object[] oldRow, object[] newRow) in pendingUpdates)
         {
-            changes.Update(rows[i].Location, oldRow, newRow, rows[i].GetPreservedText(newRow, updateIndexes.Keys));
+            changes.Update(rows[i].Location, oldRow, newRow, rows[i].GetPreservedText(newRow, updateIndexes.Keys), longValues: rows[i].GetPreservedLongValues(newRow, updateIndexes.Keys));
         }
 
         changes.RaiseAutoNumbers = AssignsAutoNumberColumn(tableDef, updateIndexes.Keys);
@@ -410,7 +431,8 @@ internal sealed class TableDataWriter(
         TableDef tableDef = table.Definition;
         var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
 
-        List<LocatedRow> rows = await snapshots.ReadRowsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        List<LocatedRow> rows = await snapshots.TryReadIndexedRowsAsync(table, criteria, cancellationToken).ConfigureAwait(false)
+            ?? await snapshots.ReadRowsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
         // FK enforcement: identify the rows we are about to delete; if any
         // FK relationship names this table as the primary side, capture the
