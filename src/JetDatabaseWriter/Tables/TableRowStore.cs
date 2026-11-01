@@ -194,6 +194,9 @@ internal sealed class TableRowStore(
     internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef tableDef, CancellationToken cancellationToken)
         => await this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef, DeletedRowDataMode.Default, cancellationToken).ConfigureAwait(false);
 
+    internal ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef tableDef, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
+        => this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef, dataMode, retainLongValues: false, cancellationToken);
+
     /// <summary>
     /// Flags the row at (<paramref name="pageNumber"/>, <paramref name="rowIndex"/>)
     /// deleted. For an overflow row that slot is the header: it is flagged deleted
@@ -206,8 +209,9 @@ internal sealed class TableRowStore(
     /// <param name="rowIndex">The row's slot index.</param>
     /// <param name="tableDef">The row's table, needed to free its long values under secure erase.</param>
     /// <param name="dataMode">Whether the row's bytes are cleared.</param>
+    /// <param name="retainLongValues">Whether to retain all original chains because a replacement can share their rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef tableDef, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
+    internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef tableDef, DeletedRowDataMode dataMode, bool retainLongValues, CancellationToken cancellationToken)
     {
         byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         List<LongValueDescriptor>? longValueRoots = null;
@@ -215,7 +219,7 @@ internal sealed class TableRowStore(
         int raw = Ru16(page, offsetPos);
         if ((raw & Constants.DataPage.NonLiveRowFlags) == Constants.DataPage.OverflowRowFlag)
         {
-            await this.MarkOverflowRowDeletedAsync(pageNumber, page, rowIndex, tableDef, dataMode, cancellationToken).ConfigureAwait(false);
+            await this.MarkOverflowRowDeletedAsync(pageNumber, page, rowIndex, tableDef, dataMode, retainLongValues, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -233,7 +237,10 @@ internal sealed class TableRowStore(
                     continue;
                 }
 
-                longValueRoots = longValueEncoder.CollectLongValueRoots(page, rowBound, tableDef);
+                // Different roots can converge on a retained chain tail. Without
+                // complete ownership evidence, retain every original chain.
+                longValueRoots = retainLongValues ? [] : longValueEncoder.CollectLongValueRoots(page, rowBound, tableDef);
+
                 if (dataMode == DeletedRowDataMode.Clear || options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
                 {
                     Array.Clear(page, rowBound.RowStart, rowBound.RowSize);
@@ -268,9 +275,10 @@ internal sealed class TableRowStore(
     /// <param name="rowIndex">The header's slot index.</param>
     /// <param name="tableDef">The row's table, needed to free its long values under secure erase.</param>
     /// <param name="dataMode">Whether the row's bytes are cleared.</param>
+    /// <param name="retainLongValues">Whether to retain all original chains because a replacement can share their rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="JetCorruptDataException">The overflow storage has invalid bounds, unresolved pointers or shared live targets.</exception>
-    private async ValueTask MarkOverflowRowDeletedAsync(long pageNumber, byte[] page, int rowIndex, TableDef tableDef, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
+    private async ValueTask MarkOverflowRowDeletedAsync(long pageNumber, byte[] page, int rowIndex, TableDef tableDef, DeletedRowDataMode dataMode, bool retainLongValues, CancellationToken cancellationToken)
     {
         List<LongValueDescriptor> longValueRoots;
         long owner = Ri32(page, format.DataPage.TDefOff);
@@ -295,7 +303,8 @@ internal sealed class TableRowStore(
                 longValueRoots = [];
                 if (resolvedTarget is { } target)
                 {
-                    longValueRoots = longValueEncoder.CollectLongValueRoots(target.Page, target.Bound, tableDef);
+                    longValueRoots = retainLongValues ? [] : longValueEncoder.CollectLongValueRoots(target.Page, target.Bound, tableDef);
+
                     AddSlot(target.PageNumber, target.Bound);
                     foreach ((long number, RowBound bound) in intermediateSlots)
                     {

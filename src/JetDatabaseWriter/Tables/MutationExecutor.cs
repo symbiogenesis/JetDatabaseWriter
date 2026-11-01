@@ -8,11 +8,13 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueDecoding.Models;
+using JetDatabaseWriter.ValueEncoding.Models;
 
 /// <summary>Applies prepared row changes; the transaction lifecycle owns rollback and publication.</summary>
 /// <param name="format">The database format.</param>
@@ -39,7 +41,7 @@ internal sealed class MutationExecutor(JetFormat format, Pager pager, OwnedDataP
                 cancellationToken.ThrowIfCancellationRequested();
                 if (change.Replacement is object[] replacement)
                 {
-                    _ = rows.EncodeRow(table.Definition, replacement, change.FixedText);
+                    _ = rows.EncodeRow(table.Definition, StorageValues(replacement, change.LongValues), change.FixedText);
                 }
             }
         }
@@ -71,7 +73,20 @@ internal sealed class MutationExecutor(JetFormat format, Pager pager, OwnedDataP
                 cancellationToken.ThrowIfCancellationRequested();
                 if (change.Location is RowLocation location)
                 {
-                    await rows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, table.Definition, change.DataMode, cancellationToken).ConfigureAwait(false);
+                    bool retainLongValues = false;
+                    if (change.LongValues is { Count: > 0 } longValues)
+                    {
+                        foreach (byte[] bytes in longValues.Values)
+                        {
+                            if (LongValueDescriptor.TryRead(bytes, out LongValueDescriptor descriptor) && descriptor.IsExternal)
+                            {
+                                retainLongValues = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    await rows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, table.Definition, change.DataMode, retainLongValues, cancellationToken).ConfigureAwait(false);
                     if (change.Original is object[] original)
                     {
                         deleted.Add((location, original));
@@ -84,7 +99,7 @@ internal sealed class MutationExecutor(JetFormat format, Pager pager, OwnedDataP
 
                 if (change.Replacement is object[] replacement)
                 {
-                    RowLocation added = await rows.InsertRowDataLocAsync(table.Page, table.Definition, replacement, updateTDefRowCount: false, fixedTextBytes: change.FixedText, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    RowLocation added = await rows.InsertRowDataLocAsync(table.Page, table.Definition, StorageValues(replacement, change.LongValues), updateTDefRowCount: false, fixedTextBytes: change.FixedText, cancellationToken: cancellationToken).ConfigureAwait(false);
                     inserted.Add((added, replacement));
                     newRows.Add(replacement);
                 }
@@ -112,6 +127,22 @@ internal sealed class MutationExecutor(JetFormat format, Pager pager, OwnedDataP
                 await autoNumbers.UpdateComplexHighWaterAsync(table.Page, table.Definition, newRows, cancellationToken).ConfigureAwait(false);
             }
         }
+    }
+
+    private static object[] StorageValues(object[] values, IReadOnlyDictionary<int, byte[]>? longValues)
+    {
+        if (longValues is not { Count: > 0 })
+        {
+            return values;
+        }
+
+        object[] stored = (object[])values.Clone();
+        foreach ((int column, byte[] bytes) in longValues)
+        {
+            stored[column] = new PreEncodedLongValue(bytes);
+        }
+
+        return stored;
     }
 
     /// <summary>Stages one internal system row with its required native index policy.</summary>

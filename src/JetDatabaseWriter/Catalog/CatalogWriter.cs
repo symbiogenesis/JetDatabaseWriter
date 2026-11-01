@@ -342,8 +342,9 @@ internal sealed class CatalogWriter(
         }
 
         var plan = new MutationPlan();
+        IReadOnlyDictionary<int, byte[]> longValues = await this.ReadUnassignedLongValuesAsync(rename.Definition, rename.Original, rename.Replacement, cancellationToken).ConfigureAwait(false);
         plan.ForTable(2, rename.Definition, Constants.SystemTableNames.Objects, MutationPlan.IndexPolicy.CatalogChange, "renaming relationship catalog identity")
-            .Update(rename.Original.Location, rename.Original.Values, rename.Replacement, rename.FixedTextBytes, DeletedRowDataMode.Clear);
+            .Update(rename.Original.Location, rename.Original.Values, rename.Replacement, rename.FixedTextBytes, DeletedRowDataMode.Clear, longValues);
         await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
         catalog.Invalidate();
     }
@@ -739,11 +740,53 @@ internal sealed class CatalogWriter(
 
         await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
         var plan = new MutationPlan();
+        IReadOnlyDictionary<int, byte[]> longValues = await this.ReadUnassignedLongValuesAsync(objects, original, replacement, cancellationToken).ConfigureAwait(false);
         plan.ForTable(2, objects, Constants.SystemTableNames.Objects, MutationPlan.IndexPolicy.CatalogRelocation, tableName)
-            .Update(original.Location, original.Values, replacement, fixedTextBytes, DeletedRowDataMode.Clear);
+            .Update(original.Location, original.Values, replacement, fixedTextBytes, DeletedRowDataMode.Clear, longValues);
         await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
 
         catalog.Invalidate();
+    }
+
+    /// <summary>Retains unassigned catalog LVAL descriptors, inline bytes and external storage identities.</summary>
+    /// <param name="definition">The catalog's validated definition.</param>
+    /// <param name="original">The row being replaced.</param>
+    /// <param name="replacement">The final decoded values, used independently for index maintenance.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Raw long-value fields that the replacement does not assign.</returns>
+    /// <exception cref="JetCorruptDataException">The previously decoded row no longer has a valid layout.</exception>
+    private async ValueTask<IReadOnlyDictionary<int, byte[]>> ReadUnassignedLongValuesAsync(TableDef definition, LocatedRow original, object[] replacement, CancellationToken cancellationToken)
+    {
+        var retained = new Dictionary<int, byte[]>();
+        byte[] page = await pager.ReadPageAsync(original.Location.DataPageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!RowDecodePlan.TryParseRowLayout(format.RowFields, page, original.Location.RowStart, original.Location.RowSize, definition.HasVarColumns, out RowLayout layout))
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The catalog row cannot retain its unassigned long-value storage.", new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = original.Location.DataPageNumber });
+            }
+
+            for (int index = 0; index < definition.Columns.Count; index++)
+            {
+                ColumnInfo column = definition.Columns[index];
+                if (!JetTypeInfo.UsesLongValueStorage(column) || !Equals(original.Values[index], replacement[index]))
+                {
+                    continue;
+                }
+
+                ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(format.RowFields, page, original.Location.RowStart, original.Location.RowSize, layout, column);
+                if (slice.Kind is ColumnSliceKind.Fixed or ColumnSliceKind.Var)
+                {
+                    retained.Add(index, page.AsSpan(original.Location.RowStart + slice.DataStart, slice.DataLen).ToArray());
+                }
+            }
+        }
+        finally
+        {
+            PageBuffers.Return(page);
+        }
+
+        return retained;
     }
 
     internal async ValueTask<IReadOnlyList<long>> DeleteUserTableCatalogRowsAsync(

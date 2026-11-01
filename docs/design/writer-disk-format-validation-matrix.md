@@ -873,3 +873,14 @@ the domain aggregates and a nested `CurrentUser` call in all three constraint
 contexts with error 3388. Native `Abs(-3)` defaults/rules and insertion succeed.
 DAO120 checks remain guarded. These table-constraint observations do not define
 the functions' separate query/application or workgroup behavior.
+
+`CatalogLongValuePreservationTests` independently seeds unassigned catalog OLE
+metadata with opaque token words and compares complete inline slots, external
+descriptors and reachable LVAL row bytes through public table-rule edits, column
+rewrites and relationship renames in Jet3/Jet4/ACE and all statement modes.
+Secure erase retains live shared roots and interior chain tails; statement
+rollback and every injected partial-write position restore exact database bytes
+and permit a same-writer retry. Any transferred external field conservatively
+pins every original row chain, so obsolete metadata reclamation remains S9/I6/I17
+work. Existing native application/security specimens and fresh DAO120 mutation
+acceptance retain their separate limits.

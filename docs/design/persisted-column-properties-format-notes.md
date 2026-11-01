@@ -35,6 +35,28 @@ DAO-created and writer-created evidence separate. Non-nullable CLR POCO
 `Guid.Empty` omission is a library mapping convention; explicit row values
 can store that GUID.
 
+## Catalog storage preservation
+
+Updating a table's properties or renaming a relationship replaces its
+`MSysObjects` row. Unassigned long-value fields retain their exact inline bytes
+or external descriptor, including opaque token words, and the original external
+LVAL rows. Decoded values remain separate inputs to index maintenance. The
+replacement reads raw slices from the resolved physical row, including an
+overflow target, before deleting the original row.
+
+When any external field transfers to the replacement, deletion retains all
+original row chains. Different roots can share an interior tail, so comparing
+root tokens cannot authorize reclamation. The catalog row itself still follows
+its clearing policy. Replaced metadata can remain allocated until complete
+incoming ownership evidence permits reclamation (S9/I6/I17); this is not a
+reclaiming compact operation.
+
+`CatalogLongValuePreservationTests` checks inline, single-row and chained fields
+across all formats and statement modes, secure erase, differing opaque tokens,
+shared roots/interior tails, complete byte rollback, partial writes at every
+selected mutation boundary and same-writer retry. These managed controls do not
+replace fresh native acceptance or establish every application/security layout.
+
 ## 1. Sources
 
 | Source | Confidence |
