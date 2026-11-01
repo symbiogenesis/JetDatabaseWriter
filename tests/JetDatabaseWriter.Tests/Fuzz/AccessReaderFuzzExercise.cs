@@ -80,7 +80,7 @@ internal static class AccessReaderFuzzExercise
             MaxEncryptionInfoBytes = 64 * 1024,
             MaxEncryptionSpinCount = 100_000,
             MaxTotalEncryptionSpinCount = MaxEncryptionIterations,
-            LinkedSourceMaxDepth = 0,
+            LinkedSourceMaxDepth = 1,
             LinkedSourceResolver = (_, _, _) =>
             {
                 log("[FuzzCoverage] reader:link-denied");

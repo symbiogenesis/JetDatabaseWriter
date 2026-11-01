@@ -122,6 +122,28 @@ public sealed class AccessReaderFuzzExerciseTests
     }
 
     [Fact]
+    public async Task NativeAccessLinkSeed_DeniesSchemaAndRowsAtResolver()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        byte[] bytes = await File.ReadAllBytesAsync(TestDatabases.LinkerTestV2007, ct);
+        var messages = new List<string>();
+
+        await AccessReaderFuzzExercise.RunAsync(bytes, messages.Add, ct);
+
+        Assert.Contains("[FuzzCoverage] reader:links:completed", messages);
+        Assert.Equal(2, messages.Count(static message => message == "[FuzzCoverage] reader:link-denied"));
+        foreach (string operation in (string[])["linked-schema", "linked-rows"])
+        {
+            Assert.Contains($"[FuzzCoverage] reader:{operation}", messages);
+            Assert.DoesNotContain($"[FuzzCoverage] reader:{operation}:completed", messages);
+            Assert.Contains(
+                messages,
+                message => message.StartsWith($"[Fuzzing] Expected {operation} input failure: System.UnauthorizedAccessException:", StringComparison.Ordinal) &&
+                    message.Contains("Linked-source execution is disabled by the fuzz harness.", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
     public async Task RowLimit_DisposesWithoutReadingAnExtraRow()
     {
         int consumed = 0;

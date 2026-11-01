@@ -69,6 +69,22 @@ Assert-Fuzz (($plan.Entries.Field.Offset -join ',') -eq ($repeated.Entries.Field
 Assert-Fuzz (@($plan.Entries | Select-Object -First 3 | Where-Object Family -eq 'Control').Count -eq 3) 'Healthy controls did not precede structural cases for every format.'
 Assert-Fuzz (@($plan.Catalog | Where-Object { $_.SHA256.Length -ne 64 }).Count -eq 0) 'The schedule omitted corpus identity hashes.'
 
+# Native Access and ODBC links stay unmutated controls before every seeded structural schedule.
+foreach ($name in 'indexCursorTestV2007.accdb', 'linkerTestV2007.accdb', 'odbcLinkerTestV2007.accdb') {
+    [IO.File]::Copy((Join-Path $fixtureRoot 'synthetic-2.mdb'), (Join-Path $fixtureRoot $name))
+}
+$linkedCorpus = @(Get-ChildItem -LiteralPath $fixtureRoot -File | Sort-Object FullName)
+foreach ($seed in 0, 24, 20261015, ([int]::MaxValue)) {
+    $linkedPlan = Get-FuzzReaderPlan $linkedCorpus $seed
+    Assert-Fuzz ($linkedPlan.Entries.Count -le 64) 'Linked controls exceeded the default bounded campaign.'
+    foreach ($name in 'linkerTestV2007.accdb', 'odbcLinkerTestV2007.accdb') {
+        $control = @($linkedPlan.Entries | Where-Object { $_.Family -eq 'Control' -and $_.Source.File.Name -ceq $name })
+        Assert-Fuzz ($control.Count -eq 1 -and $null -eq $control[0].Field) "Seed $seed omitted or mutated the mandatory $name control."
+        $controlIndex = [Array]::IndexOf($linkedPlan.Entries, $control[0])
+        Assert-Fuzz ($controlIndex -lt @($linkedPlan.Entries | Where-Object Family -eq 'Control').Count) "Seed $seed delayed $name until after structural mutations."
+    }
+}
+
 $state = @{ Calls = 0 }
 $probe = {
     param([byte[]] $Candidate)
