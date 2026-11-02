@@ -221,7 +221,9 @@ public sealed class SharedParsingKernelTests
         destination = [99, 99];
         await Assert.ThrowsAsync<EndOfStreamException>(async () =>
             await store.ReadAsync(7, destination, inline, TestContext.Current.CancellationToken));
-        Assert.Equal([8, 99], destination);
+        byte[] expected = [store.Capabilities.PositionalReads ? (byte)8 : (byte)99, 99];
+        Assert.Equal(expected, destination);
+        Assert.Equal(1, file.Position);
     }
 
     private static int[] Partition(int mask)
