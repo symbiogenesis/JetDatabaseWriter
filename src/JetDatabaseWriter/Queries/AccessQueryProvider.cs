@@ -242,7 +242,7 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
             return null;
         }
 
-        IReadOnlyList<IndexMetadata> tableIndexes = await indexes.ListSeekableIndexesAsync(table, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<IndexMetadata> tableIndexes = await indexes.ListSeekableIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
         return order.FindCoveringIndex(tableIndexes, resolved.Definition, typeof(T)) is { } index
             ? indexes.ReadIndexRowsAsync<T>(table, index.Name, IndexQueryCriteria.All, cancellationToken)
             : null;

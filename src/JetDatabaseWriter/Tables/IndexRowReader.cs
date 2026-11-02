@@ -212,6 +212,15 @@ internal sealed class IndexRowReader(
             return [];
         }
 
+        return await this.ListSeekableIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Lists seekable indexes against the same acquired schema used by query admission.</summary>
+    /// <param name="resolved">The independently resolved local table and its native column types.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal async ValueTask<IReadOnlyList<IndexMetadata>> ListSeekableIndexesAsync(ResolvedTable resolved, CancellationToken cancellationToken)
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         IReadOnlyList<IndexMetadata> indexes = await this.ReadIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
         var result = new List<IndexMetadata>();
         foreach (IndexMetadata index in indexes)
