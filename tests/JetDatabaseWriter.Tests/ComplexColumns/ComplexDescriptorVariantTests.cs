@@ -61,7 +61,7 @@ public sealed class ComplexDescriptorVariantTests
             Assert.Equal(info.ComplexId, reference.Misc);
             Assert.Equal(info.Kind == ComplexColumnKind.VersionHistory ? 0x20 : 0, reference.ExtraFlags);
             TableDef flat = Assert.IsType<TableDef>(await harness.Services.Catalog.ReadTableDefAsync(info.FlatTableId, Ct));
-            ColumnInfo foreignKey = Assert.Single(flat.Columns, column => column.Name.StartsWith('_'));
+            ColumnInfo foreignKey = Assert.Single(flat.Columns, column => column.Name.Length != 0 && column.Name[0] == '_');
             Assert.Equal((0x02, 0x08), (foreignKey.Flags, foreignKey.ExtraFlags));
             ColumnInfo scalar = Assert.Single(flat.Columns, column => column.IsAutoNumber);
             Assert.Equal((0x06, 0x04), (scalar.Flags, scalar.ExtraFlags));

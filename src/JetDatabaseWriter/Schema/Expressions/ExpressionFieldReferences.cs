@@ -129,7 +129,11 @@ internal static class ExpressionFieldReferences
             else if (current == '#')
             {
                 // A #date# literal; a lone '#' is just a character.
+#if NET11_0_OR_GREATER
+                int close = text.IndexOf('#', index + 1, StringComparison.Ordinal);
+#else
                 int close = text.IndexOf('#', index + 1);
+#endif
                 operandExpected = close < 0;
                 index = close < 0 ? index + 1 : close + 1;
             }

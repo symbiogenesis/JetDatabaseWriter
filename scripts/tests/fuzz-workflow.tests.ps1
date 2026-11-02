@@ -29,10 +29,11 @@ function Assert-Workflow([string] $Workflow) {
         Assert-Contract ($checkout.Groups['step'].Value.Contains('ref: ${{ env.JDW_VALIDATION_SHA }}')) 'Every fuzz checkout must use the immutable completed CI revision.'
     }
     $setup = [regex]::Match($fuzz, '(?ms)^      - (?:name: [^\n]+\n        )?uses: actions/setup-dotnet@[^\n]+\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    Assert-Contract ($setup -match '(?m)^          dotnet-version: 10\.0\.\d{3}$') 'Fuzz runners must explicitly install the .NET 10 runtime alongside the pinned SDK.'
     Assert-Contract ($setup.Contains('global-json-file: global.json') -and $setup.Contains('cache: true') -and $setup.Contains("cache-dependency-path: '**/packages.lock.json'")) 'Fuzz runners must cache their locked NuGet dependencies with the pinned SDK.'
     Assert-Contract ($fuzz.Contains('tf: [net10.0, net11.0]') -and $fuzz.Contains('JDW_EXPECTED_RUNTIME_MAJOR:') -and $fuzz.Contains('DOTNET_ROLL_FORWARD_TO_PRERELEASE:')) 'Fuzzing must retain both explicitly selected runtimes.'
     Assert-Contract ($fuzz.Contains('FUZZ_CASES: ${{ inputs.cases || ''64'' }}') -and $fuzz.Contains('FUZZ_SEED: ${{ inputs.seed || github.run_number }}')) 'Automatic fuzzing must supply a bounded case count and reproducible changing seed.'
-    Assert-Contract ($fuzz.Contains('dotnet restore tests/JetDatabaseWriter.Tests --locked-mode') -and $fuzz.Contains('dotnet build tests/JetDatabaseWriter.Tests -c Release --no-restore -f net10.0 -p:RunAnalyzers=false')) 'Fuzz runners must build locked Release inputs without repeating the CI analyzers.'
+    Assert-Contract ($fuzz.Contains('dotnet restore tests/JetDatabaseWriter.Tests --locked-mode -p:TestNetStandard=${{ matrix.tf == ''net10.0'' }}') -and $fuzz.Contains('dotnet build tests/JetDatabaseWriter.Tests -c Release --no-restore -f ${{ matrix.tf }} -p:TestNetStandard=${{ matrix.tf == ''net10.0'' }} -p:RunAnalyzers=false')) 'Fuzz runners must build locked Release inputs without repeating the CI analyzers.'
     $upload = [regex]::Match($fuzz, '(?ms)^      - name: Retain reproductions and logs\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($upload.Contains('if: always()') -and $upload.Contains('name: fuzz-${{ matrix.tf }}') -and $upload.Contains('path: artifacts/fuzz/') -and $upload.Contains('if-no-files-found: error')) 'Each fuzz runtime must retain diagnostics on failure and report missing reproductions.'
 }
@@ -45,6 +46,7 @@ function Assert-Refusal([string] $Name, [string] $Candidate, [string] $Expected)
 }
 
 Assert-Workflow $workflow
+Assert-Refusal 'runtime installation depends on runner image' ($workflow.Replace("          dotnet-version: 10.0.403`n", '')) 'must explicitly install the .NET 10 runtime'
 Assert-Refusal 'missing main guard' ($workflow.Replace("github.ref == 'refs/heads/main'", 'true')) 'successful exact-main CI'
 Assert-Refusal 'automatic campaign omitted' ($workflow.Replace('types: [completed]', 'types: [requested]')) 'run automatically after main CI'
 Assert-Refusal 'foreign repository accepted' ($workflow.Replace('github.event.workflow_run.head_repository.full_name == github.repository', 'true')) 'from this repository'

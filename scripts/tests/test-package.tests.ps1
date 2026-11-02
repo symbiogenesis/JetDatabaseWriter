@@ -9,7 +9,7 @@ if (-not $OutputDirectory) { $OutputDirectory = Join-Path ([IO.Path]::GetTempPat
 $testRoot = [IO.Path]::GetFullPath($OutputDirectory)
 [IO.Directory]::CreateDirectory($testRoot) | Out-Null
 $subject = Join-Path $PSScriptRoot '../test-package.ps1'
-$packageTestContext = [pscustomobject]@{ Calls = [Collections.Generic.List[object]]::new(); Failure = '' }
+$packageTestContext = [pscustomobject]@{ Calls = [Collections.Generic.List[object]]::new(); Failure = ''; MissingRuntime = '' }
 
 function Assert-Check([bool] $Condition, [string] $Message) {
     if (-not $Condition) { throw $Message }
@@ -22,8 +22,8 @@ function New-Package([string] $Name, [string] $Missing = '', [string] $Stale = '
     try {
         $entries = [ordered]@{
             'JetDatabaseWriter.nuspec' = '<package><metadata><id>JetDatabaseWriter</id><version>1.0.0</version></metadata></package>'
-            'lib/net10.0/JetDatabaseWriter.dll' = 'Synthetic DLL'
-            'lib/net10.0/JetDatabaseWriter.xml' = 'Synthetic documentation'
+            'lib/net11.0/JetDatabaseWriter.dll' = 'Synthetic DLL'
+            'lib/net11.0/JetDatabaseWriter.xml' = 'Synthetic documentation'
             'lib/netstandard2.1/JetDatabaseWriter.dll' = 'Synthetic DLL'
             'lib/netstandard2.1/JetDatabaseWriter.xml' = 'Synthetic documentation'
         }
@@ -42,8 +42,12 @@ function dotnet {
     $arguments = [string[]]$args
     $packageTestContext.Calls.Add($arguments)
     $stage = $arguments[0]
-    Assert-Check ($stage -in 'restore', 'build', 'exec') "Unexpected dotnet operation: $stage"
+    Assert-Check ($stage -in '--list-runtimes', 'restore', 'build', 'exec') "Unexpected dotnet operation: $stage"
     $global:LASTEXITCODE = if ($packageTestContext.Failure -eq $stage) { 17 } else { 0 }
+    if ($stage -eq '--list-runtimes') {
+        if ($packageTestContext.MissingRuntime -ne '10') { 'Microsoft.NETCore.App 10.0.14 [synthetic/runtimes]' }
+        if ($packageTestContext.MissingRuntime -ne '11') { 'Microsoft.NETCore.App 11.0.0-rc.3.26522.148 [synthetic/runtimes]' }
+    }
 }
 
 function Invoke-Scenario([string] $Name, [string] $PackageDirectory, [string] $Failure = '') {
@@ -61,9 +65,9 @@ function Invoke-Scenario([string] $Name, [string] $PackageDirectory, [string] $F
 $valid = New-Package 'valid'
 $pass = Invoke-Scenario 'pass' $valid
 Assert-Check (-not $pass.Error) "Valid package failed: $($pass.Error)"
-Assert-Check ($packageTestContext.Calls.Count -eq 6) 'Both consumers must restore, build and execute.'
-Assert-Check (($packageTestContext.Calls | ForEach-Object { $_[0] }) -join ',' -eq 'restore,build,exec,restore,build,exec') 'Consumer validation changed its operation sequence.'
-foreach ($target in 'net10.0', 'net8.0') {
+Assert-Check ($packageTestContext.Calls.Count -eq 7) 'Runtime discovery and both consumers must complete.'
+Assert-Check (($packageTestContext.Calls | ForEach-Object { $_[0] }) -join ',' -eq '--list-runtimes,restore,build,exec,restore,build,exec') 'Consumer validation changed its operation sequence.'
+foreach ($target in 'net11.0', 'net8.0') {
     $project = [xml][IO.File]::ReadAllText((Join-Path $pass.Output "$target/PackageConsumer.csproj"))
     Assert-Check ($project.Project.PropertyGroup.TargetFramework -eq $target) 'The consumer framework was lost.'
     Assert-Check ($project.Project.ItemGroup.PackageReference.Version -eq '[1.0.0]') 'The consumer must restore the exact artifact version.'
@@ -74,9 +78,15 @@ Assert-Check ($config.SelectSingleNode('/configuration/packageSourceMapping/pack
 foreach ($name in 'Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props') { Assert-Check ([IO.File]::ReadAllText((Join-Path $pass.Output $name)) -eq '<Project />') 'The consumer inherited enclosing repository build configuration.' }
 Assert-Check ([IO.File]::ReadAllText((Join-Path $pass.Output '.editorconfig')) -eq 'root = true') 'The consumer inherited repository analyzer configuration.'
 Assert-Check (@($packageTestContext.Calls | Where-Object { $_[0] -eq 'restore' -and $_ -contains '--no-http-cache' -and $_ -contains '--packages' }).Count -eq 2) 'Both consumers require isolated restores.'
-Assert-Check ($packageTestContext.Calls[2][-1] -eq '.NETCoreApp,Version=v10.0' -and $packageTestContext.Calls[5][-1] -eq '.NETStandard,Version=v2.1') 'Each consumer must verify its loaded library asset.'
+Assert-Check ($packageTestContext.Calls[3][-2] -eq '.NETCoreApp,Version=v11.0' -and $packageTestContext.Calls[6][-2] -eq '.NETStandard,Version=v2.1') 'Each consumer must verify its loaded library asset.'
+Assert-Check ($packageTestContext.Calls[3][-1] -eq '11' -and $packageTestContext.Calls[6][-1] -eq '10') 'Each consumer must verify its actual runtime major.'
+foreach ($case in @(@{ Index = 3; Runtime = '11.0.0-rc.3.26522.148' }, @{ Index = 6; Runtime = '10.0.14' })) {
+    $arguments = $packageTestContext.Calls[$case.Index]
+    $option = [Array]::IndexOf($arguments, '--fx-version')
+    Assert-Check ($option -ge 0 -and $arguments[$option + 1] -ceq $case.Runtime) 'Package consumers must pin the intended installed runtime, including prereleases.'
+}
 
-foreach ($missing in 'LICENSE', 'LICENSE-APACHE-2.0.txt', 'lib/netstandard2.1/JetDatabaseWriter.dll', 'lib/net10.0/JetDatabaseWriter.xml') {
+foreach ($missing in 'LICENSE', 'LICENSE-APACHE-2.0.txt', 'lib/netstandard2.1/JetDatabaseWriter.dll', 'lib/net11.0/JetDatabaseWriter.xml') {
     $name = 'missing-' + [IO.Path]::GetFileName($missing)
     $scenario = Invoke-Scenario $name (New-Package $name $missing)
     Assert-Check ($scenario.Error.Contains('missing ' + $missing.Split('/')[-1]) -or $scenario.Error.Contains('missing the ')) "Missing $missing was accepted: $($scenario.Error)"
@@ -84,9 +94,14 @@ foreach ($missing in 'LICENSE', 'LICENSE-APACHE-2.0.txt', 'lib/netstandard2.1/Je
 }
 $stale = Invoke-Scenario 'stale' (New-Package 'stale' '' 'LICENSE-APACHE-2.0.txt')
 Assert-Check ($stale.Error.Contains('stale or incomplete LICENSE-APACHE-2.0.txt')) 'An incomplete Apache license was accepted.'
-foreach ($stage in 'restore', 'build', 'exec') {
+foreach ($stage in '--list-runtimes', 'restore', 'build', 'exec') {
     $scenario = Invoke-Scenario ('failed-' + $stage) $valid $stage
     Assert-Check ($scenario.Error.Contains('failed with exit code 17')) "$stage failure was not propagated."
     Assert-Check ($packageTestContext.Calls[-1][0] -eq $stage) "$stage failure did not stop subsequent work."
+}
+foreach ($major in '10', '11') {
+    $packageTestContext.MissingRuntime = $major
+    $scenario = Invoke-Scenario ('missing-runtime-' + $major) $valid
+    Assert-Check ($scenario.Error.Contains("requires an installed .NET $major runtime")) 'A missing runtime was silently replaced by another major.'
 }
 Write-Host "All package coordinator and malformed archive checks passed. Artifacts: $testRoot"

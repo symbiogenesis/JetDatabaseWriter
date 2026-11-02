@@ -195,7 +195,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         var seenSets = new HashSet<byte[]>[descriptors.Count];
         for (int d = 0; d < descriptors.Count; d++)
         {
-            seenSets[d] = new HashSet<byte[]>(ByteArrayEqualityComparer.Instance);
+            seenSets[d] = [with(ByteArrayEqualityComparer.Instance)];
         }
 
         for (int p = 0; p < pendingRows.Count; p++)
@@ -249,7 +249,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
             return;
         }
 
-        Dictionary<int, object[]> replaceAt = new(updates.Count);
+        Dictionary<int, object[]> replaceAt = [with(updates.Count)];
         foreach ((int idx, _, object[] newRow) in updates)
         {
             replaceAt[idx] = newRow;

@@ -18,12 +18,12 @@ using JetDatabaseWriter.Transactions;
 /// from untrusted access. Data is processed one page at a time; the original remains unchanged
 /// until replacement. Incomplete staging is cleaned up before commit; commit failures retain
 /// recovery copies named in the IOException data. File contents are flushed through managed
-/// .NET APIs; net10.0 on Windows checks directory flush acknowledgements. Power-loss persistence is unqualified.
+/// .NET APIs; net11.0 on Windows checks directory flush acknowledgements. Power-loss persistence is unqualified.
 /// Supported source providers are JET RC4 and ACE RC4 CryptoAPI, Standard AES and Agile AES;
 /// new encrypted output uses JET RC4 or ACE Agile AES. Third-party extensible providers and
 /// non-AES Agile ciphers are unsupported. Native fixture
 /// evidence covers specific provider variants. Windows staging files receive owner-only ACLs.
-/// The .NET 10 build requests Unix mode 0600; the .NET Standard build uses host-default Unix
+/// The .NET 11 build requests Unix mode 0600; the .NET Standard build uses host-default Unix
 /// permissions. Inherited ACLs and directory permissions must provide the required protection.</remarks>
 public static class AccessDatabaseEncryption
 {

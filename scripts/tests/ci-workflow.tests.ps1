@@ -32,6 +32,11 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract ($Workflow.Contains('group: ci-${{ github.ref }}') -and $Workflow.Contains("cancel-in-progress: `${{ !startsWith(github.ref, 'refs/tags/') }}")) 'Superseded branch runs must be cancelled without cancelling release runs.'
     $analyze = Get-CiJob $Workflow 'analyze'
     $test = Get-CiJob $Workflow 'test'
+    foreach ($jobName in 'analyze', 'test', 'package', 'native-access', 'aot', 'encryption-replacement') {
+        $runtimeJob = Get-CiJob $Workflow $jobName
+        $setup = [regex]::Match($runtimeJob, '(?ms)^      - name: Setup \.NET\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+        Assert-Contract ($setup.Contains('global-json-file: global.json') -and $setup -match '(?m)^          dotnet-version: 10\.0\.\d{3}$') "The '$jobName' job must explicitly install the .NET 10 runtime alongside the pinned SDK."
+    }
     Assert-Contract ($analyze.Contains('matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}') -and [regex]::Matches($analyze, '(?m)^      matrix:').Count -eq 1) 'The analyzer matrix must consume the complete shared definition.'
     $lanes = @($Lanes)
 
@@ -47,19 +52,22 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     $filtered = @($toolsFilter.solution.projects | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.Replace('\', '/')) })
     Assert-Contract (@(Compare-Object @($projects | Where-Object { $_ -notin 'JetDatabaseWriter', 'JetDatabaseWriter.Tests' }) @($filtered | Where-Object { $_ -ne 'JetDatabaseWriter' })).Count -eq 0) 'Every remaining solution project must belong to the tools filter.'
 
-    $frameworks = @($TestProject.SelectNodes('/Project/PropertyGroup/TargetFrameworks') | ForEach-Object { $_.InnerText.Split(';', [StringSplitOptions]::RemoveEmptyEntries) } | Sort-Object -Unique)
-    Assert-Contract (($frameworks -join ';') -eq 'net10.0') 'Tests must build locally with the pinned .NET 10 SDK.'
+    $frameworks = @($TestProject.SelectNodes('/Project/PropertyGroup/TargetFrameworks'))
+    $nativeFramework = @($frameworks | Where-Object { -not $_.Condition -and -not $_.ParentNode.Condition })
+    $standardFramework = @($frameworks | Where-Object { $_.Condition -eq "'`$(TestNetStandard)' == 'true'" -or $_.ParentNode.Condition -eq "'`$(TestNetStandard)' == 'true'" })
+    Assert-Contract ($frameworks.Count -eq 2 -and $nativeFramework.Count -eq 1 -and $nativeFramework[0].InnerText -eq 'net11.0' -and $standardFramework.Count -eq 1 -and $standardFramework[0].InnerText -eq 'net10.0') 'Tests must target native .NET 11 and use a separate .NET 10 Standard runner.'
     $buildLanes = @($lanes | Where-Object project -eq 'tests/JetDatabaseWriter.Tests')
     Assert-Contract ($buildLanes.Count -eq 2) 'Exactly two analyzed test assets must serve every runtime partition.'
     foreach ($asset in 'native', 'standard') {
         $buildLane = @($buildLanes | Where-Object asset -CEQ $asset)
-        $expectedOptions = '-f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests'
+        $expectedOptions = '-f net11.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests'
+        $expectedFramework = 'net11.0'
         $restoreOptions = ''
-        if ($asset -eq 'standard') { $expectedOptions += ' -p:TestNetStandard=true'; $restoreOptions = '-p:TestNetStandard=true' }
-        Assert-Contract ($buildLane.Count -eq 1 -and $buildLane[0].name -ceq "tests $asset" -and $buildLane[0].options -ceq $expectedOptions -and [string]$buildLane[0]['restore-options'] -ceq $restoreOptions -and $buildLane[0].runner -is [bool] -and $buildLane[0].runner) 'The two test assets must restore and analyze their exact dependency graphs once.'
+        if ($asset -eq 'standard') { $expectedOptions = '-f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true'; $restoreOptions = '-p:TestNetStandard=true'; $expectedFramework = 'net10.0' }
+        Assert-Contract ($buildLane.Count -eq 1 -and $buildLane[0].name -ceq "tests $asset" -and $buildLane[0].options -ceq $expectedOptions -and [string]$buildLane[0]['restore-options'] -ceq $restoreOptions -and $buildLane[0].runner -is [bool] -and $buildLane[0].runner -and $buildLane[0].framework -ceq $expectedFramework) 'The two test assets must restore and analyze their exact dependency graphs once.'
     }
     $testLanes = @($lanes | Where-Object partition)
-    Assert-Contract ($testLanes.Count -eq 15) 'Native .NET 10, netstandard and .NET 11 must each have five test partitions.'
+    Assert-Contract ($testLanes.Count -eq 15) 'Native .NET 11 and Standard on .NET 10 and .NET 11 must each have five test partitions.'
     $sweepClasses = [ordered]@{
         jet3 = 'JetDatabaseWriter.Tests.Writer.StatementAtomicityJet3Tests'
         jet4 = 'JetDatabaseWriter.Tests.Writer.StatementAtomicityJet4Tests'
@@ -67,12 +75,12 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     }
     $partitionNamespaces = 'JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer'
     $partitions = @('ordinary', 'schema-writer') + @($sweepClasses.Keys)
-    foreach ($framework in 'net10.0', 'net10.0-netstandard', 'net11.0') {
-        $expectedAsset = if ($framework -eq 'net10.0-netstandard') { 'standard' } else { 'native' }
+    foreach ($framework in 'net11.0', 'net10.0-netstandard', 'net11.0-netstandard') {
+        $expectedAsset = if ($framework.EndsWith('-netstandard', [StringComparison]::Ordinal)) { 'standard' } else { 'native' }
         foreach ($partition in $partitions) {
             $lane = @($testLanes | Where-Object { $_.tf -eq $framework -and $_.partition -eq $partition })
             Assert-Contract ($lane.Count -eq 1 -and $lane[0].asset -ceq $expectedAsset -and -not $lane[0].project -and -not $lane[0].options -and -not $lane[0]['restore-options']) "The '$framework/$partition' test partition must execute its matching analyzed asset exactly once."
-            $name = 'tests ' + $framework.Replace('net10.0-netstandard', 'net10.0 netstandard') + ' ' + $partition
+            $name = 'tests ' + $framework.Replace('-netstandard', ' netstandard') + ' ' + $partition
             Assert-Contract ($lane[0].name -ceq $name) 'Test partition job names must match the validated ancestor job inventory.'
             $expectedFilter = switch ($partition) {
                 ordinary { '--filter-not-namespace ' + $partitionNamespaces }
@@ -99,7 +107,7 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract (($suppressed -join ';') -eq 'CA1707;SA1615') 'The test project must not add blanket warning suppressions.'
 
     $upload = [regex]::Match($analyze, '(?ms)^      - name: Upload analyzed test runner\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
-    Assert-Contract ($upload.Contains('if: matrix.runner') -and $upload.Contains('name: analyzed-runner-${{ matrix.asset }}') -and $upload.Contains('path: tests/JetDatabaseWriter.Tests/bin/Release/net10.0/') -and $upload -match 'uses: actions/upload-artifact@[0-9a-f]{40}(?:\s|$)' -and $upload.Contains('if-no-files-found: error')) 'Each analyzed test asset must publish its complete runner exactly once with a pinned action.'
+    Assert-Contract ($upload.Contains('if: matrix.runner') -and $upload.Contains('name: analyzed-runner-${{ matrix.asset }}') -and $upload.Contains('path: tests/JetDatabaseWriter.Tests/bin/Release/${{ matrix.framework }}/') -and $upload -match 'uses: actions/upload-artifact@[0-9a-f]{40}(?:\s|$)' -and $upload.Contains('if-no-files-found: error')) 'Each analyzed test asset must publish its complete runner exactly once with a pinned action.'
     Assert-Contract ($analyze.IndexOf('      - name: Build', [StringComparison]::Ordinal) -lt $analyze.IndexOf('      - name: Upload analyzed test runner', [StringComparison]::Ordinal) -and $upload -notmatch '(?m)^        if:.*(?:always|cancelled)') 'Analyzed runners may publish only after their successful Release build.'
     foreach ($name in 'analyze', 'aot', 'encryption-replacement') {
         $laneJob = Get-CiJob $Workflow $name
@@ -118,8 +126,8 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     $testPosition = $test.IndexOf('      - name: Test', [StringComparison]::Ordinal)
     Assert-Contract ($downloadPosition -ge 0 -and $downloadPosition -lt $testPosition) 'Ordinary tests must follow acquisition of their analyzed runner.'
     Assert-Contract ($test -notmatch '\bdotnet\s+(?:build|restore|publish|pack)\b') 'Ordinary tests must execute the analyzed binaries without rebuilding.'
-    Assert-Contract ($test.Contains('global-json-file: .github/dotnet11/global.json') -and $test.Contains("if: matrix.tf == 'net11.0'")) 'The .NET 11 lane must install the pinned prerelease runtime.'
-    Assert-Contract ($testStep.Contains("DOTNET_ROLL_FORWARD: `${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}") -and $testStep.Contains("DOTNET_ROLL_FORWARD_TO_PRERELEASE: `${{ matrix.tf == 'net11.0' && '1' || '0' }}") -and $testStep.Contains("JDW_EXPECTED_RUNTIME_MAJOR: `${{ matrix.tf == 'net11.0' && '11' || '10' }}")) 'Test lanes must select and verify their intended runtime, including prereleases.'
+    Assert-Contract ($test.Contains('global-json-file: .github/dotnet11/global.json') -and $test.Contains("if: startsWith(matrix.tf, 'net11.')")) 'The .NET 11 lane must install the pinned prerelease runtime.'
+    Assert-Contract ($testStep.Contains("DOTNET_ROLL_FORWARD: `${{ startsWith(matrix.tf, 'net11.') && 'LatestMajor' || 'LatestPatch' }}") -and $testStep.Contains("DOTNET_ROLL_FORWARD_TO_PRERELEASE: `${{ startsWith(matrix.tf, 'net11.') && '1' || '0' }}") -and $testStep.Contains("JDW_EXPECTED_RUNTIME_MAJOR: `${{ startsWith(matrix.tf, 'net11.') && '11' || '10' }}")) 'Test lanes must select and verify their intended runtime, including prereleases.'
     $testCommand = [regex]::Match($testStep, '(?m)^        run: (?<command>[^\n]+)$').Groups['command'].Value
     if ($testCommand -eq '>-') {
         $testCommand = ([regex]::Matches($testStep, '(?m)^          (?<line>[^\n]+)$') | ForEach-Object { $_.Groups['line'].Value.Trim() }) -join ' '
@@ -160,10 +168,10 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract ($gate.Contains('needs: [changes, checks, formal, analyze, test, native-access, aot, encryption-replacement, package]') -and $gate.Contains('if: ${{ !cancelled() }}') -and $gate.Contains('JDW_CI_NEEDS: ${{ toJSON(needs) }}') -and $gate.Contains('run: ./scripts/select-ci-lanes.ps1 -CheckResults')) 'The aggregate gate must reject failure and missing selected jobs while honoring workflow cancellation.'
     $native = Get-CiJob $Workflow 'native-access'
     Assert-Contract ($native.Contains('name: Native Access compatibility (${{ matrix.tf }})') -and $native.Contains('needs: [changes, analyze]') -and $native.Contains('if: ${{ !cancelled() && needs.changes.outputs.dotnet == ''true'' }}') -and $native.Contains('runs-on: windows-latest') -and $native.Contains('timeout-minutes: 90') -and $native -notmatch 'continue-on-error:') 'Native compatibility must gate every selected .NET revision after its analyzed artifacts are available, including independent evidence after self-test failures.'
-    Assert-Contract ($native.Contains('tf: [net10.0, net10.0-netstandard, net11.0]') -and $native.Contains('global-json-file: global.json') -and $native.Contains('global-json-file: .github/dotnet11/global.json')) 'Native compatibility must cover all three runtime/library combinations.'
-    Assert-Contract ($native -match 'uses: actions/download-artifact@[0-9a-f]{40}(?:\s|$)' -and $native.Contains('name: analyzed-runner-${{ matrix.tf == ''net10.0-netstandard'' && ''standard'' || ''native'' }}') -and $native.Contains('path: artifacts/native-runner') -and $native -notmatch 'dotnet (?:build|restore|publish)\b') 'Native compatibility must consume the exact analyzed runner without rebuilding.'
+    Assert-Contract ($native.Contains('tf: [net11.0, net10.0-netstandard, net11.0-netstandard]') -and $native.Contains('global-json-file: global.json') -and $native.Contains('global-json-file: .github/dotnet11/global.json')) 'Native compatibility must cover all three runtime/library combinations.'
+    Assert-Contract ($native -match 'uses: actions/download-artifact@[0-9a-f]{40}(?:\s|$)' -and $native.Contains('name: analyzed-runner-${{ endsWith(matrix.tf, ''-netstandard'') && ''standard'' || ''native'' }}') -and $native.Contains('path: artifacts/native-runner') -and $native -notmatch 'dotnet (?:build|restore|publish)\b') 'Native compatibility must consume the exact analyzed runner without rebuilding.'
     Assert-Contract ($native.Contains('run: ./scripts/install-native-access.ps1') -and $native.Contains('run: ./scripts/run-native-compatibility.ps1 -RunnerDirectory artifacts/native-runner -ResultsDirectory artifacts/native-results/${{ matrix.tf }}') -and $native.IndexOf('run: ./scripts/install-native-access.ps1', [StringComparison]::Ordinal) -lt $native.IndexOf('run: ./scripts/run-native-compatibility.ps1', [StringComparison]::Ordinal)) 'Native compatibility must provision the pinned independent engine before executing its zero-skip method inventory.'
-    Assert-Contract ($native.Contains("JDW_EXPECTED_RUNTIME_MAJOR: `${{ matrix.tf == 'net11.0' && '11' || '10' }}") -and $native.Contains("DOTNET_ROLL_FORWARD: `${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}") -and $native.Contains("DOTNET_ROLL_FORWARD_TO_PRERELEASE: `${{ matrix.tf == 'net11.0' && '1' || '0' }}")) 'Native compatibility must execute its declared runtime, including prereleases.'
+    Assert-Contract ($native.Contains("JDW_EXPECTED_RUNTIME_MAJOR: `${{ startsWith(matrix.tf, 'net11.') && '11' || '10' }}") -and $native.Contains("DOTNET_ROLL_FORWARD: `${{ startsWith(matrix.tf, 'net11.') && 'LatestMajor' || 'LatestPatch' }}") -and $native.Contains("DOTNET_ROLL_FORWARD_TO_PRERELEASE: `${{ startsWith(matrix.tf, 'net11.') && '1' || '0' }}")) 'Native compatibility must execute its declared runtime, including prereleases.'
     $nativeResults = [regex]::Match($native, '(?ms)^      - name: Upload native results\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($nativeResults.Contains('if: ${{ !cancelled() }}') -and $nativeResults.Contains('name: native-results-${{ matrix.tf }}') -and $nativeResults.Contains('path: artifacts/native-results/${{ matrix.tf }}/')) 'Native result evidence must survive test or engine-provisioning failures.'
 }
@@ -186,6 +194,7 @@ function Assert-MatrixScenario([string] $Name, [scriptblock] $Change, [string] $
 }
 
 Assert-Scenario 'hosted coverage and immediate validated binary execution' $workflow
+Assert-Scenario 'runtime installation depends on runner image' ($workflow.Replace("          dotnet-version: 10.0.403`n", '')) 'must explicitly install the .NET 10 runtime'
 Assert-Scenario 'docs hidden from required push gate' ($workflow.Replace("  push:`n", "  push:`n    paths-ignore:`n      - '**.md'`n")) 'Push and PR triggers must retain the required gate'
 Assert-Scenario 'PR content filter suppresses required gate' ($workflow.Replace("  pull_request:`n", "  pull_request:`n    paths:`n      - 'src/**'`n")) 'Push and PR triggers must retain the required gate'
 Assert-Scenario 'package selection omitted' ($workflow.Replace('package: ${{ steps.select.outputs.package }}', 'removed: value')) 'The selection job must expose documentation package selection'
@@ -210,7 +219,7 @@ Assert-Scenario 'test execution omitted from gate' ($workflow.Replace('analyze, 
 Assert-Scenario 'native evidence blocked by self-test failures' ($workflow.Replace('if: ${{ !cancelled() && needs.changes.outputs.dotnet == ''true'' }}', 'if: needs.changes.outputs.dotnet == ''true''')) 'including independent evidence after self-test failures'
 Assert-Scenario 'native runner rebuilt' ($workflow.Replace('run: ./scripts/run-native-compatibility.ps1', 'run: dotnet build; ./scripts/run-native-compatibility.ps1')) 'Native compatibility must consume the exact analyzed runner'
 Assert-Scenario 'native engine not provisioned' ($workflow.Replace('run: ./scripts/install-native-access.ps1', 'run: echo already-installed')) 'Native compatibility must provision the pinned independent engine'
-Assert-Scenario 'native target omitted' ($workflow.Replace('tf: [net10.0, net10.0-netstandard, net11.0]', 'tf: [net10.0, net11.0]')) 'Native compatibility must cover all three runtime/library combinations'
+Assert-Scenario 'native target omitted' ($workflow.Replace('tf: [net11.0, net10.0-netstandard, net11.0-netstandard]', 'tf: [net10.0, net11.0]')) 'Native compatibility must cover all three runtime/library combinations'
 Assert-Scenario 'unrelated analyzer barrier' ($workflow.Replace("    name: Analyze", "    needs: another-analyzer`n    name: Analyze")) 'Analyzer lanes must start independently'
 Assert-Scenario 'dotnet lane selection disabled' ($workflow.Replace("if: needs.changes.outputs.dotnet == 'true'", 'if: false')) 'All .NET jobs must use the same reviewed lane selection'
 Assert-Scenario 'missing aggregate gate' ($workflow.Replace('  gate:', '  removed:')) "The 'gate' CI job is missing"
@@ -255,18 +264,18 @@ $weakenedProps.SelectSingleNode('/Project/PropertyGroup/TreatWarningsAsErrors').
 Assert-Scenario 'warnings cease to be errors' $workflow "The 'TreatWarningsAsErrors' build guarantee must remain enabled" $weakenedProps
 $additionalFramework = [xml]$testProject.OuterXml
 $additionalFramework.SelectSingleNode('/Project/PropertyGroup/TargetFrameworks').InnerText += ';net9.0'
-Assert-Scenario 'new test framework lacks hosted coverage' $workflow 'Tests must build locally with the pinned .NET 10 SDK' -Tests $additionalFramework
+Assert-Scenario 'new test framework lacks hosted coverage' $workflow 'Tests must target native .NET 11 and use a separate .NET 10 Standard runner' -Tests $additionalFramework
 $suppressedWarning = [xml]$testProject.OuterXml
 $suppressedWarning.SelectSingleNode('/Project/PropertyGroup/NoWarn').InnerText += ';CA2000'
 Assert-Scenario 'blanket suppression hides disposal analysis' $workflow 'The test project must not add blanket warning suppressions' -Tests $suppressedWarning
 
-Assert-MatrixScenario 'missing standard asset partition' { param($lanes) $lanes | Where-Object name -CNE 'tests net10.0 netstandard ordinary' } 'Native .NET 10, netstandard and .NET 11 must each have five test partitions'
-Assert-MatrixScenario 'duplicate standard asset partition' { param($lanes) $lanes; $lanes[9] } 'Native .NET 10, netstandard and .NET 11 must each have five test partitions'
-Assert-MatrixScenario 'duplicate namespace partition misses ordinary tests' { param($lanes) $lanes[4].partition = 'schema-writer'; $lanes } "The 'net10.0/ordinary' test partition must execute"
+Assert-MatrixScenario 'missing standard asset partition' { param($lanes) $lanes | Where-Object name -CNE 'tests net10.0 netstandard ordinary' } 'Native .NET 11 and Standard on .NET 10 and .NET 11 must each have five test partitions'
+Assert-MatrixScenario 'duplicate standard asset partition' { param($lanes) $lanes; $lanes[9] } 'Native .NET 11 and Standard on .NET 10 and .NET 11 must each have five test partitions'
+Assert-MatrixScenario 'duplicate namespace partition misses ordinary tests' { param($lanes) $lanes[4].partition = 'schema-writer'; $lanes } "The 'net11.0/ordinary' test partition must execute"
 Assert-MatrixScenario 'wrong standard analyzer project' { param($lanes) $lanes[3].options = '-f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Test -p:TestNetStandard=true'; $lanes } 'The two test assets must restore and analyze'
-Assert-MatrixScenario 'mismatched runtime runner' { param($lanes) $lanes[14].tf = 'net10.0'; $lanes } "The 'net10.0/ordinary' test partition must execute"
-Assert-MatrixScenario 'duplicate sweep format misses another partition' { param($lanes) $lanes[8].partition = 'jet4'; $lanes } "The 'net10.0/jet4' test partition must execute"
-Assert-MatrixScenario 'unknown sweep partition omits a format' { param($lanes) $lanes[8].partition = 'other'; $lanes } "The 'net10.0/ace' test partition must execute"
+Assert-MatrixScenario 'mismatched runtime runner' { param($lanes) $lanes[14].tf = 'net11.0'; $lanes } "The 'net11.0/ordinary' test partition must execute"
+Assert-MatrixScenario 'duplicate sweep format misses another partition' { param($lanes) $lanes[8].partition = 'jet4'; $lanes } "The 'net11.0/jet4' test partition must execute"
+Assert-MatrixScenario 'unknown sweep partition omits a format' { param($lanes) $lanes[8].partition = 'other'; $lanes } "The 'net11.0/ace' test partition must execute"
 Assert-MatrixScenario 'renamed job no longer matches ancestor inventory' { param($lanes) $lanes[4].name = 'tests net10.0 renamed'; $lanes } 'Test partition job names must match the validated ancestor job inventory'
 Assert-MatrixScenario 'standard graph not restored' { param($lanes) $lanes[3]['restore-options'] = 'removed'; $lanes } 'The two test assets must restore and analyze'
 Assert-MatrixScenario 'package creation omitted' { param($lanes) $lanes[0].pack = $false; $lanes } 'Library and tools job names and package creation must match'

@@ -39,7 +39,7 @@ internal sealed class CalculatedExpressionEvaluationContext
         this.values = values;
         this.evaluating = new bool[constraints.Count];
         this.evaluated = new bool[constraints.Count];
-        this.columnIndexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        this.columnIndexes = [with(StringComparer.OrdinalIgnoreCase)];
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
             this.columnIndexes[tableDef.Columns[i].Name] = i;

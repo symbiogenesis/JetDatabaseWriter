@@ -378,7 +378,7 @@ public sealed class TableScanReadAheadTests(GeneratedDatabaseCache seeds) : IDis
         {
             int id = i + 1;
             string prefix = Signature(id, Pad(id), withLongValues ? Notes(id) : null, blob: null);
-            Assert.StartsWith(prefix[..prefix.LastIndexOf('|')], rows[i], StringComparison.Ordinal);
+            Assert.StartsWith(prefix[..prefix.AsSpan().LastIndexOf('|')], rows[i], StringComparison.Ordinal);
         }
 
         return new ScanResult(rows, await ReadStringRowsAsync(reader, tableName));

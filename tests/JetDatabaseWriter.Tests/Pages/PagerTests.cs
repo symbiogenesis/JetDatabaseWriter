@@ -94,7 +94,7 @@ public sealed class PagerTests
     /// <summary>
     /// A writer's file opened by path reads its pages positionally once
     /// <see cref="PageFile.EnableRandomAccessPageReadsIfSupported"/> has run
-    /// (on the net10.0 build), but not while a transaction journal is
+    /// (on the net11.0 build), but not while a transaction journal is
     /// attached: a pending page and a page appended past the physical end of
     /// file come from the journal, where a positional read would return the
     /// file's old bytes or run past its end. After rollback, and after a

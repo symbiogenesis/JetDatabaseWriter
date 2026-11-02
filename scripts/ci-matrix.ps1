@@ -3,16 +3,16 @@ function Get-CiAnalyzerMatrix {
     return [ordered]@{ include = @(
         [ordered]@{ name = 'library'; project = 'src/JetDatabaseWriter'; pack = $true }
         [ordered]@{ name = 'tools'; project = '.github/ci-tools.slnf'; options = '"-p:AnalyzeExcept=JetDatabaseWriter JetDatabaseWriter.Tests"' }
-        [ordered]@{ name = 'tests native'; project = 'tests/JetDatabaseWriter.Tests'; options = '-f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests'; runner = $true; asset = 'native' }
-        [ordered]@{ name = 'tests standard'; project = 'tests/JetDatabaseWriter.Tests'; options = '-f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true'; 'restore-options' = '-p:TestNetStandard=true'; runner = $true; asset = 'standard' }
+        [ordered]@{ name = 'tests native'; project = 'tests/JetDatabaseWriter.Tests'; options = '-f net11.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests'; runner = $true; asset = 'native'; framework = 'net11.0' }
+        [ordered]@{ name = 'tests standard'; project = 'tests/JetDatabaseWriter.Tests'; options = '-f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true'; 'restore-options' = '-p:TestNetStandard=true'; runner = $true; asset = 'standard'; framework = 'net10.0' }
     ) }
 }
 
 function Get-CiTestMatrix {
     $runtimes = @(
-        @{ name = 'net10.0'; tf = 'net10.0'; asset = 'native' }
-        @{ name = 'net10.0 netstandard'; tf = 'net10.0-netstandard'; asset = 'standard' }
         @{ name = 'net11.0'; tf = 'net11.0'; asset = 'native' }
+        @{ name = 'net10.0 netstandard'; tf = 'net10.0-netstandard'; asset = 'standard' }
+        @{ name = 'net11.0 netstandard'; tf = 'net11.0-netstandard'; asset = 'standard' }
     )
     $namespaces = 'JetDatabaseWriter.Tests.Schema JetDatabaseWriter.Tests.RoundTrip JetDatabaseWriter.Tests.Writer'
     $sweeps = [ordered]@{

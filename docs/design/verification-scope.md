@@ -14,7 +14,7 @@ Native scope includes recognized Jet3 `.mdb` (2,048-byte pages), Jet4 `.mdb` and
 
 Recovery formats are library sidecars, not native Access logs. Recovery operates on raw bytes, including encrypted images; page codecs and format semantics have separate contracts. Native Jet3/Jet4 RC4 and implemented ACE Standard/Agile forms do not establish third-party provider or Office package support. Native Access does not replay this library's sidecars.
 
-Execution scope covers shipped `netstandard2.1` and `net10.0` assets, CI's .NET 10/.NET 11 execution and Windows/Linux/macOS paths. The following remain explicitly qualified contracts:
+Execution scope covers shipped `netstandard2.1` and `net11.0` assets, CI's .NET 10/.NET 11 execution and Windows/Linux/macOS paths. The following remain explicitly qualified contracts:
 
 | Boundary | Alternatives and required qualification |
 |---|---|

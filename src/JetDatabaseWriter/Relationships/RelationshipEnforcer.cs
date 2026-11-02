@@ -80,7 +80,7 @@ internal sealed class RelationshipEnforcer(
 
             if (!ctx.InsertedParentKeys.TryGetValue(rel.Name, out HashSet<string>? inserted))
             {
-                inserted = new HashSet<string>(StringComparer.Ordinal);
+                inserted = [with(StringComparer.Ordinal)];
                 ctx.InsertedParentKeys[rel.Name] = inserted;
             }
 
@@ -600,7 +600,7 @@ internal sealed class RelationshipEnforcer(
 
                     if (!assignmentSources.TryGetValue(target, out Dictionary<string, int>? sources))
                     {
-                        sources = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                        sources = [with(StringComparer.OrdinalIgnoreCase)];
                         assignmentSources.Add(target, sources);
                     }
 

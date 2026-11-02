@@ -44,7 +44,7 @@ try {
         Invoke-DotNet $scaffoldArguments
         foreach ($mode in @('trimmed', 'native')) {
             $publish = Join-Path $OutputDirectory ($kind + '-' + $mode)
-            Invoke-DotNet @('publish', $project, '-c', 'Release', '-f', 'net10.0', ('-p:SmokeMode=' + $mode), ('-p:GeneratedModels=' + $models), '-p:RestoreLockedMode=true', '-p:AnalyzeOnly=AotSmoke', '--artifacts-path', $build, '-o', $publish)
+            Invoke-DotNet @('publish', $project, '-c', 'Release', '-f', 'net11.0', ('-p:SmokeMode=' + $mode), ('-p:GeneratedModels=' + $models), '-p:RestoreLockedMode=true', '-p:AnalyzeOnly=AotSmoke', '--artifacts-path', $build, '-o', $publish)
             $database = Join-Path $OutputDirectory ($kind + '-' + $mode + '.accdb')
             Copy-Item -LiteralPath $seed -Destination $database
             & (Join-Path $publish 'AotSmoke.exe') $database

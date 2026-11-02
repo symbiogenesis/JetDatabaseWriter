@@ -51,7 +51,7 @@ function Get-CiLaneJobs([ValidateSet('dotnet', 'formal')][string] $Lane) {
         }
         foreach ($entry in (Get-CiTestMatrix).include) { "Test ($($entry.name))" }
         'Trimmed and NativeAOT consumers'
-        'Native Access compatibility (net10.0)', 'Native Access compatibility (net10.0-netstandard)', 'Native Access compatibility (net11.0)'
+        'Native Access compatibility (net11.0)', 'Native Access compatibility (net10.0-netstandard)', 'Native Access compatibility (net11.0-netstandard)'
         'Encryption replacement (ubuntu-latest, net10.0)', 'Encryption replacement (ubuntu-latest, net11.0)',
         'Encryption replacement (macos-latest, net10.0)', 'Encryption replacement (macos-latest, net11.0)'
     )

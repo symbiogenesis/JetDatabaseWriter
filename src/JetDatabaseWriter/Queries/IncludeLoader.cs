@@ -784,9 +784,9 @@ internal static class IncludeLoader
 
     private sealed class IncludeMetadataCache(TableReader tables, IndexRowReader indexes, SchemaReader schema)
     {
-        private readonly Dictionary<string, IReadOnlyList<IndexMetadata>> indexes = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, string[]> headers = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, long> rowCounts = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, IReadOnlyList<IndexMetadata>> indexes = [with(StringComparer.OrdinalIgnoreCase)];
+        private readonly Dictionary<string, string[]> headers = [with(StringComparer.OrdinalIgnoreCase)];
+        private readonly Dictionary<string, long> rowCounts = [with(StringComparer.OrdinalIgnoreCase)];
         private uint materializedRows;
 
         public TableReader Tables { get; } = tables;

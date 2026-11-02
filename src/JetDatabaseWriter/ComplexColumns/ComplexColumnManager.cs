@@ -367,7 +367,7 @@ internal sealed class ComplexColumnManager(
             ColumnDefinition def = columns[i];
             if ((def.IsAttachment || def.IsMultiValue) && def.ComplexId == 0)
             {
-                indices ??= new List<int>(2);
+                indices ??= [with(2)];
                 indices.Add(i);
 
                 if (def.IsMultiValue && def.MultiValueElementType == typeof(string) && (def.MaxLength < 0 || def.MaxLength > ComplexTypeTemplateTextLength))
@@ -1149,7 +1149,11 @@ internal sealed class ComplexColumnManager(
             return string.Empty;
         }
 
+#if NET11_0_OR_GREATER
+        int dot = fileName.LastIndexOf('.', StringComparison.Ordinal);
+#else
         int dot = fileName.LastIndexOf('.');
+#endif
         if (dot < 0 || dot == fileName.Length - 1)
         {
             return string.Empty;
@@ -1288,7 +1292,7 @@ internal sealed class ComplexColumnManager(
 
             TableDef flatDef = await this.tableDefs.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
 
-            ColumnInfo? fkCol = flatDef.Columns.FirstOrDefault(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
+            ColumnInfo? fkCol = flatDef.Columns.FirstOrDefault(c => c.Type == LongIntegerType && c.Name.Length != 0 && c.Name[0] == '_')
                 ?? flatDef.Columns.FirstOrDefault(c => c.Type == LongIntegerType);
             if (fkCol == null)
             {

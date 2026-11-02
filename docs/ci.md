@@ -39,7 +39,7 @@ pwsh -NoProfile -File scripts/submit-candidate.ps1 -Base origin/main
 For a restore-only SDK update, supply an exact installed release version:
 
 ```powershell
-gh workflow run maintenance.yml --ref main -f task=sdk-lock-refresh -f sdk-version=10.0.403
+gh workflow run maintenance.yml --ref main -f task=sdk-lock-refresh -f sdk-version=11.0.100-rc.3.26522.148
 ```
 
 The workflow validates the selected task's inputs before checkout or SDK setup. Candidate checks preserve the trusted main coordinator before applying the patch; SDK refresh runs the restore-only updater. Review the returned patch before integrating it, then require ordinary main CI.

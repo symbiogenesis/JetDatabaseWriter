@@ -16,7 +16,16 @@ function Assert-Contract([bool] $Condition, [string] $Message) {
 function Assert-Policies([hashtable] $Workflows) {
     foreach ($name in $Workflows.Keys) {
         $content = $Workflows[$name]
-        Assert-Contract ($content -match '(?m)^  contents: read$' -and $content -notmatch '(?m)^\s+[\w-]+: write$') "$name must keep repository permissions read-only."
+        $allowedOidcPosition = -1
+        if ($name -ceq 'publish.yml') {
+            $publishJob = [regex]::Match($content, '(?ms)^  publish:\n(?<body>.*?)(?=^  [\w-]+:\n|\z)').Groups['body']
+            $publishPermissions = [regex]::Match($publishJob.Value, '(?ms)^    permissions:\n(?<body>.*?)(?=^    \S|\z)').Groups['body']
+            $oidc = [regex]::Match($publishPermissions.Value, '(?m)^      id-token: write$')
+            if ($oidc.Success) { $allowedOidcPosition = $publishJob.Index + $publishPermissions.Index + $oidc.Index }
+        }
+        $writePermissions = @([regex]::Matches($content, '(?m)^ +[\w-]+: write$'))
+        $readOnly = $writePermissions.Count -eq 0 -or ($writePermissions.Count -eq 1 -and $writePermissions[0].Index -eq $allowedOidcPosition)
+        Assert-Contract ($content -match '(?m)^  contents: read$' -and $readOnly) "$name must keep repository permissions read-only; only the publish job's OIDC token permission may write."
         foreach ($step in [regex]::Matches($content, '(?ms)^      - (?<body>.*?)(?=^      - |\z)')) {
             $body = $step.Groups['body'].Value
             foreach ($action in [regex]::Matches($body, '(?m)^(?:uses:|        uses:) (?<action>[^\n]+)$')) {
@@ -59,6 +68,14 @@ function Assert-Scenario([string] $Name, [string] $Workflow = '', [string] $Old 
 
 Assert-Scenario 'all workflow policies'
 Assert-Scenario 'write permission refused' 'ci.yml' 'contents: read' 'contents: write' 'read-only'
+Assert-Scenario 'global OIDC permission refused' 'publish.yml' "permissions:`n  contents: read" "permissions:`n  id-token: write`n  contents: read" 'read-only'
+Assert-Scenario 'other workflow OIDC permission refused' 'ci.yml' "permissions:`n  contents: read" "permissions:`n  id-token: write`n  contents: read" 'read-only'
+Assert-Scenario 'other publish workflow job OIDC permission refused' 'publish.yml' "  ci:`n" "  ci:`n    permissions:`n      id-token: write`n" 'read-only'
+Assert-Scenario 'publish repository write refused' 'publish.yml' '      contents: read' '      contents: write' 'read-only'
+Assert-Scenario 'duplicate publish OIDC permission refused' 'publish.yml' "      id-token: write`n" "      id-token: write`n      id-token: write`n" 'read-only'
+$withoutPublishOidc = $workflows['publish.yml'].Replace("      id-token: write`n", '')
+Assert-Scenario 'single global OIDC grant refused' 'publish.yml' $workflows['publish.yml'] ($withoutPublishOidc.Replace("permissions:`n  contents: read", "permissions:`n  id-token: write`n  contents: read")) 'read-only'
+Assert-Scenario 'single other-job OIDC grant refused' 'publish.yml' $workflows['publish.yml'] ($withoutPublishOidc.Replace("  ci:`n", "  ci:`n    permissions:`n      id-token: write`n")) 'read-only'
 Assert-Scenario 'unpinned action refused' 'ci.yml' 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' 'actions/checkout@main' 'pin every action'
 Assert-Scenario 'checkout credentials refused' 'ci.yml' 'persist-credentials: false' 'persist-credentials: true' 'disable persisted'
 Assert-Scenario 'unbounded publish refused' 'publish.yml' "    timeout-minutes: 10`n" '' 'bound every hosted job'

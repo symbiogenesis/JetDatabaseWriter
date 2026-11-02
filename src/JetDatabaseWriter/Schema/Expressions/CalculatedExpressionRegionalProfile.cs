@@ -106,7 +106,7 @@ internal static class CalculatedExpressionRegionalProfile
         }
 
         string[] parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 3 && parts[1].EndsWith('月')
+        if (parts.Length == 3 && parts[1].Length != 0 && parts[1][^1] == '月'
             && int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out _)
             && int.TryParse(parts[1].AsSpan(0, parts[1].Length - 1), NumberStyles.None, CultureInfo.InvariantCulture, out _)
             && int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out _))

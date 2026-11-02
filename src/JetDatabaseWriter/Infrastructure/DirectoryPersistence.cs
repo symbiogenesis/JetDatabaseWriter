@@ -12,7 +12,7 @@ using Microsoft.Win32.SafeHandles;
 internal static class DirectoryPersistence
 {
     // SafeFileHandle.Open forwards this Windows backup-semantics option. The
-    // source-audited .NET 10 path accepts writable directory handles; this is
+    // source-audited .NET 11 RC3 path forwards writable directory opens to Windows; this is
     // deliberately narrower than a portable directory-flush API contract.
 #if NET6_0_OR_GREATER
     private const FileOptions BackupSemantics = (FileOptions)0x02000000;

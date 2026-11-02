@@ -112,7 +112,7 @@ internal static class FormatProbeApplication
             string? unknownMode = selectedModes.FirstOrDefault(mode => FindMode(mode) is null);
             if (unknownMode is not null)
             {
-                await Console.Error.WriteLineAsync($"Unknown FormatProbe mode: {unknownMode}");
+                await Console.Error.WriteLineAsync($"Unknown FormatProbe mode: {unknownMode}", CancellationToken.None);
                 _ = await ShowHelpAsync(rootCommand, cancellationToken);
                 return 1;
             }

@@ -99,7 +99,7 @@ Native maintenance streams pages into a unique adjacent staging file using
 managed .NET APIs. Callers must protect the containing directory from untrusted
 access: staged output or original backups can contain plaintext. Windows files
 receive a protected owner-only ACL at creation through `FileSystemAclExtensions`.
-The .NET 10 build requests Unix mode `0600`; inherited macOS ACL grants are not
+The .NET 11 build requests Unix mode `0600`; inherited macOS ACL grants are not
 suppressed. The .NET Standard build uses host-default Unix creation permissions.
 Unix confidentiality therefore depends on the directory permissions and ACLs,
 not on `FileShare.None`, which is advisory there.
@@ -108,7 +108,7 @@ Pre-canceled operations stop before creating files. Conversion/cancellation befo
 
 Path writer open recovers a valid intent before requiring the destination to exist. Prepared selects old content; a complete valid Committed record selects new content. Surviving immutable copies and canonical content must match recorded old/new generations; an interrupted publication copy may instead be a validated prefix of a complete authorized image. Invalid metadata, conflicting copies, foreign ownership or mixed transaction/replacement evidence refuses. Readers and detection refuse a pending intent. Legacy random candidates have no automatic selection authority. Incomplete intent or recovery-lease acquisition can require conservative refusal even while complete database copies survive.
 
-Both library targets use managed `FileStream.Flush(true)` and `File.Replace`/non-overwriting move, with no library P/Invoke, COM or native helper binary. .NET handles OS calls. The net10.0 asset on Windows checks parent-directory flush acknowledgements around preparation, publication and cleanup; standard/Linux/macOS have no directory adapter. Rename, bootstrap and cleanup persistence remain unqualified across physical power loss. Existing Windows destinations use `File.Replace` metadata semantics. A missing destination is restored under private maintenance-file creation permissions; no separate ACL, alternate-stream or timestamp recovery policy is claimed.
+Both library targets use managed `FileStream.Flush(true)` and `File.Replace`/non-overwriting move, with no library P/Invoke, COM or native helper binary. .NET handles OS calls. The net11.0 asset on Windows checks parent-directory flush acknowledgements around preparation, publication and cleanup; standard/Linux/macOS have no directory adapter. Rename, bootstrap and cleanup persistence remain unqualified across physical power loss. Existing Windows destinations use `File.Replace` metadata semantics. A missing destination is restored under private maintenance-file creation permissions; no separate ACL, alternate-stream or timestamp recovery policy is claimed.
 
 Commit errors identify complete retained copies through `IOException.Data["JetDatabaseWriter.ReplacementFile"]` and `["JetDatabaseWriter.OriginalFile"]`. Recover through `AccessWriter.OpenAsync(path)` while preserving all intent/generation files. Actual process termination and repeated recovery tests exercise publication, decisions and cleanup; they do not establish physical power-loss durability. Other operations' temporary files are retained.
 

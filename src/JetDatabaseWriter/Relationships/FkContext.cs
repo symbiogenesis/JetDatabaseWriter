@@ -18,7 +18,7 @@ internal sealed class FkContext(IReadOnlyList<FkRelationship> all)
     /// cannot be checked by an index seek.
     /// </summary>
     public Dictionary<string, HashSet<string>> ParentKeySets { get; }
-        = new(StringComparer.OrdinalIgnoreCase);
+        = [with(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>
     /// Gets the primary keys of the rows this call has inserted so far, by
@@ -27,22 +27,22 @@ internal sealed class FkContext(IReadOnlyList<FkRelationship> all)
     /// maintenance adds it to the index.
     /// </summary>
     public Dictionary<string, HashSet<string>> InsertedParentKeys { get; }
-        = new(StringComparer.OrdinalIgnoreCase);
+        = [with(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>Gets complete post-update parent key sets for tables the statement rewrites.</summary>
     public Dictionary<string, HashSet<string>> PlannedParentKeys { get; }
-        = new(StringComparer.OrdinalIgnoreCase);
+        = [with(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>Gets original parent keys that the composed update removes from each relationship.</summary>
     public Dictionary<string, HashSet<string>> RemovedParentKeys { get; }
-        = new(StringComparer.OrdinalIgnoreCase);
+        = [with(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>Gets the tables whose relationship key descriptors passed native policy.</summary>
-    public HashSet<string> ValidatedKeyTables { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public HashSet<string> ValidatedKeyTables { get; } = [with(StringComparer.OrdinalIgnoreCase)];
 
     public Dictionary<string, ParentSeekIndex?> SeekIndexes { get; }
-        = new(StringComparer.OrdinalIgnoreCase);
+        = [with(StringComparer.OrdinalIgnoreCase)];
 
     public Dictionary<string, ChildSeekIndex?> ChildSeekIndexes { get; }
-        = new(StringComparer.OrdinalIgnoreCase);
+        = [with(StringComparer.OrdinalIgnoreCase)];
 }

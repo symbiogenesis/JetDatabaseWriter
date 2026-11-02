@@ -289,7 +289,7 @@ internal sealed class CalculatedExpressionParser
             CalculatedColumnExpressionPolicy.ValidateFunction(name);
         }
 
-        if (name.EndsWith('$'))
+        if (name.Length != 0 && name[^1] == '$')
         {
             name = name[..^1];
         }
@@ -471,7 +471,11 @@ internal sealed class CalculatedExpressionParser
                 }
                 else if (current == '#')
                 {
+#if NET11_0_OR_GREATER
+                    int end = expression.IndexOf('#', index + 1, StringComparison.Ordinal);
+#else
                     int end = expression.IndexOf('#', index + 1);
+#endif
                     if (end < 0)
                     {
                         throw this.SyntaxError("unterminated date literal");
@@ -613,7 +617,11 @@ internal sealed class CalculatedExpressionParser
 
             index = SkipWhiteSpace(expression, index + 4);
             int start = index;
+#if NET11_0_OR_GREATER
+            int end = expression.IndexOf('}', start, StringComparison.Ordinal);
+#else
             int end = expression.IndexOf('}', start);
+#endif
             if (index >= expression.Length || expression[index] != '{' || end < 0
                 || !Guid.TryParseExact(expression.AsSpan(start, end - start + 1), "B".AsSpan(), out Guid value))
             {

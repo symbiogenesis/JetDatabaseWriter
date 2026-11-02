@@ -218,7 +218,7 @@ internal sealed class ColumnPropertyBlockBuilder
         // Keep every original pool in place, including unused and duplicate names.
         // Empty chunks do not replace the active name pool in native Access.
         var pools = new Dictionary<int, List<string>> { [-1] = [] };
-        var poolIndices = new Dictionary<int, Dictionary<string, int>> { [-1] = new(StringComparer.Ordinal) };
+        var poolIndices = new Dictionary<int, Dictionary<string, int>> { [-1] = [with(StringComparer.Ordinal)] };
         var sourceTargetPools = new Dictionary<int, int>();
         int currentPool = -1;
         for (int chunkIndex = 0; chunkIndex < this.sourceChunks.Count; chunkIndex++)
@@ -271,7 +271,7 @@ internal sealed class ColumnPropertyBlockBuilder
             {
                 names = [];
                 pools.Add(poolIndex, names);
-                poolIndices.Add(poolIndex, new Dictionary<string, int>(StringComparer.Ordinal));
+                poolIndices.Add(poolIndex, [with(StringComparer.Ordinal)]);
             }
 
             Dictionary<string, int> indices = poolIndices[poolIndex];

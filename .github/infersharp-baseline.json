@@ -3,21 +3,21 @@
   "analyzer": "InferSharp v1.5",
   "reviewedRevision": "0200b4cd94a4550d21c577583e3eb4d5b91c4d17",
   "sources": {
-    "src/JetDatabaseWriter/AccessDatabaseEncryption.cs": "99e0df82c3685583315fc330ef55671f20a887e5d8ab3c5aac30e9fb2b47c1d6",
+    "src/JetDatabaseWriter/AccessDatabaseEncryption.cs": "263821e879c6878355abb36ac24e010fe14f38628212c007c02d35a22aef246c",
     "src/JetDatabaseWriter/AccessReader.cs": "bd87b92591a34043048cebbef35b5c44dd4161b20dff83f9ac1175953d73720c",
-    "src/JetDatabaseWriter/Catalog/CatalogReader.cs": "6cbff8798b496372086ddde78f3e7e5d9b405a5d1e20bc4bcb2f4c56b87a33d1",
+    "src/JetDatabaseWriter/Catalog/CatalogReader.cs": "04703ae8310dec3adbe40d20f93b655d83f517266010123e3fca7b0f218bd6d3",
     "src/JetDatabaseWriter/Catalog/TableCatalog.cs": "2dd1c1764ce8a68a6863e2347a0eb0635685d8d90977befd7d0f4256014382f6",
-    "src/JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs": "66fe065642a4275c4c785655d07491ceeffb84f70815a8f0a044616bcb96e4cc",
+    "src/JetDatabaseWriter/ComplexColumns/ComplexColumnManager.cs": "94936ca907a1e2007572bc452ce5316e77c834074e940bade8f108453cb79be1",
     "src/JetDatabaseWriter/DatabaseFile.cs": "10846f26cda9ee6dcafc29fd05a116a3f7a40d7f6ce70a9c375210460191ec94",
     "src/JetDatabaseWriter/Encryption/OfficeCryptoStandard.cs": "df4ed1f39d8e0e5053601db56328a9b7f6ce9c60d0fa5417413a4f1809fea392",
     "src/JetDatabaseWriter/Pages/Paging/PageBuffers.cs": "1c08da50772d9694a2042c00023dc2bfa690c6b824be40e2a2cb88d73c71d107",
     "src/JetDatabaseWriter/Pages/Paging/PageFile.cs": "635be147540726fed820b91e57e1a4f858bec1a405ebeaeb3b3c46caf8602e9c",
     "src/JetDatabaseWriter/Pages/Paging/Pager.cs": "dbf98d79aea6c2749852ffff0f99e0ca371fe7e9e1c6fd627bb940d27a1e6fc3",
-    "src/JetDatabaseWriter/Pages/ReaderPageCache.cs": "afdd77368e56d6dd73bfcb71be965b69be90a54f71c14380d7021788cfa1852e",
-    "src/JetDatabaseWriter/ReaderServices.cs": "83bcd75cd15f4972e0a8c40dc23e0c610695aa6ee8038c452c789b1d4a5a2341",
-    "src/JetDatabaseWriter/Relationships/LinkedTableManager.cs": "193a8d18987c13bda3830f5bbe14d8353fe7e520880b460ed2558117af9caf99",
+    "src/JetDatabaseWriter/Pages/ReaderPageCache.cs": "cc129c76ed3ae75b73b3ba147b150846ef70183d7c0eeb1fa9507747330c7dd0",
+    "src/JetDatabaseWriter/ReaderServices.cs": "7e222f0ac923af1c3c3678cd68371dafa866ade8310e69e8a996a9e7168539c8",
+    "src/JetDatabaseWriter/Relationships/LinkedTableManager.cs": "b89c9f81217cf77e75660012379fabb0e0cb4720ca785e5a47e1e3f73857f0e0",
     "src/JetDatabaseWriter/Schema/TableDefReader.cs": "386db6af10dd4c165640cb90ea8b38076976330b2510c2fc4a1123fa9d82f72d",
-    "src/JetDatabaseWriter/Tables/TableReader.cs": "56d332486a73f9655a6a4c0339a5d8e933d27321fabb7a5e916ebf14de1bfdb0",
+    "src/JetDatabaseWriter/Tables/TableReader.cs": "d29980bc7b93f447092d053127d777859b4c2e2682afacf6ac5c44fa67ffbd40",
     "src/JetDatabaseWriter/Transactions/LockFileCoordinator.cs": "03dae75cbaab4808ec68b4bb116ea745ea31092693b28fdf4f3d9789c63cb22c",
     "src/JetDatabaseWriter/Transactions/LockFileSlotWriter.cs": "f0fc65d7098d01f3837978dcc6cffbf34fdfe4915ca05f4306b200d714ae88a8",
     "src/JetDatabaseWriter/Transactions/TransactionLifecycle.cs": "f9a4b3c305b05fad06254f4098105ff2b596c05e40dde2f411b04f3a21b21baa",
@@ -26,8 +26,8 @@
     "src/JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs": "1cdc9c6f3eeb302076288377751880278513569d5f202ab3447e38db84670152",
     "src/JetDatabaseWriter/Pages/Paging/StreamPageStore.cs": "64c36259a79cb85367b7a2effb69c76a873179736097d56ec46f49f7e2fce0d2",
     "src/JetDatabaseWriter/Relationships/LinkedTextSourceStream.cs": "42e29a44ddc7c995df717c9d8291dddd248ee9719d9d8f67173166fb6945e583",
-    "src/JetDatabaseWriter/AccessWriterOptions.cs": "f8349d9cdfc334f8eba4ff2c9a35a0ecb9e7450a8dfe83f40412e37ef4a52da4",
-    "src/JetDatabaseWriter/AccessWriter.cs": "a79b9b89a10bf032427ce237a3b1d5bf86b4b501a9acfd14302e3fbb9d90ee9c",
+    "src/JetDatabaseWriter/AccessWriterOptions.cs": "d854eb31a053c9f13928bfa613493cb7915478cf9e0db43ea04609c574ed9d8e",
+    "src/JetDatabaseWriter/AccessWriter.cs": "6564962c7734aac7bde70d61773cde434c0f2fe7f6aa462e33133fc5ca889047",
     "src/JetDatabaseWriter/Infrastructure/BoundedCache.cs": "5519f282810e348400a448f37f1dacc90c8bafcc4f5fe4c0206cf2181474d7ad",
     "src/JetDatabaseWriter/Infrastructure/FileStreamFactory.cs": "e46ec3e656fd4c45204b4ca660c084dfe3f26f6db63cceb65eb3aecb51a05347",
     "src/JetDatabaseWriter/Maintenance/CompactActiveCatalogRows.cs": "2ce3ae7a9332361a5daada76c90713630a8555f81c9da986b1a71402b206c61d",
@@ -211,7 +211,7 @@
         "reason": "WriterServices transfers SnapshotPages ownership to its completed graph and Dispose explicitly closes it; AccessWriter calls this on normal teardown and failed outer initialization, and RewriteNativeSecurityAsync uses services. This constructor creates a capacity-0 ReaderPageCache and performs no page reads, so that cache has no retained frames or other disposable resources even if later graph construction throws. InferSharp treats allocating the empty managed wrapper as allocating an external resource."
       }
     ],
-    "net10.0": [
+    "net11.0": [
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/AccessDatabaseEncryption.cs",
@@ -319,7 +319,7 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/Relationships/LinkedTableManager.cs",
-        "line": 1085,
+        "line": 1089,
         "fingerprint": "5e9100ea7247c46534a07587a13d0105",
         "symbol": "LinkedTableManager.cs|MoveNext|PULSE_RESOURCE_LEAK",
         "reason": "OpenAsync disposes records in finally until ownership transfers to the returned LinkedTextRowReader. Its Dispose closes records, StreamReader, wrapper and source; every row-reader consumer uses using."

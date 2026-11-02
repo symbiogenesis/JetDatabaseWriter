@@ -385,7 +385,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             if (freeSpaceDifference < bestFreeSpaceDifference
                 || (freeSpaceDifference == bestFreeSpaceDifference && minimumFreeSpace > bestMinimumFreeSpace))
             {
-                best = new SplitPages([left, right]);
+                best = [with([left, right])];
                 bestFreeSpaceDifference = freeSpaceDifference;
                 bestMinimumFreeSpace = minimumFreeSpace;
             }
@@ -1081,7 +1081,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         // and capture everything the processing pass needs (sibling pointers,
         // prefix length, old max key). Classifying emptying leaves up front
         // lets the merge logic below tolerate contiguous runs of dead leaves.
-        Dictionary<long, LeafSplicePlan> plans = preparedPlans ?? new Dictionary<long, LeafSplicePlan>(groups.Count);
+        Dictionary<long, LeafSplicePlan> plans = preparedPlans ?? [with(groups.Count)];
         var emptyingLeaves = new HashSet<long>();
         foreach (LeafGroup group in groups.Values)
         {
@@ -2186,7 +2186,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
 
         // Process pages in descending depth (deepest first).
         var pending = new List<long>(parentOps.Keys);
-        return new IntermediateRewriteContext([.. parentOps.Keys], intermediateRefs, intermediateGrandparent, new Dictionary<long, long>(parentOps.Count * 2), depthOf, pending, parentOps, rewrites, state, appends);
+        return new IntermediateRewriteContext([.. parentOps.Keys], intermediateRefs, intermediateGrandparent, [with(parentOps.Count * 2)], depthOf, pending, parentOps, rewrites, state, appends);
     }
 
     /// <summary>Owns ancestry and pending parent work throughout deepest-first intermediate staging.</summary>

@@ -42,10 +42,11 @@ internal static class AttachmentWrapper
     /// This is Jackcess 4.0.12's <c>COMPRESSED_FORMATS</c>, from its author's
     /// observation of Access; the fixtures store jpg raw and txt compressed.
     /// </summary>
-    private static readonly HashSet<string> RawFormats = new(StringComparer.OrdinalIgnoreCase)
-    {
+    private static readonly HashSet<string> RawFormats =
+    [
+        with(StringComparer.OrdinalIgnoreCase),
         "jpg", "jpeg", "gif", "png", "zip", "cab", "docx", "xlsx", "xlsb", "pptx",
-    };
+    ];
 
     /// <summary>
     /// Wraps <paramref name="payload"/> per spec §3.1 as Access does: typeFlag

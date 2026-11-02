@@ -49,7 +49,7 @@ public sealed class GeneralLegacyEncoderFixtureTests
     ];
 
     /// <summary>No Access-authored long-row tables are excluded from the fixture sweep.</summary>
-    private static readonly HashSet<string> LongRowStressTables = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> LongRowStressTables = [with(StringComparer.OrdinalIgnoreCase)];
 
     [Theory]
     [MemberData(nameof(Fixtures))]

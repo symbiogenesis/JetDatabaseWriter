@@ -156,11 +156,11 @@ $dotnetNames = @(
     'Analyze (tools)'
     'Analyze (tests native)'
     'Analyze (tests standard)'
-    foreach ($runtime in 'net10.0', 'net10.0 netstandard', 'net11.0') {
+    foreach ($runtime in 'net11.0', 'net10.0 netstandard', 'net11.0 netstandard') {
         foreach ($partition in 'ordinary', 'schema-writer', 'jet3', 'jet4', 'ace') { "Test (tests $runtime $partition)" }
     }
     'Trimmed and NativeAOT consumers'
-    'Native Access compatibility (net10.0)', 'Native Access compatibility (net10.0-netstandard)', 'Native Access compatibility (net11.0)'
+    'Native Access compatibility (net11.0)', 'Native Access compatibility (net10.0-netstandard)', 'Native Access compatibility (net11.0-netstandard)'
     'Encryption replacement (ubuntu-latest, net10.0)', 'Encryption replacement (ubuntu-latest, net11.0)',
     'Encryption replacement (macos-latest, net10.0)', 'Encryption replacement (macos-latest, net11.0)'
 )
@@ -171,7 +171,7 @@ $script:jobs += @{ name = 'CI gate'; status = 'completed'; conclusion = 'failure
 Assert-Baseline 'complete dotnet success survives independent proof failure' $partial.head_sha
 $script:jobs += @{ name = 'Package documentation'; status = 'completed'; conclusion = 'skipped' }
 Assert-Baseline 'full dotnet pack permits skipped documentation pack' $partial.head_sha
-foreach ($runtime in 'net10.0', 'net10.0 netstandard', 'net11.0') {
+foreach ($runtime in 'net11.0', 'net10.0 netstandard', 'net11.0 netstandard') {
     foreach ($partition in 'ordinary', 'schema-writer', 'jet3', 'jet4', 'ace') {
         $name = "Test (tests $runtime $partition)"
         $selectedJob = $script:jobs | Where-Object name -CEQ $name
@@ -185,7 +185,7 @@ foreach ($runtime in 'net10.0', 'net10.0 netstandard', 'net11.0') {
         $script:jobs += $selectedJob
     }
 }
-foreach ($runtime in 'net10.0', 'net10.0-netstandard', 'net11.0') {
+foreach ($runtime in 'net11.0', 'net10.0-netstandard', 'net11.0-netstandard') {
     $name = "Native Access compatibility ($runtime)"
     $selectedJob = $script:jobs | Where-Object name -CEQ $name
     foreach ($verdict in 'failure', 'skipped', 'cancelled') {
@@ -304,7 +304,7 @@ try {
         $expanded = $outputs.matrix | ConvertFrom-Json -AsHashtable
         if (@($expanded.include).Count -ne 4 -or @($expanded.include | Where-Object runner -EQ $true).Count -ne 2) { throw 'Serialized matrix lost the analyzed assets.' }
         $testMatrix = $outputs['test-matrix'] | ConvertFrom-Json -AsHashtable
-        if (@($testMatrix.include).Count -ne 15 -or @($testMatrix.include | Where-Object asset -CEQ 'standard').Count -ne 5) { throw 'Serialized execution matrix lost runtime partitions or asset bindings.' }
+        if (@($testMatrix.include).Count -ne 15 -or @($testMatrix.include | Where-Object asset -CEQ 'standard').Count -ne 10) { throw 'Serialized execution matrix lost runtime partitions or asset bindings.' }
         $receipt = [IO.File]::ReadAllText((Join-Path $temporary 'ci-selection.json')) | ConvertFrom-Json -AsHashtable
         $selected = $event -notin 'push', 'pull_request'
         if ($outputs.dotnet -ne $selected.ToString().ToLowerInvariant() -or $outputs.formal -ne $outputs.dotnet -or $outputs.package -ne 'false' -or $receipt.revision -ne $sha -or $receipt.dotnet -ne $selected -or $receipt.formal -ne $selected -or $receipt.package) { throw "Incorrect selection output or receipt for ${event}: $($receipt | ConvertTo-Json -Depth 4 -Compress)." }

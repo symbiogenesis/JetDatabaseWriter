@@ -788,7 +788,11 @@ internal static class LinkedTableManager
             else if (format.StartsWith("Delimited(", StringComparison.OrdinalIgnoreCase))
             {
                 int start = format.IndexOf('(', StringComparison.Ordinal) + 1;
+#if NET11_0_OR_GREATER
+                int end = format.IndexOf(')', start, StringComparison.Ordinal);
+#else
                 int end = format.IndexOf(')', start);
+#endif
                 if (end > start)
                 {
                     delimiter = format[start];
@@ -911,7 +915,7 @@ internal static class LinkedTableManager
                 || stem.Equals("CONOUT$", StringComparison.OrdinalIgnoreCase)
                 || (stem.Length == 4 && (stem[3] is (>= '1' and <= '9') or '¹' or '²' or '³')
                     && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)));
-            if (reserved || segment.Contains(':', StringComparison.Ordinal) || segment.EndsWith('.') || segment.EndsWith(' '))
+            if (reserved || segment.Contains(':', StringComparison.Ordinal) || (segment.Length != 0 && segment[^1] == '.') || (segment.Length != 0 && segment[^1] == ' '))
             {
                 throw new JetAccessDeniedException(JetErrorCode.LinkedSourceNotPermitted, $"Invalid device, alternate stream or aliased path in {context}: '{path}'.");
             }

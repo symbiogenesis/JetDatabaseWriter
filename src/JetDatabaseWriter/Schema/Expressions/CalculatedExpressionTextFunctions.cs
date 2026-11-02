@@ -171,7 +171,7 @@ internal static partial class CalculatedExpressionTextFunctions
             text = text.Replace(CalculatedExpressionRegionalProfile.Culture.NumberFormat.NumberDecimalSeparator, ".", StringComparison.Ordinal);
         }
 
-        bool negative = text.StartsWith('-');
+        bool negative = text.Length != 0 && text[0] == '-';
         int start = negative ? 1 : 0;
         if (text.Length > start + 1 && text[start] == '0' && text[start + 1] == '.')
         {
@@ -321,7 +321,7 @@ internal static partial class CalculatedExpressionTextFunctions
             return false;
         }
 
-        if (function.Name.EndsWith('$'))
+        if (function.Name.Length != 0 && function.Name[^1] == '$')
         {
             throw new InvalidCastException("A string-returning dollar function cannot accept Null.");
         }

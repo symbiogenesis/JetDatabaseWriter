@@ -46,7 +46,7 @@ internal sealed class EntityMap
             ? table.Name
             : type.Name;
 
-        this.byColumn = new Dictionary<string, EntityProperty>(StringComparer.OrdinalIgnoreCase);
+        this.byColumn = [with(StringComparer.OrdinalIgnoreCase)];
         foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
             if (!property.CanWrite

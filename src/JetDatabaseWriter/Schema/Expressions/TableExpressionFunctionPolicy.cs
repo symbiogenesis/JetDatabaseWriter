@@ -40,7 +40,11 @@ internal static class TableExpressionFunctionPolicy
             }
             else if (current == '#')
             {
+#if NET11_0_OR_GREATER
+                int close = expression.IndexOf('#', index + 1, System.StringComparison.Ordinal);
+#else
                 int close = expression.IndexOf('#', index + 1);
+#endif
                 index = close < 0 ? expression.Length : close + 1;
             }
             else if (IsNameStart(current))

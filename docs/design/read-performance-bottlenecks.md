@@ -536,7 +536,7 @@ Primary code path:
 
 ### 6. Table-scan read-ahead
 
-`PageReadOptimizationMode` controls whether path-opened readers of the net10.0
+`PageReadOptimizationMode` controls whether path-opened readers of the net11.0
 build read pages with positional `RandomAccess` reads and whether eligible
 simple table scans use a conservative one-page read-ahead path. It does not
 change how the file is opened (see "Page I/O handle" below). The default `Auto`
@@ -613,7 +613,7 @@ A path-opened reader opens its file with `FileOptions.None` in every
 Before 2026-10-03 it opened an overlapped (`FileOptions.Asynchronous`) handle
 with the `RandomAccess` hint in `Auto` and `Enabled` and the `SequentialScan`
 hint in `Disabled`. Page reads stay asynchronous to the caller:
-`RandomAccess.ReadAsync` (net10.0 build, `Auto` and `Enabled`) and
+`RandomAccess.ReadAsync` (net11.0 build, `Auto` and `Enabled`) and
 `FileStream.ReadAsync` (`Disabled`, and every mode of the netstandard2.1
 build) run a synchronous read on a thread-pool thread, which is how .NET reads
 every file on Unix.

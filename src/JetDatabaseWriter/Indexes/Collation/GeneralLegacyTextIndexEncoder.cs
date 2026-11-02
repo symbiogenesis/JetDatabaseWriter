@@ -255,10 +255,7 @@ internal static class GeneralLegacyTextIndexEncoder
     }
 
     private static List<byte> CreateEntryBuffer(int payloadCapacity, bool ascending)
-        => new(payloadCapacity + 4)
-        {
-            ascending ? AscendingNonNull : DescendingNonNull,
-        };
+        => [with(payloadCapacity + 4), ascending ? AscendingNonNull : DescendingNonNull];
 
 #if NET8_0_OR_GREATER
     private static void AppendBytes(List<byte> sink, ReadOnlySpan<byte> bytes) => sink.AddRange(bytes);
@@ -791,7 +788,7 @@ internal static class GeneralLegacyTextIndexEncoder
 
     private sealed class ExtraCodesStream(int initialCapacity)
     {
-        public List<byte> Bytes { get; } = new List<byte>(initialCapacity);
+        public List<byte> Bytes { get; } = [with(initialCapacity)];
 
         public int NumChars { get; set; }
 

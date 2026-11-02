@@ -60,9 +60,9 @@ internal sealed class ConstraintRegistry(
     CultureInfo? calculatedCulture = null)
 {
     private readonly Dictionary<string, List<ColumnConstraint>> constraints =
-        new(StringComparer.OrdinalIgnoreCase);
+        [with(StringComparer.OrdinalIgnoreCase)];
 
-    private readonly Dictionary<string, TableValidationConstraint?> tableRules = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, TableValidationConstraint?> tableRules = [with(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>
     /// Rewinds each auto-increment counter listed in <paramref name="checkpoints"/>
@@ -237,7 +237,7 @@ internal sealed class ConstraintRegistry(
 
             if (!targets.TryGetValue(target.Name, out Dictionary<string, ColumnPropertyEntry>? entries))
             {
-                entries = new Dictionary<string, ColumnPropertyEntry>(StringComparer.OrdinalIgnoreCase);
+                entries = [with(StringComparer.OrdinalIgnoreCase)];
                 targets.Add(target.Name, entries);
             }
 
@@ -450,7 +450,7 @@ internal sealed class ConstraintRegistry(
                 {
                     long? previous = c.NextAutoValue;
                     long next = await this.GetNextAutoValueAsync(tableName, tableDef, c, i, cancellationToken).ConfigureAwait(false);
-                    (checkpoints ??= new List<(ColumnConstraint, long?)>(1)).Add((c, previous));
+                    (checkpoints ??= [with(1)]).Add((c, previous));
                     value = ConvertIntegral(next, c.ClrType);
                     isNull = false;
                 }

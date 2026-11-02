@@ -139,7 +139,7 @@ internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReade
                 ? await tableDefs.ReadTableDefAsync(flatTdefPage, cancellationToken).ConfigureAwait(false)
                 : null;
             ColumnInfo? foreignKey = flatDef?.FindColumn("_" + column.Name)
-                ?? flatDef?.Columns.FirstOrDefault(c => c.Type == LongIntegerType && !c.IsAutoNumber && c.Name.StartsWith('_'));
+                ?? flatDef?.Columns.FirstOrDefault(c => c.Type == LongIntegerType && !c.IsAutoNumber && c.Name.Length != 0 && c.Name[0] == '_');
             if (foreignKey is null || foreignKey.Type != LongIntegerType || foreignKey.IsAutoNumber)
             {
                 throw new JetCorruptDataException(

@@ -28,7 +28,7 @@ public class UsageMapEnumerationBenchmarks
     public void Setup()
     {
         this.bitmap = new byte[this.BitmapBytes];
-        this.pages = new List<long>(this.BitmapBytes * 8);
+        this.pages = [with(this.BitmapBytes * 8)];
         var expected = new List<long>();
         for (int bit = 0; bit < this.BitmapBytes * 8; bit++)
         {

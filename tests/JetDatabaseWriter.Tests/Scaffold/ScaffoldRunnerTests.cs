@@ -436,7 +436,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
         }
 
         Assembly assembly = ScaffoldCompilation.CompileCleanly(sources);
-        Dictionary<string, Type> typeByTable = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, Type> typeByTable = [with(StringComparer.OrdinalIgnoreCase)];
         foreach (Type type in assembly.GetTypes().Where(t => t.Namespace == "MyApp.Models"))
         {
             typeByTable.Add(type.GetCustomAttribute<TableAttribute>()?.Name ?? type.Name, type);

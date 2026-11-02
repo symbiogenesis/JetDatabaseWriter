@@ -35,7 +35,7 @@ using JetDatabaseWriter.Infrastructure;
 public sealed class RowValues : IEnumerable<KeyValuePair<string, object?>>
 {
     private readonly Dictionary<string, object?> values =
-        new(StringComparer.OrdinalIgnoreCase);
+        [with(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>Initializes a new instance of the <see cref="RowValues"/> class.</summary>
     public RowValues()

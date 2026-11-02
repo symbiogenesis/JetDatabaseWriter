@@ -64,14 +64,14 @@ internal static class StorageAuditProbe
                 || pageLimit <= 0 || objectLimit <= 0 || referenceLimit <= 0 || diagnosticLimit <= 0 || schemaLimit <= 0 || reportLimit < TerminalReserve * 2
                 || readLimit <= 0 || mapStepLimit <= 0 || recordLimit <= 0 || workingLimit <= 0)
             {
-                await Console.Error.WriteLineAsync("Use absolute paths without unresolved environment tokens and positive limits; --max-report-bytes must be at least 8192.");
+                await Console.Error.WriteLineAsync("Use absolute paths without unresolved environment tokens and positive limits; --max-report-bytes must be at least 8192.", CancellationToken.None);
                 return 2;
             }
 
             string? password = passwordVariable is null ? null : Environment.GetEnvironmentVariable(passwordVariable);
             if (passwordVariable is not null && password is null)
             {
-                await Console.Error.WriteLineAsync("The requested password environment variable is absent.");
+                await Console.Error.WriteLineAsync("The requested password environment variable is absent.", CancellationToken.None);
                 return 2;
             }
 
@@ -159,22 +159,22 @@ internal static class StorageAuditProbe
         }
         catch (OperationCanceledException)
         {
-            await Console.Error.WriteLineAsync("Inventory cancelled; any report is incomplete. The source was opened read-only.");
+            await Console.Error.WriteLineAsync("Inventory cancelled; any report is incomplete. The source was opened read-only.", CancellationToken.None);
             return 3;
         }
         catch (Exception error)
         {
             string code = error is IJetException structured ? structured.ErrorCode.ToString() : error.GetType().Name;
-            await Console.Error.WriteLineAsync($"Inventory failed ({code}); any report is incomplete. The source was opened read-only.");
+            await Console.Error.WriteLineAsync($"Inventory failed ({code}); any report is incomplete. The source was opened read-only.", CancellationToken.None);
             return 1;
         }
     }
 
     private static bool HasEnvironmentToken(string path)
     {
-        for (int start = path.IndexOf('%', StringComparison.Ordinal); start >= 0; start = path.IndexOf('%', start + 1))
+        for (int start = path.IndexOf('%', StringComparison.Ordinal); start >= 0; start = path.IndexOf('%', start + 1, StringComparison.Ordinal))
         {
-            if (path.IndexOf('%', start + 1) > start + 1)
+            if (path.IndexOf('%', start + 1, StringComparison.Ordinal) > start + 1)
             {
                 return true;
             }

@@ -176,7 +176,7 @@ internal sealed class TableDef
     /// no non-AutoNumber <c>LongInteger</c> column is present.
     /// </summary>
     /// <exception cref="JetCorruptDataException">Thrown when the flat child table has no Long FK back-reference column.</exception>
-    public ColumnInfo FindFlatTableForeignKeyColumn() => this.Columns.FirstOrDefault(c => c.Type == LongIntegerType && !c.IsAutoNumber && c.Name.StartsWith('_'))
+    public ColumnInfo FindFlatTableForeignKeyColumn() => this.Columns.FirstOrDefault(c => c.Type == LongIntegerType && !c.IsAutoNumber && c.Name.Length != 0 && c.Name[0] == '_')
             ?? this.Columns.FirstOrDefault(c => c.Type == LongIntegerType && !c.IsAutoNumber)
             ?? throw new JetCorruptDataException(JetErrorCode.CorruptComplexColumn, "Flat child table is missing a Long FK back-reference column.");
 

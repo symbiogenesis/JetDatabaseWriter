@@ -424,9 +424,9 @@ public sealed class AccessRoundTripTests
 
     private sealed class Snapshot
     {
-        public Dictionary<string, List<IndexSummary>> Indexes { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, List<IndexSummary>> Indexes { get; } = [with(StringComparer.Ordinal)];
 
-        public Dictionary<string, int> RowCounts { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, int> RowCounts { get; } = [with(StringComparer.Ordinal)];
 
         public int RelationshipRowCount { get; set; }
     }

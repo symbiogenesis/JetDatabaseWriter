@@ -55,7 +55,7 @@ internal sealed partial class ComplexColumnReader(JetFormat format, TableDefRead
 #else
     private readonly object metadataGate = new();
 #endif
-    private readonly Dictionary<string, DescriptorSnapshot> descriptors = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DescriptorSnapshot> descriptors = [with(StringComparer.OrdinalIgnoreCase)];
     private Dictionary<long, CatalogRow>? objectNames;
     private int metadataGeneration = -1;
     private long metadataWriteEpoch = -1;
@@ -389,14 +389,14 @@ internal sealed partial class ComplexColumnReader(JetFormat format, TableDefRead
         if (index < 0)
         {
             index = flat.FindColumnIndex(c => c.Type == LongIntegerType
-                && c.Name.StartsWith('_')
+                && c.Name.Length != 0 && c.Name[0] == '_'
                 && (c.Flags & Constants.ColumnDescriptorFlags.AutoNumber) == 0
                 && !c.Name.EndsWith(foreignKeyName, StringComparison.OrdinalIgnoreCase));
         }
 
         if (index < 0)
         {
-            index = flat.FindColumnIndex(c => c.Type == LongIntegerType && c.Name.StartsWith('_'));
+            index = flat.FindColumnIndex(c => c.Type == LongIntegerType && c.Name.Length != 0 && c.Name[0] == '_');
         }
 
         return index >= 0 ? index : flat.FindColumnIndex(c => c.Type == LongIntegerType);
@@ -700,7 +700,7 @@ internal sealed partial class ComplexColumnReader(JetFormat format, TableDefRead
             && (flatObject.Flags & Constants.SystemObjects.ComplexFlatTableFlags) == Constants.SystemObjects.ComplexFlatTableFlags;
         TableDef? flat = valid ? await tableDefs.ReadTableDefAsync(flatObject!.TDefPage, cancellationToken).ConfigureAwait(false) : null;
         int foreignKey = flat is null ? -1 : FindForeignKeyIndex(flat, info.ColumnName);
-        valid &= foreignKey >= 0 && !flat!.Columns[foreignKey].IsAutoNumber && flat.Columns[foreignKey].Name.StartsWith('_');
+        valid &= foreignKey >= 0 && !flat!.Columns[foreignKey].IsAutoNumber && flat.Columns[foreignKey].Name.Length != 0 && flat.Columns[foreignKey].Name[0] == '_';
         if (valid && info.Kind == ComplexColumnKind.Unknown)
         {
             info = info with { Kind = ClassifyFlatTable(flat!, info.ColumnName) };

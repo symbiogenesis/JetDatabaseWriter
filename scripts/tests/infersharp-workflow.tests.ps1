@@ -24,7 +24,7 @@ function Assert-Workflow([string] $Workflow) {
     # Memory-safety analysis must cover both actual library assets and retain evidence
     # before unreviewed findings fail this workflow.
     $infer = Get-CiJob $Workflow 'infersharp'
-    Assert-Contract ($infer.Contains('runs-on: ubuntu-latest') -and $infer.Contains('tf: [netstandard2.1, net10.0]')) 'InferSharp must analyze both library frameworks on Linux.'
+    Assert-Contract ($infer.Contains('runs-on: ubuntu-latest') -and $infer.Contains('tf: [netstandard2.1, net11.0]')) 'InferSharp must analyze both library frameworks on Linux.'
     Assert-Contract ($infer -notmatch 'continue-on-error:|(?m)^    if:') 'InferSharp must retain strict failure handling.'
     Assert-Contract ($infer.Contains('dotnet restore src/JetDatabaseWriter --locked-mode') -and $infer.Contains('dotnet build src/JetDatabaseWriter -c Release --no-restore -f ${{ matrix.tf }}')) 'InferSharp must build the locked Release library asset for each framework.'
     Assert-Contract ($infer.Contains('-p:DebugType=portable') -and $infer.Contains('-p:DebugSymbols=true')) 'InferSharp must receive source symbols.'
@@ -45,7 +45,7 @@ function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedE
 }
 
 Assert-Scenario 'independent InferSharp workflow' $workflow
-Assert-Scenario 'missing framework coverage' ($workflow.Replace('tf: [netstandard2.1, net10.0]', 'tf: [net10.0]')) 'InferSharp must analyze both library frameworks'
+Assert-Scenario 'missing framework coverage' ($workflow.Replace('tf: [netstandard2.1, net11.0]', 'tf: [net11.0]')) 'InferSharp must analyze both library frameworks'
 Assert-Scenario 'analysis allowed to fail' ($workflow.Replace("  infersharp:`n", "  infersharp:`n    continue-on-error: true`n")) 'InferSharp must retain strict failure handling'
 Assert-Scenario 'missing finding gate' ($workflow.Replace('./scripts/assert-infersharp.ps1', './scripts/removed-infersharp.ps1')) 'InferSharp must reject findings and empty translation'
 Assert-Scenario 'missing translation log' ($workflow.Replace('tee /workspace/artifacts/infersharp/analysis.log', 'cat')) 'InferSharp must pin v1.5 and preserve translation coverage'

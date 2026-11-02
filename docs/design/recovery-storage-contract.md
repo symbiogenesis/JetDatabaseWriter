@@ -6,7 +6,7 @@ The recovery proofs assume exact successful bytes-and-length flush fences, resta
 
 `StreamPageStore.FlushAsync(true)` calls `FileStream.Flush(true)` for a `FileStream`. Other streams receive their own `FlushAsync`; the Boolean request does not give an arbitrary stream device-flush semantics. `PhysicalRollback.BeginWrite` creates persistent recovery evidence only for the file-stream path. In-memory captures and temporary spill files on other paths support rollback within that lifecycle; they do not provide a persistent identity, discovery or reopen protocol.
 
-Journal preparation/records, replacement copies/decisions and ownership receipts flush file contents. Creation, movement, replacement and deletion also change names. The `net10.0` library asset on Windows uses `DirectoryPersistence` to flush writable parent-directory handles after journal promotion, prepared evidence publication, selected destination publication and ordered retirement. The adapter uses the source-audited backup-semantics option and immediately checks cleared/captured last-error state; a suppressed access-denied result is a failed acknowledgement. The standard asset and other platforms have no directory adapter and retain process-only guarantees.
+Journal preparation/records, replacement copies/decisions and ownership receipts flush file contents. Creation, movement, replacement and deletion also change names. The `net11.0` library asset on Windows uses `DirectoryPersistence` to flush writable parent-directory handles after journal promotion, prepared evidence publication, selected destination publication and ordered retirement. The adapter uses the source-audited backup-semantics option and immediately checks cleared/captured last-error state; a suppressed access-denied result is a failed acknowledgement. The standard asset and other platforms have no directory adapter and retain process-only guarantees.
 
 An acknowledged directory operation is still conditional on the deployed runtime, filesystem and device contracts. It does not itself qualify name discovery after physical power loss. A process kill exercises recovery code but leaves the host, its caches and outstanding device work alive.
 
@@ -14,7 +14,7 @@ A failed flush grants no successful fence. Retain the surviving evidence and dis
 
 ## Managed API and operating-system evidence
 
-The public [`FileStream.Flush(Boolean)` contract](https://learn.microsoft.com/en-us/dotnet/api/system.io.filestream.flush?view=net-10.0) covers intermediate file buffers; it does not specify a parent-directory barrier. The following source audit is pinned to the .NET `v10.0.0` reference implementation. It is evidence about that implementation, not a guarantee for every runtime that can load the netstandard2.1 asset. Qualification must record the actual runtime build and repeat the relevant audit.
+The public [`FileStream.Flush(Boolean)` contract](https://learn.microsoft.com/en-us/dotnet/api/system.io.filestream.flush?view=net-10.0) covers intermediate file buffers; it does not specify a parent-directory barrier. The following table preserves the original source audit pinned to the .NET `v10.0.0` reference implementation; the native Windows adapter's .NET 11 RC3 review follows below. Source review is evidence about the named implementation, not a guarantee for every runtime that can load the netstandard2.1 asset. Qualification must record the actual runtime build and repeat the relevant audit.
 
 | Host boundary | Reference evidence | Remaining obligation |
 |---|---|---|
@@ -31,6 +31,28 @@ forwards that option, while the
 suppresses access-denied errors unless the adapter checks them. This is a narrow
 source-audited Windows path, not a named portable BCL directory-barrier contract.
 Standard/Linux/macOS adapters and physical qualification remain E4/F6/I15 work.
+
+The native Windows path has also been reviewed against runtime
+`v11.0.0-rc.3.26522.148`, commit `474ed963699fc29809015392738a15231aaae2de`.
+[`File.OpenHandle`](https://github.com/dotnet/runtime/blob/v11.0.0-rc.3.26522.148/src/libraries/System.Private.CoreLib/src/System/IO/File.cs)
+still validates through the
+[shared helpers](https://github.com/dotnet/runtime/blob/v11.0.0-rc.3.26522.148/src/libraries/System.Private.CoreLib/src/System/IO/Strategies/FileStreamHelpers.cs),
+which accept the backup option.
+[`SafeFileHandle.Open`](https://github.com/dotnet/runtime/blob/v11.0.0-rc.3.26522.148/src/libraries/System.Private.CoreLib/src/Microsoft/Win32/SafeHandles/SafeFileHandle.Windows.cs)
+forwards the option and maps `FileAccess.ReadWrite` to both native read and write access.
+The operative
+[`RandomAccess.FlushToDisk`](https://github.com/dotnet/runtime/blob/v11.0.0-rc.3.26522.148/src/libraries/System.Private.CoreLib/src/System/IO/RandomAccess.cs)
+is in the common implementation: it validates the handle without rejecting directories,
+then calls the
+[Windows flush helper](https://github.com/dotnet/runtime/blob/v11.0.0-rc.3.26522.148/src/libraries/System.Private.CoreLib/src/System/IO/Strategies/FileStreamHelpers.Windows.cs).
+That helper still suppresses `ERROR_ACCESS_DENIED`; the
+[`FlushFileBuffers` import](https://github.com/dotnet/runtime/blob/v11.0.0-rc.3.26522.148/src/libraries/Common/src/Interop/Windows/Kernel32/Interop.FlushFileBuffers.cs)
+still captures last-error state. The adapter's immediate cleared/captured check
+therefore remains necessary. This review establishes source correspondence for
+the existing adapter, not runtime or physical-storage qualification. Focused
+`DirectoryPersistenceTests` on the native .NET 11 asset must exercise writable
+acknowledgements, suppressed read-only refusal and publication/ownership failures;
+successful runtime checks still do not establish power-loss durability.
 
 ## Qualification receipt
 

@@ -27,8 +27,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, TableCatalog tables, CatalogRowReader catalogRows, RowDecoder rows)
 {
     private const int NameCacheCapacity = 256;
-    private readonly Dictionary<string, ResolvedTable?> resolvedNames = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, long> systemNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ResolvedTable?> resolvedNames = [with(StringComparer.OrdinalIgnoreCase)];
+    private readonly Dictionary<string, long> systemNames = [with(StringComparer.OrdinalIgnoreCase)];
     private int cachedGeneration = -1;
 
     /// <summary>Gets the catalog generation used by dependent metadata caches.</summary>

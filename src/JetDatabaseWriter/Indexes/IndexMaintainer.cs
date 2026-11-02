@@ -633,7 +633,7 @@ internal sealed class IndexMaintainer(
                 // column the table does not have.
                 List<KeyColumnInfo> keyColInfos = catalog.KeyColumnInfosByRealIdx[rieKey];
 
-                List<IndexEntry> entries = new(rows.Count);
+                List<IndexEntry> entries = [with(rows.Count)];
                 object?[] cells = new object?[keyColInfos.Count];
                 byte[]? allowedNullKey = !rie.IsRequired && !catalog.Catalog.PkRealIdxNums.Contains(rieKey)
                     ? this.EncodeCompositeKey(keyColInfos, cells)
@@ -2095,7 +2095,7 @@ internal sealed class IndexMaintainer(
                 return false;
             }
 
-            List<(long DataPage, byte DataRow)> removePtrs = new(delCount);
+            List<(long DataPage, byte DataRow)> removePtrs = [with(delCount)];
             foreach ((_, long dpDel, byte drDel) in removeEntries)
             {
                 removePtrs.Add((dpDel, drDel));

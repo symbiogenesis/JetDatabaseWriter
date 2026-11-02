@@ -21,7 +21,7 @@ try {
         $expected = [IO.File]::ReadAllText((Join-Path $repository $name))
         if ($actual -cne $expected) { throw "The shipping package has stale or incomplete $name." }
     }
-    foreach ($target in 'net10.0', 'netstandard2.1') {
+    foreach ($target in 'net11.0', 'netstandard2.1') {
         if ($null -eq $archive.GetEntry("lib/$target/JetDatabaseWriter.dll")) { throw "The shipping package is missing the $target assembly." }
         if ($null -eq $archive.GetEntry("lib/$target/JetDatabaseWriter.xml")) { throw "The shipping package is missing the $target API documentation." }
     }
@@ -77,6 +77,8 @@ internal static class Program
         Assembly library = typeof(AccessReader).Assembly;
         string? target = library.GetCustomAttribute<TargetFrameworkAttribute>()?.FrameworkName;
         if (target != args[0]) { throw new InvalidDataException("Wrong NuGet asset loaded: " + target); }
+        int expectedRuntime = int.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture);
+        if (Environment.Version.Major != expectedRuntime) { throw new InvalidDataException("Wrong runtime loaded: " + Environment.Version); }
         foreach (string name in new[] { "index_codes_genleg.txt.gz", "index_codes_ext_genleg.txt.gz", "index_codes_gen.txt.gz", "index_codes_ext_gen.txt.gz", "index_codes_gen_97.txt.gz", "index_mappings_ext_gen_97.txt.gz" })
         {
             using Stream resource = library.GetManifestResourceStream("JetDatabaseWriter.IndexCodeTables." + name) ?? throw new InvalidDataException("Missing collation table: " + name);
@@ -128,9 +130,18 @@ function Invoke-PackageDotNet([string[]] $Arguments) {
 
 Push-Location $OutputDirectory
 try {
-    # .NET 8 resolves the netstandard2.1 asset, then runs on the installed .NET 10 runtime.
+    # Verify the native asset on .NET 11 and the .NET 8 consumer's Standard asset on .NET 10.
     # An empty shared package cache and exact source mapping force use of this archive.
-    foreach ($target in 'net10.0', 'net8.0') {
+    $installedRuntimes = @(Invoke-PackageDotNet @('--list-runtimes'))
+    $runtimeVersions = @{}
+    foreach ($major in '10', '11') {
+        $candidates = @($installedRuntimes | ForEach-Object {
+            if ($_ -match ('^Microsoft\.NETCore\.App (' + $major + '\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?) \[')) { $Matches[1] }
+        })
+        if ($candidates.Count -eq 0) { throw "Package validation requires an installed .NET $major runtime." }
+        $runtimeVersions[$major] = $candidates | Sort-Object { [version]($_.Split('-')[0]) }, { -not $_.Contains('-') }, { $_ } -Descending | Select-Object -First 1
+    }
+    foreach ($target in 'net11.0', 'net8.0') {
         $consumer = Join-Path $OutputDirectory $target
         [IO.Directory]::CreateDirectory($consumer) | Out-Null
         $project = Join-Path $consumer 'PackageConsumer.csproj'
@@ -143,8 +154,9 @@ try {
         [IO.File]::WriteAllText((Join-Path $consumer 'Program.cs'), $source)
         Invoke-PackageDotNet @('restore', $project, '--configfile', $config, '--packages', (Join-Path $OutputDirectory 'packages'), '--no-http-cache')
         Invoke-PackageDotNet @('build', $project, '-c', 'Release', '--no-restore')
-        $expectedTarget = if ($target -eq 'net10.0') { '.NETCoreApp,Version=v10.0' } else { '.NETStandard,Version=v2.1' }
-        Invoke-PackageDotNet @('exec', '--roll-forward', 'Major', (Join-Path $consumer "bin/Release/$target/PackageConsumer.dll"), $expectedTarget)
+        $expectedTarget = if ($target -eq 'net11.0') { '.NETCoreApp,Version=v11.0' } else { '.NETStandard,Version=v2.1' }
+        $runtimeMajor = if ($target -eq 'net11.0') { '11' } else { '10' }
+        Invoke-PackageDotNet @('exec', '--roll-forward', 'Disable', '--fx-version', $runtimeVersions[$runtimeMajor], (Join-Path $consumer "bin/Release/$target/PackageConsumer.dll"), $expectedTarget, $runtimeMajor)
     }
 }
 finally { Pop-Location }

@@ -208,7 +208,7 @@ internal static class IndexHelpers
         HashSet<string>? pkColumnNames = null;
         if (anyColumnPk)
         {
-            pkColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            pkColumnNames = [with(StringComparer.OrdinalIgnoreCase)];
             var pkColList = new List<string>();
             foreach (ColumnDefinition c in columns)
             {
@@ -226,7 +226,7 @@ internal static class IndexHelpers
         }
         else if (anyIndexPk)
         {
-            pkColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            pkColumnNames = [with(StringComparer.OrdinalIgnoreCase)];
             foreach (IndexDefinition idx in indexes)
             {
                 if (idx.IsPrimaryKey)
@@ -435,6 +435,7 @@ internal static class IndexHelpers
             }
         }
 
+        loop_idx:
         foreach (IndexMetadata idx in existing)
         {
             if (idx.Kind is not IndexKind.Normal and not IndexKind.PrimaryKey)
@@ -449,7 +450,6 @@ internal static class IndexHelpers
 
             var keyColumns = new List<string>(idx.Columns.Count);
             var descendingCols = new List<string>();
-            bool dropped = false;
             IndexColumnReference? unnamed = null;
             foreach (IndexColumnReference ic in idx.Columns)
             {
@@ -462,8 +462,8 @@ internal static class IndexHelpers
                 string? mapped = mapColumnName(ic.Name);
                 if (mapped is null || !newColumnNames.Contains(mapped))
                 {
-                    dropped = true;
-                    break;
+                    // An index on a dropped column goes with it, whatever its other key columns are.
+                    continue loop_idx;
                 }
 
                 keyColumns.Add(mapped);
@@ -471,13 +471,6 @@ internal static class IndexHelpers
                 {
                     descendingCols.Add(mapped);
                 }
-            }
-
-            // An index on a dropped column goes with it, whatever its other
-            // key columns are.
-            if (dropped)
-            {
-                continue;
             }
 
             if (unnamed is not null)

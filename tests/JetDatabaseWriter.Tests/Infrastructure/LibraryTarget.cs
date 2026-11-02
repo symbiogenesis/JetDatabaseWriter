@@ -7,7 +7,7 @@ using Xunit;
 
 /// <summary>
 /// Reports which build of the library the running tests loaded. The ordinary runtime
-/// lanes load the net10.0 asset; TestNetStandard selects the netstandard2.1 asset.
+/// lanes load the net11.0 asset; TestNetStandard selects the netstandard2.1 asset.
 /// </summary>
 internal static class LibraryTarget
 {

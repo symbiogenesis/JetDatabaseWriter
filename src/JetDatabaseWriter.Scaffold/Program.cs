@@ -68,13 +68,13 @@ internal static class Program
 
             if (dbFile is null)
             {
-                await Console.Error.WriteLineAsync("Error: database path is required. Use --database or pass a positional argument.");
+                await Console.Error.WriteLineAsync("Error: database path is required. Use --database or pass a positional argument.", CancellationToken.None);
                 return 1;
             }
 
             if (!dbFile.Exists)
             {
-                await Console.Error.WriteLineAsync($"Error: database file not found: {dbFile.FullName}");
+                await Console.Error.WriteLineAsync($"Error: database file not found: {dbFile.FullName}", CancellationToken.None);
                 return 1;
             }
 

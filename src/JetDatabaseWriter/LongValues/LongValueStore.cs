@@ -404,8 +404,9 @@ internal static class LongValueStore
                 return true;
             }
 
-            this.overflow = new HashSet<uint>(InlineCapacity + 1)
-            {
+            this.overflow =
+            [
+                with(InlineCapacity + 1),
                 this.value0,
                 this.value1,
                 this.value2,
@@ -414,7 +415,7 @@ internal static class LongValueStore
                 this.value5,
                 this.value6,
                 this.value7,
-            };
+            ];
 
             return this.overflow.Add(value);
         }

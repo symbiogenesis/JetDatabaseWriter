@@ -274,6 +274,6 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
             throw new ArgumentException("Database extension must be non-empty.", nameof(databaseExtension));
         }
 
-        return databaseExtension.StartsWith('.') ? databaseExtension : "." + databaseExtension;
+        return databaseExtension[0] == '.' ? databaseExtension : "." + databaseExtension;
     }
 }

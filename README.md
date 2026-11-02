@@ -2,14 +2,14 @@
 
 [![NuGet](https://img.shields.io/nuget/v/JetDatabaseWriter.svg)](https://www.nuget.org/packages/JetDatabaseWriter/)
 [![Downloads](https://img.shields.io/nuget/dt/JetDatabaseWriter.svg)](https://www.nuget.org/packages/JetDatabaseWriter/)
-[![Targets](https://img.shields.io/badge/targets-net10.0%20%7C%20netstandard2.1-blue)](#nuget-target-compatibility)
+[![Targets](https://img.shields.io/badge/targets-net11.0%20%7C%20netstandard2.1-blue)](#nuget-target-compatibility)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Fully managed .NET library for reading and writing Microsoft Access (JET/ACE) databases — no OleDB, ODBC, or ACE/Jet driver installation required.
 
 Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from your .NET applications and tools, without installing Microsoft Access.
 
-JetDatabaseWriter is preparing its first release, version `1.0.0`. It has never been released or published.
+Version `1.0.0` is the first release of JetDatabaseWriter.
 
 The [supported operating envelope](docs/support-contract.md) defines the release scope, resource and recovery contracts, and evidence needed to broaden them.
 
@@ -69,7 +69,7 @@ Beyond functional tests, the codebase is validated by:
 
 - **Verified recovery and parsing kernels** — Production recovery and value parsing use generated [Dafny code](verification/README.md) for bounded journal framing, replay identity, replacement field validation, byte authorization and long-value descriptor codecs. Separate models check selected undo, interrupted recovery, replacement and generation-ownership invariants for arbitrary finite model instances. CI verifies proofs, audits trust and checks generated freshness. Remaining C# correspondence and operating-system persistence are [separate obligations](docs/design/formal-verification.md). No verifier or solver ships with the library.
 
-- **Continuous integration** — Every push to main and every pull request runs the [CI gate](.github/workflows/ci.yml). Content selection requires Release builds, Windows tests on .NET 10 and .NET 11, and a separate .NET 10 lane for the `netstandard2.1` build when their inputs change; unchanged lanes retain validated ancestor evidence. Release tags run every lane and publish that run's tested package only after the required release evidence passes.
+- **Continuous integration** — Every push to main and every pull request runs the [CI gate](.github/workflows/ci.yml). Content selection requires Release builds, Windows tests of the native build on .NET 11 and the `netstandard2.1` build on .NET 10 and .NET 11 when their inputs change; unchanged lanes retain validated ancestor evidence. Release tags run every lane and publish that run's tested package only after the required release evidence passes.
 
 - **Reproducible builds** — Deterministic compilation via [DotNet.ReproducibleBuilds](https://github.com/dotnet/reproducible-builds); reproducing builds requires matching locked dependencies, SDK, version and build inputs.
 
@@ -97,7 +97,7 @@ Install-Package JetDatabaseWriter
 
 ### NuGet target compatibility
 
-The package targets .NET 10 and .NET Standard 2.1. Applications on .NET Core 3.x and .NET 5–9 use the .NET Standard build; .NET Framework is not supported. See [runtime and NativeAOT guidance](docs/operations.md#runtime-compatibility) for details.
+The package targets .NET 11 (`net11.0`) and .NET Standard 2.1. Applications on .NET Core 3.x and .NET 5–10 use the .NET Standard build; .NET Framework is not supported. See [runtime and NativeAOT guidance](docs/operations.md#runtime-compatibility) for details.
 
 ### Reading Data
 

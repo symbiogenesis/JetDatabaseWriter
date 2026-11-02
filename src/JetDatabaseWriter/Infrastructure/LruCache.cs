@@ -47,7 +47,7 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     {
         this.capacity = capacity;
         this.release = release;
-        this.map = new Dictionary<TKey, int>(capacity);
+        this.map = [with(capacity)];
         this.nodes = new Node[capacity + 1]; // +1 for sentinel
         this.nodes[Sentinel].Next = Sentinel;
         this.nodes[Sentinel].Prev = Sentinel;

@@ -6,7 +6,11 @@ internal static class AccessExpressionText
     internal static int SkipQuoted(string text, int index)
     {
         char quote = text[index];
+#if NET11_0_OR_GREATER
+        while ((index = text.IndexOf(quote, index + 1, System.StringComparison.Ordinal)) >= 0)
+#else
         while ((index = text.IndexOf(quote, index + 1)) >= 0)
+#endif
         {
             if (index + 1 == text.Length || text[index + 1] != quote)
             {
@@ -37,7 +41,11 @@ internal static class AccessExpressionText
     {
         if (text[index] == '[')
         {
+#if NET11_0_OR_GREATER
+            int close = text.IndexOf(']', index + 1, System.StringComparison.Ordinal);
+#else
             int close = text.IndexOf(']', index + 1);
+#endif
             return close < 0 ? -1 : close + 1;
         }
 

@@ -74,7 +74,7 @@ public sealed partial class FormatKnowledgeTests
     }
 
     private static bool IsAllowed(string relativePath)
-        => AllowedPaths.Any(allowed => allowed.EndsWith('/')
+        => AllowedPaths.Any(allowed => allowed.Length != 0 && allowed[^1] == '/'
             ? relativePath.StartsWith(allowed, StringComparison.Ordinal)
             : string.Equals(relativePath, allowed, StringComparison.Ordinal));
 

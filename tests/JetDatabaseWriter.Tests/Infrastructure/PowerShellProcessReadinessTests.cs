@@ -20,7 +20,7 @@ public sealed class PowerShellProcessReadinessTests
             await Task.Delay(TimeSpan.FromSeconds(8), TestContext.Current.CancellationToken);
             await File.WriteAllTextAsync(childPath, "ready", TestContext.Current.CancellationToken);
             await Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
-            await Console.Out.WriteLineAsync("operation complete");
+            await Console.Out.WriteLineAsync("operation complete".AsMemory(), TestContext.Current.CancellationToken);
             return;
         }
 
@@ -59,8 +59,8 @@ public sealed class PowerShellProcessReadinessTests
         if (Environment.GetEnvironmentVariable(ChildReadyPath) is { } childPath)
         {
             await File.WriteAllTextAsync(childPath, "ready", TestContext.Current.CancellationToken);
-            await Console.Out.WriteLineAsync("started operation");
-            await Console.Error.WriteLineAsync("operation stalled");
+            await Console.Out.WriteLineAsync("started operation".AsMemory(), TestContext.Current.CancellationToken);
+            await Console.Error.WriteLineAsync("operation stalled".AsMemory(), TestContext.Current.CancellationToken);
             await Task.Delay(TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken);
             return;
         }
@@ -82,7 +82,7 @@ public sealed class PowerShellProcessReadinessTests
     {
         if (Environment.GetEnvironmentVariable(ChildReadyPath) is not null)
         {
-            await Console.Out.WriteLineAsync("exited before readiness");
+            await Console.Out.WriteLineAsync("exited before readiness".AsMemory(), TestContext.Current.CancellationToken);
             return;
         }
 

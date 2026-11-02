@@ -1,6 +1,6 @@
 # Publishing JetDatabaseWriter
 
-JetDatabaseWriter has never been released or published and has no users. The first release will be `1.0.0`.
+Version `1.0.0` is the first release of JetDatabaseWriter.
 
 Only the `JetDatabaseWriter` library is published to nuget.org. The scaffolding CLI, the tests, the test-support library, the benchmarks and the format probe are not packable.
 
@@ -10,11 +10,23 @@ Only the `JetDatabaseWriter` library is published to nuget.org. The scaffolding 
 
 - `MinVerTagPrefix` is `v`, so the tag `v1.0.0` gives version `1.0.0`.
 - `MinVerMinimumMajorMinor` is `1.0`, so until the first release tag exists, every build is `1.0.0-alpha.0.<height>`, where the height is the number of commits since the last tag (or since the first commit).
-- A commit after `vX.Y.Z` builds as `X.Y.(Z+1)-alpha.0.<height>`. Only tagged commits are published, so these prerelease versions never reach nuget.org.
+- A commit after `vX.Y.Z` builds as `X.Y.(Z+1)-alpha.0.<height>`. Untagged development builds are not published.
 - For the first release, `AssemblyVersion` and `FileVersion` are `1.0.0.0`; `InformationalVersion` is the full version plus the commit hash.
 - A build outside a git clone, such as from a source archive, warns `MINVER1001` and builds `1.0.0-alpha.0`.
 
 CI checks out the full history (`fetch-depth: 0`) so MinVer sees every tag.
+
+## Trusted publishing
+
+The publish job uses [NuGet trusted publishing](https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing) through the commit-pinned [official NuGet login action](https://github.com/NuGet/login). The NuGet policy is owned and created by the `symbiogenesis` account. Its nuget.org trusted publishing policy must match these GitHub settings:
+
+- Repository owner: `symbiogenesis`.
+- Repository: `JetDatabaseWriter`.
+- Workflow file: `publish.yml` (the filename only).
+- Environment: leave empty; this workflow does not use a GitHub Actions environment.
+- Publishing scope: allow publishing the new package `JetDatabaseWriter`.
+
+Only the publish job has `id-token: write`; repository contents and Actions access remain read-only. After release readiness and package-version checks, the job installs the SDK pinned in root `global.json` and exchanges its GitHub OIDC token for a temporary NuGet API key immediately before upload. The push reads that action's masked output; no stored API key is required. The token exchange verifies the configured policy, and a mismatch refuses publication.
 
 ## Releasing a version
 
@@ -27,7 +39,7 @@ CI checks out the full history (`fetch-depth: 0`) so MinVer sees every tag.
    ```
 
    Publish a prerelease only when explicitly authorized, using a SemVer prerelease tag for the first release.
-3. The tag runs `.github/workflows/publish.yml`. It calls `ci.yml` with every validation lane enabled: locked restores, strict Release analysis, all five test partitions for each of the three runtime/library combinations, proofs, pinned native Access interoperability, generated consumers, platform checks and library packaging. Once every job has passed, the Linux publish job runs `scripts/assert-release-readiness.ps1` to verify main ancestry, the exact main CI gate, complete fuzz/portability job inventories and their matching evidence receipts. Missing, skipped, failed, pending or expired evidence refuses publication. The job then downloads the `nupkg` artifact, checks that it holds `JetDatabaseWriter.<tag without the v>.nupkg`, and pushes it to nuget.org with the `NUGET_API_KEY` secret. Nothing is rebuilt between the CI run and the push.
+3. The tag runs `.github/workflows/publish.yml`. It calls `ci.yml` with every validation lane enabled: locked restores, strict Release analysis, all five test partitions for each of the three runtime/library combinations, proofs, pinned native Access interoperability, generated consumers, platform checks and library packaging. Once every job has passed, the Linux publish job runs `scripts/assert-release-readiness.ps1` to verify main ancestry, the exact main CI gate, complete fuzz/portability job inventories and their matching evidence receipts. Missing, skipped, failed, pending or expired evidence refuses publication. The job then downloads the `nupkg` artifact, checks that it holds `JetDatabaseWriter.<tag without the v>.nupkg`, and pushes it to nuget.org using trusted publishing. Nothing is rebuilt between the CI run and the push.
 4. Check that the version appears at <https://www.nuget.org/packages/JetDatabaseWriter/> and at <https://api.nuget.org/v3-flatcontainer/jetdatabasewriter/index.json>.
 
 Before creating a tag, the same read-only preflight can run locally with `GITHUB_TOKEN` set to an account token with repository contents and Actions read access:
@@ -43,12 +55,13 @@ It reads existing evidence without dispatching, waiting or publishing. Keep the 
 - **The version check fails.** MinVer did not use the tag, usually because it is not a `vX.Y.Z` SemVer version, so CI packed a prerelease. Delete the tag on the remote, fix it, and push it again.
 - **Release readiness refuses.** Inspect the named exact-revision CI/campaign result. Finish or correct the missing evidence, then rerun the failed publish job. Rerunning only a campaign's evidence job cannot turn a failed matrix into success; the publisher independently checks every required job and the receipt's current run attempt. Expired receipts require a fresh successful campaign.
 - **The push fails with 409 Conflict.** nuget.org already has that version. The workflow does not pass `--skip-duplicate`, so a duplicate fails the run instead of looking like a publish. A version number can't be reused on nuget.org; tag the next patch version.
-- **The push fails for another reason** (for example an expired API key). Fix the cause, then re-run the failed jobs of the same workflow run from the Actions page. The `nupkg` artifact is kept for 7 days; after that, re-run all jobs so CI packs it again.
+- **NuGet login fails.** Check that the trusted publishing policy is active, permits this package and matches the policy creator, repository owner, repository, workflow filename and empty environment above. Correct the policy, then rerun the failed publish job to obtain a fresh temporary key.
+- **The push fails for another reason.** Fix the cause, then re-run the failed jobs of the same workflow run from the Actions page. The login step obtains a fresh temporary key on each attempt. The `nupkg` artifact is kept for 7 days; after that, re-run all jobs so CI packs it again.
 - **A published version is broken.** Unlist it on nuget.org (it can't be deleted) and release the next patch version.
 
 ### Publishing tags
 
-Create the `v1.0.0` tag only on the accepted first-release commit. Never push inherited tags: they may run an unrelated publishing workflow with this repository's API key. Push single tags (`git push origin <tag>`), never `git push --tags`.
+Create the `v1.0.0` tag only on the accepted first-release commit. Never push inherited tags: they may run an unrelated publishing workflow. Push single tags (`git push origin <tag>`), never `git push --tags`.
 
 ## Symbols
 
@@ -56,9 +69,9 @@ Create the `v1.0.0` tag only on the accepted first-release commit. Never push in
 
 ## Package validation
 
-Before upload, CI inspects the actual archive for both assemblies, XML documentation, the README, project license, full Apache license and third-party notices. Fresh consumers restore that archive from an isolated local feed and package cache, then check indexed create/read/update behavior and every embedded collation table. A .NET 10 consumer selects the native asset; a .NET 8 consumer selects the Standard asset and executes on .NET 10. This checks package resolution and dependencies without qualifying execution on older runtimes.
+Before upload, CI inspects the actual archive for both assemblies, XML documentation, the README, project license, full Apache license and third-party notices. Fresh consumers restore that archive from an isolated local feed and package cache, then check indexed create/read/update behavior and every embedded collation table. A .NET 11 consumer selects the native asset; a .NET 8 consumer selects the Standard asset and executes on .NET 10. This checks package resolution and dependencies without qualifying execution on older runtimes.
 
-Every pack runs .NET package validation (`EnablePackageValidation`). Today it checks that each public API of the `netstandard2.1` build also exists in the `net10.0` build, so a public member compiled only into the `netstandard2.1` build fails the pack (`CP0001` or `CP0002`).
+Every pack runs .NET package validation (`EnablePackageValidation`). Today it checks that each public API of the `netstandard2.1` build also exists in the `net11.0` build, so a public member compiled only into the `netstandard2.1` build fails the pack (`CP0001` or `CP0002`).
 
 Once a version is on nuget.org, also validate against it:
 

@@ -17,8 +17,8 @@ function Assert-Matrix($Analyzers, $Tests) {
         if ($build.asset -notin 'native', 'standard' -or $artifacts.ContainsKey($build.asset)) { throw 'Every runner asset must have exactly one analyzed producer.' }
         $artifacts[$build.asset] = $build
     }
-    foreach ($runtime in 'net10.0', 'net10.0-netstandard', 'net11.0') {
-        $expectedAsset = if ($runtime -eq 'net10.0-netstandard') { 'standard' } else { 'native' }
+    foreach ($runtime in 'net11.0', 'net10.0-netstandard', 'net11.0-netstandard') {
+        $expectedAsset = if ($runtime.EndsWith('-netstandard', [StringComparison]::Ordinal)) { 'standard' } else { 'native' }
         foreach ($partition in 'ordinary', 'schema-writer', 'jet3', 'jet4', 'ace') {
             $run = @($runs | Where-Object { $_.tf -ceq $runtime -and $_.partition -ceq $partition })
             if ($run.Count -ne 1 -or $run[0].asset -cne $expectedAsset -or -not $artifacts.ContainsKey($run[0].asset)) { throw 'Every runtime partition must consume its exact analyzed asset once.' }
@@ -27,7 +27,7 @@ function Assert-Matrix($Analyzers, $Tests) {
     }
     $standard = $artifacts.standard
     if ($standard['restore-options'] -cne '-p:TestNetStandard=true' -or $standard.options -cne '-f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests -p:TestNetStandard=true') { throw 'The standard runner must build and restore the standard-library dependency graph.' }
-    if ($artifacts.native.options -cne '-f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests' -or $artifacts.native['restore-options']) { throw 'The native runner must be analyzed once with the pinned SDK.' }
+    if ($artifacts.native.options -cne '-f net11.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests' -or $artifacts.native['restore-options']) { throw 'The native runner must be analyzed once with the pinned SDK.' }
 }
 
 $analyzers = Get-CiAnalyzerMatrix

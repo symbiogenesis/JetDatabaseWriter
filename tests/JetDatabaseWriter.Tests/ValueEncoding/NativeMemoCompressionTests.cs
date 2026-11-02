@@ -179,7 +179,7 @@ public sealed class NativeMemoCompressionTests(ITestOutputHelper output)
             Format = kind.ToString(),
             NativeInfo = result.StdOut,
             Sha256 = Convert.ToHexString(SHA256.HashData(database)),
-            Values = payloads.Select((payload, index) => new { Id = index, Characters = texts[index].Length, HasLiteralFeff = texts[index].StartsWith('\uFEFF'), StoredBytes = payload.Length, Descriptor = Convert.ToHexString(descriptors[index]), Prefix = Convert.ToHexString(payload.AsSpan(0, Math.Min(20, payload.Length))) }),
+            Values = payloads.Select((payload, index) => new { Id = index, Characters = texts[index].Length, HasLiteralFeff = texts[index].Length != 0 && texts[index][0] == '\uFEFF', StoredBytes = payload.Length, Descriptor = Convert.ToHexString(descriptors[index]), Prefix = Convert.ToHexString(payload.AsSpan(0, Math.Min(20, payload.Length))) }),
         });
         await File.WriteAllTextAsync(Path.Combine(evidence, "manifest.json"), manifest, Ct);
         List<object[]> rows = await reader.Rows("Items", cancellationToken: Ct).ToListAsync(Ct);

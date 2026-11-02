@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.1;net10.0</TargetFrameworks>
+    <TargetFrameworks>netstandard2.1;net11.0</TargetFrameworks>
     <TargetFrameworks Condition="'$(TestNetStandard)' == 'true'">netstandard2.1</TargetFrameworks>
     <NuGetLockFilePath Condition="'$(TestNetStandard)' == 'true'">packages.netstandard.lock.json</NuGetLockFilePath>
     <PackageId>JetDatabaseWriter</PackageId>
@@ -25,7 +25,7 @@
     <MinVerMinimumMajorMinor>1.0</MinVerMinimumMajorMinor>
     <!--
       Checks on every pack that each public API of the netstandard2.1 build also exists in
-      the net10.0 build. A PackageValidationBaselineVersion is added once a version is on
+      the net11.0 build. A PackageValidationBaselineVersion is added once a version is on
       nuget.org (see PUBLISH.md).
     -->
     <EnablePackageValidation>true</EnablePackageValidation>

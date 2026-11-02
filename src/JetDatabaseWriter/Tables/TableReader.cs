@@ -61,7 +61,7 @@ internal sealed class TableReader(
 {
     private const int MinimumAutoTableScanReadAheadPages = 3;
     private const int ResultCacheCapacity = 256;
-    private readonly Dictionary<string, (int Generation, bool Exists)> tableLookups = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (int Generation, bool Exists)> tableLookups = [with(StringComparer.OrdinalIgnoreCase)];
     private readonly Dictionary<long, (int Generation, long Count)> rowCounts = [];
 
     /// <summary>Gets the related-entity allowance shared across one Include execution.</summary>

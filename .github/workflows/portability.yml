@@ -85,6 +85,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+          dotnet-version: 10.0.403
           cache: true
           cache-dependency-path: '**/packages.lock.json'
       - name: Setup .NET 11 runtime
@@ -93,9 +94,9 @@ jobs:
         with:
           global-json-file: .github/dotnet11/global.json
       - name: Restore
-        run: dotnet restore tests/JetDatabaseWriter.Tests --locked-mode
+        run: dotnet restore tests/JetDatabaseWriter.Tests --locked-mode -p:TestNetStandard=${{ matrix.tf == 'net10.0' }}
       - name: Build
-        run: dotnet build tests/JetDatabaseWriter.Tests -c Release --no-restore -f net10.0 -p:RunAnalyzers=false
+        run: dotnet build tests/JetDatabaseWriter.Tests -c Release --no-restore -f ${{ matrix.tf }} -p:TestNetStandard=${{ matrix.tf == 'net10.0' }} -p:RunAnalyzers=false
       - name: Test
         env:
           JDW_EXPECTED_RUNTIME_MAJOR: ${{ matrix.tf == 'net11.0' && '11' || '10' }}
@@ -104,7 +105,7 @@ jobs:
           JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/portability-${{ matrix.os }}-${{ matrix.tf }}
         run: >-
           dotnet test --test-modules JetDatabaseWriter.Tests.dll
-          --root-directory tests/JetDatabaseWriter.Tests/bin/Release/net10.0
+          --root-directory tests/JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}
           --minimum-expected-tests 48
           --long-running 60 --xunit-diagnostics on --no-ansi --output Detailed --timeout 80m
           --report-xunit-xml --report-xunit-xml-filename tests.xml

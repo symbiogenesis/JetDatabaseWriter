@@ -254,7 +254,7 @@ public sealed class ComplexItemPreflightTests
         TableDef flat = await harness.Database.TableDefs.ReadRequiredTableDefAsync(pageNumber, descriptor.FlatTableName, Ct);
         List<LocatedRow> items = await harness.Services.Snapshots.ReadRowsAsync(pageNumber, Ct);
         int identity = flat.FindColumnIndex(column => column.IsAutoNumber);
-        int reference = flat.FindColumnIndex(column => column.Type == ColumnType.LongIntegerType && !column.IsAutoNumber && column.Name.StartsWith('_'));
+        int reference = flat.FindColumnIndex(column => column.Type == ColumnType.LongIntegerType && !column.IsAutoNumber && column.Name.Length != 0 && column.Name[0] == '_');
         Assert.True(identity >= 0 && reference >= 0);
         LocatedRow first = items[0];
         LocatedRow other = items.First(item => !Equals(item.Values[reference], first.Values[reference]));

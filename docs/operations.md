@@ -17,7 +17,7 @@ This guide covers stream ownership, configuration, transactions and the limits t
 
 ## Runtime compatibility
 
-The package ships two builds. Apps on .NET 10 or later get the `net10.0` build; apps on .NET Core 3.x and .NET 5 through 9 get the `netstandard2.1` build, which brings in `System.Linq.Async`, `System.ComponentModel.Annotations` and `System.Text.Encoding.CodePages` for the APIs .NET 10 has built in. The test suite runs the native build on .NET 10 and .NET 11, plus a separate .NET 10 lane that loads the `netstandard2.1` build. Hosted ordinary tests exercise these three runtime/library combinations; compatibility with the older supported runtimes is not equivalent to a completed test run on each. The `net10.0` build can read eligible file pages with `RandomAccess`; the `netstandard2.1` build uses stream I/O. Trimming/NativeAOT evidence covers the .NET 10 consumer paths below. Unix maintenance-file creation permissions also differ between the builds; see [encryption options](#encryption-options).
+The package ships two builds. Apps on .NET 11 or later get the `net11.0` build; apps on .NET Core 3.x and .NET 5 through 10 get the `netstandard2.1` build, which brings in `System.Linq.Async`, `System.ComponentModel.Annotations` and `System.Text.Encoding.CodePages` for APIs available in the native build. The test suite runs the native build on .NET 11 and the `netstandard2.1` build on .NET 10 and .NET 11. Hosted ordinary tests exercise these three runtime/library combinations; compatibility with the older supported runtimes is not equivalent to a completed test run on each. The `net11.0` build can read eligible file pages with `RandomAccess`; the `netstandard2.1` build uses stream I/O. Trimming/NativeAOT checks cover the .NET 11 consumer paths below. Unix maintenance-file creation permissions also differ between the builds; see [encryption options](#encryption-options).
 
 ## Opening a Reader or Writer
 
@@ -99,11 +99,11 @@ The first physical write under an open writer acquires raw page digests with a b
 
 Keep the journal beside the database at its original path until recovery completes. Microsoft Access does not understand this sidecar: recover with the library before opening an interrupted database in Access. Do not rename, replace, edit or copy the database independently of a pending journal. Identity validation uses the full path and raw contents; it is not a persistent operating-system file identifier or authentication against a maliciously replaced journal.
 
-These guarantees cover process termination under exclusive file access. The `net10.0` library asset on Windows additionally checks parent-directory flush acknowledgements around publication and cleanup. These source-audited calls still lack physical power-loss qualification; standard/Linux/macOS retain process-only directory semantics. A non-`FileStream` caller stream has only in-process rollback; no persistent journal-stream API is available. Creation, physical shrinking and container replacement retain their separate guarantees. See the [recovery protocol](design/transaction-crash-recovery.md) for ordering and limits.
+These guarantees cover process termination under exclusive file access. The `net11.0` library asset on Windows additionally checks parent-directory flush acknowledgements around publication and cleanup. These source-audited calls still lack physical power-loss qualification; standard/Linux/macOS retain process-only directory semantics. A non-`FileStream` caller stream has only in-process rollback; no persistent journal-stream API is available. Creation, physical shrinking and container replacement retain their separate guarantees. See the [recovery protocol](design/transaction-crash-recovery.md) for ordering and limits.
 
 ## Trimming and NativeAOT
 
-On .NET 10, typed inserts, `Rows<T>` (including predicates),
+On .NET 11, typed inserts, `Rows<T>` (including predicates),
 `ReadTableAsync<T>` and typed index reads preserve the mapped public properties
 and parameterless constructor needed by POCO and scaffold-generated models.
 Generic helper methods wrapping these APIs must propagate their
@@ -116,7 +116,7 @@ CI runs `scripts/test-aot.ps1` to generate classes and records, then publish and
 execute each as a trimmed and NativeAOT Windows x64 consumer. The checks cover
 column-name mapping, nullable values, typed insert/read, streaming and predicate
 reads, and compilation of generated relationship navigations. This evidence
-covers the .NET 10 typed API paths exercised by that consumer.
+covers the .NET 11 typed API paths exercised by that consumer.
 
 ---
 
@@ -243,13 +243,13 @@ These examples are not an exhaustive exception list. Catch a specific structured
 
 Close readers and writers before calling `AccessDatabaseEncryption.EncryptAsync`, `DecryptAsync` or `ChangePasswordAsync`. Use a containing directory protected from untrusted access: staging and original backups can contain plaintext, and Unix file sharing does not provide access control. Maintenance processes pages through a reusable buffer, stages the final format in a unique adjacent file, updates native security metadata, flushes, then replaces the original. All operations use managed .NET APIs.
 
-Windows maintenance files receive a protected owner-only ACL at creation. The .NET 10 build requests Unix mode `0600`, but inherited macOS ACLs can grant additional access. The .NET Standard build uses the host's default Unix creation permissions; it has no Unix permission API. Directory permissions and inherited ACLs must therefore provide the required protection. Windows replacement preserves the destination ACL; Unix replacement uses the staged file's permissions.
+Windows maintenance files receive a protected owner-only ACL at creation. The .NET 11 build requests Unix mode `0600`, but inherited macOS ACLs can grant additional access. The .NET Standard build uses the host's default Unix creation permissions; it has no Unix permission API. Directory permissions and inherited ACLs must therefore provide the required protection. Windows replacement preserves the destination ACL; Unix replacement uses the staged file's permissions.
 
 Cancellation and conversion failures before preparation preserve the original and clean up only owned incomplete files. A deterministic `<database>.jdw-replacement` intent binds the canonical path, generation and exact old/new content lengths and SHA-256 hashes. Complete old/new copies and a publication copy can require up to three extra database-sized files. Prepared without a complete valid commit decision selects the original; a complete valid committed decision selects the replacement. Invalid or conflicting evidence refuses without choosing a copy.
 
 Recover an interrupted or cleanup-pending replacement with `AccessWriter.OpenAsync(path)`, including when the destination name is missing. Readers, encryption detection, caller FileStream opens and new database creation refuse pending replacement evidence. Keep every sidecar and generation file together in the protected directory. Legacy random candidates without a valid intent are retained rather than guessed. Commit errors may name complete retained copies in `IOException.Data["JetDatabaseWriter.ReplacementFile"]` and `["JetDatabaseWriter.OriginalFile"]`.
 
-Contents are device-flushed with `FileStream.Flush(true)`. The `net10.0` library asset on Windows also checks parent-directory flush acknowledgements for prepared evidence, selected publication and ordered cleanup; standard/Linux/macOS have no directory adapter. Physical directory-entry persistence remains unqualified. The protocol covers validated process recovery, not physical power-loss durability. Interrupted intent/ownership acquisition can retain incomplete evidence that requires refusal. Restoring a missing destination preserves validated database bytes and uses private maintenance-file creation permissions; filesystem ACLs, alternate streams and timestamps have no separate recovery record. See the [recovery contract](design/transaction-crash-recovery.md).
+Contents are device-flushed with `FileStream.Flush(true)`. The `net11.0` library asset on Windows also checks parent-directory flush acknowledgements for prepared evidence, selected publication and ordered cleanup; standard/Linux/macOS have no directory adapter. Physical directory-entry persistence remains unqualified. The protocol covers validated process recovery, not physical power-loss durability. Interrupted intent/ownership acquisition can retain incomplete evidence that requires refusal. Restoring a missing destination preserves validated database bytes and uses private maintenance-file creation permissions; filesystem ACLs, alternate streams and timestamps have no separate recovery record. See the [recovery contract](design/transaction-crash-recovery.md).
 
 JET password-only files remain password-only after a password change. New JET encryption uses native RC4; new ACE encryption and ACE password changes use fresh AES-256-CBC/SHA-512. Existing encrypted files retain their provider during ordinary updates. JET3 passwords must fit 20 bytes in the database code page; JET4 passwords fit 20 UTF-16 characters. Unrepresentable passwords are refused before publishing output.
 
@@ -273,7 +273,7 @@ For local DAO tests on hosts whose installed Office architecture differs from th
 
 ### Thread safety and concurrent access
 
-A shared `AccessReader` supports concurrent scans while the database remains unchanged. Eligible path-based reads on the .NET 10 build use positional I/O; stream reads and the .NET Standard build serialize access to the stream position.
+A shared `AccessReader` supports concurrent scans while the database remains unchanged. Eligible path-based reads on the .NET 11 build use positional I/O; stream reads and the .NET Standard build serialize access to the stream position.
 
 Readers cache the table list, table definitions, owned data pages and up to `PageCacheSize` recently read pages. They do not refresh those caches. Path-based readers restrict sharing to read access for their lifetime, and refuse a pending recovery journal. A caller-supplied `FileStream` reader acquires an additional read-only lease; a writable or exclusively shared supplied handle can conflict with that lease and is refused. Prefer the path overload for file databases. Custom streams require caller-managed isolation.
 
@@ -289,7 +289,7 @@ Path-based writers request exclusive file sharing, which Windows enforces. Unix 
 - Statement page buffers are bounded. File-backed stores that support in-place writes spill large undo logs to temporary files; other stores retain undo in memory. `MaxTransactionPageBudget` limits explicit transactions only.
 - Cancellation is checked between spill batches and before final write-back. Started physical batches and recovery finish without cancellation. A cancelled mutation restores earlier spills; inside an explicit transaction, it rolls back to an internal savepoint and leaves earlier successful calls intact.
 - Path-based creation initializes and flushes an adjacent private staging file before publishing the complete database without overwriting an existing destination. If reopening the published file fails, the completed database remains available. A process crash before publication can leave a staging file, but cannot expose a partially initialized destination.
-- File replacement flushes retained contents and, in the `net10.0` library asset on Windows, checks parent-directory acknowledgements before destroying recovery copies. Standard/Linux/macOS lack this adapter. No supported storage configuration has a physical power-loss qualification receipt.
+- File replacement flushes retained contents and, in the `net11.0` library asset on Windows, checks parent-directory acknowledgements before destroying recovery copies. Standard/Linux/macOS lack this adapter. No supported storage configuration has a physical power-loss qualification receipt.
 
 See [Transactions](#transactions) for commit, recovery and faulted-writer behavior.
 

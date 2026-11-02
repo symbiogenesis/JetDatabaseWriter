@@ -186,6 +186,6 @@ public sealed class CalculatedNativeNumericValueTests
         Assert.Equal(bytes, Assert.IsType<byte[]>(row[1]));
         Assert.Equal(expected, row[2]);
         Assert.Equal(expected, row[3]);
-        Assert.Equal(expected.StartsWith('-') ? expected : " " + expected, row[4]);
+        Assert.Equal(expected.Length != 0 && expected[0] == '-' ? expected : " " + expected, row[4]);
     }
 }

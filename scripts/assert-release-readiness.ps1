@@ -88,7 +88,7 @@ function Assert-ReleaseJobs($Run, [string] $Kind) {
         foreach ($entry in (Get-CiAnalyzerMatrix).include) { "Analyze ($($entry.name))" }
         foreach ($entry in (Get-CiTestMatrix).include) { "Test ($($entry.name))" }
         'Verify recovery models (Dafny)', 'Package documentation', 'Trimmed and NativeAOT consumers'
-        foreach ($tf in 'net10.0', 'net10.0-netstandard', 'net11.0') { "Native Access compatibility ($tf)" }
+        foreach ($tf in 'net11.0', 'net10.0-netstandard', 'net11.0-netstandard') { "Native Access compatibility ($tf)" }
         foreach ($os in 'ubuntu-latest', 'macos-latest') {
             foreach ($tf in 'net10.0', 'net11.0') { "Encryption replacement ($os, $tf)" }
         }

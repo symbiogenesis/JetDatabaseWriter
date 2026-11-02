@@ -45,7 +45,7 @@ internal sealed class ColumnDefaultValue
     public static ColumnDefaultValue Compile(string expression)
     {
         string text = expression.Trim();
-        if (text.StartsWith('='))
+        if (text.Length != 0 && text[0] == '=')
         {
             text = text[1..].TrimStart();
         }
@@ -178,7 +178,7 @@ internal sealed class ColumnDefaultValue
         // writes {guid xxxxxxxx-...}. Guid.TryParse accepts both inner forms.
         guid = Guid.Empty;
         return text.StartsWith("{guid", StringComparison.OrdinalIgnoreCase)
-            && text.EndsWith('}')
+            && text.Length != 0 && text[^1] == '}'
             && Guid.TryParse(text[5..^1].Trim(), out guid);
     }
 

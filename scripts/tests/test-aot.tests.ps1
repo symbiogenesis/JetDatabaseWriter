@@ -134,6 +134,7 @@ foreach ($publish in @($aotTestContext.Calls | Where-Object { $_.Stage.EndsWith(
     Assert-Check ($publish.Arguments -contains ('-p:GeneratedModels=' + (Join-Path $pass.Output ($kind + '-models')))) "$($publish.Stage) did not compile its generated models."
     Assert-Check ($publish.Arguments -contains ('-p:SmokeMode=' + $mode)) "$($publish.Stage) did not enable the matching consumer mode."
     Assert-Check ($publish.Arguments -notcontains '--no-build') "$($publish.Stage) skipped consumer compilation."
+    Assert-Check ((Get-Option $publish.Arguments '-f') -eq 'net11.0') "$($publish.Stage) did not target the native .NET 11 library asset."
 }
 Assert-Check (($aotTestContext.Executions.Stage -join ',') -eq 'classes-trimmed,classes-native,records-trimmed,records-native') 'Every generated consumer must execute.'
 Assert-Check (@($aotTestContext.Executions.Database | Select-Object -Unique).Count -eq 4) 'Consumers shared their mutable databases.'

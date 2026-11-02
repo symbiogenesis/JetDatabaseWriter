@@ -149,6 +149,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+          dotnet-version: 10.0.403
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
@@ -161,7 +162,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: analyzed-runner-${{ matrix.asset }}
-          path: tests/JetDatabaseWriter.Tests/bin/Release/net10.0/
+          path: tests/JetDatabaseWriter.Tests/bin/Release/${{ matrix.framework }}/
           if-no-files-found: error
           retention-days: 3
 
@@ -204,8 +205,9 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+          dotnet-version: 10.0.403
       - name: Setup .NET 11 runtime
-        if: matrix.tf == 'net11.0'
+        if: startsWith(matrix.tf, 'net11.')
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: .github/dotnet11/global.json
@@ -217,9 +219,9 @@ jobs:
 
       - name: Test
         env:
-          JDW_EXPECTED_RUNTIME_MAJOR: ${{ matrix.tf == 'net11.0' && '11' || '10' }}
-          DOTNET_ROLL_FORWARD: ${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}
-          DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
+          JDW_EXPECTED_RUNTIME_MAJOR: ${{ startsWith(matrix.tf, 'net11.') && '11' || '10' }}
+          DOTNET_ROLL_FORWARD: ${{ startsWith(matrix.tf, 'net11.') && 'LatestMajor' || 'LatestPatch' }}
+          DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ startsWith(matrix.tf, 'net11.') && '1' || '0' }}
           JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}-${{ matrix.partition }}
         run: >-
           dotnet test --test-modules JetDatabaseWriter.Tests.dll
@@ -270,6 +272,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+          dotnet-version: 10.0.403
           cache: true
           cache-dependency-path: '**/packages.lock.json'
       - name: Restore
@@ -297,7 +300,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tf: [net10.0, net10.0-netstandard, net11.0]
+        tf: [net11.0, net10.0-netstandard, net11.0-netstandard]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -307,15 +310,16 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+          dotnet-version: 10.0.403
       - name: Setup .NET 11 runtime
-        if: matrix.tf == 'net11.0'
+        if: startsWith(matrix.tf, 'net11.')
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: .github/dotnet11/global.json
       - name: Download analyzed DAO runner
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: analyzed-runner-${{ matrix.tf == 'net10.0-netstandard' && 'standard' || 'native' }}
+          name: analyzed-runner-${{ endsWith(matrix.tf, '-netstandard') && 'standard' || 'native' }}
           path: artifacts/native-runner
       - name: Install pinned Microsoft Access Runtime
         shell: pwsh
@@ -323,9 +327,9 @@ jobs:
       - name: Test native interoperability
         shell: pwsh
         env:
-          JDW_EXPECTED_RUNTIME_MAJOR: ${{ matrix.tf == 'net11.0' && '11' || '10' }}
-          DOTNET_ROLL_FORWARD: ${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}
-          DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
+          JDW_EXPECTED_RUNTIME_MAJOR: ${{ startsWith(matrix.tf, 'net11.') && '11' || '10' }}
+          DOTNET_ROLL_FORWARD: ${{ startsWith(matrix.tf, 'net11.') && 'LatestMajor' || 'LatestPatch' }}
+          DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ startsWith(matrix.tf, 'net11.') && '1' || '0' }}
         run: ./scripts/run-native-compatibility.ps1 -RunnerDirectory artifacts/native-runner -ResultsDirectory artifacts/native-results/${{ matrix.tf }}
       - name: Upload native results
         if: ${{ !cancelled() }}
@@ -352,6 +356,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+          dotnet-version: 10.0.403
           cache: true
           cache-dependency-path: '**/packages*.lock.json'
       - name: Publish and run generated consumers
@@ -379,24 +384,25 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+          dotnet-version: 10.0.403
           cache: true
           cache-dependency-path: '**/packages.lock.json'
       - name: Setup .NET 11 runtime
-        if: matrix.tf == 'net11.0'
+        if: startsWith(matrix.tf, 'net11.')
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: .github/dotnet11/global.json
       - name: Restore
-        run: dotnet restore tests/JetDatabaseWriter.Tests --locked-mode
+        run: dotnet restore tests/JetDatabaseWriter.Tests --locked-mode -p:TestNetStandard=${{ matrix.tf == 'net10.0' }}
       - name: Build
-        run: dotnet build tests/JetDatabaseWriter.Tests -c Release --no-restore -f net10.0 -p:RunAnalyzers=false
+        run: dotnet build tests/JetDatabaseWriter.Tests -c Release --no-restore -f ${{ matrix.tf }} -p:TestNetStandard=${{ matrix.tf == 'net10.0' }} -p:RunAnalyzers=false
       - name: Test managed recovery, encryption replacement and linked-source boundaries
         env:
-          JDW_EXPECTED_RUNTIME_MAJOR: ${{ matrix.tf == 'net11.0' && '11' || '10' }}
-          DOTNET_ROLL_FORWARD: ${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}
-          DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
+          JDW_EXPECTED_RUNTIME_MAJOR: ${{ startsWith(matrix.tf, 'net11.') && '11' || '10' }}
+          DOTNET_ROLL_FORWARD: ${{ startsWith(matrix.tf, 'net11.') && 'LatestMajor' || 'LatestPatch' }}
+          DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ startsWith(matrix.tf, 'net11.') && '1' || '0' }}
         run: >-
-          dotnet test --project tests/JetDatabaseWriter.Tests -c Release --no-build -f net10.0
+          dotnet test --project tests/JetDatabaseWriter.Tests -c Release --no-build -f ${{ matrix.tf }} -p:TestNetStandard=${{ matrix.tf == 'net10.0' }}
           --filter-class JetDatabaseWriter.Tests.Infrastructure.LibraryTargetTests
           JetDatabaseWriter.Tests.Infrastructure.GuardTests
           JetDatabaseWriter.Tests.Encryption.AtomicReplacementTests

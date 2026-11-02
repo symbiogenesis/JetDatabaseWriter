@@ -488,7 +488,7 @@ src/JetDatabaseWriter/
     └── Guard.cs                           (argument validation helpers)
 ```
 
-The other projects in the solution are not part of the package: the tests (`JetDatabaseWriter.Tests`, net10.0), the benchmarks, the format probe, the scaffolding CLI, and `JetDatabaseWriter.TestSupport`. TestSupport is a non-packable class library, built for net10.0 like the tests, that holds code the tests and the format probe share but the package must not ship: `DaoPowerShellHostResolver`, which finds a Windows PowerShell host that can load DAO, and `PowerShellProcessRunner`, which runs that host and, when it times out, kills it with every process it started.
+The other projects in the solution are not part of the package: the tests (`JetDatabaseWriter.Tests`, net11.0 for the native asset and net10.0 for Standard), the benchmarks, the format probe, the scaffolding CLI, and `JetDatabaseWriter.TestSupport`. TestSupport is a non-packable class library, built for net10.0 and net11.0 to match the test runners, that holds code the tests and the format probe share but the package must not ship: `DaoPowerShellHostResolver`, which finds a Windows PowerShell host that can load DAO, and `PowerShellProcessRunner`, which runs that host and, when it times out, kills it with every process it started.
 
 ---
 

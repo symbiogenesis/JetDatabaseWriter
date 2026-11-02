@@ -48,7 +48,7 @@ remain separate obligations; recovery independently acquires physical content.
 The directory-order refinements in `GenerationOwnership` and
 `ReplacementProtocol` gate preparation authority and copy/native/receipt/intent
 retirement on named acknowledgements. `DirectoryPersistence` supplies the narrow
-Windows adapter in the net10.0 asset; unsupported assets/platforms grant no
+Windows adapter in the net11.0 asset; unsupported assets/platforms grant no
 acknowledgement. `DirectoryPersistenceTests`, publication and cleanup conformance
 controls bind the source ordering and suppressed-error refusal. Actual C# effect
 composition, lost names and filesystem/device power-cut qualification remain

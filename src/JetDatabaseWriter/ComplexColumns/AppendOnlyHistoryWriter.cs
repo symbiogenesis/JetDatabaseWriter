@@ -131,7 +131,7 @@ internal sealed class AppendOnlyHistoryWriter(
 
             TableDef flatDef = flat.Definition;
             int referenceIndex = tableDef.FindColumnIndex(history.ColumnName);
-            int foreignKeyIndex = flatDef.FindColumnIndex(column => column.Type == ColumnType.LongIntegerType && !column.IsAutoNumber && column.Name.StartsWith('_'));
+            int foreignKeyIndex = flatDef.FindColumnIndex(column => column.Type == ColumnType.LongIntegerType && !column.IsAutoNumber && column.Name.Length != 0 && column.Name[0] == '_');
             int valueIndex = flatDef.FindColumnIndex(memoName);
             int modifiedIndex = flatDef.FindColumnIndex(column => column.Type == ColumnType.DateTimeType);
             if (referenceIndex < 0 || foreignKeyIndex < 0 || modifiedIndex < 0

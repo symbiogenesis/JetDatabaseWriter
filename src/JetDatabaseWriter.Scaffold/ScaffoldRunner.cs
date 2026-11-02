@@ -43,18 +43,18 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
     {
         if (!ScaffoldNames.IsValidNamespace(ns))
         {
-            await error.WriteLineAsync($"Error: '{ns}' is not a valid C# namespace.");
+            await error.WriteLineAsync($"Error: '{ns}' is not a valid C# namespace.", CancellationToken.None);
             return -1;
         }
 
         IReadOnlyList<string> tables = await reader.ListTablesAsync(cancellationToken);
         if (tables.Count == 0)
         {
-            await output.WriteLineAsync("No user tables found in the database.");
+            await output.WriteLineAsync("No user tables found in the database.", CancellationToken.None);
             return 0;
         }
 
-        await output.WriteLineAsync($"Found {tables.Count} table(s). Generating models into: {outputDir}");
+        await output.WriteLineAsync($"Found {tables.Count} table(s). Generating models into: {outputDir}", CancellationToken.None);
 
         IReadOnlyList<RelationshipMetadata> relationships;
         try
@@ -63,7 +63,7 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException)
         {
-            await error.WriteLineAsync($"  Warning: relationships unavailable; navigation properties skipped: {ex.Message}");
+            await error.WriteLineAsync($"  Warning: relationships unavailable; navigation properties skipped: {ex.Message}", CancellationToken.None);
             relationships = [];
         }
 
@@ -76,7 +76,7 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
             }
             catch (Exception ex) when (ex is InvalidOperationException or IOException)
             {
-                await error.WriteLineAsync($"  Warning: skipping table '{table}': {ex.Message}");
+                await error.WriteLineAsync($"  Warning: skipping table '{table}': {ex.Message}", CancellationToken.None);
             }
         }
 
@@ -84,7 +84,7 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
         bool includeCollections = NavigationResolver.Resolve(classNames, relationships).Values.Any(navigations => navigations.Any(navigation => navigation.IsCollection));
         if (ScaffoldNames.FindNamespaceTypeIdentityCollision(ns, scaffolded, includeCollections) is { } requiredType)
         {
-            await error.WriteLineAsync($"Error: namespace '{ns}' conflicts with required type '{requiredType}'. Choose a namespace with a different fully qualified identity.");
+            await error.WriteLineAsync($"Error: namespace '{ns}' conflicts with required type '{requiredType}'. Choose a namespace with a different fully qualified identity.", CancellationToken.None);
             return -1;
         }
 
@@ -103,11 +103,11 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
                 : [];
 
             await File.WriteAllTextAsync(filePath, EntityEmitter.Emit(className, table, columns, navigations, ns, useRecords, nullable), cancellationToken);
-            await output.WriteLineAsync($"  {table} -> {className}.cs ({columns.Count} columns)");
+            await output.WriteLineAsync($"  {table} -> {className}.cs ({columns.Count} columns)", CancellationToken.None);
             generated++;
         }
 
-        await output.WriteLineAsync($"Done. {generated} model(s) generated.");
+        await output.WriteLineAsync($"Done. {generated} model(s) generated.", CancellationToken.None);
         return generated;
     }
 }

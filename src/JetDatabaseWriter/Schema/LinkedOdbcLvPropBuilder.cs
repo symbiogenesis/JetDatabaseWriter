@@ -196,7 +196,11 @@ internal static class LinkedOdbcLvPropBuilder
 
     private static string GetUnqualifiedSourceName(string foreignTableName)
     {
+#if NET11_0_OR_GREATER
+        int dot = foreignTableName.LastIndexOf('.', StringComparison.Ordinal);
+#else
         int dot = foreignTableName.LastIndexOf('.');
+#endif
         string name = dot >= 0 && dot + 1 < foreignTableName.Length
             ? foreignTableName[(dot + 1)..]
             : foreignTableName;

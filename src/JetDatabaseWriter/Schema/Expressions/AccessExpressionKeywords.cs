@@ -14,8 +14,9 @@ using System.Collections.Generic;
 /// </summary>
 internal static class AccessExpressionKeywords
 {
-    private static readonly HashSet<string> Words = new(StringComparer.OrdinalIgnoreCase)
-    {
+    private static readonly HashSet<string> Words =
+    [
+        with(StringComparer.OrdinalIgnoreCase),
         "AND",
         "OR",
         "XOR",
@@ -34,7 +35,7 @@ internal static class AccessExpressionKeywords
         "NO",
         "ON",
         "OFF",
-    };
+    ];
 
     /// <summary>Returns whether <paramref name="word"/> is an Access keyword (any case).</summary>
     /// <param name="word">The bare word.</param>
