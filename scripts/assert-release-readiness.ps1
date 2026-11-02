@@ -46,8 +46,10 @@ function Get-ReleasePages([string] $Uri, [string] $Property) {
 function Get-ReleaseRun([string] $Kind) {
     $workflow = Invoke-RestMethod -Uri "$api/actions/workflows/$Kind.yml" -Headers $headers
     if ($workflow.id -le 0 -or $workflow.path -cne ".github/workflows/$Kind.yml") { throw "Unexpected $Kind workflow identity." }
-    $uri = "$api/actions/workflows/$Kind.yml/runs?branch=main&per_page=100"
-    if ($Kind -eq 'ci') { $uri += "&head_sha=$Sha" }
+    # GitHub caps filtered run searches at 1,000 results. Campaign target titles
+    # require local filtering, so enumerate their uncapped workflow history.
+    $uri = "$api/actions/workflows/$Kind.yml/runs?per_page=100"
+    if ($Kind -eq 'ci') { $uri += "&branch=main&head_sha=$Sha" }
     $runs = @(Get-ReleasePages $uri 'workflow_runs')
     $matching = @($runs | Where-Object {
         $run = $_

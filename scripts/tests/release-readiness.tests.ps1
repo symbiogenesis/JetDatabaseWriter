@@ -42,6 +42,7 @@ function Reset-Context {
     $context.DuplicateArtifact = $false
     $context.ArchiveEntryName = 'receipt.json'
     $context.ArtifactSize = 512
+    $context.EnforceSearchCap = $false
 }
 
 function Invoke-RestMethod {
@@ -60,6 +61,7 @@ function Invoke-RestMethod {
     if ($Uri -match '/actions/workflows/(ci|fuzz|portability)\.yml/runs\?.*page=(\d+)$') {
         $kind = $Matches[1]; $page = [int]$Matches[2]
         $runs = @($context.Runs[$kind])
+        if ($context.EnforceSearchCap -and $Uri.Contains('branch=main')) { $runs = @($runs | Select-Object -First 1000) }
         return @{ total_count = $(if ($null -ne $context.CountOverride) { $context.CountOverride } else { $runs.Count }); workflow_runs = @($runs | Select-Object -Skip (($page - 1) * 100) -First 100) }
     }
     if ($Uri -match '/actions/runs/(\d+)/jobs\?filter=latest&per_page=100&page=(\d+)$') {
@@ -118,6 +120,9 @@ function Assert-Scenario([string] $Name, [string] $ExpectedError = '') {
 try {
     Reset-Context
     Assert-Scenario 'published ancestor accepts complete exact-SHA receipts'
+    if (@($context.Calls | Where-Object { $_ -like "*/ci.yml/runs?per_page=100&branch=main&head_sha=$sha&page=1" }).Count -ne 1) {
+        throw 'Main CI discovery must retain its exact-SHA server filter.'
+    }
     $context.Comparison = 'identical'
     Assert-Scenario 'published main tip accepts the same evidence'
     foreach ($comparison in 'behind', 'diverged') {
@@ -199,6 +204,11 @@ try {
     $context.Runs.fuzz = @(1..101 | ForEach-Object { $run = New-Run fuzz (100 + $_); $run.display_title = "Validation: fuzz $mainSha"; $run.head_sha = $mainSha; $run }) + $context.Runs.fuzz
     Assert-Scenario 'run discovery paginates before selecting matching campaign'
     if (@($context.Calls | Where-Object { $_ -match '/fuzz.yml/runs\?.*&page=2$' }).Count -ne 1) { throw 'Campaign discovery omitted the second page.' }
+    Reset-Context
+    $context.EnforceSearchCap = $true
+    $context.Runs.fuzz = @(1..1001 | ForEach-Object { $run = New-Run fuzz (100 + $_); $run.display_title = "Validation: fuzz $mainSha"; $run.head_sha = $mainSha; $run }) + $context.Runs.fuzz
+    Assert-Scenario 'campaign discovery avoids the filtered thousand-run API cap'
+    if (@($context.Calls | Where-Object { $_ -match '/fuzz.yml/runs\?[^\r\n]*branch=' }).Count -ne 0) { throw 'Campaign discovery invoked the capped branch search.' }
     Reset-Context; $context.CountOverride = 2
     Assert-Scenario 'truncated API inventory is refused' 'Incomplete GitHub evidence'
     Reset-Context; $context.ApiFailure = $true
