@@ -1037,6 +1037,54 @@ module RecoveryKernel {
       InitialJournalAdmission(originalLength, currentLength))
   { }
 
+  lemma JournalAfterImagePreservesPrefix(pageSize: U32, originalLength: U64, currentLength: U64,
+      state: Admission.State, tag: U64)
+    requires JournalAdmissionInvariant(pageSize, originalLength, currentLength, state)
+    requires IsPageOffset(tag, pageSize)
+    ensures JournalAdmissionInvariant(pageSize, originalLength, currentLength,
+      state.(maximum := if tag + pageSize as U64 > state.maximum then tag + pageSize as U64 else state.maximum,
+        authorized := state.authorized || IsAfterImageLength(currentLength, tag, pageSize),
+        writes := state.writes + {tag}))
+  {
+    PageOffsetAuthorizesOnlyCompleteBoundedPages(tag, pageSize);
+    var next := state.(maximum := if tag + pageSize as U64 > state.maximum then tag + pageSize as U64 else state.maximum,
+      authorized := state.authorized || IsAfterImageLength(currentLength, tag, pageSize),
+      writes := state.writes + {tag});
+    assert tag in next.writes;
+    forall offset | offset in next.writes
+      ensures IsPageOffset(offset, pageSize) && offset + pageSize as U64 <= next.maximum
+    {
+      if offset != tag {
+        assert offset in state.writes;
+        assert offset + pageSize as U64 <= state.maximum <= next.maximum;
+      }
+    }
+    if next.maximum != originalLength {
+      if next.maximum == tag + pageSize as U64 {
+        assert tag in next.writes;
+      } else {
+        assert next.maximum == state.maximum;
+        var offset :| offset in state.writes && state.maximum == offset + pageSize as U64;
+        assert offset in next.writes;
+      }
+    }
+    assert (exists offset | offset in next.writes :: IsAfterImageLength(currentLength, offset, pageSize)) <==>
+      ((exists offset | offset in state.writes :: IsAfterImageLength(currentLength, offset, pageSize)) ||
+        IsAfterImageLength(currentLength, tag, pageSize)) by {
+      if exists offset | offset in next.writes :: IsAfterImageLength(currentLength, offset, pageSize) {
+        var offset :| offset in next.writes && IsAfterImageLength(currentLength, offset, pageSize);
+        if offset != tag { assert offset in state.writes; }
+      }
+      if exists offset | offset in state.writes :: IsAfterImageLength(currentLength, offset, pageSize) {
+        var offset :| offset in state.writes && IsAfterImageLength(currentLength, offset, pageSize);
+        assert offset in next.writes;
+      }
+      if IsAfterImageLength(currentLength, tag, pageSize) {
+        assert exists offset | offset in next.writes :: IsAfterImageLength(currentLength, offset, pageSize);
+      }
+    }
+  }
+
   lemma JournalAdmissionStepPreservesPrefix(pageSize: U32, originalLength: U64, currentLength: U64,
       state: Admission.State, outcome: Admission.Outcome)
     requires JournalAdmissionInvariant(pageSize, originalLength, currentLength, state)
@@ -1071,31 +1119,15 @@ module RecoveryKernel {
         assert state.minimum <= offset;
       }
     }
-    if kind == 5 {
-      PageOffsetAuthorizesOnlyCompleteBoundedPages(outcome.tag, pageSize);
-      forall offset | offset in next.writes
-        ensures offset + pageSize as U64 <= next.maximum
-      {
-        if offset != outcome.tag {
-          assert offset in state.writes;
-          assert offset + pageSize as U64 <= state.maximum <= next.maximum;
-        }
-      }
-      if next.maximum != originalLength {
-        if next.maximum == outcome.tag + pageSize as U64 {
-          assert outcome.tag in next.writes;
-        } else {
-          assert next.maximum == state.maximum;
-          var offset :| offset in state.writes && state.maximum == offset + pageSize as U64;
-          assert offset in next.writes;
-        }
-      }
-    }
     if kind == 1 { return {:isolate}; }
     if kind == 2 { return {:isolate}; }
     if kind == 3 { return {:isolate}; }
     if kind == 4 { return {:isolate}; }
     assert kind == 5;
+    JournalAfterImagePreservesPrefix(pageSize, originalLength, currentLength, state, outcome.tag);
+    assert next == state.(maximum := if outcome.tag + pageSize as U64 > state.maximum then outcome.tag + pageSize as U64 else state.maximum,
+      authorized := state.authorized || IsAfterImageLength(currentLength, outcome.tag, pageSize),
+      writes := state.writes + {outcome.tag});
   }
 
   ghost predicate JournalAdmissionPath(pageSize: U32, originalLength: U64, currentLength: U64,
