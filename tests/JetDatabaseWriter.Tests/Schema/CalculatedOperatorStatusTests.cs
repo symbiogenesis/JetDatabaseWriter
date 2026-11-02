@@ -176,8 +176,7 @@ public sealed class CalculatedOperatorStatusTests
     [InlineData("native-membership.accdb", "31E420C894D0117E75B346B117043F3F1B9A752E9A8E3D06AF1AB141B3D866F8")]
     [InlineData("native-membership-compacted.accdb", "DEA2BF5E77F0F94BF707F621CCECA32ADCB06B99EE0181CEBCD2FAF993FDAE4B")]
     public async Task NativeMembershipFixtures_RetainNativeTypeMismatchAndFormattedComparison(string fixture, string hash)
-    {
-        CultureInfo previous = CultureInfo.CurrentCulture;
+    {        CultureInfo previous = CultureInfo.CurrentCulture;
         try
         {
             CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
@@ -220,8 +219,7 @@ public sealed class CalculatedOperatorStatusTests
             await using AccessReader reopened = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
             object[][] written = await reopened.Rows("Membership", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken);
             Assert.Equal(2, written.Length);
-            Assert.All(written, row => Assert.Equal(native[1..], row[1..]));
-        }
+            Assert.All(written, row => Assert.Equal(native[1..], row[1..]));        }
         finally
         {
             CultureInfo.CurrentCulture = previous;

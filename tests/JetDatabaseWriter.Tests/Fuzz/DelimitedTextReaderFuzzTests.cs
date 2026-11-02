@@ -39,16 +39,12 @@ public sealed class DelimitedTextReaderFuzzTests
     /// <summary>Malformed raw text may refuse without aborting the generated round-trip control.</summary>
     [Fact]
     public async Task RawInput_UnterminatedQuote_ContinuesGeneratedRoundTrip()
-    {
-        await RunFuzzIterationAsync(Encoding.UTF8.GetBytes("\"unterminated"));
-    }
+        => await RunFuzzIterationAsync(Encoding.UTF8.GetBytes("\"unterminated"));
 
     /// <summary>The configured raw-field limit may refuse without aborting the generated control.</summary>
     [Fact]
     public async Task RawInput_OverFieldBudget_ContinuesGeneratedRoundTrip()
-    {
-        await RunFuzzIterationAsync(Encoding.UTF8.GetBytes(new string('x', FuzzLimits.MaxFieldLength + 1)));
-    }
+        => await RunFuzzIterationAsync(Encoding.UTF8.GetBytes(new string('x', FuzzLimits.MaxFieldLength + 1)));
 
     /// <summary>
     /// Empty single-column records need explicit field syntax to survive EOF and mixed line endings.
