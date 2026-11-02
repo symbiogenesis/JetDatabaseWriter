@@ -177,46 +177,55 @@ public sealed class CalculatedOperatorStatusTests
     [InlineData("native-membership-compacted.accdb", "DEA2BF5E77F0F94BF707F621CCECA32ADCB06B99EE0181CEBCD2FAF993FDAE4B")]
     public async Task NativeMembershipFixtures_RetainNativeTypeMismatchAndFormattedComparison(string fixture, string hash)
     {
-        string path = Path.Combine(AppContext.BaseDirectory, "Databases", "CalculatedMembership", fixture);
-        byte[] bytes = await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken);
-        Assert.Equal(hash, Convert.ToHexString(SHA256.HashData(bytes)));
-        await using var stream = new MemoryStream();
-        await stream.WriteAsync(bytes, TestContext.Current.CancellationToken);
-        object[] native;
-        Dictionary<string, object> named;
-        await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        CultureInfo previous = CultureInfo.CurrentCulture;
+        try
         {
-            native = Assert.Single(await reader.Rows("Membership", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken));
-            IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("Membership", TestContext.Current.CancellationToken);
-            named = columns.Select((column, index) => (column.Name, Value: native[index])).ToDictionary(pair => pair.Name, pair => pair.Value, StringComparer.Ordinal);
-        }
+            CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+            string path = Path.Combine(AppContext.BaseDirectory, "Databases", "CalculatedMembership", fixture);
+            byte[] bytes = await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken);
+            Assert.Equal(hash, Convert.ToHexString(SHA256.HashData(bytes)));
+            await using var stream = new MemoryStream();
+            await stream.WriteAsync(bytes, TestContext.Current.CancellationToken);
+            object[] native;
+            Dictionary<string, object> named;
+            await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+            {
+                native = Assert.Single(await reader.Rows("Membership", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken));
+                IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("Membership", TestContext.Current.CancellationToken);
+                named = columns.Select((column, index) => (column.Name, Value: native[index])).ToDictionary(pair => pair.Name, pair => pair.Value, StringComparer.Ordinal);
+            }
 
-        foreach (string name in new[] { "NumberText", "NumberBadText", "TextNumber", "TextBadNumber", "NumberGroupedText", "NumberExponentText", "BooleanText", "NullCandidate", "GuidNumber", "NumberGuid" })
+            foreach (string name in new[] { "NumberText", "NumberBadText", "TextNumber", "TextBadNumber", "NumberGroupedText", "NumberExponentText", "BooleanText", "NullCandidate", "GuidNumber", "NumberGuid" })
+            {
+                Assert.Equal(13, Assert.IsType<CalculatedError>(named[name]).NativeCode);
+            }
+
+            foreach (string name in new[] { "EarlyNumber", "EarlyText", "DateCanonical", "DateAfterBadText", "TextDate", "DateTimeCanonical", "DateNumber", "NumberDate", "GuidText", "TextGuid", "InfinityText", "TextInfinity", "NegativeInfinityText", "NaNCanonical", "NaNNumber", "NumberNaN", "InfinitySelf" })
+            {
+                Assert.Equal(-1d, named[name]);
+            }
+
+            foreach (string name in new[] { "DatePadded", "DateBadText", "BadTextDate", "DateMidnightText", "GuidBadText", "BadTextGuid", "InfinityBadText", "NegativeInfinityOther", "NaNOtherText", "InfinityNumber" })
+            {
+                Assert.Equal(0d, named[name]);
+            }
+
+            Assert.Equal(DBNull.Value, named["NullNeedle"]);
+            await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false, CalculatedExpressionCulture = CultureInfo.GetCultureInfo("en-US") }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+            {
+                Assert.Equal(1, await writer.UpdateRowsAsync("Membership", "Id", 1, new Dictionary<string, object?> { ["Id"] = 2 }, TestContext.Current.CancellationToken));
+                await writer.InsertRowAsync("Membership", new RowValues { ["Id"] = 3 }, TestContext.Current.CancellationToken);
+            }
+
+            await using AccessReader reopened = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+            object[][] written = await reopened.Rows("Membership", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(2, written.Length);
+            Assert.All(written, row => Assert.Equal(native[1..], row[1..]));
+        }
+        finally
         {
-            Assert.Equal(13, Assert.IsType<CalculatedError>(named[name]).NativeCode);
+            CultureInfo.CurrentCulture = previous;
         }
-
-        foreach (string name in new[] { "EarlyNumber", "EarlyText", "DateCanonical", "DateAfterBadText", "TextDate", "DateTimeCanonical", "DateNumber", "NumberDate", "GuidText", "TextGuid", "InfinityText", "TextInfinity", "NegativeInfinityText", "NaNCanonical", "NaNNumber", "NumberNaN", "InfinitySelf" })
-        {
-            Assert.Equal(-1d, named[name]);
-        }
-
-        foreach (string name in new[] { "DatePadded", "DateBadText", "BadTextDate", "DateMidnightText", "GuidBadText", "BadTextGuid", "InfinityBadText", "NegativeInfinityOther", "NaNOtherText", "InfinityNumber" })
-        {
-            Assert.Equal(0d, named[name]);
-        }
-
-        Assert.Equal(DBNull.Value, named["NullNeedle"]);
-        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
-        {
-            Assert.Equal(1, await writer.UpdateRowsAsync("Membership", "Id", 1, new Dictionary<string, object?> { ["Id"] = 2 }, TestContext.Current.CancellationToken));
-            await writer.InsertRowAsync("Membership", new RowValues { ["Id"] = 3 }, TestContext.Current.CancellationToken);
-        }
-
-        await using AccessReader reopened = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        object[][] written = await reopened.Rows("Membership", cancellationToken: TestContext.Current.CancellationToken).ToArrayAsync(TestContext.Current.CancellationToken);
-        Assert.Equal(2, written.Length);
-        Assert.All(written, row => Assert.Equal(native[1..], row[1..]));
     }
 
     [Theory]
