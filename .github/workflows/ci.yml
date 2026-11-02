@@ -169,6 +169,11 @@ jobs:
         if: matrix.pack
         run: dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-build -o artifacts/nupkg
 
+      - name: Test packed consumers
+        if: matrix.pack
+        shell: pwsh
+        run: ./scripts/test-package.ps1 -PackageDirectory artifacts/nupkg
+
       # publish.yml pushes this artifact only when every job of the run has passed, so a
       # release publishes the package this run built from the tested commit instead of
       # rebuilding it.
@@ -271,6 +276,10 @@ jobs:
         run: dotnet restore src/JetDatabaseWriter/JetDatabaseWriter.csproj --locked-mode
       - name: Pack
         run: dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-restore -o artifacts/nupkg
+
+      - name: Test packed consumers
+        shell: pwsh
+        run: ./scripts/test-package.ps1 -PackageDirectory artifacts/nupkg
       - name: Upload package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

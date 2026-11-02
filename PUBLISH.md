@@ -47,6 +47,8 @@ Some local clones have the release tags `v1.0.0` through `v2.2.0` of the upstrea
 
 ## Package validation
 
+Before upload, CI inspects the actual archive for both assemblies, XML documentation, the README, project license, full Apache license and third-party notices. Fresh consumers restore that archive from an isolated local feed and package cache, then check indexed create/read/update behavior and every embedded collation table. A .NET 10 consumer selects the native asset; a .NET 8 consumer selects the Standard asset and executes on .NET 10. This checks package resolution and dependencies without qualifying execution on older runtimes.
+
 Every pack runs .NET package validation (`EnablePackageValidation`). Today it checks that each public API of the `netstandard2.1` build also exists in the `net10.0` build, so a public member compiled only into the `netstandard2.1` build fails the pack (`CP0001` or `CP0002`).
 
 Once a version is on nuget.org, also validate against it:

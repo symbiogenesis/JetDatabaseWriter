@@ -15,6 +15,8 @@ The required [CI workflow](../.github/workflows/ci.yml) owns ordinary validation
 
 Ordinary partition results are checked from xUnit XML: failures, infrastructure errors, unknown skip reasons and unapproved explicit not-run identities fail acceptance. The native inventory additionally requires every named method to pass, verifies the actual loaded ACEDAO DLL version and permits no skips. Its scope is DAO120; native Jet3/DAO3.6 and unlisted feature variants remain separate evidence obligations.
 
+Both package-producing paths run `scripts/test-package.ps1` before artifact upload. It checks complete packaged licenses and documentation, then restores the actual archive into isolated native and Standard consumers. Their indexed create/read/update controls and embedded-resource checks complement the project-reference tests and generated AOT consumers.
+
 CI selects expensive lanes against validated main ancestors, retaining unconditional checks and the aggregate gate even for documentation changes. Manual CI and release calls validate every lane. Specialized workflows add evidence after that gate; their results do not replace it. See [AGENTS.md](../AGENTS.md#gating-a-commit-on-ci) for the acceptance and reporting rules.
 
 Native compatibility can still execute after self-test failures when its analyzed

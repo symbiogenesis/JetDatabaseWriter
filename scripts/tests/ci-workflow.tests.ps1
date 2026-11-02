@@ -144,6 +144,15 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     $checks = Get-CiJob $Workflow 'checks'
     Assert-Contract ($checks -notmatch '(?m)^    (?:if|needs):' -and $checks.Contains('run: ./scripts/test-scripts.ps1') -and $checks.Contains('run: ./scripts/check-security-traceability.ps1')) 'Script and security checks must remain unconditional.'
     $package = Get-CiJob $Workflow 'package'
+    foreach ($packedJob in @(@{ Body = $analyze; Conditional = $true }, @{ Body = $package; Conditional = $false })) {
+        $consumer = [regex]::Match($packedJob.Body, '(?ms)^      - name: Test packed consumers\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+        $condition = if ($packedJob.Conditional) { $consumer -match '(?m)^        if: matrix\.pack$' } else { $consumer -notmatch '(?m)^        if:' }
+        Assert-Contract ($consumer.Contains('run: ./scripts/test-package.ps1 -PackageDirectory artifacts/nupkg') -and $consumer.Contains('shell: pwsh') -and $condition -and $consumer -notmatch 'continue-on-error:') 'Every produced package must pass its actual package consumers before upload.'
+        $packPosition = $packedJob.Body.IndexOf('      - name: Pack', [StringComparison]::Ordinal)
+        $consumerPosition = $packedJob.Body.IndexOf('      - name: Test packed consumers', [StringComparison]::Ordinal)
+        $uploadPosition = $packedJob.Body.IndexOf('      - name: Upload package', [StringComparison]::Ordinal)
+        Assert-Contract ($packPosition -ge 0 -and $packPosition -lt $consumerPosition -and $consumerPosition -lt $uploadPosition) 'Package consumption must follow packing and precede artifact publication.'
+    }
     Assert-Contract ($package -match '(?m)^    needs: changes$' -and $package -match "(?m)^    if: needs\.changes\.outputs\.package == 'true'$" -and $package.Contains('name: Package documentation')) 'Packed documentation must use the focused package selection.'
     Assert-Contract ($package.Contains('fetch-depth: 0') -and $package.Contains('global-json-file: global.json') -and $package.Contains('dotnet restore src/JetDatabaseWriter/JetDatabaseWriter.csproj --locked-mode') -and $package.Contains('dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-restore -o artifacts/nupkg') -and $package -notmatch 'dotnet test|--no-build|continue-on-error:') 'Documentation packaging must restore locked dependencies and build the strict Release library without running the test suite.'
     Assert-Contract ($package.Contains('name: nupkg') -and $package.Contains('path: artifacts/nupkg/*.nupkg') -and $package.Contains('if-no-files-found: error')) 'Documentation packaging must retain its package artifact.'
@@ -181,6 +190,9 @@ Assert-Scenario 'docs hidden from required push gate' ($workflow.Replace("  push
 Assert-Scenario 'PR content filter suppresses required gate' ($workflow.Replace("  pull_request:`n", "  pull_request:`n    paths:`n      - 'src/**'`n")) 'Push and PR triggers must retain the required gate'
 Assert-Scenario 'package selection omitted' ($workflow.Replace('package: ${{ steps.select.outputs.package }}', 'removed: value')) 'The selection job must expose documentation package selection'
 Assert-Scenario 'documentation packaging disabled' ($workflow.Replace("if: needs.changes.outputs.package == 'true'", 'if: false')) 'Packed documentation must use the focused package selection'
+Assert-Scenario 'packed consumer validation omitted' ($workflow.Replace('./scripts/test-package.ps1', './scripts/removed-package-check.ps1')) 'Every produced package must pass its actual package consumers before upload'
+Assert-Scenario 'packed consumers disabled' ($workflow.Replace("      - name: Test packed consumers`n        if: matrix.pack", "      - name: Test packed consumers`n        if: false")) 'Every produced package must pass its actual package consumers before upload'
+Assert-Scenario 'failed package consumers accepted' ($workflow.Replace("      - name: Test packed consumers`n", "      - name: Test packed consumers`n        continue-on-error: true`n")) 'Analyzer jobs must retain all strict build guarantees'
 Assert-Scenario 'documentation package reuses missing binaries' ($workflow.Replace('-c Release --no-restore -o artifacts/nupkg', '-c Release --no-build -o artifacts/nupkg')) 'Documentation packaging must restore locked dependencies'
 Assert-Scenario 'documentation package omitted from gate' ($workflow.Replace('encryption-replacement, package]', 'encryption-replacement]')) 'The aggregate gate must reject failure'
 Assert-Scenario 'obsolete branch runs block current validation' ($workflow.Replace("cancel-in-progress: `${{ !startsWith(github.ref, 'refs/tags/') }}", 'cancel-in-progress: false')) 'Superseded branch runs must be cancelled'
