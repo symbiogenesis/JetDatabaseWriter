@@ -17,19 +17,19 @@ using Microsoft.Win32.SafeHandles;
 using Xunit;
 
 /// <summary>
-/// Runs a real Windows PowerShell host through <see cref="PowerShellProcessRunner"/>, which the
+/// Runs real PowerShell hosts through <see cref="PowerShellProcessRunner"/>, which the
 /// DAO probe and the DAO round-trip scripts use. A hung host must be killed with every process it
 /// started once the timeout passes, a process in that tree that cannot be killed must not turn
 /// the timeout into an exception, and a child process that keeps the output pipes open after the
-/// host exits must not block the caller. All runtime and library-asset lanes run these.
+/// host exits must not block the caller. Process-DACL cases belong to the explicit Windows inventory.
 /// </summary>
 public sealed partial class PowerShellProcessRunnerTests
 {
-    private const string WindowsOnly = "Runs powershell.exe and ping.exe, which only Windows has.";
+    private const string WindowsOnly = "Checks Windows process DACLs and restricted-token termination rights.";
 
     /// <summary>
     /// The first timeout of the tests that let a host outlive it. The timeout must pass only
-    /// after the host has started the ping and recorded its id, and host start-up varies widely
+    /// after the host has started the child and recorded its id, and host start-up varies widely
     /// (well under a second on CI, 12 s on a busy machine), so a test whose host was too slow
     /// runs again with twice the timeout, up to <see cref="LastTimeout"/>.
     /// </summary>
@@ -38,13 +38,13 @@ public sealed partial class PowerShellProcessRunnerTests
     private static readonly TimeSpan LastTimeout = TimeSpan.FromSeconds(40);
 
     private static string PowerShellPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
+        OperatingSystem.IsWindows()
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe")
+            : "pwsh";
 
     [Fact]
     public void Run_ScriptWritesBothStreams_ReturnsOutputAndExitCode()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
-
         PowerShellRunResult result = PowerShellProcessRunner.Run(
             PowerShellPath,
             CommandArguments("Write-Output 'out'; [Console]::Error.WriteLine('err'); exit 3"),
@@ -60,8 +60,6 @@ public sealed partial class PowerShellProcessRunnerTests
     [Fact]
     public void Run_DefaultWorkingDirectory_IsIsolatedUnderTemp()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
-
         PowerShellRunResult result = PowerShellProcessRunner.Run(
             PowerShellPath,
             CommandArguments("[Console]::WriteLine([Environment]::CurrentDirectory)"),
@@ -70,24 +68,35 @@ public sealed partial class PowerShellProcessRunnerTests
         Assert.Equal(0, result.ExitCode);
         string directory = result.StandardOutput.Trim();
         Assert.True(Path.IsPathFullyQualified(directory));
-        Assert.StartsWith(Path.GetFullPath(Path.GetTempPath()), directory, StringComparison.OrdinalIgnoreCase);
         Assert.NotEqual(Path.GetFullPath(Environment.CurrentDirectory), directory);
+        string expectedDirectory = Path.Combine(Path.GetFullPath(Path.GetTempPath()), Path.GetFileName(directory));
+        Assert.True(Directory.Exists(expectedDirectory), "The child's directory is absent under the parent temporary directory.");
+        string markerName = $"directory-identity-{Guid.NewGuid():N}";
+        string marker = Guid.NewGuid().ToString("N");
+        string markerPath = Path.Combine(expectedDirectory, markerName);
+        try
+        {
+            File.WriteAllText(markerPath, marker);
+            Assert.Equal(marker, File.ReadAllText(Path.Combine(directory, markerName)));
+        }
+        finally
+        {
+            File.Delete(markerPath);
+        }
     }
 
     [Fact]
     public void Run_ChildEnvironmentOverrides_PreserveInheritedEnvironmentAndLeaveParentUnchanged()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
-
         string variable = $"JDW_RUNNER_{Guid.NewGuid():N}";
         const string value = "child value with 'quotes' and $symbols";
-        string? inherited = Environment.GetEnvironmentVariable("SystemRoot");
+        string? inherited = Environment.GetEnvironmentVariable("PATH");
         Assert.NotNull(inherited);
         Assert.Null(Environment.GetEnvironmentVariable(variable));
 
         PowerShellRunResult result = PowerShellProcessRunner.Run(
             PowerShellPath,
-            CommandArguments($"[Console]::WriteLine([Environment]::GetEnvironmentVariable('{variable}')); [Console]::WriteLine([Environment]::GetEnvironmentVariable('SystemRoot'))"),
+            CommandArguments($"[Console]::WriteLine([Environment]::GetEnvironmentVariable('{variable}')); [Console]::WriteLine([Environment]::GetEnvironmentVariable('PATH'))"),
             TimeSpan.FromSeconds(60),
             environmentOverrides: new Dictionary<string, string> { [variable] = value });
 
@@ -96,16 +105,14 @@ public sealed partial class PowerShellProcessRunnerTests
         Assert.True(result.OutputComplete);
         Assert.Equal(value + Environment.NewLine + inherited + Environment.NewLine, result.StandardOutput);
         Assert.Null(Environment.GetEnvironmentVariable(variable));
-        Assert.Equal(inherited, Environment.GetEnvironmentVariable("SystemRoot"));
+        Assert.Equal(inherited, Environment.GetEnvironmentVariable("PATH"));
     }
 
     [Fact]
     public async Task Run_HostOutlivesTimeout_KillsHostAndGrandchild()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
-
-        // The host starts a ping that would run for two minutes and shares the host's output
-        // pipes, records the ping's process id, and sleeps for two minutes. The id goes to a
+        // The host starts a child that would run for two minutes and shares the host's output
+        // pipes, records the child's process id, and sleeps for two minutes. The id goes to a
         // file because the host's buffered output is lost when it is killed.
         for (TimeSpan timeout = FirstTimeout; ; timeout += timeout)
         {
@@ -113,7 +120,7 @@ public sealed partial class PowerShellProcessRunnerTests
             var stopwatch = Stopwatch.StartNew();
             PowerShellRunResult result = PowerShellProcessRunner.Run(
                 PowerShellPath,
-                CommandArguments(StartPingScript(pidPath) + "; Start-Sleep -Seconds 120"),
+                CommandArguments(StartChildScript(pidPath) + "; Start-Sleep -Seconds 120"),
                 timeout);
             stopwatch.Stop();
 
@@ -146,6 +153,7 @@ public sealed partial class PowerShellProcessRunnerTests
     }
 
     [Fact]
+    [Trait("Platform", "Windows")]
     [SupportedOSPlatform("windows")]
     public async Task Run_TimeoutCannotKillGrandchild_ReturnsTimedOutResult()
     {
@@ -167,7 +175,7 @@ public sealed partial class PowerShellProcessRunnerTests
             {
                 PowerShellRunResult result = RunWithoutPrivileges(() => PowerShellProcessRunner.Run(
                     PowerShellPath,
-                    CommandArguments(StartPingScript(pidPath) + "; Start-Sleep -Seconds 120"),
+                    CommandArguments(StartChildScript(pidPath) + "; Start-Sleep -Seconds 120"),
                     timeout,
                     drainTimeout: TimeSpan.FromSeconds(1)));
                 await stopGuard.CancelAsync();
@@ -197,6 +205,7 @@ public sealed partial class PowerShellProcessRunnerTests
     }
 
     [Fact]
+    [Trait("Platform", "Windows")]
     [SupportedOSPlatform("windows")]
     public async Task DenyTerminateOnceStartedAsync_ProcessAlreadyExited_ReturnsNull()
     {
@@ -224,6 +233,7 @@ public sealed partial class PowerShellProcessRunnerTests
     }
 
     [Fact]
+    [Trait("Platform", "Windows")]
     [SupportedOSPlatform("windows")]
     public async Task DenyTerminateOnceStartedAsync_ProcessExitsBeforeHandleOpens_ReturnsNull()
     {
@@ -262,15 +272,13 @@ public sealed partial class PowerShellProcessRunnerTests
     [Fact]
     public void Run_GrandchildKeepsPipeOpen_ReturnsAfterDrainTimeout()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
-
-        // The host exits at once, but the ping it started keeps the output pipes open for two
+        // The host exits at once, but the child it started keeps the output pipes open for two
         // minutes.
         string pidPath = Path.Combine(Path.GetTempPath(), $"ps-runner-{Guid.NewGuid():N}.txt");
         var stopwatch = Stopwatch.StartNew();
         PowerShellRunResult result = PowerShellProcessRunner.Run(
             PowerShellPath,
-            CommandArguments(StartPingScript(pidPath) + "; Write-Output 'host done'; exit 0"),
+            CommandArguments(StartChildScript(pidPath) + "; Write-Output 'host done'; exit 0"),
             TimeSpan.FromSeconds(90),
             drainTimeout: TimeSpan.FromSeconds(1));
         stopwatch.Stop();
@@ -297,8 +305,6 @@ public sealed partial class PowerShellProcessRunnerTests
     [Fact(DisableParallelization = true)]
     public void Run_ThreadPoolBusy_CapturesOutputBeforeDrainTimeout()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
-
         // Every thread-pool thread is blocked, with more work queued behind them, as can happen
         // when the whole suite runs in parallel. The lines the host writes before it exits must
         // still reach the result within the drain timeout. The test starves the pool, so it runs
@@ -331,8 +337,10 @@ public sealed partial class PowerShellProcessRunnerTests
     private static string[] CommandArguments(string script) =>
         ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script];
 
-    private static string StartPingScript(string pidPath) =>
-        "$p = Start-Process ping.exe -ArgumentList '-n','120','127.0.0.1' -NoNewWindow -PassThru; " +
+    private static string StartChildScript(string pidPath) =>
+        (OperatingSystem.IsWindows()
+            ? "$p = Start-Process ping.exe -ArgumentList '-n','120','127.0.0.1' -NoNewWindow -PassThru; "
+            : "$p = Start-Process nohup -ArgumentList 'sleep','120' -NoNewWindow -PassThru; ") +
         $"Set-Content -LiteralPath {AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(pidPath)} -Value $p.Id";
 
     private static int? ReadProcessId(string pidPath)

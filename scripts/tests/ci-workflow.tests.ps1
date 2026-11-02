@@ -26,6 +26,34 @@ function Get-CiJob([string] $Workflow, [string] $Name) {
     return $match.Groups['body'].Value
 }
 
+function Assert-WindowsProcessCoverage([string] $SkipPolicy) {
+    Assert-Contract ($SkipPolicy.Contains('JDW_TEST_PARTITION: ${{ matrix.partition }}')) 'Windows ordinary partitions must require all three process-DACL methods.'
+    $run = [regex]::Match($SkipPolicy, '(?ms)^        run: \|\n(?<body>.*)$').Groups['body'].Value
+    Assert-Contract (-not [string]::IsNullOrWhiteSpace($run)) 'Windows ordinary partitions must require all three process-DACL methods.'
+    $run = [regex]::Replace($run, '(?m)^          ', '').Replace('./scripts/assert-test-results.ps1', 'Assert-CapturedResults')
+    $expected = @(
+        'JetDatabaseWriter.Tests.Infrastructure.PowerShellProcessRunnerTests.Run_TimeoutCannotKillGrandchild_ReturnsTimedOutResult'
+        'JetDatabaseWriter.Tests.Infrastructure.PowerShellProcessRunnerTests.DenyTerminateOnceStartedAsync_ProcessAlreadyExited_ReturnsNull'
+        'JetDatabaseWriter.Tests.Infrastructure.PowerShellProcessRunnerTests.DenyTerminateOnceStartedAsync_ProcessExitsBeforeHandleOpens_ReturnsNull'
+    )
+    $calls = [Collections.Generic.List[object]]::new()
+    function Assert-CapturedResults([string] $ResultsDirectory, [string[]] $RequiredMethods) {
+        $calls.Add(@{ Directory = $ResultsDirectory; Methods = [string[]]$RequiredMethods })
+    }
+    $savedPartition = $env:JDW_TEST_PARTITION
+    try {
+        foreach ($framework in 'net11.0', 'net10.0-netstandard', 'net11.0-netstandard') {
+            foreach ($partition in 'ordinary', 'schema-writer', 'jet3', 'jet4', 'ace') {
+                $calls.Clear()
+                $env:JDW_TEST_PARTITION = $partition
+                $command = $run.Replace('${{ matrix.tf }}', $framework).Replace('${{ matrix.partition }}', $partition)
+                & ([scriptblock]::Create($command))
+                $required = if ($partition -eq 'ordinary') { $expected } else { @() }
+                Assert-Contract ($calls.Count -eq 1 -and $calls[0].Directory -ceq "artifacts/test-results/$framework-$partition" -and ((@($calls[0].Methods | Sort-Object -CaseSensitive) -join ';') -ceq (@($required | Sort-Object -CaseSensitive) -join ';'))) 'Windows ordinary partitions must require all three process-DACL methods, and other partitions must retain their ordinary validation.'
+            }
+        }
+    } finally { $env:JDW_TEST_PARTITION = $savedPartition }
+}
 function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProps, [xml] $TestProject, [object[]] $Lanes) {
     $events = [regex]::Match($Workflow, '(?ms)^on:\n(?<events>.*?)^permissions:\n').Groups['events'].Value
     Assert-Contract ($events -match '(?m)^  push:$' -and $events -match '(?m)^      - main$' -and $events -match '(?m)^  pull_request:$' -and $events -match '(?m)^  workflow_dispatch:$' -and $events -notmatch '(?m)^    paths(?:-ignore)?:') 'Push and PR triggers must retain the required gate for every content type; select jobs inside the workflow.'
@@ -140,6 +168,7 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract ($results.Contains('if: ${{ !cancelled() }}') -and $results.Contains('name: test-results-${{ matrix.tf }}-${{ matrix.partition }}') -and $results.Contains('path: artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}/')) 'Every partition must retain uniquely named test results after failures as well as successes.'
     $skipPolicy = [regex]::Match($test, '(?ms)^      - name: Validate test outcomes\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($skipPolicy.Contains('if: ${{ !cancelled() }}') -and $skipPolicy.Contains('shell: pwsh') -and $skipPolicy.Contains('./scripts/assert-test-results.ps1 -ResultsDirectory artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}')) 'Every ordinary partition must reject unapproved skips and missing or failed xUnit results.'
+    Assert-WindowsProcessCoverage $skipPolicy
     $golden = [regex]::Match($test, '(?ms)^      - name: Upload golden diagnostics\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($golden.Contains('if: ${{ !cancelled() }}') -and $golden.Contains('name: golden-bytes-${{ matrix.tf }}-${{ matrix.partition }}') -and $golden.Contains('path: artifacts/golden/${{ matrix.tf }}-${{ matrix.partition }}/')) 'Every partition must retain uniquely named golden diagnostics after failures as well as successes.'
     Assert-Contract ($Workflow -notmatch '(?i)infersharp') 'InferSharp must remain in its independent workflow.'
@@ -166,6 +195,10 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract ($package.Contains('name: nupkg') -and $package.Contains('path: artifacts/nupkg/*.nupkg') -and $package.Contains('if-no-files-found: error')) 'Documentation packaging must retain its package artifact.'
     $gate = Get-CiJob $Workflow 'gate'
     Assert-Contract ($gate.Contains('needs: [changes, checks, formal, analyze, test, native-access, aot, encryption-replacement, package]') -and $gate.Contains('if: ${{ !cancelled() }}') -and $gate.Contains('JDW_CI_NEEDS: ${{ toJSON(needs) }}') -and $gate.Contains('run: ./scripts/select-ci-lanes.ps1 -CheckResults')) 'The aggregate gate must reject failure and missing selected jobs while honoring workflow cancellation.'
+    $portableProcess = Get-CiJob $Workflow 'encryption-replacement'
+    $portableStep = [regex]::Match($portableProcess, '(?ms)^      - name: Test managed recovery, encryption replacement and linked-source boundaries\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    $focusedFilters = @([regex]::Matches($portableStep, '(?<!\S)--filter[\w-]*') | ForEach-Object Value | Sort-Object -CaseSensitive)
+    Assert-Contract ($portableStep.Contains('JetDatabaseWriter.Tests.Infrastructure.PowerShellProcessRunnerTests') -and ($focusedFilters -join ';') -ceq '--filter-class;--filter-not-trait' -and $portableStep -match '(?m)^          --filter-not-trait Platform=Windows$' -and $portableStep -notmatch '(?m)^        if:') 'Focused non-Windows CI must execute the portable process cases and exclude only the reviewed Windows platform trait.'
     $native = Get-CiJob $Workflow 'native-access'
     Assert-Contract ($native.Contains('name: Native Access compatibility (${{ matrix.tf }})') -and $native.Contains('needs: [changes, analyze]') -and $native.Contains('if: ${{ !cancelled() && needs.changes.outputs.dotnet == ''true'' }}') -and $native.Contains('runs-on: windows-latest') -and $native.Contains('timeout-minutes: 90') -and $native -notmatch 'continue-on-error:') 'Native compatibility must gate every selected .NET revision after its analyzed artifacts are available, including independent evidence after self-test failures.'
     Assert-Contract ($native.Contains('tf: [net11.0, net10.0-netstandard, net11.0-netstandard]') -and $native.Contains('global-json-file: global.json') -and $native.Contains('global-json-file: .github/dotnet11/global.json')) 'Native compatibility must cover all three runtime/library combinations.'
@@ -194,6 +227,12 @@ function Assert-MatrixScenario([string] $Name, [scriptblock] $Change, [string] $
 }
 
 Assert-Scenario 'hosted coverage and immediate validated binary execution' $workflow
+Assert-Scenario 'Windows process requirements omitted' ($workflow.Replace(' -RequiredMethods $requiredMethods', '')) 'Windows ordinary partitions must require all three process-DACL methods'
+Assert-Scenario 'Windows process requirement is incomplete' ($workflow.Replace('JetDatabaseWriter.Tests.Infrastructure.PowerShellProcessRunnerTests.Run_TimeoutCannotKillGrandchild_ReturnsTimedOutResult', 'Example.UnreviewedMethod')) 'Windows ordinary partitions must require all three process-DACL methods'
+Assert-Scenario 'Windows process requirements use wrong partitions' ($workflow.Replace("`$env:JDW_TEST_PARTITION -eq 'ordinary'", "`$env:JDW_TEST_PARTITION -ne 'ordinary'")) 'Windows ordinary partitions must require all three process-DACL methods'
+Assert-Scenario 'focused non-Windows process coverage omitted' ($workflow.Replace('          JetDatabaseWriter.Tests.Infrastructure.PowerShellProcessRunnerTests' + "`n", '')) 'Focused non-Windows CI must execute the portable process cases'
+Assert-Scenario 'focused non-Windows exclusion is broader' ($workflow.Replace('--filter-not-trait Platform=Windows', '--filter-not-trait Category=Fuzz')) 'Focused non-Windows CI must execute the portable process cases'
+Assert-Scenario 'focused non-Windows adds another exclusion' ($workflow.Replace('--filter-not-trait Platform=Windows', '--filter-not-trait Platform=Windows --filter-not-class Example')) 'Focused non-Windows CI must execute the portable process cases'
 Assert-Scenario 'runtime installation depends on runner image' ($workflow.Replace("          dotnet-version: 10.0.403`n", '')) 'must explicitly install the .NET 10 runtime'
 Assert-Scenario 'docs hidden from required push gate' ($workflow.Replace("  push:`n", "  push:`n    paths-ignore:`n      - '**.md'`n")) 'Push and PR triggers must retain the required gate'
 Assert-Scenario 'PR content filter suppresses required gate' ($workflow.Replace("  pull_request:`n", "  pull_request:`n    paths:`n      - 'src/**'`n")) 'Push and PR triggers must retain the required gate'

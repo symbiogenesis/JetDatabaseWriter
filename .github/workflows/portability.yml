@@ -107,6 +107,7 @@ jobs:
           dotnet test --test-modules JetDatabaseWriter.Tests.dll
           --root-directory tests/JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}
           --minimum-expected-tests 48
+          --filter-not-trait Platform=Windows
           --long-running 60 --xunit-diagnostics on --no-ansi --output Detailed --timeout 80m
           --report-xunit-xml --report-xunit-xml-filename tests.xml
           --results-directory artifacts/test-results/portability-${{ matrix.os }}-${{ matrix.tf }}

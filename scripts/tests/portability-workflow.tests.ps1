@@ -1,11 +1,12 @@
 # Keep automated portability coverage bound to the successful prerequisite main CI run.
 [CmdletBinding()]
-param([string] $WorkflowPath)
+param([string] $WorkflowPath, [string] $TestSourceRoot)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 if (-not $WorkflowPath) { $WorkflowPath = Join-Path $repoRoot '.github/workflows/portability.yml' }
 $workflow = [IO.File]::ReadAllText($WorkflowPath).Replace("`r`n", "`n")
+if (-not $TestSourceRoot) { $TestSourceRoot = Join-Path $repoRoot 'tests/JetDatabaseWriter.Tests' }
 
 function Assert-Contract([bool] $Condition, [string] $Message) {
     if (-not $Condition) { throw $Message }
@@ -18,6 +19,38 @@ function Get-WorkflowJob([string] $Workflow, [string] $Name) {
     return $match.Groups['body'].Value
 }
 
+function Assert-WindowsPlatformInventory([hashtable] $Sources) {
+    $expected = @(
+        'Run_TimeoutCannotKillGrandchild_ReturnsTimedOutResult'
+        'DenyTerminateOnceStartedAsync_ProcessAlreadyExited_ReturnsNull'
+        'DenyTerminateOnceStartedAsync_ProcessExitsBeforeHandleOpens_ReturnsNull'
+    )
+    $observed = [Collections.Generic.List[string]]::new()
+    $message = 'The Windows platform trait inventory must contain only the three reviewed process-DACL methods.'
+    foreach ($entry in $Sources.GetEnumerator()) {
+        $source = $entry.Value
+        Assert-Contract ($source -notmatch '\busing\s+\w+\s*=\s*(?:global::)?(?:Xunit\.)?Trait(?:Attribute)?\s*;') $message
+        foreach ($trait in [regex]::Matches($source, '\b(?:global::)?(?:[\w]+\.)*Trait(?:Attribute)?\s*\((?<arguments>[^)\r\n]*)\)')) {
+            # Literal arguments make every possible Platform=Windows assignment reviewable.
+            $arguments = [regex]::Match($trait.Groups['arguments'].Value, '^\s*"(?<name>[^"\r\n]+)"\s*,\s*"(?<value>[^"\r\n]+)"\s*$')
+            Assert-Contract $arguments.Success $message
+            if ($arguments.Groups['name'].Value -cne 'Platform') { continue }
+            Assert-Contract ($arguments.Groups['value'].Value -ceq 'Windows') $message
+            $tail = $source.Substring($trait.Index + $trait.Length)
+            $method = [regex]::Match($tail, '^(?:[\s\],]|\[[^\]]+\])*(?:public|internal)\s+(?:async\s+)?(?:void|Task|ValueTask)\s+(?<name>\w+)\s*\(')
+            Assert-Contract ($entry.Key -ceq 'Infrastructure/PowerShellProcessRunnerTests.cs' -and $method.Success -and $method.Groups['name'].Value -cin $expected) $message
+            $observed.Add($method.Groups['name'].Value)
+        }
+    }
+    Assert-Contract ((@($observed | Sort-Object -CaseSensitive) -join ';') -ceq (@($expected | Sort-Object -CaseSensitive) -join ';')) $message
+}
+
+function Assert-InventoryScenario([string] $Name, [hashtable] $Sources, [bool] $Refuse = $false) {
+    $caught = ''
+    try { Assert-WindowsPlatformInventory $Sources } catch { $caught = $_.Exception.Message }
+    Assert-Contract ($(if ($Refuse) { $caught.Contains('Windows platform trait inventory') } else { -not $caught })) "$Name failed: $caught"
+    "PASS: $Name"
+}
 function Assert-Workflow([string] $Workflow) {
     Assert-Contract ($Workflow.Contains("  workflow_run:`n    workflows: [CI]`n    types: [completed]`n    branches: [main]") -and $Workflow.Contains('  workflow_dispatch:')) 'Portability must run automatically after main CI and retain manual dispatch.'
     Assert-Contract ($Workflow.Contains('group: portability-${{ github.ref }}') -and $Workflow.Contains("cancel-in-progress: false`n  queue: max")) 'Portability must queue manual requests without discarding pending runs.'
@@ -36,7 +69,8 @@ function Assert-Workflow([string] $Workflow) {
     Assert-Contract ($test.Contains('os: [ubuntu-latest, macos-latest]') -and $test.Contains('tf: [net10.0, net11.0]') -and -not $test.Contains('windows-latest')) 'Portability must cover Linux and macOS on both runtimes without repeating prerequisite Windows tests.'
     Assert-Contract ($test.Contains('dotnet restore tests/JetDatabaseWriter.Tests --locked-mode -p:TestNetStandard=${{ matrix.tf == ''net10.0'' }}') -and $test.Contains('dotnet build tests/JetDatabaseWriter.Tests -c Release --no-restore -f ${{ matrix.tf }} -p:TestNetStandard=${{ matrix.tf == ''net10.0'' }} -p:RunAnalyzers=false')) 'Portability must build locked Release binaries without repeating prerequisite analyzers.'
     Assert-Contract ($test.Contains('global-json-file: .github/dotnet11/global.json') -and $test.Contains("JDW_EXPECTED_RUNTIME_MAJOR: `${{ matrix.tf == 'net11.0' && '11' || '10' }}") -and $test.Contains("DOTNET_ROLL_FORWARD: `${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}") -and $test.Contains("DOTNET_ROLL_FORWARD_TO_PRERELEASE: `${{ matrix.tf == 'net11.0' && '1' || '0' }}")) 'Portability must install, select and verify each intended runtime.'
-    Assert-Contract ($test.Contains('dotnet test --test-modules JetDatabaseWriter.Tests.dll') -and $test.Contains('--root-directory tests/JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}') -and $test.Contains('--minimum-expected-tests 48') -and $test -notmatch '--filter[- ]') 'Portability must run the complete built suite with a nonempty discovery guard.'
+    $portableFilters = @([regex]::Matches($test, '(?<!\S)--filter[\w-]*') | ForEach-Object Value)
+    Assert-Contract ($test.Contains('dotnet test --test-modules JetDatabaseWriter.Tests.dll') -and $test.Contains('--root-directory tests/JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}') -and $test.Contains('--minimum-expected-tests 48') -and $portableFilters.Count -eq 1 -and $portableFilters[0] -ceq '--filter-not-trait' -and $test -match '(?m)^          --filter-not-trait Platform=Windows$') 'Portability must run the complete built suite with a nonempty discovery guard.'
     Assert-Contract ($test.Contains('timeout-minutes: 90') -and $test.Contains('--timeout 80m')) 'Portability must allow bounded exhaustive fault sweeps to finish and retain diagnostics.'
     Assert-Contract ($test.Contains('--report-xunit-xml --report-xunit-xml-filename tests.xml') -and $test.Contains('--results-directory artifacts/test-results/portability-${{ matrix.os }}-${{ matrix.tf }}')) 'Portability must collect unique xUnit results for every OS and runtime.'
     $results = [regex]::Match($test, '(?ms)^      - name: Upload test results\n.*?(?=^      - |\z)').Value
@@ -55,7 +89,31 @@ function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedE
     "PASS: $Name"
 }
 
+$sources = @{}
+foreach ($file in Get-ChildItem -LiteralPath $TestSourceRoot -Filter '*.cs' -File -Recurse) {
+    $relative = [IO.Path]::GetRelativePath($TestSourceRoot, $file.FullName).Replace('\', '/')
+    if ($relative -notmatch '(?:^|/)(?:bin|obj)/') { $sources[$relative] = [IO.File]::ReadAllText($file.FullName) }
+}
+Assert-InventoryScenario 'exact Windows process-DACL trait inventory' $sources
+$missing = $sources.Clone()
+$processPath = 'Infrastructure/PowerShellProcessRunnerTests.cs'
+$missing[$processPath] = $missing[$processPath].Replace('[Trait("Platform", "Windows")]', '')
+Assert-InventoryScenario 'missing declared Windows case refused' $missing $true
+$future = $sources.Clone()
+$future['FutureWindowsTests.cs'] = '[Trait("Platform", "Windows")] public sealed class FutureWindowsTests { public void Other() { } }'
+Assert-InventoryScenario 'future class-wide platform exclusion refused' $future $true
+$future['FutureWindowsTests.cs'] = 'public sealed class FutureWindowsTests { [Xunit.Trait("Platform", "Windows")] public void Other() { } }'
+Assert-InventoryScenario 'future method platform exclusion refused' $future $true
+$future['FutureWindowsTests.cs'] = 'public sealed class FutureWindowsTests { [Trait("Platform", WindowsValue)] public void Other() { } }'
+Assert-InventoryScenario 'opaque platform assignment refused' $future $true
+$expanded = $sources.Clone()
+$expanded[$processPath] = $expanded[$processPath].Replace('public void Run_ScriptWritesBothStreams_ReturnsOutputAndExitCode()', '[Trait("Platform", "Windows")] public void Run_ScriptWritesBothStreams_ReturnsOutputAndExitCode()')
+Assert-InventoryScenario 'portable process case excluded from portability refused' $expanded $true
 Assert-Scenario 'complementary portability workflow' $workflow
+Assert-Scenario 'Windows-only platform exclusion omitted' ($workflow.Replace('          --filter-not-trait Platform=Windows' + "`n", '')) 'complete built suite'
+Assert-Scenario 'platform exclusion is broader' ($workflow.Replace('--filter-not-trait Platform=Windows', '--filter-not-trait Category=Fuzz')) 'complete built suite'
+Assert-Scenario 'platform exclusion adds values' ($workflow.Replace('--filter-not-trait Platform=Windows', '--filter-not-trait Platform=Windows Category=Fuzz')) 'complete built suite'
+Assert-Scenario 'platform exclusion adds filters' ($workflow.Replace('--filter-not-trait Platform=Windows', '--filter-not-trait Platform=Windows --filter-not-method Example')) 'complete built suite'
 Assert-Scenario 'runtime installation depends on runner image' ($workflow.Replace("          dotnet-version: 10.0.403`n", '')) 'must explicitly install the .NET 10 runtime'
 Assert-Scenario 'pending manual runs discarded' ($workflow.Replace('  queue: max', '  queue: single')) 'queue manual requests'
 Assert-Scenario 'checkout credentials retained' ($workflow.Replace('persist-credentials: false', 'persist-credentials: true')) 'checkouts must not persist credentials'

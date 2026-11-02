@@ -234,7 +234,18 @@ jobs:
       - name: Validate test outcomes
         if: ${{ !cancelled() }}
         shell: pwsh
-        run: ./scripts/assert-test-results.ps1 -ResultsDirectory artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}
+        env:
+          JDW_TEST_PARTITION: ${{ matrix.partition }}
+        run: |
+          [string[]] $requiredMethods = @()
+          if ($env:JDW_TEST_PARTITION -eq 'ordinary') {
+            $requiredMethods = @(
+              'JetDatabaseWriter.Tests.Infrastructure.PowerShellProcessRunnerTests.Run_TimeoutCannotKillGrandchild_ReturnsTimedOutResult'
+              'JetDatabaseWriter.Tests.Infrastructure.PowerShellProcessRunnerTests.DenyTerminateOnceStartedAsync_ProcessAlreadyExited_ReturnsNull'
+              'JetDatabaseWriter.Tests.Infrastructure.PowerShellProcessRunnerTests.DenyTerminateOnceStartedAsync_ProcessExitsBeforeHandleOpens_ReturnsNull'
+            )
+          }
+          ./scripts/assert-test-results.ps1 -ResultsDirectory artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }} -RequiredMethods $requiredMethods
 
       - name: Upload test results
         if: ${{ !cancelled() }}
@@ -405,6 +416,7 @@ jobs:
           dotnet test --project tests/JetDatabaseWriter.Tests -c Release --no-build -f ${{ matrix.tf }} -p:TestNetStandard=${{ matrix.tf == 'net10.0' }}
           --filter-class JetDatabaseWriter.Tests.Infrastructure.LibraryTargetTests
           JetDatabaseWriter.Tests.Infrastructure.GuardTests
+          JetDatabaseWriter.Tests.Infrastructure.PowerShellProcessRunnerTests
           JetDatabaseWriter.Tests.Encryption.AtomicReplacementTests
           JetDatabaseWriter.Tests.Encryption.ReplacementCancellationTests
           JetDatabaseWriter.Tests.Encryption.ReplacementDurabilityTests
@@ -433,6 +445,7 @@ jobs:
           JetDatabaseWriter.Tests.Relationships.LinkedSourceCapabilityTests
           JetDatabaseWriter.Tests.Relationships.LinkedSourceSecurityTests
           JetDatabaseWriter.Tests.Relationships.SystemLinkedExecutionTests
+          --filter-not-trait Platform=Windows
 
   gate:
     name: CI gate
