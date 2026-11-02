@@ -152,6 +152,8 @@ The shared primitive boundary covers range admission, slice composition and posi
 
 Production buffer slices and exact-read adapters use these decisions on both library targets. The bounds and cursor decisions are total on their native input domains. Exact source-byte acquisition additionally depends on the stream's read-effect contract: a successful read supplies the reported next source prefix and does not mutate outside its requested destination. EOF, cancellation and exceptions remain effectful outcomes; a proof about successful chunks does not establish filesystem persistence or arbitrary custom-stream behavior. Parser traversal, aggregate allocation budgets and format interpretation remain separate obligations.
 
+`StreamPageStore.ReadAsync` also uses the shared range decision against the current stream length inside its seek gate, refusing unavailable bytes before a seek. `PageStoreTests` exercises that boundary, and public reader regressions cover out-of-file table-definition links in Jet4 and ACE databases. Pending transaction pages retain their separate pager path; positional file reads retain their exact-read EOF handling. Meaningful stream length, exclusive store ownership or an unchanged reader snapshot, returned I/O effects and complete parser correspondence remain implementation contracts.
+
 ## Row read admission
 
 The generated row-read boundary supplies `RowReadDisposition`, saturating

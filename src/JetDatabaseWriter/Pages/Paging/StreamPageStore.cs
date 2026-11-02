@@ -110,6 +110,11 @@ internal class StreamPageStore : IPageStore
         await this.ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (!BinaryBuffer.IsRange(this.Stream.Length, offset, buffer.Length))
+            {
+                throw new EndOfStreamException();
+            }
+
             _ = this.Stream.Seek(offset, SeekOrigin.Begin);
             if (inline)
             {

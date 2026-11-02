@@ -24,7 +24,7 @@
     "src/JetDatabaseWriter/ValueDecoding/RowMapper.cs": "ee9f04d270c9964f5bce0cbfdef01bc3bc858a6f72265004d18e1a316f146b18",
     "src/JetDatabaseWriter/WriterServices.cs": "2a26c9e395250e7046f79d5c31088c60ade0ee182c07135c14985ff5c718b87c",
     "src/JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs": "1cdc9c6f3eeb302076288377751880278513569d5f202ab3447e38db84670152",
-    "src/JetDatabaseWriter/Pages/Paging/StreamPageStore.cs": "64c36259a79cb85367b7a2effb69c76a873179736097d56ec46f49f7e2fce0d2",
+    "src/JetDatabaseWriter/Pages/Paging/StreamPageStore.cs": "c9dba39c8e0498ab864a6afb54cf1714ae601a7616809954f2d4f1ce2c38b488",
     "src/JetDatabaseWriter/Relationships/LinkedTextSourceStream.cs": "42e29a44ddc7c995df717c9d8291dddd248ee9719d9d8f67173166fb6945e583",
     "src/JetDatabaseWriter/AccessWriterOptions.cs": "d854eb31a053c9f13928bfa613493cb7915478cf9e0db43ea04609c574ed9d8e",
     "src/JetDatabaseWriter/AccessWriter.cs": "6564962c7734aac7bde70d61773cde434c0f2fe7f6aa462e33133fc5ca889047",

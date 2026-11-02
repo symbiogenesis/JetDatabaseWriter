@@ -44,6 +44,46 @@ public sealed class PageStoreTests
         await store.ReadAsync(0, new byte[16], inline, TestContext.Current.CancellationToken);
     }
 
+    /// <summary>Out-of-file reads fail before a stream-specific seek can reject a large offset.</summary>
+    /// <param name="offset">The requested byte offset.</param>
+    /// <param name="inline">Whether to use synchronous reads.</param>
+    [Theory]
+    [InlineData(3L, false)]
+    [InlineData(3L, true)]
+    [InlineData(4L, false)]
+    [InlineData(4L, true)]
+    [InlineData(17_592_186_040_320L, false)]
+    [InlineData(17_592_186_040_320L, true)]
+    [InlineData(long.MaxValue - 2, false)]
+    [InlineData(long.MaxValue - 2, true)]
+    public async Task OutOfFileRead_RefusesBeforeSeekAndLeavesStoreUsable(long offset, bool inline)
+    {
+        await using var stream = new MemoryStream([1, 2, 3, 4]);
+        await using var store = new StreamPageStore(stream, leaveOpen: true);
+        stream.Position = 1;
+        byte[] rejected = [255, 254];
+        await Assert.ThrowsAsync<EndOfStreamException>(async () =>
+            await store.ReadAsync(offset, rejected, inline, TestContext.Current.CancellationToken));
+        Assert.Equal(1, stream.Position);
+        Assert.Equal(new byte[] { 255, 254 }, rejected);
+        byte[] valid = new byte[2];
+        await store.ReadAsync(0, valid, inline, TestContext.Current.CancellationToken);
+        Assert.Equal(new byte[] { 1, 2 }, valid);
+    }
+
+    /// <summary>Invalid arithmetic ranges retain the store's argument contract.</summary>
+    /// <param name="offset">The negative or overflowing offset.</param>
+    [Theory]
+    [InlineData(-1L)]
+    [InlineData(long.MaxValue)]
+    public async Task InvalidReadRange_ThrowsArgumentOutOfRange(long offset)
+    {
+        await using var stream = new MemoryStream([1, 2, 3, 4]);
+        await using var store = new StreamPageStore(stream, leaveOpen: true);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
+            await store.ReadAsync(offset, new byte[2], false, TestContext.Current.CancellationToken));
+    }
+
     /// <summary>Both read paths fill the requested buffer when a stream returns partial reads.</summary>
     /// <param name="inline">Whether to use synchronous reads.</param>
     [Theory]

@@ -1,10 +1,14 @@
 namespace JetDatabaseWriter.Tests.Fuzz;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
+using JetDatabaseWriter.TestSupport;
 using Xunit;
 
 #pragma warning disable CA5394 // System.Random is fine — no security context here, just deterministic fuzz seeds.
@@ -152,6 +156,43 @@ public sealed class AccessReaderFuzzRobustnessTests
             Array.Copy(golden, truncated, cut);
             await TryParseAsync(truncated, TestContext.Current.CancellationToken);
         }
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task Schema_TDefContinuationBeyondFile_ThrowsEndOfStream(DatabaseFormat format)
+    {
+        await using var seed = new MemoryStream();
+        long definitionPage;
+        int pageSize;
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            seed, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
+            CatalogEntry? entry = await writer.Services.Catalog.GetCatalogEntryAsync("T", TestContext.Current.CancellationToken);
+            Assert.NotNull(entry);
+            definitionPage = entry.TDefPage;
+            pageSize = writer.Database.Format.PageSize;
+        }
+
+        await using (var valid = new PageTraceStream(seed, pageSize))
+        await using (AccessReader reader = await AccessReader.OpenAsync(
+            valid, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            Assert.Single(await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken));
+        }
+
+        byte[] mutated = seed.ToArray();
+        BinaryPrimitives.WriteUInt32LittleEndian(mutated.AsSpan(checked((int)(definitionPage * pageSize)) + 4, 4), uint.MaxValue);
+        await using var memory = new MemoryStream(mutated, writable: false);
+        await using var source = new PageTraceStream(memory, pageSize);
+        await Assert.ThrowsAsync<EndOfStreamException>(async () =>
+        {
+            await using AccessReader reader = await AccessReader.OpenAsync(
+                source, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+            _ = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
+        });
     }
 
     /// <summary>
