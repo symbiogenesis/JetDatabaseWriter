@@ -98,7 +98,7 @@ function Assert-ReleaseJobs($Run, [string] $Kind) {
         if ($Kind -eq 'ci' -and $job.name -cnotin $required) {
             # The aggregate CI gate checks the content-selected optional lane inventory.
             # Unexpanded skipped matrices have no matrix values in their display names.
-            $skippedMatrix = $job.name -cin 'Analyze ()', 'Test ()' -and $job.conclusion -ceq 'skipped'
+            $skippedMatrix = $job.name -cin 'Analyze ()', 'Test ()', 'Native Access compatibility ()', 'Encryption replacement (, )' -and $job.conclusion -ceq 'skipped'
             if (($job.name -cnotin $optionalCiJobs -and -not $skippedMatrix) -or $job.conclusion -cnotin 'success', 'skipped') {
                 throw 'Unrecognized or unsuccessful CI job inventory.'
             }

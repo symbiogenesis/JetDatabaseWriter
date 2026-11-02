@@ -36,6 +36,7 @@ function Reset-Context {
     }
     $context.JobStatus = 'completed'
     $context.JobConclusion = 'success'
+    $context.SkippedJobs = @()
     $context.ReceiptOverride = @{}
     $context.ArtifactRunOverride = $null
     $context.CountOverride = $null
@@ -69,7 +70,7 @@ function Invoke-RestMethod {
     if ($Uri -match '/actions/runs/(\d+)/jobs\?filter=latest&per_page=100&page=(\d+)$') {
         $runId = [long]$Matches[1]; $page = [int]$Matches[2]
         $kind = switch ($runId) { 10 { 'ci' }; 20 { 'fuzz' }; 30 { 'portability' }; default { throw "Unexpected run $runId." } }
-        $jobs = @($context.Jobs[$kind] | ForEach-Object { @{ name = $_; status = $context.JobStatus; conclusion = $context.JobConclusion } })
+        $jobs = @($context.Jobs[$kind] | ForEach-Object { @{ name = $_; status = $context.JobStatus; conclusion = $(if ($_ -cin $context.SkippedJobs) { 'skipped' } else { $context.JobConclusion }) } })
         return @{ total_count = $jobs.Count; jobs = @($jobs | Select-Object -Skip (($page - 1) * 100) -First 100) }
     }
     if ($Uri -match '/actions/runs/(20|30)/artifacts\?per_page=100&page=(\d+)$') {
@@ -143,6 +144,15 @@ try {
     }
     $context.Comparison = 'identical'
     Assert-Scenario 'published main tip accepts the same evidence'
+    Reset-Context
+    $context.SkippedJobs = @('Analyze ()', 'Test ()', 'Native Access compatibility ()', 'Encryption replacement (, )')
+    $context.Jobs.ci += $context.SkippedJobs + @('Verify recovery models (Dafny)')
+    Assert-Scenario 'proof-only CI accepts all known unexpanded skipped matrices'
+    foreach ($name in 'Native Access compatibility ()', 'Encryption replacement (, )') {
+        Reset-Context
+        $context.Jobs.ci += $name
+        Assert-Scenario 'unexpanded matrix cannot report success' 'Unrecognized or unsuccessful CI'
+    }
     foreach ($comparison in 'behind', 'diverged') {
         Reset-Context; $context.Comparison = $comparison
         Assert-Scenario "$comparison commit is refused" 'published main history'
