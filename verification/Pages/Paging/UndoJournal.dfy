@@ -188,16 +188,36 @@ module UndoJournal {
     ensures Authorized(original, torn, intents, minimumLength, recovering)
   { }
 
+  // Keep one named byte-mixture proposition across replay composition calls.
+  // Pointwise owners reveal its definition; adapters retain the same atom.
+  opaque ghost predicate ReplayContentMixture(original: seq<Byte>, before: seq<Byte>, after: seq<Byte>,
+      minimumLength: nat, recovering: bool) {
+    forall i: nat :: i < |after| ==>
+      (i < |before| && after[i] == before[i]) ||
+      (i < |original| && after[i] == original[i]) ||
+      (recovering && i >= minimumLength && after[i] == 0)
+  }
+
+  lemma ReplayContentMixtureIsExact(original: seq<Byte>, before: seq<Byte>, after: seq<Byte>,
+      minimumLength: nat, recovering: bool)
+    ensures ReplayContentMixture(original, before, after, minimumLength, recovering) <==>
+      (forall i: nat :: i < |after| ==>
+        (i < |before| && after[i] == before[i]) ||
+        (i < |original| && after[i] == original[i]) ||
+        (recovering && i >= minimumLength && after[i] == 0))
+  {
+    reveal ReplayContentMixture();
+  }
+
   lemma ReplayMixtureRemainsAuthorized(
       original: seq<Byte>, before: seq<Byte>, after: seq<Byte>,
       intents: map<nat, set<Byte>>, minimumLength: nat, recovering: bool)
     requires Authorized(original, before, intents, minimumLength, recovering)
-    requires forall i: nat :: i < |after| ==>
-      (i < |before| && after[i] == before[i]) ||
-      (i < |original| && after[i] == original[i]) ||
-      (recovering && i >= minimumLength && after[i] == 0)
+    requires ReplayContentMixture(original, before, after, minimumLength, recovering)
     ensures Authorized(original, after, intents, minimumLength, recovering)
-  { }
+  {
+    reveal ReplayContentMixture();
+  }
 
   // Combines the undo invariant with content validation, including zero-filled
   // gaps created by partial replay. Capturing every byte of the removed tail
@@ -209,13 +229,11 @@ module UndoJournal {
     requires Authorized(original, before, intents, minimumLength, recovering)
     requires forall i: nat :: minimumLength <= i < |original| ==> i in saved
     requires Min(|before|, |original|) <= |after|
-    requires forall i: nat :: i < |after| ==>
-      (i < |before| && after[i] == before[i]) ||
-      (i < |original| && after[i] == original[i]) ||
-      (recovering && i >= minimumLength && after[i] == 0)
+    requires ReplayContentMixture(original, before, after, minimumLength, recovering)
     ensures Recoverable(original, after, saved)
     ensures Authorized(original, after, intents, minimumLength, recovering)
   {
+    reveal ReplayContentMixture();
     forall i: nat | i < |before| && i < |original| && i !in saved
       ensures after[i] == before[i]
     {
@@ -857,6 +875,10 @@ module UndoJournal {
     assert Covered(complete, 2, 0, 2);
     assert complete == [BeforeImage(0, 1), BeforeImage(1, 2), LengthIntent(0)];
     assert LengthIntent(0) in complete;
+    var good := ProtocolState([1, 2], complete, 3, false, Active, false, false, false, 0);
+    assert DurableRecords(good) == complete;
+    assert Min(|good.db|, 0) == 0;
+    assert ProtocolEnabled([1, 2], good, MutateLength(0, 0));
     var bad := ProtocolState([1, 2], missing, 2, false, Active, false, false, false, 0);
     assert DurableRecords(bad) == missing;
     if ProtocolEnabled([1, 2], bad, MutateLength(0, 0)) {
@@ -1990,10 +2012,7 @@ module UndoJournal {
     requires AdmittedByRecords(original, before, records, minimumLength, recovering)
     requires forall i: nat :: minimumLength <= i < |original| ==> i in saved
     requires Min(|before|, |original|) <= |after|
-    requires forall i: nat :: i < |after| ==>
-      (i < |before| && after[i] == before[i]) ||
-      (i < |original| && after[i] == original[i]) ||
-      (recovering && i >= minimumLength && after[i] == 0)
+    requires ReplayContentMixture(original, before, after, minimumLength, recovering)
     ensures Recoverable(original, after, saved)
     ensures AdmittedByRecords(original, after, records, minimumLength, recovering)
   {
@@ -2003,13 +2022,22 @@ module UndoJournal {
     RecordedAdmissionIsAuthorization(original, after, records, minimumLength, recovering);
   }
 
-  predicate AdmittedReplayMutation(original: seq<Byte>, before: seq<Byte>, after: seq<Byte>,
+  ghost predicate AdmittedReplayMutation(original: seq<Byte>, before: seq<Byte>, after: seq<Byte>,
       minimumLength: nat, recovering: bool) {
     Min(|before|, |original|) <= |after| &&
-    forall i: nat :: i < |after| ==>
-      (i < |before| && after[i] == before[i]) ||
-      (i < |original| && after[i] == original[i]) ||
-      (recovering && i >= minimumLength && after[i] == 0)
+    ReplayContentMixture(original, before, after, minimumLength, recovering)
+  }
+
+  lemma AdmittedReplayMutationIsExact(original: seq<Byte>, before: seq<Byte>, after: seq<Byte>,
+      minimumLength: nat, recovering: bool)
+    ensures AdmittedReplayMutation(original, before, after, minimumLength, recovering) <==>
+      (Min(|before|, |original|) <= |after| &&
+        (forall i: nat :: i < |after| ==>
+          (i < |before| && after[i] == before[i]) ||
+          (i < |original| && after[i] == original[i]) ||
+          (recovering && i >= minimumLength && after[i] == 0)))
+  {
+    reveal ReplayContentMixture();
   }
 
   // Arbitrarily many finite interruptions retain both record-derived content
