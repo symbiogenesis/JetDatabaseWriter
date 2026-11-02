@@ -181,7 +181,7 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/AccessWriter.cs",
-        "line": 576,
+        "line": 575,
         "fingerprint": "e3c8699192fd2e0fc682974b2a829d5e",
         "symbol": "AccessWriter.cs|RewriteNativeSecurityAsync|PULSE_RESOURCE_LEAK",
         "reason": "RewriteNativeSecurityAsync owns services in a synchronous using declaration spanning the awaited rewrite. WriterServices.Dispose explicitly disposes SnapshotPages, whose Dispose releases cache frame ownership. InferSharp loses the using cleanup across the async state machine; the borrowed database and pager remain owned by the caller."
@@ -189,7 +189,7 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/AccessWriter.cs",
-        "line": 576,
+        "line": 575,
         "fingerprint": "53855c432d5091750b4bacc396d4f694",
         "symbol": "AccessWriter.cs|RewriteNativeSecurityAsync|PULSE_RESOURCE_LEAK",
         "reason": "TransactionLifecycle.mutationGate is not explicitly disposed. It is private, never exposed, and its only uses are WaitAsync and finally Release; no AvailableWaitHandle or synchronous Wait is called. It therefore owns no OS wait handle: .NET allocates that event only in AvailableWaitHandle (https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/Threading/SemaphoreSlim.cs). RunDisposalAsync serializes teardown through the same gate, and each successful acquisition releases in finally, including queued calls after teardown. The remaining gate/awaiter graph is managed and collectible; disposing the gate during teardown would conflict with pending releases."
@@ -327,7 +327,7 @@
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
         "path": "src/JetDatabaseWriter/Tables/TableReader.cs",
-        "line": 210,
+        "line": 213,
         "fingerprint": "960b2d6fa871085df6936ae275710457",
         "symbol": "TableReader.cs|ThrowIfLinkedExecutionUnavailableAsync|THREAD_SAFETY_VIOLATION",
         "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
@@ -335,7 +335,7 @@
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
         "path": "src/JetDatabaseWriter/Tables/TableReader.cs",
-        "line": 218,
+        "line": 221,
         "fingerprint": "8d76eed9edacfe9f7d1d6b8dcc41fd1a",
         "symbol": "TableReader.cs|ResolveLocalTableAsync|THREAD_SAFETY_VIOLATION",
         "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
@@ -343,7 +343,7 @@
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
         "path": "src/JetDatabaseWriter/Tables/TableReader.cs",
-        "line": 230,
+        "line": 233,
         "fingerprint": "bd35ff4ea75b7db652fd9d30423513b3",
         "symbol": "TableReader.cs|ThrowIfLinkedLocalReadAsync|THREAD_SAFETY_VIOLATION",
         "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
@@ -351,7 +351,7 @@
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
         "path": "src/JetDatabaseWriter/Tables/TableReader.cs",
-        "line": 256,
+        "line": 259,
         "fingerprint": "319f863f209b3ff0ff6f409a387e9dcf",
         "symbol": "TableReader.cs|ReadFirstTableAsStringsAsync|THREAD_SAFETY_VIOLATION",
         "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
@@ -359,15 +359,15 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/Tables/TableReader.cs",
-        "line": 256,
+        "line": 259,
         "fingerprint": "45b0178912f299d4cfda72a10c586c8e",
         "symbol": "TableReader.cs|ReadFirstTableAsStringsAsync|PULSE_RESOURCE_LEAK",
-        "reason": "The trace follows DataTable allocation in ReadTableAsStringsAsync at line 553 through the immediate awaited return in ReadFirstTableAsStringsAsync at line 256. ReadTableAsStringsAsync owns the table in try/finally and disposes it if strict decoding or any other operation fails; only a successful return clears its local owner. ReadFirstTableAsStringsAsync immediately transfers the returned table to its caller. ReadSurfaceConsistencyTests.ReadFirstTableAsStrings_CalculatedColumns_MatchesReadTableAsStrings uses using DataTable for both public results, demonstrating caller disposal. InferSharp loses this interprocedural awaited-return ownership transfer."
+        "reason": "The trace follows DataTable allocation in ReadTableAsStringsAsync at line 556 through the immediate awaited return in ReadFirstTableAsStringsAsync at line 259. ReadTableAsStringsAsync owns the table in try/finally and disposes it if strict decoding or any other operation fails; only a successful return clears its local owner. ReadFirstTableAsStringsAsync immediately transfers the returned table to its caller. ReadSurfaceConsistencyTests.ReadFirstTableAsStrings_CalculatedColumns_MatchesReadTableAsStrings uses using DataTable for both public results, demonstrating caller disposal. InferSharp loses this interprocedural awaited-return ownership transfer."
       },
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
         "path": "src/JetDatabaseWriter/Tables/TableReader.cs",
-        "line": 497,
+        "line": 500,
         "fingerprint": "b6890118a22f55d10cd55e74efcddb27",
         "symbol": "TableReader.cs|ReadTableAsync|THREAD_SAFETY_VIOLATION",
         "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
@@ -375,7 +375,7 @@
       {
         "ruleId": "THREAD_SAFETY_VIOLATION",
         "path": "src/JetDatabaseWriter/Tables/TableReader.cs",
-        "line": 538,
+        "line": 541,
         "fingerprint": "f421c30303e50632b325d84e9f25fc04",
         "symbol": "TableReader.cs|ReadTableAsStringsAsync|THREAD_SAFETY_VIOLATION",
         "reason": "The reported TableDefReader.<>O.<0>__Return field is the compiler-generated cache for the static PageBuffers.Return method-group delegate. Concurrent initialization creates equivalent immutable delegates, not mutable database state."
@@ -463,7 +463,7 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/AccessWriter.cs",
-        "line": 576,
+        "line": 575,
         "fingerprint": "e3c8699192fd2e0fc682974b2a829d5e",
         "symbol": "AccessWriter.cs|RewriteNativeSecurityAsync|PULSE_RESOURCE_LEAK",
         "reason": "RewriteNativeSecurityAsync owns services in a synchronous using declaration spanning the awaited rewrite. WriterServices.Dispose explicitly disposes SnapshotPages, whose Dispose releases cache frame ownership. InferSharp loses the using cleanup across the async state machine; the borrowed database and pager remain owned by the caller."
@@ -471,7 +471,7 @@
       {
         "ruleId": "PULSE_RESOURCE_LEAK",
         "path": "src/JetDatabaseWriter/AccessWriter.cs",
-        "line": 576,
+        "line": 575,
         "fingerprint": "53855c432d5091750b4bacc396d4f694",
         "symbol": "AccessWriter.cs|RewriteNativeSecurityAsync|PULSE_RESOURCE_LEAK",
         "reason": "TransactionLifecycle.mutationGate is not explicitly disposed. It is private, never exposed, and its only uses are WaitAsync and finally Release; no AvailableWaitHandle or synchronous Wait is called. It therefore owns no OS wait handle: .NET allocates that event only in AvailableWaitHandle (https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/Threading/SemaphoreSlim.cs). RunDisposalAsync serializes teardown through the same gate, and each successful acquisition releases in finally, including queued calls after teardown. The remaining gate/awaiter graph is managed and collectible; disposing the gate during teardown would conflict with pending releases."
