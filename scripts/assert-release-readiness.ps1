@@ -28,7 +28,7 @@ function Get-ReleasePages([string] $Uri, [string] $Property) {
     $items = [Collections.Generic.List[object]]::new()
     $total = $null
     for ($page = 1; ; $page++) {
-        $response = Invoke-RestMethod -Uri "$Uri&page=$page" -Headers $headers
+        $response = Invoke-RestMethod -Uri "$Uri&page=$page" -Headers $headers -TimeoutSec 60
         $batch = @($response.$Property)
         if ($null -eq $response.total_count -or $response.total_count -lt 0 -or $batch.Count -gt 100 -or
             ($null -ne $total -and $response.total_count -ne $total)) { throw 'Incomplete GitHub evidence response.' }
@@ -44,7 +44,7 @@ function Get-ReleasePages([string] $Uri, [string] $Property) {
 }
 
 function Get-ReleaseRun([string] $Kind) {
-    $workflow = Invoke-RestMethod -Uri "$api/actions/workflows/$Kind.yml" -Headers $headers
+    $workflow = Invoke-RestMethod -Uri "$api/actions/workflows/$Kind.yml" -Headers $headers -TimeoutSec 60
     if ($workflow.id -le 0 -or $workflow.path -cne ".github/workflows/$Kind.yml") { throw "Unexpected $Kind workflow identity." }
     # GitHub caps filtered run searches at 1,000 results. Campaign target titles
     # require local filtering, so enumerate their uncapped workflow history.
@@ -121,15 +121,26 @@ function Assert-ReleaseReceipt($Run, [string] $Kind) {
     [IO.Directory]::CreateDirectory($directory) | Out-Null
     try {
         $path = Join-Path $directory 'evidence.zip'
-        Invoke-WebRequest -Uri "$api/actions/artifacts/$($matching[0].id)/zip" -Headers $headers -OutFile $path | Out-Null
+        Invoke-WebRequest -Uri "$api/actions/artifacts/$($matching[0].id)/zip" -Headers $headers -OutFile $path -TimeoutSec 60 | Out-Null
         if ([IO.FileInfo]::new($path).Length -gt 1048576) { throw "Invalid $Kind receipt archive size." }
         $archive = [IO.Compression.ZipFile]::OpenRead($path)
         try {
             if ($archive.Entries.Count -ne 1 -or $archive.Entries[0].FullName -cne 'receipt.json' -or $archive.Entries[0].Length -gt 16384) {
                 throw "Invalid $Kind receipt archive."
             }
-            $reader = [IO.StreamReader]::new($archive.Entries[0].Open())
-            try { $receipt = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+            $payload = $archive.Entries[0].Open()
+            try {
+                $bytes = [byte[]]::new(16385)
+                $length = 0
+                while ($length -lt $bytes.Length) {
+                    $read = $payload.Read($bytes, $length, $bytes.Length - $length)
+                    if ($read -eq 0) { break }
+                    $length += $read
+                }
+                if ($length -gt 16384 -or $length -ne $archive.Entries[0].Length) { throw "Invalid $Kind receipt archive payload size." }
+                try { $receipt = [Text.UTF8Encoding]::new($false, $true).GetString($bytes, 0, $length) | ConvertFrom-Json }
+                catch { throw "Invalid $Kind receipt archive content." }
+            } finally { $payload.Dispose() }
         } finally { $archive.Dispose() }
         $numericSchema = $receipt.schemaVersion -is [int] -or $receipt.schemaVersion -is [long]
         $numericRun = $receipt.runId -is [int] -or $receipt.runId -is [long]
@@ -146,9 +157,9 @@ function Assert-ReleaseReceipt($Run, [string] $Kind) {
     }
 }
 
-$main = Invoke-RestMethod -Uri "$api/git/ref/heads/main" -Headers $headers
+$main = Invoke-RestMethod -Uri "$api/git/ref/heads/main" -Headers $headers -TimeoutSec 60
 if ($main.object.sha -cnotmatch '^[0-9a-f]{40}$') { throw 'Published main could not be resolved.' }
-$comparison = Invoke-RestMethod -Uri "$api/compare/$Sha...$($main.object.sha)" -Headers $headers
+$comparison = Invoke-RestMethod -Uri "$api/compare/$Sha...$($main.object.sha)" -Headers $headers -TimeoutSec 60
 if ($comparison.status -cnotin 'ahead', 'identical' -or $comparison.merge_base_commit.sha -cne $Sha) {
     throw "Revision $Sha is not in published main history."
 }

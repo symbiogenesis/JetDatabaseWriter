@@ -43,11 +43,13 @@ function Reset-Context {
     $context.ArchiveEntryName = 'receipt.json'
     $context.ArtifactSize = 512
     $context.EnforceSearchCap = $false
+    $context.ForgeEntryLength = $false
 }
 
 function Invoke-RestMethod {
-    param([string] $Uri, $Headers, [string] $Method = 'Get')
+    param([string] $Uri, $Headers, [string] $Method = 'Get', [int] $TimeoutSec)
     if ($Method -ne 'Get' -or $Headers.Authorization -ne 'Bearer mock-token') { throw 'Expected authenticated read-only API requests.' }
+    if ($TimeoutSec -ne 60) { throw 'Expected a bounded evidence API timeout.' }
     $context.Calls.Add($Uri)
     if ($context.ApiFailure) { throw 'Synthetic API failure.' }
     if ($Uri -eq 'https://api.github.com/repos/example/repo/git/ref/heads/main') { return @{ object = @{ sha = $mainSha } } }
@@ -86,8 +88,9 @@ function Invoke-RestMethod {
 }
 
 function Invoke-WebRequest {
-    param([string] $Uri, $Headers, [string] $OutFile, [string] $Method = 'Get')
+    param([string] $Uri, $Headers, [string] $OutFile, [string] $Method = 'Get', [int] $TimeoutSec)
     if ($Method -ne 'Get' -or $Headers.Authorization -ne 'Bearer mock-token') { throw 'Expected authenticated artifact download.' }
+    if ($TimeoutSec -ne 60) { throw 'Expected a bounded receipt download timeout.' }
     $context.Calls.Add($Uri)
     if ($Uri -notmatch '^https://api.github.com/repos/example/repo/actions/artifacts/(20|30)/zip$') { throw "Unexpected archive request: $Uri" }
     $runId = [long]$Matches[1]
@@ -98,8 +101,23 @@ function Invoke-WebRequest {
     try {
         $entry = $archive.CreateEntry($context.ArchiveEntryName)
         $writer = [IO.StreamWriter]::new($entry.Open())
-        try { $writer.Write(($receipt | ConvertTo-Json)) } finally { $writer.Dispose() }
+        try {
+            $writer.Write(($receipt | ConvertTo-Json))
+            if ($context.ForgeEntryLength) { $writer.Write((' ' * 20000)) }
+        } finally { $writer.Dispose() }
     } finally { $archive.Dispose() }
+    if ($context.ForgeEntryLength) {
+        $bytes = [IO.File]::ReadAllBytes($OutFile)
+        $forgedLength = [BitConverter]::GetBytes([int]1)
+        [Array]::Copy($forgedLength, 0, $bytes, 22, 4)
+        for ($index = 0; $index -le $bytes.Length - 28; $index++) {
+            if ($bytes[$index] -eq 0x50 -and $bytes[$index + 1] -eq 0x4b -and $bytes[$index + 2] -eq 1 -and $bytes[$index + 3] -eq 2) {
+                [Array]::Copy($forgedLength, 0, $bytes, $index + 24, 4)
+                break
+            }
+        }
+        [IO.File]::WriteAllBytes($OutFile, $bytes)
+    }
 }
 
 function Assert-Scenario([string] $Name, [string] $ExpectedError = '') {
@@ -186,6 +204,8 @@ try {
     Assert-Scenario 'oversized receipt download is refused' 'receipt artifact'
     Reset-Context; $context.ArchiveEntryName = '../receipt.json'
     Assert-Scenario 'noncanonical archive entry is refused without extraction' 'receipt archive'
+    Reset-Context; $context.ForgeEntryLength = $true
+    Assert-Scenario 'forged ZIP length cannot bypass the decoded receipt limit' 'receipt archive'
     Reset-Context; $context.Runs.fuzz[0].run_attempt = 2
     Assert-Scenario 'previous attempt receipt cannot certify a rerun' 'receipt does not match'
     foreach ($key in 'schemaVersion', 'repository', 'workflowPath', 'revision', 'runId', 'runAttempt') {
