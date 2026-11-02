@@ -204,7 +204,7 @@ function Assert-ProofSource([string] $Path, [string] $Source) {
     $code = Get-DafnyPolicyText $Source
     if ($code -match '\b(include|assume|expect|extern|replaceable)\b|\bdecreases\s*\*|@') { throw "Disallowed proof construct in $Path" }
     foreach ($attribute in [regex]::Matches($code, '\{\s*:\s*([A-Za-z_][A-Za-z0-9_]*)')) {
-        if ($attribute.Groups[1].Value -cnotin 'trigger', 'induction', 'nativeType', 'isolate') { throw "Disallowed proof construct in ${Path}: $($attribute.Value)" }
+        if ($attribute.Groups[1].Value -cnotin 'trigger', 'induction', 'nativeType', 'isolate', 'isolate_assertions') { throw "Disallowed proof construct in ${Path}: $($attribute.Value)" }
     }
     # These native representations affect compilation, not proof trust. Keep the
     # reviewed set exact; never accept nativeType overrides or arbitrary attributes.
@@ -214,6 +214,9 @@ function Assert-ProofSource([string] $Path, [string] $Source) {
     }
     foreach ($attribute in [regex]::Matches($withStrings, '\{\s*:\s*isolate\b(?<value>[^}]*)\}')) {
         if ($attribute.Groups['value'].Value.Trim() -cnotmatch '^(?:"paths")?$') { throw "Disallowed proof construct in ${Path}: unreviewed isolate argument" }
+    }
+    foreach ($attribute in [regex]::Matches($withStrings, '\{\s*:\s*isolate_assertions\b(?<value>[^}]*)\}')) {
+        if ($attribute.Groups['value'].Value.Trim().Length -ne 0) { throw "Disallowed proof construct in ${Path}: unreviewed isolate_assertions argument" }
     }
 }
 

@@ -145,13 +145,19 @@ try {
     $context.Comparison = 'identical'
     Assert-Scenario 'published main tip accepts the same evidence'
     Reset-Context
-    $context.SkippedJobs = @('Analyze ()', 'Test ()', 'Native Access compatibility ()', 'Encryption replacement (, )')
+    $context.SkippedJobs = @('Analyze (${{ matrix.name }})', 'Test (${{ matrix.name }})', 'Native Access compatibility (${{ matrix.tf }})', 'Encryption replacement (${{ matrix.os }}, ${{ matrix.tf }})')
     $context.Jobs.ci += $context.SkippedJobs + @('Verify recovery models (Dafny)')
     Assert-Scenario 'proof-only CI accepts all known unexpanded skipped matrices'
-    foreach ($name in 'Native Access compatibility ()', 'Encryption replacement (, )') {
+    foreach ($name in 'Native Access compatibility (${{ matrix.tf }})', 'Encryption replacement (${{ matrix.os }}, ${{ matrix.tf }})') {
         Reset-Context
         $context.Jobs.ci += $name
         Assert-Scenario 'unexpanded matrix cannot report success' 'Unrecognized or unsuccessful CI'
+    }
+    foreach ($name in 'Analyze ()', 'Test ()', 'Native Access compatibility ()', 'Encryption replacement (, )') {
+        Reset-Context
+        $context.SkippedJobs = @($name)
+        $context.Jobs.ci += $name
+        Assert-Scenario 'unobserved empty placeholder name is refused' 'Unrecognized or unsuccessful CI'
     }
     foreach ($comparison in 'behind', 'diverged') {
         Reset-Context; $context.Comparison = $comparison

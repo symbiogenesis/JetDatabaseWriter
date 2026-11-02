@@ -254,7 +254,11 @@ before replacing the pins.
 Follow the pinned release's [verification optimization guidance](https://dafny.org/v4.11.0/VerificationOptimization/VerificationOptimization):
 use named intermediate lemmas, scoped `assert ... by` blocks and local
 `hide`/`reveal` to expose only the facts a proof needs. Use opacity at an actual
-abstraction boundary with sufficient public contracts. Apply assertion
+abstraction boundary with sufficient public contracts and checked equivalence
+when factoring an existing quantified relation. `ReplayContentMixture` keeps
+the same byte alternatives across replay composition while pointwise owners
+reveal the definition; its equivalence lemmas retain the complete original
+formula and minimum-length requirement. Apply assertion
 isolation to diagnosed obligations; a blanket source rewrite or solver timeout
 increase does not establish robustness. Preserve supported success and refusal
 cases, preconditions and postconditions while improving proof structure.
@@ -289,10 +293,15 @@ After rejecting raw runtime references and preexisting inlining metadata, the pr
 
 No Dafny runtime source is bundled and no Dafny license-bearing runtime material is redistributed. The development compiler is the upstream MIT-licensed [Dafny distribution](https://github.com/dafny-lang/dafny/tree/v4.11.0). The compiler, the projection including its exact-signature metadata insertion, the C# compiler and .NET JIT/AOT remain trusted; generation does not prove compiler correctness. The BCL metadata adds no shipping dependency. Focused production tests and the ordinary hosted framework/analyzer/trimming/NativeAOT lanes remain required.
 
-Proof hints admit only the exact `trigger`, `induction` and `isolate` names in
+Proof hints admit only the exact `trigger`, `induction`, `isolate` and
+`isolate_assertions` names in
 addition to the reviewed native representations. Local isolation accepts only
 `{:isolate}` and `{:isolate "paths"}`; other arguments and attribute spellings
-refuse. Scoped `by` proofs and local `hide`/`reveal` can reduce irrelevant solver
+refuse. Definition-wide `{:isolate_assertions}` accepts no arguments and checks
+every assertion and implicit obligation separately; it does not omit proof
+obligations or extend an individual query's limit. Use it only for a diagnosed
+definition, with complete ordinary and seeded verification evidence. Scoped
+`by` proofs and local `hide`/`reveal` can reduce irrelevant solver
 context without changing contracts. Qualify each change with the pinned verifier
 and generated freshness; neither opaque blocks nor global assertion isolation
 are a default optimization for every proof.

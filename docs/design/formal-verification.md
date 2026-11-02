@@ -53,6 +53,16 @@ Thus every original byte destroyed or removed from `D` has an exact saved value 
 
 The composed logical-record protocol derives this byte invariant from journal state. A before-image append reads an as-yet-unsaved original position from the current database; the invariant establishes that its value is still original. Only the durable complete-record prefix supplies saved coverage and write/length intents that enable database mutation. Failed journal flushes and crashes may persist any extending complete prefix plus a trailing incomplete record. Failed flushes fault the writer; recovery classifies the surviving prefix before selecting undo or a committed image.
 
+`UndoJournal.ReplayContentMixture` names the exact unchanged-byte, original-byte
+and recovery-zero alternatives shared by replay composition. The opaque
+predicate keeps one proposition across adapter calls; pointwise proof owners
+reveal its definition. `ReplayContentMixtureIsExact` and
+`AdmittedReplayMutationIsExact` prove equivalence to the original quantified
+relations, including the latter's separate minimum-length condition. This
+abstraction changes neither the admitted fault relation nor its mathematical
+domain. It remains part of the verification-only protocol, with the same C#
+effect and refinement obligations.
+
 `ProtocolStepPreserves` and `ProtocolTracePreserves` retain those obligations through arbitrary finite mixed traces. `CompletedProtocolSelectsBeforeOrCommitted` establishes the authorized completed result; `AcknowledgedImageSurvivesMixedTrace` preserves the acknowledged image across later crashes and recovery. `CompleteProtocolRecovery` uses a decreasing rank for tail discard, marker publication, resize, per-byte replay, flush and completion under eventually successful exclusive I/O.
 
 The buffered refinement separates the readable database image from `durableDb` and a queue of issued byte/length effects. Each queued effect must already have durable original coverage derived from the logical journal. Any effect may persist repeatedly in any order; writes may tear by byte, and length changes may stop at any intermediate length with zero-filled extension. `BufferedStepPreserves` and `BufferedTracePreserves` prove recoverability of both database images. `CompletedBufferedProtocolSelectsBeforeOrCommitted` and `AcknowledgedBufferedImageSurvivesMixedTrace` establish the selected durable result. `CompleteBufferedRecovery` lifts the decreasing recovery schedule to this refinement.

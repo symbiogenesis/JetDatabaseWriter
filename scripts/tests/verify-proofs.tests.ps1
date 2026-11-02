@@ -329,6 +329,11 @@ foreach ($sourceText in 'lemma X() { assume false; }', 'include "other.dfy"', 'l
 }
 Assert-Scenario 'trigger and induction proof hints allowed' { Assert-ProofSource 'hints.dfy' 'lemma {:induction false} X() { assert forall i: int {:trigger F(i)} :: F(i) == F(i); }' }
 Assert-Scenario 'reviewed local assertion isolation allowed' { Assert-ProofSource 'isolation.dfy' 'method X() { assert {:isolate} true; return {:isolate "paths"}; }' }
+Assert-Scenario 'reviewed definition-wide assertion isolation allowed' { Assert-ProofSource 'isolation.dfy' 'lemma {:isolate_assertions} X() ensures true {}' }
+foreach ($argument in 'false', 'true', '"paths"', 'F()') {
+    Assert-Scenario "definition isolation arguments rejected $argument" { Assert-ProofSource 'isolation.dfy' "lemma {:isolate_assertions $argument} X() ensures true {}" } 'Disallowed proof construct'
+}
+Assert-Scenario 'definition isolation casing remains exact' { Assert-ProofSource 'isolation.dfy' 'lemma {:Isolate_assertions} X() ensures true {}' } 'Disallowed proof construct'
 Assert-Scenario 'isolation attribute names must retain reviewed casing' { Assert-ProofSource 'isolation.dfy' 'method X() { assert {:Isolate "unreviewed"} true; }' } 'Disallowed proof construct'
 foreach ($isolation in 'false', '"unknown"', '"paths" false', '"paths", "paths"', 'F()') {
     Assert-Scenario "unreviewed isolation argument rejected $isolation" { Assert-ProofSource 'isolation.dfy' "method X() { assert {:isolate $isolation} true; }" } 'Disallowed proof construct'

@@ -97,8 +97,8 @@ function Assert-ReleaseJobs($Run, [string] $Kind) {
         if (-not $names.Add($job.name) -or $job.status -cne 'completed') { throw "Invalid $Kind job inventory." }
         if ($Kind -eq 'ci' -and $job.name -cnotin $required) {
             # The aggregate CI gate checks the content-selected optional lane inventory.
-            # Unexpanded skipped matrices have no matrix values in their display names.
-            $skippedMatrix = $job.name -cin 'Analyze ()', 'Test ()', 'Native Access compatibility ()', 'Encryption replacement (, )' -and $job.conclusion -ceq 'skipped'
+            # GitHub's jobs API retains literal name expressions for skipped matrices.
+            $skippedMatrix = $job.name -cin 'Analyze (${{ matrix.name }})', 'Test (${{ matrix.name }})', 'Native Access compatibility (${{ matrix.tf }})', 'Encryption replacement (${{ matrix.os }}, ${{ matrix.tf }})' -and $job.conclusion -ceq 'skipped'
             if (($job.name -cnotin $optionalCiJobs -and -not $skippedMatrix) -or $job.conclusion -cnotin 'success', 'skipped') {
                 throw 'Unrecognized or unsuccessful CI job inventory.'
             }
