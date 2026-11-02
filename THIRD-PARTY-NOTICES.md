@@ -45,12 +45,17 @@ SOFTWARE.
 
 ## Apache Jackcess
 
-The General Legacy text index sort-key tables embedded in this assembly
-(`Indexes/CodeTables/index_codes_genleg.txt.gz` and
-`Indexes/CodeTables/index_codes_ext_genleg.txt.gz`) are taken verbatim
-from the Apache Jackcess project resource files
-`com/healthmarketscience/jackcess/index_codes_genleg.txt` and
-`index_codes_ext_genleg.txt`.
+The text index sort-key tables embedded in this assembly are taken verbatim
+from the Apache Jackcess project resources under
+`com/healthmarketscience/jackcess/`, compressed locally without changing their
+contents:
+
+- `Indexes/CodeTables/index_codes_genleg.txt.gz`
+- `Indexes/CodeTables/index_codes_ext_genleg.txt.gz`
+- `Indexes/CodeTables/index_codes_gen.txt.gz`
+- `Indexes/CodeTables/index_codes_ext_gen.txt.gz`
+- `Indexes/CodeTables/index_codes_gen_97.txt.gz`
+- `Indexes/CodeTables/index_mappings_ext_gen_97.txt.gz`
 
 Source: https://github.com/jahlborn/jackcess
 
@@ -59,10 +64,18 @@ The character-handler state machine in
 `com.healthmarketscience.jackcess.impl.GeneralLegacyIndexCodes` from the same
 project.
 
+The General and Access 97 encoders in
+`src/JetDatabaseWriter/Indexes/Collation/GeneralTextIndexEncoder.cs` and
+`General97TextIndexEncoder.cs` also adapt the corresponding Jackcess
+`GeneralIndexCodes` and `General97IndexCodes` implementations for this library.
+
 Calculated-column expression operator and built-in function behavior in
 `src/JetDatabaseWriter/Schema/Expressions/CalculatedExpressionEvaluator.cs` is
 translated and adapted from Jackcess's `Expressionator` and `Default*Functions`
 classes, with storage-specific behavior implemented locally for this library.
+
+The complete Apache License, Version 2.0 is included in
+`LICENSE-APACHE-2.0.txt` in the repository and NuGet package.
 
 ```
 Copyright (c) 2008 Health Market Science, Inc.
