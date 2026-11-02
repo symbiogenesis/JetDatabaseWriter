@@ -72,7 +72,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// that error before any encryption or password error.
     /// </remarks>
     /// <exception cref="JetAccessDeniedException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong, or when the file cannot be opened for writing. A pending transaction journal is recovered before password validation.</exception>
-    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. The file is not opened.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The writer options contain an invalid resource budget or lock timeout. The file is not opened.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(string path, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
         DiagnosticTrace.ThrowIfReentrant();
@@ -85,7 +85,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.RequireExistingDatabaseFile(path, nameof(path));
 
         FileStream fs = CreateStream(path);
-        return await OpenAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await OpenCoreAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await fs.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     /// <summary>
@@ -102,7 +110,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="cancellationToken">A token used to cancel the open operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the database.</returns>
     /// <exception cref="JetAccessDeniedException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong. A pending file-backed transaction journal is recovered before password validation.</exception>
-    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. The stream is not read, written or disposed.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The writer options contain an invalid resource budget or lock timeout. The stream is not read, written or disposed.</exception>
     /// <exception cref="JetNotSupportedException">Office compound packages are not native Microsoft Access database inputs.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(Stream stream, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
@@ -114,35 +122,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         options.Validate();
         try
         {
-            string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
-
-            if (stream is FileStream recoveryFile)
-            {
-                EncryptionReplacementIntent.RejectPending(recoveryFile.Name);
-
-                // Retain the durable recovery decision until lock-file cleanup succeeds.
-                PersistentRollbackJournal.Recover(
-                    recoveryFile,
-                    () => RemoveAbandonedLockFile(recoveryFile.Name));
-                _ = RecoverableWriterLock.Recover(recoveryFile.Name);
-            }
-
-            // One read of page 0 serves the header and the flat Agile probe.
-            byte[] headerPage = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
-            byte[] header = headerPage.AsSpan(0, Constants.DatabaseHeader.Length).ToArray();
-
-            if (EncryptionManager.IsCompoundFileEncrypted(header))
-            {
-                throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Office compound packages are not native Microsoft Access databases.");
-            }
-
-            return new AccessWriter(
-                path,
-                stream,
-                headerPage,
-                options,
-                leaveOpen: leaveOpen,
-                cancellationToken: cancellationToken);
+            return await OpenCoreAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -170,7 +150,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the new database.</returns>
     /// <exception cref="IOException">Thrown when a database file already exists at <paramref name="path"/>.</exception>
-    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. No file is created.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The writer options contain an invalid resource budget or lock timeout. No file is created.</exception>
     /// <exception cref="JetIOException">The destination database file already exists.</exception>
     public static async ValueTask<AccessWriter> CreateDatabaseAsync(string path, DatabaseFormat format, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -203,15 +183,19 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>
     /// Asynchronously writes a new, empty JET database into the specified stream
     /// and returns a new <see cref="AccessWriter"/> ready for table creation and data insertion.
-    /// The stream must be readable, writable, and seekable.
+    /// The stream must be readable, writable, seekable, and empty. Creation starts at offset zero
+    /// regardless of the stream's initial position. Argument validation and file-backed recovery
+    /// preflight do not modify or take ownership of the stream. Once destination initialization starts, a failure
+    /// can leave a partial database; the stream is disposed unless <paramref name="leaveOpen"/> is true.
     /// </summary>
-    /// <param name="stream">A writable, seekable stream to write the new database into.</param>
+    /// <param name="stream">An empty, readable, writable, seekable stream to write the new database into.</param>
     /// <param name="format">The database format to use (Jet4 .mdb or ACE .accdb).</param>
     /// <param name="options">Optional configuration options.</param>
     /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the writer is disposed. Default is <c>false</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the new database.</returns>
-    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. Nothing is written to the stream.</exception>
+    /// <exception cref="ArgumentException">The stream is not readable, writable, seekable, or empty. Nothing is written and the stream is not disposed.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The writer options contain an invalid resource budget or lock timeout. The stream is not read, written or disposed.</exception>
     public static async ValueTask<AccessWriter> CreateDatabaseAsync(Stream stream, DatabaseFormat format, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
         DiagnosticTrace.ThrowIfReentrant();
@@ -225,20 +209,35 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             PersistentRollbackJournal.RejectHotJournal(creatingFile);
         }
 
-        byte[] dbBytes = await AccessDatabaseEncryption.PrepareCreatedDatabaseAsync(TDefPageBuilder.BuildEmptyDatabase(format), format, options, cancellationToken).ConfigureAwait(false);
-        await stream.WriteAsync(dbBytes.AsMemory(), cancellationToken).ConfigureAwait(false);
-        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        stream.Position = 0;
+        if (stream.Length != 0)
+        {
+            throw new ArgumentException("The destination stream must be empty.", nameof(stream));
+        }
 
-        AccessWriter writer = await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
+        byte[] dbBytes = await AccessDatabaseEncryption.PrepareCreatedDatabaseAsync(TDefPageBuilder.BuildEmptyDatabase(format), format, options, cancellationToken).ConfigureAwait(false);
+        AccessWriter? writer = null;
         try
         {
+            stream.Position = 0;
+            await stream.WriteAsync(dbBytes.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            stream.Position = 0;
+
+            writer = await OpenCoreAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
             await writer.InitializeFreshDatabaseAsync(cancellationToken).ConfigureAwait(false);
             return writer;
         }
         catch
         {
-            await writer.DisposeAsync().ConfigureAwait(false);
+            if (writer is not null)
+            {
+                await writer.DisposeAsync().ConfigureAwait(false);
+            }
+            else if (!leaveOpen)
+            {
+                await stream.DisposeAsync().ConfigureAwait(false);
+            }
+
             throw;
         }
     }
@@ -614,6 +613,47 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // and unconditionally releases the .ldb / .laccdb slot last.
         await this.Services.Transactions.RunDisposalAsync(this.DisposeCoreAsync).ConfigureAwait(false);
         this.lockFileCoordinator.Dispose();
+    }
+
+    /// <summary>Opens a validated stream whose failure cleanup belongs to its caller.</summary>
+    /// <param name="stream">The readable, writable, seekable database stream.</param>
+    /// <param name="options">The validated writer options.</param>
+    /// <param name="leaveOpen">Whether disposal of the returned writer retains the stream.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The opened writer.</returns>
+    /// <exception cref="JetNotSupportedException">The stream contains an Office compound package instead of a native database.</exception>
+    private static async ValueTask<AccessWriter> OpenCoreAsync(Stream stream, AccessWriterOptions options, bool leaveOpen, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
+
+        if (stream is FileStream recoveryFile)
+        {
+            EncryptionReplacementIntent.RejectPending(recoveryFile.Name);
+
+            // Retain the durable recovery decision until lock-file cleanup succeeds.
+            PersistentRollbackJournal.Recover(
+                recoveryFile,
+                () => RemoveAbandonedLockFile(recoveryFile.Name));
+            _ = RecoverableWriterLock.Recover(recoveryFile.Name);
+        }
+
+        // One read of page 0 serves the header and the flat Agile probe.
+        byte[] headerPage = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
+        byte[] header = headerPage.AsSpan(0, Constants.DatabaseHeader.Length).ToArray();
+
+        if (EncryptionManager.IsCompoundFileEncrypted(header))
+        {
+            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Office compound packages are not native Microsoft Access databases.");
+        }
+
+        return new AccessWriter(
+            path,
+            stream,
+            headerPage,
+            options,
+            leaveOpen: leaveOpen,
+            cancellationToken: cancellationToken);
     }
 
     private static void RemoveAbandonedLockFile(string databasePath)
