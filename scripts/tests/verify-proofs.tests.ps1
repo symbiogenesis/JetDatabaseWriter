@@ -413,6 +413,16 @@ function Invoke-ProofProcess([string] $Executable, [string[]] $Arguments, [strin
         if ($coverageCase -eq 'source-change') { [IO.File]::AppendAllText($coverageFiles[0], '// changed during complexity') }
         return [pscustomobject]@{ ExitCode = $(if ($coverageCase -eq 'errors') { 4 } else { 0 }); Stdout = "Starting verification of mutation 1/2 with seed 0`nStarting verification of mutation 2/2 with seed 1559595546"; Stderr = '' }
     }
+    if ($Name -eq 'proof-coverage.negative-vacuity') {
+        $warning = 'VacuousTheorem.dfy(1,56): Warning: ensures clause proved using contradictory assumptions'
+        if ($coverageCase -eq 'vacuity-missing-warning') { $warning = '' }
+        if ($coverageCase -eq 'vacuity-other-warning') { $warning = 'VacuousTheorem.dfy(1,56): Warning: unnecessary requires clause' }
+        return [pscustomobject]@{
+            ExitCode = $(if ($coverageCase -eq 'vacuity-warning-suppression') { 0 } else { 2 })
+            Stdout = $warning + "`nDafny program verifier finished with 1 verified, 0 errors"
+            Stderr = $(if ($coverageCase -eq 'vacuity-error') { 'Error: negative control failed' } else { '' })
+        }
+    }
     if ($Arguments[0] -eq 'audit') {
         $reportIndex = [Array]::IndexOf($Arguments, '--report-file') + 1
         $finding = ($Name -eq 'negative-assume' -and $coverageCase -ne 'negative-assume-control') -or ($Name -eq 'inventory.audit' -and $coverageCase -eq 'audit-finding')
@@ -490,6 +500,27 @@ try {
                     $record[0].sha256 -cne (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'Coverage lost an exact normal-source input.' }
             }
             if (($coverageCalls | Where-Object Name -EQ 'RecoveryKernel.translate').Dependencies -notcontains $coverageFiles[0]) { throw 'Kernel dependency verification changed.' }
+            $control = @($coverageCalls | Where-Object Name -EQ 'proof-coverage.negative-vacuity')
+            $controlSource = Join-Path $output 'VacuousTheorem.dfy'
+            if ($control.Count -ne 1 -or $analysis.negativeVacuity.status -cne 'complete' -or
+                $control[0].Arguments -notcontains $controlSource -or $control[0].Arguments -notcontains '--warn-contradictory-assumptions' -or
+                $control[0].Arguments -contains '--allow-warnings' -or $control[0].Arguments -contains '--filter-position' -or
+                [IO.File]::ReadAllText($controlSource) -cne 'lemma VacuousTheorem(value: int) requires false ensures value == value + 1 {}' -or
+                $analysis.negativeVacuity.process -cne 'proof-coverage.negative-vacuity.process.json') { throw 'Coverage did not independently validate its contradictory-assumption diagnostics.' }
+        }
+    }
+    foreach ($case in 'vacuity-missing-warning', 'vacuity-other-warning', 'vacuity-warning-suppression', 'vacuity-error') {
+        Assert-Scenario "coverage rejects disabled or malformed vacuity diagnostics $case" {
+            $coverageCase = $case
+            $coverageCalls.Clear()
+            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-vacuity-failure-' + [guid]::NewGuid().ToString('N'))
+            $caught = $null
+            try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true } catch { $caught = $_.Exception.Message }
+            $analysis = [IO.File]::ReadAllText((Join-Path $output 'proof-coverage.json')) | ConvertFrom-Json
+            if (-not $caught -or -not $caught.Contains('Contradictory-assumption negative control') -or
+                $analysis.status -cne 'failed' -or $analysis.negativeVacuity.status -cne 'failed' -or
+                [IO.File]::Exists((Join-Path $output 'summary.json')) -or -not [IO.File]::Exists((Join-Path $output 'failure.json')) -or
+                @($coverageCalls | Where-Object Name -EQ 'proof-coverage.verify').Count -ne 0) { throw 'Disabled vacuity diagnostics reached coverage analysis or lost refusal evidence.' }
         }
     }
     Assert-Scenario 'coverage source closure follows transitive normal dependencies in manifest order' {
@@ -791,6 +822,40 @@ Assert-Scenario 'complexity validates each seed with order-independent obligatio
     [IO.File]::WriteAllText($complexityLog, $complexityCsv)
     $statistics = Assert-ProofComplexityResult ([pscustomobject]@{ ExitCode = 0; Stdout = $complexityOutput; Stderr = '' }) $complexityLog 2
     if ($statistics.seeds.Count -ne 2 -or $statistics.obligationsPerSeed -ne 2 -or $statistics.maximumResources -ne 65) { throw 'Complexity evidence lost its measured coverage.' }
+}
+Assert-Scenario 'complexity separates resource variation from maximum resource use' {
+    [IO.File]::WriteAllText($complexityLog, $complexityCsv)
+    $statistics = Assert-ProofComplexityResult ([pscustomobject]@{ ExitCode = 0; Stdout = $complexityOutput; Stderr = '' }) $complexityLog 2
+    $variable = $statistics.highestResourceVariation[0]
+    $expensive = $statistics.highestResourceUse[0]
+    if ($variable.obligation -cne 'Good' -or $variable.minimumResources -ne 42 -or $variable.maximumResources -ne 58 -or
+        $variable.meanResources -ne 50 -or $variable.populationStandardDeviation -ne 8 -or
+        $variable.resourceCoefficientOfVariationPercent -ne 16 -or $expensive.obligation -cne 'Other' -or
+        $statistics.highestResourceVariation.Count -ne 2 -or $statistics.highestResourceUse.Count -ne 2) { throw 'Per-obligation statistics lost the population resource variation or expensive obligation.' }
+}
+Assert-Scenario 'complexity keeps zero-resource singleton obligations finite' {
+    $csv = $complexityCsv.Replace('42,', '0,').Replace('58,', '0,') -split "`n" | Where-Object { $_ -notmatch '^Other,' }
+    [IO.File]::WriteAllText($complexityLog, ($csv -join "`n"))
+    $statistics = Assert-ProofComplexityResult ([pscustomobject]@{ ExitCode = 0; Stdout = $complexityOutput; Stderr = '' }) $complexityLog 2
+    $only = @($statistics.highestResourceVariation)
+    if ($only.Count -ne 1 -or $only[0].obligation -cne 'Good' -or $only[0].meanResources -ne 0 -or
+        $only[0].populationStandardDeviation -ne 0 -or $only[0].resourceCoefficientOfVariationPercent -ne 0) { throw 'Zero-resource evidence became nonfinite or lost the singleton obligation.' }
+}
+Assert-Scenario 'complexity bounds and deterministically orders resource summaries without changing acceptance' {
+    $csv = [Collections.Generic.List[string]]::new()
+    $csv.Add('TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed')
+    foreach ($seed in '0', '1559595546') {
+        foreach ($name in @('z', 'Z', 'a') + @(1..10 | ForEach-Object { 'Item' + $_.ToString('00') })) {
+            $resources = if ($seed -eq '0') { '0' } else { [ulong]::MaxValue.ToString([Globalization.CultureInfo]::InvariantCulture) }
+            $csv.Add("$name,Passed,00:00:00.01,$resources,$seed")
+        }
+    }
+    [IO.File]::WriteAllText($complexityLog, ($csv -join "`n"))
+    $statistics = Assert-ProofComplexityResult ([pscustomobject]@{ ExitCode = 0; Stdout = $complexityOutput; Stderr = '' }) $complexityLog 2
+    if ($statistics.obligationsPerSeed -ne 13 -or $statistics.highestResourceVariation.Count -ne 10 -or $statistics.highestResourceUse.Count -ne 10 -or
+        $statistics.highestResourceVariation[0].obligation -cne 'Item01' -or $statistics.highestResourceUse[0].obligation -cne 'Item01' -or
+        $statistics.highestResourceVariation[0].resourceCoefficientOfVariationPercent -ne 100 -or
+        [double]::IsInfinity($statistics.highestResourceVariation[0].populationStandardDeviation)) { throw 'Resource summaries changed obligation identity, overflowed, or lost their deterministic bound.' }
 }
 foreach ($case in 'empty', 'failed', 'duplicate', 'missing-obligation', 'missing-seed', 'bad-resource', 'bad-duration', 'unexpected-seed', 'missing-mutation', 'exit-failure') {
     Assert-Scenario "complexity rejects $case evidence" {

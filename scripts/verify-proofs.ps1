@@ -370,6 +370,7 @@ function Assert-ProofComplexityResult($Result, [string] $ResourceLog, [int] $Mut
     $rows = @(Import-Csv -LiteralPath $ResourceLog)
     if ($rows.Count -eq 0) { throw 'Complexity measurement selected no proof obligations.' }
     $bySeed = @{}
+    $byObligation = [Collections.Generic.Dictionary[string, Collections.Generic.List[ulong]]]::new([StringComparer]::Ordinal)
     $maximum = [ulong]0
     foreach ($row in $rows) {
         $resources = [ulong]0
@@ -382,13 +383,55 @@ function Assert-ProofComplexityResult($Result, [string] $ResourceLog, [int] $Mut
         }
         if (-not $bySeed.ContainsKey($row.RandomSeed)) { $bySeed[$row.RandomSeed] = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal) }
         if (-not $bySeed[$row.RandomSeed].Add($row.'TestResult.DisplayName')) { throw 'Complexity resource log contains duplicate obligations.' }
+        if (-not $byObligation.ContainsKey($row.'TestResult.DisplayName')) { $byObligation[$row.'TestResult.DisplayName'] = [Collections.Generic.List[ulong]]::new() }
+        $byObligation[$row.'TestResult.DisplayName'].Add($resources)
         $maximum = [Math]::Max($maximum, $resources)
     }
     $baseline = $bySeed[$starts[0].Groups['seed'].Value]
     foreach ($seed in $seeds) {
         if (-not $bySeed.ContainsKey($seed) -or -not $bySeed[$seed].SetEquals($baseline)) { throw 'Complexity resource log has incomplete mutation coverage.' }
     }
-    return [ordered]@{ seeds = @($starts | ForEach-Object { $_.Groups['seed'].Value }); obligationsPerSeed = $baseline.Count; maximumResources = $maximum }
+    # Compare the same obligation across seeds, not unrelated assertions with
+    # different costs. Population variation describes these measured seeds;
+    # it neither predicts all seeds nor imposes a new acceptance threshold.
+    $statistics = [Collections.Generic.List[object]]::new()
+    foreach ($entry in $byObligation.GetEnumerator()) {
+        $minimum = [ulong]::MaxValue
+        $maximumForObligation = [ulong]0
+        $sum = [double]0
+        foreach ($sample in $entry.Value) {
+            $minimum = [Math]::Min($minimum, $sample)
+            $maximumForObligation = [Math]::Max($maximumForObligation, $sample)
+            $sum += [double]$sample
+        }
+        $mean = $sum / $entry.Value.Count
+        $squaredDifferences = [double]0
+        foreach ($sample in $entry.Value) { $squaredDifferences += [Math]::Pow([double]$sample - $mean, 2) }
+        $deviation = [Math]::Sqrt($squaredDifferences / $entry.Value.Count)
+        $statistics.Add([pscustomobject][ordered]@{
+            obligation = $entry.Key; samples = $entry.Value.Count
+            minimumResources = $minimum; maximumResources = $maximumForObligation
+            meanResources = $mean; populationStandardDeviation = $deviation
+            resourceCoefficientOfVariationPercent = $(if ($mean -eq 0) { [double]0 } else { 100 * $deviation / $mean })
+        })
+    }
+    $statistics.Sort([Comparison[object]]{
+        param($left, $right)
+        $comparison = $right.resourceCoefficientOfVariationPercent.CompareTo($left.resourceCoefficientOfVariationPercent)
+        if ($comparison -ne 0) { return $comparison }
+        return [StringComparer]::Ordinal.Compare($left.obligation, $right.obligation)
+    })
+    $highestVariation = @($statistics | Select-Object -First 10)
+    $statistics.Sort([Comparison[object]]{
+        param($left, $right)
+        $comparison = $right.maximumResources.CompareTo($left.maximumResources)
+        if ($comparison -ne 0) { return $comparison }
+        return [StringComparer]::Ordinal.Compare($left.obligation, $right.obligation)
+    })
+    return [ordered]@{
+        seeds = @($starts | ForEach-Object { $_.Groups['seed'].Value }); obligationsPerSeed = $baseline.Count; maximumResources = $maximum
+        highestResourceVariation = $highestVariation; highestResourceUse = @($statistics | Select-Object -First 10)
+    }
 }
 
 function Invoke-ProofComplexity([string] $RepositoryRoot, [string] $DafnyPath, [string] $OutputDirectory, [string[]] $Files, [string[]] $Options, [int] $TimeoutSeconds, [object[]] $Proofs, [string] $DafnyVersion, [string] $SolverVersion, [hashtable] $Diagnostics) {
@@ -415,6 +458,9 @@ function Invoke-ProofComplexity([string] $RepositoryRoot, [string] $DafnyPath, [
         Assert-ProofInputsUnchanged $RepositoryRoot $Proofs
         $receipt.status = 'complete'
         Write-Output "Supplemental proof complexity: $($receipt.statistics.obligationsPerSeed) obligations across $($Diagnostics.mutations) seeds. Results do not establish specification adequacy."
+        $variable = $receipt.statistics.highestResourceVariation[0]
+        $variation = $variable.resourceCoefficientOfVariationPercent.ToString('0.##', [Globalization.CultureInfo]::InvariantCulture)
+        Write-Output "Highest measured resource variation: $($variable.obligation), population CV $variation%. Resource rankings are diagnostic, not an acceptance threshold."
     } catch { $receipt.failure = $_.Exception.Message; throw }
     finally { [IO.File]::WriteAllText((Join-Path $OutputDirectory 'proof-complexity.json'), ($receipt | ConvertTo-Json -Depth 6)) }
 }
@@ -445,9 +491,29 @@ function Invoke-ProofCoverage([string] $RepositoryRoot, [string] $DafnyPath, [st
         failure = $null
         suggestProofRefactoring = [bool]$Diagnostics.suggestRefactoring
         position = $Diagnostics.position
+        negativeVacuity = [ordered]@{
+            status = 'not-run'; source = 'VacuousTheorem.dfy'
+            process = 'proof-coverage.negative-vacuity.process.json'
+            stdoutLog = 'proof-coverage.negative-vacuity.stdout.log'; stderrLog = 'proof-coverage.negative-vacuity.stderr.log'
+        }
     }
     try {
         if ($receipt.proofs.Count -ne $Files.Count) { throw 'Coverage source hashes do not match the selected dependency closure.' }
+        # This intentionally unreachable theorem stays outside the admitted
+        # inventory. A nonconstant false postcondition exercises the warning;
+        # literal `ensures false` is a legitimate contradiction lemma in Dafny.
+        $receipt.negativeVacuity.status = 'failed'
+        $vacuousPath = Join-Path $OutputDirectory $receipt.negativeVacuity.source
+        [IO.File]::WriteAllText($vacuousPath, 'lemma VacuousTheorem(value: int) requires false ensures value == value + 1 {}')
+        $vacuity = Invoke-ProofProcess $DafnyPath (@('verify', $vacuousPath) + $Options + @('--isolate-assertions', '--warn-contradictory-assumptions')) $OutputDirectory 'proof-coverage.negative-vacuity' $TimeoutSeconds
+        $vacuityMessages = $vacuity.Stdout + "`n" + $vacuity.Stderr
+        $vacuityComplete = [regex]::Matches($vacuity.Stdout, '(?m)^Dafny program verifier finished with 1 verified, 0 errors\r?$').Count -eq 1
+        $vacuityWarning = $vacuityMessages -match '(?m)^[^\r\n]*VacuousTheorem\.dfy\(1,[0-9]+\):\s*Warning:\s*ensures clause proved using contradictory assumptions\r?$'
+        $vacuityErrors = $vacuityMessages -match '(?m)^(?:[^\r\n]*\(\d+,\d+\):\s*)?Error:'
+        if ($vacuity.ExitCode -ne 2 -or -not $vacuityComplete -or -not $vacuityWarning -or $vacuityErrors) {
+            throw 'Contradictory-assumption negative control did not produce the expected warning and warning exit; inspect the retained control logs.'
+        }
+        $receipt.negativeVacuity.status = 'complete'
         # Dependency analysis is supplemental. It never relaxes the preceding
         # verification, audit, negative controls or generated-source checks.
         $analysisOptions = @('--isolate-assertions', '--warn-contradictory-assumptions', '--warn-redundant-assumptions',
