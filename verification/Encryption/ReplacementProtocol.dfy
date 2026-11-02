@@ -667,7 +667,14 @@ module ReplacementProtocol {
     ensures IsPrefix(output + buffer[..written], source)
     ensures IsPrefix(output, output + buffer[..written])
   {
-    assert source[..|output|] + source[|output|..|output| + written] == source[..|output| + written];
+    assert output == source[..|output|];
+    assert buffer[..written] == source[|output|..|output| + written];
+    calc {
+      output + buffer[..written];
+      == source[..|output|] + source[|output|..|output| + written];
+      == source[..|output| + written];
+    }
+    assert (output + buffer[..written])[..|output|] == output;
   }
 
   // Derives the existing Stage action from actual buffered slices and append

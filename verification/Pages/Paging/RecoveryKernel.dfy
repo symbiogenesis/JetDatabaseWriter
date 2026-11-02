@@ -393,7 +393,28 @@ module RecoveryKernel {
       Replacement.ReadRecordBytes(bytes, pathIdentity, digest) == Replacement.Admit(Replacement.Prepared)
     ensures ReplacementAdmission(|bytes| as U64, headerFieldsValid, oldLength, newLength, decisionValid) == 2 <==>
       Replacement.ReadRecordBytes(bytes, pathIdentity, digest) == Replacement.Admit(Replacement.Committed)
-  { }
+  {
+    var admitted := ReplacementAdmission(|bytes| as U64, headerFieldsValid, oldLength, newLength, decisionValid);
+    var record := Replacement.ReadRecordBytes(bytes, pathIdentity, digest);
+    if |bytes| < 256 || |bytes| > 352 {
+      assert admitted == 0 && record == Replacement.Refuse;
+    } else {
+      var header := bytes[..256];
+      assert header[64..72] == bytes[64..72];
+      assert header[72..80] == bytes[72..80];
+      assert IsReplacementHeader(headerFieldsValid, oldLength, newLength) <==>
+        Replacement.ValidHeaderBytes(header, pathIdentity, digest);
+      if !IsReplacementHeader(headerFieldsValid, oldLength, newLength) {
+        assert admitted == 0 && record == Replacement.Refuse;
+      } else if |bytes| < 352 {
+        assert admitted == 1 && record == Replacement.Admit(Replacement.Prepared);
+      } else if decisionValid {
+        assert admitted == 2 && record == Replacement.Admit(Replacement.Committed);
+      } else {
+        assert admitted == 0 && record == Replacement.Refuse;
+      }
+    }
+  }
 
   function IsPageSize(pageSize: U32): bool {
     pageSize == 2048 || pageSize == 4096

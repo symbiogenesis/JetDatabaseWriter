@@ -1378,9 +1378,13 @@ module UndoJournal {
     if first < second {
       assert first / pageSize < second / pageSize;
       assert (first / pageSize + 1) * pageSize <= (second / pageSize) * pageSize;
+      assert first + pageSize == (first / pageSize + 1) * pageSize;
+      assert first + pageSize <= second;
     } else {
       assert second / pageSize < first / pageSize;
       assert (second / pageSize + 1) * pageSize <= (first / pageSize) * pageSize;
+      assert second + pageSize == (second / pageSize + 1) * pageSize;
+      assert second + pageSize <= first;
     }
   }
 
