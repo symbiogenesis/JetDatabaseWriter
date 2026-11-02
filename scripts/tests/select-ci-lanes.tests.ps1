@@ -20,6 +20,8 @@ function Assert-Lanes([string] $Name, [string[]] $Paths, [bool] $Dotnet, [bool] 
 Assert-Lanes 'unchanged validated tree' @() $false $false
 Assert-Lanes 'readme only needs package validation' @('README.md') $false $false $true
 Assert-Lanes 'packaged notices need package validation' @('THIRD-PARTY-NOTICES.md') $false $false $true
+Assert-Lanes 'packaged project license needs package validation' @('LICENSE') $false $false $true
+Assert-Lanes 'packaged Apache license needs package validation' @('LICENSE-APACHE-2.0.txt') $false $false $true
 Assert-Lanes 'ordinary prose and instructions' @('AGENTS.md', 'PLAN.md', 'docs/operations.md', '.github/ISSUE_TEMPLATE/bug.md') $false $false
 Assert-Lanes 'fixture provenance prose' @('tests/JetDatabaseWriter.Tests/Databases/Golden/README.md') $false $false
 Assert-Lanes 'project prose' @('src/JetDatabaseWriter/README.md', 'tools/JetDatabaseWriter.FormatProbe/README.md', 'benchmarks/README.md') $false $false
@@ -31,6 +33,7 @@ Assert-Lanes 'ordinary script regression uses script checks' @('scripts/tests/ci
 Assert-Lanes 'unknown helper fails closed' @('scripts/future-build.ps1') $true $true
 Assert-Lanes 'copied fixture helper changes test runner' @('scripts/new-native-calculated-choose-fixtures.ps1') $true $false
 Assert-Lanes 'AOT and restore tooling' @('scripts/test-aot.ps1', 'scripts/restore-dependencies.ps1', 'scripts/tests/test-aot.tests.ps1') $true $false
+Assert-Lanes 'package consumer build input' @('scripts/test-package.ps1', 'scripts/tests/test-package.tests.ps1') $true $false
 Assert-Lanes 'generated consumer inputs' @('scripts/AotSmoke/Program.cs') $true $false
 Assert-Lanes 'proof-only edit' @('verification/Pages/Paging/UndoJournal.dfy', 'verification/config/proof-review.json', 'docs/design/formal-verification.md') $false $true
 Assert-Lanes 'proof outside manifest directory cannot hide under docs' @('docs/Unlisted.dfy') $false $true
@@ -62,7 +65,7 @@ Assert-Lanes 'mixed prose and source retains source coverage' @('README.md', 'te
 $libraryProject = [xml][IO.File]::ReadAllText((Join-Path $repoRoot 'src/JetDatabaseWriter/JetDatabaseWriter.csproj'))
 foreach ($item in $libraryProject.SelectNodes('//None[@Pack="true"]')) {
     $path = ([string]$item.Include).Replace('\', '/') -replace '^\.\./\.\./', ''
-    if ($path -cmatch '\.md$') { Assert-Lanes "packed Markdown $path" @($path) $false $false $true }
+    if ($path -cmatch '(?:\.md$|^LICENSE(?:-[^/]+)?(?:\.txt)?$)') { Assert-Lanes "packed prose $path" @($path) $false $false $true }
 }
 $testProject = [xml][IO.File]::ReadAllText((Join-Path $repoRoot 'tests/JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj'))
 foreach ($item in $testProject.SelectNodes('//None[@CopyToOutputDirectory]')) {

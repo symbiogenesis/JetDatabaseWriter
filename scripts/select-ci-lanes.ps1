@@ -14,14 +14,14 @@ function Get-CiLanes([string[]] $Paths) {
             $path -cmatch '^scripts/tests/(?:verify-proofs|proof-review|formal-workflow|select-ci-lanes|select-specialized-validation|run-hosted-fuzz|specialized-workflow-trigger|fuzz-workflow|portability-workflow|ci-matrix|ci-workflow|ci-tools|test-scripts)\.tests\.ps1$' -or
             $path -cmatch '^docs/design/(?:formal-verification|proof-trust-review|recovery-storage-contract|verification-[^/]+)\.md$') {
             $formal = $true
-        } elseif ($path -cin 'README.md', 'THIRD-PARTY-NOTICES.md') {
+        } elseif ($path -cin 'README.md', 'THIRD-PARTY-NOTICES.md', 'LICENSE', 'LICENSE-APACHE-2.0.txt') {
             # These documents ship in NuGet, but cannot change test binaries.
             $package = $true
         } elseif ($path -cmatch '^(?:(?:docs|src|tests|tools|benchmarks|Databases|\.github)/[^"\\]+\.md|[^/"\\]+\.md|LICENSE(?:\.txt)?)$') {
             # Recognize prose before its enclosing project/fixture directory.
             # Proof/trust documents above retain their stronger obligations.
-        } elseif ($path -cmatch '^scripts/(?:AotSmoke/|(?:test-aot|restore-dependencies|new-native-calculated-choose-fixtures)\.ps1$)' -or
-            $path -cmatch '^scripts/tests/(?:test-aot|restore-dependencies)\.tests\.ps1$') {
+        } elseif ($path -cmatch '^scripts/(?:AotSmoke/|(?:test-aot|test-package|restore-dependencies|new-native-calculated-choose-fixtures)\.ps1$)' -or
+            $path -cmatch '^scripts/tests/(?:test-aot|test-package|restore-dependencies)\.tests\.ps1$') {
             $dotnet = $true
         } elseif ($path -cmatch '^scripts/tests/[^/"\\]+\.tests\.ps1$' -or
             $path -cmatch '^scripts/(?:assert-benchmark-baseline|assert-ci-success|assert-infersharp|check-security-traceability|ci-gate|compare-benchmarks|resolve-benchmark-project|run-benchmark-comparison|run-candidate-checks|submit-candidate|update-sdk)\.ps1$') {
