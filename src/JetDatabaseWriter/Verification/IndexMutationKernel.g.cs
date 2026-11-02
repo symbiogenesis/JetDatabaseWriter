@@ -4,6 +4,23 @@
 namespace JetDatabaseWriter.Verification {
 
   internal static class IndexMutationKernel {
+    public static uint IntegerOrderingRank(byte kind) {
+      if ((kind) == ((byte)(2))) {
+        return 1U;
+      } else if ((kind) == ((byte)(3))) {
+        return 2U;
+      } else if ((kind) == ((byte)(4))) {
+        return 3U;
+      } else if ((kind) == ((byte)(19))) {
+        return 4U;
+      } else {
+        return 0U;
+      }
+    }
+    public static bool AdmitIntegerOrdering(byte stored, byte mapped)
+    {
+      return ((0U) < (JetDatabaseWriter.Verification.IndexMutationKernel.IntegerOrderingRank(stored))) && ((JetDatabaseWriter.Verification.IndexMutationKernel.IntegerOrderingRank(stored)) <= (JetDatabaseWriter.Verification.IndexMutationKernel.IntegerOrderingRank(mapped)));
+    }
     public static bool AdmitRelationshipReference(long realIndex, uint realCount, long partner, long partnerPage, long pageCount, byte role, byte cascadeUp, byte cascadeDown)
     {
       return (((((((0L) <= (realIndex)) && ((realIndex) < ((long)(realCount)))) && ((0L) <= (partner))) && (((1L) < (partnerPage)) && ((partnerPage) < (pageCount)))) && (((role) == ((byte)(1))) || ((role) == ((byte)(2))))) && ((cascadeUp) <= ((byte)(1)))) && ((cascadeDown) <= ((byte)(1)));

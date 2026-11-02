@@ -8,8 +8,12 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.Verification;
 
 /// <summary>
 /// A contiguous run of <c>OrderBy</c>/<c>ThenBy</c> keys. Ordering buffers the source
@@ -42,13 +46,15 @@ internal sealed class OrderStage : QueryStage
     /// index covers the ordering.
     /// </summary>
     /// <param name="indexes">The candidate indexes on the queried table.</param>
+    /// <param name="definition">The actual native column types and identities.</param>
+    /// <param name="entityType">The concrete entity type the provider materializes.</param>
     /// <returns>The covering index, or <see langword="null"/> when none qualifies.</returns>
-    public IndexMetadata? FindCoveringIndex(IReadOnlyList<IndexMetadata> indexes)
+    public IndexMetadata? FindCoveringIndex(IReadOnlyList<IndexMetadata> indexes, TableDef definition, Type entityType)
     {
         var columns = new List<(string Column, bool Descending)>(this.Keys.Count);
         foreach (OrderingKey key in this.Keys)
         {
-            if (!TryDescribeIntegerKey(key, out string? column))
+            if (!TryDescribeIntegerKey(key, definition, entityType, out string? column))
             {
                 return null;
             }
@@ -85,25 +91,29 @@ internal sealed class OrderStage : QueryStage
         return QueryLambdaCompiler.Shared.Compile(Expression.Lambda<Func<T, object?>>(body, parameter));
     }
 
-    private static bool TryDescribeIntegerKey(OrderingKey key, out string? column)
+    private static bool TryDescribeIntegerKey(OrderingKey key, TableDef definition, Type entityType, out string? column)
     {
         column = null;
 
-        Expression body = key.KeySelector.Body;
-        if (body is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+        // Only a direct access to a mapped property of the lambda parameter (e.g. i => i.Id)
+        // can reuse native order. Casts keep their full key evaluation, including checked
+        // overflow, and custom accessors can transform a mapped value. The generated gate
+        // admits only exact integral native-to-property mappings; Text and lossy numeric
+        // projections cannot borrow the order of the stored keys.
+        if (key.KeySelector.Body is not MemberExpression { Member: PropertyInfo property, Expression: ParameterExpression parameter }
+            || parameter != key.KeySelector.Parameters[0] || parameter.Type != entityType)
         {
-            body = convert.Operand;
+            return false;
         }
 
-        // Only a direct access to a mapped property of the lambda parameter (e.g. i => i.Id)
-        // maps to a column, through the same EntityMap the row mapper uses; nested paths,
-        // computed keys and [NotMapped] properties are left to the in-memory sort. The CLR
-        // type is restricted to signed integers/byte, whose JET index key bytes compare in
-        // the same order as the values — unlike float/double (NaN) or date (pre-1899 OADate).
-        if (body is MemberExpression { Member: PropertyInfo property, Expression: ParameterExpression parameter }
-            && parameter == key.KeySelector.Parameters[0]
-            && IsOrderSafeIntegerType(property.PropertyType)
-            && EntityMap.For(parameter.Type).FindByMember(property) is EntityProperty mapped)
+        // Every mapped setter runs during materialization. A custom setter on
+        // another property can change even an automatic key property. Covariant
+        // queries likewise must not substitute a base type's different mapping.
+        var map = EntityMap.For(entityType);
+        if (map.Properties.All(static candidate => IsAutomaticProperty(candidate.Property))
+            && map.FindByMember(property) is EntityProperty mapped && mapped.Property.Equals(property)
+            && definition.FindColumn(mapped.ColumnName) is ColumnInfo { IsCalculated: false } native
+            && IndexMutationKernel.AdmitIntegerOrdering((byte)native.Type, IntegerTypeCode(property.PropertyType)))
         {
             column = mapped.ColumnName;
             return true;
@@ -112,22 +122,40 @@ internal sealed class OrderStage : QueryStage
         return false;
     }
 
-    private static bool IsOrderSafeIntegerType(Type type)
+    private static bool IsAutomaticProperty(PropertyInfo property)
+        => property.GetMethod is { IsVirtual: false } getter && property.SetMethod is { IsVirtual: false } setter
+            && getter.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false)
+            && setter.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false);
+
+    private static byte IntegerTypeCode(Type type)
     {
         Type underlying = Nullable.GetUnderlyingType(type) ?? type;
-        return underlying == typeof(int)
-            || underlying == typeof(long)
-            || underlying == typeof(short)
-            || underlying == typeof(byte);
+        if (underlying == typeof(byte))
+        {
+            return (byte)ColumnType.ByteType;
+        }
+
+        if (underlying == typeof(short))
+        {
+            return (byte)ColumnType.IntegerType;
+        }
+
+        if (underlying == typeof(int))
+        {
+            return (byte)ColumnType.LongIntegerType;
+        }
+
+        return underlying == typeof(long) ? (byte)ColumnType.BigIntType : (byte)0;
     }
 
     private static bool Covers(IndexMetadata index, List<(string Column, bool Descending)> keys)
     {
         // The index serves the ordering only when it has a usable B-tree root, never omits
-        // rows (no ignore-nulls), and is unique — uniqueness rules out key ties, so the
-        // index order equals the stable LINQ sort. Its key columns must match the ordering
-        // columns one-for-one, in order, including sort direction.
-        if (index.FirstDp <= 0 || !index.EnforcesUniqueness || index.IgnoreNulls || index.Columns.Count != keys.Count)
+        // rows (no ignore-nulls), and has unique nonnull keys, ruling out stable-sort ties
+        // and null-to-default mapping. Its columns must match the ordering one-for-one,
+        // including sort direction. Optional unique indexes can have repeated Null keys.
+        if (index.FirstDp <= 0 || !index.EnforcesUniqueness || index.IgnoreNulls
+            || (index.Kind != IndexKind.PrimaryKey && !index.IsRequired) || index.Columns.Count != keys.Count)
         {
             return false;
         }

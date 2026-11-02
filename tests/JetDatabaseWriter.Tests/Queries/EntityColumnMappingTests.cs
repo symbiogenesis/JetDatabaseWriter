@@ -9,6 +9,7 @@ using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
@@ -16,6 +17,7 @@ using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Queries;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -181,7 +183,8 @@ public sealed class EntityColumnMappingTests(DatabaseCache db) : IClassFixture<D
             Columns = [new IndexColumnReference { Name = "Person ID", IsAscending = true }],
         };
 
-        Assert.Same(primaryKey, stage.FindCoveringIndex([primaryKey]));
+        var definition = new TableDef { Columns = [new ColumnInfo { Name = "Person ID", Type = ColumnType.LongIntegerType }] };
+        Assert.Same(primaryKey, stage.FindCoveringIndex([primaryKey], definition, typeof(Person)));
     }
 
     [Fact]

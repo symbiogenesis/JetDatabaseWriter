@@ -8,6 +8,7 @@ using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
@@ -235,8 +236,14 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
 
         // Linked metadata belongs to a separately opened source capability. Keep
         // its rows and ordering in one source read rather than planning across opens.
+        ResolvedTable? resolved = await tables.ResolveLocalTableAsync(table, cancellationToken).ConfigureAwait(false);
+        if (resolved is null)
+        {
+            return null;
+        }
+
         IReadOnlyList<IndexMetadata> tableIndexes = await indexes.ListSeekableIndexesAsync(table, cancellationToken).ConfigureAwait(false);
-        return order.FindCoveringIndex(tableIndexes) is { } index
+        return order.FindCoveringIndex(tableIndexes, resolved.Definition, typeof(T)) is { } index
             ? indexes.ReadIndexRowsAsync<T>(table, index.Name, IndexQueryCriteria.All, cancellationToken)
             : null;
     }

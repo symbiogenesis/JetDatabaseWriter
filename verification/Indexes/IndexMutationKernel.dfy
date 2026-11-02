@@ -11,6 +11,80 @@ module IndexMutationNativeTypes {
 module IndexMutationKernel {
   import opened IndexMutationNativeTypes
 
+  // Native Byte, Integer, Long Integer and Large Number are exact integral
+  // domains. Only identity and widening row mappings may reuse their order.
+  function IntegerOrderingRank(kind: Byte): U32 {
+    if kind == 2 then 1 else if kind == 3 then 2 else if kind == 4 then 3
+    else if kind == 19 then 4 else 0
+  }
+
+  function AdmitIntegerOrdering(stored: Byte, mapped: Byte): bool {
+    0 < IntegerOrderingRank(stored) <= IntegerOrderingRank(mapped)
+  }
+
+  ghost function OrderingIntegerModulus(kind: Byte): int {
+    if kind == 2 then 256 else if kind == 3 then 65536
+    else if kind == 4 then 4294967296 else if kind == 19 then 18446744073709551616 else 1
+  }
+
+  ghost function OrderingIntegerMinimum(kind: Byte): int {
+    if kind == 2 then 0 else -OrderingIntegerModulus(kind) / 2
+  }
+
+  ghost predicate OrderingIntegerValue(kind: Byte, value: int) {
+    IntegerOrderingRank(kind) > 0 && OrderingIntegerMinimum(kind) <= value <
+      OrderingIntegerMinimum(kind) + OrderingIntegerModulus(kind)
+  }
+
+  // Fixed-width two's-complement conversion gives the concrete value of an
+  // unchecked integral cast. An in-range checked conversion has that same value;
+  // values outside its range cannot be admitted as an exact mapping.
+  ghost function ConvertOrderingInteger(kind: Byte, value: int): int {
+    var residue := value % OrderingIntegerModulus(kind);
+    if kind == 2 || residue < OrderingIntegerModulus(kind) / 2 then residue
+    else residue - OrderingIntegerModulus(kind)
+  }
+
+  lemma OrderingIntegerConversionIsExact(kind: Byte, value: int)
+    requires OrderingIntegerValue(kind, value)
+    ensures ConvertOrderingInteger(kind, value) == value
+  {
+    var modulus := OrderingIntegerModulus(kind);
+    if value < 0 {
+      assert kind != 2;
+      assert 0 <= value + modulus < modulus;
+      assert value % modulus == (value + modulus) % modulus;
+      assert (value + modulus) % modulus == value + modulus;
+    } else {
+      assert 0 <= value < modulus;
+      assert value % modulus == value;
+    }
+  }
+
+  lemma AdmittedIntegerMappingPreservesOrder(stored: Byte, mapped: Byte, left: int, right: int)
+    requires AdmitIntegerOrdering(stored, mapped)
+    requires OrderingIntegerValue(stored, left) && OrderingIntegerValue(stored, right)
+    ensures OrderingIntegerValue(mapped, left) && OrderingIntegerValue(mapped, right)
+    ensures ConvertOrderingInteger(mapped, left) == left && ConvertOrderingInteger(mapped, right) == right
+    ensures (left < right) <==> (ConvertOrderingInteger(mapped, left) < ConvertOrderingInteger(mapped, right))
+    ensures (left == right) <==> (ConvertOrderingInteger(mapped, left) == ConvertOrderingInteger(mapped, right))
+  {
+    assert stored == 2 || stored == 3 || stored == 4 || stored == 19;
+    assert mapped == 2 || mapped == 3 || mapped == 4 || mapped == 19;
+    assert OrderingIntegerMinimum(mapped) <= OrderingIntegerMinimum(stored);
+    assert OrderingIntegerMinimum(stored) + OrderingIntegerModulus(stored) <=
+      OrderingIntegerMinimum(mapped) + OrderingIntegerModulus(mapped);
+    OrderingIntegerConversionIsExact(mapped, left);
+    OrderingIntegerConversionIsExact(mapped, right);
+  }
+
+  lemma UnsafeIntegerOrderingExamples()
+    ensures !AdmitIntegerOrdering(4, 2) && !AdmitIntegerOrdering(10, 4)
+    ensures 1 < 256 && ConvertOrderingInteger(2, 256) < ConvertOrderingInteger(2, 1)
+    ensures !OrderingIntegerValue(2, 256)
+  {
+  }
+
   // Relationship metadata is admitted only for the native layouts exercised
   // by the independent engine controls. These are local reference bounds;
   // partner-table acquisition and relationship enforcement remain adapters.
