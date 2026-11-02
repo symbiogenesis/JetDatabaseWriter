@@ -6,6 +6,7 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.DelimitedText;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -34,6 +35,20 @@ public sealed class DelimitedTextReaderFuzzTests
     [Trait("Category", "Fuzz")]
     [Fact(Explicit = true)]
     public async Task FuzzDelimitedTextReader() => await RunFuzzIterationAsync(await FuzzInput.ReadAsync(TestContext.Current.CancellationToken));
+
+    /// <summary>Malformed raw text may refuse without aborting the generated round-trip control.</summary>
+    [Fact]
+    public async Task RawInput_UnterminatedQuote_ContinuesGeneratedRoundTrip()
+    {
+        await RunFuzzIterationAsync(Encoding.UTF8.GetBytes("\"unterminated"));
+    }
+
+    /// <summary>The configured raw-field limit may refuse without aborting the generated control.</summary>
+    [Fact]
+    public async Task RawInput_OverFieldBudget_ContinuesGeneratedRoundTrip()
+    {
+        await RunFuzzIterationAsync(Encoding.UTF8.GetBytes(new string('x', FuzzLimits.MaxFieldLength + 1)));
+    }
 
     /// <summary>
     /// Empty single-column records need explicit field syntax to survive EOF and mixed line endings.
@@ -95,7 +110,11 @@ public sealed class DelimitedTextReaderFuzzTests
         {
             _ = await ReadAllAsync(source, delimiter);
         }
-        catch (InvalidDataException)
+        catch (JetCorruptDataException exception) when (exception.ErrorCode == JetErrorCode.CorruptDelimitedText)
+        {
+        }
+        catch (JetLimitationException exception) when (exception.ErrorCode == JetErrorCode.ValueTooLarge
+            && exception.ErrorInfo.ObjectName is "MaxRecordLength" or "MaxFieldLength" or "MaxColumnCount")
         {
         }
     }
