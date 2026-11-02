@@ -12,6 +12,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Verification;
 
@@ -40,10 +41,10 @@ internal sealed class OrderStage : QueryStage
     }
 
     /// <summary>
-    /// Finds an index whose key order is provably identical to this stage's stable sort, so
-    /// the provider can read the source in key order and skip the in-memory sort. Returns
-    /// <see langword="null"/> when any key is not an order-safe integer column access or no
-    /// index covers the ordering.
+    /// Finds an index satisfying the supported integral value-order contract, so the provider
+    /// can read in key order under the native index and materializer contracts. Other key or
+    /// mapping shapes retain buffered key evaluation. Returns <see langword="null"/> when
+    /// no covering index meets that admission boundary.
     /// </summary>
     /// <param name="indexes">The candidate indexes on the queried table.</param>
     /// <param name="definition">The actual native column types and identities.</param>
@@ -110,7 +111,7 @@ internal sealed class OrderStage : QueryStage
         // another property can change even an automatic key property. Covariant
         // queries likewise must not substitute a base type's different mapping.
         var map = EntityMap.For(entityType);
-        if (map.Properties.All(static candidate => IsAutomaticProperty(candidate.Property))
+        if (HasTotalMappings(map, definition)
             && map.FindByMember(property) is EntityProperty mapped && mapped.Property.Equals(property)
             && definition.FindColumn(mapped.ColumnName) is ColumnInfo { IsCalculated: false } native
             && IndexMutationKernel.AdmitIntegerOrdering((byte)native.Type, IntegerTypeCode(property.PropertyType)))
@@ -126,6 +127,36 @@ internal sealed class OrderStage : QueryStage
         => property.GetMethod is { IsVirtual: false } getter && property.SetMethod is { IsVirtual: false } setter
             && getter.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false)
             && setter.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false);
+
+    private static bool HasTotalMappings(EntityMap map, TableDef definition)
+    {
+        foreach (EntityProperty candidate in map.Properties)
+        {
+            if (!IsAutomaticProperty(candidate.Property))
+            {
+                return false;
+            }
+
+            ColumnInfo? native = definition.FindColumn(candidate.ColumnName);
+            if (native is null)
+            {
+                continue;
+            }
+
+            // Paging an index skips materializing later rows. Admit only total
+            // ordinary scalar conversions, so it cannot suppress their deterministic
+            // mapping failures. Calculated statuses and complex values have separate domains.
+            Type target = Nullable.GetUnderlyingType(candidate.Property.PropertyType) ?? candidate.Property.PropertyType;
+            if (native.IsCalculated || native.Type == ColumnType.ComplexType || JetTypeInfo.GetClrType(native.Type) is null
+                || (target != JetTypeInfo.ResolveClrType(native)
+                    && !IndexMutationKernel.AdmitIntegerOrdering((byte)native.Type, IntegerTypeCode(target))))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private static byte IntegerTypeCode(Type type)
     {

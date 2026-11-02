@@ -183,6 +183,89 @@ public sealed class QueryIndexOrderingTests
             (await query.OrderBy(row => row.Id).Take(1).ToListAsync(Ct)).Cast<DerivedRow>().Select(row => row.Id));
     }
 
+    /// <summary>Index paging must not hide an overflowing conversion on another mapped column.</summary>
+    [Fact]
+    public async Task OtherMappedConversion_PreservesFailureBeforePaging()
+    {
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.Jet4Mdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync(Table, [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Payload", typeof(int))], Ct);
+            await writer.InsertRowsAsync(Table, [[1, 1], [2, 256]], Ct);
+        }
+
+        await using AccessReader reader = await OpenAsync(stream);
+        await Assert.ThrowsAsync<InvalidCastException>(async () =>
+            await reader.Rows<NarrowPayloadRow>(Table, cancellationToken: Ct).ToListAsync(Ct));
+        await Assert.ThrowsAsync<InvalidCastException>(async () =>
+            await reader.Query<NarrowPayloadRow>(Table).OrderBy(row => row.Id).Take(1).ToListAsync(Ct));
+    }
+
+    /// <summary>Ordinary exact nonkey fields and integral widening still permit index paging.</summary>
+    [Fact]
+    public async Task TotalNonkeyMappings_RetainIndexPaging()
+    {
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.Jet4Mdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync(Table, [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Label", typeof(string), maxLength: 20), new("Count", typeof(short))], Ct);
+            await writer.InsertRowsAsync(Table, [[2, "two", (short)-1], [1, "one", short.MaxValue]], Ct);
+        }
+
+        await using AccessReader reader = await OpenAsync(stream);
+        List<CompleteRow> rows = await reader.Rows<CompleteRow>(Table, cancellationToken: Ct).ToListAsync(Ct);
+        ResolvedTable? resolved = await reader.Services.Tables.ResolveLocalTableAsync(Table, Ct);
+        Assert.NotNull(resolved);
+        var stage = new OrderStage();
+        Expression<Func<CompleteRow, int>> selector = row => row.Id;
+        stage.Keys.Add(new OrderingKey(selector, Descending: false));
+        Assert.NotNull(stage.FindCoveringIndex(await reader.ListIndexesAsync(Table, Ct), resolved.Definition, typeof(CompleteRow)));
+        Assert.Equal(
+            rows.OrderBy(row => row.Id).Take(1).Select(row => (row.Id, row.Label, row.Count)),
+            (await reader.Query<CompleteRow>(Table).OrderBy(row => row.Id).Take(1).ToListAsync(Ct)).Select(row => (row.Id, row.Label, row.Count)));
+    }
+
+    /// <summary>Required unique indexes retain the fast path; optional Null ties retain scan stability.</summary>
+    /// <param name="required">Whether the nonprimary unique index refuses Null keys.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UniqueIndexes_RequireNonNullKeysForIndexPaging(bool required)
+    {
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.Jet4Mdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync(Table, [new("Id", typeof(int)) { IsPrimaryKey = true }, new("SortKey", typeof(int))], [new IndexDefinition("Ordering", "SortKey") { IsUnique = true, IsRequired = required }], Ct);
+            object?[][] input = required
+                ? [[2, 20], [1, 10], [3, 30]]
+                : [[2, null], [1, null], [3, 10]];
+            await writer.InsertRowsAsync(Table, input, Ct);
+        }
+
+        await using AccessReader reader = await OpenAsync(stream);
+        List<OptionalKeyRow> rows = await reader.Rows<OptionalKeyRow>(Table, cancellationToken: Ct).ToListAsync(Ct);
+        ResolvedTable? resolved = await reader.Services.Tables.ResolveLocalTableAsync(Table, Ct);
+        Assert.NotNull(resolved);
+        var stage = new OrderStage();
+        Expression<Func<OptionalKeyRow, int?>> selector = row => row.SortKey;
+        stage.Keys.Add(new OrderingKey(selector, Descending: false));
+        IndexMetadata? selected = stage.FindCoveringIndex(await reader.ListIndexesAsync(Table, Ct), resolved.Definition, typeof(OptionalKeyRow));
+        if (required)
+        {
+            Assert.NotNull(selected);
+            Assert.Equal(IndexKind.Normal, selected.Kind);
+            Assert.Equal("Ordering", selected.Name);
+        }
+        else
+        {
+            Assert.Null(selected);
+        }
+
+        Assert.Equal(
+            rows.OrderBy(row => row.SortKey).Take(2).Select(row => row.Id),
+            (await reader.Query<OptionalKeyRow>(Table).OrderBy(row => row.SortKey).Take(2).ToListAsync(Ct)).Select(row => row.Id));
+    }
+
     private static async ValueTask<MemoryStream> CreateAsync(DatabaseFormat format, Type columnType, object[] keys)
     {
         var stream = new MemoryStream();
@@ -261,6 +344,39 @@ public sealed class QueryIndexOrderingTests
     {
         /// <summary>Gets or sets the actual mapped key.</summary>
         public new int Id { get; set; }
+    }
+
+    /// <summary>An unrelated column has a fallible narrowing projection.</summary>
+    private sealed class NarrowPayloadRow
+    {
+        /// <summary>Gets or sets the exact mapped key.</summary>
+        public int Id { get; set; }
+
+        /// <summary>Gets or sets the narrowed payload.</summary>
+        public byte Payload { get; set; }
+    }
+
+    /// <summary>Ordinary identity fields and a widened integral payload.</summary>
+    private sealed class CompleteRow
+    {
+        /// <summary>Gets or sets the mapped key.</summary>
+        public int Id { get; set; }
+
+        /// <summary>Gets or sets an identity text projection.</summary>
+        public string Label { get; set; } = string.Empty;
+
+        /// <summary>Gets or sets a widened integral projection.</summary>
+        public long Count { get; set; }
+    }
+
+    /// <summary>An optional unique sort key can contain stable Null ties.</summary>
+    private sealed class OptionalKeyRow
+    {
+        /// <summary>Gets or sets the independent row identity.</summary>
+        public int Id { get; set; }
+
+        /// <summary>Gets or sets the optional ordering key.</summary>
+        public int? SortKey { get; set; }
     }
 #pragma warning restore CA1812
 }
