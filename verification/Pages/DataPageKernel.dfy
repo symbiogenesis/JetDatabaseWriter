@@ -130,11 +130,22 @@ module DataPageKernel {
   { }
 
   // Native word masks retain the exact arithmetic slot/flag representation.
-  lemma NativeWordMasks(raw: U32, offset: U32)
+  lemma NativeWordMasksBits(raw: bv16, offset: bv16)
+    requires offset < 8192
+    ensures raw & 8191 == raw % 8192
+    ensures raw & 57344 == raw / 8192 * 8192
+    ensures ((raw & 57344) | offset) == raw / 8192 * 8192 + offset
+  { }
+
+  lemma {:isolate_assertions} NativeWordMasks(raw: U32, offset: U32)
     requires raw < 65536 && offset < 8192
     ensures (raw as bv16 & 8191) as U32 == raw % 8192
     ensures ((raw as bv16 & 57344) | offset as bv16) as U32 == raw / 8192 * 8192 + offset
-  { }
+  {
+    NativeWordMasksBits(raw as bv16, offset as bv16);
+    assert (raw as bv16 % 8192) as U32 == raw % 8192;
+    assert (raw as bv16 / 8192 * 8192 + offset as bv16) as U32 == raw / 8192 * 8192 + offset;
+  }
 
   lemma WordBytesInverse(word: U32)
     requires word < 65536
