@@ -18,6 +18,7 @@ function Assert-Lanes([string] $Name, [string[]] $Paths, [bool] $Dotnet, [bool] 
     "PASS: $Name"
 }
 Assert-Lanes 'unchanged validated tree' @() $false $false
+Assert-Lanes 'release evidence admission changes proof trust' @('scripts/assert-release-readiness.ps1', 'scripts/write-release-evidence.ps1', 'scripts/tests/release-readiness.tests.ps1', 'scripts/tests/write-release-evidence.tests.ps1', 'scripts/tests/release-evidence-workflow.tests.ps1') $false $true
 Assert-Lanes 'readme only needs package validation' @('README.md') $false $false $true
 Assert-Lanes 'packaged notices need package validation' @('THIRD-PARTY-NOTICES.md') $false $false $true
 Assert-Lanes 'packaged project license needs package validation' @('LICENSE') $false $false $true

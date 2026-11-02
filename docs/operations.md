@@ -127,7 +127,7 @@ Reader and writer examples are alternatives; dispose the reader before opening a
 ```csharp
 var options = new AccessReaderOptions("secretPassword")
 {
-    PageCacheSize            = 512,    // pages in LRU cache (default: 256)
+    PageCacheSize            = 512,    // pages in CLOCK cache (default: 256)
     PageReadOptimizationMode = PageReadOptimizationMode.Auto, // random-access/read-ahead policy (default)
     DiagnosticsEnabled       = false,  // verbose logging (default: false)
     MaxComplexDiscoveryEntries = 65_536, // aggregate metadata work per complex-column discovery

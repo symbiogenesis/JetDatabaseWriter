@@ -1,4 +1,5 @@
 name: Adversarial fuzz
+run-name: "Validation: fuzz ${{ github.event.workflow_run.head_sha || github.sha }}"
 on:
   workflow_run:
     workflows: [CI]
@@ -63,6 +64,7 @@ jobs:
         run: ./scripts/select-specialized-validation.ps1
 
   fuzz:
+    name: Fuzz (${{ matrix.tf }})
     needs: prerequisite
     if: needs.prerequisite.outputs.run == 'true'
     runs-on: windows-latest
@@ -129,3 +131,27 @@ jobs:
           path: artifacts/fuzz/
           if-no-files-found: error
           retention-days: 7
+
+  release-evidence:
+    name: Record release evidence
+    needs: [prerequisite, fuzz]
+    if: ${{ success() && needs.prerequisite.outputs.run == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout validated revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ env.JDW_VALIDATION_SHA }}
+      - name: Record successful campaign
+        shell: pwsh
+        run: ./scripts/write-release-evidence.ps1 -Kind fuzz
+      - name: Retain release evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-evidence-fuzz-${{ env.JDW_VALIDATION_SHA }}
+          path: artifacts/release-evidence/receipt.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30

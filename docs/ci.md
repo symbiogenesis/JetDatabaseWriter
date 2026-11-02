@@ -5,7 +5,7 @@ The required [CI workflow](../.github/workflows/ci.yml) owns ordinary validation
 | Workflow | Trigger | Responsibility |
 |---|---|---|
 | [CI](../.github/workflows/ci.yml) | Main pushes, pull requests, manual dispatch and release calls | Common script/security/proof-review checks and the aggregate `CI gate`; content-selected Release analyzers, complete Windows suites, pinned no-skip DAO120 compatibility against matching analyzed runner artifacts, proofs, package validation, generated consumers and focused Linux/macOS recovery checks. |
-| [Publish NuGet Package](../.github/workflows/publish.yml) | `v*` tags | Calls full CI, then publishes its exact package artifact from a bounded Linux job. |
+| [Publish NuGet Package](../.github/workflows/publish.yml) | `v*` tags | Calls full CI, verifies published-main ancestry and exact-revision CI/fuzz/portability evidence, then publishes its exact package artifact from a bounded Linux job. |
 | [Benchmarks](../.github/workflows/benchmarks.yml) | Manual, main only | Hosted measurements, with optional validated baseline and controlled comparisons. Requires successful CI for each measured revision. |
 | [Adversarial fuzz](../.github/workflows/fuzz.yml) | Successful main CI and manual main dispatch | Bounded mutation cases on .NET 10 and 11, with retained reproductions and coverage. Requires successful exact-revision CI. |
 | [Portability](../.github/workflows/portability.yml) | Successful main CI and manual main dispatch | Complete Linux/macOS suites on .NET 10 and 11, with xUnit and golden diagnostics. Requires successful exact-revision CI, which already supplies Windows coverage and strict analyzers. |
@@ -27,6 +27,8 @@ succeed. Cancellation stops superseded native runs.
 Two strict Release test builds produce the native and standard runner artifacts. Fifteen runtime/partition jobs and the three native compatibility jobs download those exact outputs; they do not repeat compiler or analyzer work. Automatic fuzz and portability runs bind checkout and prerequisite validation to the successful CI run SHA, rather than the current main tip. The exact run selection receipt must select .NET validation; documentation/proof-only runs skip those expensive campaigns, while manual dispatch remains explicit. Fuzz coverage receipts name the validated SHA and refuse a mismatched checkout; a workflow_run trigger's default-branch SHA cannot label that evidence. Guards accept the exact CI workflow path with its supported manual ref suffix and retain same-repository, main-branch and successful-event checks.
 
 ## Developer maintenance
+
+Successful fuzz and portability matrices each produce a final `Record release evidence` job. It checks the actual Git checkout and retains a small receipt bound to the repository, workflow, revision, run ID and run attempt for 30 days. Campaign titles identify their target revision even while pending, because `workflow_run` metadata can name a newer default-branch revision. Publication selects the newest matching official campaign, requires its complete successful job inventory, and validates the bounded receipt archive. A newer failed or pending run cannot fall back to older success. Skipped automatic campaigns supply no receipt; release acceptance requires explicit successful campaigns for the release SHA. Portability also validates xUnit outcomes before recording success.
 
 For candidate checks, stage new files and use the helper, which supplies the task, immutable base SHA and encoded patch:
 

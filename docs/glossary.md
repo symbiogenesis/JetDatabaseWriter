@@ -150,7 +150,7 @@ Acronyms, constants and unusual Access/JET terms used throughout this codebase, 
 
 | Term | Meaning |
 |---------|---------|
-| **LRU** | Least Recently Used — 256-page eviction cache in `AccessReader` |
+| **LRU** | Least Recently Used — strict retention policy used by bounded metadata caches; the reader page cache uses CLOCK approximate LRU eviction |
 | **B-tree** | Balanced tree — index page structure (leaf 0x04, intermediate 0x03) |
 | **Magic value / cookie** | Fixed byte or integer value Access expects in a header/descriptor to recognize a valid structure |
 | **High-water value** | Cached maximum AutoNumber value used to pick the next generated value |

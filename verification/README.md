@@ -139,12 +139,19 @@ pwsh -NoProfile -File scripts/verify-proofs.ps1 `
     -DafnyPath (Join-Path $proofRun "tool/$executable") `
     -OutputDirectory $coverageRun `
     -AnalyzeProofCoverage `
-    -ProofCoverageSources verification/LongValues/LongValueKernel.dfy
+    -ProofCoverageSources verification/LongValues/LongValueKernel.dfy `
+    -ProofDiagnosticSymbol LongValueKernel.ContainsVisited
 ```
 
 The optional mode uses the exact pinned verifier and bundled solver after
 mandatory verification, audit, negative controls and generated freshness over
-the complete admitted manifest. `-ProofCoverageSources` accepts exact,
+the complete admitted manifest. It first verifies that contradictory-assumption
+diagnostics detect a separate synthetic theorem with an impossible postcondition
+under a false precondition. A missing or suppressed expected warning refuses the
+requested coverage pass. The control source and diagnostics remain in the
+external output directory; they are never admitted into the proof manifest.
+This checks the diagnostic mechanism, not the adequacy of real specifications.
+`-ProofCoverageSources` accepts exact,
 case-sensitive repository-relative manifest paths, includes every transitive
 normal-source dependency in manifest order, and refuses unknown, duplicate or
 escaping paths. A selection without `-AnalyzeProofCoverage` refuses. Omitting
@@ -200,7 +207,7 @@ pwsh -NoProfile -File scripts/verify-proofs.ps1 `
     -MeasureProofComplexity `
     -ProofComplexitySources verification/LongValues/LongValueKernel.dfy `
     -ProofComplexityMutations 3 `
-    -ProofDiagnosticPosition 288-355
+    -ProofDiagnosticSymbol LongValueKernel.ContainsVisited
 ```
 
 Complexity measurement requires explicit manifest sources and between two and
@@ -210,6 +217,15 @@ and all generated freshness checks run first. The supplemental command uses
 `measure-complexity --mutations`, assertion isolation and the pinned solver;
 it never changes canonical source files or runs library benchmarks.
 
+`-ProofDiagnosticSymbol` selects a complete fully qualified symbol through
+Dafny's exact terminal-symbol match. It requires one explicit root source and
+cannot be combined with `-ProofDiagnosticPosition`. Prefer a complete symbol
+when reviewing assumptions or variability. Position ranges remain useful for
+individual assertion batches, but a partial method can produce misleading
+contradiction warnings elsewhere in that method. Replay its complete symbol
+and check concrete precondition witnesses before changing a contract; this is
+not a general waiver for contradictory-assumption warnings.
+
 Retain `proof-complexity.json`, `proof-complexity.resources.csv` and the process
 and output logs. The receipt records exact source hashes, versions, scope,
 requested mutation count and `acceptanceEvidence: false`. Every requested seed
@@ -217,8 +233,44 @@ must report the same nonempty set of distinct successful obligations with valid
 resource and duration values. Exit failure, missing/duplicate obligations,
 empty filters, timeouts and source drift refuse and retain a failure receipt.
 The complete mandatory source inventory is checked for drift, including sources
-outside the diagnostic closure. Resource variation guides proof maintenance;
+outside the diagnostic closure. Separate bounded rankings identify the ten most
+expensive and ten most variable obligations, with per-obligation minimum,
+maximum, mean, population standard deviation and resource coefficient of
+variation across the measured seeds. Zero-resource obligations have zero
+variation; tied rankings use ordinal obligation names. The complete measurements
+remain in the CSV. Resource variation guides proof maintenance;
 it does not establish specification adequacy or production execution costs.
+
+## Proof engineering
+
+Use a reviewed stable upstream release, with its bundled solver and archive
+digests pinned together. Check [upstream releases](https://github.com/dafny-lang/dafny/releases)
+when reviewing an update; a development manual or preview feature is not a
+reason to change the qualified toolchain. Keep the modern `verify`, `audit`,
+`translate` and `measure-complexity` commands explicit, without ambient project
+discovery or trusted-library shortcuts. Qualify both supported distributions
+before replacing the pins.
+
+Follow the pinned release's [verification optimization guidance](https://dafny.org/v4.11.0/VerificationOptimization/VerificationOptimization):
+use named intermediate lemmas, scoped `assert ... by` blocks and local
+`hide`/`reveal` to expose only the facts a proof needs. Use opacity at an actual
+abstraction boundary with sufficient public contracts. Apply assertion
+isolation to diagnosed obligations; a blanket source rewrite or solver timeout
+increase does not establish robustness. Preserve supported success and refusal
+cases, preconditions and postconditions while improving proof structure.
+
+Inspect per-obligation solver resources and seed variation before selecting
+maintenance targets. The upstream suggested resource coefficient of variation
+is a diagnostic starting point, not a calibrated repository acceptance limit.
+Retain exact inputs, complete successful obligation inventories and failed
+seeds. A focused diagnostic does not establish full-inventory stability.
+
+Prefer verified executable decisions directly called by production when that
+removes duplicated correctness policy. Keep I/O, hashing, native-format facts,
+allocation and runtime effects explicit at narrow adapters. An abstract model
+or an additional lemma does not verify those effects. Promote a claim only
+after its complete named path has the evidence required by the
+[scope inventory](../docs/design/verification-scope.md).
 
 ## Executable kernel generation
 

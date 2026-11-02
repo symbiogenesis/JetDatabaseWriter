@@ -36,6 +36,12 @@ $specializedProvenanceInputs = @(
     'scripts/run-hosted-fuzz.ps1'
     'scripts/tests/run-hosted-fuzz.tests.ps1'
     'scripts/tests/specialized-workflow-trigger.tests.ps1'
+    '.github/workflows/publish.yml'
+    'scripts/assert-release-readiness.ps1'
+    'scripts/write-release-evidence.ps1'
+    'scripts/tests/release-readiness.tests.ps1'
+    'scripts/tests/write-release-evidence.tests.ps1'
+    'scripts/tests/release-evidence-workflow.tests.ps1'
 )
 foreach ($path in $specializedProvenanceInputs) { Write-Fixture $path "reviewed provenance fixture $path`n" | Out-Null }
 function New-Receipt {

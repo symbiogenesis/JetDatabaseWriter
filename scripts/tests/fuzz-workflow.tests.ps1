@@ -23,7 +23,7 @@ function Assert-Workflow([string] $Workflow) {
     Assert-Contract ($prerequisite.Contains('run: ${{ steps.select.outputs.run }}') -and $prerequisite.Contains('id: select') -and $prerequisite.Contains('run: ./scripts/select-specialized-validation.ps1') -and $fuzz.Contains('if: needs.prerequisite.outputs.run == ''true''')) 'Automatic fuzzing must honor the reviewed .NET content selection while retaining explicit manual campaigns.'
     Assert-Contract ($Workflow.Contains('DOTNET_NOLOGO: true') -and $Workflow.Contains('DOTNET_CLI_TELEMETRY_OPTOUT: true')) 'Hosted fuzz builds must use the common .NET environment.'
     $checkouts = [regex]::Matches($Workflow, '(?ms)^      - (?:name: [^\n]+\n        )?uses: actions/checkout@[^\n]+\n(?<step>.*?)(?=^      - |\z)')
-    Assert-Contract ($checkouts.Count -eq 2) 'Both fuzz jobs must check out the dispatched revision.'
+    Assert-Contract ($checkouts.Count -eq 3) 'Fuzz prerequisite, runner and evidence jobs must check out the dispatched revision.'
     foreach ($checkout in $checkouts) {
         Assert-Contract ($checkout.Groups['step'].Value.Contains('persist-credentials: false')) 'Fuzz checkouts must not persist repository credentials.'
         Assert-Contract ($checkout.Groups['step'].Value.Contains('ref: ${{ env.JDW_VALIDATION_SHA }}')) 'Every fuzz checkout must use the immutable completed CI revision.'

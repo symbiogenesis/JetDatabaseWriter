@@ -16,7 +16,7 @@ CI checks out the full history (`fetch-depth: 0`) so MinVer sees every tag.
 
 ## Releasing a version
 
-1. Check the [supported operating envelope and release acceptance](docs/support-contract.md), then make sure the commit you want to release is on `main` and its CI run passed.
+1. Check the [supported operating envelope and release acceptance](docs/support-contract.md). The release commit must be in published `main` history and have a successful exact-revision main CI run. Both fuzz and portability must also complete successfully for that same revision. Automatic campaigns normally supply this evidence after full .NET CI; if content selection skipped them, dispatch both on the settled main revision and wait for completion. Their success-only `release-evidence-*` artifacts last 30 days and bind the actual checkout, workflow, run and attempt. A newer pending or unsuccessful campaign supersedes an earlier success for that revision.
 2. Tag it and push only that tag:
 
    ```bash
@@ -25,14 +25,23 @@ CI checks out the full history (`fetch-depth: 0`) so MinVer sees every tag.
    ```
 
    A prerelease uses a SemVer prerelease tag, such as `v4.1.0-beta.1`.
-3. The tag runs `.github/workflows/publish.yml`. It calls `ci.yml` with every validation lane enabled: locked restores, strict Release analysis, all five test partitions for each of the three runtime/library combinations, proofs, pinned native Access interoperability, generated consumers, platform checks and library packaging. Once every job has passed, the Linux publish job downloads the `nupkg` artifact, checks that it holds `JetDatabaseWriter.<tag without the v>.nupkg`, and pushes it to nuget.org with the `NUGET_API_KEY` secret. Nothing is rebuilt between the CI run and the push.
+3. The tag runs `.github/workflows/publish.yml`. It calls `ci.yml` with every validation lane enabled: locked restores, strict Release analysis, all five test partitions for each of the three runtime/library combinations, proofs, pinned native Access interoperability, generated consumers, platform checks and library packaging. Once every job has passed, the Linux publish job runs `scripts/assert-release-readiness.ps1` to verify main ancestry, the exact main CI gate, complete fuzz/portability job inventories and their matching evidence receipts. Missing, skipped, failed, pending or expired evidence refuses publication. The job then downloads the `nupkg` artifact, checks that it holds `JetDatabaseWriter.<tag without the v>.nupkg`, and pushes it to nuget.org with the `NUGET_API_KEY` secret. Nothing is rebuilt between the CI run and the push.
 4. Check that the version appears at <https://www.nuget.org/packages/JetDatabaseWriter/> and at <https://api.nuget.org/v3-flatcontainer/jetdatabasewriter/index.json>.
 
 To start the prereleases of a new major or minor version before its first tag, raise `MinVerMinimumMajorMinor` (for example to `5.0`).
 
+Before creating a tag, the same read-only preflight can run locally with `GITHUB_TOKEN` set to an account token with repository contents and Actions read access:
+
+```powershell
+pwsh -NoProfile -File scripts/assert-release-readiness.ps1 -Sha <full-release-commit> -Repo symbiogenesis/JetDatabaseWriter
+```
+
+It reads existing evidence without dispatching, waiting or publishing. Keep the release revision settled while its campaigns run. To validate the first artifact handoff and recovery before stable publication, use an explicitly authorized prerelease such as `v4.0.0-rc.1`; the same gates apply.
+
 ### When something goes wrong
 
 - **The version check fails.** MinVer did not use the tag, usually because it is not a `vX.Y.Z` SemVer version, so CI packed a prerelease. Delete the tag on the remote, fix it, and push it again.
+- **Release readiness refuses.** Inspect the named exact-revision CI/campaign result. Finish or correct the missing evidence, then rerun the failed publish job. Rerunning only a campaign's evidence job cannot turn a failed matrix into success; the publisher independently checks every required job and the receipt's current run attempt. Expired receipts require a fresh successful campaign.
 - **The push fails with 409 Conflict.** nuget.org already has that version. The workflow does not pass `--skip-duplicate`, so a duplicate fails the run instead of looking like a publish. A version number can't be reused on nuget.org; tag the next patch version.
 - **The push fails for another reason** (for example an expired API key). Fix the cause, then re-run the failed jobs of the same workflow run from the Actions page. The `nupkg` artifact is kept for 7 days; after that, re-run all jobs so CI packs it again.
 - **A published version is broken.** Unlist it on nuget.org (it can't be deleted) and release the next patch version.

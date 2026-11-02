@@ -41,7 +41,7 @@ The [supported operating envelope](docs/support-contract.md) defines the release
 | ✅ | **Concurrency** | `.ldb` / `.laccdb` lockfile + BCL page-level byte-range locks where supported |
 | ✅ | **Transactions** | Group or nest changes with `CommitAsync` / `RollbackAsync`; file transactions recover after process crashes (see [guarantees](docs/operations.md#transactions)) |
 | ✅ | **Storage&nbsp;maintenance** | Access-style free-page reuse, free-page scrubbing, opt-in secure erase, and tail shrinking |
-| ✅ | **Performance** | Configurable LRU page cache, default parallel read-ahead for eligible page scans, streams millions of rows without loading the file |
+| ✅ | **Performance** | Configurable CLOCK page cache with approximate LRU eviction, default parallel read-ahead for eligible page scans, streaming row APIs |
 
 ---
 
@@ -67,7 +67,7 @@ Beyond functional tests, the codebase is validated by:
 
 - **Verified recovery and parsing kernels** — Production recovery and value parsing use generated [Dafny code](verification/README.md) for bounded journal framing, replay identity, replacement field validation, byte authorization and long-value descriptor codecs. Separate models check selected undo, interrupted recovery, replacement and generation-ownership invariants for arbitrary finite model instances. CI verifies proofs, audits trust and checks generated freshness. Remaining C# correspondence and operating-system persistence are [separate obligations](docs/design/formal-verification.md). No verifier or solver ships with the library.
 
-- **Continuous integration** — On every push to main and every pull request, [GitHub Actions](.github/workflows/ci.yml) builds the solution in Release and runs the test suite on Windows with .NET 10 and .NET 11, plus a separate .NET 10 lane for the `netstandard2.1` build. Release tags run the same checks and publish the package built by that run only after it passes.
+- **Continuous integration** — Every push to main and every pull request runs the [CI gate](.github/workflows/ci.yml). Content selection requires Release builds, Windows tests on .NET 10 and .NET 11, and a separate .NET 10 lane for the `netstandard2.1` build when their inputs change; unchanged lanes retain validated ancestor evidence. Release tags run every lane and publish that run's tested package only after the required release evidence passes.
 
 - **Reproducible builds** — Deterministic compilation via [DotNet.ReproducibleBuilds](https://github.com/dotnet/reproducible-builds); reproducing builds requires matching locked dependencies, SDK, version and build inputs.
 

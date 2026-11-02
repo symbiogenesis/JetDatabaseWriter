@@ -10,6 +10,21 @@ This document describes the architecture and folder organization of the `JetData
 
 `TableStorageEditor` owns row/index copying, validation of the completed `TableRewriteCopy`, then publication on the original TDEF root and reclamation. Replacement data/index pages retain a private temporary owner through validation. Publication transfers only the captured row pages and index pages reachable from the replacement roots/maps, including retained initial leaves; it does not scan the database to repair owners. The original catalog row retains its ID, owner, dates, unassigned fields and permission rows; only projected properties and the complex-column flag change. Validation and cancellation checks precede destruction of the original table. Dependent complex and relationship metadata repair remains inside the caller's transaction, using the same pager and cache checkpoints. Storage reclamation and publication are absent from the declaration service and the planner.
 
+## Physical index inventory and edits
+
+`IndexTreeInventory.ReadAsync` owns physical root traversal and captured leaf
+headers. It admits complete reciprocal leaf membership through the generated
+`IndexMutationKernel.ValidateLeafChain` decision before returning an inventory.
+Its `ContainsLeaf` uses generated membership selection. This acquisition layer
+does not stage writes or grant reclamation authority.
+
+`IndexBTreeEditor` owns mutation planning and publication. It consumes the
+captured inventory and keeps generated neighbor admission at the point where a
+neighbor effect is staged. `IndexMaintainer` retains native policy and selection
+of incremental, splice and rebuild paths. Root graph acquisition, native codecs,
+complete tree ordering, allocation and rollback remain separate contracts;
+moving acquisition into a named type does not complete the B-tree proof.
+
 ## Prepared row mutations
 
 Ordinary rows, cascades, complex values, append-only history and catalog/system
@@ -234,6 +249,7 @@ src/JetDatabaseWriter/
 │   ├── IndexKeyEncoder.cs                 (column values → sort key bytes)
 │   ├── IndexBTreeBuilder.cs               (constructs index B-tree pages)
 │   ├── IndexBTreeEditor.cs                (plans/applies in-place B-tree mutations)
+│   ├── IndexTreeInventory.cs              (acquires physical tree membership and admits captured leaf chains before effects)
 │   ├── IndexCursor.cs                     (B-tree descent, streaming criteria walks and writer collecting APIs)
 │   ├── IndexPageCodec.cs                  (index page build/decode, pointers, entry bitmasks)
 │   ├── IndexPageLayout.cs                 (Jet3 / Jet4 index page layout selection)
@@ -706,7 +722,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Builder** | `TDefPageBuilder`, `IndexBTreeBuilder`, `ColumnPropertyBlockBuilder`, `DirectRowDecoderBuilder` | Constructs complex page buffers incrementally |
 | **Cursor / Editor** | `IndexCursor`, `IndexBTreeEditor`, `IndexPageCodec` | Keeps streaming read-only B-tree walks and in-place mutation planning separate from TDEF/catalog orchestration |
 | **Strategy via layout structs** | `JetFormat` holding `DataPageLayout`, `LvalPageLayout`, `TDefHeaderLayout`, `ColumnDescriptorLayout`, `RowFieldSizes`, `IndexLayout`, `IndexPageLayout` and the capability flags | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; one immutable profile per open file, built from its header |
-| **Pager** | `PageFile` / `Pager` + `ReaderPageCache` (`LruCache`) + `PagerTransaction` + `PhysicalRollback` | Dedicated page-level I/O: the reader's read-only `PageFile` with its 256-page LRU eviction cache, and the writer's `Pager` with buffered explicit transactions and bounded statement batches. File transactions use one persistent page-hash manifest and selective original page images for live rollback and validated process-crash recovery on writer reopen; non-file stores retain separate raw before-images for early spills and failed replay |
+| **Pager** | `PageFile` / `Pager` + `ReaderPageCache` (`LruCache`) + `PagerTransaction` + `PhysicalRollback` | Dedicated page-level I/O: the reader's read-only `PageFile` with its default 256-page CLOCK cache and approximate LRU eviction, and the writer's `Pager` with buffered explicit transactions and bounded statement batches. File transactions use one persistent page-hash manifest and selective original page images for live rollback and validated process-crash recovery on writer reopen; non-file stores retain separate raw before-images for early spills and failed replay |
 | **Allocator** | `PageAllocator`, `ReservedPageRuns` | Centralizes Access global free-map reuse, freed-page headers, secure erase, and tail-only shrink; index paths record each run they reserve until a TDEF or usage-map write links it, and give back any run they abandon |
 | **Usage Map Codec** | `UsageMap`, `UsageMapEditor` | Centralizes INLINE/REFERENCE ownership and free-map row parsing, bitmap traversal, bit mutation, pointer emission, and inline row serialization; `UsageMapEditor` grows the writer's rows past one INLINE window by promoting them to REFERENCE and allocating their bitmap pages |
 | **Row Decode Plan** | `RowDecodePlan` | Centralizes row-layout preflight, projection masks, string-row materialization, typed fixed/variable slice decoding, direct-decoder slice resolution, calculated payload handling, and partial key-column reads |

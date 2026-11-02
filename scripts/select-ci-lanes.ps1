@@ -10,8 +10,8 @@ function Get-CiLanes([string[]] $Paths) {
     $package = $false
     foreach ($path in $Paths) {
         if ($path -imatch '\.dfy$' -or $path -cmatch '^verification/' -or
-            $path -cmatch '^scripts/(?:install-dafny|verify-proofs|check-proof-review|select-ci-lanes|select-specialized-validation|run-hosted-fuzz|test-scripts)\.ps1$' -or
-            $path -cmatch '^scripts/tests/(?:verify-proofs|proof-review|formal-workflow|select-ci-lanes|select-specialized-validation|run-hosted-fuzz|specialized-workflow-trigger|fuzz-workflow|portability-workflow|ci-matrix|ci-workflow|ci-tools|test-scripts)\.tests\.ps1$' -or
+            $path -cmatch '^scripts/(?:install-dafny|verify-proofs|check-proof-review|select-ci-lanes|select-specialized-validation|run-hosted-fuzz|assert-release-readiness|write-release-evidence|test-scripts)\.ps1$' -or
+            $path -cmatch '^scripts/tests/(?:verify-proofs|proof-review|formal-workflow|select-ci-lanes|select-specialized-validation|run-hosted-fuzz|specialized-workflow-trigger|fuzz-workflow|portability-workflow|release-readiness|write-release-evidence|release-evidence-workflow|ci-matrix|ci-workflow|ci-tools|test-scripts)\.tests\.ps1$' -or
             $path -cmatch '^docs/design/(?:formal-verification|proof-trust-review|recovery-storage-contract|verification-[^/]+)\.md$') {
             $formal = $true
         } elseif ($path -cin 'README.md', 'THIRD-PARTY-NOTICES.md', 'LICENSE', 'LICENSE-APACHE-2.0.txt') {
