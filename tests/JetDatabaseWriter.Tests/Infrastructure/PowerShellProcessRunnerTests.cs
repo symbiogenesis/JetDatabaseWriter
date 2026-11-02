@@ -90,13 +90,14 @@ public sealed partial class PowerShellProcessRunnerTests
     {
         string variable = $"JDW_RUNNER_{Guid.NewGuid():N}";
         const string value = "child value with 'quotes' and $symbols";
-        string? inherited = Environment.GetEnvironmentVariable("PATH");
+        string inheritedName = OperatingSystem.IsWindows() ? "SystemRoot" : "HOME";
+        string? inherited = Environment.GetEnvironmentVariable(inheritedName);
         Assert.NotNull(inherited);
         Assert.Null(Environment.GetEnvironmentVariable(variable));
 
         PowerShellRunResult result = PowerShellProcessRunner.Run(
             PowerShellPath,
-            CommandArguments($"[Console]::WriteLine([Environment]::GetEnvironmentVariable('{variable}')); [Console]::WriteLine([Environment]::GetEnvironmentVariable('PATH'))"),
+            CommandArguments($"[Console]::WriteLine([Environment]::GetEnvironmentVariable('{variable}')); [Console]::WriteLine([Environment]::GetEnvironmentVariable('{inheritedName}'))"),
             TimeSpan.FromSeconds(60),
             environmentOverrides: new Dictionary<string, string> { [variable] = value });
 
@@ -105,7 +106,7 @@ public sealed partial class PowerShellProcessRunnerTests
         Assert.True(result.OutputComplete);
         Assert.Equal(value + Environment.NewLine + inherited + Environment.NewLine, result.StandardOutput);
         Assert.Null(Environment.GetEnvironmentVariable(variable));
-        Assert.Equal(inherited, Environment.GetEnvironmentVariable("PATH"));
+        Assert.Equal(inherited, Environment.GetEnvironmentVariable(inheritedName));
     }
 
     [Fact]
