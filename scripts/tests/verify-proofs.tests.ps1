@@ -597,6 +597,69 @@ try {
             if ($mandatory.Arguments -contains '--filter-position' -or $mandatory.Arguments -contains '--suggest-proof-refactoring') { throw 'Optional diagnostics changed a mandatory invocation.' }
         }
     }
+    foreach ($mode in 'coverage', 'complexity') {
+        Assert-Scenario "exact symbol selection affects only supplemental $mode" {
+            $coverageCase = 'clean'
+            $coverageCalls.Clear()
+            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-symbol-' + [guid]::NewGuid().ToString('N'))
+            $diagnostics = @{ symbol = 'RecoveryKernel.ExactMethod' }
+            if ($mode -eq 'coverage') {
+                Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true @('verification/Pages/Paging/RecoveryKernel.dfy') $diagnostics
+            } else {
+                $diagnostics.measureComplexity = $true
+                $diagnostics.complexitySources = @('verification/Pages/Paging/RecoveryKernel.dfy')
+                $diagnostics.mutations = 2
+                Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $false $null $diagnostics
+            }
+            $analysis = [IO.File]::ReadAllText((Join-Path $output "proof-$mode.json")) | ConvertFrom-Json
+            $call = $coverageCalls[-1]
+            $filters = @($call.Arguments | Where-Object { $_.StartsWith('--filter-symbol', [StringComparison]::Ordinal) })
+            if ($analysis.symbol -cne 'RecoveryKernel.ExactMethod' -or $analysis.position -or
+                $filters.Count -ne 1 -or $filters[0] -cne '--filter-symbol=RecoveryKernel.ExactMethod.' -or
+                $call.Arguments -contains '--filter-position' -or $call.Arguments -notcontains $coverageFiles[0] -or
+                $call.Arguments -notcontains $coverageFiles[1] -or $call.Arguments -contains $coverageFiles[2] -or
+                $analysis.proofs.Count -ne 2) { throw 'The exact symbol or its ordinary dependency closure was changed.' }
+            foreach ($mandatory in $coverageCalls | Where-Object Name -NE $call.Name) {
+                if (@($mandatory.Arguments | Where-Object { $_.StartsWith('--filter-symbol', [StringComparison]::Ordinal) }).Count -gt 0) { throw 'Symbol selection narrowed a mandatory check or negative control.' }
+            }
+        }
+        Assert-Scenario "unknown symbol refuses empty supplemental $mode without a successful receipt" {
+            $coverageCase = 'empty'
+            $coverageCalls.Clear()
+            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-empty-symbol-' + [guid]::NewGuid().ToString('N'))
+            $caught = $null
+            try {
+                if ($mode -eq 'coverage') {
+                    Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true @('verification/LongValues/LongValueKernel.dfy') @{ symbol = 'LongValueKernel.Absent' }
+                } else {
+                    Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $false $null @{ symbol = 'LongValueKernel.Absent'; measureComplexity = $true; complexitySources = @('verification/LongValues/LongValueKernel.dfy'); mutations = 2 }
+                }
+            } catch { $caught = $_.Exception.Message }
+            $analysis = [IO.File]::ReadAllText((Join-Path $output "proof-$mode.json")) | ConvertFrom-Json
+            if (-not $caught -or $analysis.status -cne 'failed' -or $analysis.symbol -cne 'LongValueKernel.Absent' -or
+                [IO.File]::Exists((Join-Path $output 'summary.json')) -or -not [IO.File]::Exists((Join-Path $output 'failure.json'))) { throw 'An empty symbol selection claimed successful diagnostic coverage.' }
+        }
+    }
+    foreach ($selection in @(
+        @{ symbol = 'Module.Method'; position = '1'; sources = @('verification/Good.dfy') },
+        @{ symbol = 'Module.Method'; sources = $null },
+        @{ symbol = 'Module.Method'; sources = @('verification/Good.dfy', 'verification/LongValues/LongValueKernel.dfy') },
+        @{ symbol = 'Method'; sources = @('verification/Good.dfy') },
+        @{ symbol = '.Module.Method'; sources = @('verification/Good.dfy') },
+        @{ symbol = 'Module.Method.'; sources = @('verification/Good.dfy') },
+        @{ symbol = 'Module..Method'; sources = @('verification/Good.dfy') },
+        @{ symbol = 'Module.Method --allow-warnings'; sources = @('verification/Good.dfy') },
+        @{ symbol = 'Module.Method*'; sources = @('verification/Good.dfy') },
+        @{ symbol = ' '; sources = @('verification/Good.dfy') }
+    )) {
+        Assert-Scenario "invalid or conflicting symbol selector refuses before verifier execution $($selection.symbol)" {
+            $coverageCalls.Clear()
+            $output = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-proof-invalid-symbol-' + [guid]::NewGuid().ToString('N'))
+            $caught = $null
+            try { Invoke-ProofVerification $coverageRoot $coverageExecutable $output 13 $false $true $selection.sources @{ symbol = $selection.symbol; position = $selection.position } } catch { $caught = $_.Exception.Message }
+            if (-not $caught -or $coverageCalls.Count -ne 0 -or [IO.Directory]::Exists($output)) { throw 'An invalid symbol selector reached proof execution or created an output directory.' }
+        }
+    }
     Assert-Scenario 'complexity follows every mandatory control and retains separate exact evidence' {
         $coverageCase = 'clean'
         $coverageCalls.Clear()
@@ -622,6 +685,7 @@ try {
     foreach ($diagnostic in @(
         @{ suggestRefactoring = $true },
         @{ position = '1' },
+        @{ symbol = 'Module.Method' },
         @{ complexitySources = @('verification/Good.dfy') },
         @{ measureComplexity = $true; mutations = 3 },
         @{ measureComplexity = $true; complexitySources = @('verification/Good.dfy'); mutations = 1 }

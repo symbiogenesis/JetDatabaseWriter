@@ -11,7 +11,8 @@ param(
     [switch] $MeasureProofComplexity,
     [ValidateNotNullOrEmpty()][string[]] $ProofComplexitySources,
     [ValidateRange(2, 20)][int] $ProofComplexityMutations = 3,
-    [string] $ProofDiagnosticPosition
+    [string] $ProofDiagnosticPosition,
+    [ValidateNotNullOrEmpty()][string] $ProofDiagnosticSymbol
 )
 $ErrorActionPreference = 'Stop'
 
@@ -349,6 +350,15 @@ function Get-ProofDiagnosticPosition([string] $RepositoryRoot, [string[]] $Reque
     return (Join-Path $RepositoryRoot $RequestedSources[0]).Replace('\', '/') + ':' + $Position
 }
 
+function Get-ProofDiagnosticSymbol([string[]] $RequestedSources, [string] $Symbol) {
+    if ([string]::IsNullOrEmpty($Symbol)) { return $null }
+    if ($RequestedSources.Count -ne 1) { throw 'A diagnostic symbol requires one explicitly selected source.' }
+    if ($Symbol -cnotmatch '^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$') { throw "Invalid qualified diagnostic symbol: $Symbol" }
+    # Pinned Dafny uses suffix matching. Its terminal dot prevents a requested
+    # method from also selecting methods whose names extend that method's name.
+    return $Symbol + '.'
+}
+
 function Assert-ProofInputsUnchanged([string] $RepositoryRoot, [object[]] $Proofs) {
     foreach ($proof in $Proofs) {
         if ((Get-FileHash -LiteralPath (Join-Path $RepositoryRoot $proof.file) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $proof.sha256) {
@@ -441,7 +451,7 @@ function Invoke-ProofComplexity([string] $RepositoryRoot, [string] $DafnyPath, [
         schemaVersion = 1; status = 'failed'; acceptanceEvidence = $false
         dafny = $DafnyVersion; solver = $SolverVersion
         requestedSources = @($Diagnostics.complexitySources); dependencyClosure = $closure
-        position = $Diagnostics.position; mutations = $Diagnostics.mutations
+        position = $Diagnostics.position; symbol = $Diagnostics.symbol; mutations = $Diagnostics.mutations
         proofs = @($Proofs | Where-Object { $_.file -cin $closure } | ForEach-Object { [ordered]@{ file = $_.file; sha256 = $_.sha256 } })
         resourceLog = 'proof-complexity.resources.csv'; process = 'proof-complexity.process.json'
         stdoutLog = 'proof-complexity.stdout.log'; stderrLog = 'proof-complexity.stderr.log'
@@ -453,6 +463,8 @@ function Invoke-ProofComplexity([string] $RepositoryRoot, [string] $DafnyPath, [
             '--isolate-assertions', '--log-format', "csv;LogFileName=$resourceLog")
         $position = Get-ProofDiagnosticPosition $RepositoryRoot $Diagnostics.complexitySources $Diagnostics.position
         if ($position) { $arguments += @('--filter-position', $position) }
+        $symbol = Get-ProofDiagnosticSymbol $Diagnostics.complexitySources $Diagnostics.symbol
+        if ($symbol) { $arguments += "--filter-symbol=$symbol" }
         $result = Invoke-ProofProcess $DafnyPath $arguments $OutputDirectory 'proof-complexity' $TimeoutSeconds
         $receipt.statistics = Assert-ProofComplexityResult $result $resourceLog $Diagnostics.mutations
         Assert-ProofInputsUnchanged $RepositoryRoot $Proofs
@@ -491,6 +503,7 @@ function Invoke-ProofCoverage([string] $RepositoryRoot, [string] $DafnyPath, [st
         failure = $null
         suggestProofRefactoring = [bool]$Diagnostics.suggestRefactoring
         position = $Diagnostics.position
+        symbol = $Diagnostics.symbol
         negativeVacuity = [ordered]@{
             status = 'not-run'; source = 'VacuousTheorem.dfy'
             process = 'proof-coverage.negative-vacuity.process.json'
@@ -522,6 +535,8 @@ function Invoke-ProofCoverage([string] $RepositoryRoot, [string] $DafnyPath, [st
         if ($Diagnostics.suggestRefactoring) { $analysisOptions += @('--suggest-proof-refactoring', '--show-hints') }
         $position = Get-ProofDiagnosticPosition $RepositoryRoot $RequestedSources $Diagnostics.position
         if ($position) { $analysisOptions += @('--filter-position', $position) }
+        $symbol = Get-ProofDiagnosticSymbol $RequestedSources $Diagnostics.symbol
+        if ($symbol) { $analysisOptions += "--filter-symbol=$symbol" }
         $result = Invoke-ProofProcess $DafnyPath (@('verify') + $Files + $Options + $analysisOptions) $OutputDirectory 'proof-coverage.verify' $TimeoutSeconds
         $receipt.exitCode = $result.ExitCode
         $messages = $result.Stdout + "`n" + $result.Stderr
@@ -679,6 +694,12 @@ function Invoke-ProofVerification([string] $RepositoryRoot, [string] $DafnyPath,
             $Diagnostics.mutations -lt 2 -or $Diagnostics.mutations -gt 20) { throw 'MeasureProofComplexity requires explicit ProofComplexitySources and between 2 and 20 mutations.' }
     } elseif ($null -ne $Diagnostics.complexitySources) { throw 'ProofComplexitySources requires MeasureProofComplexity.' }
     if ($Diagnostics.position -and -not ($AnalyzeCoverage -or $Diagnostics.measureComplexity)) { throw 'ProofDiagnosticPosition requires an explicit diagnostic mode.' }
+    if ($Diagnostics.symbol) {
+        if ($Diagnostics.position) { throw 'ProofDiagnosticSymbol and ProofDiagnosticPosition are mutually exclusive.' }
+        if (-not ($AnalyzeCoverage -or $Diagnostics.measureComplexity)) { throw 'ProofDiagnosticSymbol requires an explicit diagnostic mode.' }
+        if ($AnalyzeCoverage) { $null = Get-ProofDiagnosticSymbol $CoverageSources $Diagnostics.symbol }
+        if ($Diagnostics.measureComplexity) { $null = Get-ProofDiagnosticSymbol $Diagnostics.complexitySources $Diagnostics.symbol }
+    }
     $output = Assert-ProofOutputDirectory $OutputDirectory $RepositoryRoot
     if (Test-Path -LiteralPath $output) { throw 'Proof output directory must not already exist; retain each run separately.' }
     [void][IO.Directory]::CreateDirectory($output)
@@ -697,5 +718,5 @@ function Invoke-ProofVerification([string] $RepositoryRoot, [string] $DafnyPath,
 
 Invoke-ProofVerification (Split-Path $PSScriptRoot -Parent) $DafnyPath $OutputDirectory $TimeoutSeconds $UpdateGeneratedSource.IsPresent $AnalyzeProofCoverage.IsPresent $ProofCoverageSources @{
     suggestRefactoring = $SuggestProofRefactoring.IsPresent; measureComplexity = $MeasureProofComplexity.IsPresent
-    complexitySources = $ProofComplexitySources; mutations = $ProofComplexityMutations; position = $ProofDiagnosticPosition
+    complexitySources = $ProofComplexitySources; mutations = $ProofComplexityMutations; position = $ProofDiagnosticPosition; symbol = $ProofDiagnosticSymbol
 }
