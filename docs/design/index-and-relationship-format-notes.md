@@ -749,8 +749,8 @@ Validation:
 
 W7 caveats / not done:
 
-- **General 1033v1** (the Access 2010+ default sort) is partially implemented as a helper/probe path, not yet as the writer-maintained text/memo index path. `GeneralTextIndexEncoder` ports the Jackcess `GeneralIndexCodes` tables and the V2010 suffix tables cover the checked-in fixture plus sampled DAO contexts, but `IndexKeyEncoder` still needs table-collation selection before it can route production index maintenance through that encoder. Arbitrary V2010 suffix contexts and broader byte-level fixture coverage remain open.
-- **Validation gap (§8):** the byte sequences are inherited from Jackcess. DAO CompactDatabase now covers representative mixed-direction composite text/integer leaves, but the format-probe corpus still does not contain non-ASCII text-keyed leaves to byte-compare against.
+- **General 1033v1** (the Access 2010+ default sort) participates in production Text/Memo index maintenance through `IndexKeyEncoder`'s collation dispatch. `GeneralTextIndexEncoder` ports the Jackcess `GeneralIndexCodes` tables; the V2010 suffix tables cover the checked-in fixtures and sampled DAO contexts. Arbitrary V2010 suffix contexts and broader native byte-level fixture coverage remain F9 requirements.
+- **Validation scope (§8):** independent byte comparisons and native read/write/compact controls establish their named fixtures, producing engines and collation variants. The [validation matrix](writer-disk-format-validation-matrix.md) retains the remaining combinations; inherited tables alone do not qualify them.
 - **W7 supersedes the partial encoder shipped with W2** — the previous "fall-through to stale leaf for any non-`[0-9A-Za-z]` char" behavior no longer applies for the General Legacy sort.
 
 ### 7.7 W16 — what shipped (2026-04-26)

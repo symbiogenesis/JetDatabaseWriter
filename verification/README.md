@@ -88,6 +88,13 @@ successful continuation. The [formal boundary](../docs/design/formal-verificatio
 names their production adapters, independent regression evidence and remaining
 whole-path/native/platform obligations.
 
+`IndexMutationKernel` also supplies executable native-to-mapped integer ordering
+admission for `OrderStage`. Its quantified conversion theorem establishes exact
+values, equality and strict order for admitted identity/widening domains, with
+checked narrowing counterexamples. Production metadata, accessor/mapping checks,
+complete unique nonnull index admission and B-tree order remain separate C#
+contracts, exercised by `QueryIndexOrderingTests` and the native evidence.
+
 ## Run locally
 
 Use PowerShell 7 on Windows or Linux x64. The installer downloads an official pinned Dafny distribution, checks its recorded SHA-256 and retains its bundled Z3. Windows Arm64 may execute the x64 distribution through the host's supported emulation; no native Arm64 verifier is claimed. Verifier execution is a development requirement only.

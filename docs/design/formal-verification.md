@@ -411,6 +411,22 @@ immutable exclusively owned stream and exact read effects. Complete root and
 incoming-reference enumeration, key/row correspondence, graph preservation,
 safe reclamation and crash-safe compact publication remain I17/V9 obligations.
 
+For index-backed LINQ ordering, `IndexMutationKernel.AdmitIntegerOrdering`
+admits only native Byte, Integer, Long Integer and Large Number values mapped to
+the same or a wider supported integer domain. `AdmittedIntegerMappingPreservesOrder`
+derives exact conversion, equality and strict order for every pair in the native
+range. Checked counterexamples demonstrate narrowing order reversal; Text lies
+outside the admitted integer domains.
+`OrderStage` supplies actual table metadata and retains full sorting for expression
+casts, calculated values or mappings whose accessors can change key values. The
+covering index must contain complete unique nonnull keys in the requested directions.
+Every bound ordinary scalar mapping must use CLR identity or admitted integer
+widening; fallible coercions and calculated/complex mappings retain sorting.
+Native key-byte order, faithful decoding/type projection, mapper/accessor admission,
+index completeness and complete query-pipeline correspondence remain C# contracts.
+`QueryIndexOrderingTests` compares public results and paging with LINQ-to-Objects,
+checks overflow observability and exercises admitted integral boundaries.
+
 The replacement cleanup model composes `ProductionCleanupAuthority` through
 arbitrary finite admitted cleanup/crash/restart traces. Both fenced entry
 proofs establish it; `InterruptedProductionCleanupAllowsCompletion` constructs
