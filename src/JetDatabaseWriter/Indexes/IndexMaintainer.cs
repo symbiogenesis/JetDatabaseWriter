@@ -761,8 +761,8 @@ internal sealed class IndexMaintainer(
     /// Checks, before a write changes anything, that every index of the table
     /// can be maintained: the index section of its table definition can be
     /// parsed and lies wholly within the TDEF chain, and every real index
-    /// names only columns the table has. The wide tables of builds before
-    /// 4.0.0 fail it: a stray <c>used_pages</c> byte in a <c>col_map</c>
+    /// names only columns the table has. Malformed wide tables can fail it:
+    /// a stray <c>used_pages</c> byte in a <c>col_map</c>
     /// names a missing column, and one on a continuation page's type byte
     /// cuts the chain short. Either would make the index rebuild throw, or
     /// skip the indexes it cannot read, after the write had already changed

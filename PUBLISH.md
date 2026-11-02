@@ -1,16 +1,18 @@
 # Publishing JetDatabaseWriter
 
+JetDatabaseWriter has never been released or published and has no users. The first release will be `1.0.0`.
+
 Only the `JetDatabaseWriter` library is published to nuget.org. The scaffolding CLI, the tests, the test-support library, the benchmarks and the format probe are not packable.
 
 ## How the version is set
 
 [MinVer](https://github.com/adamralph/minver) sets the package, assembly file and informational versions from git tags when the library builds. The settings are in `src/JetDatabaseWriter/JetDatabaseWriter.csproj`:
 
-- `MinVerTagPrefix` is `v`, so the tag `v4.0.0` gives version `4.0.0`.
-- `MinVerMinimumMajorMinor` is `4.0`, so until a `v4.*` tag exists, every build is `4.0.0-alpha.0.<height>`, where the height is the number of commits since the last tag (or since the first commit).
+- `MinVerTagPrefix` is `v`, so the tag `v1.0.0` gives version `1.0.0`.
+- `MinVerMinimumMajorMinor` is `1.0`, so until the first release tag exists, every build is `1.0.0-alpha.0.<height>`, where the height is the number of commits since the last tag (or since the first commit).
 - A commit after `vX.Y.Z` builds as `X.Y.(Z+1)-alpha.0.<height>`. Only tagged commits are published, so these prerelease versions never reach nuget.org.
-- `AssemblyVersion` stays `<major>.0.0.0` for every 4.x release, so binding redirects are not needed within a major version. `FileVersion` is `X.Y.Z.0` and `InformationalVersion` is the full version plus the commit hash.
-- A build outside a git clone, such as from a source archive, warns `MINVER1001` and builds `4.0.0-alpha.0`.
+- For the first release, `AssemblyVersion` and `FileVersion` are `1.0.0.0`; `InformationalVersion` is the full version plus the commit hash.
+- A build outside a git clone, such as from a source archive, warns `MINVER1001` and builds `1.0.0-alpha.0`.
 
 CI checks out the full history (`fetch-depth: 0`) so MinVer sees every tag.
 
@@ -20,15 +22,13 @@ CI checks out the full history (`fetch-depth: 0`) so MinVer sees every tag.
 2. Tag it and push only that tag:
 
    ```bash
-   git tag v4.0.0 <commit>
-   git push origin v4.0.0
+   git tag v1.0.0 <commit>
+   git push origin v1.0.0
    ```
 
-   A prerelease uses a SemVer prerelease tag, such as `v4.1.0-beta.1`.
+   Publish a prerelease only when explicitly authorized, using a SemVer prerelease tag for the first release.
 3. The tag runs `.github/workflows/publish.yml`. It calls `ci.yml` with every validation lane enabled: locked restores, strict Release analysis, all five test partitions for each of the three runtime/library combinations, proofs, pinned native Access interoperability, generated consumers, platform checks and library packaging. Once every job has passed, the Linux publish job runs `scripts/assert-release-readiness.ps1` to verify main ancestry, the exact main CI gate, complete fuzz/portability job inventories and their matching evidence receipts. Missing, skipped, failed, pending or expired evidence refuses publication. The job then downloads the `nupkg` artifact, checks that it holds `JetDatabaseWriter.<tag without the v>.nupkg`, and pushes it to nuget.org with the `NUGET_API_KEY` secret. Nothing is rebuilt between the CI run and the push.
 4. Check that the version appears at <https://www.nuget.org/packages/JetDatabaseWriter/> and at <https://api.nuget.org/v3-flatcontainer/jetdatabasewriter/index.json>.
-
-To start the prereleases of a new major or minor version before its first tag, raise `MinVerMinimumMajorMinor` (for example to `5.0`).
 
 Before creating a tag, the same read-only preflight can run locally with `GITHUB_TOKEN` set to an account token with repository contents and Actions read access:
 
@@ -36,7 +36,7 @@ Before creating a tag, the same read-only preflight can run locally with `GITHUB
 pwsh -NoProfile -File scripts/assert-release-readiness.ps1 -Sha <full-release-commit> -Repo symbiogenesis/JetDatabaseWriter
 ```
 
-It reads existing evidence without dispatching, waiting or publishing. Keep the release revision settled while its campaigns run. To validate the first artifact handoff and recovery before stable publication, use an explicitly authorized prerelease such as `v4.0.0-rc.1`; the same gates apply.
+It reads existing evidence without dispatching, waiting or publishing. Keep the release revision settled while its campaigns run. To validate the first artifact handoff and recovery before stable publication, use an explicitly authorized prerelease such as `v1.0.0-rc.1`; the same gates apply.
 
 ### When something goes wrong
 
@@ -46,9 +46,9 @@ It reads existing evidence without dispatching, waiting or publishing. Keep the 
 - **The push fails for another reason** (for example an expired API key). Fix the cause, then re-run the failed jobs of the same workflow run from the Actions page. The `nupkg` artifact is kept for 7 days; after that, re-run all jobs so CI packs it again.
 - **A published version is broken.** Unlist it on nuget.org (it can't be deleted) and release the next patch version.
 
-### Tags that must not be pushed
+### Publishing tags
 
-Some local clones have the release tags `v1.0.0` through `v2.2.0` of the upstream `JetDatabaseReader` package this project grew out of. They are not on `origin`. Never push them: a pushed `v*` tag runs that commit's own `publish.yml`, which packs `JetDatabaseReader` and would push it with this repository's API key. Push single tags (`git push origin <tag>`), never `git push --tags`.
+Create the `v1.0.0` tag only on the accepted first-release commit. Never push inherited tags: they may run an unrelated publishing workflow with this repository's API key. Push single tags (`git push origin <tag>`), never `git push --tags`.
 
 ## Symbols
 
@@ -62,7 +62,7 @@ Every pack runs .NET package validation (`EnablePackageValidation`). Today it ch
 
 Once a version is on nuget.org, also validate against it:
 
-1. Add `<PackageValidationBaselineVersion>4.0.0</PackageValidationBaselineVersion>` to the library project. The baseline package must exist on nuget.org, or the restore fails with `NU1101`; before the first release, <https://api.nuget.org/v3-flatcontainer/jetdatabasewriter/index.json> returns 404.
+1. Add `<PackageValidationBaselineVersion>1.0.0</PackageValidationBaselineVersion>` to the library project. The baseline package must exist on nuget.org, or the restore fails with `NU1101`; before the first release, <https://api.nuget.org/v3-flatcontainer/jetdatabasewriter/index.json> returns 404.
 2. After each release, move the baseline to the version just published.
 3. A pack that breaks the baseline's public API then fails (for example `CP0002` for a removed member). For an intentional break, either release a new major version or generate a suppression file with `dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release -p:ApiCompatGenerateSuppressionFile=true`, review the generated `CompatibilitySuppressions.xml`, and commit it.
 

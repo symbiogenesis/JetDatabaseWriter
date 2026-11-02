@@ -846,8 +846,8 @@ New writer-side helper, now owned by `IndexMaintainer`: `TryMaintainIndexesIncre
   rewrite of that table throw `JetLimitationException` before it changes
   anything: they first call `IndexMaintainer.ThrowIfIndexesUnmaintainableAsync`,
   which runs the same resolver as `MaintainIndexesAsync` and names the table
-  and, when its name can be read, the index. Wide tables written by builds
-  before 4.0.0 can have either: their stray `used_pages` byte puts a phantom
+  and, when its name can be read, the index. Malformed wide tables can have
+  either defect: a stray `used_pages` byte puts a phantom
   column in a `col_map`, or, on a continuation page's type byte, ends the
   chain at the page before, cutting off the index descriptors, entries and
   names past it. The indexes are never skipped. Three writes that reach such a table do

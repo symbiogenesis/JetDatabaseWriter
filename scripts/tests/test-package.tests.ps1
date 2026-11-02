@@ -18,10 +18,10 @@ function Assert-Check([bool] $Condition, [string] $Message) {
 function New-Package([string] $Name, [string] $Missing = '', [string] $Stale = '') {
     $directory = Join-Path $testRoot $Name
     [IO.Directory]::CreateDirectory($directory) | Out-Null
-    $archive = [IO.Compression.ZipFile]::Open((Join-Path $directory 'JetDatabaseWriter.4.0.0-alpha.1.nupkg'), [IO.Compression.ZipArchiveMode]::Create)
+    $archive = [IO.Compression.ZipFile]::Open((Join-Path $directory 'JetDatabaseWriter.1.0.0.nupkg'), [IO.Compression.ZipArchiveMode]::Create)
     try {
         $entries = [ordered]@{
-            'JetDatabaseWriter.nuspec' = '<package><metadata><id>JetDatabaseWriter</id><version>4.0.0-alpha.1</version></metadata></package>'
+            'JetDatabaseWriter.nuspec' = '<package><metadata><id>JetDatabaseWriter</id><version>1.0.0</version></metadata></package>'
             'lib/net10.0/JetDatabaseWriter.dll' = 'Synthetic DLL'
             'lib/net10.0/JetDatabaseWriter.xml' = 'Synthetic documentation'
             'lib/netstandard2.1/JetDatabaseWriter.dll' = 'Synthetic DLL'
@@ -66,7 +66,7 @@ Assert-Check (($packageTestContext.Calls | ForEach-Object { $_[0] }) -join ',' -
 foreach ($target in 'net10.0', 'net8.0') {
     $project = [xml][IO.File]::ReadAllText((Join-Path $pass.Output "$target/PackageConsumer.csproj"))
     Assert-Check ($project.Project.PropertyGroup.TargetFramework -eq $target) 'The consumer framework was lost.'
-    Assert-Check ($project.Project.ItemGroup.PackageReference.Version -eq '[4.0.0-alpha.1]') 'The consumer must restore the exact artifact version.'
+    Assert-Check ($project.Project.ItemGroup.PackageReference.Version -eq '[1.0.0]') 'The consumer must restore the exact artifact version.'
     Assert-Check ($project.SelectNodes('//ProjectReference').Count -eq 0) 'The package consumer must not compile a repository project.'
 }
 $config = [xml][IO.File]::ReadAllText((Join-Path $pass.Output 'NuGet.Config'))

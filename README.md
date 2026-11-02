@@ -9,6 +9,8 @@ Fully managed .NET library for reading and writing Microsoft Access (JET/ACE) da
 
 Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from your .NET applications and tools, without installing Microsoft Access.
 
+JetDatabaseWriter is preparing its first release, version `1.0.0`. It has never been released or published.
+
 The [supported operating envelope](docs/support-contract.md) defines the release scope, resource and recovery contracts, and evidence needed to broaden them.
 
 ## Contents

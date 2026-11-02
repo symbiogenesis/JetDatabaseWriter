@@ -113,7 +113,7 @@ function Assert-Baseline([string] $Name, $Expected, [string] $Event = 'push', [s
 $script:runs = @(New-Run)
 Assert-Baseline 'successful main ancestor' $base
 Assert-Baseline 'manual dispatch always runs all lanes' $null 'workflow_dispatch'
-Assert-Baseline 'release workflow always runs all lanes' $null 'push' 'refs/tags/v4.0.0'
+Assert-Baseline 'release workflow always runs all lanes' $null 'push' 'refs/tags/v1.0.0'
 Assert-Baseline 'reusable workflow on main also runs all lanes' $null -Full $true
 Assert-Baseline 'PR merge validates both branches since a green ancestor' $base 'pull_request' 'refs/pull/1/merge'
 $script:runs = @(New-Run -Status 'in_progress' -Conclusion '')

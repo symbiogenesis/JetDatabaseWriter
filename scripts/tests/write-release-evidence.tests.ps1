@@ -63,7 +63,7 @@ try {
         @{ Name = 'GITHUB_RUN_ATTEMPT'; Value = '-1'; Error = 'run identity' }
         @{ Name = 'GITHUB_WORKFLOW_REF'; Value = 'fork/repo/.github/workflows/fuzz.yml@refs/heads/main'; Error = 'workflow identity' }
         @{ Name = 'GITHUB_WORKFLOW_REF'; Value = 'example/repo/.github/workflows/portability.yml@refs/heads/main'; Error = 'workflow identity' }
-        @{ Name = 'GITHUB_REF'; Value = 'refs/tags/v4.0.0'; Error = 'main campaign' }
+        @{ Name = 'GITHUB_REF'; Value = 'refs/tags/v1.0.0'; Error = 'main campaign' }
         @{ Name = 'GITHUB_EVENT_NAME'; Value = 'pull_request'; Error = 'main campaign' }
     )) {
         Reset-Environment

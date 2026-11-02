@@ -19,10 +19,10 @@
     <!--
       MinVer sets the version from the latest vX.Y.Z tag reachable from HEAD: a tagged
       commit packs as X.Y.Z and any later commit as a prerelease of the next patch.
-      With no 4.x tag yet, untagged builds are 4.0.0-alpha.0.<height>. See PUBLISH.md.
+      The first release is 1.0.0; until it is tagged, builds are 1.0.0-alpha.0.<height>. See PUBLISH.md.
     -->
     <MinVerTagPrefix>v</MinVerTagPrefix>
-    <MinVerMinimumMajorMinor>4.0</MinVerMinimumMajorMinor>
+    <MinVerMinimumMajorMinor>1.0</MinVerMinimumMajorMinor>
     <!--
       Checks on every pack that each public API of the netstandard2.1 build also exists in
       the net10.0 build. A PackageValidationBaselineVersion is added once a version is on

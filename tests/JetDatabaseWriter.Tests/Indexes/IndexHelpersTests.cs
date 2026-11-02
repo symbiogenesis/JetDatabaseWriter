@@ -22,8 +22,8 @@ public sealed class IndexHelpersTests
     public void ProjectIndexes_EmptyKeyColumnName_Throws()
     {
         // IndexCatalogReader.ReadMetadata names a key column whose col_num the
-        // table does not have "", as for the phantom column 0x02FF of wide
-        // tables written by builds before 4.0.0.
+        // table does not have "", as for a phantom column 0x02FF in a
+        // malformed wide table.
         IndexMetadata[] existing =
         [
             Index("IX_A", IndexKind.Normal, ("A", 0)),

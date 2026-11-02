@@ -22,7 +22,7 @@ JetDatabaseWriter reads and writes Microsoft Access databases in pure .NET: Jet3
 | `tools/JetDatabaseWriter.FormatProbe` | net10.0 | Diagnostics against real Access files |
 | `src/JetDatabaseWriter.Scaffold` | net10.0 | Entity scaffolding tool |
 
-Version 4.0.0 has never been released. The tags v1.0.0 to v2.2.0 are upstream history and must never be pushed, and MinVer takes the version from `v`-prefixed tags. Break APIs freely: add no compatibility shims, `[Obsolete]` wrappers, flags kept only for old behaviour, migration notes, or "breaking change" callouts in the README.
+JetDatabaseWriter has never been released or published and has no users. Its first release will be 1.0.0. MinVer takes the version from this project's `v`-prefixed tags; never push inherited tags. Break APIs freely: add no compatibility shims, `[Obsolete]` wrappers, flags kept only for old behaviour, migration notes, or "breaking change" callouts in the README.
 
 When a design decision is left to you, choose what Microsoft Access does, then the safest option, and state the choice briefly.
 
