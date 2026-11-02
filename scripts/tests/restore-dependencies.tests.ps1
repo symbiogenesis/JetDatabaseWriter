@@ -56,15 +56,17 @@ function dotnet {
     }
 }
 
-function Invoke-Scenario([string] $Name, [string] $ExpectedError = '') {
+function Invoke-Scenario([string] $Name, [string] $ExpectedError = '', [string] $Version = '10.0.402') {
     $location = (Get-Location).Path
+    $originalConfiguration = [IO.File]::ReadAllText((Join-Path $fixture 'global.json'))
     $caught = ''
-    try { & (Join-Path $scripts 'update-sdk.ps1') -Version '10.0.402' }
+    try { & (Join-Path $scripts 'update-sdk.ps1') -Version $Version }
     catch { $caught = $_.Exception.Message }
     Assert-Check ((Get-Location).Path -eq $location) "$Name did not restore the caller's directory."
     if ($ExpectedError) {
         Assert-Check ($caught.Contains($ExpectedError)) "$Name expected '$ExpectedError', got '$caught'."
         Assert-Check (([IO.File]::ReadAllText((Join-Path $fixture 'global.json')) | ConvertFrom-Json).sdk.version -eq '10.0.401') "$Name kept a partial SDK update."
+        Assert-Check ([IO.File]::ReadAllText((Join-Path $fixture 'global.json')) -ceq $originalConfiguration) "$Name did not restore the exact SDK configuration bytes."
         $libraryLock = Join-Path $fixture 'src/Library/packages.lock.json'
         Assert-Check ([IO.File]::Exists($libraryLock)) "$Name deleted an existing library lock."
         $expectedLibrary = if ($context.EmptyLibrary) { '' } else { "original library`r`n" }
@@ -136,6 +138,32 @@ $context.MissingNative = $true
 [IO.File]::Delete((Join-Path $scripts 'AotSmoke/packages.native.lock.json'))
 $context.FailAt = 5
 Invoke-Scenario 'newly created locks roll back' 'failed with exit code 7'
+foreach ($version in '11.0.100', '11.0.100-rc.3.26522.148') {
+    New-Fixture
+    $context.Version = $version
+    Invoke-Scenario "exact SDK $version refreshes all locks" -Version $version
+    $updated = [IO.File]::ReadAllText((Join-Path $fixture 'global.json')) | ConvertFrom-Json
+    Assert-Check ($updated.sdk.version -eq $version) 'The exact requested SDK pin was lost.'
+    Assert-Check ($context.Calls.Count -eq 10) 'The requested SDK did not refresh and verify every lock.'
+    if ($version.Contains('-')) { Assert-Check ($updated.sdk.allowPrerelease -eq $true) 'A prerelease pin must explicitly allow its SDK.' }
+}
+foreach ($allowPrerelease in 'false', 'true') {
+    New-Fixture
+    $configurationPath = Join-Path $fixture 'global.json'
+    [IO.File]::WriteAllText($configurationPath, [IO.File]::ReadAllText($configurationPath).Replace('"rollForward"', ('"allowPrerelease": ' + $allowPrerelease + ', "rollForward"')))
+    $context.Version = '11.0.100-rc.3.26522.148'
+    Invoke-Scenario "prerelease enables existing setting $allowPrerelease" -Version $context.Version
+    Assert-Check (([IO.File]::ReadAllText($configurationPath) | ConvertFrom-Json).sdk.allowPrerelease -eq $true) 'The prerelease SDK remains disabled.'
+}
+New-Fixture
+$context.Version = '11.0.100-rc.3.26522.148'
+$context.FailAt = 2
+Invoke-Scenario 'prerelease settings and locks roll back together' 'failed with exit code 7' -Version $context.Version
+foreach ($invalid in '11.0.x', '12.0.100', '11.0.100-rc.3', '11.0.100-rc.*', '11.0.100-rc.3.26522', '10.0.100-rc.3.26522.148', "11.0.100`n") {
+    New-Fixture
+    Invoke-Scenario "invalid exact SDK '$invalid' is refused before restoring" 'pattern' -Version $invalid
+    Assert-Check ($context.Calls.Count -eq 0) 'An invalid SDK reached restoration.'
+}
 New-Fixture
 $context.Version = '10.0.401'
 Invoke-Scenario 'missing requested SDK rolls back' 'selected SDK'

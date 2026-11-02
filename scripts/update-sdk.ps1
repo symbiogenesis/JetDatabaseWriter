@@ -9,7 +9,7 @@ are restored. Successful changes stay uncommitted for review and the ordinary ma
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidatePattern('^10\.0\.\d{3}$')]
+    [ValidatePattern('\A(?:10\.0\.[0-9]{3}|11\.0\.[0-9]{3}(?:-rc\.[1-9][0-9]*\.[0-9]+\.[0-9]+)?)\z')]
     [string] $Version
 )
 
@@ -45,11 +45,24 @@ foreach ($file in $files | Select-Object -Unique) {
 
 Push-Location $repository
 try {
-    # Preserve the established JSON formatting and all settings outside the SDK version.
+    # Preserve JSON formatting while updating the version and enabling prerelease selection when needed.
     $versionPattern = '("version"\s*:\s*")' + [regex]::Escape($globalJson.sdk.version) + '(")'
     if ([regex]::Matches($configuration, $versionPattern).Count -ne 1) { throw 'global.json must contain exactly one SDK version pin.' }
     $replacement = [Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + $Version + $match.Groups[2].Value }
-    [IO.File]::WriteAllText($globalPath, [regex]::Replace($configuration, $versionPattern, $replacement), [Text.UTF8Encoding]::new($false))
+    $updatedConfiguration = [regex]::Replace($configuration, $versionPattern, $replacement)
+    if ($Version.Contains('-')) {
+        if ($null -ne $globalJson.sdk.PSObject.Properties['allowPrerelease']) {
+            $prereleasePattern = '("allowPrerelease"\s*:\s*)(?:true|false)'
+            if ([regex]::Matches($updatedConfiguration, $prereleasePattern).Count -ne 1) { throw 'global.json must contain exactly one Boolean allowPrerelease setting.' }
+            $enablePrerelease = [Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + 'true' }
+            $updatedConfiguration = [regex]::Replace($updatedConfiguration, $prereleasePattern, $enablePrerelease)
+        } else {
+            $sdkPattern = '("sdk"\s*:\s*\{)(\s*)'
+            $addPrerelease = [Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + $match.Groups[2].Value + '"allowPrerelease": true,' + $match.Groups[2].Value }
+            $updatedConfiguration = [regex]::Replace($updatedConfiguration, $sdkPattern, $addPrerelease)
+        }
+    }
+    [IO.File]::WriteAllText($globalPath, $updatedConfiguration, [Text.UTF8Encoding]::new($false))
     $selected = (& dotnet --version | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $selected -ne $Version) {
         throw "The selected SDK is '$selected'; install SDK $Version before updating its locks."

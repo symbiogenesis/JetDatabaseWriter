@@ -47,15 +47,17 @@ try {
     $sha = 'a' * 40
     Assert-Request 'candidate needs no SDK version' 'candidate' $sha 'cGF0Y2g=' ''
     Assert-Request 'SDK refresh needs no candidate patch' 'sdk-lock-refresh' '' '' '10.0.403'
+    Assert-Request 'stable .NET 11 SDK is accepted' 'sdk-lock-refresh' '' '' '11.0.100'
+    Assert-Request 'exact .NET 11 release candidate is accepted' 'sdk-lock-refresh' '' '' '11.0.100-rc.3.26522.148'
     Assert-Request 'unknown task is refused' 'unknown' '' '' '' 'Unknown maintenance task'
     Assert-Request 'missing candidate base is refused' 'candidate' '' 'cGF0Y2g=' '' 'Candidate checks require'
     Assert-Request 'invalid candidate base is refused' 'candidate' 'main' 'cGF0Y2g=' '' 'Candidate checks require'
     Assert-Request 'missing candidate patch is refused' 'candidate' $sha '' '' 'Candidate checks require'
     Assert-Request 'blank candidate patch is refused' 'candidate' $sha '   ' '' 'Candidate checks require'
-    Assert-Request 'missing SDK is refused' 'sdk-lock-refresh' '' '' '' 'exact .NET 10 SDK version'
-    Assert-Request 'floating SDK is refused' 'sdk-lock-refresh' '' '' '10.0.x' 'exact .NET 10 SDK version'
-    Assert-Request 'other SDK major is refused' 'sdk-lock-refresh' '' '' '11.0.100' 'exact .NET 10 SDK version'
-    Assert-Request 'SDK remains data' 'sdk-lock-refresh' '' '' '10.0.403; throw "executed input"' 'exact .NET 10 SDK version'
+    foreach ($invalid in '', '10.0.x', '11.0.x', '12.0.100', '11.0.100-rc.3', '11.0.100-rc.*', '11.0.100-rc.3.26522', '10.0.100-rc.3.26522.148', "11.0.100`n") {
+        Assert-Request "invalid SDK '$invalid' is refused" 'sdk-lock-refresh' '' '' $invalid 'exact .NET 10 or 11 SDK version'
+    }
+    Assert-Request 'SDK remains data' 'sdk-lock-refresh' '' '' '10.0.403; throw "executed input"' 'exact .NET 10 or 11 SDK version'
 } finally {
     foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
 }
