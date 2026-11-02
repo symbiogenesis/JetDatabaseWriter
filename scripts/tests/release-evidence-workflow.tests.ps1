@@ -50,7 +50,7 @@ function Assert-Refusal([scriptblock] $Action, [string] $Expected) {
     Assert-Contract ($caught -and $caught.Contains($Expected)) "Expected refusal '$Expected', got '$caught'."
 }
 
-$publish = [IO.File]::ReadAllText((Join-Path $repository '.github/workflows/publish.yml')).Replace("`r`n", "`n")
+$publish = [IO.File]::ReadAllText((Join-Path $repository '.github/workflows/publish-nuget.yml')).Replace("`r`n", "`n")
 Assert-Publication $publish
 Assert-Refusal { Assert-Publication ($publish.Replace('run: ./scripts/assert-release-readiness.ps1 -Sha $env:GITHUB_SHA', 'run: echo unchecked')) } 'verify exact-revision'
 Assert-Refusal { Assert-Publication ($publish.Replace('      id-token: write', '      id-token: read')) } 'Only the publish job'

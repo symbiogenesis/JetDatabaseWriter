@@ -10,7 +10,7 @@ on:
       - main
   pull_request:
   workflow_dispatch:
-  # publish.yml calls this workflow so a tag is packed only after the tests pass, and
+  # publish-nuget.yml calls this workflow so a tag is packed only after the tests pass, and
   # then publishes the package this run uploads.
   workflow_call:
     inputs:
@@ -175,7 +175,7 @@ jobs:
         shell: pwsh
         run: ./scripts/test-package.ps1 -PackageDirectory artifacts/nupkg
 
-      # publish.yml pushes this artifact only when every job of the run has passed, so a
+      # publish-nuget.yml pushes this artifact only when every job of the run has passed, so a
       # release publishes the package this run built from the tested commit instead of
       # rebuilding it.
       - name: Upload package

@@ -22,7 +22,7 @@ The publish job uses [NuGet trusted publishing](https://learn.microsoft.com/en-u
 
 - Repository owner: `symbiogenesis`.
 - Repository: `JetDatabaseWriter`.
-- Workflow file: `publish.yml` (the filename only).
+- Workflow file: `publish-nuget.yml` (the filename only).
 - Environment: leave empty; this workflow does not use a GitHub Actions environment.
 - Publishing scope: allow publishing the new package `JetDatabaseWriter`.
 
@@ -39,7 +39,7 @@ Only the publish job has `id-token: write`; repository contents and Actions acce
    ```
 
    Publish a prerelease only when explicitly authorized, using a SemVer prerelease tag for the first release.
-3. The tag runs `.github/workflows/publish.yml`. It calls `ci.yml` with every validation lane enabled: locked restores, strict Release analysis, all five test partitions for each of the three runtime/library combinations, proofs, pinned native Access interoperability, generated consumers, platform checks and library packaging. Once every job has passed, the Linux publish job runs `scripts/assert-release-readiness.ps1` to verify main ancestry, the exact main CI gate, complete fuzz/portability job inventories and their matching evidence receipts. Missing, skipped, failed, pending or expired evidence refuses publication. The job then downloads the `nupkg` artifact, checks that it holds `JetDatabaseWriter.<tag without the v>.nupkg`, and pushes it to nuget.org using trusted publishing. Nothing is rebuilt between the CI run and the push.
+3. The tag runs `.github/workflows/publish-nuget.yml`. It calls `ci.yml` with every validation lane enabled: locked restores, strict Release analysis, all five test partitions for each of the three runtime/library combinations, proofs, pinned native Access interoperability, generated consumers, platform checks and library packaging. Once every job has passed, the Linux publish job runs `scripts/assert-release-readiness.ps1` to verify main ancestry, the exact main CI gate, complete fuzz/portability job inventories and their matching evidence receipts. Missing, skipped, failed, pending or expired evidence refuses publication. The job then downloads the `nupkg` artifact, checks that it holds `JetDatabaseWriter.<tag without the v>.nupkg`, and pushes it to nuget.org using trusted publishing. Nothing is rebuilt between the CI run and the push.
 4. Check that the version appears at <https://www.nuget.org/packages/JetDatabaseWriter/> and at <https://api.nuget.org/v3-flatcontainer/jetdatabasewriter/index.json>.
 
 Before creating a tag, the same read-only preflight can run locally with `GITHUB_TOKEN` set to an account token with repository contents and Actions read access:

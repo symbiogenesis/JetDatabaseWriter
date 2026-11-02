@@ -53,7 +53,7 @@ function Get-ProofReviewFixedInputs([string] $Boundary) {
                 'scripts/tests/specialized-workflow-trigger.tests.ps1'
                 '.github/workflows/fuzz.yml'
                 '.github/workflows/portability.yml'
-                '.github/workflows/publish.yml'
+                '.github/workflows/publish-nuget.yml'
                 'scripts/assert-release-readiness.ps1'
                 'scripts/write-release-evidence.ps1'
                 'scripts/tests/release-readiness.tests.ps1'

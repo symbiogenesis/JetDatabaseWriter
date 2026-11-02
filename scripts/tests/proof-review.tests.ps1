@@ -36,7 +36,7 @@ $specializedProvenanceInputs = @(
     'scripts/run-hosted-fuzz.ps1'
     'scripts/tests/run-hosted-fuzz.tests.ps1'
     'scripts/tests/specialized-workflow-trigger.tests.ps1'
-    '.github/workflows/publish.yml'
+    '.github/workflows/publish-nuget.yml'
     'scripts/assert-release-readiness.ps1'
     'scripts/write-release-evidence.ps1'
     'scripts/tests/release-readiness.tests.ps1'

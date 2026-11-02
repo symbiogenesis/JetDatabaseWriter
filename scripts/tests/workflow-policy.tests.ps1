@@ -17,7 +17,7 @@ function Assert-Policies([hashtable] $Workflows) {
     foreach ($name in $Workflows.Keys) {
         $content = $Workflows[$name]
         $allowedOidcPosition = -1
-        if ($name -ceq 'publish.yml') {
+        if ($name -ceq 'publish-nuget.yml') {
             $publishJob = [regex]::Match($content, '(?ms)^  publish:\n(?<body>.*?)(?=^  [\w-]+:\n|\z)').Groups['body']
             $publishPermissions = [regex]::Match($publishJob.Value, '(?ms)^    permissions:\n(?<body>.*?)(?=^    \S|\z)').Groups['body']
             $oidc = [regex]::Match($publishPermissions.Value, '(?m)^      id-token: write$')
@@ -47,7 +47,7 @@ function Assert-Policies([hashtable] $Workflows) {
             Assert-Contract ($concurrency -match '(?m)^  queue: max$') "$name must preserve queued manual requests."
         }
     }
-    $publish = $Workflows['publish.yml']
+    $publish = $Workflows['publish-nuget.yml']
     Assert-Contract ($publish.Contains('uses: ./.github/workflows/ci.yml') -and $publish.Contains('needs: ci')) 'Publishing must use the tested package after the full reusable CI gate.'
     Assert-Contract ($publish.Contains('runs-on: ubuntu-latest') -and $publish -notmatch '(?m)^\s+(?:run: )?dotnet (?:build|pack|test)\b|^        run: dotnet nuget push[^\n]*--skip-duplicate') 'Publishing must use Linux and upload the tested artifact without rebuilding or hiding duplicate versions.'
 }
@@ -68,18 +68,18 @@ function Assert-Scenario([string] $Name, [string] $Workflow = '', [string] $Old 
 
 Assert-Scenario 'all workflow policies'
 Assert-Scenario 'write permission refused' 'ci.yml' 'contents: read' 'contents: write' 'read-only'
-Assert-Scenario 'global OIDC permission refused' 'publish.yml' "permissions:`n  contents: read" "permissions:`n  id-token: write`n  contents: read" 'read-only'
+Assert-Scenario 'global OIDC permission refused' 'publish-nuget.yml' "permissions:`n  contents: read" "permissions:`n  id-token: write`n  contents: read" 'read-only'
 Assert-Scenario 'other workflow OIDC permission refused' 'ci.yml' "permissions:`n  contents: read" "permissions:`n  id-token: write`n  contents: read" 'read-only'
-Assert-Scenario 'other publish workflow job OIDC permission refused' 'publish.yml' "  ci:`n" "  ci:`n    permissions:`n      id-token: write`n" 'read-only'
-Assert-Scenario 'publish repository write refused' 'publish.yml' '      contents: read' '      contents: write' 'read-only'
-Assert-Scenario 'duplicate publish OIDC permission refused' 'publish.yml' "      id-token: write`n" "      id-token: write`n      id-token: write`n" 'read-only'
-$withoutPublishOidc = $workflows['publish.yml'].Replace("      id-token: write`n", '')
-Assert-Scenario 'single global OIDC grant refused' 'publish.yml' $workflows['publish.yml'] ($withoutPublishOidc.Replace("permissions:`n  contents: read", "permissions:`n  id-token: write`n  contents: read")) 'read-only'
-Assert-Scenario 'single other-job OIDC grant refused' 'publish.yml' $workflows['publish.yml'] ($withoutPublishOidc.Replace("  ci:`n", "  ci:`n    permissions:`n      id-token: write`n")) 'read-only'
+Assert-Scenario 'other publish workflow job OIDC permission refused' 'publish-nuget.yml' "  ci:`n" "  ci:`n    permissions:`n      id-token: write`n" 'read-only'
+Assert-Scenario 'publish repository write refused' 'publish-nuget.yml' '      contents: read' '      contents: write' 'read-only'
+Assert-Scenario 'duplicate publish OIDC permission refused' 'publish-nuget.yml' "      id-token: write`n" "      id-token: write`n      id-token: write`n" 'read-only'
+$withoutPublishOidc = $workflows['publish-nuget.yml'].Replace("      id-token: write`n", '')
+Assert-Scenario 'single global OIDC grant refused' 'publish-nuget.yml' $workflows['publish-nuget.yml'] ($withoutPublishOidc.Replace("permissions:`n  contents: read", "permissions:`n  id-token: write`n  contents: read")) 'read-only'
+Assert-Scenario 'single other-job OIDC grant refused' 'publish-nuget.yml' $workflows['publish-nuget.yml'] ($withoutPublishOidc.Replace("  ci:`n", "  ci:`n    permissions:`n      id-token: write`n")) 'read-only'
 Assert-Scenario 'unpinned action refused' 'ci.yml' 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' 'actions/checkout@main' 'pin every action'
 Assert-Scenario 'checkout credentials refused' 'ci.yml' 'persist-credentials: false' 'persist-credentials: true' 'disable persisted'
-Assert-Scenario 'unbounded publish refused' 'publish.yml' "    timeout-minutes: 10`n" '' 'bound every hosted job'
+Assert-Scenario 'unbounded publish refused' 'publish-nuget.yml' "    timeout-minutes: 10`n" '' 'bound every hosted job'
 Assert-Scenario 'manual requests may not be dropped' 'benchmarks.yml' "  queue: max`n" '' 'preserve queued'
-Assert-Scenario 'Windows publish refused' 'publish.yml' 'runs-on: ubuntu-latest' 'runs-on: windows-latest' 'Publishing must use Linux'
-Assert-Scenario 'release bypass refused' 'publish.yml' 'needs: ci' 'needs: another-job' 'full reusable CI gate'
-Assert-Scenario 'release rebuild refused' 'publish.yml' 'run: dotnet nuget push' 'run: dotnet pack' 'Publishing must use Linux'
+Assert-Scenario 'Windows publish refused' 'publish-nuget.yml' 'runs-on: ubuntu-latest' 'runs-on: windows-latest' 'Publishing must use Linux'
+Assert-Scenario 'release bypass refused' 'publish-nuget.yml' 'needs: ci' 'needs: another-job' 'full reusable CI gate'
+Assert-Scenario 'release rebuild refused' 'publish-nuget.yml' 'run: dotnet nuget push' 'run: dotnet pack' 'Publishing must use Linux'

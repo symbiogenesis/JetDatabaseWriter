@@ -5,7 +5,7 @@ The required [CI workflow](../.github/workflows/ci.yml) owns ordinary validation
 | Workflow | Trigger | Responsibility |
 |---|---|---|
 | [CI](../.github/workflows/ci.yml) | Main pushes, pull requests, manual dispatch and release calls | Common script/security/proof-review checks and the aggregate `CI gate`; content-selected Release analyzers, complete Windows suites, pinned no-skip DAO120 compatibility against matching analyzed runner artifacts, proofs, package validation, generated consumers and focused Linux/macOS recovery checks. |
-| [Publish NuGet Package](../.github/workflows/publish.yml) | `v*` tags | Calls full CI, verifies published-main ancestry and exact-revision CI/fuzz/portability evidence, then publishes its exact package artifact from a bounded Linux job. |
+| [Publish NuGet Package](../.github/workflows/publish-nuget.yml) | `v*` tags | Calls full CI, verifies published-main ancestry and exact-revision CI/fuzz/portability evidence, then publishes its exact package artifact from a bounded Linux job. |
 | [Benchmarks](../.github/workflows/benchmarks.yml) | Manual, main only | Hosted measurements, with optional validated baseline and controlled comparisons. Requires successful CI for each measured revision. |
 | [Adversarial fuzz](../.github/workflows/fuzz.yml) | Successful main CI and manual main dispatch | Bounded mutation cases on .NET 10 and 11, with retained reproductions and coverage. Requires successful exact-revision CI. |
 | [Portability](../.github/workflows/portability.yml) | Successful main CI and manual main dispatch | All applicable Linux/macOS tests on .NET 10 and 11, with xUnit and golden diagnostics. Requires successful exact-revision CI, which already supplies Windows coverage and strict analyzers. |
