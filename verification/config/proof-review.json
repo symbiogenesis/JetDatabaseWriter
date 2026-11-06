@@ -428,7 +428,7 @@
         },
         {
           "path": "AGENTS.md",
-          "sha256": "55aa088b4b6f7f45b36fcdf98f5a3147e875fdbfc22c2042799e549629c6560f"
+          "sha256": "1b8bd557f4544ea8365d520b4076691dd68ea1b3ac9f7d506746254f47c6a3d2"
         },
         {
           "path": "benchmarks/JetDatabaseWriter.Benchmarks/Indexes/IndexMutationBenchmarks.cs",
@@ -2428,7 +2428,7 @@
         },
         {
           "path": "AGENTS.md",
-          "sha256": "55aa088b4b6f7f45b36fcdf98f5a3147e875fdbfc22c2042799e549629c6560f"
+          "sha256": "1b8bd557f4544ea8365d520b4076691dd68ea1b3ac9f7d506746254f47c6a3d2"
         },
         {
           "path": "Directory.Build.props",
