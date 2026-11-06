@@ -6,6 +6,9 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repository = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $project = [xml][IO.File]::ReadAllText((Join-Path $repository 'src/JetDatabaseWriter/JetDatabaseWriter.csproj'))
+if ($project.Project.PropertyGroup.PackageProjectUrl -cne 'https://symbiogenesis.github.io/JetDatabaseWriter/') {
+    throw 'The NuGet package project URL must be https://symbiogenesis.github.io/JetDatabaseWriter/.'
+}
 foreach ($name in 'LICENSE', 'LICENSE-APACHE-2.0.txt', 'THIRD-PARTY-NOTICES.md') {
     $item = @($project.SelectNodes('/Project/ItemGroup/None') | Where-Object { $_.Include -eq ('..\..\' + $name) })
     if ($item.Count -ne 1 -or $item[0].Pack -ne 'true' -or $item[0].PackagePath -ne '\') {

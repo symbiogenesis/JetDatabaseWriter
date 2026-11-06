@@ -2628,7 +2628,7 @@
         },
         {
           "path": "scripts/test-package.ps1",
-          "sha256": "8e80b2c1bc333791e4e3c02e8896c84b62178dd095efe777e490379a0be71a71"
+          "sha256": "b0a0e0a36d08fff3a012605f0d1114eb0be96d6616137005c0ed38dda34b33c6"
         },
         {
           "path": "scripts/test-scripts.ps1",
@@ -2664,7 +2664,7 @@
         },
         {
           "path": "scripts/tests/package-content.tests.ps1",
-          "sha256": "dbb887889efedd37fa397d6f889dd883ee9770830a37dbd7c2d3b7e5cafed765"
+          "sha256": "e973dddf7fb45d8e32cfc07de257395f9087c188d0dc5549a2efbe4fccb0171e"
         },
         {
           "path": "scripts/tests/portability-workflow.tests.ps1",
@@ -2700,7 +2700,7 @@
         },
         {
           "path": "scripts/tests/test-package.tests.ps1",
-          "sha256": "14b4569abeb77748ce899eea798913eac8347c95ce613976c87e976433f5e5aa"
+          "sha256": "1301237a5cc8fe75c2641e6dd0f3bc131bbe9ef17c801e38325f7c48b7d62e26"
         },
         {
           "path": "scripts/tests/test-results.tests.ps1",
@@ -2804,7 +2804,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/JetDatabaseWriter.csproj",
-          "sha256": "2b55caf24c92bb141f1f5e36da4c0dc9f48a46b0483005158b44da3cf39920f5"
+          "sha256": "98a05fd3923eac5e40d9ffb6e179a98270a9f389eeb00872fd8e7d178f64b547"
         },
         {
           "path": "src/JetDatabaseWriter/JetFormat.cs",

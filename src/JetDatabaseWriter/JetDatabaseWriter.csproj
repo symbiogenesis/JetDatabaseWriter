@@ -8,7 +8,7 @@
     <Company>Ripera</Company>
     <Description>Pure-managed .NET reader and writer for Microsoft Access JET databases (.mdb/.accdb). No OleDB, ODBC, or ACE drivers required.</Description>
     <PackageTags>access;jet;mdb;accdb;database;microsoft-access</PackageTags>
-    <PackageProjectUrl>https://github.com/symbiogenesis/JetDatabaseWriter</PackageProjectUrl>
+    <PackageProjectUrl>https://symbiogenesis.github.io/JetDatabaseWriter/</PackageProjectUrl>
     <RepositoryUrl>https://github.com/symbiogenesis/JetDatabaseWriter</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

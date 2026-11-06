@@ -21,7 +21,7 @@ function New-Package([string] $Name, [string] $Missing = '', [string] $Stale = '
     $archive = [IO.Compression.ZipFile]::Open((Join-Path $directory 'JetDatabaseWriter.1.0.0.nupkg'), [IO.Compression.ZipArchiveMode]::Create)
     try {
         $entries = [ordered]@{
-            'JetDatabaseWriter.nuspec' = '<package><metadata><id>JetDatabaseWriter</id><version>1.0.0</version></metadata></package>'
+            'JetDatabaseWriter.nuspec' = '<package><metadata><id>JetDatabaseWriter</id><version>1.0.0</version><projectUrl>https://symbiogenesis.github.io/JetDatabaseWriter/</projectUrl></metadata></package>'
             'lib/net11.0/JetDatabaseWriter.dll' = 'Synthetic DLL'
             'lib/net11.0/JetDatabaseWriter.xml' = 'Synthetic documentation'
             'lib/netstandard2.1/JetDatabaseWriter.dll' = 'Synthetic DLL'
@@ -31,7 +31,7 @@ function New-Package([string] $Name, [string] $Missing = '', [string] $Stale = '
         foreach ($name in $entries.Keys) {
             if ($name -eq $Missing) { continue }
             $writer = [IO.StreamWriter]::new($archive.CreateEntry($name).Open())
-            try { $writer.Write($(if ($name -eq $Stale) { 'Incomplete license' } else { $entries[$name] })) } finally { $writer.Dispose() }
+            try { $writer.Write($(if ($name -eq $Stale) { if ($name -eq 'JetDatabaseWriter.nuspec') { '<package><metadata><id>JetDatabaseWriter</id><version>1.0.0</version><projectUrl>https://github.com/symbiogenesis/JetDatabaseWriter</projectUrl></metadata></package>' } else { 'Incomplete license' } } else { $entries[$name] })) } finally { $writer.Dispose() }
         }
     }
     finally { $archive.Dispose() }
@@ -94,6 +94,9 @@ foreach ($missing in 'LICENSE', 'LICENSE-APACHE-2.0.txt', 'lib/netstandard2.1/Je
 }
 $stale = Invoke-Scenario 'stale' (New-Package 'stale' '' 'LICENSE-APACHE-2.0.txt')
 Assert-Check ($stale.Error.Contains('stale or incomplete LICENSE-APACHE-2.0.txt')) 'An incomplete Apache license was accepted.'
+$staleProjectUrl = Invoke-Scenario 'stale-project-url' (New-Package 'stale-project-url' '' 'JetDatabaseWriter.nuspec')
+Assert-Check ($staleProjectUrl.Error.Contains('Invalid shipping package project URL.')) 'A stale package project URL was accepted.'
+Assert-Check ($packageTestContext.Calls.Count -eq 0) 'A stale package project URL reached the consumer commands.'
 foreach ($stage in '--list-runtimes', 'restore', 'build', 'exec') {
     $scenario = Invoke-Scenario ('failed-' + $stage) $valid $stage
     Assert-Check ($scenario.Error.Contains('failed with exit code 17')) "$stage failure was not propagated."

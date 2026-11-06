@@ -31,6 +31,7 @@ try {
     try { $nuspec = [xml]$reader.ReadToEnd() } finally { $reader.Dispose() }
     $version = [string]$nuspec.package.metadata.version
     if ($nuspec.package.metadata.id -cne 'JetDatabaseWriter' -or $version -notmatch '^[0-9A-Za-z.+-]+$') { throw 'Invalid shipping package identity.' }
+    if ($nuspec.package.metadata.PSObject.Properties['projectUrl']?.Value -cne 'https://symbiogenesis.github.io/JetDatabaseWriter/') { throw 'Invalid shipping package project URL.' }
 }
 finally { $archive.Dispose() }
 
