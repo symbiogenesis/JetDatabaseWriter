@@ -104,9 +104,9 @@ QueryDefs. DAO3.6 Jet3/Jet4 controls compare native type and SQL through native
 and managed column rename/drop, referenced-table deletion, reopen and compact.
 Pinned DAO3.6-authored query specimens retain all query rows, query catalog
 values, query permission rows and lookup properties through every writer mode
-on hosted CI. Saved definitions are never executed. Fresh ACE DAO120 checks,
-remaining native query/application forms and Access UI Name AutoCorrect remain
-separate S9/E2 evidence gaps.
+on hosted CI. Saved definitions are never executed. Fresh ACE DAO120 checks
+run in the required hosted native gate; remaining native query/application forms
+and Access UI Name AutoCorrect remain separate S9/E2 evidence gaps.
 
 `NativeSqlSpecificQueryPreservationTests` adds pinned DAO3.6-authored Jet3/Jet4
 and DAO120-authored ACE
@@ -127,20 +127,20 @@ retain the exact native specimen scope.
 ## Microsoft interoperability evidence
 
 `NativeFixedNullScalarTests` independently compares DAO3.6-authored Jet3/Jet4
-Byte/Integer/Long/Currency/Single/Double/DateTime/GUID Null-slot geometry with
-writer insert/update and native update/compact. `FixedNullScalarTests` covers
+and DAO120-authored Jet4/ACE Byte/Integer/Long/Currency/Single/Double/DateTime/GUID
+Null-slot geometry with writer insert/update and native update/compact. `FixedNullScalarTests` covers
 all declared scalar widths and no-allocation oversized-row refusal. The writer
 reserves complete fixed storage before variable data even for Null values.
 `NativeDroppedNullSlotTests` adds four pinned DAO3.6-authored Jet3/Jet4 source
-and compacted controls after dropping leading/middle/trailing fixed fields and a
+and compacted controls plus fresh DAO3.6 Jet3/Jet4 and DAO120 Jet4/ACE controls
+after dropping leading/middle/trailing fixed fields and a
 variable field beside surviving Null Double/GUID values. Public typed/string/POCO
 reads, insert/update, native reopen/update/compact and independent old/new row
 geometry qualify those shapes. Producer details and hashes are in
 `Databases/DroppedNullSlots/README.md`; native-only source and compacted fixtures
-are separate from writer-mutated subjects. Fresh DAO120 Jet4/ACE confirmation,
-native Numeric/Large Number/DateTime Extended, remaining dropped-slot variants
-and broader record-limit acceptance remain F8/E2 gaps. Existing approved golden
-specimens are unchanged.
+are separate from writer-mutated subjects. Native Numeric/Large Number/DateTime
+Extended, remaining dropped-slot variants and broader record-limit acceptance
+remain F8/E2 gaps. Existing approved golden specimens are unchanged.
 
 Validation on 2026-10-06 used revision
 `4b347f95886abdd72aadcfa59a997652e46badea`:
@@ -788,15 +788,15 @@ The [recovery contract](transaction-crash-recovery.md) records the concrete Wind
 managed directory-flush probe and its limits. None of this evidence establishes
 physical power-loss durability or authorizes compact publication.
 
-NativeDisplayPropertyTests compares independently DAO3.6-edited controls with writer-edited Jet3/Jet4 subjects for related and unrelated column rename/drop and case-only rename. Stored Filter and OrderBy text and entry metadata survive reopen and native compact unchanged, including stale references; native insert/update/delete still succeeds. The local engine was DAO3.6 with dao360.dll 10.0.26100.5074. Managed regressions cover Jet3/Jet4/ACE and direct, automatic and explicit transactions, including opaque and repeated display entries. ACE DAO120 native checks remain guarded and unexecuted on the current host; Access UI Name AutoCorrect is a separate evidence gap.
+NativeDisplayPropertyTests compares independently DAO3.6-edited controls with writer-edited Jet3/Jet4 subjects for related and unrelated column rename/drop and case-only rename. Stored Filter and OrderBy text and entry metadata survive reopen and native compact unchanged, including stale references; native insert/update/delete still succeeds. The local engine was DAO3.6 with dao360.dll 10.0.26100.5074. Managed regressions cover Jet3/Jet4/ACE and direct, automatic and explicit transactions, including opaque and repeated display entries. Fresh ACE DAO120 native checks run in the required hosted native gate; Access UI Name AutoCorrect is a separate evidence gap.
 
 `TableRenamedQualifiedExpressionTests` and `QualifiedExpressionReferenceTests` cover unchanged bare-qualifier binding, explicit-context/unknown-field refusal and byte-identical CreateTable/AddColumn rejection of new bracketed foreign declarations. `CalculatedStaleCacheTests` pins independently ACE-authored before/after and constraint specimens: stale bracketed plans retain existing caches, new rows have absent caches, and dependent fields retain status -5617. Writer insert/update matches those native stored results; public reads distinguish an absent cache from ordinary Null. Native Required, field-rule and table-rule controls establish the corresponding refusal behavior, and native compact refuses stale bracketed expressions with 3790. These controls retain their separate scope from the remaining R4 expression qualification.
 
-NativeMemoCompressionTests compares the leading-U+FEFF escape byte-for-byte with pinned DAO120-authored Jet4/ACE payloads at 11 and 1025 characters. New writer insert/update/delete and schema-rewrite controls retain exact text through DAO3.6 Jet4 reads and native compact for Unicode-compressed values of 6 through 2048 characters with a nonzero Latin-1 tail, including all 255 permitted tail characters and inline/external boundaries. The local engine was DAO3.6 with dao360.dll 10.0.26100.5074. Refusal tests retain unchanged database bytes for unsupported short, NUL/non-Latin-1-tail and uncompressed-column cases. Existing longer plain chains remain covered. Fresh ACE native read/compact confirmation remains DAO120-guarded; frozen native byte parity is distinct evidence.
+NativeMemoCompressionTests compares the leading-U+FEFF escape byte-for-byte with pinned DAO120-authored Jet4/ACE payloads at 11 and 1025 characters. New writer insert/update/delete and schema-rewrite controls retain exact text through DAO3.6 Jet4 reads and native compact for Unicode-compressed values of 6 through 2048 characters with a nonzero Latin-1 tail, including all 255 permitted tail characters and inline/external boundaries. The local engine was DAO3.6 with dao360.dll 10.0.26100.5074. Refusal tests retain unchanged database bytes for unsupported short, NUL/non-Latin-1-tail and uncompressed-column cases. Existing longer plain chains remain covered. Fresh Jet4/ACE DAO120 boundary and leading-U+FEFF read/update/compact checks run in the required hosted native gate alongside the frozen native byte controls.
 
 `NativeLookupPropertyTests` compares independently DAO3.6-edited controls and writer-edited Jet3/Jet4 subjects for column rename, case-only rename, column drop and referenced-table deletion. Direct table sources, aliased SQL, saved queries and a saved-query chain retain lookup property bytes and native QueryDef SQL through reopen and compact. Writer edits also retain every MSysQueries field and matching query catalog row field. Native surrounding read/insert/update/delete succeeds. The local engine was DAO3.6 with dao360.dll 10.0.26100.5074. The metadata can retain stale references: preservation does not establish query rebinding or executability after deletion. Fresh ACE DAO120 lookup/saved-query controls also passed on 2026-10-31 with ACEDAO 16.0.20527.20112; broader application/query forms and Access UI Name AutoCorrect remain separate evidence gaps.
 
-`NativeCompressedTextMarkerTests` pins Jet4 source/compacted files whose schemas were writer-created and whose rows were native-authored by DAO3.6. Descriptor-bit and exact raw payload checks establish the leading-U+FEFF escape for ordinary compressed Text, distinct from an inert UnicodeCompression property. Writer insert/update and schema rewrite retain complete values of 6 through 255 UTF-16 units with nonzero Latin-1 tails and optional contiguous nonsurrogate wide prefixes whose low bytes are nonzero. A wide prefix requires at least four tail units; otherwise five are required. Fresh DAO3.6 native authoring produces exact payload parity before and after compact, including both extreme prefix/tail lengths at 255 units; native reads and updates accept writer values and all 255 permitted tail characters. Declared-size overflow and unsupported short/NUL/low-byte-zero/surrogate or later-wide forms refuse before allocation with unchanged database bytes. Native U+FEFF-plus-a loses its marker on insertion and is retained as negative evidence. Producing engine/module details and hashes are beside Databases/NativeTextMarkers. Fresh DAO120 Jet4/ACE confirmation of ordinary compressed Text remains open. Calculated Text has its separate native cached-conversion controls described above.
+`NativeCompressedTextMarkerTests` pins Jet4 source/compacted files whose schemas were writer-created and whose rows were native-authored by DAO3.6. Descriptor-bit and exact raw payload checks establish the leading-U+FEFF escape for ordinary compressed Text, distinct from an inert UnicodeCompression property. Writer insert/update and schema rewrite retain complete values of 6 through 255 UTF-16 units with nonzero Latin-1 tails and optional contiguous nonsurrogate wide prefixes whose low bytes are nonzero. A wide prefix requires at least four tail units; otherwise five are required. Fresh DAO3.6 native authoring produces exact payload parity before and after compact, including both extreme prefix/tail lengths at 255 units; native reads and updates accept writer values and all 255 permitted tail characters. Declared-size overflow and unsupported short/NUL/low-byte-zero/surrogate or later-wide forms refuse before allocation with unchanged database bytes. Native U+FEFF-plus-a loses its marker on insertion and is retained as negative evidence. Producing engine/module details and hashes are beside Databases/NativeTextMarkers. Fresh DAO120 Jet4/ACE authoring, read, update and compact checks for this ordinary compressed Text subset run in the required hosted native gate. Calculated Text has its separate native cached-conversion controls described above.
 
 `CalculatedExpressionFloatingSubtypeTests` retains native x86 DAO3.6 Jet4 query
 controls (`dao360.dll` 10.0.26100.5074) for floating arithmetic, unary signs,
