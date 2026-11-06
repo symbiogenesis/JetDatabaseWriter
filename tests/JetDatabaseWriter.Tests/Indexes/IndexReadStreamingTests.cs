@@ -50,6 +50,17 @@ public sealed class IndexReadStreamingTests
         int pageSize = format == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
         Assert.InRange(counting.BytesRead, 1, 16L * pageSize);
 
+        if (format != DatabaseFormat.Jet3Mdb)
+        {
+            counting.Reset();
+            Assert.Equal(0, await reader.Query<Item>("Items").MinAsync(item => item.Id, ct));
+            Assert.InRange(counting.BytesRead, 1, 16L * pageSize);
+
+            counting.Reset();
+            Assert.Equal(rowCount - 1, await reader.Query<Item>("Items").MaxAsync(item => item.Id, ct));
+            Assert.InRange(counting.BytesRead, 1, 16L * pageSize);
+        }
+
         counting.Reset();
         int count = 0;
         await foreach (Item item in reader.FromIndex<Item>("Items", indexes.Single(static index => index.Kind == IndexKind.PrimaryKey).Name).WhereBetween(100, rowCount - 1).ToRowsAsync(ct))

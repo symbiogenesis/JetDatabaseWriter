@@ -12,6 +12,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Queries;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>Index ordering preserves the mapped values and the complete LINQ key expression.</summary>
@@ -53,6 +54,12 @@ public sealed class QueryIndexOrderingTests
         Assert.Equal(
             rows.OrderByDescending(row => unchecked((byte)row.Id)).Skip(1).Take(1).Select(row => row.Id),
             (await reader.Query<IntegerRow>(Table).OrderByDescending(row => unchecked((byte)row.Id)).Skip(1).Take(1).ToListAsync(Ct)).Select(row => row.Id));
+        Assert.Equal(
+            rows.Min(row => unchecked((byte)row.Id)),
+            await reader.Query<IntegerRow>(Table).MinAsync(row => unchecked((byte)row.Id), Ct));
+        Assert.Equal(
+            rows.Max(row => unchecked((byte)row.Id)),
+            await reader.Query<IntegerRow>(Table).MaxAsync(row => unchecked((byte)row.Id), Ct));
     }
 
     /// <summary>A checked conversion still observes overflow before a following Take returns.</summary>
@@ -71,6 +78,10 @@ public sealed class QueryIndexOrderingTests
             await reader.Query<IntegerRow>(Table).OrderBy(row => checked((byte)row.Id)).Take(1).ToListAsync(Ct));
         await Assert.ThrowsAsync<OverflowException>(async () =>
             await reader.Query<IntegerRow>(Table).OrderBy(row => checked((byte)row.Id)).Skip(1).Take(1).ToListAsync(Ct));
+        await Assert.ThrowsAsync<OverflowException>(async () =>
+            await reader.Query<IntegerRow>(Table).MinAsync(row => checked((byte)row.Id), Ct));
+        await Assert.ThrowsAsync<OverflowException>(async () =>
+            await reader.Query<IntegerRow>(Table).MaxAsync(row => checked((byte)row.Id), Ct));
     }
 
     /// <summary>A mapped integer property does not establish the native Text index's order.</summary>
@@ -93,6 +104,12 @@ public sealed class QueryIndexOrderingTests
         Assert.Equal(
             rows.OrderByDescending(row => row.Id).Skip(1).Take(1).Select(row => row.Id),
             (await reader.Query<IntegerRow>(Table).OrderByDescending(row => row.Id).Skip(1).Take(1).ToListAsync(Ct)).Select(row => row.Id));
+        Assert.Equal(
+            rows.Min(row => row.Id),
+            await reader.Query<IntegerRow>(Table).MinAsync(row => row.Id, Ct));
+        Assert.Equal(
+            rows.Max(row => row.Id),
+            await reader.Query<IntegerRow>(Table).MaxAsync(row => row.Id, Ct));
     }
 
     /// <summary>Exact integral mappings retain their index fast path and agree at signed boundaries.</summary>
@@ -126,6 +143,12 @@ public sealed class QueryIndexOrderingTests
         Assert.Equal(
             rows.OrderBy(row => row.Id).Skip(1).Take(1).Select(row => row.Id),
             (await reader.Query<LongRow>(Table).OrderBy(row => row.Id).Skip(1).Take(1).ToListAsync(Ct)).Select(row => row.Id));
+        Assert.Equal(
+            rows.Min(row => row.Id),
+            await reader.Query<LongRow>(Table).MinAsync(row => row.Id, Ct));
+        Assert.Equal(
+            rows.Max(row => row.Id),
+            await reader.Query<LongRow>(Table).MaxAsync(row => row.Id, Ct));
     }
 
     /// <summary>A property accessor can change native key values even without an expression-tree cast.</summary>
@@ -138,6 +161,12 @@ public sealed class QueryIndexOrderingTests
         Assert.Equal(
             rows.OrderBy(row => row.Id).Take(1).Select(row => row.Id),
             (await reader.Query<TransformedRow>(Table).OrderBy(row => row.Id).Take(1).ToListAsync(Ct)).Select(row => row.Id));
+        Assert.Equal(
+            rows.Min(row => row.Id),
+            await reader.Query<TransformedRow>(Table).MinAsync(row => row.Id, Ct));
+        Assert.Equal(
+            rows.Max(row => row.Id),
+            await reader.Query<TransformedRow>(Table).MaxAsync(row => row.Id, Ct));
     }
 
     /// <summary>A narrowing row projection cannot hide a later conversion error behind index paging.</summary>
@@ -150,6 +179,10 @@ public sealed class QueryIndexOrderingTests
             await reader.Rows<IntegerRow>(Table, cancellationToken: Ct).ToListAsync(Ct));
         await Assert.ThrowsAsync<InvalidCastException>(async () =>
             await reader.Query<IntegerRow>(Table).OrderBy(row => row.Id).Take(1).ToListAsync(Ct));
+        await Assert.ThrowsAsync<InvalidCastException>(async () =>
+            await reader.Query<IntegerRow>(Table).MinAsync(row => row.Id, Ct));
+        await Assert.ThrowsAsync<InvalidCastException>(async () =>
+            await reader.Query<IntegerRow>(Table).MaxAsync(row => row.Id, Ct));
     }
 
     /// <summary>Another mapped setter can change an otherwise automatic ordering property.</summary>
@@ -168,6 +201,12 @@ public sealed class QueryIndexOrderingTests
         Assert.Equal(
             rows.OrderBy(row => row.Id).Take(1).Select(row => row.Id),
             (await reader.Query<MutatingSetterRow>(Table).OrderBy(row => row.Id).Take(1).ToListAsync(Ct)).Select(row => row.Id));
+        Assert.Equal(
+            rows.Min(row => row.Id),
+            await reader.Query<MutatingSetterRow>(Table).MinAsync(row => row.Id, Ct));
+        Assert.Equal(
+            rows.Max(row => row.Id),
+            await reader.Query<MutatingSetterRow>(Table).MaxAsync(row => row.Id, Ct));
     }
 
     /// <summary>Covariance does not change which concrete entity the provider materializes.</summary>
@@ -181,6 +220,12 @@ public sealed class QueryIndexOrderingTests
         Assert.Equal(
             rows.OrderBy(row => ((BaseRow)row).Id).Take(1).Select(row => row.Id),
             (await query.OrderBy(row => row.Id).Take(1).ToListAsync(Ct)).Cast<DerivedRow>().Select(row => row.Id));
+        Assert.Equal(
+            rows.Min(row => ((BaseRow)row).Id),
+            await query.MinAsync(row => row.Id, Ct));
+        Assert.Equal(
+            rows.Max(row => ((BaseRow)row).Id),
+            await query.MaxAsync(row => row.Id, Ct));
     }
 
     /// <summary>Index paging must not hide an overflowing conversion on another mapped column.</summary>
@@ -199,6 +244,10 @@ public sealed class QueryIndexOrderingTests
             await reader.Rows<NarrowPayloadRow>(Table, cancellationToken: Ct).ToListAsync(Ct));
         await Assert.ThrowsAsync<InvalidCastException>(async () =>
             await reader.Query<NarrowPayloadRow>(Table).OrderBy(row => row.Id).Take(1).ToListAsync(Ct));
+        await Assert.ThrowsAsync<InvalidCastException>(async () =>
+            await reader.Query<NarrowPayloadRow>(Table).MinAsync(row => row.Id, Ct));
+        await Assert.ThrowsAsync<InvalidCastException>(async () =>
+            await reader.Query<NarrowPayloadRow>(Table).MaxAsync(row => row.Id, Ct));
     }
 
     /// <summary>Ordinary exact nonkey fields and integral widening still permit index paging.</summary>
@@ -264,6 +313,47 @@ public sealed class QueryIndexOrderingTests
         Assert.Equal(
             rows.OrderBy(row => row.SortKey).Take(2).Select(row => row.Id),
             (await reader.Query<OptionalKeyRow>(Table).OrderBy(row => row.SortKey).Take(2).ToListAsync(Ct)).Select(row => row.Id));
+        Assert.Equal(
+            rows.Min(row => row.SortKey),
+            await reader.Query<OptionalKeyRow>(Table).MinAsync(row => row.SortKey, Ct));
+        Assert.Equal(
+            rows.Max(row => row.SortKey),
+            await reader.Query<OptionalKeyRow>(Table).MaxAsync(row => row.SortKey, Ct));
+    }
+
+    /// <summary>A descending unique nonnull index serves both MaxAsync and MinAsync without scanning the table.</summary>
+    /// <param name="format">The seek-capable database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task DescendingRequiredUniqueIndex_ServesMinAndMaxWithoutScanning(DatabaseFormat format)
+    {
+        const int RowCount = 5000;
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync(
+                Table,
+                [new("Id", typeof(int)) { IsPrimaryKey = true }, new("SortKey", typeof(int))],
+                [new IndexDefinition("DescendingOrdering", "SortKey") { IsUnique = true, IsRequired = true, DescendingColumns = ["SortKey"] }],
+                Ct);
+            await writer.InsertRowsAsync(Table, Enumerable.Range(1, RowCount).Select(static id => new object?[] { id, id * 10 }), Ct);
+        }
+
+        stream.Position = 0;
+        await using var counting = new CountingStream(stream);
+        await using AccessReader reader = await AccessReader.OpenAsync(counting, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0 }, leaveOpen: true, cancellationToken: Ct);
+        _ = await reader.ListIndexesAsync(Table, Ct);
+        _ = await reader.GetColumnMetadataAsync(Table, Ct);
+        _ = await reader.ListLinkedTablesAsync(Ct);
+
+        counting.Reset();
+        Assert.Equal(RowCount * 10, await reader.Query<OptionalKeyRow>(Table).MaxAsync(row => row.SortKey, Ct));
+        Assert.InRange(counting.BytesRead, 1, 16L * 4096);
+
+        counting.Reset();
+        Assert.Equal(10, await reader.Query<OptionalKeyRow>(Table).MinAsync(row => row.SortKey, Ct));
+        Assert.InRange(counting.BytesRead, 1, 16L * 4096);
     }
 
     private static async ValueTask<MemoryStream> CreateAsync(DatabaseFormat format, Type columnType, object[] keys)

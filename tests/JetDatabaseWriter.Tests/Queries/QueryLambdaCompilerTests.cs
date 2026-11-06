@@ -4,6 +4,7 @@ using System;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Queries;
 using Xunit;
 
@@ -199,6 +200,18 @@ public sealed class QueryLambdaCompilerTests
         Assert.Equal("First", cache.Compile(first).Method.Name);
         Assert.Equal("Second", cache.Compile(second).Method.Name);
         Assert.Equal(2, cache.Count);
+    }
+
+    [Fact]
+    public void ClosureValueReader_CompiledFallbackBindsEachCapturedInstance()
+    {
+        var first = new Bound { Value = 4 };
+        var second = new Bound { Value = 9 };
+        Expression<Func<int>> firstExpr = () => first.Value + 3;
+        Expression<Func<int>> secondExpr = () => second.Value + 3;
+
+        Assert.Equal(7, ClosureValueReader.Evaluate(firstExpr.Body));
+        Assert.Equal(12, ClosureValueReader.Evaluate(secondExpr.Body));
     }
 
     private static Expression<Func<int, bool>> Predicate(Bound bound) => value => value == bound.Value;

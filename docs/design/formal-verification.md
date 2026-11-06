@@ -430,14 +430,22 @@ derives exact conversion, equality and strict order for every pair in the native
 range. Checked counterexamples demonstrate narrowing order reversal; Text lies
 outside the admitted integer domains.
 `OrderStage` supplies actual table metadata and retains full sorting for expression
-casts, calculated values or mappings whose accessors can change key values. The
-covering index must contain complete unique nonnull keys in the requested directions.
+casts, calculated values or mappings whose accessors can change key values;
+`AccessQueryProvider.TryExecuteExtremeRowAsync` applies the same `OrderStage`
+admission to unfiltered root `MinAsync` and `MaxAsync` selectors, reading the
+first entry of a matching-direction index or the terminal leaf entry of an
+opposite-direction index through `IndexRowReader.TryReadLastIndexRowAsync`. The
+covering index must contain complete unique nonnull keys in the requested or
+opposite direction.
 Every bound ordinary scalar mapping must use CLR identity or admitted integer
-widening; fallible coercions and calculated/complex mappings retain sorting.
+widening; fallible coercions and calculated/complex mappings retain sorting or
+full-scan folding.
 Native key-byte order, faithful decoding/type projection, mapper/accessor admission,
 index completeness and complete query-pipeline correspondence remain C# contracts.
-`QueryIndexOrderingTests` compares public results and paging with LINQ-to-Objects,
-checks overflow observability and exercises admitted integral boundaries.
+`QueryIndexOrderingTests` and `IndexReadStreamingTests` compare public ordering,
+paging and `MinAsync`/`MaxAsync` results with LINQ-to-Objects, check overflow
+observability, bound indexed reads with caching disabled and exercise admitted
+integral boundaries.
 
 The replacement cleanup model composes `ProductionCleanupAuthority` through
 arbitrary finite admitted cleanup/crash/restart traces. Both fenced entry

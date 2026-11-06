@@ -106,6 +106,59 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
         return count;
     }
 
+    public async ValueTask<(bool Handled, object? Row)> TryExecuteExtremeRowAsync(
+        Expression expression,
+        LambdaExpression selector,
+        bool descending,
+        CancellationToken cancellationToken)
+    {
+        Guard.NotNull(expression, nameof(expression));
+        Guard.NotNull(selector, nameof(selector));
+
+        if (!indexes.CanSeek || !OrderStage.CanBindDirectProperty(selector, typeof(T)))
+        {
+            return (false, null);
+        }
+
+        (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate(expression);
+        if (!ReferenceEquals(boundary, expression) || plan.Stages.Count != 0 || plan.IncludePaths.Count != 0)
+        {
+            return (false, null);
+        }
+
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        ResolvedTable? resolved = await tables.ResolveLocalTableAsync(table, cancellationToken).ConfigureAwait(false);
+        if (resolved is null)
+        {
+            return (false, null);
+        }
+
+        IReadOnlyList<IndexMetadata> tableIndexes = await indexes.ListSeekableIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
+        var forward = new OrderStage();
+        forward.Keys.Add(new OrderingKey(selector, descending));
+        if (forward.FindCoveringIndex(tableIndexes, resolved.Definition, typeof(T)) is { } sameDirection)
+        {
+            await foreach (T item in indexes.ReadIndexRowsAsync<T>(table, sameDirection.Name, IndexQueryCriteria.All, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
+            {
+                return (true, item);
+            }
+
+            return (false, null);
+        }
+
+        var reverse = new OrderStage();
+        reverse.Keys.Add(new OrderingKey(selector, !descending));
+        if (reverse.FindCoveringIndex(tableIndexes, resolved.Definition, typeof(T)) is { } oppositeDirection
+            && await indexes.TryReadLastIndexRowAsync<T>(resolved, oppositeDirection, cancellationToken).ConfigureAwait(false) is { } last)
+        {
+            return (true, last);
+        }
+
+        return (false, null);
+    }
+
     /// <summary>
     /// Determines whether <paramref name="expression"/>'s outermost node is a LINQ
     /// ordering operator (<c>OrderBy</c> / <c>OrderByDescending</c> / <c>ThenBy</c> /

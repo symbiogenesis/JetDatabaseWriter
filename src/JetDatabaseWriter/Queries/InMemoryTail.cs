@@ -195,7 +195,7 @@ internal static class InMemoryTail
         // The unbox or reference cast to the target throws just as Enumerable.Cast's does.
         ParameterExpression item = Expression.Parameter(typeof(object), "item");
         Expression cast = Expression.Convert(Expression.Convert(item, target), typeof(object));
-        return Expression.Lambda<Func<object?, object?>>(cast, item).Compile();
+        return QueryLambdaCompiler.Shared.Compile(Expression.Lambda<Func<object?, object?>>(cast, item));
     }
 
     private static Expression StripQuote(Expression expression) =>
@@ -261,7 +261,7 @@ internal static class InMemoryTail
             RequireMethod(comparerType, "Compare", keyType, keyType),
             Expression.Convert(x, keyType),
             Expression.Convert(y, keyType));
-        return Comparer<object?>.Create(Expression.Lambda<Comparison<object?>>(compare, x, y).Compile());
+        return Comparer<object?>.Create(QueryLambdaCompiler.Shared.Compile(Expression.Lambda<Comparison<object?>>(compare, x, y)));
     }
 
     /// <summary>
@@ -288,8 +288,8 @@ internal static class InMemoryTail
             Expression.Convert(y, element));
         MethodCallExpression hash = Expression.Call(instance, RequireMethod(comparerType, "GetHashCode", element), Expression.Convert(x, element));
         return new BoxedEqualityComparer(
-            Expression.Lambda<Func<object?, object?, bool>>(equals, x, y).Compile(),
-            Expression.Lambda<Func<object?, int>>(hash, x).Compile());
+            QueryLambdaCompiler.Shared.Compile(Expression.Lambda<Func<object?, object?, bool>>(equals, x, y)),
+            QueryLambdaCompiler.Shared.Compile(Expression.Lambda<Func<object?, int>>(hash, x)));
     }
 
     private static object DefaultInstance(Type comparerDefinition, Type type) =>

@@ -24,6 +24,19 @@ internal sealed class OrderStage : QueryStage
 {
     public List<OrderingKey> Keys { get; } = [];
 
+    /// <summary>
+    /// Determines whether <paramref name="selector"/> syntactically accesses a direct
+    /// property on <paramref name="entityType"/>, before any table or index metadata is read.
+    /// </summary>
+    /// <param name="selector">The candidate key or aggregate selector.</param>
+    /// <param name="entityType">The concrete entity type the provider materializes.</param>
+    /// <returns><see langword="true"/> when <paramref name="selector"/> is a direct property access on <paramref name="entityType"/>.</returns>
+    public static bool CanBindDirectProperty(LambdaExpression selector, Type entityType) =>
+        selector.Parameters.Count == 1
+        && selector.Body is MemberExpression { Member: PropertyInfo, Expression: ParameterExpression parameter }
+        && parameter == selector.Parameters[0]
+        && parameter.Type == entityType;
+
     public override async IAsyncEnumerable<T> Apply<T>(
         IAsyncEnumerable<T> source,
         [EnumeratorCancellation] CancellationToken cancellationToken)

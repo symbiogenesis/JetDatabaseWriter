@@ -780,7 +780,7 @@ public static class AccessQueryExtensions
     {
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(selector, nameof(selector));
-        return AsAsyncEnumerable(source).Select(selector.Compile());
+        return AsAsyncEnumerable(source).Select(QueryLambdaCompiler.Shared.Compile(selector));
     }
 
     /// <summary>
@@ -802,10 +802,26 @@ public static class AccessQueryExtensions
         bool keepGreater,
         CancellationToken cancellationToken)
     {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        IAsyncEnumerable<T> rows = AsAsyncEnumerable(source);
+        Func<T, TResult> project = QueryLambdaCompiler.Shared.Compile(selector);
+
+        if (source.Provider is IAccessQueryEngine engine
+            && await engine.TryExecuteExtremeRowAsync(source.Expression, selector, keepGreater, cancellationToken).ConfigureAwait(false) is (true, T indexedRow))
+        {
+            TResult candidate = project(indexedRow);
+            if (candidate is not null)
+            {
+                return candidate;
+            }
+        }
+
         bool any = false;
         TResult extreme = default!;
-        await foreach (TResult value in Project(source, selector).WithCancellation(cancellationToken).ConfigureAwait(false))
+        await foreach (T item in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
+            TResult value = project(item);
             if (value is null)
             {
                 continue;

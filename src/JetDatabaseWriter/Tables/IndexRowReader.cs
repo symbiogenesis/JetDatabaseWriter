@@ -14,6 +14,7 @@ using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
@@ -173,6 +174,72 @@ internal sealed class IndexRowReader(
                 return (factory, wantedColumns);
             },
             cancellationToken);
+
+    /// <summary>
+    /// Reads and materializes the last entry of <paramref name="index"/> when the database
+    /// supports index seeks and strict parsing is enabled, or returns <see langword="null"/>
+    /// when the tree is empty or cannot be walked.
+    /// </summary>
+    /// <typeparam name="T">The mapped entity type.</typeparam>
+    /// <param name="resolved">The resolved local table and its schema.</param>
+    /// <param name="index">The covering index whose last entry is requested.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The materialized last entity, or <see langword="null"/> when unavailable.</returns>
+    internal async ValueTask<T?> TryReadLastIndexRowAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
+        ResolvedTable resolved,
+        IndexMetadata index,
+        CancellationToken cancellationToken)
+        where T : class, new()
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        Guard.NotNull(resolved, nameof(resolved));
+        Guard.NotNull(index, nameof(index));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!this.CanSeek || !rows.StrictParsing || index.FirstDp <= 0 || index.Columns.Count == 0)
+        {
+            return null;
+        }
+
+        using var cursor = new IndexCursor(
+            format.IndexPage,
+            pages.ReadPageAsync,
+            format.PageSize);
+        IndexEntry? last = await cursor.TryReadLastEntryAsync(index.FirstDp, cancellationToken).ConfigureAwait(false);
+        if (last is null)
+        {
+            return null;
+        }
+
+        TableDef td = resolved.Definition;
+        string[] headers = new string[td.Columns.Count];
+        for (int i = 0; i < td.Columns.Count; i++)
+        {
+            headers[i] = td.Columns[i].Name;
+        }
+
+        Func<object?[], T> factory = RowMapper<T>.Build(td);
+        bool[] wantedColumns = RowMapper<T>.GetBoundColumnMask(headers);
+        bool needsComplexPass = td.HasComplexColumns
+            && TableReader.HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType);
+        bool needsHyperlinkPass = td.HasHyperlinkColumns
+            && TableReader.HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns);
+        ComplexColumnReader.RowResolver? complexResolver = needsComplexPass
+            ? await complexColumns.CreateRowResolverAsync(resolved.Entry.Name, td.Columns, wantedColumns, cancellationToken).ConfigureAwait(false)
+            : null;
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
+
+        object?[]? row = await this.MaterializeSeekRowAsync(
+            resolved.Entry.TDefPage,
+            td,
+            last.Value.DataPage,
+            last.Value.DataRow,
+            decodePlan,
+            complexResolver,
+            needsHyperlinkPass,
+            cancellationToken).ConfigureAwait(false);
+        return row is null ? null : factory(row);
+    }
 
     /// <summary>
     /// Returns the rows of <paramref name="tableName"/> that satisfy

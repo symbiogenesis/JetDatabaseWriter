@@ -87,13 +87,20 @@ separate A2/A3/E4/F6/I15/V7 obligations.
 ## Additional scalar and ledger boundaries
 
 `OrderStage` executes `IndexMutationKernel.AdmitIntegerOrdering` using the actual
-native and mapped integer domains. `AdmittedIntegerMappingPreservesOrder` proves
+native and mapped integer domains, and `AccessQueryProvider.TryExecuteExtremeRowAsync`
+reuses that single-column admission for unfiltered root `MinAsync` and `MaxAsync`
+selectors (reading the first row or the terminal leaf entry via `IndexRowReader.TryReadLastIndexRowAsync`).
+`AdmittedIntegerMappingPreservesOrder` proves
 exact value, equality and strict-order preservation across admitted identity and
 widening conversions; checked counterexamples expose narrowing order reversal.
 The [ordering parity tests](../../tests/JetDatabaseWriter.Tests/Queries/QueryIndexOrderingTests.cs)
-exercise casts, overflow, mapped Text, mapper effects, integral endpoints and paging.
+and [index streaming tests](../../tests/JetDatabaseWriter.Tests/Indexes/IndexReadStreamingTests.cs)
+exercise casts, overflow, mapped Text, mapper effects, integral endpoints, paging
+and bounded-byte `MinAsync`/`MaxAsync` reads across ascending and descending unique
+required indexes.
 The containing C# guard requires exact or admitted widening conversions for every
-bound ordinary scalar property, retaining coercion failures through the sorting path.
+bound ordinary scalar property, retaining coercion failures through the sorting or
+full-scan folding path.
 Complete unique nonnull index admission and the mapping/type/accessor checks remain
 handwritten adapters under A4/A6; full query planning and native index correspondence
 retain I9 and the existing independent native evidence requirements.

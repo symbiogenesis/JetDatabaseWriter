@@ -4,6 +4,7 @@ using System;
 using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
+using JetDatabaseWriter.Queries;
 
 /// <summary>
 /// Reads the value of a LINQ operand that does not depend on the lambda's parameter, such
@@ -52,7 +53,7 @@ internal static class ClosureValueReader
         Expression body = expression.Type.IsValueType
             ? Expression.Convert(expression, typeof(object))
             : expression;
-        return Expression.Lambda<Func<object?>>(body).Compile()();
+        return QueryLambdaCompiler.Shared.Compile(Expression.Lambda<Func<object?>>(body))();
     }
 
     /// <summary>

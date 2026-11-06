@@ -32,4 +32,20 @@ internal interface IAccessQueryEngine
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The number of rows the query produces.</returns>
     public ValueTask<long> CountAsync(Expression expression, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads the single extreme entity from a covering unique nonnull integer index when
+    /// <paramref name="expression"/> is an unfiltered root table query and <paramref name="selector"/>
+    /// satisfies the verified integer ordering admission contract.
+    /// </summary>
+    /// <param name="expression">The query expression to inspect.</param>
+    /// <param name="selector">The aggregate's value selector.</param>
+    /// <param name="descending"><see langword="true"/> for <c>MaxAsync</c>; <see langword="false"/> for <c>MinAsync</c>.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>Whether an index supplied the extreme row, and the materialized entity when it did.</returns>
+    public ValueTask<(bool Handled, object? Row)> TryExecuteExtremeRowAsync(
+        Expression expression,
+        LambdaExpression selector,
+        bool descending,
+        CancellationToken cancellationToken);
 }
