@@ -328,7 +328,7 @@ public sealed class QueryIndexOrderingTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task DescendingRequiredUniqueIndex_ServesMinAndMaxWithoutScanning(DatabaseFormat format)
     {
-        const int RowCount = 5000;
+        const int rowCount = 5000;
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))
         {
@@ -337,7 +337,7 @@ public sealed class QueryIndexOrderingTests
                 [new("Id", typeof(int)) { IsPrimaryKey = true }, new("SortKey", typeof(int))],
                 [new IndexDefinition("DescendingOrdering", "SortKey") { IsUnique = true, IsRequired = true, DescendingColumns = ["SortKey"] }],
                 Ct);
-            await writer.InsertRowsAsync(Table, Enumerable.Range(1, RowCount).Select(static id => new object?[] { id, id * 10 }), Ct);
+            await writer.InsertRowsAsync(Table, Enumerable.Range(1, rowCount).Select(static id => new object?[] { id, id * 10 }), Ct);
         }
 
         stream.Position = 0;
@@ -348,7 +348,7 @@ public sealed class QueryIndexOrderingTests
         _ = await reader.ListLinkedTablesAsync(Ct);
 
         counting.Reset();
-        Assert.Equal(RowCount * 10, await reader.Query<OptionalKeyRow>(Table).MaxAsync(row => row.SortKey, Ct));
+        Assert.Equal(rowCount * 10, await reader.Query<OptionalKeyRow>(Table).MaxAsync(row => row.SortKey, Ct));
         Assert.InRange(counting.BytesRead, 1, 16L * 4096);
 
         counting.Reset();

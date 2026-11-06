@@ -62,7 +62,9 @@ remove/replace, sibling preservation, every child index/count, rollback and comp
 byte restoration after partial-write and flush failures. `ComplexItemMutationDaoTests`
 starts with DAO-authored attachments and multi-values, accepts writer replacements
 and deletions through native child recordsets, extracts a chained payload, performs
-another native edit and preserves surviving identities through Compact & Repair.
+another native edit and preserves surviving identities through Compact & Repair;
+this check, `ComplexSchemaDaoTests` and `AppendOnlyHistorySchemaTests` run in the
+required hosted DAO120 inventory.
 
 `ComplexParentKeyDaoTests` independently compares DateTime, GUID, Decimal,
 Currency, integral, Single, fixed/variable binary, long Memo, Null/empty and Text
@@ -96,7 +98,9 @@ dropped logical indexes are removed; unrelated and orphan index maps survive.
 metadata identities and descending FK keys across schema edits. Synthetic marker
 and native-accepted layout variants remain separate from Microsoft-authored fixtures.
 `NativeSchemaPreservationTests` and `NativeSchemaDaoTests` additionally retain
-Microsoft-authored Table4 column identities and multi-page attachment table metadata.
+Microsoft-authored Table4 column identities and multi-page attachment table metadata;
+the DAO120 descriptor-preservation and `NativeSchemaDaoTests` checks run in the
+required hosted native gate.
 
 `NativeLookupPropertyTests` covers direct and chained lookup sources plus
 parameterized SELECT, UNION, crosstab and stored append/update/delete/make-table
