@@ -100,6 +100,7 @@ public sealed class ForeignKeyIncrementalEvidenceTests(ITestOutputHelper output)
         await using (AccessWriter writer = await AccessWriter.OpenAsync(trace, new AccessWriterOptions { UseLockFile = false, PageCacheSize = 0 }, leaveOpen: true, Ct))
         {
             CatalogEntry child = await writer.Services.Catalog.GetRequiredCatalogEntryAsync("C", Ct);
+            _ = await writer.Services.OwnedMaps.CanMaintainAsync(child.TDefPage, Ct);
             List<long> roots = await IndexLeafChain.ReadRealIndexRootsAsync(writer.Database, child.TDefPage, Ct);
             foreach (long root in roots)
             {
@@ -135,6 +136,7 @@ public sealed class ForeignKeyIncrementalEvidenceTests(ITestOutputHelper output)
         await using (AccessWriter writer = await AccessWriter.OpenAsync(subject, new AccessWriterOptions { UseLockFile = false }, Ct))
         {
             CatalogEntry child = await writer.Services.Catalog.GetRequiredCatalogEntryAsync("C", Ct);
+            _ = await writer.Services.OwnedMaps.CanMaintainAsync(child.TDefPage, Ct);
             List<long> roots = await IndexLeafChain.ReadRealIndexRootsAsync(writer.Database, child.TDefPage, Ct);
             int originalPages = 0;
             int intermediateRoots = 0;

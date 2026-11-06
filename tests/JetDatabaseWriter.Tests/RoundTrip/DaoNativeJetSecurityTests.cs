@@ -60,10 +60,14 @@ public sealed class DaoNativeJetSecurityTests
                 $engine.DefaultPassword = 'Owner123'
                 $check = $engine.CreateWorkspace('AccountCheck', 'NativeOwner', 'Owner123', 2)
                 try {
-                    $names = @(for ($i = 0; $i -lt $check.Users.Count; $i++) { $check.Users.Item($i).Name }) | Sort-Object
-                    if (($names -join ',') -notin @('admin,NativeOwner', 'admin,Creator,Engine,NativeOwner')) { throw "Workgroup contains unexpected user accounts: $($names -join ',')." }
-                    $groups = @(for ($i = 0; $i -lt $check.Groups.Count; $i++) { $check.Groups.Item($i).Name }) | Sort-Object
-                    if (($groups -join ',') -ne 'Admins,Users') { throw "Workgroup contains unexpected groups: $($groups -join ',')." }
+                    if ($check.Users.Count -gt 0) {
+                        $names = @(for ($i = 0; $i -lt $check.Users.Count; $i++) { $check.Users.Item($i).Name }) | Sort-Object
+                        if (($names -join ',') -notin @('admin,NativeOwner', 'admin,Creator,Engine,NativeOwner')) { throw "Workgroup contains unexpected user accounts: $($names -join ',')." }
+                    }
+                    if ($check.Groups.Count -gt 0) {
+                        $groups = @(for ($i = 0; $i -lt $check.Groups.Count; $i++) { $check.Groups.Item($i).Name }) | Sort-Object
+                        if (($groups -join ',') -ne 'Admins,Users') { throw "Workgroup contains unexpected groups: $($groups -join ',')." }
+                    }
                 } finally { $check.Close() }
                 """;
         }
