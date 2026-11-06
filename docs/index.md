@@ -1,6 +1,7 @@
 ---
 layout: null
 ---
+{::nomarkdown}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1140,3 +1141,4 @@ dotnet run --project src/JetDatabaseWriter.Scaffold -- \
   </script>
 </body>
 </html>
+{:/nomarkdown}
