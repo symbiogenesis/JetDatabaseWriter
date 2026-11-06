@@ -64,6 +64,36 @@ public sealed class CompactPinnedDatabaseBuilderTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
+    public Task SharedPhysicalDescriptors_BuildAndValidateWithActiveRows(DatabaseFormat kind)
+        => WithFixtureAsync(
+            kind,
+            async fixture =>
+            {
+                long owner = Assert.IsType<CatalogEntry>(await fixture.Source.GetCatalogEntryAsync("Items", Ct)).TDefPage;
+                int slot = fixture.Tables.FindIndex(table => table.Owner == owner);
+                CompactPinnedDatabaseBuildTable table = fixture.Tables[slot];
+                Assert.Equal(2, table.Indexes.Count);
+                Assert.Equal(table.Indexes[0].RootPage, table.Indexes[1].RootPage);
+                Assert.Equal(table.Indexes[0].OwnedPages, table.Indexes[1].OwnedPages);
+                fixture.Tables[slot] = table with { ActiveIndexOrdinal = 0 };
+                var workspace = new CompactPinnedDatabaseWorkspace(fixture.CreateAsync, fixture.OpenAsync, static (_, _) => ValueTask.CompletedTask);
+                CompactPinnedDatabaseBuilderResult result = await CompactPinnedDatabaseBuilder.BuildAndValidateAsync(
+                    fixture.Source.Database.Pages, fixture.Source.Database.Format, fixture.Tables, workspace, new(), Ct);
+                Assert.Equal(fixture.Tables.Count, result.Validation.Tables);
+                Assert.Equal(1, result.Validation.ActiveTables);
+                Assert.Equal(0, result.Validation.UnassignedRows);
+                await using AccessReader reopened = await TestDatabase.OpenReaderAsync(fixture.PathFor(CompactPinnedDatabaseFile.Destination, 0), cancellationToken: Ct);
+                TDefImage installed = Assert.IsType<TDefImage>(await reopened.Database.TableDefs.ReadImageAsync(owner, Ct));
+                Assert.Equal(2, installed.RealIndexes.Count);
+                Assert.Equal(installed.RealIndexes[0].RootPage, installed.RealIndexes[1].RootPage);
+            },
+            secondaryIndex: true,
+            sharedPhysicalIndexes: true);
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
     public Task RecoveredCatalogOwnerAliasesUserTable_RowsStageOnceAndActiveInventoryCompletes(DatabaseFormat kind)
         => WithFixtureAsync(kind, async fixture =>
         {
@@ -418,17 +448,35 @@ public sealed class CompactPinnedDatabaseBuilderTests
     public Task FreshJet3Assembly_Dao36ReadsMutatesEnforcesAndCompacts()
         => WithFixtureAsync(DatabaseFormat.Jet3Mdb, fixture => VerifyNativeAsync(fixture, DatabaseFormat.Jet3Mdb));
 
+    [Theory(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [Trait("Category", "RequiresMicrosoftAccess")]
+    public Task SharedPhysicalDescriptors_Dao120ReadsCompactsAndMutates(DatabaseFormat kind)
+        => WithFixtureAsync(kind, fixture => VerifyNativeAsync(fixture, kind, sharedPhysicalIndexes: true), secondaryIndex: true, sharedPhysicalIndexes: true);
+
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(Jet3RoundTripEnvironment.IsAvailable),
+        SkipType = typeof(Jet3RoundTripEnvironment))]
+    [Trait("Category", "RequiresMicrosoftAccess")]
+    public Task SharedPhysicalDescriptors_Dao36ReadsCompactsAndMutates()
+        => WithFixtureAsync(DatabaseFormat.Jet3Mdb, fixture => VerifyNativeAsync(fixture, DatabaseFormat.Jet3Mdb, sharedPhysicalIndexes: true), nativeJet3: true, secondaryIndex: true, sharedPhysicalIndexes: true);
+
     private static Task VerifyNativeAsync(DatabaseFormat kind)
         => WithFixtureAsync(kind, fixture => VerifyNativeAsync(fixture, kind), nativeJet3: true);
 
-    private static async Task VerifyNativeAsync(Fixture fixture, DatabaseFormat kind)
+    private static async Task VerifyNativeAsync(Fixture fixture, DatabaseFormat kind, bool sharedPhysicalIndexes = false)
     {
         await BuildAsync(fixture, new());
         await using var native = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.CompactBuilder", databaseExtension: kind == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb");
         string control = native.CreateDatabasePath("control");
         await File.WriteAllBytesAsync(control, fixture.Original, Ct);
         File.Copy(fixture.PathFor(CompactPinnedDatabaseFile.Destination, 0), native.SourcePath);
-        string script = NativeScript(native, control);
+        string script = NativeScript(native, control, sharedPhysicalIndexes);
         if (kind == DatabaseFormat.Jet3Mdb)
         {
             PowerShellRunResult result = Jet3RoundTripEnvironment.RunEngineScript(script, native.WorkDir, TimeSpan.FromMinutes(2));
@@ -441,11 +489,14 @@ public sealed class CompactPinnedDatabaseBuilderTests
         }
     }
 
-    private static string NativeScript(AccessRoundTripSession native, string control)
+    private static string NativeScript(AccessRoundTripSession native, string control, bool sharedPhysicalIndexes = false)
     {
         string original = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(control);
         string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(native.SourcePath);
         string compacted = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(native.CompactedPath);
+        string operations = sharedPhysicalIndexes
+            ? $"Check-Contents {original} $false; Check-Contents {source} $false; $engine.CompactDatabase({source},{compacted}); Check-Contents {compacted} $false; Change-Contents {compacted}; Check-Contents {compacted} $true"
+            : $"Check-Contents {original} $false; Check-Contents {source} $false; Change-Contents {original}; Check-Contents {original} $true; Change-Contents {source}; Check-Contents {source} $true; $engine.CompactDatabase({source},{compacted}); Check-Contents {compacted} $true";
         return $$"""
             function Check-Contents([string]$path, [bool]$mutated) {
                 $db=$engine.OpenDatabase($path)
@@ -501,14 +552,7 @@ public sealed class CompactPinnedDatabaseBuilderTests
                     } finally { $rs.Close() }
                 } finally { $db.Close() }
             }
-            Check-Contents {{original}} $false
-            Check-Contents {{source}} $false
-            Change-Contents {{original}}
-            Check-Contents {{original}} $true
-            Change-Contents {{source}}
-            Check-Contents {{source}} $true
-            $engine.CompactDatabase({{source}},{{compacted}})
-            Check-Contents {{compacted}} $true
+            {{operations}}
             Write-Output 'PINNED_DATABASE_NATIVE_OK'
             """;
     }
@@ -516,7 +560,7 @@ public sealed class CompactPinnedDatabaseBuilderTests
     private static ValueTask<CompactPinnedDatabaseBuilderResult> BuildAsync(Fixture fixture, CompactPinnedDatabaseBuilderBudget budget, CancellationToken? token = null)
         => CompactPinnedDatabaseBuilder.BuildAndValidateAsync(fixture.Source.Database.Pages, fixture.Source.Database.Format, fixture.Tables, new(fixture.CreateAsync, fixture.OpenAsync), budget, token ?? Ct);
 
-    private static async Task WithFixtureAsync(DatabaseFormat kind, Func<Fixture, Task> action, bool nativeJet3 = false, bool secondaryIndex = false)
+    private static async Task WithFixtureAsync(DatabaseFormat kind, Func<Fixture, Task> action, bool nativeJet3 = false, bool secondaryIndex = false, bool sharedPhysicalIndexes = false)
     {
         string directory = Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.CompactBuilder." + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -532,19 +576,26 @@ public sealed class CompactPinnedDatabaseBuilderTests
                 ? await AccessWriter.OpenAsync(original, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct)
                 : await AccessWriter.CreateDatabaseAsync(original, kind, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))
             {
-                if (secondaryIndex)
-                {
-                    await writer.CreateTableAsync("Items", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Memo", typeof(string), 20_000), new("Other", typeof(int))], [new IndexDefinition("Secondary", "Other")], Ct);
-                    await writer.InsertRowsAsync("Items", Enumerable.Range(0, 3).Select(id => new object?[] { id, new string((char)('a' + id), 3000), id * 10 }), Ct);
-                }
-                else
-                {
-                    await writer.CreateTableAsync("Items", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Memo", typeof(string), 20_000)], Ct);
-                    await writer.InsertRowsAsync("Items", Enumerable.Range(0, 3).Select(id => new object?[] { id, new string((char)('a' + id), 3000) }), Ct);
-                }
+                await writer.CreateTableAsync("Items", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Memo", typeof(string), 20_000)], secondaryIndex ? [new IndexDefinition("Secondary", "Id")] : [], Ct);
+                await writer.InsertRowsAsync("Items", Enumerable.Range(0, 3).Select(id => new object?[] { id, new string((char)('a' + id), 3000) }), Ct);
             }
 
             byte[] originalBytes = original.ToArray();
+            if (sharedPhysicalIndexes)
+            {
+                await using var inspectStream = new MemoryStream(originalBytes, writable: false);
+                await using AccessReader inspectReader = await TestDatabase.OpenReaderAsync(inspectStream, cancellationToken: Ct);
+                long itemsOwner = Assert.IsType<CatalogEntry>(await inspectReader.GetCatalogEntryAsync("Items", Ct)).TDefPage;
+                TDefImage itemsImage = Assert.IsType<TDefImage>(await inspectReader.Database.TableDefs.ReadImageAsync(itemsOwner, Ct));
+                JetFormat format = inspectReader.Database.Format;
+                byte[] bytes = itemsImage.CopyBytes();
+                bytes.AsSpan(itemsImage.RealIndexes[0].Slot.PhysStart, format.Index.RealIdxPhysSize)
+                    .CopyTo(bytes.AsSpan(itemsImage.RealIndexes[1].Slot.PhysStart, format.Index.RealIdxPhysSize));
+                bytes.CopyTo(originalBytes, checked((int)(itemsOwner * format.PageSize)));
+                original.SetLength(0);
+                await original.WriteAsync(originalBytes, Ct);
+            }
+
             await using AccessReader source = await TestDatabase.OpenReaderAsync(original, cancellationToken: Ct);
             TDefImage catalog = Assert.IsType<TDefImage>(await source.Database.TableDefs.ReadImageAsync(2, Ct));
             var reader = new CatalogRowReader(source.Database.Format, source.Database.TableDefs, source.Database.OwnedPages);

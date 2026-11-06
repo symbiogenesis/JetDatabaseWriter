@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Maintenance;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
@@ -240,6 +241,19 @@ internal sealed partial class CompactIndexOwnershipAudit
                 long member = firstPage + ((offset - first) * 8L) + bit;
                 this.ValidatePage(member);
                 this.ChargeReference(map.Pointer.PageNumber);
+                CompactIndexOwnershipRecord record = new() { Kind = "map-member", PageNumber = member, OwnerTDefPage = map.Owner, RootPageNumber = map.Root, SourcePageNumber = map.Pointer.PageNumber, MapRowIndex = map.Pointer.RowIndex };
+                if (this.declaredOwners.Contains(member))
+                {
+                    await this.EmitAsync(record with { Kind = "storage-role-contradiction", RelatedOwnerTDefPage = member, RelatedRootPageNumber = 0, Role = "index-map-member" }, visitor, token).ConfigureAwait(false);
+                    throw Corrupt(member, "An index ownership map lists a declared table-definition page as an index member.");
+                }
+
+                if (this.pages.TryGetValue(member, out PageState? state) && state.IsMapPage)
+                {
+                    await this.EmitAsync(record with { Kind = "storage-role-contradiction", RelatedOwnerTDefPage = state.Owner, RelatedRootPageNumber = state.FirstRoot, Role = "index-map-member" }, visitor, token).ConfigureAwait(false);
+                    throw Corrupt(member, "An index ownership map lists an ownership-map data or bitmap page as an index member.");
+                }
+
                 if (this.memberships >= this.budget.MaxMemberships)
                 {
                     throw Limit(member, "The retained index-map membership coordinates exceed MaxMemberships.");
@@ -261,7 +275,7 @@ internal sealed partial class CompactIndexOwnershipAudit
                     reservation?.Dispose();
                 }
 
-                await this.EmitAsync(new() { Kind = "map-member", PageNumber = member, OwnerTDefPage = map.Owner, RootPageNumber = map.Root, SourcePageNumber = map.Pointer.PageNumber, MapRowIndex = map.Pointer.RowIndex }, visitor, token).ConfigureAwait(false);
+                await this.EmitAsync(record, visitor, token).ConfigureAwait(false);
                 this.CheckMapSource(source, format, member, token);
             }
         }
@@ -271,6 +285,18 @@ internal sealed partial class CompactIndexOwnershipAudit
     {
         this.ChargeReference(map.Pointer.PageNumber);
         CompactIndexOwnershipRecord record = new() { Kind = "map-bitmap", PageNumber = bitmap, OwnerTDefPage = map.Owner, RootPageNumber = map.Root, SourcePageNumber = map.Pointer.PageNumber, MapRowIndex = map.Pointer.RowIndex };
+        if (this.declaredOwners.Contains(bitmap))
+        {
+            await this.EmitAsync(record with { Kind = "storage-role-contradiction", RelatedOwnerTDefPage = bitmap, RelatedRootPageNumber = 0, Role = "index-map-bitmap" }, visitor, token).ConfigureAwait(false);
+            throw Corrupt(bitmap, "An index ownership bitmap aliases a declared table-definition page.");
+        }
+
+        if (this.TryFindMapMember(bitmap, out MapInspection? memberMap))
+        {
+            await this.EmitAsync(record with { Kind = "storage-role-contradiction", RelatedOwnerTDefPage = memberMap.Owner, RelatedRootPageNumber = memberMap.Root, Role = "index-map-bitmap" }, visitor, token).ConfigureAwait(false);
+            throw Corrupt(bitmap, "An index ownership bitmap is also claimed as an inspected index-map member.");
+        }
+
         if (this.pages.TryGetValue(bitmap, out PageState? state))
         {
             if (!state.IsBitmapPage)
@@ -287,6 +313,21 @@ internal sealed partial class CompactIndexOwnershipAudit
         }
 
         await this.EmitAsync(record, visitor, token).ConfigureAwait(false);
+    }
+
+    private bool TryFindMapMember(long page, [NotNullWhen(true)] out MapInspection? found)
+    {
+        foreach (MapInspection inspection in this.inspectedMaps.Values)
+        {
+            if (inspection.Members.ContainsKey(page))
+            {
+                found = inspection;
+                return true;
+            }
+        }
+
+        found = null;
+        return false;
     }
 
     private async ValueTask ObserveMapPageAsync(CompactIndexRecord record, Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask> visitor, CancellationToken token)

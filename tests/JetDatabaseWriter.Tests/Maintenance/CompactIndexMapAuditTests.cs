@@ -153,6 +153,68 @@ public sealed class CompactIndexMapAuditTests
     }
 
     [Theory]
+    [InlineData("member-is-own-map-page")]
+    [InlineData("member-is-declared-map-page")]
+    [InlineData("map-page-declared-after-member")]
+    [InlineData("member-is-own-bitmap-page")]
+    [InlineData("bitmap-claimed-after-member")]
+    [InlineData("member-is-owner-tdef")]
+    [InlineData("owner-tdef-declared-after-member")]
+    [InlineData("root-is-owner-tdef")]
+    public async Task MapMemberAndDeclaredStorageRoles_RefuseContradictionInEitherOrder(string contradiction)
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        byte[] bitmap = new byte[format.PageSize];
+        bitmap[0] = Constants.PageTypes.UsageMap;
+        bitmap[1] = 1;
+        bitmap[Constants.UsageMap.ReferenceMapBitmapOffset + 1] = contradiction == "member-is-own-bitmap-page" ? (byte)(1 << 2) : (byte)0;
+        byte[] firstMap = contradiction switch
+        {
+            "member-is-own-map-page" => Inline(format, 3, 8),
+            "member-is-declared-map-page" or "map-page-declared-after-member" => Inline(format, 3, 9),
+            "member-is-own-bitmap-page" => Reference(format, 10),
+            "bitmap-claimed-after-member" => Inline(format, 3, 10),
+            "member-is-owner-tdef" => Inline(format, 2, 3),
+            "owner-tdef-declared-after-member" => Inline(format, 3, 7),
+            _ => Inline(format, 3),
+        };
+        byte[] secondMap = contradiction == "bitmap-claimed-after-member" ? Reference(format, 10) : Inline(format, 4);
+        var pages = new MemoryPages(format.PageSize, new() { [8] = firstMap, [9] = secondMap, [10] = bitmap });
+        List<CompactIndexOwnershipRecord> records = [];
+        using var audit = new CompactIndexOwnershipAudit(20, new());
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+        {
+            if (contradiction == "root-is-owner-tdef")
+            {
+                await audit.DeclareDescriptorAsync(2, 2, new(0, 8), 0, Visit, Ct);
+                return;
+            }
+
+            await audit.DeclareDescriptorAsync(2, 3, new(0, 8), 0, Visit, Ct);
+            if (contradiction == "member-is-declared-map-page")
+            {
+                await audit.DeclareDescriptorAsync(7, 4, new(0, 9), 0, Visit, Ct);
+            }
+
+            await audit.InspectMapAsync(pages, format, 2, 3, new(0, 8), Visit, Ct);
+            if (contradiction is "map-page-declared-after-member" or "owner-tdef-declared-after-member" or "bitmap-claimed-after-member")
+            {
+                await audit.DeclareDescriptorAsync(7, 4, new(0, 9), 0, Visit, Ct);
+                await audit.InspectMapAsync(pages, format, 7, 4, new(0, 9), Visit, Ct);
+            }
+        });
+        Assert.Single(records, static record => record.Kind == "storage-role-contradiction");
+        Assert.DoesNotContain(records, static record => record.Kind == "ownership-terminal");
+
+        ValueTask Visit(CompactIndexOwnershipRecord record, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            records.Add(record);
+            return default;
+        }
+    }
+
+    [Theory]
     [InlineData("reads")]
     [InlineData("steps")]
     [InlineData("members")]

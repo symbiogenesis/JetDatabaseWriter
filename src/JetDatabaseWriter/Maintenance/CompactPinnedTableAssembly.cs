@@ -21,10 +21,12 @@ using JetDatabaseWriter.Schema.Models;
 /// Reopened validation independently checks original entries and ledgers, exact private allocations and installed
 /// definition bytes; it consumes no builder fences or installer completion proof. It accepts a later private suffix
 /// for other tables or global maps, which requires separate allocation and database validation.
-/// Physical root/map sharing is refused conservatively; logical sharing within a physical descriptor is retained.
-/// Every source page remains pinned. Catalog completeness, global allocation, encryption, unknown incoming references,
-/// native mutation acceptance and durable publication remain separate requirements. Completion never authorizes
-/// reclamation or database replacement. Failures leave private partial output and no completion evidence.
+/// Same-owner physical descriptors that share both their root and ownership-map row with compatible key columns and
+/// null-membership flags relocate to one shared physical index allocation; partial or incompatible aliases refuse, and
+/// logical sharing within a physical descriptor is retained. Every source page remains pinned. Catalog completeness,
+/// global allocation, encryption, unknown incoming references, native mutation acceptance and durable publication
+/// remain separate requirements. Completion never authorizes reclamation or database replacement. Failures leave
+/// private partial output and no completion evidence.
 /// </remarks>
 internal static class CompactPinnedTableAssembly
 {
@@ -87,6 +89,17 @@ internal static class CompactPinnedTableAssembly
         for (int index = 0; index < allocations.Length; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            int shared = FindSharedDescriptor(indexes, index);
+            if (shared >= 0)
+            {
+                CompactRawIndexAssemblyResult verified = await CompactRawIndexAssembly.ValidateAsync(
+                    format, owner, destination, admission.ObserveAsync(indexes[index].Entries, cancellationToken), relocation, allocations[shared], IndexBudget(budget.Index, activeWorkingBytes), cancellationToken).ConfigureAwait(false);
+                destination.Position = destination.Length;
+                allocations[index] = allocations[shared];
+                references[index] = verified.References;
+                continue;
+            }
+
             firstFence.SetLength(0);
             secondFence.SetLength(0);
             firstFence.Position = 0;
@@ -196,6 +209,16 @@ internal static class CompactPinnedTableAssembly
         var references = new CompactTDefIndexReferences[indexes.Count];
         for (int index = 0; index < indexes.Count; index++)
         {
+            for (int earlier = 0; earlier < index; earlier++)
+            {
+                bool sourceShared = indexes[earlier].RootPage == indexes[index].RootPage && indexes[earlier].OwnedPages == indexes[index].OwnedPages;
+                bool allocationShared = SameAllocation(allocation.Indexes[earlier], allocation.Indexes[index]);
+                if (sourceShared != allocationShared)
+                {
+                    throw Corrupt("Private physical index sharing disagrees with the original descriptor identities.");
+                }
+            }
+
             verifiedIndexes[index] = await CompactRawIndexAssembly.ValidateAsync(
                 format, owner, destination, admission.ObserveAsync(indexes[index].Entries, cancellationToken), relocation, allocation.Indexes[index], IndexBudget(budget.Index, activeWorkingBytes), cancellationToken).ConfigureAwait(false);
             references[index] = verifiedIndexes[index].References;
@@ -258,13 +281,56 @@ internal static class CompactPinnedTableAssembly
 
             for (int earlier = 0; earlier < index; earlier++)
             {
-                if (indexes[earlier].RootPage == observed.RootPage || indexes[earlier].OwnedPages == observed.OwnedPages)
+                bool sameRoot = indexes[earlier].RootPage == observed.RootPage;
+                bool sameMap = indexes[earlier].OwnedPages == observed.OwnedPages;
+                if (sameRoot || sameMap)
                 {
-                    throw new JetLimitationException(JetErrorCode.FeatureNotSupported, "Aliased physical index roots or ownership-map rows require independent sharing support.");
+                    if (!sameRoot || !sameMap || !CompatibleSharedDescriptor(definition.RealIndexes[earlier], definition.RealIndexes[index]))
+                    {
+                        throw new JetLimitationException(JetErrorCode.FeatureNotSupported, "Aliased physical index roots or ownership-map rows require compatible same-owner physical descriptors.");
+                    }
                 }
             }
         }
     }
+
+    private static int FindSharedDescriptor(IReadOnlyList<CompactPinnedTableIndexSource> indexes, int index)
+    {
+        for (int earlier = 0; earlier < index; earlier++)
+        {
+            if (indexes[earlier].RootPage == indexes[index].RootPage && indexes[earlier].OwnedPages == indexes[index].OwnedPages)
+            {
+                return earlier;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool CompatibleSharedDescriptor(TDefIndexDescriptor first, TDefIndexDescriptor second)
+    {
+        if (first.Columns.Count != second.Columns.Count
+            || (first.Slot.Flags & Constants.TableDefinition.IgnoreNullsIndexFlag) != (second.Slot.Flags & Constants.TableDefinition.IgnoreNullsIndexFlag))
+        {
+            return false;
+        }
+
+        for (int column = 0; column < first.Columns.Count; column++)
+        {
+            if (first.Columns[column].ColNum != second.Columns[column].ColNum
+                || first.Columns[column].Ascending != second.Columns[column].Ascending)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool SameAllocation(CompactRawIndexAssemblyAllocation? first, CompactRawIndexAssemblyAllocation? second)
+        => first?.Tree is not null && first.OwnedPages is not null
+            && second?.Tree is not null && second.OwnedPages is not null
+            && first.Tree == second.Tree && first.OwnedPages == second.OwnedPages;
 
     private static long RemainingWorkingBytes(CompactPinnedTableAssemblyBudget budget, CompactDiscoverySession session)
     {

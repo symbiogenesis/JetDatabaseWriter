@@ -24,6 +24,7 @@ internal sealed partial class CompactIndexOwnershipAudit : IDisposable
     private readonly long storage;
     private Dictionary<long, PageState> pages = [];
     private Dictionary<UsageMapPointer, MapState> mapRows = [];
+    private HashSet<long> declaredOwners = [];
     private long descriptors;
     private long missingRoots;
     private long missingMaps;
@@ -91,6 +92,7 @@ internal sealed partial class CompactIndexOwnershipAudit : IDisposable
                 this.Step(ownerTDefPage, cancellationToken);
                 this.ValidatePage(ownerTDefPage);
                 this.ChargeDescriptor(ownerTDefPage);
+                await this.DeclareOwnerAsync(ownerTDefPage, 0, descriptorIndex, visitor, cancellationToken).ConfigureAwait(false);
                 this.missingRoots++;
                 await this.EmitAsync(new() { Kind = "missing-root", PageNumber = ownerTDefPage, OwnerTDefPage = ownerTDefPage, DescriptorIndex = descriptorIndex }, visitor, cancellationToken).ConfigureAwait(false);
             }
@@ -111,6 +113,18 @@ internal sealed partial class CompactIndexOwnershipAudit : IDisposable
             }
 
             this.ChargeReference(ownerTDefPage);
+            if (this.declaredOwners.Contains(ownedPages.PageNumber))
+            {
+                await this.EmitAsync(map with { Kind = "storage-role-contradiction", RelatedOwnerTDefPage = ownedPages.PageNumber, RelatedRootPageNumber = 0, Role = "index-ownership-map" }, visitor, cancellationToken).ConfigureAwait(false);
+                throw Corrupt(ownedPages.PageNumber, "A declared index ownership-map data page aliases a declared table-definition page.");
+            }
+
+            if (this.TryFindMapMember(ownedPages.PageNumber, out MapInspection? memberMap))
+            {
+                await this.EmitAsync(map with { Kind = "storage-role-contradiction", RelatedOwnerTDefPage = memberMap.Owner, RelatedRootPageNumber = memberMap.Root, Role = "index-ownership-map" }, visitor, cancellationToken).ConfigureAwait(false);
+                throw Corrupt(ownedPages.PageNumber, "A physical page is claimed as both an inspected index-map member and an ownership-map data page.");
+            }
+
             if (this.pages.TryGetValue(ownedPages.PageNumber, out PageState? page))
             {
                 if (!page.IsMapPage || page.IsBitmapPage)
@@ -182,6 +196,7 @@ internal sealed partial class CompactIndexOwnershipAudit : IDisposable
             this.ValidatePage(ownerTDefPage);
             this.ValidatePage(rootPage);
             this.ChargeDescriptor(rootPage);
+            await this.DeclareOwnerAsync(ownerTDefPage, rootPage, descriptorIndex, visitor, cancellationToken).ConfigureAwait(false);
             CompactIndexOwnershipRecord record = new() { Kind = "root-declaration", PageNumber = rootPage, OwnerTDefPage = ownerTDefPage, RootPageNumber = rootPage, DescriptorIndex = descriptorIndex };
             PageState state = await this.ClaimAsync(record, visitor, cancellationToken).ConfigureAwait(false);
             if (state.DeclaredRoot)
@@ -322,6 +337,7 @@ internal sealed partial class CompactIndexOwnershipAudit : IDisposable
             this.disposed = true;
             this.DisposeMaps();
             this.pages = [];
+            this.declaredOwners = [];
             foreach (MapState map in this.mapRows.Values)
             {
                 map.Reservation?.Dispose();
@@ -337,6 +353,49 @@ internal sealed partial class CompactIndexOwnershipAudit : IDisposable
 
     private static JetLimitationException Limit(long page, string reason)
         => new(JetErrorCode.ValueTooLarge, reason, new JetErrorInfo { PageNumber = page, Reason = reason });
+
+    private async ValueTask DeclareOwnerAsync(long ownerTDefPage, long rootPage, int descriptorIndex, Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    {
+        if (this.pages.TryGetValue(ownerTDefPage, out PageState? page))
+        {
+            await this.EmitAsync(
+                new()
+                {
+                    Kind = "storage-role-contradiction",
+                    PageNumber = ownerTDefPage,
+                    OwnerTDefPage = ownerTDefPage,
+                    RootPageNumber = rootPage,
+                    DescriptorIndex = descriptorIndex,
+                    RelatedOwnerTDefPage = page.Owner,
+                    RelatedRootPageNumber = page.FirstRoot,
+                    Role = "table-definition",
+                },
+                visitor,
+                cancellationToken).ConfigureAwait(false);
+            throw Corrupt(ownerTDefPage, "A declaring table-definition page is also claimed as index or ownership-map storage.");
+        }
+
+        if (this.TryFindMapMember(ownerTDefPage, out MapInspection? memberMap))
+        {
+            await this.EmitAsync(
+                new()
+                {
+                    Kind = "storage-role-contradiction",
+                    PageNumber = ownerTDefPage,
+                    OwnerTDefPage = ownerTDefPage,
+                    RootPageNumber = rootPage,
+                    DescriptorIndex = descriptorIndex,
+                    RelatedOwnerTDefPage = memberMap.Owner,
+                    RelatedRootPageNumber = memberMap.Root,
+                    Role = "table-definition",
+                },
+                visitor,
+                cancellationToken).ConfigureAwait(false);
+            throw Corrupt(ownerTDefPage, "A declaring table-definition page is also claimed as an inspected index-map member.");
+        }
+
+        this.declaredOwners.Add(ownerTDefPage);
+    }
 
     private async ValueTask ReferenceAsync(CompactIndexRecord record, Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
     {
@@ -363,6 +422,12 @@ internal sealed partial class CompactIndexOwnershipAudit : IDisposable
 
     private async ValueTask<PageState> ClaimAsync(CompactIndexOwnershipRecord record, Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
     {
+        if (this.declaredOwners.Contains(record.PageNumber))
+        {
+            await this.EmitAsync(record with { Kind = "storage-role-contradiction", RelatedOwnerTDefPage = record.PageNumber, RelatedRootPageNumber = 0, Role = "table-definition" }, visitor, cancellationToken).ConfigureAwait(false);
+            throw Corrupt(record.PageNumber, "An index root, page or incoming reference targets a declared table-definition page.");
+        }
+
         if (!this.pages.TryGetValue(record.PageNumber, out PageState? state))
         {
             state = new(record.OwnerTDefPage, record.RootPageNumber);

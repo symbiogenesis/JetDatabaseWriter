@@ -51,13 +51,39 @@ internal sealed record CompactPinnedTableAssemblyAllocation(
             yield return this.Map(column.FreePages);
         }
 
-        foreach (CompactRawIndexAssemblyAllocation index in this.Indexes)
+        for (int slot = 0; slot < this.Indexes.Count; slot++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            CompactRawIndexAssemblyAllocation index = this.Indexes[slot];
+            if (SharesEarlierAllocation(this.Indexes, slot, index))
+            {
+                continue;
+            }
+
             yield return new(CompactGlobalAllocationKind.Index, this.Owner, new(index.Tree.FirstPageNumber, index.Tree.PageCount));
             cancellationToken.ThrowIfCancellationRequested();
             yield return this.Map(index.OwnedPages);
         }
+    }
+
+    private static bool SharesEarlierAllocation(IReadOnlyList<CompactRawIndexAssemblyAllocation> indexes, int slot, CompactRawIndexAssemblyAllocation candidate)
+    {
+        if (candidate?.Tree is null || candidate.OwnedPages is null)
+        {
+            return false;
+        }
+
+        for (int earlier = 0; earlier < slot; earlier++)
+        {
+            CompactRawIndexAssemblyAllocation prior = indexes[earlier];
+            if (prior?.Tree is not null && prior.OwnedPages is not null
+                && prior.Tree == candidate.Tree && prior.OwnedPages == candidate.OwnedPages)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private CompactGlobalAllocationRecord Map(CompactUsageMapBuilderResult map)

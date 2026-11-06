@@ -244,6 +244,127 @@ public sealed class CompactPinnedTablePipelineTests
     }
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CompatibleSharedPhysicalIndexes_StageAndValidateSingleRelocatedAllocation(DatabaseFormat kind)
+    {
+        byte[] original = await CreateSharedAsync(kind);
+        await using var immutable = new MemoryStream(original, writable: false);
+        await using AccessReader source = await TestDatabase.OpenReaderAsync(immutable, cancellationToken: Ct);
+        long owner = Assert.IsType<CatalogEntry>(await source.GetCatalogEntryAsync("Items", Ct)).TDefPage;
+        TDefImage definition = Assert.IsType<TDefImage>(await source.Database.TableDefs.ReadImageAsync(owner, Ct));
+        CompactPinnedTableIndexSource[] indexes = await ObserveAsync(source, owner, definition);
+        Assert.Equal(indexes[0].RootPage, indexes[1].RootPage);
+        Assert.Equal(indexes[0].OwnedPages, indexes[1].OwnedPages);
+
+        await using var destination = new MemoryStream();
+        await destination.WriteAsync(original, Ct);
+        await using var rows = new MemoryStream();
+        await using var values = new MemoryStream();
+        await using var firstFence = new MemoryStream();
+        await using var secondFence = new MemoryStream();
+        CompactPinnedTableAssemblyAllocation allocation = await CompactPinnedTableAssembly.BuildAsync(
+            new CompactPinnedTableAssemblySession(source.Database.Pages, source.Database.Format, new()), owner, definition, indexes, destination, rows, values, firstFence, secondFence, Ct);
+        Assert.Equal(2, allocation.Indexes.Count);
+        Assert.Equal(allocation.Indexes[0], allocation.Indexes[1]);
+
+        int indexAllocations = 0;
+        long next = allocation.FirstPageNumber;
+        await foreach (CompactGlobalAllocationRecord run in allocation.AllocationsAsync(Ct))
+        {
+            Assert.Equal(next, run.Pages.FirstPageNumber);
+            if (run.Kind == CompactGlobalAllocationKind.Index)
+            {
+                indexAllocations++;
+            }
+
+            next += run.Pages.PageCount;
+        }
+
+        Assert.Equal(1, indexAllocations);
+        Assert.Equal(allocation.FirstPageNumber + allocation.PageCount, next);
+
+        indexes = await ObserveAsync(source, owner, definition);
+        await using var reopened = new MemoryStream(destination.ToArray(), writable: false);
+        await using var reopenedRows = new MemoryStream(rows.ToArray(), writable: false);
+        await using var reopenedValues = new MemoryStream(values.ToArray(), writable: false);
+        CompactPinnedTableAssemblyResult verified = await CompactPinnedTableAssembly.ValidateAsync(
+            new CompactPinnedTableAssemblySession(source.Database.Pages, source.Database.Format, new()), owner, definition, indexes, reopened, reopenedRows, reopenedValues, allocation, Ct);
+        Assert.Equal(2, verified.Indexes.Count);
+        Assert.Equal(verified.Indexes[0].References, verified.Indexes[1].References);
+    }
+
+    [Theory]
+    [InlineData("column")]
+    [InlineData("direction")]
+    [InlineData("ignore-nulls")]
+    public async Task IncompatibleSharedPhysicalIndexes_AreRefusedBeforePrivateOutput(string incompatibility)
+    {
+        byte[] original = await CreateSharedAsync(DatabaseFormat.Jet4Mdb, incompatibility);
+        await using var immutable = new MemoryStream(original, writable: false);
+        await using AccessReader source = await TestDatabase.OpenReaderAsync(immutable, cancellationToken: Ct);
+        long owner = Assert.IsType<CatalogEntry>(await source.GetCatalogEntryAsync("Items", Ct)).TDefPage;
+        TDefImage definition = Assert.IsType<TDefImage>(await source.Database.TableDefs.ReadImageAsync(owner, Ct));
+        CompactPinnedTableIndexSource[] indexes = await ObserveAsync(source, owner, definition);
+        await using var destination = new MemoryStream();
+        await destination.WriteAsync(original, Ct);
+        await using var rows = new MemoryStream();
+        await using var values = new MemoryStream();
+        await using var first = new MemoryStream();
+        await using var second = new MemoryStream();
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await CompactPinnedTableAssembly.BuildAsync(
+            new CompactPinnedTableAssemblySession(source.Database.Pages, source.Database.Format, new()), owner, definition, indexes, destination, rows, values, first, second, Ct));
+        Assert.Equal(original, destination.ToArray());
+    }
+
+    [Theory]
+    [InlineData("build-entries")]
+    [InlineData("unshared-allocation")]
+    [InlineData("unexpected-shared-allocation")]
+    public async Task SharedPhysicalIndexValidation_RejectsDisagreeingEntriesOrAllocationSharing(string mismatch)
+    {
+        byte[] sharedOriginal = await CreateSharedAsync(DatabaseFormat.Jet4Mdb);
+        await using var sharedImmutable = new MemoryStream(sharedOriginal, writable: false);
+        await using AccessReader sharedSource = await TestDatabase.OpenReaderAsync(sharedImmutable, cancellationToken: Ct);
+        long owner = Assert.IsType<CatalogEntry>(await sharedSource.GetCatalogEntryAsync("Items", Ct)).TDefPage;
+        TDefImage sharedDefinition = Assert.IsType<TDefImage>(await sharedSource.Database.TableDefs.ReadImageAsync(owner, Ct));
+        if (mismatch == "build-entries")
+        {
+            CompactPinnedTableIndexSource[] badSources = await ObserveAsync(sharedSource, owner, sharedDefinition);
+            badSources[1] = badSources[1] with { Entries = EntriesAsync([], Ct) };
+            await using var destination = new MemoryStream();
+            await destination.WriteAsync(sharedOriginal, Ct);
+            await using var rows = new MemoryStream();
+            await using var values = new MemoryStream();
+            await using var first = new MemoryStream();
+            await using var second = new MemoryStream();
+            await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CompactPinnedTableAssembly.BuildAsync(
+                new CompactPinnedTableAssemblySession(sharedSource.Database.Pages, sharedSource.Database.Format, new()), owner, sharedDefinition, badSources, destination, rows, values, first, second, Ct));
+            Assert.Equal(sharedOriginal, destination.ToArray().AsSpan(0, sharedOriginal.Length).ToArray());
+            return;
+        }
+
+        byte[] unsharedOriginal = await CreateAsync(DatabaseFormat.Jet4Mdb, true);
+        await using var unsharedImmutable = new MemoryStream(unsharedOriginal, writable: false);
+        await using AccessReader unsharedSource = await TestDatabase.OpenReaderAsync(unsharedImmutable, cancellationToken: Ct);
+        TDefImage unsharedDefinition = Assert.IsType<TDefImage>(await unsharedSource.Database.TableDefs.ReadImageAsync(owner, Ct));
+
+        AccessReader buildSource = mismatch == "unshared-allocation" ? unsharedSource : sharedSource;
+        byte[] buildOriginal = mismatch == "unshared-allocation" ? unsharedOriginal : sharedOriginal;
+        TDefImage buildDefinition = mismatch == "unshared-allocation" ? unsharedDefinition : sharedDefinition;
+        AccessReader validateSource = mismatch == "unshared-allocation" ? sharedSource : unsharedSource;
+        TDefImage validateDefinition = mismatch == "unshared-allocation" ? sharedDefinition : unsharedDefinition;
+
+        CompactPinnedTableIndexSource[] buildIndexes = await ObserveAsync(buildSource, owner, buildDefinition);
+        (byte[] Destination, byte[] Rows, byte[] Values, CompactPinnedTableAssemblyAllocation Allocation) built = await BuildInSessionAsync(
+            new CompactPinnedTableAssemblySession(buildSource.Database.Pages, buildSource.Database.Format, new()), owner, buildDefinition, buildIndexes, buildOriginal);
+        CompactPinnedTableIndexSource[] validateIndexes = await ObserveAsync(validateSource, owner, validateDefinition);
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ValidateInSessionAsync(
+            new CompactPinnedTableAssemblySession(validateSource.Database.Pages, validateSource.Database.Format, new()), owner, validateDefinition, validateIndexes, built));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task OriginalObservationAdmission_IsCumulativeAcrossPhysicalIndexes(bool keyBytes)
@@ -504,6 +625,37 @@ public sealed class CompactPinnedTablePipelineTests
         }
 
         return sources;
+    }
+
+    private static async Task<byte[]> CreateSharedAsync(DatabaseFormat kind, string? incompatibility = null)
+    {
+        byte[] database = await CreateAsync(kind, true);
+        await using var stream = new MemoryStream(database, writable: false);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
+        long owner = Assert.IsType<CatalogEntry>(await reader.GetCatalogEntryAsync("Items", Ct)).TDefPage;
+        TDefImage definition = Assert.IsType<TDefImage>(await reader.Database.TableDefs.ReadImageAsync(owner, Ct));
+        JetFormat format = reader.Database.Format;
+        byte[] bytes = definition.CopyBytes();
+        int firstStart = definition.RealIndexes[0].Slot.PhysStart;
+        int secondStart = definition.RealIndexes[1].Slot.PhysStart;
+        bytes.AsSpan(firstStart, format.Index.RealIdxPhysSize).CopyTo(bytes.AsSpan(secondStart, format.Index.RealIdxPhysSize));
+        int colMapOffset = secondStart + format.Index.ColMapStartWithinPhys;
+        if (incompatibility == "column")
+        {
+            ushort colNum = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(colMapOffset));
+            BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(colMapOffset), checked((ushort)(colNum + 1)));
+        }
+        else if (incompatibility == "direction")
+        {
+            bytes[colMapOffset + 2] ^= Constants.TableDefinition.ColMapAscendingFlag;
+        }
+        else if (incompatibility == "ignore-nulls")
+        {
+            bytes[secondStart + format.Index.FlagsOffsetWithinPhys] ^= Constants.TableDefinition.IgnoreNullsIndexFlag;
+        }
+
+        bytes.CopyTo(database, checked((int)(owner * format.PageSize)));
+        return database;
     }
 
     private static async IAsyncEnumerable<IndexEntry> EntriesAsync(IEnumerable<IndexEntry> entries, [EnumeratorCancellation] CancellationToken token)
