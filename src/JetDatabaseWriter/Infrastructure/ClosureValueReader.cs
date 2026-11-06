@@ -142,6 +142,77 @@ internal static class ClosureValueReader
     }
 
     /// <summary>
+    /// Returns <see langword="true"/> for the implicit conversion operator <see cref="decimal"/>
+    /// declares from an integral type: expression trees express those widenings as a call to
+    /// the operator, where the other numeric widenings have no method.
+    /// </summary>
+    /// <param name="method">The conversion's method.</param>
+    /// <returns><see langword="true"/> for an integral-to-decimal implicit operator.</returns>
+    internal static bool IsDecimalWidening(MethodInfo method) =>
+        method.DeclaringType == typeof(decimal)
+        && method.Name == "op_Implicit"
+        && method.ReturnType == typeof(decimal)
+        && method.GetParameters() is [{ ParameterType: Type source }]
+        && IsLosslessWidening(source, typeof(decimal));
+
+    internal static bool CanConvertTypes(Type from, Type to)
+    {
+        if (to == typeof(object))
+        {
+            return true;
+        }
+
+        Type fromCore = Nullable.GetUnderlyingType(from) ?? from;
+        Type toCore = Nullable.GetUnderlyingType(to) ?? to;
+        return fromCore.IsValueType && toCore.IsValueType && CanConvert(fromCore, toCore);
+    }
+
+    internal static bool TryConvert(object? value, Type from, Type to, out object? result)
+    {
+        result = null;
+        if (to == typeof(object))
+        {
+            result = value;
+            return true;
+        }
+
+        Type? toUnderlying = Nullable.GetUnderlyingType(to);
+        Type fromCore = Nullable.GetUnderlyingType(from) ?? from;
+        Type toCore = toUnderlying ?? to;
+        if (!fromCore.IsValueType || !toCore.IsValueType)
+        {
+            return false;
+        }
+
+        if (value is null)
+        {
+            // A lifted conversion of null is null. Unwrapping a null Nullable<T> throws,
+            // which only the compiled expression reproduces.
+            return toUnderlying is not null && CanConvert(fromCore, toCore);
+        }
+
+        if (!CanConvert(fromCore, toCore))
+        {
+            return false;
+        }
+
+        if (fromCore == toCore)
+        {
+            result = value;
+        }
+        else if (toCore.IsEnum)
+        {
+            result = Enum.ToObject(toCore, value);
+        }
+        else
+        {
+            result = Convert.ChangeType(value, toCore, CultureInfo.InvariantCulture);
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Reads the object a member chain starts from: a constant, or an instance field or
     /// property of such an object. A static member here is not a closure chain, so it is
     /// left to the compiled expression.
@@ -243,65 +314,6 @@ internal static class ClosureValueReader
     /// <returns>The property's value.</returns>
     private static object? GetPropertyValue(PropertyInfo property, object? instance) =>
         property.GetValue(instance, BindingFlags.DoNotWrapExceptions, binder: null, index: null, culture: null);
-
-    /// <summary>
-    /// Returns <see langword="true"/> for the implicit conversion operator <see cref="decimal"/>
-    /// declares from an integral type: expression trees express those widenings as a call to
-    /// the operator, where the other numeric widenings have no method.
-    /// </summary>
-    /// <param name="method">The conversion's method.</param>
-    /// <returns><see langword="true"/> for an integral-to-decimal implicit operator.</returns>
-    private static bool IsDecimalWidening(MethodInfo method) =>
-        method.DeclaringType == typeof(decimal)
-        && method.Name == "op_Implicit"
-        && method.ReturnType == typeof(decimal)
-        && method.GetParameters() is [{ ParameterType: Type source }]
-        && IsLosslessWidening(source, typeof(decimal));
-
-    private static bool TryConvert(object? value, Type from, Type to, out object? result)
-    {
-        result = null;
-        if (to == typeof(object))
-        {
-            result = value;
-            return true;
-        }
-
-        Type? toUnderlying = Nullable.GetUnderlyingType(to);
-        Type fromCore = Nullable.GetUnderlyingType(from) ?? from;
-        Type toCore = toUnderlying ?? to;
-        if (!fromCore.IsValueType || !toCore.IsValueType)
-        {
-            return false;
-        }
-
-        if (value is null)
-        {
-            // A lifted conversion of null is null. Unwrapping a null Nullable<T> throws,
-            // which only the compiled expression reproduces.
-            return toUnderlying is not null && CanConvert(fromCore, toCore);
-        }
-
-        if (!CanConvert(fromCore, toCore))
-        {
-            return false;
-        }
-
-        if (fromCore == toCore)
-        {
-            result = value;
-        }
-        else if (toCore.IsEnum)
-        {
-            result = Enum.ToObject(toCore, value);
-        }
-        else
-        {
-            result = Convert.ChangeType(value, toCore, CultureInfo.InvariantCulture);
-        }
-
-        return true;
-    }
 
     private static bool CanConvert(Type from, Type to) =>
         from == to

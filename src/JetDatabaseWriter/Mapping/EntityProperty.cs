@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Mapping;
 
+using System;
 using System.Reflection;
 
 /// <summary>One property of an <see cref="EntityMap"/> and the column it binds to.</summary>
@@ -10,6 +11,9 @@ internal sealed class EntityProperty(PropertyInfo property, string columnName, b
 {
     /// <summary>Gets the mapped property.</summary>
     public PropertyInfo Property { get; } = property;
+
+    /// <summary>Gets the non-nullable underlying target type of <see cref="Property"/>.</summary>
+    public Type TargetType { get; } = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
 
     /// <summary>Gets the column the property binds to.</summary>
     public string ColumnName { get; } = columnName;

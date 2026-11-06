@@ -116,6 +116,15 @@ public sealed class AccessReaderOptions : AccessOptions
     /// </summary>
     public int MaxIncludeMaterializedRowsPerOperation { get; init; } = 65536;
 
+    /// <summary>
+    /// Gets the maximum aggregate payload bytes of related entities materialized by one
+    /// Include execution, shared across its navigation paths and ThenInclude levels.
+    /// Default: 256 MiB. Filtering, sorting and paging run after loading and do not
+    /// reduce this positive allowance. Refusal occurs when a related row's materialized
+    /// payload exceeds the remaining budget.
+    /// </summary>
+    public long MaxIncludeMaterializedPayloadBytesPerOperation { get; init; } = 256L * 1024 * 1024;
+
     /// <summary>Gets a value indicating whether verbose diagnostic information is logged. Default: false.</summary>
     public bool DiagnosticsEnabled { get; init; }
 

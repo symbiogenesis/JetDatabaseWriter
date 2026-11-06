@@ -35,13 +35,17 @@ using JetDatabaseWriter.Infrastructure;
 /// </remarks>
 internal sealed class EntityMap
 {
+    internal const int MaxCachedTypes = 256;
+
     private static readonly ConditionalWeakTable<Type, EntityMap> Cache = [];
+    private static readonly LinkedList<WeakReference<Type>> RecentTypes = new();
 
     private readonly Dictionary<string, EntityProperty> byColumn;
     private readonly Dictionary<string, EntityProperty> byPropertyName;
 
     private EntityMap([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type type)
     {
+        this.EntityType = type;
         this.TableName = type.GetCustomAttribute<TableAttribute>(inherit: true) is { Name.Length: > 0 } table
             ? table.Name
             : type.Name;
@@ -87,6 +91,22 @@ internal sealed class EntityMap
         this.Properties = properties;
     }
 
+    /// <summary>Gets the number of active entity types currently tracked in the bounded cache.</summary>
+    internal static int CachedTypeCount
+    {
+        get
+        {
+            lock (Cache)
+            {
+                PruneCollectedTypes();
+                return RecentTypes.Count;
+            }
+        }
+    }
+
+    /// <summary>Gets the mapped entity type.</summary>
+    public Type EntityType { get; }
+
     /// <summary>Gets the table name the type binds to: its <c>[Table]</c> name, or the type name.</summary>
     public string TableName { get; }
 
@@ -106,7 +126,8 @@ internal sealed class EntityMap
         }
 
         // Construct from the annotated caller's type, outside the cache lock.
-        // The ephemeron releases reflected members along with collectible types.
+        // The ephemeron releases reflected members along with collectible types, while
+        // the weak LRU list bounds non-collectible type retention.
         var created = new EntityMap(type);
         lock (Cache)
         {
@@ -116,6 +137,7 @@ internal sealed class EntityMap
             }
 
             Cache.Add(type, created);
+            TrackType(type);
             return created;
         }
     }
@@ -134,4 +156,33 @@ internal sealed class EntityMap
     /// <returns>The mapped property, or <see langword="null"/> when the member is not a mapped column property.</returns>
     public EntityProperty? FindByMember(MemberInfo member) =>
         member is PropertyInfo && this.byPropertyName.TryGetValue(member.Name, out EntityProperty? property) ? property : null;
+
+    private static void TrackType(Type type)
+    {
+        PruneCollectedTypes();
+        RecentTypes.AddFirst(new WeakReference<Type>(type));
+        while (RecentTypes.Count > MaxCachedTypes && RecentTypes.Last is { } oldest)
+        {
+            RecentTypes.RemoveLast();
+            if (oldest.Value.TryGetTarget(out Type? evicted))
+            {
+                _ = Cache.Remove(evicted);
+            }
+        }
+    }
+
+    private static void PruneCollectedTypes()
+    {
+        LinkedListNode<WeakReference<Type>>? node = RecentTypes.First;
+        while (node is not null)
+        {
+            LinkedListNode<WeakReference<Type>>? next = node.Next;
+            if (!node.Value.TryGetTarget(out Type? target) || !Cache.TryGetValue(target, out _))
+            {
+                RecentTypes.Remove(node);
+            }
+
+            node = next;
+        }
+    }
 }

@@ -14,14 +14,33 @@ internal sealed class RowShape : IEquatable<RowShape>
     /// <param name="headers">The ordered column names.</param>
     /// <param name="types">The projected source types.</param>
     /// <param name="layout">The physical column descriptors, when available.</param>
-    internal RowShape(IReadOnlyList<string> headers, IReadOnlyList<Type>? types, IReadOnlyList<ColumnInfo>? layout = null)
+    /// <param name="wantedColumns">Optional column projection mask.</param>
+    internal RowShape(
+        IReadOnlyList<string> headers,
+        IReadOnlyList<Type>? types,
+        IReadOnlyList<ColumnInfo>? layout = null,
+        IReadOnlyList<bool>? wantedColumns = null)
     {
         this.columns = new ColumnShape[headers.Count];
         HashCode hash = default;
         for (int i = 0; i < headers.Count; i++)
         {
             ColumnInfo? column = layout?[i];
-            this.columns[i] = new ColumnShape(headers[i], types != null && i < types.Count ? types[i] : null, column?.Type, column?.ColNum, column?.VarIdx, column?.FixedOff, column?.Size, column?.Flags, column?.ExtraFlags, column?.CalculatedResultType, column?.NumericScale, column?.IsAutoNumber);
+            bool wanted = wantedColumns == null || i >= wantedColumns.Count || wantedColumns[i];
+            this.columns[i] = new ColumnShape(
+                headers[i],
+                types != null && i < types.Count ? types[i] : null,
+                column?.Type,
+                column?.ColNum,
+                column?.VarIdx,
+                column?.FixedOff,
+                column?.Size,
+                column?.Flags,
+                column?.ExtraFlags,
+                column?.CalculatedResultType,
+                column?.NumericScale,
+                column?.IsAutoNumber,
+                wanted);
             hash.Add(this.columns[i]);
         }
 
@@ -58,5 +77,18 @@ internal sealed class RowShape : IEquatable<RowShape>
     /// <inheritdoc/>
     public override int GetHashCode() => this.hashCode;
 
-    private sealed record ColumnShape(string Name, Type? ClrType, Enums.ColumnType? Type, int? ColNum, int? VarIdx, int? FixedOff, int? Size, byte? Flags, byte? ExtraFlags, Enums.ColumnType? CalculatedResultType, byte? NumericScale, bool? IsAutoNumber);
+    private sealed record ColumnShape(
+        string Name,
+        Type? ClrType,
+        Enums.ColumnType? Type,
+        int? ColNum,
+        int? VarIdx,
+        int? FixedOff,
+        int? Size,
+        byte? Flags,
+        byte? ExtraFlags,
+        Enums.ColumnType? CalculatedResultType,
+        byte? NumericScale,
+        bool? IsAutoNumber,
+        bool Wanted = true);
 }

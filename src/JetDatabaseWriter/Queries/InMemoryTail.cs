@@ -14,6 +14,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Linq;
+using static JetDatabaseWriter.Queries.QueryPlanTemplateCache;
 
 /// <summary>
 /// Runs a query's tail over the rows the engine streams. The tail is everything above the
@@ -37,13 +38,18 @@ using JetDatabaseWriter.Linq;
 [RequiresDynamicCode("LINQ queries and Include construct generic types at runtime. Use typed row readers for NativeAOT applications.")]
 internal static class InMemoryTail
 {
+    private const int AdapterCacheCapacity = 64;
+
     private static readonly Func<object?, object?> Identity = static item => item;
+    private static readonly BoundedCache<Type, Func<object?, object?>> CastDelegates = new(AdapterCacheCapacity);
+    private static readonly BoundedCache<Type, Comparer<object?>> DefaultKeyComparers = new(AdapterCacheCapacity);
+    private static readonly BoundedCache<Type, BoxedEqualityComparer> DefaultEqualityComparers = new(AdapterCacheCapacity);
 
     private static readonly Dictionary<string, StepFactory> Steps = new(StringComparer.Ordinal)
     {
         ["Where"] = static (call, source, _) => source.Where(CompileElementLambda<bool>(call)),
         ["Select"] = static (call, source, _) => source.Select(CompileElementLambda<object?>(call)),
-        ["Cast"] = static (call, source, _) => source.Select(CompileCast(call.Method.GetGenericArguments()[0])),
+        ["Cast"] = static (call, source, _) => source.Select(GetCastDelegate(call.Method.GetGenericArguments()[0])),
         ["OfType"] = static (call, source, _) => source.Where(call.Method.GetGenericArguments()[0].IsInstanceOfType),
         ["Skip"] = static (call, source, _) => source.Skip(CountArgument(call)),
         ["Take"] = static (call, source, _) => source.Take(CountArgument(call)),
@@ -81,8 +87,21 @@ internal static class InMemoryTail
     /// <param name="cancellationToken">A token used to cancel the enumeration.</param>
     /// <returns>The tail's output, boxed.</returns>
     /// <exception cref="JetNotSupportedException">Thrown when the tail holds an operator this class does not run.</exception>
-    public static IAsyncEnumerable<object?> Apply(IAsyncEnumerable<object?> rows, Expression expression, Expression boundary, CancellationToken cancellationToken)
+    public static IAsyncEnumerable<object?> Apply(IAsyncEnumerable<object?> rows, Expression expression, Expression boundary, CancellationToken cancellationToken) =>
+        Apply(rows, expression, boundary, plan: null, cancellationToken);
+
+    internal static IAsyncEnumerable<object?> Apply(
+        IAsyncEnumerable<object?> rows,
+        Expression expression,
+        Expression boundary,
+        AccessQueryPlan? plan,
+        CancellationToken cancellationToken)
     {
+        if (plan?.TailTemplate is { } groups && plan.TailCalls is { } cachedCalls)
+        {
+            return ApplyTemplate(rows, groups, cachedCalls, cancellationToken);
+        }
+
         var calls = new List<MethodCallExpression>();
         for (Expression node = expression; !ReferenceEquals(node, boundary); node = calls[^1].Arguments[0])
         {
@@ -126,6 +145,73 @@ internal static class InMemoryTail
             $"The query operator {form} is not supported on Query<T> results. Use AsAsyncEnumerable() and apply '{operatorName}' with the async LINQ operators, or materialize the rows with ToListAsync and apply it with LINQ to Objects.");
     }
 
+    internal static bool IsOrdering(MethodCallExpression call) =>
+        call.Method.DeclaringType == typeof(Queryable)
+        && call.Method.Name is "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" or "Order" or "OrderDescending";
+
+    internal static bool IsThenBy(MethodCallExpression call) =>
+        call.Method.DeclaringType == typeof(Queryable) && call.Method.Name is "ThenBy" or "ThenByDescending";
+
+    private static IAsyncEnumerable<object?> ApplyTemplate(
+        IAsyncEnumerable<object?> rows,
+        TailGroupTemplate[] groups,
+        IReadOnlyList<MethodCallExpression> calls,
+        CancellationToken cancellationToken)
+    {
+        IAsyncEnumerable<object?> sequence = rows;
+        for (int i = 0; i < groups.Length; i++)
+        {
+            TailGroupTemplate group = groups[i];
+            if (group.Kind == TailStepKind.Ordering)
+            {
+                TailOrderingKeyTemplate[] keyTemplates = group.OrderingKeys!;
+                var keys = new List<QuerySortKey<object?>>(keyTemplates.Length);
+                for (int k = 0; k < keyTemplates.Length; k++)
+                {
+                    TailOrderingKeyTemplate keyTemplate = keyTemplates[k];
+                    MethodCallExpression keyCall = calls[keyTemplate.TailCallIndex];
+                    Func<object?, object?> selector = keyTemplate.IsElementOrder
+                        ? Identity
+                        : CompileElementLambda<object?>(keyCall);
+                    Comparer<object?> comparer = keyTemplate.HasComparerArgument
+                        ? KeyOrder(keyTemplate.KeyType, keyCall.Arguments[keyTemplate.IsElementOrder ? 1 : 2])
+                        : GetDefaultKeyOrder(keyTemplate.KeyType);
+                    keys.Add(new QuerySortKey<object?>(selector, comparer, keyTemplate.Descending));
+                }
+
+                sequence = SortAsync(sequence, keys, cancellationToken);
+                continue;
+            }
+
+            MethodCallExpression call = calls[group.TailCallIndex];
+            sequence = group.Kind switch
+            {
+                TailStepKind.Where => sequence.Where(CompileElementLambda<bool>(call)),
+                TailStepKind.Select => sequence.Select(CompileElementLambda<object?>(call)),
+                TailStepKind.Cast => sequence.Select(GetCastDelegate(group.TargetType!)),
+                TailStepKind.OfType => sequence.Where(group.TargetType!.IsInstanceOfType),
+                TailStepKind.Skip => sequence.Skip(CountArgument(call)),
+                TailStepKind.Take => sequence.Take(CountArgument(call)),
+                TailStepKind.SkipWhile => sequence.SkipWhile(CompileElementLambda<bool>(call)),
+                TailStepKind.TakeWhile => sequence.TakeWhile(CompileElementLambda<bool>(call)),
+                TailStepKind.SkipLast => sequence.SkipLast(CountArgument(call)),
+                TailStepKind.TakeLast => sequence.TakeLast(CountArgument(call)),
+                TailStepKind.Distinct => sequence.Distinct(group.HasComparerArgument ? ElementEquality(call, comparerIndex: 1) : GetDefaultElementEquality(group.TargetType!)),
+                TailStepKind.Union => sequence.Union(SecondSource(call, cancellationToken), group.HasComparerArgument ? ElementEquality(call, comparerIndex: 2) : GetDefaultElementEquality(group.TargetType!)),
+                TailStepKind.Intersect => IntersectAsync(sequence, SecondSource(call, cancellationToken), group.HasComparerArgument ? ElementEquality(call, comparerIndex: 2) : GetDefaultElementEquality(group.TargetType!), cancellationToken),
+                TailStepKind.Except => ExceptAsync(sequence, SecondSource(call, cancellationToken), group.HasComparerArgument ? ElementEquality(call, comparerIndex: 2) : GetDefaultElementEquality(group.TargetType!), cancellationToken),
+                TailStepKind.Concat => sequence.Concat(SecondSource(call, cancellationToken)),
+                TailStepKind.Reverse => sequence.Reverse(),
+                TailStepKind.DefaultIfEmpty => sequence.DefaultIfEmpty(DefaultElement(call)),
+                TailStepKind.Append => sequence.Append(ClosureValueReader.Evaluate(call.Arguments[1])),
+                TailStepKind.Prepend => sequence.Prepend(ClosureValueReader.Evaluate(call.Arguments[1])),
+                TailStepKind.Ordering or _ => throw UnsupportedOperator(call.Method.Name),
+            };
+        }
+
+        return sequence;
+    }
+
     private static JetNotSupportedException IncludeAboveBoundary(string operatorName) =>
         new(JetErrorCode.FeatureNotSupported, $"'{operatorName}' loads navigations onto the entities the table read returns, so it must come before Select and the other operators that run after the read. Move '{operatorName}' ahead of them.");
 
@@ -140,13 +226,6 @@ internal static class InMemoryTail
             ? create(call, source, cancellationToken)
             : throw UnsupportedOperator(call.Method.Name);
     }
-
-    private static bool IsOrdering(MethodCallExpression call) =>
-        call.Method.DeclaringType == typeof(Queryable)
-        && call.Method.Name is "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" or "Order" or "OrderDescending";
-
-    private static bool IsThenBy(MethodCallExpression call) =>
-        call.Method.DeclaringType == typeof(Queryable) && call.Method.Name is "ThenBy" or "ThenByDescending";
 
     private static QuerySortKey<object?> CreateSortKey(MethodCallExpression call)
     {
@@ -189,6 +268,11 @@ internal static class InMemoryTail
 
         return QueryLambdaCompiler.Shared.Compile(Expression.Lambda<Func<object?, TResult>>(body, item));
     }
+
+    private static Func<object?, object?> GetCastDelegate(Type target) =>
+        QueryPlanTemplateCache.HasCollectibleType(target)
+            ? CompileCast(target)
+            : CastDelegates.GetOrCreate(target, CompileCast);
 
     private static Func<object?, object?> CompileCast(Type target)
     {
@@ -241,6 +325,11 @@ internal static class InMemoryTail
         return values.Cast<object?>().ToAsyncEnumerable();
     }
 
+    private static Comparer<object?> GetDefaultKeyOrder(Type keyType) =>
+        QueryPlanTemplateCache.HasCollectibleType(keyType)
+            ? CreateKeyOrder(keyType, comparer: null)
+            : DefaultKeyComparers.GetOrCreate(keyType, static type => CreateKeyOrder(type, comparer: null));
+
     /// <summary>
     /// Returns a comparer that orders boxed keys through <paramref name="keyType"/>'s comparer:
     /// the one the query passes, or <see cref="Comparer{T}.Default"/> when it passes none, as
@@ -251,18 +340,28 @@ internal static class InMemoryTail
     /// <returns>The comparer over boxed keys.</returns>
     private static Comparer<object?> KeyOrder(Type keyType, Expression? comparerArgument)
     {
+        object? comparer = comparerArgument is null ? null : ClosureValueReader.Evaluate(comparerArgument);
+        return comparer is null ? GetDefaultKeyOrder(keyType) : CreateKeyOrder(keyType, comparer);
+    }
+
+    private static Comparer<object?> CreateKeyOrder(Type keyType, object? comparer)
+    {
         Type comparerType = typeof(IComparer<>).MakeGenericType(keyType);
-        object comparer = (comparerArgument is null ? null : ClosureValueReader.Evaluate(comparerArgument))
-            ?? DefaultInstance(typeof(Comparer<>), keyType);
+        object instance = comparer ?? DefaultInstance(typeof(Comparer<>), keyType);
         ParameterExpression x = Expression.Parameter(typeof(object), "x");
         ParameterExpression y = Expression.Parameter(typeof(object), "y");
         MethodCallExpression compare = Expression.Call(
-            Expression.Constant(comparer, comparerType),
+            Expression.Constant(instance, comparerType),
             RequireMethod(comparerType, "Compare", keyType, keyType),
             Expression.Convert(x, keyType),
             Expression.Convert(y, keyType));
         return Comparer<object?>.Create(QueryLambdaCompiler.Shared.Compile(Expression.Lambda<Comparison<object?>>(compare, x, y)));
     }
+
+    private static BoxedEqualityComparer GetDefaultElementEquality(Type elementType) =>
+        QueryPlanTemplateCache.HasCollectibleType(elementType)
+            ? CreateElementEquality(elementType, comparer: null)
+            : DefaultEqualityComparers.GetOrCreate(elementType, static type => CreateElementEquality(type, comparer: null));
 
     /// <summary>
     /// Returns an equality comparer over boxed elements that goes through the element type's
@@ -275,10 +374,17 @@ internal static class InMemoryTail
     private static BoxedEqualityComparer ElementEquality(MethodCallExpression call, int comparerIndex)
     {
         Type element = call.Method.GetGenericArguments()[0];
+        object? comparer = OptionalArgument(call, comparerIndex) is { } argument
+            ? ClosureValueReader.Evaluate(argument)
+            : null;
+        return comparer is null ? GetDefaultElementEquality(element) : CreateElementEquality(element, comparer);
+    }
+
+    private static BoxedEqualityComparer CreateElementEquality(Type element, object? comparer)
+    {
         Type comparerType = typeof(IEqualityComparer<>).MakeGenericType(element);
-        object comparer = (OptionalArgument(call, comparerIndex) is { } argument ? ClosureValueReader.Evaluate(argument) : null)
-            ?? DefaultInstance(typeof(EqualityComparer<>), element);
-        ConstantExpression instance = Expression.Constant(comparer, comparerType);
+        object resolved = comparer ?? DefaultInstance(typeof(EqualityComparer<>), element);
+        ConstantExpression instance = Expression.Constant(resolved, comparerType);
         ParameterExpression x = Expression.Parameter(typeof(object), "x");
         ParameterExpression y = Expression.Parameter(typeof(object), "y");
         MethodCallExpression equals = Expression.Call(

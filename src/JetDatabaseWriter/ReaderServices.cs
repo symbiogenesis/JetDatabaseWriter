@@ -111,6 +111,11 @@ internal sealed class ReaderServices : IDisposable
             throw new ArgumentOutOfRangeException(nameof(options), "MaxIncludeMaterializedRowsPerOperation must be positive.");
         }
 
+        if (options.MaxIncludeMaterializedPayloadBytesPerOperation <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxIncludeMaterializedPayloadBytesPerOperation must be positive.");
+        }
+
         if (options.MaxLongValueBytes is <= 0 or > LongValueDescriptor.MaxLength)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "MaxLongValueBytes must be between 1 and 1,073,741,823.");

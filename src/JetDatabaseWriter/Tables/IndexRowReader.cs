@@ -141,11 +141,19 @@ internal sealed class IndexRowReader(
         string indexName,
         IndexQueryCriteria criteria,
         CancellationToken cancellationToken = default) =>
+        this.ReadIndexRowsAsObjectsAsync(tableName, indexName, criteria, wantedColumns: null, cancellationToken);
+
+    internal IAsyncEnumerable<object[]> ReadIndexRowsAsObjectsAsync(
+        string tableName,
+        string indexName,
+        IndexQueryCriteria criteria,
+        bool[]? wantedColumns,
+        CancellationToken cancellationToken = default) =>
         this.EnumerateIndexRowsAsync<object[]>(
             tableName,
             indexName,
             criteria,
-            static _ => (static row => (object[])row, null),
+            _ => (static row => (object[])row, wantedColumns),
             cancellationToken);
 
     internal IAsyncEnumerable<T> ReadIndexRowsAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
@@ -154,11 +162,20 @@ internal sealed class IndexRowReader(
         IndexQueryCriteria criteria,
         CancellationToken cancellationToken = default)
         where T : class, new() =>
+        this.ReadIndexRowsAsync<T>(tableName, indexName, criteria, projectedColumns: null, cancellationToken);
+
+    internal IAsyncEnumerable<T> ReadIndexRowsAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
+        string tableName,
+        string indexName,
+        IndexQueryCriteria criteria,
+        bool[]? projectedColumns,
+        CancellationToken cancellationToken = default)
+        where T : class, new() =>
         this.EnumerateIndexRowsAsync(
             tableName,
             indexName,
             criteria,
-            static td =>
+            td =>
             {
                 string[] headers = new string[td.Columns.Count];
                 for (int i = 0; i < td.Columns.Count; i++)
@@ -166,10 +183,10 @@ internal sealed class IndexRowReader(
                     headers[i] = td.Columns[i].Name;
                 }
 
-                // Decode and load only the columns T binds; complex columns
-                // it leaves out are never read from their flat tables.
-                Func<object?[], T> factory = RowMapper<T>.Build(td);
-                bool[] wantedColumns = RowMapper<T>.GetBoundColumnMask(headers);
+                // Decode and load only the columns T binds (and projectedColumns selects);
+                // complex columns it leaves out are never read from their flat tables.
+                Func<object?[], T> factory = RowMapper<T>.Build(td, projectedColumns);
+                bool[] wantedColumns = RowMapper<T>.GetBoundColumnMask(headers, projectedColumns);
 
                 return (factory, wantedColumns);
             },
@@ -183,11 +200,13 @@ internal sealed class IndexRowReader(
     /// <typeparam name="T">The mapped entity type.</typeparam>
     /// <param name="resolved">The resolved local table and its schema.</param>
     /// <param name="index">The covering index whose last entry is requested.</param>
+    /// <param name="projectedColumns">Optional column projection mask.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The materialized last entity, or <see langword="null"/> when unavailable.</returns>
     internal async ValueTask<T?> TryReadLastIndexRowAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         ResolvedTable resolved,
         IndexMetadata index,
+        bool[]? projectedColumns,
         CancellationToken cancellationToken)
         where T : class, new()
     {
@@ -218,8 +237,8 @@ internal sealed class IndexRowReader(
             headers[i] = td.Columns[i].Name;
         }
 
-        Func<object?[], T> factory = RowMapper<T>.Build(td);
-        bool[] wantedColumns = RowMapper<T>.GetBoundColumnMask(headers);
+        Func<object?[], T> factory = RowMapper<T>.Build(td, projectedColumns);
+        bool[] wantedColumns = RowMapper<T>.GetBoundColumnMask(headers, projectedColumns);
         bool needsComplexPass = td.HasComplexColumns
             && TableReader.HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType);
         bool needsHyperlinkPass = td.HasHyperlinkColumns
@@ -256,6 +275,27 @@ internal sealed class IndexRowReader(
         Expression<Func<T, bool>> predicate,
         IProgress<long>? progress,
         CancellationToken cancellationToken)
+        where T : class, new() =>
+        this.Rows(tableName, predicate, projectedColumns: null, progress, cancellationToken);
+
+    /// <summary>
+    /// Returns the rows of <paramref name="tableName"/> that satisfy
+    /// <paramref name="predicate"/>, decoding only <paramref name="projectedColumns"/> when
+    /// supplied, read through an inferred index when one covers the predicate's pushable
+    /// conditions and through a table scan otherwise.
+    /// </summary>
+    /// <typeparam name="T">The mapped row type.</typeparam>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="predicate">A row filter expression; drives index inference and the client-side filter.</param>
+    /// <param name="projectedColumns">Optional column projection mask.</param>
+    /// <param name="progress">Optional progress reporter — receives the matched-row count.</param>
+    /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
+    internal IAsyncEnumerable<T> Rows<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
+        string tableName,
+        Expression<Func<T, bool>> predicate,
+        bool[]? projectedColumns,
+        IProgress<long>? progress,
+        CancellationToken cancellationToken)
         where T : class, new()
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
@@ -263,7 +303,7 @@ internal sealed class IndexRowReader(
 
         Func<T, bool> compiled = QueryLambdaCompiler.Shared.Compile(predicate);
         RowCriteria pushable = IndexPredicateTranslator.ExtractPushableCriteria(predicate);
-        return this.RowsInferredAsync(tableName, compiled, pushable, progress, cancellationToken);
+        return this.RowsInferredAsync(tableName, compiled, pushable, projectedColumns, progress, cancellationToken);
     }
 
     /// <summary>Lists indexes whose text columns have a supported Access sort order.</summary>
@@ -361,12 +401,14 @@ internal sealed class IndexRowReader(
     /// <param name="tableName">The table to read.</param>
     /// <param name="predicate">The compiled row filter applied to every candidate.</param>
     /// <param name="pushable">The index-seekable necessary conditions extracted from the predicate.</param>
+    /// <param name="projectedColumns">Optional column projection mask restricting the columns to decode.</param>
     /// <param name="progress">Optional matched-row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel enumeration.</param>
     private async IAsyncEnumerable<T> RowsInferredAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         Func<T, bool> predicate,
         RowCriteria pushable,
+        bool[]? projectedColumns,
         IProgress<long>? progress,
         [EnumeratorCancellation] CancellationToken cancellationToken)
         where T : class, new()
@@ -374,8 +416,8 @@ internal sealed class IndexRowReader(
         IndexPlan? plan = await this.TryPlanIndexReadAsync(tableName, typeof(T), pushable, cancellationToken).ConfigureAwait(false);
 
         IAsyncEnumerable<T> candidates = plan is not null
-            ? this.ReadIndexRowsAsync<T>(tableName, plan.Index.Name, plan.Criteria, cancellationToken)
-            : tables.Rows<T>(tableName, progress: null, cancellationToken);
+            ? this.ReadIndexRowsAsync<T>(tableName, plan.Index.Name, plan.Criteria, projectedColumns, cancellationToken)
+            : tables.Rows<T>(tableName, projectedColumns, progress: null, cancellationToken);
 
         long produced = 0;
         await foreach (T item in candidates.ConfigureAwait(false))

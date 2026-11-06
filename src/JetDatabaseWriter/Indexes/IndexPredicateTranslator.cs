@@ -52,6 +52,10 @@ using JetDatabaseWriter.Models;
 /// </remarks>
 internal static class IndexPredicateTranslator
 {
+    private const int TemplateCacheCapacity = 64;
+
+    private static readonly BoundedCache<Shape, SeekCriteriaTemplate> Templates = new(TemplateCacheCapacity);
+
     private static readonly Dictionary<ExpressionType, ColumnPredicateOperator> OperatorMap = new()
     {
         [ExpressionType.Equal] = ColumnPredicateOperator.Equal,
@@ -60,6 +64,8 @@ internal static class IndexPredicateTranslator
         [ExpressionType.LessThan] = ColumnPredicateOperator.LessThan,
         [ExpressionType.LessThanOrEqual] = ColumnPredicateOperator.LessThanOrEqual,
     };
+
+    internal static int CachedTemplateCount => Templates.Count;
 
     /// <summary>
     /// Pulls the leading AND-combined comparisons that can be modelled as
@@ -92,18 +98,32 @@ internal static class IndexPredicateTranslator
         Guard.NotNull(predicate, nameof(predicate));
 
         var criteria = new RowCriteria();
-        if (predicate.Parameters.Count != 1)
+        if (predicate.Parameters.Count != 1 || map is null)
         {
             return criteria;
         }
 
         ParameterExpression parameter = predicate.Parameters[0];
+        if (!HasCollectibleType(parameter.Type))
+        {
+            var visitor = new ShapeVisitor(parameter);
+            _ = visitor.Visit(predicate.Body);
+            if (visitor.Supported)
+            {
+                var shape = new Shape(parameter.Type, visitor.Tokens.ToArray());
+                SeekCriteriaTemplate template = Templates.GetOrCreate(
+                    shape,
+                    _ => BuildTemplate(predicate.Body, parameter, map, visitor.ConstantSlots));
+                return template.Instantiate(visitor.Constants);
+            }
+        }
+
         var conjuncts = new List<Expression>();
         CollectAndConjuncts(predicate.Body, conjuncts);
 
         foreach (Expression conjunct in conjuncts)
         {
-            if (!TryTranslateComparison(conjunct, parameter, map!, out ColumnPredicate? model))
+            if (!TryTranslateComparison(conjunct, parameter, map, out ColumnPredicate? model))
             {
                 // A later seek must not suppress exceptions from this residual conjunct.
                 break;
@@ -114,6 +134,116 @@ internal static class IndexPredicateTranslator
 
         return criteria;
     }
+
+    private static SeekCriteriaTemplate BuildTemplate(
+        Expression body,
+        ParameterExpression parameter,
+        EntityMap map,
+        Dictionary<ConstantExpression, int> constantSlots)
+    {
+        var conjuncts = new List<Expression>();
+        CollectAndConjuncts(body, conjuncts);
+
+        var slots = new List<ComparisonSlot>(conjuncts.Count);
+        foreach (Expression conjunct in conjuncts)
+        {
+            if (!TryTranslateComparisonSlot(conjunct, parameter, map, constantSlots, out ComparisonSlot slot))
+            {
+                break;
+            }
+
+            slots.Add(slot);
+        }
+
+        return new SeekCriteriaTemplate(slots.ToArray());
+    }
+
+    private static bool TryTranslateComparisonSlot(
+        Expression expression,
+        ParameterExpression parameter,
+        EntityMap map,
+        Dictionary<ConstantExpression, int> constantSlots,
+        out ComparisonSlot slot)
+    {
+        slot = default;
+        if (expression is not BinaryExpression binary || !HasNonThrowingComparisonOperator(binary))
+        {
+            return false;
+        }
+
+        if (MapOperator(binary.NodeType) is not ColumnPredicateOperator @operator)
+        {
+            return false;
+        }
+
+        if (TryResolveColumn(binary.Left, parameter, map, out string? leftColumn)
+            && TryBuildOperandTemplate(binary.Right, constantSlots, out int rightConstant, out FieldInfo[]? rightFields, out (Type From, Type To)[]? rightConversions))
+        {
+            slot = new ComparisonSlot(leftColumn!, @operator, rightConstant, rightFields!, rightConversions!);
+            return true;
+        }
+
+        if (TryResolveColumn(binary.Right, parameter, map, out string? rightColumn)
+            && TryBuildOperandTemplate(binary.Left, constantSlots, out int leftConstant, out FieldInfo[]? leftFields, out (Type From, Type To)[]? leftConversions))
+        {
+            slot = new ComparisonSlot(rightColumn!, Flip(@operator), leftConstant, leftFields!, leftConversions!);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryBuildOperandTemplate(
+        Expression expression,
+        Dictionary<ConstantExpression, int> constantSlots,
+        out int constantIndex,
+        [NotNullWhen(true)] out FieldInfo[]? fields,
+        [NotNullWhen(true)] out (Type From, Type To)[]? conversions)
+    {
+        constantIndex = -1;
+        fields = null;
+        conversions = null;
+
+        if (!IsNonThrowingSeekOperand(expression))
+        {
+            return false;
+        }
+
+        var conversionList = new List<(Type From, Type To)>();
+        Expression current = expression;
+        while (current is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+        {
+            if ((convert.Method is not null && !ClosureValueReader.IsDecimalWidening(convert.Method))
+                || !ClosureValueReader.CanConvertTypes(convert.Operand.Type, convert.Type))
+            {
+                return false;
+            }
+
+            conversionList.Add((convert.Operand.Type, convert.Type));
+            current = convert.Operand;
+        }
+
+        var fieldList = new List<FieldInfo>();
+        while (current is MemberExpression { Member: FieldInfo { IsStatic: false } field, Expression: not null } member)
+        {
+            fieldList.Add(field);
+            current = member.Expression;
+        }
+
+        if (current is not ConstantExpression constant || !constantSlots.TryGetValue(constant, out constantIndex))
+        {
+            return false;
+        }
+
+        fieldList.Reverse();
+        conversionList.Reverse();
+        fields = fieldList.Count == 0 ? [] : fieldList.ToArray();
+        conversions = conversionList.Count == 0 ? [] : conversionList.ToArray();
+        return true;
+    }
+
+    private static bool HasCollectibleType(Type type) =>
+        Queries.QueryPlanTemplateCache.HasCollectibleType(type);
 
     private static void CollectAndConjuncts(Expression expression, List<Expression> conjuncts)
     {
@@ -308,5 +438,180 @@ internal static class IndexPredicateTranslator
         return from == to
             || widening
             || (!from.IsValueType && !to.IsValueType && to.IsAssignableFrom(from));
+    }
+
+    private readonly record struct ComparisonSlot(
+        string Column,
+        ColumnPredicateOperator Operator,
+        int ConstantIndex,
+        FieldInfo[] Fields,
+        (Type From, Type To)[] Conversions)
+    {
+        public bool TryEvaluate(IReadOnlyList<object?> constants, out object? value)
+        {
+            value = constants[this.ConstantIndex];
+            foreach (FieldInfo field in this.Fields)
+            {
+                if (value is null)
+                {
+                    return false;
+                }
+
+                value = field.GetValue(value);
+            }
+
+            foreach ((Type from, Type to) in this.Conversions)
+            {
+                if (!ClosureValueReader.TryConvert(value, from, to, out value))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    private sealed class SeekCriteriaTemplate(ComparisonSlot[] slots)
+    {
+        public RowCriteria Instantiate(IReadOnlyList<object?> constants)
+        {
+            var criteria = new RowCriteria();
+            foreach (ComparisonSlot slot in slots)
+            {
+                if (!slot.TryEvaluate(constants, out object? value))
+                {
+                    break;
+                }
+
+                ColumnPredicate? predicate = Build(slot.Column, slot.Operator, value);
+                if (predicate is null)
+                {
+                    break;
+                }
+
+                criteria.Add(predicate);
+            }
+
+            return criteria;
+        }
+    }
+
+    private sealed class Shape(Type parameterType, object?[] tokens) : IEquatable<Shape>
+    {
+        private Type ParameterType => parameterType;
+
+        private object?[] Tokens => tokens;
+
+        public bool Equals(Shape? other)
+        {
+            if (other is null || parameterType != other.ParameterType || tokens.Length != other.Tokens.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < tokens.Length; i++)
+            {
+                if (!Equals(tokens[i], other.Tokens[i]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public override bool Equals(object? obj) => obj is Shape other && this.Equals(other);
+
+        public override int GetHashCode()
+        {
+            HashCode hash = default;
+            hash.Add(parameterType);
+            foreach (object? token in tokens)
+            {
+                hash.Add(token);
+            }
+
+            return hash.ToHashCode();
+        }
+    }
+
+    private sealed class ShapeVisitor(ParameterExpression rootParameter) : ExpressionVisitor
+    {
+        private const int MaximumNodes = 256;
+        private const int MaximumDepth = 64;
+        private int nodes;
+        private int depth;
+
+        internal List<object?> Tokens { get; } = [];
+
+        internal List<object?> Constants { get; } = [];
+
+        internal Dictionary<ConstantExpression, int> ConstantSlots { get; } = [];
+
+        internal bool Supported { get; private set; } = true;
+
+        public override Expression? Visit(Expression? node)
+        {
+            if (!this.Supported)
+            {
+                return node;
+            }
+
+            if (node is null)
+            {
+                this.Tokens.Add(null);
+                return null;
+            }
+
+            if (++this.nodes > MaximumNodes || this.depth >= MaximumDepth || HasCollectibleType(node.Type))
+            {
+                this.Supported = false;
+                return node;
+            }
+
+            this.Tokens.Add(node.NodeType);
+            this.Tokens.Add(node.Type);
+            switch (node)
+            {
+                case BinaryExpression binary:
+                    this.Tokens.Add(binary.Method);
+                    this.Tokens.Add(binary.IsLiftedToNull);
+                    break;
+                case UnaryExpression unary:
+                    this.Tokens.Add(unary.Method);
+                    this.Tokens.Add(unary.IsLiftedToNull);
+                    break;
+                case MemberExpression member:
+                    this.Tokens.Add(member.Member);
+                    break;
+                case MethodCallExpression call:
+                    this.Tokens.Add(call.Method);
+                    this.Tokens.Add(call.Arguments.Count);
+                    break;
+                case ConstantExpression constant:
+                    if (!this.ConstantSlots.TryGetValue(constant, out int slot))
+                    {
+                        slot = this.Constants.Count;
+                        this.ConstantSlots.Add(constant, slot);
+                        this.Constants.Add(constant.Value);
+                    }
+
+                    this.Tokens.Add(slot);
+                    return node;
+                case ParameterExpression parameter:
+                    this.Tokens.Add(ReferenceEquals(parameter, rootParameter) ? 0 : -1);
+                    this.Tokens.Add(parameter.Name);
+                    return node;
+                default:
+                    this.Tokens.Add(null);
+                    break;
+            }
+
+            this.depth++;
+            Expression? result = base.Visit(node);
+            this.depth--;
+            return result;
+        }
     }
 }

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Queries;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
@@ -9,6 +10,8 @@ using System.Reflection;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Linq;
+using JetDatabaseWriter.Mapping;
+using static JetDatabaseWriter.Queries.QueryPlanTemplateCache;
 
 /// <summary>
 /// Splits a LINQ query expression tree into the operators the provider can execute
@@ -35,8 +38,69 @@ internal static class AccessQueryTranslator
     /// the engine and there is no tail.
     /// </returns>
     /// <exception cref="JetNotSupportedException">The query source is not a constant expression.</exception>
-    public static (AccessQueryPlan Plan, Expression Boundary) Translate(Expression expression)
+    public static (AccessQueryPlan Plan, Expression Boundary) Translate(Expression expression) =>
+        Translate(expression, rootMap: null);
+
+    /// <summary>
+    /// Translates <paramref name="expression"/> using the cached query plan template and
+    /// mapped column metadata of <typeparamref name="T"/>.
+    /// </summary>
+    /// <typeparam name="T">The root entity type.</typeparam>
+    /// <param name="expression">The full query expression tree.</param>
+    /// <returns>The translated plan and engine boundary.</returns>
+    public static (AccessQueryPlan Plan, Expression Boundary) Translate<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(Expression expression) =>
+        Translate(expression, EntityMap.For(typeof(T)));
+
+    internal static bool IsThenBy(MethodCallExpression call) =>
+        call.Method.DeclaringType == typeof(Queryable) && call.Method.Name is "ThenBy" or "ThenByDescending";
+
+    /// <summary>
+    /// Determines whether <paramref name="call"/> is one of the operators the engine
+    /// translates in its native pipeline, restricted to the simple forms it can honor:
+    /// a single-parameter <c>Where</c> predicate and orderings without a custom comparer.
+    /// </summary>
+    /// <param name="call">The operator call to classify.</param>
+    /// <returns><see langword="true"/> when the engine can translate the operator.</returns>
+    internal static bool IsEngineSupported(MethodCallExpression call)
     {
+        if (AccessQueryExtensions.IsIncludeMethod(call.Method) || AccessQueryExtensions.IsThenIncludeMethod(call.Method))
+        {
+            return true;
+        }
+
+        return call.Method.DeclaringType == typeof(Queryable) && IsPipelineOperator(call)
+            && (call.Method.Name is not ("Skip" or "Take") || call.Arguments[1].Type == typeof(int));
+    }
+
+    internal static bool IsSingleParameterLambda(Expression argument)
+    {
+        Expression operand = argument is UnaryExpression { NodeType: ExpressionType.Quote } quote ? quote.Operand : argument;
+        return operand is LambdaExpression lambda && lambda.Parameters.Count == 1;
+    }
+
+    /// <summary>
+    /// Determines whether <paramref name="call"/> is one of the inline collection operators a
+    /// filtered / ordered include may carry (<c>Where</c>, the four orderings, <c>Skip</c>,
+    /// <c>Take</c>), declared on <see cref="Enumerable"/> or <see cref="Queryable"/>. The
+    /// indexed <c>Where</c> overload is excluded — only a single-parameter predicate qualifies.
+    /// </summary>
+    /// <param name="call">The candidate operator call inside the navigation lambda.</param>
+    /// <returns><see langword="true"/> when the call is a supported include operator.</returns>
+    internal static bool IsIncludeOperation(MethodCallExpression call) =>
+        (call.Method.DeclaringType == typeof(Enumerable) || call.Method.DeclaringType == typeof(Queryable)) && IsPipelineOperator(call);
+
+    internal static Expression StripConvert(Expression expression) =>
+        expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary
+            ? unary.Operand
+            : expression;
+
+    private static (AccessQueryPlan Plan, Expression Boundary) Translate(Expression expression, EntityMap? rootMap)
+    {
+        if (expression is ConstantExpression)
+        {
+            return (new AccessQueryPlan(), expression);
+        }
+
         // The stack yields the operators from the source outward without making query
         // depth depend on the process call stack. Reuse it for the boundary and the plan.
         var calls = new Stack<MethodCallExpression>();
@@ -50,6 +114,15 @@ internal static class AccessQueryTranslator
         if (source is not ConstantExpression)
         {
             throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, $"Unsupported query expression node '{source.NodeType}'.");
+        }
+
+        if (calls.Count <= QueryPlanTemplateCache.MaxCachedOperators)
+        {
+            MethodCallExpression[] orderedCalls = calls.ToArray();
+            if (QueryPlanTemplateCache.TryGetOrAdd(source.Type, rootMap, orderedCalls, out QueryPlanTemplate? template))
+            {
+                return InstantiateTemplate(source, orderedCalls, template);
+            }
         }
 
         Expression boundary = FindEngineBoundary(source, calls);
@@ -67,6 +140,146 @@ internal static class AccessQueryTranslator
         }
 
         return (plan, boundary);
+    }
+
+    private static (AccessQueryPlan Plan, Expression Boundary) InstantiateTemplate(
+        Expression source,
+        MethodCallExpression[] calls,
+        QueryPlanTemplate template)
+    {
+        int engineCount = template.EngineCallCount;
+        Expression boundary = engineCount == 0 ? source : calls[engineCount - 1];
+        MethodCallExpression[]? tailCalls = null;
+        if (engineCount < calls.Length)
+        {
+            tailCalls = new MethodCallExpression[calls.Length - engineCount];
+            Array.Copy(calls, engineCount, tailCalls, 0, tailCalls.Length);
+        }
+
+        var plan = new AccessQueryPlan
+        {
+            ReferencedColumns = template.ReferencedColumns,
+            EngineOnlyReferencedColumns = template.EngineOnlyReferencedColumns,
+            TailTemplate = template.TailGroups,
+            TailCalls = tailCalls,
+        };
+
+        for (int i = 0; i < engineCount; i++)
+        {
+            EngineOperatorTemplate op = template.EngineOperators[i];
+            MethodCallExpression call = calls[i];
+            switch (op.Kind)
+            {
+                case EngineOperatorKind.Where:
+                case EngineOperatorKind.OrderBy:
+                case EngineOperatorKind.OrderByDescending:
+                case EngineOperatorKind.ThenBy:
+                case EngineOperatorKind.ThenByDescending:
+                case EngineOperatorKind.Skip:
+                case EngineOperatorKind.Take:
+                    AppendOperatorByKind(op.Kind, call.Arguments[1], plan.Stages);
+                    break;
+
+                case EngineOperatorKind.Include:
+                    plan.StartInclude(InstantiateIncludeStep(call.Arguments[1], op.Navigation!, op.IncludeOperations!));
+                    break;
+
+                case EngineOperatorKind.ThenInclude:
+                    plan.ExtendInclude(InstantiateIncludeStep(call.Arguments[1], op.Navigation!, op.IncludeOperations!));
+                    break;
+
+                default:
+                    throw InMemoryTail.UnsupportedOperator(call.Method.Name);
+            }
+        }
+
+        return (plan, boundary);
+    }
+
+    private static IncludeStep InstantiateIncludeStep(
+        Expression navigationArg,
+        PropertyInfo navigationProperty,
+        EngineOperatorKind[] operationKinds)
+    {
+        if (operationKinds.Length == 0)
+        {
+            return new IncludeStep(navigationProperty, []);
+        }
+
+        LambdaExpression navigation = ExtractLambda(navigationArg);
+        Expression body = StripConvert(navigation.Body);
+        var inlineCalls = new MethodCallExpression[operationKinds.Length];
+        for (int i = operationKinds.Length - 1; i >= 0; i--)
+        {
+            var call = (MethodCallExpression)body;
+            inlineCalls[i] = call;
+            body = StripConvert(call.Arguments[0]);
+        }
+
+        var stages = new List<QueryStage>(operationKinds.Length);
+        var operations = new List<IncludeOperation>(operationKinds.Length);
+        for (int i = 0; i < operationKinds.Length; i++)
+        {
+            AppendOperatorByKind(operationKinds[i], inlineCalls[i].Arguments[1], stages);
+            QueryStage stage = stages[^1];
+            if (stages.Count > operations.Count)
+            {
+                operations.Add(stage switch
+                {
+                    FilterStage filter => new IncludeFilterOperation(filter.Predicate),
+                    OrderStage => new IncludeOrderOperation(),
+                    SkipStage skip => new IncludeSkipOperation(skip.Count),
+                    TakeStage take => new IncludeTakeOperation(take.Count),
+                    _ => throw new JetOperationException(JetErrorCode.InvalidOperationState, "Unsupported include stage."),
+                });
+            }
+
+            if (stage is OrderStage order)
+            {
+                OrderingKey key = order.Keys[^1];
+                ((IncludeOrderOperation)operations[^1]).AddKey(key.KeySelector, key.Descending);
+            }
+        }
+
+        return new IncludeStep(navigationProperty, operations);
+    }
+
+    private static void AppendOperatorByKind(EngineOperatorKind kind, Expression argument, List<QueryStage> stages)
+    {
+        switch (kind)
+        {
+            case EngineOperatorKind.Where:
+                stages.Add(new FilterStage(ExtractLambda(argument)));
+                break;
+            case EngineOperatorKind.OrderBy:
+            case EngineOperatorKind.OrderByDescending:
+            case EngineOperatorKind.ThenBy:
+            case EngineOperatorKind.ThenByDescending:
+                OrderStage order;
+                if (kind is EngineOperatorKind.ThenBy or EngineOperatorKind.ThenByDescending
+                    && stages.Count > 0
+                    && stages[^1] is OrderStage current)
+                {
+                    order = current;
+                }
+                else
+                {
+                    order = new OrderStage();
+                    stages.Add(order);
+                }
+
+                bool descending = kind is EngineOperatorKind.OrderByDescending or EngineOperatorKind.ThenByDescending;
+                order.Keys.Add(new OrderingKey(ExtractLambda(argument), descending));
+                break;
+            case EngineOperatorKind.Skip:
+                stages.Add(new SkipStage(ToCount(argument)));
+                break;
+            case EngineOperatorKind.Take:
+                stages.Add(new TakeStage(ToCount(argument)));
+                break;
+            case EngineOperatorKind.Include or EngineOperatorKind.ThenInclude or _:
+                break;
+        }
     }
 
     /// <summary>
@@ -98,9 +311,6 @@ internal static class AccessQueryTranslator
         return boundary;
     }
 
-    private static bool IsThenBy(MethodCallExpression call) =>
-        call.Method.DeclaringType == typeof(Queryable) && call.Method.Name is "ThenBy" or "ThenByDescending";
-
     /// <summary>
     /// Returns the source of the ordering that <paramref name="ordered"/> ends: below its
     /// <c>ThenBy</c> calls and the <c>OrderBy</c> or <c>OrderByDescending</c> that starts it.
@@ -117,30 +327,6 @@ internal static class AccessQueryTranslator
         return ordered is MethodCallExpression { Method.Name: "OrderBy" or "OrderByDescending" } orderBy
             ? orderBy.Arguments[0]
             : ordered;
-    }
-
-    /// <summary>
-    /// Determines whether <paramref name="call"/> is one of the operators the engine
-    /// translates in its native pipeline, restricted to the simple forms it can honor:
-    /// a single-parameter <c>Where</c> predicate and orderings without a custom comparer.
-    /// </summary>
-    /// <param name="call">The operator call to classify.</param>
-    /// <returns><see langword="true"/> when the engine can translate the operator.</returns>
-    private static bool IsEngineSupported(MethodCallExpression call)
-    {
-        if (AccessQueryExtensions.IsIncludeMethod(call.Method) || AccessQueryExtensions.IsThenIncludeMethod(call.Method))
-        {
-            return true;
-        }
-
-        return call.Method.DeclaringType == typeof(Queryable) && IsPipelineOperator(call)
-            && (call.Method.Name is not ("Skip" or "Take") || call.Arguments[1].Type == typeof(int));
-    }
-
-    private static bool IsSingleParameterLambda(Expression argument)
-    {
-        Expression operand = argument is UnaryExpression { NodeType: ExpressionType.Quote } quote ? quote.Operand : argument;
-        return operand is LambdaExpression lambda && lambda.Parameters.Count == 1;
     }
 
     private static void Apply(MethodCallExpression call, AccessQueryPlan plan)
@@ -233,17 +419,6 @@ internal static class AccessQueryTranslator
         return new IncludeStep(property, BuildIncludeOperations(calls));
     }
 
-    /// <summary>
-    /// Determines whether <paramref name="call"/> is one of the inline collection operators a
-    /// filtered / ordered include may carry (<c>Where</c>, the four orderings, <c>Skip</c>,
-    /// <c>Take</c>), declared on <see cref="Enumerable"/> or <see cref="Queryable"/>. The
-    /// indexed <c>Where</c> overload is excluded — only a single-parameter predicate qualifies.
-    /// </summary>
-    /// <param name="call">The candidate operator call inside the navigation lambda.</param>
-    /// <returns><see langword="true"/> when the call is a supported include operator.</returns>
-    private static bool IsIncludeOperation(MethodCallExpression call) =>
-        (call.Method.DeclaringType == typeof(Enumerable) || call.Method.DeclaringType == typeof(Queryable)) && IsPipelineOperator(call);
-
     private static bool IsPipelineOperator(MethodCallExpression call) =>
         call.Arguments.Count == 2 && call.Method.Name switch
         {
@@ -289,11 +464,6 @@ internal static class AccessQueryTranslator
     /// <returns>The number of elements to skip or take.</returns>
     private static int ToCount(Expression expression) =>
         Convert.ToInt32(ClosureValueReader.Evaluate(expression), CultureInfo.InvariantCulture);
-
-    private static Expression StripConvert(Expression expression) =>
-        expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary
-            ? unary.Operand
-            : expression;
 
     private static PropertyInfo ResolveMember(Expression body)
     {

@@ -103,6 +103,23 @@ internal static class IncludeLoader
         await LoadNodesAsync(metadata, parentTable, roots, forest, relationships, cancellationToken).ConfigureAwait(false);
     }
 
+    internal static string? Normalize(object? value, TextSortOrder sortOrder) => value switch
+    {
+        null or DBNull => null,
+        bool b => b ? "b1" : "b0",
+        byte or sbyte or short or ushort or int or uint or long =>
+            "n" + FormatNumeric(Convert.ToInt64(value, CultureInfo.InvariantCulture)),
+        ulong ul => "n" + FormatNumeric(ul),
+        decimal m => "n" + FormatNumeric(m),
+        float or double => NormalizeReal(Convert.ToDouble(value, CultureInfo.InvariantCulture)),
+        char c => NormalizeText(c.ToString(), sortOrder),
+        Guid g => "g" + g.ToString("N"),
+        DateTime dt => "t" + dt.Ticks.ToString(CultureInfo.InvariantCulture),
+        string s => NormalizeText(s, sortOrder),
+        byte[] bytes => "x" + BitConverter.ToString(bytes),
+        _ => null,
+    };
+
     private static async ValueTask LoadNodesAsync(
         IncludeMetadataCache metadata,
         string table,
@@ -268,8 +285,8 @@ internal static class IncludeLoader
     {
         var map = new Dictionary<string, object>(StringComparer.Ordinal);
         Func<object?[], object>? mapper = null;
-        await foreach ((string key, string[] headers, object[] row) in ReadMatchesAsync(
-            metadata, table, keyColumns, distinctKeys, firstPerKey: true, cancellationToken).ConfigureAwait(false))
+        await foreach ((string key, string[] headers, bool[] wantedColumns, object[] row) in ReadMatchesAsync(
+            metadata, table, type, keyColumns, distinctKeys, firstPerKey: true, cancellationToken).ConfigureAwait(false))
         {
             // A scan can encounter duplicate keys: keep and map only the first parent.
             if (map.ContainsKey(key))
@@ -277,8 +294,8 @@ internal static class IncludeLoader
                 continue;
             }
 
-            mapper ??= RuntimeRowMapper.Build(type, headers);
-            metadata.ReserveMaterializedRow();
+            mapper ??= RuntimeRowMapper.Build(type, headers, wantedColumns);
+            metadata.ReserveMaterializedRow(row, wantedColumns);
             map.Add(key, mapper(row));
             if (map.Count == distinctKeys.Count)
             {
@@ -299,26 +316,27 @@ internal static class IncludeLoader
     {
         var map = new Dictionary<string, List<object>>(StringComparer.Ordinal);
         Func<object?[], object>? mapper = null;
-        await foreach ((string key, string[] headers, object[] row) in ReadMatchesAsync(
-            metadata, table, keyColumns, distinctKeys, firstPerKey: false, cancellationToken).ConfigureAwait(false))
+        await foreach ((string key, string[] headers, bool[] wantedColumns, object[] row) in ReadMatchesAsync(
+            metadata, table, type, keyColumns, distinctKeys, firstPerKey: false, cancellationToken).ConfigureAwait(false))
         {
-            metadata.ReserveMaterializedRow();
+            metadata.ReserveMaterializedRow(row, wantedColumns);
             if (!map.TryGetValue(key, out List<object>? list))
             {
                 list = [];
                 map[key] = list;
             }
 
-            mapper ??= RuntimeRowMapper.Build(type, headers);
+            mapper ??= RuntimeRowMapper.Build(type, headers, wantedColumns);
             list.Add(mapper(row));
         }
 
         return map;
     }
 
-    private static async IAsyncEnumerable<(string Key, string[] Headers, object[] Row)> ReadMatchesAsync(
+    private static async IAsyncEnumerable<(string Key, string[] Headers, bool[] WantedColumns, object[] Row)> ReadMatchesAsync(
         IncludeMetadataCache metadata,
         string table,
+        Type relatedType,
         IReadOnlyList<string> keyColumns,
         Dictionary<string, object?[]> distinctKeys,
         bool firstPerKey,
@@ -335,17 +353,18 @@ internal static class IncludeLoader
         if (plan is SeekPlan seek)
         {
             int[] keyIndices = ResolveKeyIndices(seek.Headers, keyColumns);
+            bool[] wantedColumns = BuildWantedColumns(seek.Headers, relatedType, keyColumns);
             foreach (KeyValuePair<string, object?[]> entry in distinctKeys)
             {
                 IndexQueryCriteria criteria = BuildSeekCriteria(seek.IndexColumnCount, keyColumns.Count, entry.Value);
-                await foreach (object[] row in metadata.Indexes.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
+                await foreach (object[] row in metadata.Indexes.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, wantedColumns, cancellationToken).ConfigureAwait(false))
                 {
                     if (!string.Equals(BuildKeyFromRow(row, keyIndices, metadata.TextSortOrder), entry.Key, StringComparison.Ordinal))
                     {
                         continue;
                     }
 
-                    yield return (entry.Key, seek.Headers, row);
+                    yield return (entry.Key, seek.Headers, wantedColumns, row);
                     if (firstPerKey)
                     {
                         break;
@@ -357,14 +376,90 @@ internal static class IncludeLoader
         }
 
         (string[] headers, int[] scanKeyIndices) = await ReadHeadersAsync(metadata, table, keyColumns, cancellationToken).ConfigureAwait(false);
-        await foreach (object[] row in metadata.Tables.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
+        bool[] scanWantedColumns = BuildWantedColumns(headers, relatedType, keyColumns);
+        await foreach (object[] row in metadata.Tables.Rows(table, scanWantedColumns, progress: null, cancellationToken).ConfigureAwait(false))
         {
             string? key = BuildKeyFromRow(row, scanKeyIndices, metadata.TextSortOrder);
             if (key is not null && distinctKeys.ContainsKey(key))
             {
-                yield return (key, headers, row);
+                yield return (key, headers, scanWantedColumns, row);
             }
         }
+    }
+
+    private static bool[] BuildWantedColumns(string[] headers, Type relatedType, IReadOnlyList<string> keyColumns)
+    {
+        var map = EntityMap.For(relatedType);
+        bool[] wanted = new bool[headers.Length];
+        for (int i = 0; i < headers.Length; i++)
+        {
+            string header = headers[i];
+            if (map.FindByColumn(header) is not null)
+            {
+                wanted[i] = true;
+                continue;
+            }
+
+            for (int k = 0; k < keyColumns.Count; k++)
+            {
+                if (string.Equals(header, keyColumns[k], StringComparison.OrdinalIgnoreCase))
+                {
+                    wanted[i] = true;
+                    break;
+                }
+            }
+        }
+
+        return wanted;
+    }
+
+    private static ulong MeasureRowPayloadBytes(object?[] row, bool[] wantedColumns)
+    {
+        ulong total = 0;
+        int limit = Math.Min(row.Length, wantedColumns.Length);
+        for (int i = 0; i < limit; i++)
+        {
+            if (!wantedColumns[i])
+            {
+                continue;
+            }
+
+            total += MeasureValuePayloadBytes(row[i]);
+        }
+
+        return total;
+    }
+
+    private static ulong MeasureValuePayloadBytes(object? value) => value switch
+    {
+        null or DBNull => 0UL,
+        string s => (ulong)s.Length * sizeof(char),
+        byte[] bytes => (ulong)bytes.Length,
+        Hyperlink h => (ulong)((h.DisplayText?.Length ?? 0)
+            + (h.Address?.Length ?? 0)
+            + (h.SubAddress?.Length ?? 0)
+            + (h.ScreenTip?.Length ?? 0)) * sizeof(char),
+        OleObjectContent ole => (ulong)ole.Content.Length,
+        AttachmentRecord a => (ulong)a.FileData.Length
+            + ((ulong)((a.FileName?.Length ?? 0) + (a.FileType?.Length ?? 0)) * sizeof(char)),
+        IEnumerable<AttachmentRecord> attachments => MeasureAttachmentsBytes(attachments),
+        bool or byte or sbyte => 1UL,
+        short or ushort or char => 2UL,
+        int or uint or float => 4UL,
+        long or ulong or double or DateTime or TimeSpan => 8UL,
+        decimal or Guid or DateTimeOffset => 16UL,
+        _ => 8UL,
+    };
+
+    private static ulong MeasureAttachmentsBytes(IEnumerable<AttachmentRecord> attachments)
+    {
+        ulong sum = 0;
+        foreach (AttachmentRecord item in attachments)
+        {
+            sum += MeasureValuePayloadBytes(item);
+        }
+
+        return sum;
     }
 
     private static async ValueTask<SeekPlan?> ResolveSeekPlanAsync(
@@ -576,23 +671,6 @@ internal static class IncludeLoader
         return string.Join("|", parts);
     }
 
-    internal static string? Normalize(object? value, TextSortOrder sortOrder) => value switch
-    {
-        null or DBNull => null,
-        bool b => b ? "b1" : "b0",
-        byte or sbyte or short or ushort or int or uint or long =>
-            "n" + FormatNumeric(Convert.ToInt64(value, CultureInfo.InvariantCulture)),
-        ulong ul => "n" + FormatNumeric(ul),
-        decimal m => "n" + FormatNumeric(m),
-        float or double => NormalizeReal(Convert.ToDouble(value, CultureInfo.InvariantCulture)),
-        char c => NormalizeText(c.ToString(), sortOrder),
-        Guid g => "g" + g.ToString("N"),
-        DateTime dt => "t" + dt.Ticks.ToString(CultureInfo.InvariantCulture),
-        string s => NormalizeText(s, sortOrder),
-        byte[] bytes => "x" + BitConverter.ToString(bytes),
-        _ => null,
-    };
-
     private static string NormalizeText(string text, TextSortOrder order)
     {
         var collation = new JetTextCollation(order);
@@ -788,6 +866,7 @@ internal static class IncludeLoader
         private readonly Dictionary<string, string[]> headers = [with(StringComparer.OrdinalIgnoreCase)];
         private readonly Dictionary<string, long> rowCounts = [with(StringComparer.OrdinalIgnoreCase)];
         private uint materializedRows;
+        private ulong materializedPayloadBytes;
 
         public TableReader Tables { get; } = tables;
 
@@ -795,7 +874,7 @@ internal static class IncludeLoader
 
         public TextSortOrder TextSortOrder => this.Indexes.DefaultTextSortOrder;
 
-        public void ReserveMaterializedRow()
+        public void ReserveMaterializedRow(object?[] row, bool[] wantedColumns)
         {
             DataPageKernel.TryReserveCount(this.materializedRows, checked((uint)this.Tables.MaxIncludeMaterializedRowsPerOperation), out bool admitted, out uint next);
             if (!admitted)
@@ -804,6 +883,28 @@ internal static class IncludeLoader
             }
 
             this.materializedRows = next;
+
+            long maxBytes = this.Tables.MaxIncludeMaterializedPayloadBytesPerOperation;
+            if (maxBytes <= 0)
+            {
+                throw new JetLimitationException(JetErrorCode.IncludeMaterializationBudgetExceeded, $"The Include execution permits at most {maxBytes} bytes of related entity payload before filtering and paging.");
+            }
+
+            ulong rowBytes = MeasureRowPayloadBytes(row, wantedColumns);
+            RecoveryKernel.TryReserveBytes(
+                this.materializedPayloadBytes,
+                rowBytes,
+                (ulong)maxBytes,
+                out bool bytesAdmitted,
+                out ulong nextBytes);
+            if (!bytesAdmitted)
+            {
+                throw new JetLimitationException(
+                    JetErrorCode.IncludeMaterializationBudgetExceeded,
+                    $"The Include execution permits at most {maxBytes} bytes of related entity payload before filtering and paging.");
+            }
+
+            this.materializedPayloadBytes = nextBytes;
         }
 
         public async ValueTask<IReadOnlyList<IndexMetadata>> GetIndexesAsync(string table, CancellationToken cancellationToken)

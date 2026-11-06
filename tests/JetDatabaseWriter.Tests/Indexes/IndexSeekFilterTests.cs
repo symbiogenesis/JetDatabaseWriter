@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Indexes;
 
 using System;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Linq;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
@@ -183,7 +184,9 @@ public sealed class IndexSeekFilterTests
             ColumnPredicate.GreaterThan("Id", 1),
             ColumnPredicate.EqualTo("shade name", 3),
             ColumnPredicate.LessThan("Score", 1.5),
-            ColumnPredicate.Between("Id", 1, 1.5),
+            ColumnPredicate.LessThan("Score", 2.5),
+            ColumnPredicate.GreaterThan("Id", 1.5),
+            ColumnPredicate.Between("Id", 1.5, 8.5),
             ColumnPredicate.Between("Id", 1, 9),
             ColumnPredicate.In("Id", 1, 2),
             ColumnPredicate.EqualTo("Missing", 1),
@@ -192,10 +195,34 @@ public sealed class IndexSeekFilterTests
 
         RowCriteria seekable = IndexSeekFilter.SelectSeekable(pushable, typeof(Row), table);
 
-        // Kept: exact bounds and fractional upper bounds that round outward. Dropped: an enum
-        // on a Text column, In, a column the table lacks, and a column
-        // no property maps.
-        Assert.Equal([pushable.Predicates[0], pushable.Predicates[2], pushable.Predicates[3], pushable.Predicates[4]], seekable.Predicates);
+        // Kept: exact bounds, outward fractional bounds, and inward strict fractional bounds rewritten to inclusive.
+        // Dropped: an enum on a Text column, In, a column the table lacks, and a column no property maps.
+        Assert.Equal(6, seekable.Predicates.Count);
+        Assert.Same(pushable.Predicates[0], seekable.Predicates[0]);
+        Assert.Same(pushable.Predicates[2], seekable.Predicates[1]);
+        Assert.Equal(("Score", ColumnPredicateOperator.LessThanOrEqual, (object?)2.5), (seekable.Predicates[2].ColumnName, seekable.Predicates[2].Operator, seekable.Predicates[2].Operand));
+        Assert.Equal(("Id", ColumnPredicateOperator.GreaterThanOrEqual, (object?)1.5), (seekable.Predicates[3].ColumnName, seekable.Predicates[3].Operator, seekable.Predicates[3].Operand));
+        Assert.Same(pushable.Predicates[5], seekable.Predicates[4]);
+        Assert.Same(pushable.Predicates[6], seekable.Predicates[5]);
+    }
+
+    [Fact]
+    public void PredicateTranslator_ReusesTemplateAcrossChangingCaptures_AndPreservesResidualStop()
+    {
+        System.Linq.Expressions.Expression<Func<Row, bool>> MakePredicate(int idBound, int scoreBound) =>
+            r => r.Id >= idBound && r.Score <= scoreBound && (r.Id == 1 || r.Id == 2) && r.Score == 42;
+
+        RowCriteria first = IndexPredicateTranslator.ExtractPushableCriteria(MakePredicate(10, 50));
+        int countAfterFirst = IndexPredicateTranslator.CachedTemplateCount;
+        Assert.True(countAfterFirst >= 1);
+        Assert.Equal(
+            [("Id", ColumnPredicateOperator.GreaterThanOrEqual, (object?)10), ("Score", ColumnPredicateOperator.LessThanOrEqual, (object?)50)],
+            [.. first.Predicates.Select(p => (p.ColumnName, p.Operator, p.Operand))]);
+
+        RowCriteria second = IndexPredicateTranslator.ExtractPushableCriteria(MakePredicate(25, 99));
+        Assert.Equal(
+            [("Id", ColumnPredicateOperator.GreaterThanOrEqual, (object?)25), ("Score", ColumnPredicateOperator.LessThanOrEqual, (object?)99)],
+            [.. second.Predicates.Select(p => (p.ColumnName, p.Operator, p.Operand))]);
     }
 
     private static bool Seekable(

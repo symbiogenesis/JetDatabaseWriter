@@ -78,6 +78,44 @@ namespace JetDatabaseWriter.Verification {
         return false;
       }
     }
+    public static uint RewriteRoundedSeekOperator(uint op, int comparison)
+    {
+      if ((op) == (0U)) {
+        if ((comparison) == (0)) {
+          return 0U;
+        } else {
+          return 4294967295U;
+        }
+      } else if ((op) == (2U)) {
+        if ((comparison) <= (0)) {
+          return 2U;
+        } else {
+          return 3U;
+        }
+      } else if ((op) == (3U)) {
+        return 3U;
+      } else if ((op) == (4U)) {
+        if ((comparison) >= (0)) {
+          return 4U;
+        } else {
+          return 5U;
+        }
+      } else if ((op) == (5U)) {
+        return 5U;
+      } else {
+        return 4294967295U;
+      }
+    }
+    public static void TryReserveBytes(ulong current, ulong delta, ulong limit, out bool admitted, out ulong next)
+    {
+      admitted = false;
+      next = 0;
+      admitted = ((current) <= (limit)) && ((delta) <= ((limit) - (current)));
+      next = current;
+      if (admitted) {
+        next = (current) + (delta);
+      }
+    }
     public static bool IsFloatingZeroSeekBound(uint op, bool negative)
     {
       return ((((op) == (2U)) || ((op) == (4U))) || (((op) == (3U)) && (negative))) || (((op) == (5U)) && (!(negative)));

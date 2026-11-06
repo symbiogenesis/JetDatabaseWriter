@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "productionInventorySha256": "b057425c6958fcf0c67602283535ea99e6da9e3f3450ca42be801f7b922702a8",
-  "inventoryReview": "Reviewed the production source-name inventory and direct generated-kernel callers. RowEncoder now executes value-width admission; ReaderPageCache and IncludeLoader execute bounded reservations; TableSnapshotReader executes complete unique-key and bookmark admission. Existing recovery, descriptor, parsing, page/index/usage and digest boundaries retain their explicit adapter contracts. New tests and workflow helpers are conformance/tooling inputs rather than shipping proof code. The inventory hash establishes source-name freshness only. IndexHelpers and IndexPageCodec execute the generated complete-entry comparator; IndexMaintainer executes conservative relationship form/reference/key and exact tree/map admission. Full C# tree composition remains outside the generated boundary. The shared physical-root collector now supplies immutable actual leaf headers to generated complete chain admission; staged sibling targets execute generated membership/owner/type/reciprocal checks. Classified new CalculatedNativeRegionalDefaults as finite captured native date/name data and observable-override selection, not a verified locale implementation. CalculatedExpressionCoercion now calls generated tick rounding. The hot index byte scan uses the established span adapter followed by generated sign/bookmark completion; the fully verified scanner remains a conformance reference. Splicer sorting is a private-buffer BCL effect. Classified OrderStage as a direct generated integer-order admission caller using acquired table metadata; AccessQueryProvider retains local-table acquisition and source selection. Stream creation and writer option validation are C# ownership/admission adapters, with fault-injection evidence rather than a new abstract I/O proof. Classified the IndexTreeInventory acquisition boundary: the extracted internal type retains physical traversal, captured headers and direct generated leaf-chain/membership admission; IndexBTreeEditor retains staged neighbor admission, mutation planning and publication. Source identity changes do not promote B1 proof coverage. Classified AccessDatabaseCompact as a direct StreamRead caller for header inspection before delegating to CompactDatabasePlanner, CompactPinnedDatabaseBuilder, CompactEncodedDatabaseCopy and EncryptionFileReplacement; classified CompactReclamationPlan, CompactDatabasePlanner, CompactDatabasePlannerResult, AccessCompactOptions, AccessCompactDiagnostic and AccessCompactReport as C# maintenance orchestration and model types outside the generated kernel boundary.",
+  "productionInventorySha256": "2feaeffd09a2382524acbbf02a269904f47dd9be6b8875b4567ec7a5a3cd96ff",
+  "inventoryReview": "Reviewed the production source-name inventory and direct generated-kernel callers. RowEncoder now executes value-width admission; ReaderPageCache and IncludeLoader execute bounded reservations; TableSnapshotReader executes complete unique-key and bookmark admission. Existing recovery, descriptor, parsing, page/index/usage and digest boundaries retain their explicit adapter contracts. New tests and workflow helpers are conformance/tooling inputs rather than shipping proof code. The inventory hash establishes source-name freshness only. IndexHelpers and IndexPageCodec execute the generated complete-entry comparator; IndexMaintainer executes conservative relationship form/reference/key and exact tree/map admission. Full C# tree composition remains outside the generated boundary. The shared physical-root collector now supplies immutable actual leaf headers to generated complete chain admission; staged sibling targets execute generated membership/owner/type/reciprocal checks. Classified new CalculatedNativeRegionalDefaults as finite captured native date/name data and observable-override selection, not a verified locale implementation. CalculatedExpressionCoercion now calls generated tick rounding. The hot index byte scan uses the established span adapter followed by generated sign/bookmark completion; the fully verified scanner remains a conformance reference. Splicer sorting is a private-buffer BCL effect. Classified OrderStage as a direct generated integer-order admission caller using acquired table metadata; AccessQueryProvider retains local-table acquisition and source selection. Stream creation and writer option validation are C# ownership/admission adapters, with fault-injection evidence rather than a new abstract I/O proof. Classified the IndexTreeInventory acquisition boundary: the extracted internal type retains physical traversal, captured headers and direct generated leaf-chain/membership admission; IndexBTreeEditor retains staged neighbor admission, mutation planning and publication. Source identity changes do not promote B1 proof coverage. Classified AccessDatabaseCompact as a direct StreamRead caller for header inspection before delegating to CompactDatabasePlanner, CompactPinnedDatabaseBuilder, CompactEncodedDatabaseCopy and EncryptionFileReplacement; classified CompactReclamationPlan, CompactDatabasePlanner, CompactDatabasePlannerResult, AccessCompactOptions, AccessCompactDiagnostic and AccessCompactReport as C# maintenance orchestration and model types outside the generated kernel boundary. Classified new QueryPlanTemplateCache as a C# query-translation template and column-projection mask cache outside the generated kernel boundary; IndexSeekFilter now invokes generated RecoveryKernel.RewriteRoundedSeekOperator for inward-rounded range bounds, OrderStage.FindExtremeIndex invokes generated IndexMutationKernel.AdmitExtremeIndex for MinAsync/MaxAsync index admission, and IncludeLoader invokes generated RecoveryKernel.TryReserveBytes for MaxIncludeMaterializedPayloadBytesPerOperation enforcement.",
   "reviews": [
     {
       "boundary": "implementation",
-      "obligations": "Reviewed journal/replacement acquisition, byte authorization, replay selection, generation ownership, conditional markers, flush ordering, uncertain outcomes and cleanup against the existing mapping. Reviewed generated descriptor/range/row/page/index/usage/digest callers and their exact input/ownership contracts. Ordinary variable Text/Binary admission refuses complete oversized values before storage mutation; no clipping remains in those paths, and the pooled fixed workspace returns through finally. Complete unique nonnull scalar/composite equality admission retains prefix evaluation, native key eligibility, streaming duplicate-bookmark refusal and re-encoded live-row identity. Safe mutation scan fallbacks decode every visited row and retain matching snapshots; key-changing/calculated paths retain complete-set checks. Reader admission counts pending/live leases, coalesces per-page misses, balances cancellation/disposal and refuses capacity immediately. Include shares its mapped-entity budget across navigation paths before callbacks. Weak type retention relies on CLR ephemeron semantics. Prior native format, preservation and recovery contracts remain in the evidence map. Reviewed complete encoded-key/page/row comparison through bulk sorting, survivor/addition splicing, mutation-only descent and maximum-entry ancestor propagation. Relationship incremental eligibility is restricted to local valid references, native layout/flags and ascending fixed noncalculated Int32 keys. Every physical slot has an exact reachable/map set and disjoint ownership before edits and at successful completion; post-edit acquisition failure throws for rollback rather than selecting bulk fallback. Unsigned native pointer reads preserve corrupt-high-bit refusal. Root publication during surgery is not claimed to satisfy a completed-statement map invariant. Reviewed shared root-child/tail acquisition, exact captured-header transport into generated leaf-chain validation and verified sorted membership lookup. Neighbor staging re-reads target headers and checks original reciprocal source, owner/type and membership in that physical tree before any append/link write, including catalog splits. The generated chain validator initializes scratch, rejects aliases, requires unique complete coverage and checks actual adjacency. Disjoint-inventory composition excludes another physical index under the explicit complete-root and inventory-separation premises. Reviewed vectorized byte-order sign correspondence and conditional generated completion through bulk/splice/descent/max callers. The complete scalar reference retains exact order laws; production completion normalizes arbitrary signed results and compares bookmarks only for equal keys. Private-buffer sorting preserves native entry multiset/byte order and input/key immutability; equal complete entries may exchange array-reference order because every production consumer uses native values or emitted bytes. Reviewed six pinned regional default/name tables against unchanged native observations, per-field/per-name ordinal override selection, Gregorian conversion retention and invariant/uncaptured runtime behavior. Defaults equal to host defaults cannot reveal caller intent and select captured native defaults. Default internal evaluation now snapshots the English profile; explicit writer culture still follows the captured option/current culture. General Date calls a total generated valid-tick projection; invalid unsigned ticks map to zero, native serial ties-up conversion stays separate. Reviewed native Byte/Integer/Long/Large Number ranks, exact widening conversion and strict/equality preservation against native CLR domains. OrderStage retains sorting for expression casts, incompatible concrete mappings, calculated keys and accessor effects, and requires complete unique nonnull indexes with matching directions. Mapper metadata, property identity and generated-accessor recognition remain C# contracts. Creation refuses nonempty destinations and invalid option domains before mutation/ownership, initializes empty streams from zero, and gives initial writes, open and initialization one failure-cleanup owner while retaining recovery preflight. Reviewed complete bound-property conversion admission: ordinary CLR identity and verified integral widening remain eligible; unknown, calculated, complex or coercing mappings sort. Required unique non-PK indexes retain admission, while optional unique indexes retain stable Null-key sorting. Reviewed shared ResolvedTable acquisition for native type admission and seekable-index inventory. The existing string wrapper resolves once and delegates under the same reentrant operation contract; ordered planning reuses its acquired definition instead of rereading uncached schema. Reviewed the extracted IndexTreeInventory against its original editor implementation: acquisition order, cancellation, owner/type checks, leaf transport, generated admission and corruption context are unchanged. It stages no effects; mutable collection identity, complete child graphs, native layout and containing mutation/rollback remain explicit C# contracts. Reviewed the first-release documentation and malformed-wide-table comment edits: index admission, generated calls, runtime behavior and the production correspondence are unchanged. Reviewed the .NET 11 retarget and required SDK analyzer edits. Collection expressions retain their exact constructors, capacities, comparers and enumeration order. Labeled index projection retains dropped-column precedence, callback order and enumerator disposal. Character guards and target-specific explicit ordinal overloads retain existing parser semantics. Generated decisions and model contracts are unchanged; C# compiler lowering and these containing adapters remain trusted. Reviewed the applicable process-test inventory and qualification documentation; shipping recovery/parser code, generated controllers and their contracts are unchanged. Reviewed seek-based physical read admission under the existing store I/O gate: the shared overflow-safe range decision now checks current stream length before seeking. Pending journal pages remain in the pager path, and native positional reads keep their existing exact-read loop. Existing negative or overflowing argument rejection, write/truncate ordering, journal capture and generated kernels are unchanged. The caller-stream and shared-parsing boundary documents explicitly retain their effect and ownership assumptions. Reviewed the CI documentation link relocation to the configured publisher filename; executing library code and mapped model correspondence are unchanged. Reviewed the expanded required hosted DAO120 compatibility inventory and synchronized evidence map and validation matrix; shipping library code, generated verification controllers and model contracts are unchanged. Reviewed index-backed root MinAsync and MaxAsync execution through AccessQueryProvider.TryExecuteExtremeRowAsync and IndexRowReader.TryReadLastIndexRowAsync, which reuse OrderStage.FindCoveringIndex admission for unfiltered root queries over a direct single-column property and read either the first row of a matching-direction unique nonnull integer index or the terminal leaf entry of an opposite-direction unique nonnull integer index under the operation gate, falling back to streaming fold when any admission or strict-parsing check refuses. Reviewed QueryLambdaCompiler.Shared template reuse across AccessQueryExtensions aggregate selectors, InMemoryTail casts/comparers and ClosureValueReader.Evaluate. Reviewed AccessDatabaseCompact header preflight through StreamRead.ReadExactlyAsync, CompactDatabasePlanner source-page reclamation classification, CompactGlobalMapInstaller/Validator and CompactPinnedPrefixValidator scrubbed-prefix and retained-tail verification, and CompactInPlaceAsync publication through EncryptionFileReplacement under RecoverableWriterLock and LockFileCoordinator.",
-      "conformance": "Focused failing-first width regressions reproduced silent Text/Binary clipping across supported formats and write modes, then passed with boundary Unicode, exact byte/AutoNumber rollback and valid index lookup checks. Focused indexed-target, unmatched-corruption, snapshot-retention, coalescing/cancellation, Include-budget and collectible-type tests exercise the changed C# adapters. Pinned kernel verification/audit and generated freshness establish only their declared executable properties. The PageFrameOwnership aggregate theorem bounds retained plus ticket-covered frame identities under the stated ownership coverage contract. Strict Release build and focused results are development evidence; settled-main CI, native interoperability and specialized campaigns remain independent acceptance gates. Native-authored Text(5) controls refuse oversized assignment with error 3163 and preserve valid unique-index seeks through compact. Jet3/Jet4 DAO3.6 controls establish this independently. Failing-first bulk/incremental duplicate-tree tests reproduced native bookmark disorder; complete-entry ordering permits native insert/update/delete/compact, including the preserved constant-DateTime mixed FK fixture. Relationship admission regressions cover post-edit unreadable trees, high-bit pointers and generation flags; random managed write modes retain exact map and row coverage. DAO120 width, duplicate and relationship controls are in the required hosted inventory. The calculated-source width test now requires refusal without persisted cache values. Native and managed results apply only to their named fixtures and engines. Failing-first surgical cases overwrote foreign leaf headers across all formats and owner variants; public FK statement cases silently succeeded on the same malformed pointers. Focused corrected cases require structured corruption refusal, unchanged foreign bytes and full-image restoration across Direct, AutoCommit and ExplicitCommit. Native-authored Jet3/Jet4 constant-date relationship trees still accept further native DML and compact under the stricter guard. Generated-chain conformance includes incomplete coverage, cycles, owner/type mismatches and scratch alias refusal. Paired default adaptive run41345899605 measured long-prefix scalar regressions19.70x/14.67x with unchanged controls1.02/0.99 and unordered allocation1.19x, motivating the reviewed adapter and private sort. Failing-first allocation exceeded422808bytes against139264bound; complete-tie controls compare exact native page images, preserve every key reference and deep input bytes. Independent adapter controls cover all65536byte pairs and vector boundaries; native Jet3/Jet4 unordered/duplicate DML+compact controls pass. Seven synthetic-host/calendar regressions failed before the regional fix; native source/compacted caches and exact patterns/names remain unchanged. Focused caller overrides, partial names, invariant/uncaptured cultures, culture isolation and rounding endpoint controls pass. Full portability and revised performance acceptance still require the settled main revision. QueryIndexOrderingTests uses independent source-scan/LINQ ordering and paging oracles, checked-overflow cases, native Text mapped to integers, setter effects, covariance and exact integral boundaries. StreamDatabaseCreationTests injects write/flush/header-open/initialization failures and cancellation, checks exact disposal counts and caller-owned preservation, verifies destination offset/refusal and pending recovery evidence, and covers all public writer option preflight entry points. Native fixture membership evaluation explicitly uses its producing culture even under invariant ambient culture. Raw-text fuzz controls accept only named structured corruption/resource refusals before executing the independent generated round-trip oracle. Additional independent controls exercise non-key narrowing failure before paging, identity string fields with integral widening, optional unique Null ties and required unique non-PK admission. IndexReadStreamingTests retains its original sixteen-page upper bound with caching disabled across Jet3, Jet4 and ACE and both fixture sizes; these controls complement mapped-value ordering parity on both library assets. Focused existing neighbor-ownership and surgical single-leaf controls pass after the extraction; both library targets pass strict Release analysis. Existing generated chain and neighbor conformance remains applicable. Exact-main CI and specialized campaigns remain independent acceptance evidence. The release-version diff changes only documentation and comments in the implementation boundary; existing index-admission conformance remains applicable. Exact-main CI remains required. Strict Release library builds pass for both shipping assets. The reviewed Windows runtime source retains writable backup-semantics handles, common RandomAccess flush validation and captured last-error acknowledgement. Focused adapter, index, expression and linked-source regressions and exact-main hosted validation remain required before publication. Focused native adapter, index, expression and linked-text regressions pass. One local linked-text case skips because this host cannot create directory symbolic links; the hosted skip policy and independent platform evidence remain required. All nine process-runner cases pass on Windows without skips; actual Unix execution of the six generic cases remains required in hosted validation. Seed-37 hosted fuzz exposed the same out-of-file FFFFFFFF TDEF link in Jet4 and ACE on both assets. Failing-first public schema regressions reproduce the MemoryStream seek exception through the generic stream adapter. Boundary regressions cover partial EOF, EOF, the malformed page offset and the largest representable read range; they assert pre-seek refusal, unchanged position and destination, released gate and subsequent valid reads. Focused native and Standard store, reservation, journal visibility and malformed-schema tests pass with strict Release analysis. New exact-main CI and specialized campaign evidence remain required. Shared page-store conformance distinguishes native positional EOF partial effects from seek-path admission before I/O, and asserts unchanged file position for both. The complete focused shared-parsing class passes on native and Standard assets with strict Release analysis; exact-main validation remains required. The required hosted DAO120 compatibility runner now admits 75 distinct DAO120-only methods covering public collation, index drop/rename, table rename, linked-table relationship cleanup, constraint function policy, AllowZeroLength, display/lookup/SQL-specific query/application/workgroup preservation, variable-text slot preservation, fixed/dropped Null scalar slots, Memo/ordinary-Text leading-marker escapes, fresh Jet4 bootstrap, column/free-space/owned-map maintenance, fixed binary/text and negative date serials, Standard/historical/RC4/Agile/workgroup encryption, relationship catalog identity and table-delete rules, case-only column renames, complex-item/schema/history rewrites and native index/schema descriptor preservation; settled-main CI execution remains required. QueryIndexOrderingTests, IndexReadStreamingTests and QueryLambdaCompilerTests add MinAsync/MaxAsync parity, exception-preservation, sixteen-page streaming bounds across ascending and descending unique required integer indexes, and ClosureValueReader compiled-fallback live-capture controls. CompactReclaimingDatabaseTests exercises reclaiming compaction, tail truncation, interior Freed-page scrubbing and writer reuse, relationships, calculated and complex columns, encrypted round trips, partial catalog/unassigned-row salvage, frozen application/workgroup fixtures, DAO3.6 Jet3 and required hosted DAO120 Jet4/ACE native round trips.",
-      "remainingAssumptions": "Specification adequacy, Dafny/Z3 soundness, generated projection, C# compilation, CLR/JIT/AOT and BCL implementations remain trusted. Native key/codec semantics, complete index membership and ownership, hashing/identity, actual read/write/partial-failure effects and full public operation composition remain explicit contracts. Count admission is verified; CAS, locks, coalesced ownership coverage, pool/array identity, ephemeron lifetime, decoded payload bytes and complete aggregate CLR memory are reviewed/tested implementation obligations. Text criteria do not yet establish a necessary native-collation seek; key-changing/calculated full-set operations, schema rewrites and unsupported native FK rebuild fallbacks remain separate work. Process kills and managed flush acknowledgements do not qualify physical namespace/device persistence. Exact native fixture/version/locale and physical storage coverage remain scoped by the validation matrix and storage contract. No whole-engine, complete parser, complete concurrency refinement or power-loss claim follows from this receipt. Generated key/bookmark comparison laws do not verify C# sort algorithms, full tree separators/siblings, reciprocal relationship links or complete acquisition. Whole-tree ownership acquisition and O(n log n) sorting/membership remain, and duplicate append cases may rebuild. Scalar long-prefix comparison performance requires hosted paired measurements; correctness controls do not establish a timing improvement. Leaf-chain proof requires complete acquired physical membership and exact immutable header correspondence. It does not establish separator order, child-graph alias freedom, complete native layouts, C# publication effects or aggregate temporary-array byte budgets. Vectorized byte-order sign and BCL List.Sort permutation/order are explicit reviewed/tested contracts, not proved runtime implementations. Locale tables are empirical captured data; unknown profiles and DateTime parsing retain runtime dependencies. CultureInfo cannot report override intent for a value equal to its host default. The tick proof covers arithmetic on supplied valid DateTime ticks, not native locale adequacy or complete expression semantics. The integer-order theorem applies to supplied in-range native values and exact type codes; native key-byte ordering, decoding, metadata/attribute honesty, materializer behavior, complete indexes and full IQueryable semantics remain separate. Index-backed paging intentionally bounds materialization; unvisited I/O, corruption and allocation failures are not whole-source exception guarantees. Stream effects and successful asynchronous disposal remain runtime contracts. Preparing the first release changes no implementation contract or proof-coverage claim. The .NET 11 RC compiler/runtime and collection-expression lowering remain implementation dependencies; this retarget establishes no additional parser, recovery, storage or whole-library proof coverage. Platform classification of supporting process-harness tests adds no production proof or storage guarantee. Physical range admission trusts a meaningful current Stream.Length and exclusive writer ownership or an unchanged reader snapshot. It adds no whole-parser proof, storage durability claim or guarantee for externally resized or dishonest stream adapters; later exact reads still admit EOF and I/O failure.",
+      "obligations": "Reviewed journal/replacement acquisition, byte authorization, replay selection, generation ownership, conditional markers, flush ordering, uncertain outcomes and cleanup against the existing mapping. Reviewed generated descriptor/range/row/page/index/usage/digest callers and their exact input/ownership contracts. Ordinary variable Text/Binary admission refuses complete oversized values before storage mutation; no clipping remains in those paths, and the pooled fixed workspace returns through finally. Complete unique nonnull scalar/composite equality admission retains prefix evaluation, native key eligibility, streaming duplicate-bookmark refusal and re-encoded live-row identity. Safe mutation scan fallbacks decode every visited row and retain matching snapshots; key-changing/calculated paths retain complete-set checks. Reader admission counts pending/live leases, coalesces per-page misses, balances cancellation/disposal and refuses capacity immediately. Include shares its mapped-entity budget across navigation paths before callbacks. Weak type retention relies on CLR ephemeron semantics. Prior native format, preservation and recovery contracts remain in the evidence map. Reviewed complete encoded-key/page/row comparison through bulk sorting, survivor/addition splicing, mutation-only descent and maximum-entry ancestor propagation. Relationship incremental eligibility is restricted to local valid references, native layout/flags and ascending fixed noncalculated Int32 keys. Every physical slot has an exact reachable/map set and disjoint ownership before edits and at successful completion; post-edit acquisition failure throws for rollback rather than selecting bulk fallback. Unsigned native pointer reads preserve corrupt-high-bit refusal. Root publication during surgery is not claimed to satisfy a completed-statement map invariant. Reviewed shared root-child/tail acquisition, exact captured-header transport into generated leaf-chain validation and verified sorted membership lookup. Neighbor staging re-reads target headers and checks original reciprocal source, owner/type and membership in that physical tree before any append/link write, including catalog splits. The generated chain validator initializes scratch, rejects aliases, requires unique complete coverage and checks actual adjacency. Disjoint-inventory composition excludes another physical index under the explicit complete-root and inventory-separation premises. Reviewed vectorized byte-order sign correspondence and conditional generated completion through bulk/splice/descent/max callers. The complete scalar reference retains exact order laws; production completion normalizes arbitrary signed results and compares bookmarks only for equal keys. Private-buffer sorting preserves native entry multiset/byte order and input/key immutability; equal complete entries may exchange array-reference order because every production consumer uses native values or emitted bytes. Reviewed six pinned regional default/name tables against unchanged native observations, per-field/per-name ordinal override selection, Gregorian conversion retention and invariant/uncaptured runtime behavior. Defaults equal to host defaults cannot reveal caller intent and select captured native defaults. Default internal evaluation now snapshots the English profile; explicit writer culture still follows the captured option/current culture. General Date calls a total generated valid-tick projection; invalid unsigned ticks map to zero, native serial ties-up conversion stays separate. Reviewed native Byte/Integer/Long/Large Number ranks, exact widening conversion and strict/equality preservation against native CLR domains. OrderStage retains sorting for expression casts, incompatible concrete mappings, calculated keys and accessor effects, and requires complete unique nonnull indexes with matching directions. Mapper metadata, property identity and generated-accessor recognition remain C# contracts. Creation refuses nonempty destinations and invalid option domains before mutation/ownership, initializes empty streams from zero, and gives initial writes, open and initialization one failure-cleanup owner while retaining recovery preflight. Reviewed complete bound-property conversion admission: ordinary CLR identity and verified integral widening remain eligible; unknown, calculated, complex or coercing mappings sort. Required unique non-PK indexes retain admission, while optional unique indexes retain stable Null-key sorting. Reviewed shared ResolvedTable acquisition for native type admission and seekable-index inventory. The existing string wrapper resolves once and delegates under the same reentrant operation contract; ordered planning reuses its acquired definition instead of rereading uncached schema. Reviewed the extracted IndexTreeInventory against its original editor implementation: acquisition order, cancellation, owner/type checks, leaf transport, generated admission and corruption context are unchanged. It stages no effects; mutable collection identity, complete child graphs, native layout and containing mutation/rollback remain explicit C# contracts. Reviewed the first-release documentation and malformed-wide-table comment edits: index admission, generated calls, runtime behavior and the production correspondence are unchanged. Reviewed the .NET 11 retarget and required SDK analyzer edits. Collection expressions retain their exact constructors, capacities, comparers and enumeration order. Labeled index projection retains dropped-column precedence, callback order and enumerator disposal. Character guards and target-specific explicit ordinal overloads retain existing parser semantics. Generated decisions and model contracts are unchanged; C# compiler lowering and these containing adapters remain trusted. Reviewed the applicable process-test inventory and qualification documentation; shipping recovery/parser code, generated controllers and their contracts are unchanged. Reviewed seek-based physical read admission under the existing store I/O gate: the shared overflow-safe range decision now checks current stream length before seeking. Pending journal pages remain in the pager path, and native positional reads keep their existing exact-read loop. Existing negative or overflowing argument rejection, write/truncate ordering, journal capture and generated kernels are unchanged. The caller-stream and shared-parsing boundary documents explicitly retain their effect and ownership assumptions. Reviewed the CI documentation link relocation to the configured publisher filename; executing library code and mapped model correspondence are unchanged. Reviewed the expanded required hosted DAO120 compatibility inventory and synchronized evidence map and validation matrix; shipping library code, generated verification controllers and model contracts are unchanged. Reviewed index-backed root MinAsync and MaxAsync execution through AccessQueryProvider.TryExecuteExtremeRowAsync and IndexRowReader.TryReadLastIndexRowAsync, which reuse OrderStage.FindCoveringIndex admission for unfiltered root queries over a direct single-column property and read either the first row of a matching-direction unique nonnull integer index or the terminal leaf entry of an opposite-direction unique nonnull integer index under the operation gate, falling back to streaming fold when any admission or strict-parsing check refuses. Reviewed QueryLambdaCompiler.Shared template reuse across AccessQueryExtensions aggregate selectors, InMemoryTail casts/comparers and ClosureValueReader.Evaluate. Reviewed AccessDatabaseCompact header preflight through StreamRead.ReadExactlyAsync, CompactDatabasePlanner source-page reclamation classification, CompactGlobalMapInstaller/Validator and CompactPinnedPrefixValidator scrubbed-prefix and retained-tail verification, and CompactInPlaceAsync publication through EncryptionFileReplacement under RecoverableWriterLock and LockFileCoordinator. Reviewed QueryPlanTemplateCache, IndexPredicateTranslator seek-criteria templates, bounded ConditionalWeakTable plus weak-LRU retention in EntityMap, MaterializerCache and RuntimeRowMapper, safe column projection pushdown through RowShape, RowMapper, DirectRowDecoderBuilder, TableReader and IndexRowReader, inward-rounded seek endpoint rewrites through RecoveryKernel.RewriteRoundedSeekOperator in IndexSeekFilter, extended MinAsync/MaxAsync index admission through IndexMutationKernel.AdmitExtremeIndex in OrderStage and AccessQueryProvider, and Include payload-byte admission through RecoveryKernel.TryReserveBytes in IncludeLoader.",
+      "conformance": "Focused failing-first width regressions reproduced silent Text/Binary clipping across supported formats and write modes, then passed with boundary Unicode, exact byte/AutoNumber rollback and valid index lookup checks. Focused indexed-target, unmatched-corruption, snapshot-retention, coalescing/cancellation, Include-budget and collectible-type tests exercise the changed C# adapters. Pinned kernel verification/audit and generated freshness establish only their declared executable properties. The PageFrameOwnership aggregate theorem bounds retained plus ticket-covered frame identities under the stated ownership coverage contract. Strict Release build and focused results are development evidence; settled-main CI, native interoperability and specialized campaigns remain independent acceptance gates. Native-authored Text(5) controls refuse oversized assignment with error 3163 and preserve valid unique-index seeks through compact. Jet3/Jet4 DAO3.6 controls establish this independently. Failing-first bulk/incremental duplicate-tree tests reproduced native bookmark disorder; complete-entry ordering permits native insert/update/delete/compact, including the preserved constant-DateTime mixed FK fixture. Relationship admission regressions cover post-edit unreadable trees, high-bit pointers and generation flags; random managed write modes retain exact map and row coverage. DAO120 width, duplicate and relationship controls are in the required hosted inventory. The calculated-source width test now requires refusal without persisted cache values. Native and managed results apply only to their named fixtures and engines. Failing-first surgical cases overwrote foreign leaf headers across all formats and owner variants; public FK statement cases silently succeeded on the same malformed pointers. Focused corrected cases require structured corruption refusal, unchanged foreign bytes and full-image restoration across Direct, AutoCommit and ExplicitCommit. Native-authored Jet3/Jet4 constant-date relationship trees still accept further native DML and compact under the stricter guard. Generated-chain conformance includes incomplete coverage, cycles, owner/type mismatches and scratch alias refusal. Paired default adaptive run41345899605 measured long-prefix scalar regressions19.70x/14.67x with unchanged controls1.02/0.99 and unordered allocation1.19x, motivating the reviewed adapter and private sort. Failing-first allocation exceeded422808bytes against139264bound; complete-tie controls compare exact native page images, preserve every key reference and deep input bytes. Independent adapter controls cover all65536byte pairs and vector boundaries; native Jet3/Jet4 unordered/duplicate DML+compact controls pass. Seven synthetic-host/calendar regressions failed before the regional fix; native source/compacted caches and exact patterns/names remain unchanged. Focused caller overrides, partial names, invariant/uncaptured cultures, culture isolation and rounding endpoint controls pass. Full portability and revised performance acceptance still require the settled main revision. QueryIndexOrderingTests uses independent source-scan/LINQ ordering and paging oracles, checked-overflow cases, native Text mapped to integers, setter effects, covariance and exact integral boundaries. StreamDatabaseCreationTests injects write/flush/header-open/initialization failures and cancellation, checks exact disposal counts and caller-owned preservation, verifies destination offset/refusal and pending recovery evidence, and covers all public writer option preflight entry points. Native fixture membership evaluation explicitly uses its producing culture even under invariant ambient culture. Raw-text fuzz controls accept only named structured corruption/resource refusals before executing the independent generated round-trip oracle. Additional independent controls exercise non-key narrowing failure before paging, identity string fields with integral widening, optional unique Null ties and required unique non-PK admission. IndexReadStreamingTests retains its original sixteen-page upper bound with caching disabled across Jet3, Jet4 and ACE and both fixture sizes; these controls complement mapped-value ordering parity on both library assets. Focused existing neighbor-ownership and surgical single-leaf controls pass after the extraction; both library targets pass strict Release analysis. Existing generated chain and neighbor conformance remains applicable. Exact-main CI and specialized campaigns remain independent acceptance evidence. The release-version diff changes only documentation and comments in the implementation boundary; existing index-admission conformance remains applicable. Exact-main CI remains required. Strict Release library builds pass for both shipping assets. The reviewed Windows runtime source retains writable backup-semantics handles, common RandomAccess flush validation and captured last-error acknowledgement. Focused adapter, index, expression and linked-source regressions and exact-main hosted validation remain required before publication. Focused native adapter, index, expression and linked-text regressions pass. One local linked-text case skips because this host cannot create directory symbolic links; the hosted skip policy and independent platform evidence remain required. All nine process-runner cases pass on Windows without skips; actual Unix execution of the six generic cases remains required in hosted validation. Seed-37 hosted fuzz exposed the same out-of-file FFFFFFFF TDEF link in Jet4 and ACE on both assets. Failing-first public schema regressions reproduce the MemoryStream seek exception through the generic stream adapter. Boundary regressions cover partial EOF, EOF, the malformed page offset and the largest representable read range; they assert pre-seek refusal, unchanged position and destination, released gate and subsequent valid reads. Focused native and Standard store, reservation, journal visibility and malformed-schema tests pass with strict Release analysis. New exact-main CI and specialized campaign evidence remain required. Shared page-store conformance distinguishes native positional EOF partial effects from seek-path admission before I/O, and asserts unchanged file position for both. The complete focused shared-parsing class passes on native and Standard assets with strict Release analysis; exact-main validation remains required. The required hosted DAO120 compatibility runner now admits 75 distinct DAO120-only methods covering public collation, index drop/rename, table rename, linked-table relationship cleanup, constraint function policy, AllowZeroLength, display/lookup/SQL-specific query/application/workgroup preservation, variable-text slot preservation, fixed/dropped Null scalar slots, Memo/ordinary-Text leading-marker escapes, fresh Jet4 bootstrap, column/free-space/owned-map maintenance, fixed binary/text and negative date serials, Standard/historical/RC4/Agile/workgroup encryption, relationship catalog identity and table-delete rules, case-only column renames, complex-item/schema/history rewrites and native index/schema descriptor preservation; settled-main CI execution remains required. QueryIndexOrderingTests, IndexReadStreamingTests and QueryLambdaCompilerTests add MinAsync/MaxAsync parity, exception-preservation, sixteen-page streaming bounds across ascending and descending unique required integer indexes, and ClosureValueReader compiled-fallback live-capture controls. CompactReclaimingDatabaseTests exercises reclaiming compaction, tail truncation, interior Freed-page scrubbing and writer reuse, relationships, calculated and complex columns, encrypted round trips, partial catalog/unassigned-row salvage, frozen application/workgroup fixtures, DAO3.6 Jet3 and required hosted DAO120 Jet4/ACE native round trips. QueryPlanCacheAndProjectionTests, IndexSeekRoundingTests, IndexSeekFilterTests, EntityMapLifetimeTests, QueryIndexOrderingTests and EntityQueryFilteredIncludeTests exercise inward-rounded range rewrites, non-exact numeric equality refusal, seek and query-plan template reuse with live mutable captures and residual short-circuit stop semantics, projection pushdown skipping unreferenced corrupt Memo/long-value columns on table/index/Min/Max/Count/Include reads, extended MinAsync/MaxAsync index admission across non-unique, multi-column leading, IgnoreNulls and nullable integer indexes, weak-LRU type/shape eviction, and MaxIncludeMaterializedPayloadBytesPerOperation refusal.",
+      "remainingAssumptions": "Specification adequacy, Dafny/Z3 soundness, generated projection, C# compilation, CLR/JIT/AOT and BCL implementations remain trusted. Native key/codec semantics, complete index membership and ownership, hashing/identity, actual read/write/partial-failure effects and full public operation composition remain explicit contracts. Count admission is verified; CAS, locks, coalesced ownership coverage, pool/array identity, ephemeron lifetime, decoded payload bytes and complete aggregate CLR memory are reviewed/tested implementation obligations. Text criteria do not yet establish a necessary native-collation seek; key-changing/calculated full-set operations, schema rewrites and unsupported native FK rebuild fallbacks remain separate work. Process kills and managed flush acknowledgements do not qualify physical namespace/device persistence. Exact native fixture/version/locale and physical storage coverage remain scoped by the validation matrix and storage contract. No whole-engine, complete parser, complete concurrency refinement or power-loss claim follows from this receipt. Generated key/bookmark comparison laws do not verify C# sort algorithms, full tree separators/siblings, reciprocal relationship links or complete acquisition. Whole-tree ownership acquisition and O(n log n) sorting/membership remain, and duplicate append cases may rebuild. Scalar long-prefix comparison performance requires hosted paired measurements; correctness controls do not establish a timing improvement. Leaf-chain proof requires complete acquired physical membership and exact immutable header correspondence. It does not establish separator order, child-graph alias freedom, complete native layouts, C# publication effects or aggregate temporary-array byte budgets. Vectorized byte-order sign and BCL List.Sort permutation/order are explicit reviewed/tested contracts, not proved runtime implementations. Locale tables are empirical captured data; unknown profiles and DateTime parsing retain runtime dependencies. CultureInfo cannot report override intent for a value equal to its host default. The tick proof covers arithmetic on supplied valid DateTime ticks, not native locale adequacy or complete expression semantics. The integer-order theorem applies to supplied in-range native values and exact type codes; native key-byte ordering, decoding, metadata/attribute honesty, materializer behavior, complete indexes and full IQueryable semantics remain separate. Index-backed paging intentionally bounds materialization; unvisited I/O, corruption and allocation failures are not whole-source exception guarantees. Stream effects and successful asynchronous disposal remain runtime contracts. Preparing the first release changes no implementation contract or proof-coverage claim. The .NET 11 RC compiler/runtime and collection-expression lowering remain implementation dependencies; this retarget establishes no additional parser, recovery, storage or whole-library proof coverage. Platform classification of supporting process-harness tests adds no production proof or storage guarantee. Physical range admission trusts a meaningful current Stream.Length and exclusive writer ownership or an unchanged reader snapshot. It adds no whole-parser proof, storage durability claim or guarantee for externally resized or dishonest stream adapters; later exact reads still admit EOF and I/O failure. RewriteRoundedSeekOperator, AdmitExtremeIndex and TryReserveBytes verify their scalar operator/order/reservation decisions; CLR numeric conversion and comparison signs, native key-byte order, complete query-plan and projection-mask construction, weak reference collection timing and CLR object-header overhead remain reviewed C#/runtime contracts.",
       "evidence": [
         ".github/workflows/calculated-native-profiles.yml",
         "AGENTS.md",
@@ -56,6 +56,7 @@
         "src/JetDatabaseWriter/AccessCompactOptions.cs",
         "src/JetDatabaseWriter/AccessDatabaseEncryption.cs",
         "src/JetDatabaseWriter/AccessReader.cs",
+        "src/JetDatabaseWriter/AccessReaderOptions.cs",
         "src/JetDatabaseWriter/AccessWriter.cs",
         "src/JetDatabaseWriter/AccessWriterOptions.cs",
         "src/JetDatabaseWriter/Catalog/CatalogWriter.LinkedDeletion.cs",
@@ -82,7 +83,9 @@
         "src/JetDatabaseWriter/Indexes/IndexPageCodec.cs",
         "src/JetDatabaseWriter/Indexes/IndexPageLayout.cs",
         "src/JetDatabaseWriter/Indexes/IndexPlanner.cs",
+        "src/JetDatabaseWriter/Indexes/IndexPredicateTranslator.cs",
         "src/JetDatabaseWriter/Indexes/IndexSchemaEditor.cs",
+        "src/JetDatabaseWriter/Indexes/IndexSeekFilter.cs",
         "src/JetDatabaseWriter/Indexes/Models/IndexEntry.cs",
         "src/JetDatabaseWriter/Indexes/UniqueIndexChecker.cs",
         "src/JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs",
@@ -108,6 +111,8 @@
         "src/JetDatabaseWriter/Maintenance/CompactRawField.cs",
         "src/JetDatabaseWriter/Maintenance/CompactReclamationPlan.cs",
         "src/JetDatabaseWriter/Mapping/EntityMap.cs",
+        "src/JetDatabaseWriter/Mapping/MaterializerCache.cs",
+        "src/JetDatabaseWriter/Mapping/RowShape.cs",
         "src/JetDatabaseWriter/Mapping/ValueCoercer.cs",
         "src/JetDatabaseWriter/Models/CalculatedError.cs",
         "src/JetDatabaseWriter/Models/ColumnDefinition.cs",
@@ -133,11 +138,13 @@
         "src/JetDatabaseWriter/Queries/FilterStage.cs",
         "src/JetDatabaseWriter/Queries/IAccessQueryEngine.cs",
         "src/JetDatabaseWriter/Queries/InMemoryTail.cs",
+        "src/JetDatabaseWriter/Queries/IncludeLoader.cs",
         "src/JetDatabaseWriter/Queries/IncludeOperation.cs",
         "src/JetDatabaseWriter/Queries/IncludeOrderOperation.cs",
         "src/JetDatabaseWriter/Queries/OrderStage.cs",
         "src/JetDatabaseWriter/Queries/QueryLambdaCompiler.cs",
         "src/JetDatabaseWriter/Queries/QueryOrdering.cs",
+        "src/JetDatabaseWriter/Queries/QueryPlanTemplateCache.cs",
         "src/JetDatabaseWriter/Queries/QuerySortKey.cs",
         "src/JetDatabaseWriter/Queries/RuntimeRowMapper.cs",
         "src/JetDatabaseWriter/Queries/SkipStage.cs",
@@ -188,6 +195,7 @@
         "src/JetDatabaseWriter/Tables/TableSchemaEditor.cs",
         "src/JetDatabaseWriter/Tables/TableSnapshotReader.cs",
         "src/JetDatabaseWriter/Transactions/RecoverableWriterLock.cs",
+        "src/JetDatabaseWriter/ValueDecoding/DirectRowDecoderBuilder.cs",
         "src/JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs",
         "src/JetDatabaseWriter/ValueDecoding/RowDecoder.cs",
         "src/JetDatabaseWriter/ValueDecoding/RowMapper.cs",
@@ -309,6 +317,7 @@
         "tests/JetDatabaseWriter.Tests/Queries/QueryLambdaCompilerTests.cs",
         "tests/JetDatabaseWriter.Tests/Queries/QueryOperandEvaluationTests.cs",
         "tests/JetDatabaseWriter.Tests/Queries/QueryPipelineParityTests.cs",
+        "tests/JetDatabaseWriter.Tests/Queries/QueryPlanCacheAndProjectionTests.cs",
         "tests/JetDatabaseWriter.Tests/Queries/RuntimeRowMapperTests.cs",
         "tests/JetDatabaseWriter.Tests/Queries/TypedMappingCoercionTests.cs",
         "tests/JetDatabaseWriter.Tests/Reader/AccessReaderCacheTests.cs",
@@ -505,7 +514,7 @@
         },
         {
           "path": "docs/design/formal-verification.md",
-          "sha256": "361f79649070a7be55900576956f6650da37b603cf48f8b00dc5dcb196ea76fa"
+          "sha256": "c75c0a9c18108a152a1e711de0ff3122b906a71b6a518302cab4f54d15280eaf"
         },
         {
           "path": "docs/design/index-and-relationship-format-notes.md",
@@ -513,7 +522,7 @@
         },
         {
           "path": "docs/design/library-structure.md",
-          "sha256": "8c75a91099a37ba11fb2d7fd8735dbd5e98287524574c776532928b90173567d"
+          "sha256": "3ef6d11bc64189fa6c7d2b3bfcdf02d513bee605f8f32a71f463e1cb4057dc1e"
         },
         {
           "path": "docs/design/long-value-traversal.md",
@@ -545,11 +554,11 @@
         },
         {
           "path": "docs/design/verification-evidence-map.md",
-          "sha256": "d51fe19d83305c4e2520c109bc59e7db1c928d96f5289e26a560de27ca636824"
+          "sha256": "b60190b0e8905c516f6227549df43cf767ce6cc27d9e433fc4460120096cc322"
         },
         {
           "path": "docs/design/verification-scope.md",
-          "sha256": "295b3a956ee6a17b9f375fc114c2528a6aaab793639e67e76ec479b564335025"
+          "sha256": "981eac75814eb73881a10919d7d261da8fec470a523fec6704955f88dab74316"
         },
         {
           "path": "docs/design/writer-disk-format-validation-matrix.md",
@@ -565,7 +574,7 @@
         },
         {
           "path": "docs/reading.md",
-          "sha256": "7e1b9b18ad05308233d9a169b4b7c465fe34dfb411fc8b3afec04745dbedfbdb"
+          "sha256": "85dbd0db3a6dbed5d54c38f3ac99d1c9761b536d50febb4d9ddb6745f7bdf202"
         },
         {
           "path": "docs/support-contract.md",
@@ -614,6 +623,10 @@
         {
           "path": "src/JetDatabaseWriter/AccessReader.cs",
           "sha256": "bd87b92591a34043048cebbef35b5c44dd4161b20dff83f9ac1175953d73720c"
+        },
+        {
+          "path": "src/JetDatabaseWriter/AccessReaderOptions.cs",
+          "sha256": "c5e700fbd03005be0e0421d0700d2233d6030db0251f7b20f100b6641aa7ab5f"
         },
         {
           "path": "src/JetDatabaseWriter/AccessWriter.cs",
@@ -736,12 +749,16 @@
           "sha256": "64666c5e3459bbaff4e853996bc14fb10bf80e048dc53106ebf86f175c125306"
         },
         {
+          "path": "src/JetDatabaseWriter/Indexes/IndexPredicateTranslator.cs",
+          "sha256": "1dcdf959cf067420eb942b8e6b0a24bcb062108b57bb72e17f3ebf53092e884c"
+        },
+        {
           "path": "src/JetDatabaseWriter/Indexes/IndexSchemaEditor.cs",
           "sha256": "4c7634dcb76a47922cd302cc4e6727028a567bd348b31c3b231029bce472bec3"
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexSeekFilter.cs",
-          "sha256": "9188878333b61a9b100d48fdceb30e1b5bf7c7dab74e1fcafdb9d0254f468f60"
+          "sha256": "77646c5d04ed99f1f2c71b670e89501617fa8ee29b3eeb7ef0877a690b238c5b"
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexTreeInventory.cs",
@@ -765,11 +782,11 @@
         },
         {
           "path": "src/JetDatabaseWriter/Infrastructure/BoundedCache.cs",
-          "sha256": "5519f282810e348400a448f37f1dacc90c8bafcc4f5fe4c0206cf2181474d7ad"
+          "sha256": "ad8f372f39545dc7ed336f05b809bdc4c7424575131d82dfe219f60434858d3f"
         },
         {
           "path": "src/JetDatabaseWriter/Infrastructure/ClosureValueReader.cs",
-          "sha256": "042756968ca4f533299d229a81fb69fb3cbbd537263728489f54fd60ec5cc33f"
+          "sha256": "d0a94fe2222c13bfd7e75ab1b67e1c3bf9a77ec8d35e2804f571717ce9254f74"
         },
         {
           "path": "src/JetDatabaseWriter/Infrastructure/ComplexItemIdentityBudget.cs",
@@ -933,7 +950,15 @@
         },
         {
           "path": "src/JetDatabaseWriter/Mapping/EntityMap.cs",
-          "sha256": "a132d31f1cec1e3e374fb47ca020d08b1418dff95d206659a89ae7c45c55ac05"
+          "sha256": "fab0ad4f8c174b0824904952589200413a89955af1fd989a51266fe110888609"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Mapping/MaterializerCache.cs",
+          "sha256": "b46cee3574370a81d62df45e79af859a6fb57c5fc296945c1398ef49fb4d849f"
+        },
+        {
+          "path": "src/JetDatabaseWriter/Mapping/RowShape.cs",
+          "sha256": "badc4e50aae2b68f0188a6a8d8be76961704d8f0f323aaa2a09ded37625990e7"
         },
         {
           "path": "src/JetDatabaseWriter/Mapping/ValueCoercer.cs",
@@ -1041,11 +1066,11 @@
         },
         {
           "path": "src/JetDatabaseWriter/Queries/AccessQueryProvider.cs",
-          "sha256": "b4db544d401c3711387ecead95b7e4ff0d66212dfecb46bfbefbfedd52d09a7a"
+          "sha256": "ba05efd843331c4050f039b07386ea3da6e24670a92209a629c3b0cb44849afa"
         },
         {
           "path": "src/JetDatabaseWriter/Queries/AccessQueryTranslator.cs",
-          "sha256": "88d7b32606dfea04c0c71df728141ce109015fedc9130af995fefae42ad5ee19"
+          "sha256": "1b012a05701bd6c9da72beef27c81e334daa51264edd582d30ce00937162958b"
         },
         {
           "path": "src/JetDatabaseWriter/Queries/FilterStage.cs",
@@ -1057,11 +1082,11 @@
         },
         {
           "path": "src/JetDatabaseWriter/Queries/InMemoryTail.cs",
-          "sha256": "9de7c0cc475eeb91acceeb4dc0dbe043df934248c164fabc8a7dc5db905c48ab"
+          "sha256": "46fd4e770707fcdb9770432bce257575f1c6a585a05d7ae7d8f4d2dd0bfa0693"
         },
         {
           "path": "src/JetDatabaseWriter/Queries/IncludeLoader.cs",
-          "sha256": "38e990acb8c62cbb7033cf1540ae5ff1a4b769396447b9356176ef79e8b69ddf"
+          "sha256": "8f58cb32a88b2b5316884462efb0f7f90ffb94d6ccd1b0acdbc545dfa8b1c792"
         },
         {
           "path": "src/JetDatabaseWriter/Queries/IncludeOperation.cs",
@@ -1073,7 +1098,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Queries/OrderStage.cs",
-          "sha256": "faeda924fbe122c37223c322245af9cb1ee36b47f8a5275168a9640fbb2de8d3"
+          "sha256": "36d7758df6eb233296a739c7cf940d4f3ad7929bd6485d8df755727cb4641290"
         },
         {
           "path": "src/JetDatabaseWriter/Queries/QueryLambdaCompiler.cs",
@@ -1084,12 +1109,16 @@
           "sha256": "32b94d09ab4ff962d40ed919f5345f33a627b3175e78a75de44a8219d9835922"
         },
         {
+          "path": "src/JetDatabaseWriter/Queries/QueryPlanTemplateCache.cs",
+          "sha256": "14318515c3e914c86e10af90530ad2e122bffd639018f021663cafb8188d8c40"
+        },
+        {
           "path": "src/JetDatabaseWriter/Queries/QuerySortKey.cs",
           "sha256": "23e0669e66bf98fd0acea751a51a9a05772bd3dc11e08074470cd616a1109f8a"
         },
         {
           "path": "src/JetDatabaseWriter/Queries/RuntimeRowMapper.cs",
-          "sha256": "0f09fcde0f0b23d84f33bfc1d6d6e9f4237bf1c8b4b6735af73dcbbb455b8b6d"
+          "sha256": "f16fd8cbf068787f52baf51949049c62e6a747af72984afae3b4311e117ef80a"
         },
         {
           "path": "src/JetDatabaseWriter/Queries/SkipStage.cs",
@@ -1105,7 +1134,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/ReaderServices.cs",
-          "sha256": "7e222f0ac923af1c3c3678cd68371dafa866ade8310e69e8a996a9e7168539c8"
+          "sha256": "95dded661bd5fb011810dd4d62a500db04b5740dc54c9c8ec6cdcf816f7f1777"
         },
         {
           "path": "src/JetDatabaseWriter/Relationships/LinkedSourcePolicy.cs",
@@ -1241,7 +1270,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Tables/IndexRowReader.cs",
-          "sha256": "7144ade3a78fbed79bbdde7b32e72670213ef938e9af42129da403b2dfa6533d"
+          "sha256": "c52734187d88d30fd995f3e1b38eacb9df1ba3bb8532a90cdc51bf07ca688344"
         },
         {
           "path": "src/JetDatabaseWriter/Tables/MutationExecutor.cs",
@@ -1261,7 +1290,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableReader.cs",
-          "sha256": "d29980bc7b93f447092d053127d777859b4c2e2682afacf6ac5c44fa67ffbd40"
+          "sha256": "c2841ff2d0ed0845e2b549b57549e2eaa354e2181da849454b54add4b989655d"
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableRewritePlanner.cs",
@@ -1293,7 +1322,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/ValueDecoding/DirectRowDecoderBuilder.cs",
-          "sha256": "ccc585db759ac5496e4d3cec20899081100fe915002188bf35d921f22576ef24"
+          "sha256": "cab6b085791c0364107e0338b737327bb73f9e67c512f74ac97a94d3c2b0f3f3"
         },
         {
           "path": "src/JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs",
@@ -1309,7 +1338,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/ValueDecoding/RowMapper.cs",
-          "sha256": "ee9f04d270c9964f5bce0cbfdef01bc3bc858a6f72265004d18e1a316f146b18"
+          "sha256": "a5ed0cef4e6f36fbfe8c8f1ae6cc8bd6b1497dcd80093a13ee1640cf9a8920c4"
         },
         {
           "path": "src/JetDatabaseWriter/ValueDecoding/RowReadAccounting.cs",
@@ -1341,7 +1370,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Verification/IndexMutationKernel.g.cs",
-          "sha256": "f97357b0f9637523339cf18bf1ce0b8758d509cbb2700771543b26f97bf13242"
+          "sha256": "bf35b90669ab15c3c3d37c221ce30fc99d9cc45dfa64bdc071fd295692479157"
         },
         {
           "path": "src/JetDatabaseWriter/Verification/LongValueKernel.g.cs",
@@ -1353,7 +1382,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Verification/RecoveryKernel.g.cs",
-          "sha256": "f4e705706fb7d627b89ada44858374c7b4d90735a787bd112deb93a01457caf9"
+          "sha256": "21971b06ab69799eb014309bcd35429f1ffd837fa91e05a68568a9b8ffc5acb0"
         },
         {
           "path": "src/JetDatabaseWriter/Verification/UsageMapKernel.g.cs",
@@ -1601,11 +1630,11 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexSeekFilterTests.cs",
-          "sha256": "740c512b183a87f636cd8b26581aa028578b3f0f5080602d480799db850f4243"
+          "sha256": "70945d5003296afdd9cee2f54e629efacd6206654d1f701048b4ba69af8f942b"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexSeekRoundingTests.cs",
-          "sha256": "e04d3a71d2842935b15fd66bc7ef0ad2081d804355015368a665cea6cedf4589"
+          "sha256": "50728be0094ac3e6e2c85e3f1b03ac373060730ce03e51f1ccb13e37d62f7f27"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IntermediateIndexCycleTests.cs",
@@ -1785,15 +1814,15 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Queries/EntityMapLifetimeTests.cs",
-          "sha256": "3170a9bcc50e17569ed3897e9308d19bfa0064387e4f2509846905f47baf0b41"
+          "sha256": "75a9cd471a71b5f835498ab93e4c5d10ddc37df7a32b84a911c2dd1f24c158bb"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Queries/EntityQueryFilteredIncludeTests.cs",
-          "sha256": "71be33fc9b2d82a56f08094c7e4ef1ae4f43168a7617d422a4139887c418322a"
+          "sha256": "6eefd6c2f3f564cc864f25f27f1d9300a17272d8b8fcad056a14d59262f9bbec"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Queries/QueryIndexOrderingTests.cs",
-          "sha256": "435e339a733528a428e75ab76689ad966fdd757e2ae52505de5d823b40b3c206"
+          "sha256": "e7a8ef52fba9e0a434ca62455f6cb7fe0bbfffb58fe64d6e0c113735e7bcd9e5"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Queries/QueryLambdaCompilerTests.cs",
@@ -1806,6 +1835,10 @@
         {
           "path": "tests/JetDatabaseWriter.Tests/Queries/QueryPipelineParityTests.cs",
           "sha256": "c8d35887891b614ce78db15df2d7ac80f5274b6648cb3f4bc50e7a807e6e70b6"
+        },
+        {
+          "path": "tests/JetDatabaseWriter.Tests/Queries/QueryPlanCacheAndProjectionTests.cs",
+          "sha256": "0a1e91b9c53fdf505cfe52295e217231677e5698192dda10901198d75b812e49"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Queries/RuntimeRowMapperTests.cs",
@@ -2529,7 +2562,7 @@
         },
         {
           "path": "docs/design/formal-verification.md",
-          "sha256": "361f79649070a7be55900576956f6650da37b603cf48f8b00dc5dcb196ea76fa"
+          "sha256": "c75c0a9c18108a152a1e711de0ff3122b906a71b6a518302cab4f54d15280eaf"
         },
         {
           "path": "docs/design/index-and-relationship-format-notes.md",
@@ -2537,7 +2570,7 @@
         },
         {
           "path": "docs/design/library-structure.md",
-          "sha256": "8c75a91099a37ba11fb2d7fd8735dbd5e98287524574c776532928b90173567d"
+          "sha256": "3ef6d11bc64189fa6c7d2b3bfcdf02d513bee605f8f32a71f463e1cb4057dc1e"
         },
         {
           "path": "docs/design/long-value-traversal.md",
@@ -2581,11 +2614,11 @@
         },
         {
           "path": "docs/design/verification-evidence-map.md",
-          "sha256": "d51fe19d83305c4e2520c109bc59e7db1c928d96f5289e26a560de27ca636824"
+          "sha256": "b60190b0e8905c516f6227549df43cf767ce6cc27d9e433fc4460120096cc322"
         },
         {
           "path": "docs/design/verification-scope.md",
-          "sha256": "295b3a956ee6a17b9f375fc114c2528a6aaab793639e67e76ec479b564335025"
+          "sha256": "981eac75814eb73881a10919d7d261da8fec470a523fec6704955f88dab74316"
         },
         {
           "path": "docs/design/writer-lifecycle.md",
@@ -2597,7 +2630,7 @@
         },
         {
           "path": "docs/reading.md",
-          "sha256": "7e1b9b18ad05308233d9a169b4b7c465fe34dfb411fc8b3afec04745dbedfbdb"
+          "sha256": "85dbd0db3a6dbed5d54c38f3ac99d1c9761b536d50febb4d9ddb6745f7bdf202"
         },
         {
           "path": "docs/support-contract.md",
@@ -2805,7 +2838,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Infrastructure/ClosureValueReader.cs",
-          "sha256": "042756968ca4f533299d229a81fb69fb3cbbd537263728489f54fd60ec5cc33f"
+          "sha256": "d0a94fe2222c13bfd7e75ab1b67e1c3bf9a77ec8d35e2804f571717ce9254f74"
         },
         {
           "path": "src/JetDatabaseWriter/Infrastructure/ComplexItemIdentityBudget.cs",
@@ -2869,7 +2902,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/ReaderServices.cs",
-          "sha256": "7e222f0ac923af1c3c3678cd68371dafa866ade8310e69e8a996a9e7168539c8"
+          "sha256": "95dded661bd5fb011810dd4d62a500db04b5740dc54c9c8ec6cdcf816f7f1777"
         },
         {
           "path": "src/JetDatabaseWriter/Schema/Models/ColumnPropertyBlock.cs",
@@ -2877,7 +2910,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Tables/IndexRowReader.cs",
-          "sha256": "7144ade3a78fbed79bbdde7b32e72670213ef938e9af42129da403b2dfa6533d"
+          "sha256": "c52734187d88d30fd995f3e1b38eacb9df1ba3bb8532a90cdc51bf07ca688344"
         },
         {
           "path": "src/JetDatabaseWriter/Tables/MutationExecutor.cs",
@@ -2941,11 +2974,11 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexSeekFilterTests.cs",
-          "sha256": "740c512b183a87f636cd8b26581aa028578b3f0f5080602d480799db850f4243"
+          "sha256": "70945d5003296afdd9cee2f54e629efacd6206654d1f701048b4ba69af8f942b"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/IndexSeekRoundingTests.cs",
-          "sha256": "e04d3a71d2842935b15fd66bc7ef0ad2081d804355015368a665cea6cedf4589"
+          "sha256": "50728be0094ac3e6e2c85e3f1b03ac373060730ce03e51f1ccb13e37d62f7f27"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Infrastructure/CrashRecoveryProcess.cs",
@@ -3133,7 +3166,7 @@
         },
         {
           "path": "verification/Indexes/IndexMutationKernel.dfy",
-          "sha256": "30c03ff73417d31b3f662a2d46269030feece2d802beb84ab71c3ecb753d8bb2"
+          "sha256": "5a86a6bd8860f7cb6b39938d13ba8ae5b95fa493fd0d5b1f8762e29363f34b40"
         },
         {
           "path": "verification/LongValues/LongValueKernel.dfy",
@@ -3157,7 +3190,7 @@
         },
         {
           "path": "verification/Pages/Paging/RecoveryKernel.dfy",
-          "sha256": "06c554d7f669eab77d88135f74750d339cca09f0344e0e24a388e4f94e979cfe"
+          "sha256": "94f1aa3751b331e611c6a9443c719409954e4957f63558a84209fc540c573714"
         },
         {
           "path": "verification/Pages/Paging/UndoJournal.dfy",

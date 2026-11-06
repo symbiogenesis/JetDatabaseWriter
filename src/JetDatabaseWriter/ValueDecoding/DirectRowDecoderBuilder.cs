@@ -83,14 +83,31 @@ internal static class DirectRowDecoderBuilder
             return null;
         }
 
-        return RowMapper<T>.GetDirect(new RowShape(headers, clrTypes, columns), () => TryBuildUncached<T>(headers, columns, clrTypes));
+        return RowMapper<T>.GetDirect(new RowShape(headers, clrTypes, columns), () => TryBuildUncached<T>(headers, columns, clrTypes, wantedColumns: null));
     }
 
     /// <summary>Gets a direct decoder cached against the table's immutable shape.</summary>
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="td">The table definition.</param>
     internal static DirectRowDecoder<T>? TryBuild<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(Catalog.Models.TableDef td)
-        where T : class, new() => RowMapper<T>.GetDirect(td.Shape, () => TryBuildUncached<T>(td.Columns.Select(static column => column.Name).ToArray(), td.Columns, td.ClrTypes));
+        where T : class, new()
+        => TryBuild<T>(td, wantedColumns: null);
+
+    /// <summary>Gets a direct decoder cached against the table's immutable shape and optional column projection mask.</summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="td">The table definition.</param>
+    /// <param name="wantedColumns">Optional column projection mask.</param>
+    internal static DirectRowDecoder<T>? TryBuild<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
+        Catalog.Models.TableDef td,
+        bool[]? wantedColumns)
+        where T : class, new()
+        => RowMapper<T>.GetDirect(
+            td.GetShape(wantedColumns),
+            () => TryBuildUncached<T>(
+                td.Columns.Select(static column => column.Name).ToArray(),
+                td.Columns,
+                td.ClrTypes,
+                wantedColumns));
 
     /// <summary>Builds a scalar/OLE decoder, or refuses unsupported bound properties.</summary>
     /// <typeparam name="T">The target row type.</typeparam>
@@ -111,26 +128,49 @@ internal static class DirectRowDecoderBuilder
             return null;
         }
 
-        return RowMapper<T>.GetHybrid(new RowShape(headers, clrTypes, columns), () => TryBuildHybridUncached<T>(headers, columns, clrTypes));
+        return RowMapper<T>.GetHybrid(new RowShape(headers, clrTypes, columns), () => TryBuildHybridUncached<T>(headers, columns, clrTypes, wantedColumns: null));
     }
 
     /// <summary>Gets the hybrid decoder cached against an immutable table shape.</summary>
     /// <typeparam name="T">The target row type.</typeparam>
     /// <param name="td">The table definition.</param>
     internal static HybridRowDecodePlan<T>? TryBuildHybrid<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(Catalog.Models.TableDef td)
-        where T : class, new() => RowMapper<T>.GetHybrid(td.Shape, () => TryBuildHybridUncached<T>(td.Columns.Select(static column => column.Name).ToArray(), td.Columns, td.ClrTypes));
+        where T : class, new()
+        => TryBuildHybrid<T>(td, wantedColumns: null);
+
+    /// <summary>Gets the hybrid decoder cached against an immutable table shape and optional column projection mask.</summary>
+    /// <typeparam name="T">The target row type.</typeparam>
+    /// <param name="td">The table definition.</param>
+    /// <param name="wantedColumns">Optional column projection mask.</param>
+    internal static HybridRowDecodePlan<T>? TryBuildHybrid<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
+        Catalog.Models.TableDef td,
+        bool[]? wantedColumns)
+        where T : class, new()
+        => RowMapper<T>.GetHybrid(
+            td.GetShape(wantedColumns),
+            () => TryBuildHybridUncached<T>(
+                td.Columns.Select(static column => column.Name).ToArray(),
+                td.Columns,
+                td.ClrTypes,
+                wantedColumns));
 
     private static HybridRowDecodePlan<T>? TryBuildHybridUncached<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         IReadOnlyList<string> headers,
         IReadOnlyList<ColumnInfo> columns,
-        IReadOnlyList<Type> clrTypes)
+        IReadOnlyList<Type> clrTypes,
+        bool[]? wantedColumns)
         where T : class, new()
     {
-        var bound = new List<(int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col)>();
+        var bound = new List<(int Index, EntityProperty Accessor, ColumnInfo Col)>();
         var oleColumns = new List<(string Name, Action<T, byte[]> Assign)>();
         for (int i = 0; i < headers.Count; i++)
         {
-            RowMapper<T>.Accessor? accessor = RowMapper<T>.TryGetAccessor(headers[i]);
+            if (wantedColumns != null && i < wantedColumns.Length && !wantedColumns[i])
+            {
+                continue;
+            }
+
+            EntityProperty? accessor = RowMapper<T>.TryGetAccessor(headers[i]);
             if (accessor is null)
             {
                 continue;
@@ -180,7 +220,11 @@ internal static class DirectRowDecoderBuilder
             : new HybridRowDecodePlan<T>(Emit<T, HybridRowDecoder<T>>(bound, hybrid: true), oleColumns.ToArray());
     }
 
-    private static DirectRowDecoder<T>? TryBuildUncached<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(IReadOnlyList<string> headers, IReadOnlyList<ColumnInfo> columns, IReadOnlyList<Type> clrTypes)
+    private static DirectRowDecoder<T>? TryBuildUncached<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
+        IReadOnlyList<string> headers,
+        IReadOnlyList<ColumnInfo> columns,
+        IReadOnlyList<Type> clrTypes,
+        bool[]? wantedColumns)
         where T : class, new()
     {
         Guard.NotNull(headers, nameof(headers));
@@ -193,10 +237,15 @@ internal static class DirectRowDecoderBuilder
             return null;
         }
 
-        var bound = new List<(int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col)>();
+        var bound = new List<(int Index, EntityProperty Accessor, ColumnInfo Col)>();
         for (int i = 0; i < columnCount; i++)
         {
-            RowMapper<T>.Accessor? acc = RowMapper<T>.TryGetAccessor(headers[i]);
+            if (wantedColumns != null && i < wantedColumns.Length && !wantedColumns[i])
+            {
+                continue;
+            }
+
+            EntityProperty? acc = RowMapper<T>.TryGetAccessor(headers[i]);
             if (acc == null)
             {
                 continue;
@@ -234,7 +283,7 @@ internal static class DirectRowDecoderBuilder
     }
 
     private static TDelegate Emit<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T, TDelegate>(
-        List<(int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col)> bound,
+        List<(int Index, EntityProperty Accessor, ColumnInfo Col)> bound,
         bool hybrid)
         where T : class, new()
         where TDelegate : Delegate
@@ -270,7 +319,7 @@ internal static class DirectRowDecoderBuilder
             Expression.Return(returnLabel, Expression.Constant(false))),
         };
 
-        foreach ((int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col) entry in bound)
+        foreach ((int Index, EntityProperty Accessor, ColumnInfo Col) entry in bound)
         {
             ColumnInfo col = entry.Col;
             ConstantExpression colExpr = Expression.Constant(col, typeof(ColumnInfo));

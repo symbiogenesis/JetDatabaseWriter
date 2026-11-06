@@ -1,7 +1,9 @@
 namespace JetDatabaseWriter.Queries;
 
 using System.Collections.Generic;
+using System.Linq.Expressions;
 using JetDatabaseWriter.Exceptions;
+using static JetDatabaseWriter.Queries.QueryPlanTemplateCache;
 
 /// <summary>
 /// The translated form of a query expression tree: the operators the provider knows
@@ -16,6 +18,14 @@ internal sealed class AccessQueryPlan
     public List<QueryStage> Stages { get; } = [];
 
     public List<List<IncludeStep>> IncludePaths { get; } = [];
+
+    public HashSet<string>? ReferencedColumns { get; init; }
+
+    public HashSet<string>? EngineOnlyReferencedColumns { get; init; }
+
+    public TailGroupTemplate[]? TailTemplate { get; init; }
+
+    public IReadOnlyList<MethodCallExpression>? TailCalls { get; init; }
 
     public void StartInclude(IncludeStep step) => this.IncludePaths.Add([step]);
 

@@ -27,17 +27,6 @@ using JetDatabaseWriter.Schema;
 internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>
     where T : new()
 {
-    private static readonly BoundedCache<RowShape, Materializers> Cache = new(64);
-    private static readonly Lazy<Dictionary<string, Accessor>> PropertyMapCache = new(BuildPropertyMap, LazyThreadSafetyMode.PublicationOnly);
-
-    /// <summary>
-    /// Gets the column name to accessor map, built from <see cref="EntityMap"/> on
-    /// first use. It is built lazily rather than by the static initializer so that a mapping
-    /// error, such as two properties naming one column, surfaces as its own exception
-    /// instead of a <see cref="TypeInitializationException"/> that poisons the type.
-    /// </summary>
-    private static Dictionary<string, Accessor> PropertyMap => PropertyMapCache.Value;
-
     /// <summary>
     /// Returns a boolean mask the same length as <paramref name="headers"/> indicating
     /// which header indices the compiled mapper actually consumes (i.e. those whose
@@ -46,31 +35,31 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     /// that <typeparamref name="T"/> never reads.
     /// </summary>
     /// <param name="headers">The headers.</param>
-    public static bool[] GetBoundColumnMask(IReadOnlyList<string> headers)
+    /// <param name="projectedColumns">Optional projection mask restricting the columns to decode.</param>
+    public static bool[] GetBoundColumnMask(IReadOnlyList<string> headers, IReadOnlyList<bool>? projectedColumns = null)
     {
         Guard.NotNull(headers, nameof(headers));
+        var map = EntityMap.For(typeof(T));
         int count = headers.Count;
         bool[] mask = new bool[count];
         for (int i = 0; i < count; i++)
         {
-            mask[i] = PropertyMap.ContainsKey(headers[i]);
+            mask[i] = (projectedColumns == null || i >= projectedColumns.Count || projectedColumns[i])
+                && map.FindByColumn(headers[i]) is not null;
         }
 
         return mask;
     }
 
     /// <summary>
-    /// Returns the <see cref="Accessor"/> for the property mapped to the
+    /// Returns the <see cref="EntityProperty"/> for the property mapped to the
     /// column <paramref name="header"/> (case-insensitive), or
     /// <see langword="null"/> when no property matches. Used by the
     /// direct-decoder builder.
     /// </summary>
     /// <param name="header">The header.</param>
-    internal static Accessor? TryGetAccessor(string header)
-    {
-        PropertyMap.TryGetValue(header, out Accessor? acc);
-        return acc;
-    }
+    internal static EntityProperty? TryGetAccessor(string header) =>
+        EntityMap.For(typeof(T)).FindByColumn(header);
 
     /// <summary>
     /// <para>
@@ -89,18 +78,27 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     /// </summary>
     /// <param name="headers">The headers.</param>
     /// <param name="sourceTypes">The source types.</param>
+    /// <param name="wantedColumns">Optional column projection mask.</param>
     /// <returns>The mapper. It throws <see cref="InvalidCastException"/> for a value its property cannot hold.</returns>
-    public static Func<object?[], T> Build(IReadOnlyList<string> headers, IReadOnlyList<Type>? sourceTypes = null)
+    public static Func<object?[], T> Build(IReadOnlyList<string> headers, IReadOnlyList<Type>? sourceTypes = null, IReadOnlyList<bool>? wantedColumns = null)
     {
         Guard.NotNull(headers, nameof(headers));
-        return GetRead(new RowShape(headers, sourceTypes), headers, sourceTypes);
+        return GetRead(new RowShape(headers, sourceTypes, layout: null, wantedColumns), headers, sourceTypes, wantedColumns);
     }
 
     /// <summary>Gets the mapper cached against a table's immutable shape.</summary>
     /// <param name="td">The table definition.</param>
-    internal static Func<object?[], T> Build(TableDef td)
+    public static Func<object?[], T> Build(TableDef td)
+        => Build(td, wantedColumns: null);
+
+    /// <summary>Gets the mapper cached against a table's immutable shape and optional column projection mask.</summary>
+    /// <param name="td">The table definition.</param>
+    /// <param name="wantedColumns">Optional column projection mask.</param>
+    public static Func<object?[], T> Build(TableDef td, bool[]? wantedColumns)
     {
-        Materializers entry = Cache.GetOrCreate(td.Shape, static _ => new Materializers());
+        Guard.NotNull(td, nameof(td));
+        RowShape shape = td.GetShape(wantedColumns);
+        Materializers entry = MaterializerCache.GetOrCreate(typeof(T), shape, static _ => new Materializers());
         if (entry.Read is { } read)
         {
             return read;
@@ -108,7 +106,7 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
 
         lock (entry)
         {
-            return entry.Read ??= BuildUncached(td.Columns.Select(static column => column.Name).ToArray(), td.ClrTypes);
+            return entry.Read ??= BuildUncached(td.Columns.Select(static column => column.Name).ToArray(), td.ClrTypes, wantedColumns);
         }
     }
 
@@ -119,7 +117,7 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     internal static TDelegate? GetDirect<TDelegate>(RowShape shape, Func<TDelegate?> create)
         where TDelegate : class
     {
-        Materializers entry = Cache.GetOrCreate(shape, static _ => new Materializers());
+        Materializers entry = MaterializerCache.GetOrCreate(typeof(T), shape, static _ => new Materializers());
         if (entry.DirectInitialized)
         {
             return (TDelegate?)entry.Direct;
@@ -142,7 +140,7 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     /// <param name="create">The decoder factory.</param>
     internal static HybridRowDecodePlan<T>? GetHybrid(RowShape shape, Func<HybridRowDecodePlan<T>?> create)
     {
-        Materializers entry = Cache.GetOrCreate(shape, static _ => new Materializers());
+        Materializers entry = MaterializerCache.GetOrCreate(typeof(T), shape, static _ => new Materializers());
         if (entry.HybridInitialized)
         {
             return entry.Hybrid;
@@ -160,9 +158,13 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
         }
     }
 
-    private static Func<object?[], T> GetRead(RowShape shape, IReadOnlyList<string> headers, IReadOnlyList<Type>? types)
+    private static Func<object?[], T> GetRead(
+        RowShape shape,
+        IReadOnlyList<string> headers,
+        IReadOnlyList<Type>? types,
+        IReadOnlyList<bool>? wantedColumns)
     {
-        Materializers entry = Cache.GetOrCreate(shape, static _ => new Materializers());
+        Materializers entry = MaterializerCache.GetOrCreate(typeof(T), shape, static _ => new Materializers());
         if (entry.Read is { } read)
         {
             return read;
@@ -170,11 +172,14 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
 
         lock (entry)
         {
-            return entry.Read ??= BuildUncached(headers, types);
+            return entry.Read ??= BuildUncached(headers, types, wantedColumns);
         }
     }
 
-    private static Func<object?[], T> BuildUncached(IReadOnlyList<string> headers, IReadOnlyList<Type>? sourceTypes)
+    private static Func<object?[], T> BuildUncached(
+        IReadOnlyList<string> headers,
+        IReadOnlyList<Type>? sourceTypes,
+        IReadOnlyList<bool>? wantedColumns)
     {
         ParameterExpression rowParam = Expression.Parameter(typeof(object?[]), "row");
         ParameterExpression itemLocal = Expression.Variable(typeof(T), "item");
@@ -193,16 +198,23 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
             Expression.Assign(lenLocal, Expression.ArrayLength(rowParam)),
         };
 
+        var map = EntityMap.For(typeof(T));
         for (int i = 0; i < columnCount; i++)
         {
-            if (!PropertyMap.TryGetValue(headers[i], out Accessor? acc))
+            if (wantedColumns != null && i < wantedColumns.Count && !wantedColumns[i])
+            {
+                continue;
+            }
+
+            EntityProperty? acc = map.FindByColumn(headers[i]);
+            if (acc is null)
             {
                 continue;
             }
 
             PropertyInfo prop = acc.Property;
             Type propType = prop.PropertyType;
-            Type underlying = Nullable.GetUnderlyingType(propType) ?? propType;
+            Type underlying = acc.TargetType;
             Type? sourceType = i < sourceCount ? sourceTypes![i] : null;
             bool fastDirect = sourceType != null && sourceType == underlying;
 
@@ -303,7 +315,7 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     public static object[] ToRow(TableDef td, T item)
     {
         Guard.NotNull(td, nameof(td));
-        Materializers entry = Cache.GetOrCreate(td.Shape, static _ => new Materializers());
+        Materializers entry = MaterializerCache.GetOrCreate(typeof(T), td.Shape, static _ => new Materializers());
         Func<T, object[]>? writer = entry.Write;
         if (writer is null)
         {
@@ -365,14 +377,13 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
         ConstantExpression dbNull = Expression.Constant(DBNull.Value, typeof(object));
         ConstantExpression dbDefault = Expression.Constant(DbDefault.Value, typeof(object));
 
-        // Build the array via NewArrayInit so the compiled body is a single
-        // `newarr` followed by inline `stelem.ref` per element — no scratch
-        // local, no Block, no per-element ArrayAccess assignment expression.
+        var map = EntityMap.For(typeof(T));
         var values = new Expression[count];
         for (int i = 0; i < count; i++)
         {
             Expression valueExpr;
-            if (PropertyMap.TryGetValue(td.Columns[i].Name, out Accessor? acc) && acc.Property.CanRead)
+            EntityProperty? acc = map.FindByColumn(td.Columns[i].Name);
+            if (acc?.Property.CanRead == true)
             {
                 Type pt = acc.Property.PropertyType;
                 Expression propAccess = Expression.Property(itemParam, acc.Property);
@@ -469,18 +480,6 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     /// <param name="type">A non-nullable value type.</param>
     private static bool CanCompareToDefault(Type type) => type.IsPrimitive || type.IsEnum || type == typeof(decimal) || type == typeof(Guid);
 
-    private static Dictionary<string, Accessor> BuildPropertyMap()
-    {
-        IReadOnlyList<EntityProperty> properties = EntityMap.For(typeof(T)).Properties;
-        var map = new Dictionary<string, Accessor>(properties.Count, StringComparer.OrdinalIgnoreCase);
-        foreach (EntityProperty property in properties)
-        {
-            map[property.ColumnName] = new Accessor(property.Property);
-        }
-
-        return map;
-    }
-
     /// <summary>Publishes compiled values and null decoder refusals once so warm lookups need no entry lock.</summary>
     private sealed class Materializers
     {
@@ -511,16 +510,5 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
             get => Volatile.Read(ref field);
             set => Volatile.Write(ref field, value);
         }
-    }
-
-    /// <summary>
-    /// Property accessor holding the mapped property and its pre-resolved target type.
-    /// </summary>
-    /// <param name="prop">The mapped property.</param>
-    internal sealed class Accessor(PropertyInfo prop)
-    {
-        public Type TargetType { get; } = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
-
-        internal PropertyInfo Property { get; } = prop;
     }
 }

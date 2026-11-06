@@ -20,7 +20,7 @@ The [proof and algorithm survey](proof-survey.md) maps recent research to these 
 
 `RecoveryKernel.VariableValueAdmitted` executes ordinary variable Text/Binary width admission. It proves the exact logical UTF-16 and encoded-byte bounds without overflowing native arithmetic. `RowEncoder` encodes admitted values completely and refuses oversized values instead of clipping them; statement preflight and rollback remain the containing C# contract. Native codecs, index-key construction and their complete correspondence are not proved by this arithmetic predicate. `VariableValueWidthTests` exercises public insert, batch, update, boundary Unicode values, exact byte restoration, AutoNumber restoration and index lookup.
 
-`DataPageKernel.TryReserveCount` proves exact bounded count reservation and unchanged refusal. Reader page acquisition uses it before pending/live leases, and Include uses it before each related entity mapping across navigation paths. Concurrent miss coalescing, CAS publication, cancellation, pool/array identity and payload-byte allocation remain C#/CLR effects. These are named count budgets, not a whole-process memory proof; see the [frame contract](page-frame-ownership.md).
+`DataPageKernel.TryReserveCount` proves exact bounded count reservation and unchanged refusal, and `RecoveryKernel.TryReserveBytes` proves exact bounded 32-bit byte reservation without arithmetic overflow. Reader page acquisition uses `TryReserveCount` before pending/live leases, and Include uses `TryReserveCount` before each related entity mapping and `TryReserveBytes` before retaining each related variable-width or long-value payload across navigation paths. Concurrent miss coalescing, CAS publication, cancellation, pool/array identity and CLR object overhead remain C#/CLR effects. These are named count and payload-byte budgets, not a whole-process memory proof; see the [frame contract](page-frame-ownership.md).
 
 `IndexMutationKernel.SelectMutationPredicates` proves full unique-key equality admission and the exact predicate selected for every component. Generated bookmark decisions reject multiple results and disagreement between acquired and decoded rows. Production re-encodes the live key, retains residual predicates and refuses unsupported key semantics. Native key encoding/comparison, index completeness and the surrounding scan/mutation remain separate contracts. Text criteria continue scanning until their equality semantics can safely imply a native seek.
 
@@ -388,15 +388,20 @@ parser, tree and mutation proofs remain in V8/V9/V12.
 ## Numeric seek admission and relocation ledgers
 
 `RecoveryKernel.IsOutwardSeekBound` admits exact numeric equality and range
-bounds whose conversion moves away from matching values. Its order theorem
-preserves every original match without changing strict/inclusive endpoints.
-`IndexSeekFilter` executes this decision after checking lossless property and
-operand domains and comparing nearest-even encoded values with the original
-operand. Integral, Currency, declared-scale Decimal and finite Single rounding
-may broaden a range; the original residual predicate still filters every row.
-Overflow, NaN, unsafe inward rounding and nonexact numeric equality refuse.
-The existing Date/Time policy uses the same range decision, retaining its
-whole-millisecond equality exception.
+bounds whose conversion moves away from matching values, and
+`RecoveryKernel.RewriteRoundedSeekOperator` admits every nearest-key rounded
+inclusive range bound while rewriting inward-rounded strict range bounds (`>` to
+`>=` when `comparison > 0`, `<` to `<=` when `comparison < 0`) to their inclusive
+nearest-key counterparts. `OutwardSeekBoundRetainsEveryOriginalMatch` and
+`RewrittenSeekBoundRetainsEveryNearestMatch` prove that every stored key whose
+relationship to the original operand satisfies the predicate also satisfies the
+admitted or rewritten key bound. `IndexSeekFilter` executes these decisions after
+checking lossless property and operand domains and comparing nearest-even encoded
+values with the original operand. Integral, Currency, declared-scale Decimal and
+finite Single rounding may broaden a range or rewrite an inward strict endpoint to
+its inclusive nearest key; the original residual predicate still filters every row.
+Overflow, NaN and nonexact numeric equality refuse. The existing Date/Time policy
+uses the outward range decision, retaining its whole-millisecond equality exception.
 
 `IsFloatingZeroSeekBound` separately accounts for the distinct index encodings
 of CLR-equal negative and positive zero. Strict zero ranges remain admissible;
@@ -406,12 +411,12 @@ zero observations. Numeric conversion, comparison signs and native key order
 remain adapter contracts, checked by independent encoded-key vectors for
 supported orders and both Decimal key forms, plus public indexed-versus-scan tests.
 These are scalar admission proofs, not complete query-planner refinement or
-new native-format evidence. Endpoint-rewriting optimizations remain I9.
+new native-format evidence.
 
 Legacy descending Decimal encodings retain a sign-byte rule that does not
 establish reversed cross-sign byte order. Inferred descending ranges remain
 residual; planner regressions guard both complete refusal and retention of an
-earlier equality prefix. Native fixture/comparison qualification remains F9/I9.
+earlier equality prefix. Native fixture/comparison qualification remains F9.
 
 `IndexMutationKernel` also executes monotone relocation-pair admission and
 overflow-safe binary-search pivot/interval decisions in `CompactRowRelocationMap`.
@@ -431,12 +436,17 @@ range. Checked counterexamples demonstrate narrowing order reversal; Text lies
 outside the admitted integer domains.
 `OrderStage` supplies actual table metadata and retains full sorting for expression
 casts, calculated values or mappings whose accessors can change key values;
-`AccessQueryProvider.TryExecuteExtremeRowAsync` applies the same `OrderStage`
-admission to unfiltered root `MinAsync` and `MaxAsync` selectors, reading the
-first entry of a matching-direction index or the terminal leaf entry of an
-opposite-direction index through `IndexRowReader.TryReadLastIndexRowAsync`. The
-covering index must contain complete unique nonnull keys in the requested or
-opposite direction.
+`OrderStage.FindExtremeIndex` and `AccessQueryProvider.TryExecuteExtremeRowAsync`
+execute `IndexMutationKernel.AdmitExtremeIndex` (`AdmittedExtremeIndexPreservesOrder`)
+for unfiltered root `MinAsync` and `MaxAsync` selectors, reading the first entry of
+a matching-direction index, seeking the non-null integer domain minimum when null
+keys precede non-null keys on an ascending index, or reading the terminal leaf entry
+of an opposite-direction index through `IndexRowReader.TryReadLastIndexRowAsync`
+while projecting only the single target column. Because tie order among equal keys
+does not alter the extreme key value, `AdmitExtremeIndex` admits non-unique indexes,
+multi-column indexes whose leading column matches the selector, `IgnoreNulls`
+single-column indexes, and nullable integer properties when null keys are excluded
+or skipped.
 Every bound ordinary scalar mapping must use CLR identity or admitted integer
 widening; fallible coercions and calculated/complex mappings retain sorting or
 full-scan folding.
@@ -466,7 +476,7 @@ explicit contracts.
 
 | Modeled obligation | Production boundary | Existing focused evidence | Remaining correspondence gap |
 |---|---|---|---|
-| Outward numeric range and signed-zero admission | `Indexes/IndexSeekFilter.cs`; generated `RecoveryKernel.IsOutwardSeekBound`, `IsFloatingZeroSeekBound` | `IndexSeekRoundingTests`, `IndexSeekFilterTests`, `TypedMappingCoercionTests` | CLR conversion/comparison and native key-order correspondence remain contracts; full planner/evaluation semantics and endpoint rewriting remain I9. |
+| Outward and inward-rewritten numeric range and signed-zero admission | `Indexes/IndexSeekFilter.cs`; generated `RecoveryKernel.IsOutwardSeekBound`, `RewriteRoundedSeekOperator`, `IsFloatingZeroSeekBound` | `IndexSeekRoundingTests`, `IndexSeekFilterTests`, `QueryPlanCacheAndProjectionTests`, `TypedMappingCoercionTests` | CLR conversion/comparison and native key-order correspondence remain contracts; full planner/evaluation semantics remain outside the scalar admission proof. |
 | Monotone injective relocation and bounded exact ledger search | `Maintenance/CompactRowRelocationMap.cs`; generated `IndexMutationKernel` relocation controls | `CompactRowRelocationMapTests`, existing raw index assembly/validator tests | Immutable exclusive ledger/read effects remain contracts; complete rooted graph, native key/row correspondence and reclaim/publication composition remain I17/V9. |
 | Complete row-reclamation admission and directory/free-space rewrite | `Pages/DataPageRows.cs` `ReclaimDeletedRowSpace`; generated `DataPageKernel` | `DataPageReclaimKernelTests`, existing deletion/overflow/reclamation tests | Exact overlapping copy/clear effects, exclusive page/layout identity, containing mutation and statement rollback remain contracts. |
 | Leaf/intermediate index header, compressed entry metadata and page finalization | `Indexes/IndexPageCodec.cs` page builder and prefix scan; generated `IndexMutationKernel` | `IndexPageEmissionKernelTests`, strict leaf/intermediate and structural tests; existing hosted index-emission benchmarks | Exact suffix copy and stable list/layout inputs remain adapter contracts; ordered trees, separators, allocation and full edit paths remain open. |

@@ -268,6 +268,60 @@ public sealed class EntityQueryFilteredIncludeTests(DatabaseCache db) : IClassFi
         }
     }
 
+    [Theory]
+    [InlineData(512L, true)]
+    [InlineData(64L, false)]
+    public async Task Include_EnforcesMaterializedPayloadByteBudgetAcrossNavigationPaths(long byteBudget, bool succeeds)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        temp.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            temp,
+            new AccessReaderOptions
+            {
+                UseLockFile = false,
+                MaxIncludeMaterializedPayloadBytesPerOperation = byteBudget,
+            },
+            leaveOpen: true,
+            ct);
+
+        async Task<List<FiRegion>> ReadAsync() => await reader.Query<FiRegion>("FiRegion")
+            .Include(region => region.Customers).ThenInclude(customer => customer.Orders).ToListAsync(ct);
+        if (succeeds)
+        {
+            FiRegion region = Assert.Single(await ReadAsync());
+            Assert.Equal(9, region.Customers.Sum(customer => customer.Orders.Count));
+        }
+        else
+        {
+            JetLimitationException failure = await Assert.ThrowsAsync<JetLimitationException>(ReadAsync);
+            Assert.Equal(JetErrorCode.IncludeMaterializationBudgetExceeded, failure.ErrorCode);
+        }
+    }
+
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    public async Task OpenAsync_RejectsNonPositiveIncludePayloadByteBudget(long invalidBudget)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream temp = await this.BuildAsync(ct);
+        temp.Position = 0;
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
+        {
+            await using AccessReader reader = await AccessReader.OpenAsync(
+                temp,
+                new AccessReaderOptions
+                {
+                    UseLockFile = false,
+                    MaxIncludeMaterializedPayloadBytesPerOperation = invalidBudget,
+                },
+                leaveOpen: true,
+                ct);
+        });
+    }
+
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, CancellationToken ct)
     {
         stream.Position = 0;

@@ -17,10 +17,15 @@ public sealed class IndexSeekRoundingTests
         {
             var column = new ColumnInfo { Name = "C", Type = ColumnType.LongIntegerType };
             Assert.Equal(lower, IndexSeekFilter.IsSeekable(column, typeof(int), ColumnPredicateOperator.GreaterThan, operand));
-            Assert.Equal(lower, IndexSeekFilter.IsSeekable(column, typeof(int), ColumnPredicateOperator.GreaterThanOrEqual, operand));
+            Assert.True(IndexSeekFilter.IsSeekable(column, typeof(int), ColumnPredicateOperator.GreaterThanOrEqual, operand));
             Assert.Equal(!lower, IndexSeekFilter.IsSeekable(column, typeof(int), ColumnPredicateOperator.LessThan, operand));
-            Assert.Equal(!lower, IndexSeekFilter.IsSeekable(column, typeof(int), ColumnPredicateOperator.LessThanOrEqual, operand));
+            Assert.True(IndexSeekFilter.IsSeekable(column, typeof(int), ColumnPredicateOperator.LessThanOrEqual, operand));
             Assert.False(IndexSeekFilter.IsSeekable(column, typeof(int), ColumnPredicateOperator.Equal, operand));
+
+            Assert.True(IndexSeekFilter.TryRewriteSeekOperator(column, typeof(int), ColumnPredicateOperator.GreaterThan, operand, out ColumnPredicateOperator gtRewritten));
+            Assert.Equal(lower ? ColumnPredicateOperator.GreaterThan : ColumnPredicateOperator.GreaterThanOrEqual, gtRewritten);
+            Assert.True(IndexSeekFilter.TryRewriteSeekOperator(column, typeof(int), ColumnPredicateOperator.LessThan, operand, out ColumnPredicateOperator ltRewritten));
+            Assert.Equal(!lower ? ColumnPredicateOperator.LessThan : ColumnPredicateOperator.LessThanOrEqual, ltRewritten);
         }
     }
 
@@ -32,16 +37,24 @@ public sealed class IndexSeekRoundingTests
             var column = new ColumnInfo { Name = "C", Type = type, NumericScale = 4 };
             Assert.True(IndexSeekFilter.IsSeekable(column, typeof(decimal), ColumnPredicateOperator.GreaterThan, 1.23445m));
             Assert.False(IndexSeekFilter.IsSeekable(column, typeof(decimal), ColumnPredicateOperator.LessThan, 1.23445m));
+            Assert.True(IndexSeekFilter.TryRewriteSeekOperator(column, typeof(decimal), ColumnPredicateOperator.LessThan, 1.23445m, out ColumnPredicateOperator ltScaled));
+            Assert.Equal(ColumnPredicateOperator.LessThanOrEqual, ltScaled);
             Assert.True(IndexSeekFilter.IsSeekable(column, typeof(decimal), ColumnPredicateOperator.LessThan, 1.23455m));
             Assert.False(IndexSeekFilter.IsSeekable(column, typeof(decimal), ColumnPredicateOperator.GreaterThan, 1.23455m));
+            Assert.True(IndexSeekFilter.TryRewriteSeekOperator(column, typeof(decimal), ColumnPredicateOperator.GreaterThan, 1.23455m, out ColumnPredicateOperator gtScaled));
+            Assert.Equal(ColumnPredicateOperator.GreaterThanOrEqual, gtScaled);
             Assert.False(IndexSeekFilter.IsSeekable(column, typeof(decimal), ColumnPredicateOperator.Equal, 1.23455m));
         }
 
         var single = new ColumnInfo { Name = "C", Type = ColumnType.FloatType };
         Assert.True(IndexSeekFilter.IsSeekable(single, typeof(float), ColumnPredicateOperator.LessThan, 0.1));
         Assert.False(IndexSeekFilter.IsSeekable(single, typeof(float), ColumnPredicateOperator.GreaterThan, 0.1));
+        Assert.True(IndexSeekFilter.TryRewriteSeekOperator(single, typeof(float), ColumnPredicateOperator.GreaterThan, 0.1, out ColumnPredicateOperator gtSingle));
+        Assert.Equal(ColumnPredicateOperator.GreaterThanOrEqual, gtSingle);
         Assert.True(IndexSeekFilter.IsSeekable(single, typeof(float), ColumnPredicateOperator.GreaterThan, 0.7));
         Assert.False(IndexSeekFilter.IsSeekable(single, typeof(float), ColumnPredicateOperator.LessThan, 0.7));
+        Assert.True(IndexSeekFilter.TryRewriteSeekOperator(single, typeof(float), ColumnPredicateOperator.LessThan, 0.7, out ColumnPredicateOperator ltSingle));
+        Assert.Equal(ColumnPredicateOperator.LessThanOrEqual, ltSingle);
         Assert.False(IndexSeekFilter.IsSeekable(single, typeof(float), ColumnPredicateOperator.Equal, 0.1));
         Assert.False(IndexSeekFilter.IsSeekable(single, typeof(float), ColumnPredicateOperator.LessThan, double.MaxValue));
         Assert.False(IndexSeekFilter.IsSeekable(single, typeof(float), ColumnPredicateOperator.GreaterThan, double.NaN));
@@ -63,8 +76,9 @@ public sealed class IndexSeekRoundingTests
                 byte[]? bound = Encode(ColumnType.ByteType, operand, ascending);
                 foreach (ColumnPredicateOperator op in (ColumnPredicateOperator[])[ColumnPredicateOperator.Equal, ColumnPredicateOperator.GreaterThan, ColumnPredicateOperator.GreaterThanOrEqual, ColumnPredicateOperator.LessThan, ColumnPredicateOperator.LessThanOrEqual])
                 {
-                    if (!IndexSeekFilter.IsSeekable(column, typeof(byte), op, operand))
+                    if (!IndexSeekFilter.TryRewriteSeekOperator(column, typeof(byte), op, operand, out ColumnPredicateOperator rewritten))
                     {
+                        Assert.False(IndexSeekFilter.IsSeekable(column, typeof(byte), op, operand));
                         continue;
                     }
 
@@ -78,7 +92,7 @@ public sealed class IndexSeekRoundingTests
 
                         byte[] encoded = Assert.IsType<byte[]>(Encode(ColumnType.ByteType, (byte)key, ascending));
                         int comparison = encoded.AsSpan().SequenceCompareTo(bound);
-                        Assert.True(Matches(ascending ? comparison : -comparison, op), $"Lost {key} for {op} {operand}, ascending={ascending}.");
+                        Assert.True(Matches(ascending ? comparison : -comparison, rewritten), $"Lost {key} for {op} (rewritten {rewritten}) {operand}, ascending={ascending}.");
                     }
                 }
             }

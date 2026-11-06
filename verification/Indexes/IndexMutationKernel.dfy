@@ -85,6 +85,33 @@ module IndexMutationKernel {
   {
   }
 
+  // Extreme-value (Min/Max) index admission: tie order among equal keys does not
+  // affect the extreme key value, so non-unique and multi-column leading indexes
+  // are sound when every row key is non-null or null keys are excluded/skipped
+  // for a nullable mapped property.
+  function AdmitExtremeIndex(stored: Byte, mapped: Byte, keyCount: U32,
+      nonNullColumn: bool, nullableProperty: bool, ignoreNulls: bool,
+      nullsAtOppositeEnd: bool, canSeekNonNullMinimum: bool): bool {
+    AdmitIntegerOrdering(stored, mapped) && keyCount >= 1 &&
+      (if ignoreNulls then keyCount == 1 && (nonNullColumn || nullableProperty)
+       else nonNullColumn || (nullableProperty && (nullsAtOppositeEnd || canSeekNonNullMinimum)))
+  }
+
+  lemma AdmittedExtremeIndexPreservesOrder(stored: Byte, mapped: Byte, keyCount: U32,
+      nonNullColumn: bool, nullableProperty: bool, ignoreNulls: bool,
+      nullsAtOppositeEnd: bool, canSeekNonNullMinimum: bool, left: int, right: int)
+    requires AdmitExtremeIndex(stored, mapped, keyCount, nonNullColumn,
+      nullableProperty, ignoreNulls, nullsAtOppositeEnd, canSeekNonNullMinimum)
+    requires OrderingIntegerValue(stored, left) && OrderingIntegerValue(stored, right)
+    ensures keyCount >= 1
+    ensures !nonNullColumn ==> nullableProperty
+    ensures ignoreNulls ==> keyCount == 1
+    ensures ConvertOrderingInteger(mapped, left) == left && ConvertOrderingInteger(mapped, right) == right
+    ensures (left <= right) <==> (ConvertOrderingInteger(mapped, left) <= ConvertOrderingInteger(mapped, right))
+  {
+    AdmittedIntegerMappingPreservesOrder(stored, mapped, left, right);
+  }
+
   // Relationship metadata is admitted only for the native layouts exercised
   // by the independent engine controls. These are local reference bounds;
   // partner-table acquisition and relationship enforcement remain adapters.

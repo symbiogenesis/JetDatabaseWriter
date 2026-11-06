@@ -21,6 +21,10 @@ namespace JetDatabaseWriter.Verification {
     {
       return ((0U) < (JetDatabaseWriter.Verification.IndexMutationKernel.IntegerOrderingRank(stored))) && ((JetDatabaseWriter.Verification.IndexMutationKernel.IntegerOrderingRank(stored)) <= (JetDatabaseWriter.Verification.IndexMutationKernel.IntegerOrderingRank(mapped)));
     }
+    public static bool AdmitExtremeIndex(byte stored, byte mapped, uint keyCount, bool nonNullColumn, bool nullableProperty, bool ignoreNulls, bool nullsAtOppositeEnd, bool canSeekNonNullMinimum)
+    {
+      return ((JetDatabaseWriter.Verification.IndexMutationKernel.AdmitIntegerOrdering(stored, mapped)) && ((keyCount) >= (1U))) && (((ignoreNulls) ? (((keyCount) == (1U)) && ((nonNullColumn) || (nullableProperty))) : ((nonNullColumn) || ((nullableProperty) && ((nullsAtOppositeEnd) || (canSeekNonNullMinimum))))));
+    }
     public static bool AdmitRelationshipReference(long realIndex, uint realCount, long partner, long partnerPage, long pageCount, byte role, byte cascadeUp, byte cascadeDown)
     {
       return (((((((0L) <= (realIndex)) && ((realIndex) < ((long)(realCount)))) && ((0L) <= (partner))) && (((1L) < (partnerPage)) && ((partnerPage) < (pageCount)))) && (((role) == ((byte)(1))) || ((role) == ((byte)(2))))) && ((cascadeUp) <= ((byte)(1)))) && ((cascadeDown) <= ((byte)(1)));

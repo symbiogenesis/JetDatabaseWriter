@@ -67,6 +67,9 @@ internal sealed class TableReader(
     /// <summary>Gets the related-entity allowance shared across one Include execution.</summary>
     internal int MaxIncludeMaterializedRowsPerOperation => options.MaxIncludeMaterializedRowsPerOperation;
 
+    /// <summary>Gets the aggregate related-entity payload byte allowance shared across one Include execution.</summary>
+    internal long MaxIncludeMaterializedPayloadBytesPerOperation => options.MaxIncludeMaterializedPayloadBytesPerOperation;
+
     /// <summary>
     /// Returns <see langword="true"/> when any column flagged in
     /// <paramref name="wantedColumns"/> has type <paramref name="type"/>.
@@ -333,8 +336,20 @@ internal sealed class TableReader(
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="progress">Optional row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel enumeration.</param>
+    internal IAsyncEnumerable<object[]> Rows(
+        string tableName,
+        IProgress<long>? progress,
+        CancellationToken cancellationToken)
+        => this.Rows(tableName, wantedColumns: null, progress, cancellationToken);
+
+    /// <summary>Streams a table's rows as typed object arrays under an optional column projection mask.</summary>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="wantedColumns">Optional column projection mask for local tables.</param>
+    /// <param name="progress">Optional row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel enumeration.</param>
     internal async IAsyncEnumerable<object[]> Rows(
         string tableName,
+        bool[]? wantedColumns,
         IProgress<long>? progress,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -356,7 +371,7 @@ internal sealed class TableReader(
 
         CatalogEntry entry = resolved.Entry;
         TableDef td = resolved.Definition;
-        await foreach (object?[] row in this.EnumerateTypedRowsAsync(tableName, entry, td, wantedColumns: null, progress, cancellationToken).ConfigureAwait(false))
+        await foreach (object?[] row in this.EnumerateTypedRowsAsync(tableName, entry, td, wantedColumns, progress, cancellationToken).ConfigureAwait(false))
         {
             yield return (object[])row;
         }
@@ -372,7 +387,21 @@ internal sealed class TableReader(
         IProgress<long>? progress,
         CancellationToken cancellationToken)
         where T : class, new()
-        => this.RowsWithDecoder<T>(tableName, forceProjection: false, progress, cancellationToken);
+        => this.RowsWithDecoder<T>(tableName, forceProjection: false, projectedColumns: null, progress, cancellationToken);
+
+    /// <summary>Streams a table's rows mapped to <typeparamref name="T"/> under an optional column projection mask.</summary>
+    /// <typeparam name="T">The mapped row type.</typeparam>
+    /// <param name="tableName">Table name (case-insensitive).</param>
+    /// <param name="projectedColumns">Optional column projection mask.</param>
+    /// <param name="progress">Optional row-count progress sink.</param>
+    /// <param name="cancellationToken">A token used to cancel enumeration.</param>
+    internal IAsyncEnumerable<T> Rows<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
+        string tableName,
+        bool[]? projectedColumns,
+        IProgress<long>? progress,
+        CancellationToken cancellationToken)
+        where T : class, new()
+        => this.RowsWithDecoder<T>(tableName, forceProjection: false, projectedColumns, progress, cancellationToken);
 
     /// <summary>Streams mapped rows with an enumeration-local decoder selection.</summary>
     /// <typeparam name="T">The mapped row type.</typeparam>
@@ -380,9 +409,25 @@ internal sealed class TableReader(
     /// <param name="forceProjection">Whether to use the projection mapper for comparison.</param>
     /// <param name="progress">The progress sink.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    internal IAsyncEnumerable<T> RowsWithDecoder<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
+        string tableName,
+        bool forceProjection,
+        IProgress<long>? progress,
+        CancellationToken cancellationToken)
+        where T : class, new()
+        => this.RowsWithDecoder<T>(tableName, forceProjection, projectedColumns: null, progress, cancellationToken);
+
+    /// <summary>Streams mapped rows with an enumeration-local decoder selection and optional column projection mask.</summary>
+    /// <typeparam name="T">The mapped row type.</typeparam>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="forceProjection">Whether to use the projection mapper for comparison.</param>
+    /// <param name="projectedColumns">Optional column projection mask.</param>
+    /// <param name="progress">The progress sink.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     internal async IAsyncEnumerable<T> RowsWithDecoder<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         bool forceProjection,
+        bool[]? projectedColumns,
         IProgress<long>? progress,
         [EnumeratorCancellation] CancellationToken cancellationToken)
         where T : class, new()
@@ -403,7 +448,7 @@ internal sealed class TableReader(
             yield break;
         }
 
-        await foreach (T item in this.EnumerateMappedRowsAsync<T>(tableName, resolved, forceProjection, progress, cancellationToken).ConfigureAwait(false))
+        await foreach (T item in this.EnumerateMappedRowsAsync<T>(tableName, resolved, forceProjection, projectedColumns, progress, cancellationToken).ConfigureAwait(false))
         {
             yield return item;
         }
@@ -513,7 +558,7 @@ internal sealed class TableReader(
             return items;
         }
 
-        await foreach (T item in this.EnumerateMappedRowsAsync<T>(tableName, resolved, forceProjection: false, progress: null, cancellationToken).ConfigureAwait(false))
+        await foreach (T item in this.EnumerateMappedRowsAsync<T>(tableName, resolved, forceProjection: false, projectedColumns: null, progress: null, cancellationToken).ConfigureAwait(false))
         {
             items.Add(item);
             if (IsRowLimitReached(items.Count, maxRows))
@@ -835,12 +880,14 @@ internal sealed class TableReader(
     /// <param name="tableName">The table name, used to load complex-column data.</param>
     /// <param name="resolved">The resolved table.</param>
     /// <param name="forceProjection">Whether to bypass generated decoders.</param>
+    /// <param name="projectedColumns">Optional column projection mask.</param>
     /// <param name="progress">Optional row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel enumeration.</param>
     private IAsyncEnumerable<T> EnumerateMappedRowsAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         ResolvedTable resolved,
         bool forceProjection,
+        bool[]? projectedColumns,
         IProgress<long>? progress,
         CancellationToken cancellationToken)
         where T : class, new()
@@ -861,26 +908,26 @@ internal sealed class TableReader(
         // null when any bound column requires the slow path (Memo/Ole
         // LVAL chain, Complex/Attachment, Hyperlink prop); complex columns
         // T does not bind are never read.
-        DirectRowDecoder<T>? directDecoder = forceProjection ? null : DirectRowDecoderBuilder.TryBuild<T>(td);
+        DirectRowDecoder<T>? directDecoder = forceProjection ? null : DirectRowDecoderBuilder.TryBuild<T>(td, projectedColumns);
 
         if (directDecoder != null)
         {
-            return this.EnumerateDirectRowsAsync(entry, td, directDecoder, hybridPlan: null, progress, cancellationToken);
+            return this.EnumerateDirectRowsAsync(entry, td, directDecoder, hybridPlan: null, projectedColumns, progress, cancellationToken);
         }
 
-        if (!forceProjection && DirectRowDecoderBuilder.TryBuildHybrid<T>(td) is { } hybridPlan)
+        if (!forceProjection && DirectRowDecoderBuilder.TryBuildHybrid<T>(td, projectedColumns) is { } hybridPlan)
         {
-            return this.EnumerateDirectRowsAsync<T>(entry, td, directDecoder: null, hybridPlan, progress, cancellationToken);
+            return this.EnumerateDirectRowsAsync<T>(entry, td, directDecoder: null, hybridPlan, projectedColumns, progress, cancellationToken);
         }
 
-        Func<object?[], T> factory = RowMapper<T>.Build(td);
+        Func<object?[], T> factory = RowMapper<T>.Build(td, projectedColumns);
 
         // Skip per-row decode of columns the mapper never reads. For wide
         // tables and narrow DTOs this can eliminate the bulk of the per-row
         // decode + boxing cost. Complex resolution reads only each bound
         // complex column's own reference slot, so the complex columns T does
         // not bind are neither decoded nor loaded from their flat tables.
-        bool[] wantedColumns = RowMapper<T>.GetBoundColumnMask(headers);
+        bool[] wantedColumns = RowMapper<T>.GetBoundColumnMask(headers, projectedColumns);
 
         return this.EnumerateMappedRowsPooledAsync(tableName, entry, td, wantedColumns, factory, progress, cancellationToken);
     }
@@ -1034,6 +1081,7 @@ internal sealed class TableReader(
     /// <param name="td">Parsed table definition.</param>
     /// <param name="directDecoder">Compiled direct-row decoder.</param>
     /// <param name="hybridPlan">Optional scalar/OLE plan whose payloads resolve before yielding.</param>
+    /// <param name="wantedColumns">Optional column projection mask.</param>
     /// <param name="progress">Optional row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async IAsyncEnumerable<T> EnumerateDirectRowsAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
@@ -1041,6 +1089,7 @@ internal sealed class TableReader(
         TableDef td,
         DirectRowDecoder<T>? directDecoder,
         HybridRowDecodePlan<T>? hybridPlan,
+        bool[]? wantedColumns,
         IProgress<long>? progress,
         [EnumeratorCancellation] CancellationToken cancellationToken)
         where T : class, new()
@@ -1048,7 +1097,7 @@ internal sealed class TableReader(
         ColumnSlice[] oleSlices = hybridPlan is null ? [] : new ColumnSlice[hybridPlan.OleColumnCount];
         long rowCount = 0;
         IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, rows.StrictParsing);
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
 
         await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
         {

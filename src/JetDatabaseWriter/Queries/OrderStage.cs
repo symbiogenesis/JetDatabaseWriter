@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
@@ -36,6 +37,88 @@ internal sealed class OrderStage : QueryStage
         && selector.Body is MemberExpression { Member: PropertyInfo, Expression: ParameterExpression parameter }
         && parameter == selector.Parameters[0]
         && parameter.Type == entityType;
+
+    /// <summary>
+    /// Finds an index that can answer <c>MinAsync</c> or <c>MaxAsync</c> over <paramref name="selector"/>
+    /// by reading a single extreme entry. Unlike full <c>OrderBy</c> paging, extreme-value aggregates do
+    /// not depend on tie-breaking stability across equal keys, so non-unique indexes, multi-column
+    /// indexes whose leading key is the target column, <c>IgnoreNulls</c> single-column indexes, and
+    /// nullable integer properties are admitted through <see cref="IndexMutationKernel.AdmitExtremeIndex"/>.
+    /// </summary>
+    /// <param name="indexes">The candidate indexes on the queried table.</param>
+    /// <param name="definition">The actual native column types and identities.</param>
+    /// <param name="entityType">The concrete entity type the provider materializes.</param>
+    /// <param name="selector">The property selector expression.</param>
+    /// <param name="descending"><see langword="true"/> for <c>MaxAsync</c>; <see langword="false"/> for <c>MinAsync</c>.</param>
+    /// <param name="criteria">Receives the seek criteria to use when reading in forward index order.</param>
+    /// <param name="reverseLast">Receives <see langword="true"/> when the extreme entry is the last entry of the index.</param>
+    /// <param name="targetColumnName">Receives the native column name of the selected property.</param>
+    /// <returns>The admitted index, or <see langword="null"/> when none qualifies.</returns>
+    public static IndexMetadata? FindExtremeIndex(
+        IReadOnlyList<IndexMetadata> indexes,
+        TableDef definition,
+        Type entityType,
+        LambdaExpression selector,
+        bool descending,
+        out IndexQueryCriteria criteria,
+        out bool reverseLast,
+        out string targetColumnName)
+    {
+        criteria = IndexQueryCriteria.All;
+        reverseLast = false;
+        targetColumnName = string.Empty;
+
+        if (selector.Parameters.Count != 1
+            || selector.Body is not MemberExpression { Member: PropertyInfo property, Expression: ParameterExpression parameter }
+            || parameter != selector.Parameters[0]
+            || parameter.Type != entityType)
+        {
+            return null;
+        }
+
+        var map = EntityMap.For(entityType);
+        if (!HasTotalMappings(map, definition)
+            || map.FindByMember(property) is not EntityProperty mapped
+            || !mapped.Property.Equals(property)
+            || definition.FindColumn(mapped.ColumnName) is not ColumnInfo { IsCalculated: false } native)
+        {
+            return null;
+        }
+
+        byte propertyTypeCode = IntegerTypeCode(property.PropertyType);
+        if (!IndexMutationKernel.AdmitIntegerOrdering((byte)native.Type, propertyTypeCode))
+        {
+            return null;
+        }
+
+        bool nullableProperty = Nullable.GetUnderlyingType(property.PropertyType) is not null;
+
+        // Prefer forward-order candidates before reverse last-entry candidates.
+        for (int pass = 0; pass < 2; pass++)
+        {
+            bool wantReverse = pass == 1;
+            foreach (IndexMetadata index in indexes)
+            {
+                if (TryAdmitExtremeCandidate(
+                        index,
+                        native,
+                        propertyTypeCode,
+                        nullableProperty,
+                        descending,
+                        out IndexQueryCriteria candidateCriteria,
+                        out bool candidateReverse)
+                    && candidateReverse == wantReverse)
+                {
+                    criteria = candidateCriteria;
+                    reverseLast = candidateReverse;
+                    targetColumnName = native.Name;
+                    return index;
+                }
+            }
+        }
+
+        return null;
+    }
 
     public override async IAsyncEnumerable<T> Apply<T>(
         IAsyncEnumerable<T> source,
@@ -85,6 +168,103 @@ internal sealed class OrderStage : QueryStage
         }
 
         return null;
+    }
+
+    internal static bool HasTotalMappings(EntityMap map, TableDef definition)
+    {
+        foreach (EntityProperty candidate in map.Properties)
+        {
+            if (!IsAutomaticProperty(candidate.Property))
+            {
+                return false;
+            }
+
+            ColumnInfo? native = definition.FindColumn(candidate.ColumnName);
+            if (native is null)
+            {
+                continue;
+            }
+
+            // Paging an index skips materializing later rows. Admit only total
+            // ordinary scalar conversions, so it cannot suppress their deterministic
+            // mapping failures. Calculated statuses and complex values have separate domains.
+            Type target = Nullable.GetUnderlyingType(candidate.Property.PropertyType) ?? candidate.Property.PropertyType;
+            if (native.IsCalculated || native.Type == ColumnType.ComplexType || JetTypeInfo.GetClrType(native.Type) is null
+                || (target != JetTypeInfo.ResolveClrType(native)
+                    && !IndexMutationKernel.AdmitIntegerOrdering((byte)native.Type, IntegerTypeCode(target))))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryAdmitExtremeCandidate(
+        IndexMetadata index,
+        ColumnInfo native,
+        byte propertyTypeCode,
+        bool nullableProperty,
+        bool descending,
+        out IndexQueryCriteria criteria,
+        out bool reverseLast)
+    {
+        criteria = IndexQueryCriteria.All;
+        reverseLast = false;
+
+        if (index.FirstDp <= 0
+            || index.Columns.Count == 0
+            || !string.Equals(index.Columns[0].Name, native.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        bool keyAscending = index.Columns[0].IsAscending;
+        reverseLast = keyAscending == descending;
+        bool nonNullColumn = index.Kind == IndexKind.PrimaryKey || index.IsRequired;
+        bool nullsAtOppositeEnd = descending;
+        bool canSeekNonNullMinimum = !descending && keyAscending;
+        if (!IndexMutationKernel.AdmitExtremeIndex(
+            (byte)native.Type,
+            propertyTypeCode,
+            (uint)index.Columns.Count,
+            nonNullColumn,
+            nullableProperty,
+            index.IgnoreNulls,
+            nullsAtOppositeEnd,
+            canSeekNonNullMinimum))
+        {
+            return false;
+        }
+
+        if (!nonNullColumn && !index.IgnoreNulls && canSeekNonNullMinimum)
+        {
+            object minDomainValue = native.Type switch
+            {
+                ColumnType.ByteType => byte.MinValue,
+                ColumnType.IntegerType => short.MinValue,
+                ColumnType.LongIntegerType => int.MinValue,
+                ColumnType.BigIntType => long.MinValue,
+                ColumnType.BooleanType
+                    or ColumnType.MoneyType
+                    or ColumnType.FloatType
+                    or ColumnType.DoubleType
+                    or ColumnType.DateTimeType
+                    or ColumnType.BinaryType
+                    or ColumnType.TextType
+                    or ColumnType.OleType
+                    or ColumnType.MemoType
+                    or ColumnType.GuidType
+                    or ColumnType.NumericType
+                    or ColumnType.ComplexType
+                    or ColumnType.BigBinaryType
+                    or ColumnType.DateTimeExtendedType
+                    or _ => 0,
+            };
+            criteria = IndexQueryCriteria.Range(IndexKeyBound.Inclusive([minDomainValue]), upper: null);
+        }
+
+        return true;
     }
 
     private static List<T> Sort<T>(List<T> buffer, List<OrderingKey> keys)
@@ -140,36 +320,6 @@ internal sealed class OrderStage : QueryStage
         => property.GetMethod is { IsVirtual: false } getter && property.SetMethod is { IsVirtual: false } setter
             && getter.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false)
             && setter.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false);
-
-    private static bool HasTotalMappings(EntityMap map, TableDef definition)
-    {
-        foreach (EntityProperty candidate in map.Properties)
-        {
-            if (!IsAutomaticProperty(candidate.Property))
-            {
-                return false;
-            }
-
-            ColumnInfo? native = definition.FindColumn(candidate.ColumnName);
-            if (native is null)
-            {
-                continue;
-            }
-
-            // Paging an index skips materializing later rows. Admit only total
-            // ordinary scalar conversions, so it cannot suppress their deterministic
-            // mapping failures. Calculated statuses and complex values have separate domains.
-            Type target = Nullable.GetUnderlyingType(candidate.Property.PropertyType) ?? candidate.Property.PropertyType;
-            if (native.IsCalculated || native.Type == ColumnType.ComplexType || JetTypeInfo.GetClrType(native.Type) is null
-                || (target != JetTypeInfo.ResolveClrType(native)
-                    && !IndexMutationKernel.AdmitIntegerOrdering((byte)native.Type, IntegerTypeCode(target))))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
 
     private static byte IntegerTypeCode(Type type)
     {

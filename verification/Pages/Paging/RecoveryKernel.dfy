@@ -187,6 +187,52 @@ module RecoveryKernel {
     ensures !IsOutwardSeekBound(4, -1)
   { }
 
+  // When an in-range operand rounds to its nearest representable key, no stored
+  // key lies between the operand and that encoded key. Rewriting an inward
+  // strict bound to its inclusive counterpart (2 -> 3 when comparison > 0, and
+  // 4 -> 5 when comparison < 0) retains every match; equality stays exact and
+  // uint.MaxValue refuses non-seekable operators or rounded equalities.
+  function RewriteRoundedSeekOperator(op: U32, comparison: I32): U32 {
+    if op == 0 then (if comparison == 0 then 0 else 4294967295)
+    else if op == 2 then (if comparison <= 0 then 2 else 3)
+    else if op == 3 then 3
+    else if op == 4 then (if comparison >= 0 then 4 else 5)
+    else if op == 5 then 5
+    else 4294967295
+  }
+
+  ghost predicate NearestSeekKey(original: real, encoded: real, key: real) {
+    (if encoded >= original then encoded - original else original - encoded) <=
+      (if key >= original then key - original else original - key)
+  }
+
+  lemma RewrittenSeekBoundRetainsEveryNearestMatch(op: U32, comparison: I32,
+      original: real, encoded: real, key: real)
+    requires (comparison < 0 <==> encoded < original)
+    requires (comparison == 0 <==> encoded == original)
+    requires (comparison > 0 <==> encoded > original)
+    requires NearestSeekKey(original, encoded, key)
+    requires RewriteRoundedSeekOperator(op, comparison) != 4294967295
+    ensures IsOutwardSeekBound(op, comparison) ==>
+      RewriteRoundedSeekOperator(op, comparison) == op
+    ensures MatchesSeekComparison(op, key, original) ==>
+      MatchesSeekComparison(RewriteRoundedSeekOperator(op, comparison), key, encoded)
+    ensures ((op == 2 || op == 3) && comparison > 0) || ((op == 4 || op == 5) && comparison < 0) ==>
+      (MatchesSeekComparison(op, key, original) <==>
+        MatchesSeekComparison(RewriteRoundedSeekOperator(op, comparison), key, encoded))
+  { }
+
+  // Reserves an additional byte count against an aggregate U64 budget without overflow.
+  method TryReserveBytes(current: U64, delta: U64, limit: U64) returns (admitted: bool, next: U64)
+    ensures admitted <==> current <= limit && delta <= limit - current
+    ensures admitted ==> next as int == current as int + delta as int && next <= limit
+    ensures !admitted ==> next == current
+  {
+    admitted := current <= limit && delta <= limit - current;
+    next := current;
+    if admitted { next := current + delta; }
+  }
+
   // IEEE encodings distinguish the two zeros even though CLR predicates do
   // not. Use the lower zero for an inclusive lower bound and the upper zero
   // for an inclusive upper bound; equality needs both and must scan instead.

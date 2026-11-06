@@ -12,12 +12,42 @@ using static JetDatabaseWriter.Enums.ColumnType;
 internal sealed class TableDef
 {
     private Dictionary<string, int>? columnIndexesByName;
+    private string[]? columnNames;
 
     /// <summary>Gets or sets the physical root page, when read from a database.</summary>
     internal long? TDefPageNumber { get; set; }
 
     /// <summary>Gets the immutable materializer identity for this definition.</summary>
-    public RowShape Shape => field ??= new RowShape(this.Columns.Select(static column => column.Name).ToArray(), this.ClrTypes, this.Columns);
+    public RowShape Shape => field ??= new RowShape(this.columnNames ??= this.Columns.Select(static column => column.Name).ToArray(), this.ClrTypes, this.Columns);
+
+    /// <summary>Gets the immutable materializer identity for this definition under an optional column projection mask.</summary>
+    /// <param name="wantedColumns">Optional column projection mask restricting the columns to decode.</param>
+    public RowShape GetShape(bool[]? wantedColumns)
+    {
+        if (wantedColumns is null)
+        {
+            return this.Shape;
+        }
+
+        bool allWanted = true;
+        int count = Math.Min(wantedColumns.Length, this.Columns.Count);
+        for (int i = 0; i < count; i++)
+        {
+            if (!wantedColumns[i])
+            {
+                allWanted = false;
+                break;
+            }
+        }
+
+        if (allWanted)
+        {
+            return this.Shape;
+        }
+
+        string[] names = this.columnNames ??= this.Columns.Select(static column => column.Name).ToArray();
+        return new RowShape(names, this.ClrTypes, this.Columns, wantedColumns);
+    }
 
     public IReadOnlyList<ColumnInfo> Columns
     {

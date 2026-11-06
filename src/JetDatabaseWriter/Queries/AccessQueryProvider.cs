@@ -12,6 +12,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tables;
 
@@ -64,16 +65,16 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
     public IAsyncEnumerable<object?> ExecuteStreamAsync(Expression expression, CancellationToken cancellationToken)
     {
         Guard.NotNull(expression, nameof(expression));
-        (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate(expression);
+        (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate<T>(expression);
 
         // A tail (a projection, or operators the engine does not translate) runs over the
         // engine's rows as they stream. It is composed here, before a row is read, so an
         // operator it does not run throws first, including one in a second query source.
         // Enumeration remains deferred; streaming stages let Take/First stop the read.
-        IAsyncEnumerable<object?> rows = this.ExecuteEngineAsync(plan, cancellationToken);
+        IAsyncEnumerable<object?> rows = this.ExecuteEngineAsync(plan, plan.ReferencedColumns, cancellationToken);
         if (!ReferenceEquals(boundary, expression))
         {
-            rows = InMemoryTail.Apply(rows, expression, boundary, cancellationToken);
+            rows = InMemoryTail.Apply(rows, expression, boundary, plan, cancellationToken);
         }
 
         bool maySkipSource = !ReferenceEquals(boundary, expression)
@@ -84,7 +85,7 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
     public async ValueTask<long> CountAsync(Expression expression, CancellationToken cancellationToken)
     {
         Guard.NotNull(expression, nameof(expression));
-        (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate(expression);
+        (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate<T>(expression);
 
         // Fast path: counting the whole table (no stages, no includes, no in-memory tail)
         // calls GetRealRowCountAsync, which counts the live rows whose layout decodes (the
@@ -95,10 +96,20 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
             return await tables.GetRealRowCountAsync(table, cancellationToken).ConfigureAwait(false);
         }
 
-        // Every other shape (a filter, paging, a projection, or includes) streams the rows
-        // and counts them without buffering a list.
+        // When counting an engine-only pipeline without includes whose stages only read
+        // direct mapped properties, decode only those referenced columns.
+        bool canProjectCount = ReferenceEquals(boundary, expression)
+            && plan.IncludePaths.Count == 0
+            && plan.EngineOnlyReferencedColumns is not null;
+        IAsyncEnumerable<object?> stream = canProjectCount
+            ? this.ReadPreparedAsync(
+                this.ExecuteEngineAsync(plan, plan.EngineOnlyReferencedColumns, cancellationToken),
+                plan.Stages.Any(static stage => stage is TakeStage { SkipsSource: true }),
+                cancellationToken)
+            : this.ExecuteStreamAsync(expression, cancellationToken);
+
         long count = 0;
-        await foreach (object? unused in this.ExecuteStreamAsync(expression, cancellationToken).ConfigureAwait(false))
+        await foreach (object? unused in stream.ConfigureAwait(false))
         {
             count++;
         }
@@ -120,7 +131,7 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
             return (false, null);
         }
 
-        (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate(expression);
+        (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate<T>(expression);
         if (!ReferenceEquals(boundary, expression) || plan.Stages.Count != 0 || plan.IncludePaths.Count != 0)
         {
             return (false, null);
@@ -136,24 +147,31 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
         }
 
         IReadOnlyList<IndexMetadata> tableIndexes = await indexes.ListSeekableIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
-        var forward = new OrderStage();
-        forward.Keys.Add(new OrderingKey(selector, descending));
-        if (forward.FindCoveringIndex(tableIndexes, resolved.Definition, typeof(T)) is { } sameDirection)
+        if (OrderStage.FindExtremeIndex(
+            tableIndexes,
+            resolved.Definition,
+            typeof(T),
+            selector,
+            descending,
+            out IndexQueryCriteria criteria,
+            out bool reverseLast,
+            out string targetColumnName) is { } extremeIndex)
         {
-            await foreach (T item in indexes.ReadIndexRowsAsync<T>(table, sameDirection.Name, IndexQueryCriteria.All, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
+            bool[] projectedColumns = BuildSingleColumnMask(resolved.Definition, targetColumnName);
+            if (!reverseLast)
             {
-                return (true, item);
+                await foreach (T item in indexes.ReadIndexRowsAsync<T>(table, extremeIndex.Name, criteria, projectedColumns, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
+                {
+                    return (true, item);
+                }
+
+                return (false, null);
             }
 
-            return (false, null);
-        }
-
-        var reverse = new OrderStage();
-        reverse.Keys.Add(new OrderingKey(selector, !descending));
-        if (reverse.FindCoveringIndex(tableIndexes, resolved.Definition, typeof(T)) is { } oppositeDirection
-            && await indexes.TryReadLastIndexRowAsync<T>(resolved, oppositeDirection, cancellationToken).ConfigureAwait(false) is { } last)
-        {
-            return (true, last);
+            if (await indexes.TryReadLastIndexRowAsync<T>(resolved, extremeIndex, projectedColumns, cancellationToken).ConfigureAwait(false) is { } last)
+            {
+                return (true, last);
+            }
         }
 
         return (false, null);
@@ -174,6 +192,20 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
         expression is MethodCallExpression call
         && call.Method.DeclaringType == typeof(Queryable)
         && call.Method.Name is "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" or "Order" or "OrderDescending";
+
+    private static bool[] BuildSingleColumnMask(TableDef definition, string columnName)
+    {
+        bool[] mask = new bool[definition.Columns.Count];
+        for (int i = 0; i < definition.Columns.Count; i++)
+        {
+            if (string.Equals(definition.Columns[i].Name, columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                mask[i] = true;
+            }
+        }
+
+        return mask;
+    }
 
     private async IAsyncEnumerable<object?> ReadPreparedAsync(
         IAsyncEnumerable<object?> rows,
@@ -201,9 +233,12 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
         }
     }
 
-    private async IAsyncEnumerable<T> ExecuteEngineAsync(AccessQueryPlan plan, [EnumeratorCancellation] CancellationToken cancellationToken)
+    private async IAsyncEnumerable<T> ExecuteEngineAsync(
+        AccessQueryPlan plan,
+        HashSet<string>? referencedColumns,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        IAsyncEnumerable<T> sequence = await this.BuildPipelineAsync(plan, cancellationToken).ConfigureAwait(false);
+        IAsyncEnumerable<T> sequence = await this.BuildPipelineAsync(plan, referencedColumns, cancellationToken).ConfigureAwait(false);
 
         // Without includes the pipeline streams straight through, so Take/First can
         // short-circuit before the whole table is read.
@@ -231,9 +266,15 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
         }
     }
 
-    private async ValueTask<IAsyncEnumerable<T>> BuildPipelineAsync(AccessQueryPlan plan, CancellationToken cancellationToken)
+    private async ValueTask<IAsyncEnumerable<T>> BuildPipelineAsync(
+        AccessQueryPlan plan,
+        HashSet<string>? referencedColumns,
+        CancellationToken cancellationToken)
     {
         List<QueryStage> stages = plan.Stages;
+        bool[]? projectedColumns = plan.IncludePaths.Count == 0
+            ? await this.TryBuildProjectionMaskAsync(referencedColumns, cancellationToken).ConfigureAwait(false)
+            : null;
 
         // Push the leading run of consecutive filters into the reader so its index
         // inference can seek rather than scan. Filters are mutually commutative, so
@@ -255,7 +296,7 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
         // identical to the stable LINQ sort, and a following Take/Skip then bounds how many
         // rows are materialized instead of buffering and sorting the whole table.
         IAsyncEnumerable<T>? ordered = pushed is null && next < stages.Count && stages[next] is OrderStage order
-            ? await this.TryBuildOrderedSourceAsync(order, cancellationToken).ConfigureAwait(false)
+            ? await this.TryBuildOrderedSourceAsync(order, projectedColumns, cancellationToken).ConfigureAwait(false)
             : null;
 
         IAsyncEnumerable<T> sequence;
@@ -267,8 +308,8 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
         else
         {
             sequence = pushed is null
-                ? tables.Rows<T>(table, progress: null, cancellationToken)
-                : indexes.Rows(table, pushed, progress: null, cancellationToken);
+                ? tables.Rows<T>(table, projectedColumns, progress: null, cancellationToken)
+                : indexes.Rows(table, pushed, projectedColumns, progress: null, cancellationToken);
         }
 
         for (; next < stages.Count; next++)
@@ -279,7 +320,43 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
         return sequence;
     }
 
-    private async ValueTask<IAsyncEnumerable<T>?> TryBuildOrderedSourceAsync(OrderStage order, CancellationToken cancellationToken)
+    private async ValueTask<bool[]?> TryBuildProjectionMaskAsync(
+        HashSet<string>? referencedColumns,
+        CancellationToken cancellationToken)
+    {
+        if (referencedColumns is null)
+        {
+            return null;
+        }
+
+        ResolvedTable? resolved = await tables.ResolveLocalTableAsync(table, cancellationToken).ConfigureAwait(false);
+        if (resolved is null)
+        {
+            return null;
+        }
+
+        TableDef td = resolved.Definition;
+        if (!OrderStage.HasTotalMappings(EntityMap.For(typeof(T)), td))
+        {
+            return null;
+        }
+
+        bool[] mask = new bool[td.Columns.Count];
+        for (int i = 0; i < td.Columns.Count; i++)
+        {
+            if (referencedColumns.Contains(td.Columns[i].Name))
+            {
+                mask[i] = true;
+            }
+        }
+
+        return mask;
+    }
+
+    private async ValueTask<IAsyncEnumerable<T>?> TryBuildOrderedSourceAsync(
+        OrderStage order,
+        bool[]? projectedColumns,
+        CancellationToken cancellationToken)
     {
         // Index seeks use the database format layout.
         if (!indexes.CanSeek)
@@ -297,7 +374,7 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
 
         IReadOnlyList<IndexMetadata> tableIndexes = await indexes.ListSeekableIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
         return order.FindCoveringIndex(tableIndexes, resolved.Definition, typeof(T)) is { } index
-            ? indexes.ReadIndexRowsAsync<T>(table, index.Name, IndexQueryCriteria.All, cancellationToken)
+            ? indexes.ReadIndexRowsAsync<T>(table, index.Name, IndexQueryCriteria.All, projectedColumns, cancellationToken)
             : null;
     }
 }

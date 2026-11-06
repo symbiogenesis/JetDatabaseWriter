@@ -1,9 +1,14 @@
 namespace JetDatabaseWriter.Tests.Queries;
 
 using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Mapping;
+using JetDatabaseWriter.Queries;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.TestSupport;
 using Xunit;
 
@@ -35,6 +40,21 @@ public sealed class EntityMapLifetimeTests
         GC.Collect();
         Assert.Same(map, EntityMap.For(type));
         Assert.NotNull(map.FindByColumn(nameof(SnapshotPlaylistRow.PlaylistID)));
+        Assert.InRange(EntityMap.CachedTypeCount, 1, 256);
+    }
+
+    [Fact(DisableParallelization = true)]
+    public void MaterializerCache_BoundsShapesPerType_AndTypes()
+    {
+        Type type = typeof(SnapshotPlaylistRow);
+        for (int i = 0; i < 80; i++)
+        {
+            IReadOnlyList<string> headers = [nameof(SnapshotPlaylistRow.PlaylistID), $"Col_{i}"];
+            var shape = new RowShape(headers, [typeof(int), typeof(string)]);
+            _ = MaterializerCache.GetOrCreate(type, shape, static _ => new object());
+        }
+
+        Assert.InRange(MaterializerCache.CachedTypeCount, 1, 256);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -50,6 +70,17 @@ public sealed class EntityMapLifetimeTests
             Assert.Equal(nameof(SnapshotPlaylistRow), map.TableName);
             Assert.NotNull(map.FindByColumn(nameof(SnapshotPlaylistRow.PlaylistID)));
             Assert.Same(map, EntityMap.For(type));
+            _ = RuntimeRowMapper.Build(type, [nameof(SnapshotPlaylistRow.PlaylistID), nameof(SnapshotPlaylistRow.Title)]);
+            _ = RuntimeRowMapper.CreateList(type);
+            var td = new TableDef
+            {
+                Columns =
+                [
+                    new ColumnInfo { Name = nameof(SnapshotPlaylistRow.PlaylistID), Type = ColumnType.LongIntegerType, ColNum = 0, FixedOff = 0, Size = 4 },
+                    new ColumnInfo { Name = nameof(SnapshotPlaylistRow.Title), Type = ColumnType.TextType, ColNum = 1, VarIdx = 0, Size = 50 },
+                ],
+            };
+            _ = td.GetShape([true, false]);
             return (new WeakReference(context), new WeakReference(type));
         }
         finally

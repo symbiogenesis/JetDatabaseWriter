@@ -356,6 +356,82 @@ public sealed class QueryIndexOrderingTests
         Assert.InRange(counting.BytesRead, 1, 16L * 4096);
     }
 
+    /// <summary>Non-unique, multi-column leading, IgnoreNulls, and nullable optional integer indexes serve MinAsync and MaxAsync without scanning the table.</summary>
+    /// <param name="descending">Whether the leading index column is descending.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExtendedIntegerIndexes_ServeMinAndMaxWithoutScanning(bool descending)
+    {
+        const int rowCount = 4000;
+        string[] descendingCols = descending ? ["SortKey"] : [];
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync(
+                "NonUniqueComposite",
+                [new("Id", typeof(int)) { IsPrimaryKey = true }, new("SortKey", typeof(int)), new("Secondary", typeof(int))],
+                [new IndexDefinition("IX_Composite", ["SortKey", "Secondary"]) { IsUnique = false, IsRequired = false, DescendingColumns = descendingCols }],
+                Ct);
+            var rows = new List<object?[]>(rowCount + 3)
+            {
+                new object?[] { 1, null, 1 },
+                new object?[] { 2, null, 2 },
+                new object?[] { 3, -50, 99 },
+            };
+            for (int i = 4; i <= rowCount + 3; i++)
+            {
+                int bucket = i % 500;
+                rows.Add([i, bucket * 10, i]);
+            }
+
+            await writer.InsertRowsAsync("NonUniqueComposite", rows, Ct);
+
+            await writer.CreateTableAsync(
+                "IgnoreNullsTable",
+                [new("Id", typeof(int)) { IsPrimaryKey = true }, new("SortKey", typeof(int))],
+                [new IndexDefinition("IX_IgnoreNulls", "SortKey") { IgnoreNulls = true, DescendingColumns = descendingCols }],
+                Ct);
+            await writer.InsertRowsAsync("IgnoreNullsTable", [[1, null], [2, 25], [3, null], [4, 750]], Ct);
+
+            await writer.CreateTableAsync(
+                "AllNullsTable",
+                [new("Id", typeof(int)) { IsPrimaryKey = true }, new("SortKey", typeof(int))],
+                [new IndexDefinition("IX_AllNulls", "SortKey") { IsUnique = false, DescendingColumns = descendingCols }],
+                Ct);
+            await writer.InsertRowsAsync("AllNullsTable", [[1, null], [2, null]], Ct);
+        }
+
+        stream.Position = 0;
+        await using var counting = new CountingStream(stream);
+        await using AccessReader reader = await AccessReader.OpenAsync(counting, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0 }, leaveOpen: true, cancellationToken: Ct);
+        _ = await reader.ListIndexesAsync("NonUniqueComposite", Ct);
+        _ = await reader.GetColumnMetadataAsync("NonUniqueComposite", Ct);
+        _ = await reader.ListLinkedTablesAsync(Ct);
+
+        counting.Reset();
+        Assert.Equal(-50, await reader.Query<OptionalKeyRow>("NonUniqueComposite").MinAsync(row => row.SortKey, Ct));
+        if (!descending)
+        {
+            Assert.InRange(counting.BytesRead, 1, 16L * 4096);
+        }
+
+        counting.Reset();
+        Assert.Equal(4990, await reader.Query<OptionalKeyRow>("NonUniqueComposite").MaxAsync(row => row.SortKey, Ct));
+        Assert.InRange(counting.BytesRead, 1, 16L * 4096);
+
+        counting.Reset();
+        Assert.Equal(25, await reader.Query<OptionalKeyRow>("IgnoreNullsTable").MinAsync(row => row.SortKey, Ct));
+        Assert.InRange(counting.BytesRead, 1, 16L * 4096);
+
+        counting.Reset();
+        Assert.Equal(750, await reader.Query<OptionalKeyRow>("IgnoreNullsTable").MaxAsync(row => row.SortKey, Ct));
+        Assert.InRange(counting.BytesRead, 1, 16L * 4096);
+
+        Assert.Null(await reader.Query<OptionalKeyRow>("AllNullsTable").MinAsync(row => row.SortKey, Ct));
+        Assert.Null(await reader.Query<OptionalKeyRow>("AllNullsTable").MaxAsync(row => row.SortKey, Ct));
+    }
+
     private static async ValueTask<MemoryStream> CreateAsync(DatabaseFormat format, Type columnType, object[] keys)
     {
         var stream = new MemoryStream();
