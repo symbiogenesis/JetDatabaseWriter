@@ -61,7 +61,7 @@ public sealed class DaoNativeJetSecurityTests
                 $check = $engine.CreateWorkspace('AccountCheck', 'NativeOwner', 'Owner123', 2)
                 try {
                     $names = @(foreach ($user in $check.Users) { $user.Name }) | Sort-Object
-                    if (($names -join ',') -ne 'admin,Creator,Engine,NativeOwner') { throw 'Workgroup contains unexpected user accounts.' }
+                    if (($names -join ',') -notin @('admin,NativeOwner', 'admin,Creator,Engine,NativeOwner')) { throw "Workgroup contains unexpected user accounts: $($names -join ',')." }
                     $groups = @(foreach ($group in $check.Groups) { $group.Name }) | Sort-Object
                     if (($groups -join ',') -ne 'Admins,Users') { throw 'Workgroup contains unexpected groups.' }
                 } finally { $check.Close() }

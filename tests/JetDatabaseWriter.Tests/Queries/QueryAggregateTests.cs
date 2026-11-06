@@ -203,7 +203,9 @@ public sealed class QueryAggregateTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = await CreateItemsAsync(DatabaseFormat.AceAccdb, fillerRows: 2000, ct);
 
-        long everyRow = await BytesReadAsync(stream, q => AggregateAsync(q, aggregate, i => i.Id, ct), ct);
+        // Select an unindexed expression so MinAsync and MaxAsync stream the table rows
+        // rather than taking the covering-index shortcut on Id.
+        long everyRow = await BytesReadAsync(stream, q => AggregateAsync(q, aggregate, i => i.Score ?? 0, ct), ct);
         long untilFault = await BytesReadAsync(
             stream,
             async q =>
