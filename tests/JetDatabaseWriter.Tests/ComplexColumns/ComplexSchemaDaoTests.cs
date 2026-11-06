@@ -237,7 +237,7 @@ public sealed class ComplexSchemaDaoTests
             object value = snapshot.Rows[0][column.Name];
             if (keyColumns.Contains(column.Name))
             {
-                value = value is string ? (column.Length >= 18 ? "s8-native" : "S8N") : checked(snapshot.Rows.Cast<DataRow>().Max(existing => Convert.ToInt32(existing[column.Name], CultureInfo.InvariantCulture)) + 1);
+                value = value is string ? "S8N" : checked(snapshot.Rows.Cast<DataRow>().Max(existing => Convert.ToInt32(existing[column.Name], CultureInfo.InvariantCulture)) + 1);
             }
 
             row[column.Name] = value;
