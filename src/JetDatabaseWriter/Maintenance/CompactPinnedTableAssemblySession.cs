@@ -15,8 +15,7 @@ using JetDatabaseWriter.Pages.Paging;
 /// Build and independent validation normally use separate sessions. Repeated operations, including failed attempts,
 /// retain their work charges. Operations must run serially; overlapping assembly calls are refused rather than queued.
 /// The caller keeps the source immutable, owns every stream and retained result, and serializes any direct discovery work
-/// with assembly calls. Result evidence and caller buffers are outside working-storage admission. Completion proves no
-/// complete database coverage, ownership, reclamation or publication permission.
+/// with assembly calls. Result evidence and caller buffers are outside working-storage admission.
 /// </remarks>
 internal sealed class CompactPinnedTableAssemblySession
 {
@@ -27,7 +26,8 @@ internal sealed class CompactPinnedTableAssemblySession
     /// <param name="source">The caller-owned immutable decrypted original source.</param>
     /// <param name="format">The verified native format.</param>
     /// <param name="budget">Fixed whole-session limits, including per-component allowances.</param>
-    internal CompactPinnedTableAssemblySession(IPageSource source, JetFormat format, CompactPinnedTableAssemblyBudget budget)
+    /// <param name="reclamation">Optional proven prefix-truncation and interior-scrubbing plan.</param>
+    internal CompactPinnedTableAssemblySession(IPageSource source, JetFormat format, CompactPinnedTableAssemblyBudget budget, CompactReclamationPlan? reclamation = null)
     {
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(format, nameof(format));
@@ -48,6 +48,9 @@ internal sealed class CompactPinnedTableAssemblySession
         this.Format = format;
         this.Budget = budget;
         this.sourcePages = source.PageCount;
+        reclamation?.ValidateAgainstSource(this.sourcePages);
+        this.Reclamation = reclamation;
+        this.RetainedPrefixPages = reclamation?.RetainedPrefixPages ?? this.sourcePages;
         this.Discovery = new(source, format, SourceBudget(budget));
         this.DefinitionSource = new AdmittedSource(this);
     }
@@ -60,6 +63,12 @@ internal sealed class CompactPinnedTableAssemblySession
 
     /// <summary>Gets the fixed cumulative and per-component allowances.</summary>
     internal CompactPinnedTableAssemblyBudget Budget { get; }
+
+    /// <summary>Gets the optional reclamation plan governing prefix truncation and interior scrubbing.</summary>
+    internal CompactReclamationPlan? Reclamation { get; }
+
+    /// <summary>Gets the retained prefix page count preceding appended table allocations.</summary>
+    internal long RetainedPrefixPages { get; }
 
     /// <summary>Gets persistent discovery admission for serialized source inventory, traversal and table work.</summary>
     internal CompactDiscoverySession Discovery { get; }

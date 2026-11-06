@@ -19,9 +19,10 @@ internal sealed class CompactGlobalMapIo
     private readonly CompactGlobalMapBudget budget;
     private readonly int pageSize;
     private readonly long sourcePages;
+    private readonly long pinnedPages;
     private long destinationLength;
 
-    internal CompactGlobalMapIo(IPageSource source, JetFormat format, long appendPointPages, Stream destination, CompactGlobalMapBudget budget, bool writable, CancellationToken token)
+    internal CompactGlobalMapIo(IPageSource source, JetFormat format, long appendPointPages, Stream destination, CompactGlobalMapBudget budget, bool writable, CancellationToken token, CompactReclamationPlan? reclamation = null)
     {
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(format, nameof(format));
@@ -44,10 +45,12 @@ internal sealed class CompactGlobalMapIo
         this.budget = budget;
         this.pageSize = format.PageSize;
         this.sourcePages = source.PageCount;
+        this.pinnedPages = reclamation?.RetainedPrefixPages ?? this.sourcePages;
         this.destinationLength = destination.Length;
         this.AppendPoint = appendPointPages;
+        reclamation?.ValidateAgainstSource(this.sourcePages);
         if (source.PageSize != this.pageSize || this.sourcePages is < 3 or > 0x1000000
-            || appendPointPages < this.sourcePages || appendPointPages > 0x1000000
+            || appendPointPages < this.pinnedPages || appendPointPages > 0x1000000
             || this.destinationLength % this.pageSize != 0
             || (writable && this.destinationLength / this.pageSize != appendPointPages))
         {
@@ -237,7 +240,7 @@ internal sealed class CompactGlobalMapIo
     }
 
     internal CompactGlobalMapResult Result(RowBound row)
-        => new(this.sourcePages, this.AppendPoint, this.FinalPages, this.BitmapPages, row.RowStart, row.RowSize, this.ReadBytes, this.WrittenBytes);
+        => new(this.pinnedPages, this.AppendPoint, this.FinalPages, this.BitmapPages, row.RowStart, row.RowSize, this.ReadBytes, this.WrittenBytes);
 
     private void AdmitRead(int requested)
     {

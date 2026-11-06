@@ -11,19 +11,18 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema.Models;
 
-/// <summary>Independently compares every retained original byte with reopened private append-only staging.</summary>
+/// <summary>Independently compares every retained original byte and scrubbed interior page with reopened private staging.</summary>
 /// <remarks>
 /// The caller keeps the decrypted original source, verified original images, replacement inputs and independently
 /// reopened decrypted destination immutable on distinct backing storage, including through wrappers. Only complete
 /// known TDEF reference replacements are reconstructed; caller-supplied patched bytes and arbitrary exception ranges
 /// cannot authorize changes. Unknown application, security, replication and other storage remains byte-identical.
 /// Global-map mutation requires a concrete independent comparison of every changed map byte and unchanged surround.
-/// Appended contents outside that map, catalog completeness, reference ownership, native
-/// acceptance, reclamation and publication remain separate requirements. This component reads and never writes.
+/// This component reads and never writes.
 /// </remarks>
 internal static class CompactPinnedPrefixValidator
 {
-    /// <summary>Streams the entire pinned prefix against source bytes with independently reconstructed defined pointer changes.</summary>
+    /// <summary>Streams the retained prefix against source bytes with independently reconstructed defined pointer changes.</summary>
     /// <param name="source">The immutable original decrypted page source, including its physical header page.</param>
     /// <param name="format">The matching verified original native format.</param>
     /// <param name="definitions">Complete original images and expected reference inputs for every changed pinned definition.</param>
@@ -31,7 +30,7 @@ internal static class CompactPinnedPrefixValidator
     /// <param name="budget">Aggregate physical, repeated-read and conservative additional storage admission.</param>
     /// <param name="cancellationToken">Cancels every traversal, page read and page comparison.</param>
     /// <param name="globalMap">Optional independent pre-map EOF and limits for validating the replacement native global map.</param>
-    /// <returns>Exact original-prefix preservation evidence, without whole-database or reclaimability acceptance.</returns>
+    /// <returns>Exact original-prefix preservation evidence.</returns>
     /// <exception cref="JetCorruptDataException">Geometry, source evidence, chain identities or expected private bytes disagree.</exception>
     internal static async ValueTask<CompactPinnedPrefixValidatorResult> ValidateAsync(
         IPageSource source,
@@ -42,7 +41,8 @@ internal static class CompactPinnedPrefixValidator
         CancellationToken cancellationToken,
         CompactPinnedGlobalMapValidation? globalMap = null)
     {
-        var audit = new Audit(source, format, definitions, reopenedDestination, budget, cancellationToken);
+        CompactReclamationPlan? reclamation = globalMap?.Reclamation;
+        var audit = new Audit(source, format, definitions, reopenedDestination, budget, reclamation, cancellationToken);
         long position = reopenedDestination.Position;
         try
         {
@@ -63,7 +63,8 @@ internal static class CompactPinnedPrefixValidator
                         MaxWriteBytes = limits.MaxWriteBytes,
                         MaxWorkingBytes = Math.Min(limits.MaxWorkingBytes, budget.MaxWorkingBytes),
                     },
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    reclamation).ConfigureAwait(false);
                 audit.AcceptGlobalMapComparison(compared.ReadBytes);
             }
 
@@ -89,11 +90,13 @@ internal static class CompactPinnedPrefixValidator
         private readonly JetFormat format;
         private readonly Stream destination;
         private readonly CompactPinnedPrefixValidatorBudget budget;
+        private readonly CompactReclamationPlan? reclamation;
+        private readonly long sourcePages;
         private readonly long destinationLength;
         private readonly List<BytePatch> patches = [];
         private bool globalMapValidated;
 
-        internal Audit(IPageSource source, JetFormat format, IReadOnlyList<CompactPinnedTDefReferences> definitions, Stream destination, CompactPinnedPrefixValidatorBudget budget, CancellationToken token)
+        internal Audit(IPageSource source, JetFormat format, IReadOnlyList<CompactPinnedTDefReferences> definitions, Stream destination, CompactPinnedPrefixValidatorBudget budget, CompactReclamationPlan? reclamation, CancellationToken token)
         {
             Guard.NotNull(source, nameof(source));
             Guard.NotNull(format, nameof(format));
@@ -111,9 +114,13 @@ internal static class CompactPinnedPrefixValidator
             this.format = format;
             this.destination = destination;
             this.budget = budget;
-            this.PinnedPages = source.PageCount;
+            this.reclamation = reclamation;
+            this.sourcePages = source.PageCount;
+            reclamation?.ValidateAgainstSource(this.sourcePages);
+            this.PinnedPages = reclamation?.RetainedPrefixPages ?? this.sourcePages;
             this.destinationLength = destination.Length;
-            if (source.PageSize != format.PageSize || this.PinnedPages is < 3 or > 0x1000000
+            if (source.PageSize != format.PageSize || this.sourcePages is < 3 or > 0x1000000
+                || this.PinnedPages < 3 || this.PinnedPages > this.sourcePages
                 || this.destinationLength % format.PageSize != 0
                 || this.destinationLength / format.PageSize < this.PinnedPages
                 || this.destinationLength / format.PageSize > 0x1000000)
@@ -143,6 +150,7 @@ internal static class CompactPinnedPrefixValidator
                     ? format.PageSize
                     : format.PageSize + ((((end - format.PageSize - 1) / (format.PageSize - 8)) + 1) * (format.PageSize - 8));
                 if (definition.RootPage is <= 0 or > 0xFFFFFF || definition.RootPage >= this.PinnedPages
+                    || reclamation?.IsReclaimed(definition.RootPage) == true
                     || (image.TDefPageNumber.HasValue && image.TDefPageNumber != definition.RootPage)
                     || image.Issues != TDefParseIssues.None || length < format.PageSize
                     || (length - format.PageSize) % (format.PageSize - 8) != 0 || length != expectedLength
@@ -201,7 +209,9 @@ internal static class CompactPinnedPrefixValidator
                 while (logical < expected.Length)
                 {
                     this.Check(token);
-                    if (number <= 0 || number >= this.PinnedPages || !visited.Add(number))
+                    if (number <= 0 || number >= this.PinnedPages
+                        || this.reclamation?.IsReclaimed(number) == true
+                        || !visited.Add(number))
                     {
                         throw Corrupt("Original pinned definition chains overlap, cycle or leave original storage.");
                     }
@@ -259,11 +269,28 @@ internal static class CompactPinnedPrefixValidator
                     continue;
                 }
 
+                long start = number * this.format.PageSize;
+                long end = start + this.format.PageSize;
+                if (this.reclamation?.IsScrubbedPrefixPage(number) == true)
+                {
+                    if (patchIndex < this.patches.Count && this.patches[patchIndex].Offset < end)
+                    {
+                        throw Corrupt("A scrubbed interior prefix page cannot receive definition patches.");
+                    }
+
+                    await this.ReadPrivateAsync(start, actual, token).ConfigureAwait(false);
+                    this.Check(token);
+                    if (!CompactReclamationPlan.IsScrubbedFreePage(actual, this.format.PageSize))
+                    {
+                        throw Corrupt("A scrubbed interior prefix page differs from its expected canonical freed-page bytes.");
+                    }
+
+                    continue;
+                }
+
                 byte[] expected = await this.ReadSourceAsync(number, token).ConfigureAwait(false);
                 try
                 {
-                    long start = number * this.format.PageSize;
-                    long end = start + this.format.PageSize;
                     while (patchIndex < this.patches.Count && this.patches[patchIndex].Offset < end)
                     {
                         BytePatch patch = this.patches[patchIndex++];
@@ -293,7 +320,7 @@ internal static class CompactPinnedPrefixValidator
         private void Check(CancellationToken token)
         {
             this.source.ThrowIfDisposedOrCancelled(token);
-            if (this.source.PageCount != this.PinnedPages || this.source.PageSize != this.format.PageSize || this.destination.Length != this.destinationLength)
+            if (this.source.PageCount != this.sourcePages || this.source.PageSize != this.format.PageSize || this.destination.Length != this.destinationLength)
             {
                 throw Corrupt("Original or private destination geometry changed during pinned-prefix comparison.");
             }

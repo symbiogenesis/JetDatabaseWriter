@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,10 +24,31 @@ internal static class CompactPinnedDestinationInventory
     /// <returns>The exact compared discovered object count.</returns>
     /// <exception cref="JetCorruptDataException">An identity, local owner or complete discovered membership differs.</exception>
     /// <exception cref="JetLimitationException">An inventory or simultaneous storage allowance is exhausted.</exception>
-    internal static async ValueTask<int> ValidateAsync(
+    internal static ValueTask<int> ValidateAsync(
         CompactDiscoverySession source,
         IPageSource destination,
         CompactActiveCatalogRows activeCatalog,
+        IReadOnlyList<CompactPinnedDatabaseTable> tables,
+        CompactTraversalBudget budget,
+        CancellationToken cancellationToken)
+        => ValidateCoreAsync(source, destination, activeCatalog, activeCatalog.ActiveRows, reclamation: null, tables, budget, cancellationToken);
+
+    internal static ValueTask<int> ValidateReclaimedAsync(
+        CompactDiscoverySession source,
+        IPageSource destination,
+        long activeCatalogRows,
+        CompactReclamationPlan reclamation,
+        IReadOnlyList<CompactPinnedDatabaseTable> tables,
+        CompactTraversalBudget budget,
+        CancellationToken cancellationToken)
+        => ValidateCoreAsync(source, destination, activeCatalog: null, activeCatalogRows, reclamation, tables, budget, cancellationToken);
+
+    private static async ValueTask<int> ValidateCoreAsync(
+        CompactDiscoverySession source,
+        IPageSource destination,
+        CompactActiveCatalogRows? activeCatalog,
+        long expectedActiveRows,
+        CompactReclamationPlan? reclamation,
         IReadOnlyList<CompactPinnedDatabaseTable> tables,
         CompactTraversalBudget budget,
         CancellationToken cancellationToken)
@@ -39,6 +61,50 @@ internal static class CompactPinnedDestinationInventory
 
         cancellationToken.ThrowIfCancellationRequested();
         using IDisposable membership = source.Accounting.ReserveWorkingBytes(retained);
+        if (reclamation is not null)
+        {
+            reclamation.ValidateAgainstSource(source.SourcePages.PageCount);
+            int pageSize = source.SourceFormat.PageSize;
+            for (long number = 3; number < source.SourcePages.PageCount; number++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                source.Accounting.Charge(CompactDiscoveryCharge.PageReads, 1, number);
+                byte[] page = await source.SourcePages.ReadUncachedPageAsync(number, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (page[0] != Constants.PageTypes.Data || BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(4, 4)) != 2)
+                    {
+                        continue;
+                    }
+
+                    if (!reclamation.IsReclaimed(number))
+                    {
+                        throw Corrupt("A reclaimed catalog destination retains an unreclaimed original catalog data page.");
+                    }
+
+                    if (number < reclamation.RetainedPrefixPages)
+                    {
+                        byte[] scrubbed = await destination.ReadUncachedPageAsync(number, cancellationToken).ConfigureAwait(false);
+                        try
+                        {
+                            if (!CompactReclamationPlan.IsScrubbedFreePage(scrubbed.AsSpan(0, pageSize), pageSize))
+                            {
+                                throw Corrupt("A reclaimed interior catalog page was not scrubbed to a canonical freed page.");
+                            }
+                        }
+                        finally
+                        {
+                            PageBuffers.Return(scrubbed);
+                        }
+                    }
+                }
+                finally
+                {
+                    PageBuffers.Return(page);
+                }
+            }
+        }
+
         var objects = new Dictionary<long, CompactStorageRecord>();
         var owners = new HashSet<long>();
         foreach (CompactPinnedDatabaseTable table in tables)
@@ -121,7 +187,7 @@ internal static class CompactPinnedDestinationInventory
                 return default;
             },
             activeCatalog: activeCatalog).ConfigureAwait(false);
-        if (objects.Count != 0 || owners.Count != 0 || count != activeCatalog.ActiveRows)
+        if (objects.Count != 0 || owners.Count != 0 || count != expectedActiveRows)
         {
             throw Corrupt("Active destination discovery omits independently compared catalog identities or local definitions.");
         }

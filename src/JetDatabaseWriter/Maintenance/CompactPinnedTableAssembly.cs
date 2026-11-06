@@ -23,10 +23,8 @@ using JetDatabaseWriter.Schema.Models;
 /// for other tables or global maps, which requires separate allocation and database validation.
 /// Same-owner physical descriptors that share both their root and ownership-map row with compatible key columns and
 /// null-membership flags relocate to one shared physical index allocation; partial or incompatible aliases refuse, and
-/// logical sharing within a physical descriptor is retained. Every source page remains pinned. Catalog completeness,
-/// global allocation, encryption, unknown incoming references, native mutation acceptance and durable publication
-/// remain separate requirements. Completion never authorizes reclamation or database replacement. Failures leave
-/// private partial output and no completion evidence.
+/// logical sharing within a physical descriptor is retained.
+/// Failures leave private partial output and no completion evidence.
 /// </remarks>
 internal static class CompactPinnedTableAssembly
 {
@@ -63,9 +61,9 @@ internal static class CompactPinnedTableAssembly
         IPageSource source = assembly.Source;
         JetFormat format = assembly.Format;
         CompactPinnedTableAssemblyBudget budget = assembly.Budget;
-        ValidateInputs(source, format, owner, definition, indexes, budget, cancellationToken);
+        ValidateInputs(source, format, owner, definition, indexes, budget, assembly.Reclamation, cancellationToken);
         ValidateStreams(writable: true, privateDestination, rowLedger, allocationLedger, firstFenceStream, secondFenceStream);
-        if (privateDestination.Length % format.PageSize != 0 || privateDestination.Length / format.PageSize < source.PageCount)
+        if (privateDestination.Length % format.PageSize != 0 || privateDestination.Length / format.PageSize < assembly.RetainedPrefixPages)
         {
             throw new ArgumentException("The private append point must retain the complete page-aligned pinned source prefix.", nameof(privateDestination));
         }
@@ -158,13 +156,13 @@ internal static class CompactPinnedTableAssembly
         IPageSource source = assembly.Source;
         JetFormat format = assembly.Format;
         CompactPinnedTableAssemblyBudget budget = assembly.Budget;
-        ValidateInputs(source, format, owner, definition, indexes, budget, cancellationToken);
+        ValidateInputs(source, format, owner, definition, indexes, budget, assembly.Reclamation, cancellationToken);
         ValidateStreams(writable: false, reopenedDestination, rowLedger, allocationLedger);
         Guard.NotNull(allocation, nameof(allocation));
         Guard.NotNull(allocation.Table, nameof(allocation));
         Guard.NotNull(allocation.Table.LongValueMaps, nameof(allocation));
         Guard.NotNull(allocation.Indexes, nameof(allocation));
-        if (allocation.Owner != owner || allocation.Indexes.Count != indexes.Count || allocation.FirstPageNumber < source.PageCount
+        if (allocation.Owner != owner || allocation.Indexes.Count != indexes.Count || allocation.FirstPageNumber < assembly.RetainedPrefixPages
             || allocation.Table.LongValueMaps.Count > Constants.TableDefinition.MaxColumns
             || allocation.FirstPageNumber is < 3 or > 0xFFFFFF || allocation.PageCount < 1
             || allocation.PageCount > 0x1000000L - allocation.FirstPageNumber || reopenedDestination.Length % format.PageSize != 0
@@ -232,7 +230,7 @@ internal static class CompactPinnedTableAssembly
         return new(table, Array.AsReadOnly(verifiedIndexes), chain, admission.ReadBytes);
     }
 
-    private static void ValidateInputs(IPageSource source, JetFormat format, long owner, TDefImage definition, IReadOnlyList<CompactPinnedTableIndexSource> indexes, CompactPinnedTableAssemblyBudget budget, CancellationToken token)
+    private static void ValidateInputs(IPageSource source, JetFormat format, long owner, TDefImage definition, IReadOnlyList<CompactPinnedTableIndexSource> indexes, CompactPinnedTableAssemblyBudget budget, CompactReclamationPlan? reclamation, CancellationToken token)
     {
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(format, nameof(format));
@@ -252,7 +250,9 @@ internal static class CompactPinnedTableAssembly
         Guard.InRange(budget.MaxObservedEntries, 0L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxObservedKeyBytes, 0L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxWorkingBytes, 1L, long.MaxValue, nameof(budget));
-        if (source.PageSize != format.PageSize || owner <= 0 || owner >= source.PageCount
+        long maxOwnerPage = reclamation?.RetainedPrefixPages ?? source.PageCount;
+        if (source.PageSize != format.PageSize || owner <= 0 || owner >= maxOwnerPage
+            || reclamation?.IsReclaimed(owner) == true
             || definition.Issues != TDefParseIssues.None || (definition.TDefPageNumber.HasValue && definition.TDefPageNumber != owner)
             || definition.RealIndexes.Count != indexes.Count || indexes.Count > Constants.TableDefinition.MaxIndexes)
         {

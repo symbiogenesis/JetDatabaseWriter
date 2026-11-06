@@ -10,14 +10,15 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 
-/// <summary>Independently compares a reopened all-pinned global map against original page one and pre-map EOF.</summary>
+/// <summary>Independently compares a reopened all-pinned or reclaiming global map against original page one and pre-map EOF.</summary>
 /// <remarks>
 /// No installer result, generated row or generated bitmap supplies expected bytes. The caller keeps the source,
 /// reopened separate destination and the independently recorded pre-map EOF immutable. Every page-one byte
 /// outside original row zero compares exactly; every row byte and appended bitmap byte has a canonical expected
-/// value. All existing pages, including old global storage and new bitmap storage, must be marked used. Future
-/// represented pages are free. This validates only that conservative native map and its append allocation;
-/// it does not compare other prefix pages, establish incoming ownership, validate the database or permit publication.
+/// value. All existing pages, including old global storage and new bitmap storage, must be marked used unless
+/// proven scrubbed free in a <see cref="CompactReclamationPlan"/>. Future represented pages are free.
+/// This validates only that native map and its append allocation; it does not compare other prefix pages,
+/// establish incoming ownership, validate the database or permit publication.
 /// </remarks>
 internal static class CompactGlobalMapValidator
 {
@@ -28,11 +29,19 @@ internal static class CompactGlobalMapValidator
     /// <param name="reopenedDestination">The separately reopened immutable readable seekable decrypted destination.</param>
     /// <param name="budget">Total page, bitmap, read and working-storage limits.</param>
     /// <param name="cancellationToken">Cancels every read and bitmap comparison.</param>
+    /// <param name="reclamation">Optional proven prefix-truncation and interior-scrubbing plan.</param>
     /// <returns>Exact conservative map comparison without complete database acceptance.</returns>
     /// <exception cref="JetCorruptDataException">The source or private native map, unchanged surround or exact allocation geometry disagrees.</exception>
-    internal static async ValueTask<CompactGlobalMapResult> ValidateAsync(IPageSource source, JetFormat format, long appendPointPages, Stream reopenedDestination, CompactGlobalMapBudget budget, CancellationToken cancellationToken)
+    internal static async ValueTask<CompactGlobalMapResult> ValidateAsync(
+        IPageSource source,
+        JetFormat format,
+        long appendPointPages,
+        Stream reopenedDestination,
+        CompactGlobalMapBudget budget,
+        CancellationToken cancellationToken,
+        CompactReclamationPlan? reclamation = null)
     {
-        var io = new CompactGlobalMapIo(source, format, appendPointPages, reopenedDestination, budget, writable: false, cancellationToken);
+        var io = new CompactGlobalMapIo(source, format, appendPointPages, reopenedDestination, budget, writable: false, cancellationToken, reclamation);
         long position = reopenedDestination.Position;
         byte[] original = await io.ReadSourceAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -63,7 +72,7 @@ internal static class CompactGlobalMapValidator
                 for (int offset = Constants.UsageMap.InlineMapHeaderSize; offset < row.RowSize; offset++)
                 {
                     long firstPage = (long)(offset - Constants.UsageMap.InlineMapHeaderSize) * 8;
-                    if (actual[row.RowStart + offset] != ExpectedFreeByte(firstPage, io.FinalPages))
+                    if (actual[row.RowStart + offset] != ExpectedFreeByte(firstPage, io.FinalPages, reclamation))
                     {
                         throw CompactGlobalMapIo.Corrupt("The reopened global INLINE membership differs from exact pinned and future coverage.");
                     }
@@ -101,7 +110,7 @@ internal static class CompactGlobalMapValidator
                             0 => Constants.PageTypes.UsageMap,
                             1 => 1,
                             _ when offset < Constants.UsageMap.ReferenceMapBitmapOffset => 0,
-                            _ => ExpectedFreeByte(((long)window * windowSize) + ((long)(offset - Constants.UsageMap.ReferenceMapBitmapOffset) * 8), io.FinalPages),
+                            _ => ExpectedFreeByte(((long)window * windowSize) + ((long)(offset - Constants.UsageMap.ReferenceMapBitmapOffset) * 8), io.FinalPages, reclamation),
                         };
                         if (actual[offset] != expected)
                         {
@@ -123,14 +132,29 @@ internal static class CompactGlobalMapValidator
         }
     }
 
-    private static byte ExpectedFreeByte(long firstPage, long finalPages)
+    private static byte ExpectedFreeByte(long firstPage, long finalPages, CompactReclamationPlan? reclamation)
     {
-        if (firstPage >= finalPages)
+        if (reclamation is null || reclamation.ScrubbedPrefixPageCount == 0 || firstPage >= reclamation.RetainedPrefixPages)
         {
-            return byte.MaxValue;
+            if (firstPage >= finalPages)
+            {
+                return byte.MaxValue;
+            }
+
+            long used = finalPages - firstPage;
+            return used >= 8 ? (byte)0 : unchecked((byte)(byte.MaxValue << checked((int)used)));
         }
 
-        long used = finalPages - firstPage;
-        return used >= 8 ? (byte)0 : unchecked((byte)(byte.MaxValue << checked((int)used)));
+        byte mask = 0;
+        for (int bit = 0; bit < 8; bit++)
+        {
+            long page = firstPage + bit;
+            if (page >= finalPages || reclamation.IsScrubbedPrefixPage(page))
+            {
+                mask |= (byte)(1 << bit);
+            }
+        }
+
+        return mask;
     }
 }

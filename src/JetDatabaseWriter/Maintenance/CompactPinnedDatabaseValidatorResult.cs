@@ -10,9 +10,8 @@ namespace JetDatabaseWriter.Maintenance;
 /// <param name="ActiveTables">The ordinary tables whose scoped active rows were independently corroborated.</param>
 /// <param name="UnassignedRows">The physical rows outside those corroborated sets; every such row remains pinned and reported.</param>
 /// <remarks>
-/// Known local-table membership is bound to an independent source inventory. Opaque incoming references, complete
-/// discoverability under damaged ownership, native acceptance, encryption and
-/// durable publication remain separate requirements. This result never authorizes database replacement.
+/// Known local-table membership is bound to an independent source inventory. When validated without a
+/// <see cref="CompactReclamationPlan"/>, whole-database, ownership, and reclamation flags remain false.
 /// </remarks>
 internal sealed record CompactPinnedDatabaseValidatorResult(
     int Tables,
@@ -27,12 +26,12 @@ internal sealed record CompactPinnedDatabaseValidatorResult(
     /// <summary>Gets a value indicating whether independently discovered source and active destination inventories matched.</summary>
     public bool DestinationInventoryCompared { get; } = true;
 
-    /// <summary>Gets a value indicating whether the complete database has been validated; always false.</summary>
-    public bool DatabaseValidated { get; }
+    /// <summary>Gets a value indicating whether the complete database has been validated.</summary>
+    public bool DatabaseValidated { get; init; }
 
-    /// <summary>Gets a value indicating whether complete incoming-reference ownership is established; always false.</summary>
-    public bool OwnershipProven { get; }
+    /// <summary>Gets a value indicating whether complete incoming-reference ownership is established.</summary>
+    public bool OwnershipProven { get; init; }
 
-    /// <summary>Gets a value indicating whether pinned source storage may be reclaimed; always false.</summary>
-    public bool ReclamationAuthorized { get; }
+    /// <summary>Gets a value indicating whether pinned source storage may be reclaimed.</summary>
+    public bool ReclamationAuthorized { get; init; }
 }

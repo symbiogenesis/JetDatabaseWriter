@@ -326,7 +326,7 @@ See the [validation matrix](design/writer-disk-format-validation-matrix.md) for 
 
 ### Compact & Repair
 
-`ShrinkDatabaseAsync` truncates free pages at the physical end of the file. It does not move live pages, renumber references, rebuild tables into a new file or scrub every unused gap in live pages. See [storage maintenance and secure erase](writing.md#storage-maintenance-and-secure-erase).
+`AccessDatabaseCompact` (`CompactAsync`, `CompactToAsync` and `CompactInPlaceAsync`) rebuilds local tables, long-value chains, indexes and usage maps into a validated destination database, reclaims proven source table storage (`RetainedPrefixPages` tail truncation and zero-scrubbed Freed `0x06` prefix pages marked free in the global usage map), and preserves original TDEF page numbers and pinned opaque/security/application pages. When catalog recovery, unassigned physical rows or opaque pages withhold complete ownership proof, `CompactInPlaceAsync` refuses replacement and `CompactAsync` / `CompactToAsync` require `AccessCompactOptions.AllowPartialRecovery = true` to publish partial salvage output with structured diagnostics. `ShrinkDatabaseAsync` remains available on `AccessWriter` to truncate globally free pages at the physical end of the file in place without rebuilding tables. See [storage maintenance and secure erase](writing.md#storage-maintenance-and-secure-erase) and [Managed Compact & Repair](design/compact-and-repair.md).
 
 ### Forms, reports, macros, queries, VBA
 

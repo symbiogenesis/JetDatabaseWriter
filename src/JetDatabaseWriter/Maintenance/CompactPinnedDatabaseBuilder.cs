@@ -14,24 +14,24 @@ using JetDatabaseWriter.Pages.Paging;
 /// <remarks>
 /// The immutable decrypted source and all caller-provisioned private backing stores are distinct, including through
 /// wrappers. The complete local-table plan is independently checked before any output factory runs. Only one source
-/// page is retained while copying the original prefix; table sidecars can spill to disk and open serially. Every source
-/// page stays pinned. Raw DATA/LVAL, physical stored indexes, known TDEF pointers, native global allocation and the
+/// page is retained while copying the original prefix; table sidecars can spill to disk and open serially.
+/// Raw DATA/LVAL, physical stored indexes, known TDEF pointers, native global allocation and the
 /// complete allocation sidecar are composed without converting stored values or regenerating stored keys.
 /// Construction read/write admission is cumulative across all phases and failed requests. Independent reopened
 /// validation has its own allowance. Every transferred stream is closed on every exit; partial private output is
-/// retained for caller-controlled diagnosis and cleanup. This is a private append-only assembly, not compaction,
-/// complete source recovery, native acceptance, proof of incoming ownership or permission to replace the source.
+/// retained for caller-controlled diagnosis and cleanup.
 /// </remarks>
 internal static class CompactPinnedDatabaseBuilder
 {
-    /// <summary>Constructs, closes, independently reopens and compares one complete private pinned database assembly.</summary>
+    /// <summary>Constructs, closes, independently reopens and compares one complete private database assembly.</summary>
     /// <param name="source">The caller-owned immutable decrypted original page source.</param>
     /// <param name="format">The independently verified matching native format.</param>
     /// <param name="tables">Immutable complete discovered-local-table evidence in the requested append order.</param>
     /// <param name="workspace">Exclusive separate private storage, with transferred stream ownership.</param>
     /// <param name="budget">Cumulative construction and separately bounded independent validation admission.</param>
     /// <param name="cancellationToken">Cancels inventory, factories, traversal, copying, writes and comparison.</param>
-    /// <returns>Private compared component evidence that never authorizes reclamation or publication.</returns>
+    /// <param name="reclamation">Optional proven page-reclamation plan for reclaiming compact copy construction.</param>
+    /// <returns>Private compared component evidence.</returns>
     /// <exception cref="JetCorruptDataException">The plan, native storage, compared retained bytes or allocations disagree.</exception>
     /// <exception cref="JetLimitationException">A cumulative or component allowance is exhausted.</exception>
     internal static async ValueTask<CompactPinnedDatabaseBuilderResult> BuildAndValidateAsync(
@@ -40,10 +40,11 @@ internal static class CompactPinnedDatabaseBuilder
         IReadOnlyList<CompactPinnedDatabaseBuildTable> tables,
         CompactPinnedDatabaseWorkspace workspace,
         CompactPinnedDatabaseBuilderBudget budget,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        CompactReclamationPlan? reclamation = null)
     {
         ValidateArguments(source, format, tables, workspace, budget);
-        var admission = new Admission(source, format, budget, cancellationToken);
+        var admission = new Admission(source, format, budget, cancellationToken, reclamation);
         if (tables.Count > budget.MaxTables)
         {
             throw Limit("Private database construction exceeds MaxTables.");
@@ -71,7 +72,7 @@ internal static class CompactPinnedDatabaseBuilder
         }
 
         long working = budget.MaxWorkingBytes - retained;
-        var assembly = new CompactPinnedTableAssemblySession(admission.Source, format, TableBudget(budget.Tables, working));
+        var assembly = new CompactPinnedTableAssemblySession(admission.Source, format, TableBudget(budget.Tables, working), reclamation);
         var plan = new CompactDatabasePlanTable[tables.Count];
         var compared = new CompactPinnedDatabaseTable[tables.Count];
         var created = new List<Stream>(checked((tables.Count * 4) + 2));
@@ -89,7 +90,7 @@ internal static class CompactPinnedDatabaseBuilder
         await using (Stream destinationOutput = await CreateAsync(workspace, CompactPinnedDatabaseFile.Destination, 0, created, admission, cancellationToken).ConfigureAwait(false))
         {
             await using var destination = new AdmittedStream(destinationOutput, admission, destination: true);
-            await CopyPrefixAsync(admission, destination, cancellationToken).ConfigureAwait(false);
+            await CopyPrefixAsync(admission, format, destination, reclamation, cancellationToken).ConfigureAwait(false);
             await assembly.Discovery.WithCatalogRecoveryAsync(
                 async buildToken =>
                 {
@@ -120,12 +121,13 @@ internal static class CompactPinnedDatabaseBuilder
                 cancellationToken).ConfigureAwait(false);
 
             long appendPoint = destination.Length / format.PageSize;
-            global = await CompactGlobalMapInstaller.InstallAsync(admission.Source, format, appendPoint, destination, MapBudget(budget.GlobalMap, working), cancellationToken).ConfigureAwait(false);
+            global = await CompactGlobalMapInstaller.InstallAsync(admission.Source, format, appendPoint, destination, MapBudget(budget.GlobalMap, working), cancellationToken, reclamation).ConfigureAwait(false);
+            long retainedPrefixPages = reclamation?.RetainedPrefixPages ?? source.PageCount;
             await using (Stream allocationOutput = await CreateAsync(workspace, CompactPinnedDatabaseFile.AllocationLedger, 0, created, admission, cancellationToken).ConfigureAwait(false))
             {
                 await using var ledger = new AdmittedStream(allocationOutput, admission, destination: false);
                 allocation = await CompactGlobalAllocationBuilder.BuildAsync(
-                    format, source.PageCount, AllocationsAsync(compared, global, cancellationToken), destination, ledger, AllocationBudget(budget.Allocation, working), cancellationToken).ConfigureAwait(false);
+                    format, retainedPrefixPages, AllocationsAsync(compared, global, cancellationToken), destination, ledger, AllocationBudget(budget.Allocation, working), cancellationToken).ConfigureAwait(false);
             }
 
             admission.Check(cancellationToken);
@@ -147,14 +149,38 @@ internal static class CompactPinnedDatabaseBuilder
             {
                 RejectClosedWriter(reopenedLedger, created);
                 CompactPinnedDatabaseValidatorResult validation = await CompactPinnedDatabaseValidator.ValidateAsync(
-                    source, format, compared, reopenedDestination, new(global.AppendPointPages, budget.GlobalMap), reopenedLedger, allocation, ValidationBudget(budget.Validation, working, budget.MaxPages, budget.MaxTables), cancellationToken, workspace.ObserveUnassignedRow).ConfigureAwait(false);
+                    source,
+                    format,
+                    compared,
+                    reopenedDestination,
+                    new(global.AppendPointPages, budget.GlobalMap, reclamation),
+                    reopenedLedger,
+                    allocation,
+                    ValidationBudget(budget.Validation, working, budget.MaxPages, budget.MaxTables),
+                    cancellationToken,
+                    workspace.ObserveUnassignedRow,
+                    reclamation).ConfigureAwait(false);
                 if (validation.ActiveTables != activeTables || validation.UnassignedRows != unassignedRows)
                 {
                     throw Corrupt("Independent active-table and pinned unassigned-row coverage differs from construction.");
                 }
 
                 admission.Check(cancellationToken);
-                return new(membership, validation, admission.ReadBytes, admission.WrittenBytes);
+                if (reclamation is null)
+                {
+                    return new(membership, validation, admission.ReadBytes, admission.WrittenBytes);
+                }
+
+                return new(membership, validation, admission.ReadBytes, admission.WrittenBytes)
+                {
+                    DatabaseValidated = validation.DatabaseValidated,
+                    ReclamationAuthorized = validation.ReclamationAuthorized,
+                    PublicationAuthorized = validation.DatabaseValidated
+                        && validation.OwnershipProven
+                        && validation.ReclamationAuthorized
+                        && reclamation.IsComplete
+                        && validation.UnassignedRows == 0,
+                };
             }
         }
     }
@@ -189,10 +215,20 @@ internal static class CompactPinnedDatabaseBuilder
         }
     }
 
-    private static async ValueTask CopyPrefixAsync(Admission admission, Stream destination, CancellationToken token)
+    private static async ValueTask CopyPrefixAsync(Admission admission, JetFormat format, Stream destination, CompactReclamationPlan? reclamation, CancellationToken token)
     {
-        for (long pageNumber = 0; pageNumber < admission.Source.PageCount; pageNumber++)
+        long retainedPrefixPages = reclamation?.RetainedPrefixPages ?? admission.Source.PageCount;
+        byte[]? scrubbedPage = reclamation is { ScrubbedPrefixPageCount: > 0 }
+            ? CompactReclamationPlan.CreateScrubbedFreePage(format)
+            : null;
+        for (long pageNumber = 0; pageNumber < retainedPrefixPages; pageNumber++)
         {
+            if (scrubbedPage is not null && reclamation!.IsScrubbedPrefixPage(pageNumber))
+            {
+                await destination.WriteAsync(scrubbedPage.AsMemory(0, admission.Source.PageSize), token).ConfigureAwait(false);
+                continue;
+            }
+
             byte[] page = await admission.Source.ReadPageAsync(pageNumber, token).ConfigureAwait(false);
             try
             {
@@ -345,7 +381,7 @@ internal static class CompactPinnedDatabaseBuilder
         private readonly long sourcePages;
         private readonly CancellationToken token;
 
-        internal Admission(IPageSource source, JetFormat format, CompactPinnedDatabaseBuilderBudget budget, CancellationToken token)
+        internal Admission(IPageSource source, JetFormat format, CompactPinnedDatabaseBuilderBudget budget, CancellationToken token, CompactReclamationPlan? reclamation = null)
         {
             this.original = source;
             this.format = format;
@@ -359,7 +395,9 @@ internal static class CompactPinnedDatabaseBuilder
                 throw Corrupt("The original database does not contain a complete native prefix.");
             }
 
-            this.Output(checked(this.sourcePages * format.PageSize));
+            reclamation?.ValidateAgainstSource(this.sourcePages);
+            long retainedPrefixPages = reclamation?.RetainedPrefixPages ?? this.sourcePages;
+            this.Output(checked(retainedPrefixPages * format.PageSize));
         }
 
         internal IPageSource Source { get; }

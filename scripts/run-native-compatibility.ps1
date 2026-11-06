@@ -84,6 +84,7 @@ function Get-NativeCompatibilityMethods {
         'JetDatabaseWriter.Tests.Schema.NativeSchemaDaoTests.DaoAuthoredWideAttachment_RewriteSurvivesNativeMutationAndCompact'
         'JetDatabaseWriter.Tests.Schema.IndexDescriptorPreservationTests.Dao120_NativeDescriptorsSurviveRewriteMutationAndCompact'
         'JetDatabaseWriter.Tests.Schema.IndexDescriptorPreservationTests.Dao120_NewPrimaryKeyPreservesForeignKeyNameAndProperties'
+        'JetDatabaseWriter.Tests.Maintenance.CompactReclaimingDatabaseTests.CompactedDatabase_Dao120ReadsMutatesAndRecompacts'
     )
 }
 

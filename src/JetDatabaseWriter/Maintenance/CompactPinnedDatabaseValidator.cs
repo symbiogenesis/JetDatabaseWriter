@@ -36,7 +36,8 @@ internal static class CompactPinnedDatabaseValidator
     /// <param name="budget">One-shot cumulative and per-component admission.</param>
     /// <param name="cancellationToken">Cancels inventory, provider opens, every traversal and every read request.</param>
     /// <param name="observeUnassignedRow">Required for active-table selections; consumes borrowed pinned unassigned rows during independent corroboration and repeated scans.</param>
-    /// <returns>Composed private comparisons without whole-database, ownership or publication acceptance.</returns>
+    /// <param name="reclamation">Optional proven page-reclamation plan when validating a reclaiming compact copy.</param>
+    /// <returns>Composed private comparisons.</returns>
     /// <exception cref="JetCorruptDataException">Membership, native storage, retained bytes or complete allocations disagree.</exception>
     /// <exception cref="JetLimitationException">A cumulative or active-component allowance is exhausted.</exception>
     /// <exception cref="ArgumentException">An active-table selection has no required unassigned-row observer.</exception>
@@ -50,7 +51,8 @@ internal static class CompactPinnedDatabaseValidator
         CompactGlobalAllocationBuilderResult allocation,
         CompactPinnedDatabaseValidatorBudget budget,
         CancellationToken cancellationToken,
-        Func<CompactActiveTableRowRecord, CancellationToken, ValueTask>? observeUnassignedRow = null)
+        Func<CompactActiveTableRowRecord, CancellationToken, ValueTask>? observeUnassignedRow = null,
+        CompactReclamationPlan? reclamation = null)
     {
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(format, nameof(format));
@@ -71,7 +73,13 @@ internal static class CompactPinnedDatabaseValidator
         Guard.InRange(budget.MaxReadBytes, 0L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxWorkingBytes, 1L, long.MaxValue, nameof(budget));
         ValidateStreams(reopenedDestination, reopenedAllocationLedger);
-        var admission = new Admission(source, format, reopenedDestination, budget, cancellationToken);
+        CompactReclamationPlan? effectiveReclamation = reclamation ?? globalMap.Reclamation;
+        if (reclamation is not null && globalMap.Reclamation is not null && !ReferenceEquals(reclamation, globalMap.Reclamation))
+        {
+            throw new ArgumentException("Global-map validation and database validation must reference the same reclamation plan.", nameof(reclamation));
+        }
+
+        var admission = new Admission(source, format, reopenedDestination, budget, cancellationToken, effectiveReclamation);
         if (tables.Count > budget.MaxTables)
         {
             throw Limit("Private database comparison exceeds MaxTables.");
@@ -110,7 +118,7 @@ internal static class CompactPinnedDatabaseValidator
         }
 
         long working = budget.MaxWorkingBytes - retained;
-        var session = new CompactPinnedTableAssemblySession(admission.Source, format, TableBudget(budget.Tables, working));
+        var session = new CompactPinnedTableAssemblySession(admission.Source, format, TableBudget(budget.Tables, working), effectiveReclamation);
         var plan = new CompactDatabasePlanTable[tables.Count];
         var references = new CompactPinnedTDefReferences[tables.Count];
         for (int index = 0; index < tables.Count; index++)
@@ -190,14 +198,25 @@ internal static class CompactPinnedDatabaseValidator
                 cancellationToken).ConfigureAwait(false);
 
             CompactGlobalMapBudget mapBudget = MapBudget(budget.GlobalMap, globalMap.Budget, working);
-            CompactGlobalMapResult map = await CompactGlobalMapValidator.ValidateAsync(admission.Source, format, globalMap.AppendPointPages, destination, mapBudget, cancellationToken).ConfigureAwait(false);
+            CompactGlobalMapResult map = await CompactGlobalMapValidator.ValidateAsync(admission.Source, format, globalMap.AppendPointPages, destination, mapBudget, cancellationToken, effectiveReclamation).ConfigureAwait(false);
             CompactPinnedPrefixValidatorResult prefix = await CompactPinnedPrefixValidator.ValidateAsync(
-                admission.Source, format, references, destination, PrefixBudget(budget.Prefix, working), cancellationToken, new(globalMap.AppendPointPages, mapBudget)).ConfigureAwait(false);
+                admission.Source, format, references, destination, PrefixBudget(budget.Prefix, working), cancellationToken, new(globalMap.AppendPointPages, mapBudget, effectiveReclamation)).ConfigureAwait(false);
+            long retainedPrefixPages = effectiveReclamation?.RetainedPrefixPages ?? source.PageCount;
             CompactGlobalAllocationValidatorResult allocations = await CompactGlobalAllocationValidator.ValidateAsync(
-                format, source.PageCount, AllocationsAsync(tables, map, cancellationToken), destination, ledger, allocation, AllocationBudget(budget.Allocation, working), cancellationToken).ConfigureAwait(false);
-            int objects = await CompareDestinationAsync(session.Discovery, format, tables, references, destination, reopenedDestination, reopenedAllocationLedger, budget, working, admission, cancellationToken).ConfigureAwait(false);
+                format, retainedPrefixPages, AllocationsAsync(tables, map, cancellationToken), destination, ledger, allocation, AllocationBudget(budget.Allocation, working), cancellationToken).ConfigureAwait(false);
+            int objects = await CompareDestinationAsync(session.Discovery, format, tables, references, destination, reopenedDestination, reopenedAllocationLedger, budget, working, admission, effectiveReclamation, cancellationToken).ConfigureAwait(false);
             admission.Check(cancellationToken);
-            return new(tables.Count, map, prefix, allocations, admission.ReadBytes, objects, activeTables, unassignedRows);
+            if (effectiveReclamation is null)
+            {
+                return new(tables.Count, map, prefix, allocations, admission.ReadBytes, objects, activeTables, unassignedRows);
+            }
+
+            return new(tables.Count, map, prefix, allocations, admission.ReadBytes, objects, activeTables, unassignedRows)
+            {
+                DatabaseValidated = true,
+                OwnershipProven = effectiveReclamation.IsComplete && unassignedRows == 0,
+                ReclamationAuthorized = effectiveReclamation.ReclamationAuthorized,
+            };
         }
         finally
         {
@@ -217,6 +236,7 @@ internal static class CompactPinnedDatabaseValidator
         CompactPinnedDatabaseValidatorBudget budget,
         long working,
         Admission admission,
+        CompactReclamationPlan? reclamation,
         CancellationToken token)
     {
         for (int index = 0; index < tables.Count; index++)
@@ -242,6 +262,31 @@ internal static class CompactPinnedDatabaseValidator
                     ValidateStreams(rows, values, borrowedDestination, borrowedLedger);
                     await using var admittedRows = new AdmittedStream(rows, admission);
                     await using var admittedValues = new AdmittedStream(values, admission);
+                    CompactTraversalBudget inventory = budget.Inventory;
+                    CompactTraversalBudget traversalBudget = new()
+                    {
+                        MaxPages = Math.Min(inventory.MaxPages, budget.MaxPages),
+                        MaxObjects = inventory.MaxObjects,
+                        MaxReferences = inventory.MaxReferences,
+                        MaxDiagnostics = inventory.MaxDiagnostics,
+                        MaxSchemaBytes = inventory.MaxSchemaBytes,
+                        MaxPageReads = inventory.MaxPageReads,
+                        MaxMapSteps = inventory.MaxMapSteps,
+                        MaxRecords = inventory.MaxRecords,
+                        MaxWorkingBytes = Math.Min(inventory.MaxWorkingBytes, working),
+                    };
+                    if (reclamation is not null && (reclamation.RetainedPrefixPages < source.SourcePages.PageCount || reclamation.ScrubbedPrefixPageCount > 0))
+                    {
+                        return await CompactPinnedDestinationInventory.ValidateReclaimedAsync(
+                            source,
+                            pages,
+                            table.Allocation.Table.Data.RowCount,
+                            reclamation,
+                            tables,
+                            traversalBudget,
+                            token).ConfigureAwait(false);
+                    }
+
                     CompactActiveCatalogBudget catalogBudget = budget.ActiveCatalog;
                     using CompactActiveCatalogRows active = await CompactActiveCatalogRows.ValidateAsync(
                         source,
@@ -253,24 +298,12 @@ internal static class CompactPinnedDatabaseValidator
                         references[index].Indexes,
                         catalogBudget with { MaxWorkingBytes = Math.Min(catalogBudget.MaxWorkingBytes, working) },
                         token).ConfigureAwait(false);
-                    CompactTraversalBudget inventory = budget.Inventory;
                     return await CompactPinnedDestinationInventory.ValidateAsync(
                         source,
                         pages,
                         active,
                         tables,
-                        new()
-                        {
-                            MaxPages = Math.Min(inventory.MaxPages, budget.MaxPages),
-                            MaxObjects = inventory.MaxObjects,
-                            MaxReferences = inventory.MaxReferences,
-                            MaxDiagnostics = inventory.MaxDiagnostics,
-                            MaxSchemaBytes = inventory.MaxSchemaBytes,
-                            MaxPageReads = inventory.MaxPageReads,
-                            MaxMapSteps = inventory.MaxMapSteps,
-                            MaxRecords = inventory.MaxRecords,
-                            MaxWorkingBytes = Math.Min(inventory.MaxWorkingBytes, working),
-                        },
+                        traversalBudget,
                         token).ConfigureAwait(false);
                 }
                 finally
@@ -435,7 +468,7 @@ internal static class CompactPinnedDatabaseValidator
         private readonly int pageSize;
         private readonly CancellationToken token;
 
-        internal Admission(IPageSource source, JetFormat format, Stream destination, CompactPinnedDatabaseValidatorBudget budget, CancellationToken token)
+        internal Admission(IPageSource source, JetFormat format, Stream destination, CompactPinnedDatabaseValidatorBudget budget, CancellationToken token, CompactReclamationPlan? reclamation = null)
         {
             this.original = source;
             this.destination = destination;
@@ -446,7 +479,9 @@ internal static class CompactPinnedDatabaseValidator
             this.token = token;
             this.Source = new AdmittedSource(this);
             this.Check(token);
-            if (this.sourcePages < 3 || this.destinationLength % this.pageSize != 0 || this.destinationLength / this.pageSize < this.sourcePages)
+            reclamation?.ValidateAgainstSource(this.sourcePages);
+            long retainedPrefixPages = reclamation?.RetainedPrefixPages ?? this.sourcePages;
+            if (this.sourcePages < 3 || this.destinationLength % this.pageSize != 0 || this.destinationLength / this.pageSize < retainedPrefixPages)
             {
                 throw Corrupt("The private database does not retain the complete page-aligned original prefix.");
             }

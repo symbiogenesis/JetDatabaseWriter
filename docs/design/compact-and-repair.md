@@ -2,10 +2,26 @@
 
 ## Contract and current boundary
 
-This is the implementation and acceptance plan for I17, not an implemented
-maintenance API. `ShrinkDatabaseAsync` only removes globally free tail pages.
-Native DAO compact tests validate writer output; they do not exercise a managed
-compact or repair implementation.
+`AccessDatabaseCompact` (`CompactAsync`, `CompactToAsync` and `CompactInPlaceAsync`),
+`AccessCompactOptions`, `AccessCompactReport` and `AccessCompactDiagnostic` provide
+managed Compact & Repair and bounded space reclamation, and
+`JetDatabaseWriter.FormatProbe compact` exposes the same pipeline from the CLI.
+`CompactDatabasePlanner` inventories local tables, catalog identities, calculated
+`ResultType` declarations, stored index entries and source-page ownership, then
+produces a `CompactReclamationPlan` consumed by `CompactPinnedDatabaseBuilder` and
+independently verified by `CompactPinnedDatabaseValidator`. When source-page
+ownership is complete (`ReclamationAuthorized`), trailing source pages owned by
+rebuilt tables or already globally free are truncated (`RetainedPrefixPages`) and
+interior reclaimed source pages below `RetainedPrefixPages` are zero-scrubbed to
+canonical Freed (`0x06`) pages and marked free in Page 1's global usage map for
+immediate writer reuse. When catalog recovery, unassigned physical rows or
+opaque/unassigned pages withhold complete ownership proof, all source prefix pages
+remain pinned, `CompactInPlaceAsync` refuses replacement, and `CompactAsync` /
+`CompactToAsync` require `AllowPartialRecovery = true` to publish partial salvage
+output with explicit diagnostics. `ShrinkDatabaseAsync` remains available when a
+writer only needs to truncate globally free tail pages in place. Broader native
+feature variants, unsupported key regeneration, opaque incoming-reference proofs
+and physical power-loss namespace qualification remain open under I17.
 
 The operation must rebuild into a separate database, validate that result, and
 preserve the original until replacement is safe. Preserve the source format,
@@ -114,9 +130,9 @@ preservation remain mandatory for every page proposed for reclamation.
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
 | Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map inspection; independent catalog Id and unique ParentIdName key evidence despite damaged headers/map hints, including intact original headers with damaged moved owners and complete independently audited key/chain/routing evidence; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/field/LVAL/index work and simultaneous storage through local-table orchestration; independent discovered-local-table plan coverage checks original bytes and parsed projections | S1: complete remaining public-scan accounting and catalog recovery when physical ownership and both supported independent key paths are unavailable; qualify runtime/pool and caller-owned memory separately |
-| Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory refusal; bounded raw row and field streaming with retained assignment states; bounded calculated ResultType hydration and complete defined LVAL-chain observations, including trailing storage; private dense raw-row packing with original-header bookmark mappings and independent reopened raw-allocation/ledger comparison; complete raw LVAL staging with retargeted descriptor/chain pointers installed in verified packed rows and per-column allocation observations; independent reopened data/LVAL byte and private allocation coverage validation; bounded per-table DATA/LVAL/map assembly with original-column allocation-ledger comparison, independent complete table/map and pointer-only image comparison; bounded serialized whole-database raw assembly and independently reopened active catalog/table/index/global-map/prefix/allocation validation; native-authored calculated Byte error/Null envelope byte preservation through assembly and native compact | S3/F8: interpret remaining native value/error variants independently of Null and damaged values for diagnosis and recovery; complete ownership and source coverage before reclaiming retained storage |
-| Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; projected raw header/trailer bytes and source index sharing/directions during schema edits; retained continuation headers and original trailing padding during chain writes; complete known table/index/LVAL pointer patching within pinned raw definitions; all-chain-preflight installation on original page identities and independent reopened header/body comparison; exact complete pinned-prefix comparison permitting only independently reconstructed TDEF pointers and validated native global-map bytes | S9: complete application, security, replication and unknown-object inventory and semantic preservation requirements |
-| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key graph, entry-edge fence and observed leaf-chain checks; separate complete observed-edge key-envelope, conservative key-routing and bookmark-inclusive order proofs; bounded same-owner bookmark-target validation; cross-root declared-owner, table-definition/map/bitmap role and incoming-reference observations; stored-key staging with disk-backed fences and monotone disk-backed row-bookmark lookup; independent reopened private stored-key/bookmark, child-maximum and allocation coverage validation; bounded private native usage-map construction from ordered allocation runs and independent reopened exact membership/allocation validation; composed relocated stored-key tree/map assembly with references returned after reopened validation; disk-backed exact whole-destination allocation ledgers retaining the complete source prefix; composed per-table physical stored indexes (including compatible same-owner physical root/map sharing), maps and pinned chain installation; independent canonical native global-map installation/comparison with self-covered bitmap storage; independent native descriptor-map membership (including map-member versus TDEF/map/bitmap role checks) and exact observed separator/child-maximum comparisons; bounded database-wide private assembly driver and exact independently discovered active destination inventory | I2: prove safe sharing beyond compatible same-owner root/map pairs and complete incoming-reference ownership beyond known declarations, complete stored-key/row correspondence beyond supported scalar, ordinary Memo and positive complex-reference keys against corroborated active rows, plus native sharing validation, and extend the bounded discovered-table driver and independent active destination inventory into a reclaiming compact copy; F9 only where keys must be regenerated |
+| Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory refusal; bounded raw row and field streaming with retained assignment states; bounded calculated ResultType hydration and complete defined LVAL-chain observations, including trailing storage; private dense raw-row packing with original-header bookmark mappings and independent reopened raw-allocation/ledger comparison; complete raw LVAL staging with retargeted descriptor/chain pointers installed in verified packed rows and per-column allocation observations; independent reopened data/LVAL byte and private allocation coverage validation; bounded per-table DATA/LVAL/map assembly with original-column allocation-ledger comparison, independent complete table/map and pointer-only image comparison; bounded serialized whole-database raw assembly and independently reopened active catalog/table/index/global-map/prefix/allocation validation; `CompactDatabasePlanner` and `CompactReclamationPlan` source-page reclamation and `AccessDatabaseCompact` public compact/salvage/in-place replacement; native-authored calculated Byte error/Null envelope byte preservation through assembly and native compact | S3/F8: interpret remaining native value/error variants independently of Null and damaged values for diagnosis and recovery; complete opaque incoming-reference ownership before reclaiming retained opaque storage |
+| Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; projected raw header/trailer bytes and source index sharing/directions during schema edits; retained continuation headers and original trailing padding during chain writes; complete known table/index/LVAL pointer patching within pinned raw definitions; all-chain-preflight installation on original page identities and independent reopened header/body comparison; exact pinned-prefix comparison permitting only independently reconstructed TDEF pointers, validated native global-map bytes and zero-scrubbed Freed (`0x06`) reclaimed prefix pages | S9: complete application, security, replication and unknown-object inventory and semantic preservation requirements |
+| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key graph, entry-edge fence and observed leaf-chain checks; separate complete observed-edge key-envelope, conservative key-routing and bookmark-inclusive order proofs; bounded same-owner bookmark-target validation; cross-root declared-owner, table-definition/map/bitmap role and incoming-reference observations; stored-key staging with disk-backed fences and monotone disk-backed row-bookmark lookup; independent reopened private stored-key/bookmark, child-maximum and allocation coverage validation; bounded private native usage-map construction from ordered allocation runs and independent reopened exact membership/allocation validation; composed relocated stored-key tree/map assembly with references returned after reopened validation; disk-backed exact whole-destination allocation ledgers across retained prefix and newly allocated storage; composed per-table physical stored indexes (including compatible same-owner physical root/map sharing), maps and pinned chain installation; independent canonical native global-map installation/comparison with self-covered bitmap storage and free-marked scrubbed prefix pages; independent native descriptor-map membership (including map-member versus TDEF/map/bitmap role checks) and exact observed separator/child-maximum comparisons; bounded database-wide private assembly driver, `CompactDatabasePlanner`, `CompactReclamationPlan` and independent active/reclaimed destination inventory | I2: prove safe sharing beyond compatible same-owner root/map pairs and complete incoming-reference ownership beyond known declarations, complete stored-key/row correspondence beyond supported scalar, ordinary Memo and positive complex-reference keys against corroborated active rows, plus native sharing validation; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
 | Replace the source safely | Bounded generation-bound replacement intents and old/new copies; validated process commit decisions; exclusive recovery leases; repeated interruption, missing-destination and unchanged-evidence refusal tests | E4/F6 and the file-recovery part of I15: bootstrap/namespace persistence, missing-destination filesystem metadata policy and actual power-interruption qualification |
 
@@ -639,24 +655,39 @@ authentication in the managed reader or establish replication and arbitrary
 security variants.
 
 `CompactGlobalMapInstaller` replaces only the original page-one global free-map
-row in the private destination. It marks every original and appended page used,
-retains old bitmap storage and appends canonical REFERENCE bitmaps when needed.
-Coverage includes those new bitmap pages themselves, including a boundary that
+row in the private destination. Under a pinned plan it marks every original and
+appended page used, retains old bitmap storage and appends canonical REFERENCE
+bitmaps when needed. When a `CompactReclamationPlan` authorizes reclamation,
+`CompactGlobalMapInstaller` sizes the global map to the truncated retained prefix
+plus newly appended table/index/map pages and marks scrubbed interior prefix
+pages (`ScrubbedPrefixPages`) free (`1` bit) in the global usage map while
+marking pinned prefix pages and newly allocated pages used (`0` bit). Coverage
+includes any new REFERENCE bitmap pages themselves, including a boundary that
 requires another window. The separate reopened `CompactGlobalMapValidator`
-derives the expected row and all bitmap bytes from the original page geometry
-and independently recorded pre-map EOF, without trusting installer output.
-Every page-one byte outside the map row remains exact. The complete allocation
-ledger must also account for appended global-map storage owned by page one.
-This conservative map does not reclaim any source page.
+derives the expected row and all bitmap bytes from the original page geometry,
+independently recorded pre-map EOF and `CompactReclamationPlan`, without trusting
+installer output. Every page-one byte outside the map row remains exact. The
+complete allocation ledger must also account for appended global-map storage
+owned by page one.
 
 `CompactPinnedPrefixValidator` independently reconstructs complete known TDEF
-pointer replacements and compares every physical source-prefix byte. Unlisted
+pointer replacements and compares every physical retained-prefix byte. Unlisted
 definitions, application/security/replication storage, page headers and padding
-remain byte-identical. Optional native global-map changes require the concrete
-independent global-map validator; arbitrary mutable-page exceptions are not
-accepted. Definition traversal, cumulative requested reads and retained patch
-storage have bounds. This is a preservation comparison, not proof of complete
-catalog discovery, opaque-reference meaning, ownership or safe reclamation.
+on pinned prefix pages remain byte-identical, while any interior prefix pages
+listed in `CompactReclamationPlan.ScrubbedPrefixPages` must match a canonical
+zero-scrubbed Freed page (`0x06`, `0x01`, `pageSize - 16` free bytes, remaining
+bytes zero). Optional native global-map changes require the concrete independent
+global-map validator; arbitrary mutable-page exceptions are not accepted.
+Definition traversal, cumulative requested reads and retained patch storage have
+bounds.
+
+`CompactDatabasePlanner` and `CompactReclaimingDatabaseTests` compose discovery,
+active-row corroboration, calculated `ResultType` hydration, stored-index entry
+streaming, `CompactReclamationPlan` classification and `AccessDatabaseCompact`
+across Jet3, Jet4 and ACE databases (including encrypted databases, relationships,
+calculated and complex columns, frozen application/workgroup fixtures, damaged
+catalog headers, unassigned physical table rows, and DAO3.6/DAO120 reopen,
+mutation and native re-compaction).
 
 `CompactPinnedDatabaseCompositionTests` assembles multiple generated tables on
 Jet3/Jet4/ACE, then independently compares their reopened table/index allocations,

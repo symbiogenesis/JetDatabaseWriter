@@ -80,6 +80,11 @@ internal static class FormatProbeApplication
             return await StorageAuditProbe.RunCliAsync(args[1..]);
         }
 
+        if (args.Length > 0 && args[0].Equals("compact", StringComparison.OrdinalIgnoreCase))
+        {
+            return await CompactProbe.RunCliAsync(args[1..]);
+        }
+
         var modesArgument = new Argument<string[]>("modes")
         {
             Arity = ArgumentArity.ZeroOrMore,

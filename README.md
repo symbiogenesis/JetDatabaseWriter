@@ -42,7 +42,7 @@ The [supported operating envelope](docs/support-contract.md) defines the release
 | ✅ | **Calculated&nbsp;columns** | Native ACCDB expressions, metadata and cached values; recompute dependent results on insert/update and populate newly added fields, with native error values and regional settings. See [calculated fields](docs/writing.md#calculated-columns). |
 | ✅ | **Concurrency** | `.ldb` / `.laccdb` lockfile + BCL page-level byte-range locks where supported |
 | ✅ | **Transactions** | Group or nest changes with `CommitAsync` / `RollbackAsync`; file transactions recover after process crashes (see [guarantees](docs/operations.md#transactions)) |
-| ✅ | **Storage&nbsp;maintenance** | Access-style free-page reuse, free-page scrubbing, opt-in secure erase, and tail shrinking |
+| ✅ | **Storage&nbsp;maintenance** | Access-style free-page reuse, free-page scrubbing, opt-in secure erase, tail shrinking, and `AccessDatabaseCompact` managed compaction and bounded repair |
 | ✅ | **Performance** | Configurable CLOCK page cache with approximate LRU eviction, default parallel read-ahead for eligible page scans, streaming row APIs |
 
 ---
@@ -194,7 +194,7 @@ The support status covers the built-in providers listed above. Third-party exten
 - **Crash recovery requires the database and its journal.** File transactions and physical shrinking recover interrupted writes on writer reopen; keep the adjacent `.jdw-journal` with the database until recovery finishes. Custom streams provide [live rollback under the caller-stream contract](docs/design/caller-stream-recovery.md); power-loss guarantees remain unqualified. See [transaction guarantees](docs/operations.md#transactions).
 - **Access feature coverage varies.** Third-party encryption providers, some index formats and some expressions are unsupported. For example, a default or validation rule using `DLookUp` refuses the write. See the [compatibility evidence](docs/design/writer-disk-format-validation-matrix.md) and [detailed limits](docs/operations.md#limitations).
 - **Access size and encoding constraints still apply.** Tables are limited to 255 columns; rows must fit the supported page layout. Jet3 text must fit the database's code page. Large MEMO and binary OLE values can use separate pages; see [size limits](docs/operations.md#table-and-row-size).
-- **Storage maintenance is limited.** `ShrinkDatabaseAsync` removes free pages at the end of a file; it does not perform a full Access Compact & Repair. Deleted data is not securely erased by default; see [storage maintenance](docs/writing.md#storage-maintenance-and-secure-erase).
+- **Storage maintenance has explicit bounds.** `AccessDatabaseCompact` rebuilds local tables, long values, indexes and usage maps into a validated database and reclaims proven table storage while keeping TDEF page identities and opaque/ambiguous pages pinned; partial recovery never authorizes in-place replacement. `ShrinkDatabaseAsync` removes free pages at the end of a file in place. Deleted data is not securely erased by default; see [storage maintenance](docs/writing.md#storage-maintenance-and-secure-erase) and [Compact & Repair](docs/design/compact-and-repair.md).
 - **This is a data library.** It supports LINQ queries, but does not execute SQL, saved Access queries, forms, reports, macros or VBA, and does not provide an ODBC driver. Complete preservation of Access application objects during edits is not established.
 
 ## How It Works
