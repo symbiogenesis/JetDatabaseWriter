@@ -1169,7 +1169,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Schema/ConstraintRegistry.cs",
-          "sha256": "0a4b134715601ec03b871023deeef27ce34cedfddefab831cffad1aafbf3a2a1"
+          "sha256": "1b109e2edff492a6bf8b444afea415c41c93d4f66d22a5b5128f2d4e7531a891"
         },
         {
           "path": "src/JetDatabaseWriter/Schema/Expressions/AccessLikeMatcher.cs",

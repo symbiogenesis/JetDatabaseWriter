@@ -559,9 +559,11 @@ internal sealed class ConstraintRegistry(
                     throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Validation rule for column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
                 }
 
-                if (!isNull && c.IsAutoIncrement && c.ClrType != typeof(Guid))
+                if (!isNull && c.IsAutoIncrement && c.ClrType != typeof(Guid) && c.NextAutoValue is long next
+                    && AutoNumberMaintainer.TryGetAutoNumberCandidate(value!, out long supplied) && supplied >= next)
                 {
-                    await this.KeepAutoCounterAboveAsync(tableName, tableDef, c, i, value!, checkpoints ??= [with(1)], cancellationToken).ConfigureAwait(false);
+                    (checkpoints ??= [with(1)]).Add((c, next));
+                    c.NextAutoValue = supplied + 1;
                 }
             }
 
