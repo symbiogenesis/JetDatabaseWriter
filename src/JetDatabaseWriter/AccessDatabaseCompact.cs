@@ -26,17 +26,18 @@ using JetDatabaseWriter.Transactions;
 /// <para>
 /// <see cref="AccessDatabaseCompact"/> inventories all catalog objects, local tables, system tables,
 /// and complex flat tables, rebuilds table rows, long-value (<c>LVAL</c>) chains, B-tree indexes,
-/// and usage maps into contiguous pages, packs rebuilt allocations into reclaimed interior prefix holes,
+/// and usage maps into contiguous pages, clusters user-table rows in Primary Key order, coalesces fragmented
+/// multi-hop <c>LVAL</c> chains, packs rebuilt allocations into reclaimed interior prefix holes,
 /// repairs out-of-sync table counters, reclaims proven old data/LVAL/index/map/freed pages,
 /// and independently reopens and validates the compacted database before publishing it.
 /// </para>
 /// <para>
 /// When damaged catalog headers, unassigned physical rows, damaged user-table indexes, damaged data-page
-/// headers, or opaque pages are encountered, <see cref="CompactToAsync"/> and <see cref="CompactAsync"/>
-/// can write a validated salvage copy when <see cref="AccessCompactOptions.AllowPartialRecovery"/> is
-/// <see langword="true"/>, while <see cref="CompactInPlaceAsync"/> always requires complete ownership and
-/// zero blocking salvage diagnostics (<see cref="AccessCompactReport.ReplacementAuthorized"/>) before
-/// replacing the original file.
+/// headers, partially corrupt data pages, orphaned complex/FK child rows, or opaque pages are encountered,
+/// <see cref="CompactToAsync"/> and <see cref="CompactAsync"/> can write a validated salvage copy when
+/// <see cref="AccessCompactOptions.AllowPartialRecovery"/> is <see langword="true"/>, while
+/// <see cref="CompactInPlaceAsync"/> always requires complete ownership and zero blocking salvage diagnostics
+/// (<see cref="AccessCompactReport.ReplacementAuthorized"/>) before replacing the original file.
 /// </para>
 /// </remarks>
 public static class AccessDatabaseCompact
@@ -302,7 +303,7 @@ public static class AccessDatabaseCompact
                             await using (FileStream staging = FileStreamFactory.Open(
                                 stagingPath,
                                 FileMode.CreateNew,
-                                FileAccess.Write,
+                                FileAccess.ReadWrite,
                                 FileShare.None,
                                 FileOptions.Asynchronous | FileOptions.SequentialScan))
                             {
@@ -476,7 +477,8 @@ public static class AccessDatabaseCompact
                     database.Format,
                     discoveryBudget,
                     allowDataSalvage: true,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    quarantineOrphanedChildRows: options.QuarantineOrphanedChildRows).ConfigureAwait(false);
 
                 CompactDatabasePlannerResult plan = await CompactDatabasePlanner.PlanAsync(
                     salvage.EffectiveSource,
@@ -518,6 +520,7 @@ public static class AccessDatabaseCompact
                     UnassignedRowCount = plan.UnassignedRowCount,
                     RegeneratedIndexCount = plan.RegeneratedIndexCount,
                     SalvagedRowCount = plan.SalvagedRowCount,
+                    QuarantinedRowCount = plan.QuarantinedRowCount,
                     RepairedCounterTableCount = plan.RepairedCounterTableCount,
                     QuarantinedRecordCount = quarantinedCount,
                     ReadBytes = checked(sourcePages * pageSize),
@@ -579,7 +582,8 @@ public static class AccessDatabaseCompact
                     database.Format,
                     discoveryBudget,
                     allowDataSalvage: options.AllowPartialRecovery,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    quarantineOrphanedChildRows: options.QuarantineOrphanedChildRows).ConfigureAwait(false);
 
                 CompactDatabasePlannerResult plan = await CompactDatabasePlanner.PlanAsync(
                     salvage.EffectiveSource,
@@ -674,17 +678,63 @@ public static class AccessDatabaseCompact
                     long finalDestinationPages = buildResult.Validation.Allocations.DestinationPages;
                     int finalScrubbedFreePages = plan.Reclamation.ScrubbedPrefixPageCount;
                     int packedInteriorPages = 0;
+                    int clusteredTableCount = 0;
+                    long coalescedLongValueCount = 0;
+                    IReadOnlyList<AccessCompactTableSummary> finalTableSummaries = plan.TableSummaries ?? [];
+
+                    var hydratedByOwner = new Dictionary<long, IReadOnlyList<ColumnInfo>?>(plan.Tables.Count);
+                    foreach (CompactPinnedDatabaseBuildTable plannedTable in plan.Tables)
+                    {
+                        hydratedByOwner[plannedTable.Owner] = plannedTable.HydratedColumns;
+                    }
+
+                    var tableNamesByOwner = new Dictionary<long, string>(finalTableSummaries.Count);
+                    foreach (AccessCompactTableSummary summary in finalTableSummaries)
+                    {
+                        tableNamesByOwner[summary.OwnerTDefPage] = summary.TableName;
+                    }
+
+                    if (options.ClusterByPrimaryKey || options.CoalesceLongValueChains)
+                    {
+                        CompactTableLayoutOptimizeResult optResult = await CompactTableLayoutOptimizer.OptimizeAndValidateAsync(
+                            database.Format,
+                            plan.Reclamation.RetainedPrefixPages,
+                            buildResult.Tables,
+                            tableNamesByOwner,
+                            hydratedByOwner,
+                            decryptedDestinationPath,
+                            options.ClusterByPrimaryKey,
+                            options.CoalesceLongValueChains,
+                            cancellationToken).ConfigureAwait(false);
+                        extraReadBytes = checked(extraReadBytes + optResult.ReadBytes);
+                        extraWrittenBytes = checked(extraWrittenBytes + optResult.WrittenBytes);
+                        clusteredTableCount = optResult.ClusteredTableCount;
+                        coalescedLongValueCount = optResult.CoalescedLongValueCount;
+
+                        if (clusteredTableCount > 0 || coalescedLongValueCount > 0)
+                        {
+                            var updatedSummaries = new List<AccessCompactTableSummary>(finalTableSummaries.Count);
+                            foreach (AccessCompactTableSummary summary in finalTableSummaries)
+                            {
+                                bool clustered = optResult.ClusteredOwners.Contains(summary.OwnerTDefPage);
+                                optResult.CoalescedByOwner.TryGetValue(summary.OwnerTDefPage, out long coalescedLvals);
+                                updatedSummaries.Add(
+                                    summary with
+                                    {
+                                        ClusteredByPrimaryKey = clustered,
+                                        CoalescedLongValueCount = coalescedLvals,
+                                    });
+                            }
+
+                            finalTableSummaries = updatedSummaries;
+                        }
+                    }
 
                     if (options.PackInteriorFreePages
                         && plan.Reclamation.ReclamationAuthorized
                         && plan.Reclamation.ScrubbedPrefixPageCount > 0)
                     {
                         options.Progress?.Report(new AccessCompactProgress(AccessCompactPhase.PackingInteriorPages, 2, totalSteps));
-                        var hydratedByOwner = new Dictionary<long, IReadOnlyList<ColumnInfo>?>(plan.Tables.Count);
-                        foreach (CompactPinnedDatabaseBuildTable plannedTable in plan.Tables)
-                        {
-                            hydratedByOwner[plannedTable.Owner] = plannedTable.HydratedColumns;
-                        }
 
                         CompactPrefixHolePackResult packResult = await CompactPrefixHolePacker.PackAndValidateAsync(
                             salvage.EffectiveSource,
@@ -816,7 +866,10 @@ public static class AccessDatabaseCompact
                         UnassignedRowCount = Math.Max(plan.UnassignedRowCount, buildResult.Validation.UnassignedRows),
                         RegeneratedIndexCount = plan.RegeneratedIndexCount,
                         SalvagedRowCount = plan.SalvagedRowCount,
+                        QuarantinedRowCount = plan.QuarantinedRowCount,
                         RepairedCounterTableCount = plan.RepairedCounterTableCount,
+                        ClusteredTableCount = clusteredTableCount,
+                        CoalescedLongValueCount = coalescedLongValueCount,
                         QuarantinedRecordCount = quarantinedCount,
                         ReadBytes = checked(buildResult.ReadBytes + buildResult.Validation.ReadBytes + extraReadBytes),
                         WrittenBytes = checked(buildResult.WrittenBytes + extraWrittenBytes),
@@ -826,7 +879,7 @@ public static class AccessDatabaseCompact
                         ReclamationAuthorized = buildResult.ReclamationAuthorized,
                         ReplacementAuthorized = buildResult.PublicationAuthorized,
                         Diagnostics = plan.Diagnostics,
-                        Tables = plan.TableSummaries ?? [],
+                        Tables = finalTableSummaries,
                     };
                 }
                 finally
@@ -868,7 +921,7 @@ public static class AccessDatabaseCompact
             await using FileStream fileStream = FileStreamFactory.Open(
                 fullPath,
                 FileMode.Create,
-                FileAccess.Write,
+                FileAccess.ReadWrite,
                 FileShare.None,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
             await WriteQuarantineRecordsToStreamAsync(fileStream, records, cancellationToken).ConfigureAwait(false);

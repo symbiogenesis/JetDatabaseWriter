@@ -75,7 +75,7 @@ internal static class CompactPrefixHolePacker
 
         int appendedCount = (int)appendedCountLong;
         int packedCount = Math.Min(holes.Count, appendedCount);
-        while (packedCount > 0 && !AllInlineUsageMapsFit(packedCount, holes, retainedPrefixPages, tableAppendEnd, tables, format))
+        while (packedCount > 0 && !AllUsageMapsFit(packedCount, holes, retainedPrefixPages, tableAppendEnd, tables, format))
         {
             packedCount--;
         }
@@ -279,16 +279,16 @@ internal static class CompactPrefixHolePacker
                     }
                 }
 
-                // 3. Relocate UsageMap pages for table Owned/Free, LVAL Owned/Free, and Index Owned.
-                RelocateInlineUsageMapPage(GetAppendedPage(table.Allocation.Table.OwnedPages.FirstPageNumber), format, Relocate);
-                RelocateInlineUsageMapPage(GetAppendedPage(table.Allocation.Table.FreePages.FirstPageNumber), format, Relocate);
+                // 3. Relocate UsageMap allocations (both Inline 0x00 and Reference 0x01 + 0x05) for table Owned/Free, LVAL Owned/Free, and Index Owned.
+                RelocateUsageMapAllocation(table.Allocation.Table.OwnedPages, GetAppendedPage, format, Relocate);
+                RelocateUsageMapAllocation(table.Allocation.Table.FreePages, GetAppendedPage, format, Relocate);
 
                 var relocatedLvalRefs = new CompactTDefLongValueReferences[table.Allocation.Table.LongValueMaps.Count];
                 for (int i = 0; i < relocatedLvalRefs.Length; i++)
                 {
                     CompactRawTableLongValueMaps lvMap = table.Allocation.Table.LongValueMaps[i];
-                    RelocateInlineUsageMapPage(GetAppendedPage(lvMap.OwnedPages.FirstPageNumber), format, Relocate);
-                    RelocateInlineUsageMapPage(GetAppendedPage(lvMap.FreePages.FirstPageNumber), format, Relocate);
+                    RelocateUsageMapAllocation(lvMap.OwnedPages, GetAppendedPage, format, Relocate);
+                    RelocateUsageMapAllocation(lvMap.FreePages, GetAppendedPage, format, Relocate);
                     relocatedLvalRefs[i] = new CompactTDefLongValueReferences(
                         lvMap.ColumnNumber,
                         new UsageMapPointer(lvMap.OwnedPages.Pointer.RowIndex, checked((int)Relocate(lvMap.OwnedPages.Pointer.PageNumber))),
@@ -302,7 +302,7 @@ internal static class CompactPrefixHolePacker
                     CompactRawIndexAssemblyAllocation idxAlloc = table.Allocation.Indexes[i];
                     if (processedIndexMaps.Add(idxAlloc.OwnedPages.FirstPageNumber))
                     {
-                        RelocateInlineUsageMapPage(GetAppendedPage(idxAlloc.OwnedPages.FirstPageNumber), format, Relocate);
+                        RelocateUsageMapAllocation(idxAlloc.OwnedPages, GetAppendedPage, format, Relocate);
                     }
 
                     relocatedIndexRefs[i] = new CompactTDefIndexReferences(
@@ -517,7 +517,7 @@ internal static class CompactPrefixHolePacker
         return retainedPrefixPages + (offset - packedCount);
     }
 
-    private static bool AllInlineUsageMapsFit(
+    private static bool AllUsageMapsFit(
         int packedCount,
         List<long> holes,
         long retainedPrefixPages,
@@ -528,39 +528,42 @@ internal static class CompactPrefixHolePacker
         int inlineCapacity = (format.UsageMapRowSize - Constants.UsageMap.InlineMapHeaderSize) * 8;
         foreach (CompactPinnedDatabaseTable table in tables)
         {
-            if (table.Allocation.Table.OwnedPages.PageCount != 1
-                || table.Allocation.Table.FreePages.PageCount != 1)
+            if (table.Allocation.Table.FreePages.PageCount != 1)
             {
                 return false;
             }
 
-            if (!ExtentFitsInlineWindow(
+            if (!ExtentFitsUsageMapAllocation(
                 table.Allocation.Table.Data.FirstPageNumber,
                 table.Allocation.Table.Data.PageCount,
+                table.Allocation.Table.OwnedPages.PageCount,
                 packedCount,
                 holes,
                 retainedPrefixPages,
                 tableAppendEnd,
-                inlineCapacity))
+                inlineCapacity,
+                format))
             {
                 return false;
             }
 
             foreach (CompactRawTableLongValueMaps lvMap in table.Allocation.Table.LongValueMaps)
             {
-                if (lvMap.OwnedPages.PageCount != 1 || lvMap.FreePages.PageCount != 1)
+                if (lvMap.FreePages.PageCount != 1)
                 {
                     return false;
                 }
 
-                if (!ExtentFitsInlineWindow(
+                if (!ExtentFitsUsageMapAllocation(
                     table.Allocation.Table.LongValues.FirstPageNumber,
                     table.Allocation.Table.LongValues.PageCount,
+                    lvMap.OwnedPages.PageCount,
                     packedCount,
                     holes,
                     retainedPrefixPages,
                     tableAppendEnd,
-                    inlineCapacity))
+                    inlineCapacity,
+                    format))
                 {
                     return false;
                 }
@@ -568,19 +571,16 @@ internal static class CompactPrefixHolePacker
 
             foreach (CompactRawIndexAssemblyAllocation idxAlloc in table.Allocation.Indexes)
             {
-                if (idxAlloc.OwnedPages.PageCount != 1)
-                {
-                    return false;
-                }
-
-                if (!ExtentFitsInlineWindow(
+                if (!ExtentFitsUsageMapAllocation(
                     idxAlloc.Tree.FirstPageNumber,
                     idxAlloc.Tree.PageCount,
+                    idxAlloc.OwnedPages.PageCount,
                     packedCount,
                     holes,
                     retainedPrefixPages,
                     tableAppendEnd,
-                    inlineCapacity))
+                    inlineCapacity,
+                    format))
                 {
                     return false;
                 }
@@ -588,6 +588,67 @@ internal static class CompactPrefixHolePacker
         }
 
         return true;
+    }
+
+    private static bool ExtentFitsUsageMapAllocation(
+        long firstPage,
+        long pageCount,
+        long mapAllocationPageCount,
+        int packedCount,
+        List<long> holes,
+        long retainedPrefixPages,
+        long tableAppendEnd,
+        int inlineCapacity,
+        JetFormat format)
+    {
+        if (mapAllocationPageCount <= 0)
+        {
+            return false;
+        }
+
+        if (mapAllocationPageCount == 1)
+        {
+            return ExtentFitsInlineWindow(
+                firstPage,
+                pageCount,
+                packedCount,
+                holes,
+                retainedPrefixPages,
+                tableAppendEnd,
+                inlineCapacity);
+        }
+
+        if (pageCount <= 0)
+        {
+            return false;
+        }
+
+        long bitmapPageCapacity = mapAllocationPageCount - 1;
+        int maxPointers = UsageMap.ReferencePointerCount(format.UsageMapRowSize);
+        int lastWindow = -1;
+        long distinctWindows = 0;
+        for (long p = firstPage; p < firstPage + pageCount; p++)
+        {
+            long relocated = RelocatePage(p, packedCount, holes, retainedPrefixPages, tableAppendEnd);
+            int window = UsageMap.ReferencePointerIndex(format.PageSize, relocated);
+            if (window < 0 || window >= maxPointers)
+            {
+                return false;
+            }
+
+            if (window != lastWindow)
+            {
+                distinctWindows++;
+                if (distinctWindows > bitmapPageCapacity)
+                {
+                    return false;
+                }
+
+                lastWindow = window;
+            }
+        }
+
+        return distinctWindows == bitmapPageCapacity;
     }
 
     private static bool ExtentFitsInlineWindow(
@@ -669,6 +730,21 @@ internal static class CompactPrefixHolePacker
         }
     }
 
+    private static void RelocateUsageMapAllocation(
+        CompactUsageMapBuilderResult mapAlloc,
+        Func<long, byte[]> getAppendedPage,
+        JetFormat format,
+        Func<long, long> relocate)
+    {
+        if (mapAlloc.PageCount == 1)
+        {
+            RelocateInlineUsageMapPage(getAppendedPage(mapAlloc.FirstPageNumber), format, relocate);
+            return;
+        }
+
+        RelocateReferenceUsageMapAllocation(mapAlloc, getAppendedPage, format, relocate);
+    }
+
     private static void RelocateInlineUsageMapPage(
         byte[] mapPage,
         JetFormat format,
@@ -724,6 +800,110 @@ internal static class CompactPrefixHolePacker
             {
                 throw Corrupt($"Relocated page {member} did not fit in inline usage map anchored at {newBasePage}.");
             }
+        }
+    }
+
+    private static void RelocateReferenceUsageMapAllocation(
+        CompactUsageMapBuilderResult mapAlloc,
+        Func<long, byte[]> getAppendedPage,
+        JetFormat format,
+        Func<long, long> relocate)
+    {
+        byte[] rowPage = getAppendedPage(mapAlloc.FirstPageNumber);
+        int rowStart = format.PageSize - format.UsageMapRowSize;
+        if (rowPage[0] != Constants.PageTypes.Data || rowPage[rowStart] != Constants.UsageMap.ReferenceMapType)
+        {
+            throw Corrupt("Expected a reference usage-map row page during interior hole packing.");
+        }
+
+        int pointerCount = UsageMap.ReferencePointerCount(format.UsageMapRowSize);
+        int pagesPerMapPage = UsageMap.PagesPerReferenceMapPage(format.PageSize);
+        int bitmapBytes = format.PageSize - Constants.UsageMap.ReferenceMapBitmapOffset;
+        var relocatedMembers = new List<long>(checked((int)Math.Min(int.MaxValue, mapAlloc.ListedPages)));
+        for (int pointerIndex = 0; pointerIndex < pointerCount; pointerIndex++)
+        {
+            int bitmapPageNumber = BinaryPrimitives.ReadInt32LittleEndian(rowPage.AsSpan(rowStart + 1 + (pointerIndex * 4), 4));
+            if (bitmapPageNumber == 0)
+            {
+                continue;
+            }
+
+            byte[] oldBitmapPage = getAppendedPage(bitmapPageNumber);
+            if (oldBitmapPage[0] != Constants.PageTypes.UsageMap)
+            {
+                throw Corrupt($"Expected usage-map bitmap page at {bitmapPageNumber} during interior hole packing.");
+            }
+
+            long windowBase = (long)pointerIndex * pagesPerMapPage;
+            for (int byteIndex = 0; byteIndex < bitmapBytes; byteIndex++)
+            {
+                byte b = oldBitmapPage[Constants.UsageMap.ReferenceMapBitmapOffset + byteIndex];
+                if (b == 0)
+                {
+                    continue;
+                }
+
+                for (int bit = 0; bit < 8; bit++)
+                {
+                    if ((b & (1 << bit)) != 0)
+                    {
+                        long oldMember = windowBase + (byteIndex * 8L) + bit;
+                        relocatedMembers.Add(relocate(oldMember));
+                    }
+                }
+            }
+        }
+
+        rowPage.AsSpan(0, format.PageSize).Clear();
+        rowPage[0] = Constants.PageTypes.Data;
+        rowPage[1] = 1;
+        BinaryPrimitives.WriteUInt16LittleEndian(rowPage.AsSpan(2, 2), checked((ushort)(rowStart - format.DataPage.RowsStart - 2)));
+        BinaryPrimitives.WriteUInt16LittleEndian(rowPage.AsSpan(format.DataPage.NumRows, 2), 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(rowPage.AsSpan(format.DataPage.RowsStart, 2), checked((ushort)rowStart));
+        rowPage[rowStart] = Constants.UsageMap.ReferenceMapType;
+
+        relocatedMembers.Sort();
+        int currentWindow = -1;
+        long nextBitmapOldPage = mapAlloc.FirstPageNumber + 1;
+        long bitmapEndOldPage = mapAlloc.FirstPageNumber + mapAlloc.PageCount;
+        byte[]? currentBitmapPage = null;
+
+        foreach (long member in relocatedMembers)
+        {
+            int window = UsageMap.ReferencePointerIndex(format.PageSize, member);
+            if (window < 0 || window >= pointerCount)
+            {
+                throw Corrupt($"Relocated page {member} exceeds reference usage-map capacity.");
+            }
+
+            if (window != currentWindow)
+            {
+                if (nextBitmapOldPage >= bitmapEndOldPage)
+                {
+                    throw Corrupt("Relocated reference usage-map members exceeded allocated bitmap page count.");
+                }
+
+                currentBitmapPage = getAppendedPage(nextBitmapOldPage);
+                currentBitmapPage.AsSpan(0, format.PageSize).Clear();
+                currentBitmapPage[0] = Constants.PageTypes.UsageMap;
+                currentBitmapPage[1] = 1;
+                long relocatedBitmapPage = relocate(nextBitmapOldPage);
+                BinaryPrimitives.WriteInt32LittleEndian(
+                    rowPage.AsSpan(rowStart + 1 + (window * 4), 4),
+                    checked((int)relocatedBitmapPage));
+                nextBitmapOldPage++;
+                currentWindow = window;
+            }
+
+            if (!UsageMap.TrySetReferencePageState(currentBitmapPage!, format.PageSize, member, isMarked: true))
+            {
+                throw Corrupt($"Relocated page {member} could not be marked in reference bitmap window {window}.");
+            }
+        }
+
+        if (nextBitmapOldPage != bitmapEndOldPage)
+        {
+            throw Corrupt("Relocated reference usage-map did not consume all allocated bitmap pages.");
         }
     }
 

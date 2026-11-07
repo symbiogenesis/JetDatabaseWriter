@@ -7,8 +7,11 @@ read-only `InspectAsync`), `AccessCompactOptions`, `AccessCompactReport`,
 `AccessCompactDiagnostic` (`AccessCompactDiagnosticCategory`),
 `AccessCompactTableSummary`, `AccessCompactQuarantineRecord` and
 `AccessCompactProgress` (`AccessCompactPhase`) provide managed Compact & Repair,
-dry-run health inspection, damaged-index regeneration, damaged-header data-page
-salvage, quarantine export, table-counter repair and bounded space reclamation,
+dry-run health inspection, damaged-index regeneration, damaged-header and
+damaged-owner data-page salvage, row-level partial data-page salvage, orphaned
+complex flat-table and enforced foreign-key child-row quarantine, quarantine
+export, table-counter repair, primary-key clustered row reordering, multi-hop
+`LVAL` chain coalescing and bounded space reclamation,
 and `JetDatabaseWriter.FormatProbe compact` (`--verify-only`, `--quarantine`)
 exposes the same pipeline from the CLI. `CompactDatabasePlanner` inventories local
 tables, catalog identities, calculated `ResultType` declarations, stored index
@@ -18,11 +21,17 @@ independently verified by `CompactPinnedDatabaseValidator`. When source-page
 ownership is complete (`ReclamationAuthorized`), trailing source pages owned by
 rebuilt tables or already globally free are truncated (`RetainedPrefixPages`),
 `CompactPrefixHolePacker` (`PackInteriorFreePages = true`) relocates rebuilt table
-allocations into scrubbed interior prefix holes (`3 .. RetainedPrefixPages - 1`)
+allocations (for both `Inline` and multi-page `Reference` usage-map tables) into
+scrubbed interior prefix holes (`3 .. RetainedPrefixPages - 1`)
 using a strictly order-preserving page bijection before leaving pages appended at
 the end, and any remaining interior reclaimed prefix pages are zero-scrubbed to
 canonical Freed (`0x06`) pages and marked free in Page 1's global usage map for
-immediate writer reuse. When a user table's stored physical index B-tree or index
+immediate writer reuse. `CompactTableLayoutOptimizer` optionally reorders rebuilt
+user-table DATA rows into canonical Primary Key order (`ClusterByPrimaryKey = true`,
+updating physical B-tree index bookmarks and duplicate secondary-key runs) and
+coalesces fragmented multi-hop `ChainedStorageMode` `LVAL` values into
+`SinglePageStorageMode` (`0x40`) or maximally dense full-page chunks
+(`CoalesceLongValueChains = true`). When a user table's stored physical index B-tree or index
 ownership map is damaged and `RebuildDamagedIndexes = true`,
 `CompactIndexKeyRegenerator` derives canonical `IndexEntry` keys directly from
 verified active rows for supported scalar, ordinary Memo and complex-reference
@@ -33,11 +42,17 @@ rebuilds the B-tree and ownership map. When `RepairTableCounters = true`,
 AutoNumber tables, and raises `AutoNumber` / `ComplexAutoNumber` high-water marks
 when active rows contain higher allocated values. Under `AllowPartialRecovery = true`
 (or `InspectAsync`), `CompactDataPageSalvager` repairs damaged page-type header
-bytes (`-> 0x01`) on user-table DATA pages whose owner, row directory and live
-fields verify cleanly, and isolates genuinely unrecoverable user-table DATA pages
+bytes (`-> 0x01`) and reconstructs damaged 4-byte `TDef` owner pointers using a
+three-tier evidence hierarchy (`usage-map`, `index-bookmarks`, `schema-signature`),
+salvages surviving live rows on partially corrupt DATA pages while quarantining
+only the damaged row slots (`quarantined-corrupt-row`, preserving slot boundaries
+via `DeletedRowFlag | start`), quarantines orphaned `MSysComplexColumns` flat-table
+rows (`quarantined-orphan-complex-row`) and orphaned enforced foreign-key child
+rows (`quarantined-orphan-fk-row`, when `QuarantineOrphanedChildRows = true`),
+and isolates genuinely unrecoverable user-table DATA pages
 into `AccessCompactQuarantineRecord` entries (optionally exported as NDJSON via
 `QuarantinePath` / `QuarantineStream` / `--quarantine`) so surviving table pages
-still compact. When catalog recovery, damaged-page salvage/quarantine, index
+and rows still compact. When catalog recovery, damaged-page or row salvage/quarantine, index
 regeneration, unassigned physical rows or opaque/unassigned pages withhold
 complete ownership proof, all source prefix pages remain pinned,
 `CompactInPlaceAsync` refuses replacement, and `CompactAsync` / `CompactToAsync`
@@ -707,15 +722,21 @@ bounds.
 
 `CompactDatabasePlanner`, `CompactPrefixHolePacker`, `CompactIndexKeyRegenerator`,
 `CompactDataPageSalvager`, `CompactTableCounterRepairer`,
-`CompactReclaimingDatabaseTests` and `CompactOptimalCapabilitiesTests` compose
+`CompactTableLayoutOptimizer`, `CompactReclaimingDatabaseTests` and
+`CompactOptimalCapabilitiesTests` compose
 discovery, active-row corroboration, calculated `ResultType` hydration, stored-index
-entry streaming and damaged-index key regeneration, damaged-header DATA page
-salvage, unrecoverable DATA page quarantine export, `TDef` counter repair,
-`CompactReclamationPlan` classification, monotone interior prefix hole packing,
+entry streaming and damaged-index key regeneration, damaged-header and 3-tier
+damaged-owner DATA page salvage, row-level partial DATA page salvage with per-row
+quarantine, orphaned complex flat-table and enforced foreign-key child-row
+quarantine, unrecoverable DATA page quarantine export, `TDef` counter repair,
+primary-key clustered row reordering, multi-hop `LVAL` chain coalescing,
+`CompactReclamationPlan` classification, monotone interior prefix hole packing
+(for both `Inline` and `Reference` usage-map tables),
 read-only `InspectAsync` health checks and `AccessDatabaseCompact` across Jet3,
 Jet4 and ACE databases (including encrypted databases, relationships, calculated
 and complex columns, frozen application/workgroup fixtures, damaged catalog
-headers, damaged primary/secondary index roots, damaged DATA page headers,
+headers, damaged primary/secondary index roots, damaged DATA page headers and
+owners, partially corrupt DATA page rows, orphaned complex/FK child rows,
 unassigned physical table rows, and DAO3.6/DAO120 reopen, mutation and native
 re-compaction).
 

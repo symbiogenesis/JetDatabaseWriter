@@ -58,15 +58,36 @@ public sealed class AccessCompactOptions : AccessOptions
     public bool RepairTableCounters { get; init; } = true;
 
     /// <summary>
+    /// Gets a value indicating whether rebuilt user-table data rows are reordered into canonical
+    /// Primary Key order during compaction so sequential Primary Key scans read data pages in order.
+    /// Default: <see langword="true"/>.
+    /// </summary>
+    public bool ClusterByPrimaryKey { get; init; } = true;
+
+    /// <summary>
+    /// Gets a value indicating whether fragmented multi-hop external <c>LVAL</c> chains are coalesced
+    /// into single-page (<c>SinglePageStorageMode</c>) or maximally dense full-page <c>LVAL</c> chunks during compaction.
+    /// Default: <see langword="true"/>.
+    /// </summary>
+    public bool CoalesceLongValueChains { get; init; } = true;
+
+    /// <summary>
+    /// Gets a value indicating whether orphaned complex flat-table child rows (<c>MSysComplexColumns</c>)
+    /// and orphaned enforced foreign-key child rows are isolated and quarantined when <see cref="AllowPartialRecovery"/> is enabled.
+    /// Default: <see langword="true"/>.
+    /// </summary>
+    public bool QuarantineOrphanedChildRows { get; init; } = true;
+
+    /// <summary>
     /// Gets an optional file path to receive newline-delimited JSON (<see cref="AccessCompactQuarantineRecord"/>)
-    /// records for unrecoverable data pages or excluded unassigned rows encountered during partial recovery.
+    /// records for unrecoverable data pages, corrupt row slots, orphaned child rows, or excluded unassigned rows encountered during partial recovery.
     /// Cannot be combined with <see cref="QuarantineStream"/>.
     /// </summary>
     public string? QuarantinePath { get; init; }
 
     /// <summary>
     /// Gets an optional writable stream to receive newline-delimited JSON (<see cref="AccessCompactQuarantineRecord"/>)
-    /// records for unrecoverable data pages or excluded unassigned rows encountered during partial recovery.
+    /// records for unrecoverable data pages, corrupt row slots, orphaned child rows, or excluded unassigned rows encountered during partial recovery.
     /// Cannot be combined with <see cref="QuarantinePath"/>.
     /// </summary>
     public Stream? QuarantineStream { get; init; }

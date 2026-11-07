@@ -53,14 +53,23 @@ public sealed record AccessCompactReport
     /// <summary>Gets the number of damaged physical real indexes regenerated from verified active table rows.</summary>
     public int RegeneratedIndexCount { get; init; }
 
-    /// <summary>Gets the number of active rows salvaged from data pages whose page-type header byte was damaged.</summary>
+    /// <summary>Gets the number of active rows salvaged from data pages whose header, owner pointer, or sibling row slots were damaged.</summary>
     public long SalvagedRowCount { get; init; }
 
     /// <summary>Gets the number of local tables whose <c>TDef</c> row-count or <c>AutoNumber</c> counters were repaired or reset.</summary>
     public int RepairedCounterTableCount { get; init; }
 
-    /// <summary>Gets the number of quarantined unrecoverable data pages or excluded unassigned rows recorded during partial recovery.</summary>
+    /// <summary>Gets the number of quarantined unrecoverable data pages, corrupt row slots, orphaned child rows, or excluded unassigned rows recorded during partial recovery.</summary>
     public int QuarantinedRecordCount { get; init; }
+
+    /// <summary>Gets the number of individual corrupt row slots or orphaned child rows quarantined without discarding their entire data page.</summary>
+    public long QuarantinedRowCount { get; init; }
+
+    /// <summary>Gets the number of user tables whose data rows were physically clustered into canonical Primary Key order.</summary>
+    public int ClusteredTableCount { get; init; }
+
+    /// <summary>Gets the number of fragmented multi-hop external <c>LVAL</c> chains coalesced into single-page or dense fewer-hop chunks.</summary>
+    public long CoalescedLongValueCount { get; init; }
 
     /// <summary>Gets the cumulative bytes read during construction and independent reopened validation.</summary>
     public long ReadBytes { get; init; }

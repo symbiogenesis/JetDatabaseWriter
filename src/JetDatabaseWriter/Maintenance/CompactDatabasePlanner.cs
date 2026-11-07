@@ -82,7 +82,10 @@ internal static class CompactDatabasePlanner
             foreach (AccessCompactQuarantineRecord qRec in salvage.QuarantineRecords)
             {
                 quarantineRecords.Add(qRec);
-                _ = salvageQuarantinedPageNumbers.Add(qRec.PageNumber);
+                if (qRec.Kind == "quarantined-data-page")
+                {
+                    _ = salvageQuarantinedPageNumbers.Add(qRec.PageNumber);
+                }
             }
         }
 
@@ -249,6 +252,7 @@ internal static class CompactDatabasePlanner
         var counterEvaluations = new List<CompactTableCounterEvaluation>(orderedOwners.Count);
         long totalActiveRows = 0;
         long totalUnassignedRows = 0;
+        long totalExcludedUnassignedRows = 0;
         int totalRegeneratedIndexes = 0;
         int repairedCounterTableCount = 0;
 
@@ -303,6 +307,7 @@ internal static class CompactDatabasePlanner
                     int? activeIndexOrdinal = null;
                     long tableActiveRows = 0;
                     long tableUnassignedRows = 0;
+                    long tableExcludedUnassignedRows = 0;
                     List<(RowLocation Location, byte[] Payload)>? retainedRowsForTable = null;
                     HashSet<(long Page, int Row)>? activeBookmarks = null;
 
@@ -363,6 +368,8 @@ internal static class CompactDatabasePlanner
                                 tableActiveRows = mappedRows;
                                 totalActiveRows = checked(totalActiveRows + mappedRows);
                                 retainedRowsForTable = mappedRowList;
+                                tableExcludedUnassignedRows = unmappedRows;
+                                totalExcludedUnassignedRows = checked(totalExcludedUnassignedRows + unmappedRows);
                                 foreach ((RowLocation loc, byte[] rawRow) in unmappedRowList)
                                 {
                                     quarantineRecords.Add(
@@ -559,7 +566,7 @@ internal static class CompactDatabasePlanner
                             indexes[slot] = new(descriptor.RootPage, ownedPages, regenerated);
                             tableRegeneratedIndexes++;
                             totalRegeneratedIndexes++;
-                            string reason = indexError?.Message ?? "Quarantined data page required index key regeneration.";
+                            string reason = indexError?.Message ?? "Quarantined data page or row required index key regeneration.";
                             AddDiagnostic(
                                 diagnostics,
                                 budget.MaxDiagnostics,
@@ -596,6 +603,7 @@ internal static class CompactDatabasePlanner
 
                     long tableSalvagedRows = salvage?.SalvagedRowsByOwner.GetValueOrDefault(owner, 0) ?? 0;
                     int tableQuarantinedPages = salvage?.QuarantinedPagesByOwner.GetValueOrDefault(owner, 0) ?? 0;
+                    long tableQuarantinedRows = checked((salvage?.QuarantinedRowsByOwner?.GetValueOrDefault(owner, 0) ?? 0) + tableExcludedUnassignedRows);
                     tableSummaries.Add(
                         new AccessCompactTableSummary(
                             owner,
@@ -610,7 +618,8 @@ internal static class CompactDatabasePlanner
                             counterEval.RepairedRowCount,
                             counterEval.DeclaredAutoNumber,
                             counterEval.RepairedAutoNumber,
-                            counterEval.CountersRepaired));
+                            counterEval.CountersRepaired,
+                            QuarantinedRowCount: tableQuarantinedRows));
 
                     buildTables.Add(new(owner, definition, indexes, hydratedColumns, activeIndexOrdinal));
                 }
@@ -741,6 +750,7 @@ internal static class CompactDatabasePlanner
                 reclamationAuthorized: true);
         }
 
+        long totalQuarantinedRows = checked((salvage?.TotalQuarantinedRows ?? 0) + totalExcludedUnassignedRows);
         return new(
             buildTables,
             reclamation,
@@ -754,7 +764,8 @@ internal static class CompactDatabasePlanner
             quarantineRecords,
             totalRegeneratedIndexes,
             salvage?.TotalSalvagedRows ?? 0,
-            repairedCounterTableCount);
+            repairedCounterTableCount,
+            totalQuarantinedRows);
     }
 
     private static async ValueTask<long> PreAuditUserIndexAsync(

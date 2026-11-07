@@ -23,7 +23,7 @@ public enum AccessCompactDiagnosticCategory
     /// <summary>A damaged stored index B-tree or ownership map was regenerated from verified active table rows.</summary>
     RegeneratedIndex = 5,
 
-    /// <summary>A data page with a damaged page-type header byte had its header repaired after verifying its owner, directory, and row fields.</summary>
+    /// <summary>A data page with a damaged page-type header byte or owner pointer had its header repaired after verifying its directory and row fields.</summary>
     SalvagedDataPage = 6,
 
     /// <summary>An unrecoverable data page was isolated and quarantined so surviving table pages could be compacted.</summary>
@@ -31,4 +31,7 @@ public enum AccessCompactDiagnosticCategory
 
     /// <summary>An out-of-sync table-definition row count or AutoNumber high-water counter was repaired.</summary>
     RepairedTableCounter = 8,
+
+    /// <summary>An individual corrupt row slot or orphaned complex/foreign-key child row was isolated and quarantined while preserving surviving rows on its data page.</summary>
+    QuarantinedRow = 9,
 }

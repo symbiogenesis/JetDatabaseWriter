@@ -9,13 +9,16 @@ namespace JetDatabaseWriter.Models;
 /// <param name="UnassignedRowCount">The number of unmapped physical rows discovered for this table.</param>
 /// <param name="IndexCount">The total number of physical real indexes on the table.</param>
 /// <param name="RegeneratedIndexCount">The number of damaged physical real indexes regenerated from verified active rows.</param>
-/// <param name="SalvagedRowCount">The number of active rows salvaged from data pages with damaged page-type headers.</param>
+/// <param name="SalvagedRowCount">The number of active rows salvaged from data pages with damaged headers, owners, or sibling row corruption.</param>
 /// <param name="QuarantinedPageCount">The number of unrecoverable data pages quarantined for this table.</param>
 /// <param name="DeclaredRowCount">The original <c>NumRows</c> counter stored in the source <c>TDef</c> header.</param>
 /// <param name="RepairedRowCount">The verified <c>NumRows</c> counter after compact planning and repair.</param>
 /// <param name="DeclaredAutoNumber">The original <c>AutoNumber</c> high-water counter stored in the source <c>TDef</c> header.</param>
 /// <param name="RepairedAutoNumber">The verified <c>AutoNumber</c> high-water counter after compact planning and repair.</param>
 /// <param name="CountersRepaired">A value indicating whether any <c>TDef</c> counter was repaired or reset for this table.</param>
+/// <param name="QuarantinedRowCount">The number of individual corrupt or orphaned rows quarantined on this table without discarding their entire data page.</param>
+/// <param name="ClusteredByPrimaryKey">A value indicating whether the table's data rows were clustered into canonical Primary Key order.</param>
+/// <param name="CoalescedLongValueCount">The number of fragmented multi-hop external <c>LVAL</c> chains coalesced for this table.</param>
 public sealed record AccessCompactTableSummary(
     long OwnerTDefPage,
     string TableName,
@@ -29,4 +32,7 @@ public sealed record AccessCompactTableSummary(
     uint RepairedRowCount,
     uint DeclaredAutoNumber,
     uint RepairedAutoNumber,
-    bool CountersRepaired);
+    bool CountersRepaired,
+    long QuarantinedRowCount = 0,
+    bool ClusteredByPrimaryKey = false,
+    long CoalescedLongValueCount = 0);

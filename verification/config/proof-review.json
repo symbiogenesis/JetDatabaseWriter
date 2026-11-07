@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "productionInventorySha256": "fb6d30c0ff9afcff130733b2c802a7c9308856111e04482d8fdc2672b871a9fa",
-  "inventoryReview": "Reviewed the production source-name inventory and direct generated-kernel callers. RowEncoder now executes value-width admission; ReaderPageCache and IncludeLoader execute bounded reservations; TableSnapshotReader executes complete unique-key and bookmark admission. Existing recovery, descriptor, parsing, page/index/usage and digest boundaries retain their explicit adapter contracts. New tests and workflow helpers are conformance/tooling inputs rather than shipping proof code. The inventory hash establishes source-name freshness only. IndexHelpers and IndexPageCodec execute the generated complete-entry comparator; IndexMaintainer executes conservative relationship form/reference/key and exact tree/map admission. Full C# tree composition remains outside the generated boundary. The shared physical-root collector now supplies immutable actual leaf headers to generated complete chain admission; staged sibling targets execute generated membership/owner/type/reciprocal checks. Classified new CalculatedNativeRegionalDefaults as finite captured native date/name data and observable-override selection, not a verified locale implementation. CalculatedExpressionCoercion now calls generated tick rounding. The hot index byte scan uses the established span adapter followed by generated sign/bookmark completion; the fully verified scanner remains a conformance reference. Splicer sorting is a private-buffer BCL effect. Classified OrderStage as a direct generated integer-order admission caller using acquired table metadata; AccessQueryProvider retains local-table acquisition and source selection. Stream creation and writer option validation are C# ownership/admission adapters, with fault-injection evidence rather than a new abstract I/O proof. Classified the IndexTreeInventory acquisition boundary: the extracted internal type retains physical traversal, captured headers and direct generated leaf-chain/membership admission; IndexBTreeEditor retains staged neighbor admission, mutation planning and publication. Source identity changes do not promote B1 proof coverage. Classified AccessDatabaseCompact as a direct StreamRead caller for header inspection before delegating to CompactDatabasePlanner, CompactPinnedDatabaseBuilder, CompactEncodedDatabaseCopy and EncryptionFileReplacement; classified CompactReclamationPlan, CompactDatabasePlanner, CompactDatabasePlannerResult, AccessCompactOptions, AccessCompactDiagnostic and AccessCompactReport as C# maintenance orchestration and model types outside the generated kernel boundary. Classified new QueryPlanTemplateCache as a C# query-translation template and column-projection mask cache outside the generated kernel boundary; IndexSeekFilter now invokes generated RecoveryKernel.RewriteRoundedSeekOperator for inward-rounded range bounds, OrderStage.FindExtremeIndex invokes generated IndexMutationKernel.AdmitExtremeIndex for MinAsync/MaxAsync index admission, and IncludeLoader invokes generated RecoveryKernel.TryReserveBytes for MaxIncludeMaterializedPayloadBytesPerOperation enforcement. Classified CompactPrefixHolePacker, CompactPrefixHolePackResult, CompactIndexKeyRegenerator, CompactDataPageSalvager, CompactDataPageSalvageResult, CompactTableCounterRepairer, CompactTableCounterEvaluation, AccessCompactDiagnosticCategory, AccessCompactPhase, AccessCompactProgress, AccessCompactTableSummary and AccessCompactQuarantineRecord as C# maintenance orchestration, repair and reporting types outside the generated kernel boundary.",
+  "productionInventorySha256": "b7c01c23f896297aa995b06a1aa42c59e8fe4c224ba95e8b14ce5b1f1d06044b",
+  "inventoryReview": "Reviewed the production source-name inventory and direct generated-kernel callers. RowEncoder now executes value-width admission; ReaderPageCache and IncludeLoader execute bounded reservations; TableSnapshotReader executes complete unique-key and bookmark admission. Existing recovery, descriptor, parsing, page/index/usage and digest boundaries retain their explicit adapter contracts. New tests and workflow helpers are conformance/tooling inputs rather than shipping proof code. The inventory hash establishes source-name freshness only. IndexHelpers and IndexPageCodec execute the generated complete-entry comparator; IndexMaintainer executes conservative relationship form/reference/key and exact tree/map admission. Full C# tree composition remains outside the generated boundary. The shared physical-root collector now supplies immutable actual leaf headers to generated complete chain admission; staged sibling targets execute generated membership/owner/type/reciprocal checks. Classified new CalculatedNativeRegionalDefaults as finite captured native date/name data and observable-override selection, not a verified locale implementation. CalculatedExpressionCoercion now calls generated tick rounding. The hot index byte scan uses the established span adapter followed by generated sign/bookmark completion; the fully verified scanner remains a conformance reference. Splicer sorting is a private-buffer BCL effect. Classified OrderStage as a direct generated integer-order admission caller using acquired table metadata; AccessQueryProvider retains local-table acquisition and source selection. Stream creation and writer option validation are C# ownership/admission adapters, with fault-injection evidence rather than a new abstract I/O proof. Classified the IndexTreeInventory acquisition boundary: the extracted internal type retains physical traversal, captured headers and direct generated leaf-chain/membership admission; IndexBTreeEditor retains staged neighbor admission, mutation planning and publication. Source identity changes do not promote B1 proof coverage. Classified AccessDatabaseCompact as a direct StreamRead caller for header inspection before delegating to CompactDatabasePlanner, CompactPinnedDatabaseBuilder, CompactEncodedDatabaseCopy and EncryptionFileReplacement; classified CompactReclamationPlan, CompactDatabasePlanner, CompactDatabasePlannerResult, AccessCompactOptions, AccessCompactDiagnostic and AccessCompactReport as C# maintenance orchestration and model types outside the generated kernel boundary. Classified new QueryPlanTemplateCache as a C# query-translation template and column-projection mask cache outside the generated kernel boundary; IndexSeekFilter now invokes generated RecoveryKernel.RewriteRoundedSeekOperator for inward-rounded range bounds, OrderStage.FindExtremeIndex invokes generated IndexMutationKernel.AdmitExtremeIndex for MinAsync/MaxAsync index admission, and IncludeLoader invokes generated RecoveryKernel.TryReserveBytes for MaxIncludeMaterializedPayloadBytesPerOperation enforcement. Classified CompactPrefixHolePacker, CompactPrefixHolePackResult, CompactTableLayoutOptimizer, CompactTableLayoutOptimizeResult, CompactIndexKeyRegenerator, CompactDataPageSalvager, CompactDataPageSalvageResult, CompactTableCounterRepairer, CompactTableCounterEvaluation, AccessCompactDiagnosticCategory, AccessCompactPhase, AccessCompactProgress, AccessCompactTableSummary and AccessCompactQuarantineRecord as C# maintenance orchestration, repair and reporting types outside the generated kernel boundary.",
   "reviews": [
     {
       "boundary": "implementation",
@@ -502,7 +502,7 @@
         },
         {
           "path": "docs/design/compact-and-repair.md",
-          "sha256": "d23870276cc13e41f2b0e73a145eaca2d0a1584cec27790cad869f0b21a41e17"
+          "sha256": "02c1252186383d57dd1f2ce5ea1696f67e82ec0cdd58f33dfc6724795bed936e"
         },
         {
           "path": "docs/design/complex-columns-format-notes.md",
@@ -618,7 +618,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/AccessCompactOptions.cs",
-          "sha256": "86100b8de7d91aa271826ab183ec146f8f040a69664a1c6d914e851b7431ccfb"
+          "sha256": "8ba00f19e904099307889ca6c671f86b318d69206091adb0c1caa817262ef1c2"
         },
         {
           "path": "src/JetDatabaseWriter/AccessDatabaseEncryption.cs",
@@ -874,7 +874,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Maintenance/CompactDatabasePlanner.cs",
-          "sha256": "037cd9d69a022f521fa51d72b2c1f8aeb72687bd1eddb4a2eabc4686b57da3c1"
+          "sha256": "6459c1c3abff1e28af0d7cc762f5c49644261f7e592199c1f0ac53476d1987dc"
         },
         {
           "path": "src/JetDatabaseWriter/Maintenance/CompactDiscoverySession.cs",
@@ -1698,7 +1698,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactOptimalCapabilitiesTests.cs",
-          "sha256": "164de76edd6f837313f6e33b0d7f669c0cee638e480090636051d51495b75c1d"
+          "sha256": "a43e32c739017fd3a7f07cba731f9eb8b4127f9e66f2946f85af4b787af624c8"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawDataLongValueRelocatorTests.cs",
