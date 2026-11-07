@@ -225,10 +225,10 @@ against .NET Decimal's maximum of 28, treats any nonzero sign byte as negative,
 and reads coefficient words at fixed offsets. Native acceptance of noncanonical
 sign bytes remains unqualified. Payload widths from
 four through sixteen bytes zero-fill omitted trailing bytes; a four-byte header
-is Decimal zero. An empty calculated envelope is ordinary Null. Short headers
-and malformed envelopes follow the contextual corruption policy. In strict
-numeric decoding, oversized payloads or scales above 28 raise `NumericOverflow`;
-the non-strict numeric helper returns missing values instead.
+is Decimal zero. An empty calculated envelope is ordinary Null. Short headers,
+oversized payloads, scales above 28 and malformed envelopes follow the
+contextual `MalformedValue` corruption policy; the non-strict numeric helper
+returns missing values instead.
 `CalculatedNumericNativeLayoutTests` compares reserved-word mutations and every
 payload width from four through sixteen bytes with DAO120 reads and compaction.
 Independent width expectations also exercise the typed/string payload decoders;

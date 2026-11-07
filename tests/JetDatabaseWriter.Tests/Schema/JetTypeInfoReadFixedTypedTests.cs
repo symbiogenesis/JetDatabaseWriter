@@ -279,7 +279,7 @@ public sealed class JetTypeInfoReadFixedTypedTests
         byte[] row = BuildNumericRow(lo: 1, mid: 0, hi: 0, negative: false);
         ColumnInfo column = NumericColumn(scale: 29);
 
-        _ = Assert.Throws<JetLimitationException>(() =>
+        _ = StructuredFormatAssert.Throws<JetCorruptDataException>(JetErrorCode.MalformedValue, () =>
             JetTypeInfo.ReadFixedTyped(row, start: 0, column, size: 17, strictNumeric: true));
     }
 

@@ -193,8 +193,8 @@ internal static class CalculatedColumnUtil
         {
             if (strict)
             {
-                throw new JetLimitationException(
-                    JetErrorCode.NumericOverflow,
+                throw new JetCorruptDataException(
+                    JetErrorCode.MalformedValue,
                     $"Calculated Numeric payload is {payload.Length} bytes, which exceeds the native sixteen-byte Decimal layout.");
             }
 
@@ -206,8 +206,8 @@ internal static class CalculatedColumnUtil
         {
             if (strict)
             {
-                throw new JetLimitationException(
-                    JetErrorCode.NumericOverflow,
+                throw new JetCorruptDataException(
+                    JetErrorCode.MalformedValue,
                     $"Calculated Numeric scale {scale} exceeds the .NET decimal maximum of 28.");
             }
 

@@ -43,9 +43,13 @@ name and the original cause. Explicitly lenient reads return empty text,
 listener failures do not abort the read. Valid negative dates, range boundaries
 and null slots retain their normal representations. Writer snapshots refuse an
 unreadable date even for an unrelated field update, leaving the database
-bytes unchanged. Storage I/O exceptions propagate unchanged. The malformed
-fixtures in `FixedDateDecodePolicyTests` and `VariableDateDecodePolicyTests`
-are synthetic corruption evidence.
+bytes unchanged. Storage I/O exceptions propagate unchanged. Fixed, variable and calculated
+Numeric (`Decimal`) slots with coefficients exceeding 96 bits or scales above 28
+follow the same contextual `MalformedValue` policy and byte-preserving writer
+refusal (`NumericDecodePolicyTests` and `CalculatedNumericDecodePolicyTests`).
+The malformed fixtures in `FixedDateDecodePolicyTests`,
+`VariableDateDecodePolicyTests` and `NumericDecodePolicyTests` are synthetic
+corruption evidence.
 
 Assigned fixed-field slices are bounded by the fixed payload area, ending before
 variable data or the row trailer. An out-of-range descriptor offset or size is an

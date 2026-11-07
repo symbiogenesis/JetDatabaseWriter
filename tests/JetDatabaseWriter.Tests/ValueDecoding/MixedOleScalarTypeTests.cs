@@ -169,8 +169,9 @@ public sealed class MixedOleScalarTypeTests
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: Ct);
         if (strict)
         {
-            JetLimitationException expected = await Assert.ThrowsAsync<JetLimitationException>(async () => await Rows<NumericRow>(reader, hybrid: false).ToListAsync(Ct));
-            JetLimitationException actual = await Assert.ThrowsAsync<JetLimitationException>(async () => await Rows<NumericRow>(reader, hybrid: true).ToListAsync(Ct));
+            JetCorruptDataException expected = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await Rows<NumericRow>(reader, hybrid: false).ToListAsync(Ct));
+            JetCorruptDataException actual = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await Rows<NumericRow>(reader, hybrid: true).ToListAsync(Ct));
+            Assert.Equal(JetErrorCode.MalformedValue, actual.ErrorCode);
             Assert.Equal(expected.ErrorCode, actual.ErrorCode);
             Assert.Equal(expected.Message, actual.Message);
         }

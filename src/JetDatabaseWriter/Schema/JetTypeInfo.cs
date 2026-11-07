@@ -517,7 +517,7 @@ internal static class JetTypeInfo
         // per-type decoders never index or slice past the row buffer, replacing the
         // previous reliance on catching IndexOutOfRangeException / ArgumentException
         // for out-of-range offsets. Numeric is excluded because it self-validates
-        // inside TryReadNumericDecimal with strict-mode JetLimitationException
+        // inside TryReadNumericDecimal with strict-mode MalformedValue
         // semantics that must still propagate.
         if (type == NumericType)
         {
@@ -537,8 +537,8 @@ internal static class JetTypeInfo
     /// <summary>
     /// Formats a fixed-width JET column value as a culture-invariant string.
     /// When <paramref name="strictNumeric"/> is <see langword="true"/>, Numeric values
-    /// that overflow .NET's <see cref="decimal"/> range or carry an out-of-range scale
-    /// surface as <see cref="JetLimitationException"/> instead of being silently elided
+    /// that exceed the 96-bit Decimal coefficient or carry an out-of-range scale
+    /// surface as <see cref="JetCorruptDataException"/> instead of being silently elided
     /// to the empty string — the contract the typed reader path relies on.
     /// </summary>
     /// <param name="row">The row values or row bytes.</param>
@@ -584,7 +584,7 @@ internal static class JetTypeInfo
             // failures that reach here are genuinely invalid on-disk values: a bad
             // OA date (DateTime.FromOADate) or a malformed 42-byte Date/Time
             // Extended payload. Surface those as the diagnostic empty string.
-            // Strict Numeric limits propagate as JetLimitationException, and an
+            // Strict Numeric faults propagate as JetCorruptDataException, and an
             // IndexOutOfRangeException would signal a real slicing bug, so neither
             // is caught here.
             return string.Empty;
@@ -623,7 +623,7 @@ internal static class JetTypeInfo
     /// <see cref="OverflowException"/>) — matching the empty-string-then-DBNull
     /// behaviour of the round-trip path. When <paramref name="strictNumeric"/>
     /// is <see langword="true"/>, Numeric values that overflow or carry an
-    /// out-of-range scale surface as <see cref="JetLimitationException"/>; with
+    /// out-of-range scale surface as <see cref="JetCorruptDataException"/>; with
     /// <see langword="false"/> they collapse to <see cref="DBNull.Value"/>.
     /// </para>
     /// </summary>
@@ -677,7 +677,7 @@ internal static class JetTypeInfo
         {
             // See ReadFixedString: bounds are pre-validated by FixedReadInBounds,
             // so only invalid OA dates and malformed Date/Time Extended payloads
-            // reach here. Strict Numeric limits propagate as JetLimitationException
+            // reach here. Strict Numeric faults propagate as JetCorruptDataException
             // and an IndexOutOfRangeException would signal a real slicing bug.
             return DBNull.Value;
         }
@@ -694,7 +694,7 @@ internal static class JetTypeInfo
     /// is <see langword="false"/> (the default, used by lossy diagnostics paths) returns the
     /// empty string for scale > 28, OLE-decimal overflow, or insufficient bytes. When
     /// <see langword="true"/> (the typed-reader path) those conditions throw
-    /// <see cref="JetLimitationException"/> so the caller can surface the schema mismatch.
+    /// <see cref="JetCorruptDataException"/> so the caller can surface the malformed value.
     /// </summary>
     /// <param name="b">The second value or byte buffer.</param>
     /// <param name="start">The start.</param>
@@ -713,7 +713,7 @@ internal static class JetTypeInfo
     /// <summary>
     /// Typed counterpart to <see cref="ReadNumericString"/>: returns the boxed
     /// <see cref="decimal"/> directly. Invalid slot bounds throw <see cref="JetCorruptDataException"/>;
-    /// unsupported decimal scales or magnitudes throw <see cref="JetLimitationException"/>.
+    /// unsupported decimal scales or magnitudes throw <see cref="JetCorruptDataException"/>.
     /// Non-strict failures
     /// collapse to <see cref="DBNull.Value"/> (the typed analogue of
     /// <see cref="ReadNumericString"/>'s empty-string return).
@@ -730,24 +730,24 @@ internal static class JetTypeInfo
     {
         value = default;
 
-        if (start + 17 > b.Length)
+        if (start < 0 || b.Length - start < 17)
         {
             if (strict)
             {
                 throw new JetCorruptDataException(
                     JetErrorCode.MalformedValue,
-                    $"Numeric slot at offset {start} extends past the row buffer (need 17 bytes, have {Math.Max(0, b.Length - start)}).");
+                    $"Numeric slot at offset {start} extends past the row buffer (need 17 bytes, have {Math.Max(0, b.Length - Math.Max(0, start))}).");
             }
 
             return false;
         }
 
-        if (scale > 28)
+        if ((uint)scale > 28)
         {
             if (strict)
             {
-                throw new JetLimitationException(
-                    JetErrorCode.NumericOverflow,
+                throw new JetCorruptDataException(
+                    JetErrorCode.MalformedValue,
                     $"Numeric scale {scale} exceeds the .NET decimal maximum of 28.");
             }
 
@@ -769,7 +769,7 @@ internal static class JetTypeInfo
         {
             if (strict)
             {
-                throw new JetLimitationException(JetErrorCode.NumericOverflow, "Numeric value exceeds the .NET decimal 96-bit mantissa range.");
+                throw new JetCorruptDataException(JetErrorCode.MalformedValue, "Numeric value exceeds the .NET decimal 96-bit mantissa range.");
             }
 
             return false;
@@ -787,8 +787,8 @@ internal static class JetTypeInfo
         {
             if (strict)
             {
-                throw new JetLimitationException(
-                    JetErrorCode.NumericOverflow,
+                throw new JetCorruptDataException(
+                    JetErrorCode.MalformedValue,
                     $"Numeric value overflow (scale={scale})",
                     innerException: ex);
             }

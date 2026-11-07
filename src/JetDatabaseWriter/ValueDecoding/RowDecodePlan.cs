@@ -404,6 +404,31 @@ internal sealed class RowDecodePlan
         return value is DateTime date ? FormatDatePayload(date, column.Type) : string.Empty;
     }
 
+    internal bool TryReadDecimal(byte[] page, int start, ColumnInfo column, out decimal value)
+    {
+        try
+        {
+            value = JetTypeInfo.ReadDecimalLE(page, start, column.NumericScale);
+            return true;
+        }
+        catch (Exception exception) when (RowValueDecodePolicy.IsMalformedValueException(exception))
+        {
+            _ = column.IsFixed
+                ? RowValueDecodePolicy.MalformedFixedValue(column, exception, this.strictParsing || this.PreservesStoredValues)
+                : this.MalformedVariableValue(column, exception);
+            value = default;
+            return false;
+        }
+    }
+
+    private object DecodeFixedNumeric(byte[] page, int start, ColumnInfo column)
+        => this.TryReadDecimal(page, start, column, out decimal value) ? value : DBNull.Value;
+
+    private string DecodeFixedNumericString(byte[] page, int start, ColumnInfo column)
+        => this.TryReadDecimal(page, start, column, out decimal value)
+            ? value.ToString("G", System.Globalization.CultureInfo.InvariantCulture)
+            : string.Empty;
+
     private object DecodeFixedComplexReference(byte[] page, int start, int length, ColumnInfo column)
     {
         try
@@ -548,7 +573,7 @@ internal sealed class RowDecodePlan
 
             throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Unknown column type: {JetTypeInfo.GetTypeDisplayName(column.Type)}");
         }
-        catch (Exception ex) when (ex is JetLimitationException or ArgumentException or OverflowException)
+        catch (Exception ex) when (ex is JetLimitationException or ArgumentException or OverflowException or JetCorruptDataException { ErrorCode: JetErrorCode.MalformedValue })
         {
             // Corrupt row offsets surface as ArgumentException from the text/binary
             // slicers, and strict Numeric limits surface as JetLimitationException;
@@ -757,6 +782,7 @@ internal sealed class RowDecodePlan
             ColumnSliceKind.Empty when JetTypeInfo.UsesLongValueStorage(column) => null!,
             ColumnSliceKind.Null or ColumnSliceKind.Empty => string.Empty,
             ColumnSliceKind.Fixed when column.Type is DateTimeType or DateTimeExtendedType => this.DecodeFixedDateString(page, rowStart + slice.DataStart, column),
+            ColumnSliceKind.Fixed when column.Type == NumericType => this.DecodeFixedNumericString(page, rowStart + slice.DataStart, column),
             ColumnSliceKind.Fixed when column.Type == ComplexType => this.DecodeFixedComplexReferenceString(page, rowStart + slice.DataStart, slice.DataLen, column),
             ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
             ColumnSliceKind.Var => await this.DecodeStringVariableValueAsync(
@@ -814,7 +840,7 @@ internal sealed class RowDecodePlan
             if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
             {
                 return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing)
-                    ? JetTypeInfo.ReadFixedString(page, start, column, required, this.strictParsing)
+                    ? JetTypeInfo.ReadFixedString(page, start, column, required, strictNumeric: true)
                     : string.Empty;
             }
 
@@ -919,7 +945,7 @@ internal sealed class RowDecodePlan
                 return CalculatedColumnUtil.ReadPayloadString(
                     payload,
                     valueType,
-                    this.strictParsing || this.PreservesStoredValues);
+                    strictNumeric: true);
             }
 
             throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");
@@ -962,8 +988,9 @@ internal sealed class RowDecodePlan
                 }),
             ColumnSliceKind.Null or ColumnSliceKind.Empty => DBNull.Value,
             ColumnSliceKind.Fixed when column.Type is DateTimeType or DateTimeExtendedType => this.DecodeFixedDate(page, rowStart + slice.DataStart, column),
+            ColumnSliceKind.Fixed when column.Type == NumericType => this.DecodeFixedNumeric(page, rowStart + slice.DataStart, column),
             ColumnSliceKind.Fixed when column.Type == ComplexType => this.DecodeFixedComplexReference(page, rowStart + slice.DataStart, slice.DataLen, column),
-            ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
+            ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing || this.PreservesStoredValues),
             ColumnSliceKind.Var => this.DecodeTypedVariableValue(source, page, rowStart + slice.DataStart, slice.DataLen, column, longValueDecoder, ref needsLongValue),
             _ => DBNull.Value,
         };
@@ -1004,7 +1031,7 @@ internal sealed class RowDecodePlan
             if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
             {
                 return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing || this.PreservesStoredValues)
-                    ? JetTypeInfo.ReadFixedTyped(page, start, column, required, this.strictParsing || this.PreservesStoredValues)
+                    ? JetTypeInfo.ReadFixedTyped(page, start, column, required, strictNumeric: true)
                     : DBNull.Value;
             }
 
@@ -1114,7 +1141,7 @@ internal sealed class RowDecodePlan
                 return CalculatedColumnUtil.ReadPayloadTyped(
                     payload,
                     valueType,
-                    this.strictParsing || this.PreservesStoredValues);
+                    strictNumeric: true);
             }
 
             throw new JetNotSupportedException(JetErrorCode.UnknownColumnType, $"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");

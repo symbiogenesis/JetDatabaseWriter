@@ -366,11 +366,18 @@ internal static class DirectRowDecoderBuilder
                 formatParam);
 
             ParameterExpression? dateValue = null;
+            ParameterExpression? decimalValue = null;
             if (col.Type is DateTimeType or DateTimeExtendedType)
             {
                 dateValue = Expression.Variable(typeof(DateTime), "dateValue");
                 locals.Add(dateValue);
                 readExpr = dateValue;
+            }
+            else if (col.Type == NumericType)
+            {
+                decimalValue = Expression.Variable(typeof(decimal), "decimalValue");
+                locals.Add(decimalValue);
+                readExpr = decimalValue;
             }
 
             // target.Prop = (PropType)readExpr;
@@ -426,6 +433,16 @@ internal static class DirectRowDecoderBuilder
                     offsetExpr,
                     colExpr,
                     dateValue));
+            }
+            else if (decimalValue is not null)
+            {
+                kindGate = Expression.AndAlso(kindGate, Expression.Call(
+                    decodePlanParam,
+                    GetRequiredMethod(typeof(RowDecodePlan), nameof(RowDecodePlan.TryReadDecimal), InstanceNonPublic),
+                    pageParam,
+                    offsetExpr,
+                    colExpr,
+                    decimalValue));
             }
 
             statements.Add(Expression.IfThen(kindGate, safeAssign));
