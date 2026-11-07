@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Schema;
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -113,7 +114,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
         long epoch = this.images.Epoch;
         LogicalTDefChain? chain = await this.ReadChainAsync(startPage, cancellationToken).ConfigureAwait(false);
         TDefImage? image = TDefCodec.Parse(this.format, chain?.Bytes);
-        if (image is not null && chain is not null)
+        if (image is { Issues: TDefParseIssues.None } && !HasInvalidColumnIdentities(image.Columns) && chain is not null)
         {
             image.TDefPageNumber = startPage;
             _ = this.images.Publish(startPage, image, chain.PageNumbers, epoch);
@@ -174,7 +175,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
         long epoch = this.images.Epoch;
         LogicalTDefChain? chain = await this.ReadChainAsync(tdefPage, remainingSchemaBytes, cancellationToken, retainPageNumbers: this.cacheResults).ConfigureAwait(false);
         TDefImage? image = TDefCodec.Parse(this.format, chain?.Bytes);
-        if (chain is not null && image is null)
+        if (chain is not null && (image is null || image.Issues != TDefParseIssues.None || HasInvalidColumnIdentities(image.Columns)))
         {
             throw new JetCorruptDataException(
                 JetErrorCode.CorruptTableDefinition,
@@ -225,10 +226,25 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
     {
         if (this.cacheResults && this.images.TryGet(tdefPage, out TDefImage? cached) && cached.Bytes.SequenceEqual(bytes))
         {
-            return cached.Issues == TDefParseIssues.None;
+            return cached.Issues == TDefParseIssues.None && !HasInvalidColumnIdentities(cached.Columns);
         }
 
-        return TDefCodec.Parse(this.format, bytes)?.Issues == TDefParseIssues.None;
+        return TDefCodec.Parse(this.format, bytes) is { Issues: TDefParseIssues.None } parsed && !HasInvalidColumnIdentities(parsed.Columns);
+    }
+
+    private static bool HasInvalidColumnIdentities(IReadOnlyList<ColumnInfo> columns)
+    {
+        var names = new HashSet<string>(columns.Count, StringComparer.OrdinalIgnoreCase);
+        var numbers = new HashSet<int>(columns.Count);
+        foreach (ColumnInfo column in columns)
+        {
+            if (string.IsNullOrEmpty(column.Name) || !names.Add(column.Name) || !numbers.Add(column.ColNum))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static JetLimitationException SchemaBudgetExceeded(long page)

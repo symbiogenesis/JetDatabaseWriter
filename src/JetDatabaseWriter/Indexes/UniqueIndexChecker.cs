@@ -164,7 +164,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         if (RequiresSnapshotForPreInsert(descriptors))
         {
             List<LocatedRow> existingRows = await snapshots.ReadRowsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-            this.CheckUniqueIndexesCore(tableName, descriptors, existingRows, pendingRows, replaceAtRowIndex: null);
+            this.CheckUniqueIndexesCore(tableName, descriptors, existingRows, pendingRows, replaceAtRowIndex: null, cancellationToken);
             return;
         }
 
@@ -255,7 +255,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
             replaceAt[idx] = newRow;
         }
 
-        this.CheckUniqueIndexesCore(tableName, descriptors, existingRows, pendingInsertRows: [], replaceAtRowIndex: replaceAt);
+        this.CheckUniqueIndexesCore(tableName, descriptors, existingRows, pendingInsertRows: [], replaceAtRowIndex: replaceAt, cancellationToken);
     }
 
     private static bool ShouldCheckKey(string tableName, UniqueIndexDescriptor descriptor, object[] row)
@@ -303,6 +303,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
     /// <param name="existingRows">The table's live rows.</param>
     /// <param name="pendingInsertRows">The pending insert rows.</param>
     /// <param name="replaceAtRowIndex">Post-update rows keyed by their position in <paramref name="existingRows"/>.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="JetOperationException">Thrown when the effective post-mutation row set contains a duplicate unique key.</exception>
     /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
     private void CheckUniqueIndexesCore(
@@ -310,17 +311,20 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         List<UniqueIndexDescriptor> descriptors,
         IReadOnlyList<LocatedRow> existingRows,
         List<object[]> pendingInsertRows,
-        Dictionary<int, object[]>? replaceAtRowIndex)
+        Dictionary<int, object[]>? replaceAtRowIndex,
+        CancellationToken cancellationToken)
     {
         int existingRowCount = existingRows.Count;
         int pendingCount = pendingInsertRows.Count;
 
         foreach (UniqueIndexDescriptor descriptor in descriptors)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var seen = new HashSet<byte[]>(ByteArrayEqualityComparer.Instance);
 
             for (int r = 0; r < existingRowCount; r++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 object[] effectiveRow = replaceAtRowIndex != null && replaceAtRowIndex.TryGetValue(r, out object[]? rep)
                     ? rep
                     : existingRows[r].Values;
@@ -340,6 +344,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
 
             for (int p = 0; p < pendingCount; p++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!ShouldCheckKey(tableName, descriptor, pendingInsertRows[p]))
                 {
                     continue;

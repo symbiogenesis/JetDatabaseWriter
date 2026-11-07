@@ -478,9 +478,12 @@ internal sealed class IndexRowReader(
     private async ValueTask<IReadOnlyList<IndexMetadata>> ReadIndexesAsync(ResolvedTable resolved, CancellationToken cancellationToken)
     {
         TDefImage? image = await tableDefs.ReadImageAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        if (image is null)
+        if (image is null || image.Issues != TDefParseIssues.None)
         {
-            return [];
+            throw new JetCorruptDataException(
+                JetErrorCode.CorruptTableDefinition,
+                $"Table definition for '{resolved.Entry.Name}' at page {resolved.Entry.TDefPage} has an invalid or incomplete index section.",
+                new JetErrorInfo { TableName = resolved.Entry.Name, PageNumber = resolved.Entry.TDefPage });
         }
 
         lock (this.indexMetadata)

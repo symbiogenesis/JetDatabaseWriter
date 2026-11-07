@@ -577,6 +577,7 @@ internal sealed class TableReader(
     /// <param name="maxRows">Maximum number of rows to read, or <c>null</c> for unlimited.</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
+    /// <exception cref="JetCorruptDataException">The table definition has a malformed or duplicate column name.</exception>
     internal async ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows, IProgress<long>? progress, CancellationToken cancellationToken)
     {
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
@@ -599,8 +600,17 @@ internal sealed class TableReader(
         try
         {
             dt = new DataTable(tableName);
+            var seenColumns = new HashSet<string>(td.Columns.Count, StringComparer.OrdinalIgnoreCase);
             foreach (ColumnInfo col in td.Columns)
             {
+                if (string.IsNullOrEmpty(col.Name) || !seenColumns.Add(col.Name))
+                {
+                    throw new JetCorruptDataException(
+                        JetErrorCode.CorruptTableDefinition,
+                        $"Table '{tableName}' has a malformed or duplicate column name '{col.Name}'.",
+                        new JetErrorInfo { TableName = tableName, ColumnName = col.Name, PageNumber = resolved.Entry.TDefPage });
+                }
+
                 _ = dt.Columns.Add(col.Name, typeof(string));
             }
 
@@ -769,8 +779,17 @@ internal sealed class TableReader(
         try
         {
             dt = new DataTable(tableName);
+            var seenColumns = new HashSet<string>(td.Columns.Count, StringComparer.OrdinalIgnoreCase);
             foreach (ColumnInfo col in td.Columns)
             {
+                if (string.IsNullOrEmpty(col.Name) || !seenColumns.Add(col.Name))
+                {
+                    throw new JetCorruptDataException(
+                        JetErrorCode.CorruptTableDefinition,
+                        $"Table '{tableName}' has a malformed or duplicate column name '{col.Name}'.",
+                        new JetErrorInfo { TableName = tableName, ColumnName = col.Name, PageNumber = entry.TDefPage });
+                }
+
                 _ = dt.Columns.Add(col.Name, col.IsCalculated ? typeof(object) : ResolveClrType(col));
             }
 

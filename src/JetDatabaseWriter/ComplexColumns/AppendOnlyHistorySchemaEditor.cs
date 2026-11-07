@@ -199,13 +199,15 @@ internal sealed class AppendOnlyHistorySchemaEditor(
     {
         LogicalTDefChain chain = await tableDefs.ReadTDefChainAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
         TDefImage image = TDefCodec.Parse(format, chain.Bytes) ?? throw InvalidHistory(table.Entry.Name, oldName);
-        int usedLength = checked(image.Header.LogicalLength + 8);
+        long declaredLength = (long)image.Header.LogicalLength + 8;
         int descriptorStart = checked(format.TDef.BlockEnd + (image.Header.RealIndexCount * format.TDef.RealIdxEntrySz));
         int namePosition = checked(descriptorStart + (image.Header.ColumnCount * format.ColumnDescriptor.Size));
-        if (usedLength > chain.Bytes.Length || namePosition > usedLength || (newName is not null && table.Definition.FindColumn(newName) is { } collision && !string.Equals(collision.Name, oldName, StringComparison.OrdinalIgnoreCase)))
+        if (image.Issues != TDefParseIssues.None || declaredLength < namePosition || declaredLength > chain.Bytes.Length || (newName is not null && table.Definition.FindColumn(newName) is { } collision && !string.Equals(collision.Name, oldName, StringComparison.OrdinalIgnoreCase)))
         {
             throw InvalidHistory(table.Entry.Name, oldName);
         }
+
+        int usedLength = (int)declaredLength;
 
         int nameStart = -1;
         int nameEnd = -1;

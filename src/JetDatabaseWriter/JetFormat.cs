@@ -549,7 +549,7 @@ internal sealed partial class JetFormat
 
             int len = Ru16(td, pos);
             pos += 2;
-            if (pos + len > td.Length)
+            if (len <= 0 || (len & 1) != 0 || pos + len > td.Length)
             {
                 return -1;
             }
@@ -561,7 +561,7 @@ internal sealed partial class JetFormat
         else
         {
             int len = td[pos++];
-            if (pos + len > td.Length)
+            if (len <= 0 || pos + len > td.Length)
             {
                 return -1;
             }

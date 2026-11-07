@@ -1636,11 +1636,13 @@ internal sealed class ForeignKeyMetadataEditor(
 
         int trailingStart = logIdxNamesStart + logIdxNamesLen;
         int storedTdefLen = Ri32(td, 8);
-        int currentEnd = storedTdefLen + 8;
-        if (currentEnd < trailingStart)
+        long declaredEnd = (long)storedTdefLen + 8;
+        if (storedTdefLen < 0 || declaredEnd > td.Length)
         {
-            currentEnd = trailingStart;
+            return false;
         }
+
+        int currentEnd = declaredEnd < trailingStart ? trailingStart : (int)declaredEnd;
 
         int trailingLen = currentEnd - trailingStart;
         if (trailingLen < 0 || trailingStart + trailingLen > td.Length)
