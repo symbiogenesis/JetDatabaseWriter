@@ -478,7 +478,9 @@ public static class AccessDatabaseCompact
                     discoveryBudget,
                     allowDataSalvage: true,
                     cancellationToken,
-                    quarantineOrphanedChildRows: options.QuarantineOrphanedChildRows).ConfigureAwait(false);
+                    quarantineOrphanedChildRows: options.QuarantineOrphanedChildRows,
+                    quarantineConstraintViolatingRows: options.QuarantineConstraintViolatingRows,
+                    coalesceLongValueChains: false).ConfigureAwait(false);
 
                 CompactDatabasePlannerResult plan = await CompactDatabasePlanner.PlanAsync(
                     salvage.EffectiveSource,
@@ -583,7 +585,9 @@ public static class AccessDatabaseCompact
                     discoveryBudget,
                     allowDataSalvage: options.AllowPartialRecovery,
                     cancellationToken,
-                    quarantineOrphanedChildRows: options.QuarantineOrphanedChildRows).ConfigureAwait(false);
+                    quarantineOrphanedChildRows: options.QuarantineOrphanedChildRows,
+                    quarantineConstraintViolatingRows: options.QuarantineConstraintViolatingRows,
+                    coalesceLongValueChains: options.CoalesceLongValueChains).ConfigureAwait(false);
 
                 CompactDatabasePlannerResult plan = await CompactDatabasePlanner.PlanAsync(
                     salvage.EffectiveSource,
@@ -679,7 +683,7 @@ public static class AccessDatabaseCompact
                     int finalScrubbedFreePages = plan.Reclamation.ScrubbedPrefixPageCount;
                     int packedInteriorPages = 0;
                     int clusteredTableCount = 0;
-                    long coalescedLongValueCount = 0;
+                    long coalescedLongValueCount = salvage.TotalInlinePromotedLongValues;
                     IReadOnlyList<AccessCompactTableSummary> finalTableSummaries = plan.TableSummaries ?? [];
 
                     var hydratedByOwner = new Dictionary<long, IReadOnlyList<ColumnInfo>?>(plan.Tables.Count);
@@ -709,7 +713,7 @@ public static class AccessDatabaseCompact
                         extraReadBytes = checked(extraReadBytes + optResult.ReadBytes);
                         extraWrittenBytes = checked(extraWrittenBytes + optResult.WrittenBytes);
                         clusteredTableCount = optResult.ClusteredTableCount;
-                        coalescedLongValueCount = optResult.CoalescedLongValueCount;
+                        coalescedLongValueCount = checked(coalescedLongValueCount + optResult.CoalescedLongValueCount);
 
                         if (clusteredTableCount > 0 || coalescedLongValueCount > 0)
                         {
@@ -718,11 +722,12 @@ public static class AccessDatabaseCompact
                             {
                                 bool clustered = optResult.ClusteredOwners.Contains(summary.OwnerTDefPage);
                                 optResult.CoalescedByOwner.TryGetValue(summary.OwnerTDefPage, out long coalescedLvals);
+                                long inlinePromoted = salvage.InlinePromotedLongValuesByOwner?.GetValueOrDefault(summary.OwnerTDefPage, 0) ?? 0;
                                 updatedSummaries.Add(
                                     summary with
                                     {
                                         ClusteredByPrimaryKey = clustered,
-                                        CoalescedLongValueCount = coalescedLvals,
+                                        CoalescedLongValueCount = checked(coalescedLvals + inlinePromoted),
                                     });
                             }
 

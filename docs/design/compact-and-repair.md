@@ -726,19 +726,28 @@ bounds.
 `CompactOptimalCapabilitiesTests` compose
 discovery, active-row corroboration, calculated `ResultType` hydration, stored-index
 entry streaming and damaged-index key regeneration, damaged-header and 3-tier
-damaged-owner DATA page salvage, row-level partial DATA page salvage with per-row
-quarantine, orphaned complex flat-table and enforced foreign-key child-row
-quarantine, unrecoverable DATA page quarantine export, `TDef` counter repair,
-primary-key clustered row reordering, multi-hop `LVAL` chain coalescing,
-`CompactReclamationPlan` classification, monotone interior prefix hole packing
-(for both `Inline` and `Reference` usage-map tables),
+damaged-owner DATA page salvage, damaged `LVAL` page header/magic repair
+(`salvaged-lval-page-header`), field-level `LVAL` salvage with multi-hop chain
+prefix truncation (`salvaged-truncated-lval-chain`) and unrecoverable `LVAL`
+field nulling (`quarantined-corrupt-lval-field`), corrupt table/index/`LVAL`
+usage-map reconstruction (`salvaged-usage-map`), orphaned user-table root `TDef`
+catalog reattachment (`salvaged-orphan-table`), row-level partial DATA page
+salvage with per-row quarantine, orphaned complex flat-table and enforced
+foreign-key child-row quarantine, constraint-violating duplicate/null key row
+quarantine during unique/PK index regeneration (`QuarantineConstraintViolatingRows`,
+`quarantined-constraint-row`), unrecoverable DATA page quarantine export, `TDef`
+counter repair, primary-key clustered row reordering, multi-hop `LVAL` chain
+coalescing plus small-`LVAL` (`<= 64` bytes) inline promotion and physical `LVAL`
+page shrinkage, `CompactReclamationPlan` classification, monotone interior prefix
+hole packing (for both `Inline` and `Reference` usage-map tables),
 read-only `InspectAsync` health checks and `AccessDatabaseCompact` across Jet3,
 Jet4 and ACE databases (including encrypted databases, relationships, calculated
 and complex columns, frozen application/workgroup fixtures, damaged catalog
-headers, damaged primary/secondary index roots, damaged DATA page headers and
-owners, partially corrupt DATA page rows, orphaned complex/FK child rows,
-unassigned physical table rows, and DAO3.6/DAO120 reopen, mutation and native
-re-compaction).
+headers, orphaned `TDef` tables missing from `MSysObjects`, damaged primary/secondary
+index roots, damaged DATA and `LVAL` page headers and owners, corrupt usage maps,
+partially corrupt DATA page rows and `LVAL` chains, orphaned complex/FK child rows,
+constraint-violating duplicate/null key rows, unassigned physical table rows, and
+DAO3.6/DAO120 reopen, mutation and native re-compaction).
 
 `CompactPinnedDatabaseCompositionTests` assembles multiple generated tables on
 Jet3/Jet4/ACE, then independently compares their reopened table/index allocations,

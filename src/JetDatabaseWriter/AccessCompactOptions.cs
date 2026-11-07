@@ -79,6 +79,15 @@ public sealed class AccessCompactOptions : AccessOptions
     public bool QuarantineOrphanedChildRows { get; init; } = true;
 
     /// <summary>
+    /// Gets a value indicating whether duplicate-key or null-required-key rows that violate a user table's
+    /// <c>PrimaryKey</c>, <c>Unique</c>, or <c>Required</c> index constraints are isolated and quarantined
+    /// when <see cref="AllowPartialRecovery"/> is enabled, allowing damaged unique/primary-key indexes to be
+    /// regenerated without stripping the table's schema constraints.
+    /// Default: <see langword="false"/>.
+    /// </summary>
+    public bool QuarantineConstraintViolatingRows { get; init; }
+
+    /// <summary>
     /// Gets an optional file path to receive newline-delimited JSON (<see cref="AccessCompactQuarantineRecord"/>)
     /// records for unrecoverable data pages, corrupt row slots, orphaned child rows, or excluded unassigned rows encountered during partial recovery.
     /// Cannot be combined with <see cref="QuarantineStream"/>.
