@@ -1,5 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
+using System.Collections.Generic;
+
 /// <summary>Completed private append-only construction followed by independently reopened component comparisons.</summary>
 /// <param name="Plan">The prewrite independent source plan membership check.</param>
 /// <param name="Validation">The complete independent private reopened comparison result.</param>
@@ -15,6 +17,9 @@ internal sealed record CompactPinnedDatabaseBuilderResult(
     long ReadBytes,
     long WrittenBytes)
 {
+    /// <summary>Gets the independently compared per-table allocations in build order.</summary>
+    public IReadOnlyList<CompactPinnedDatabaseTable> Tables { get; init; } = [];
+
     /// <summary>Gets a value indicating whether the complete database is accepted.</summary>
     public bool DatabaseValidated { get; init; }
 

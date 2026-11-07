@@ -1,8 +1,11 @@
 namespace JetDatabaseWriter;
 
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
@@ -12,29 +15,126 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Maintenance;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 
 /// <summary>
-/// Provides Compact &amp; Repair operations for Microsoft Access Jet3 (<c>.mdb</c>), Jet4 (<c>.mdb</c>),
-/// and ACE (<c>.accdb</c>) databases.
+/// Provides Compact &amp; Repair and dry-run health inspection operations for Microsoft Access Jet3 (<c>.mdb</c>),
+/// Jet4 (<c>.mdb</c>), and ACE (<c>.accdb</c>) databases.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <see cref="AccessDatabaseCompact"/> inventories all catalog objects, local tables, system tables,
 /// and complex flat tables, rebuilds table rows, long-value (<c>LVAL</c>) chains, B-tree indexes,
-/// and usage maps into contiguous pages, reclaims proven old data/LVAL/index/map/freed pages,
+/// and usage maps into contiguous pages, packs rebuilt allocations into reclaimed interior prefix holes,
+/// repairs out-of-sync table counters, reclaims proven old data/LVAL/index/map/freed pages,
 /// and independently reopens and validates the compacted database before publishing it.
 /// </para>
 /// <para>
-/// When damaged catalog headers, unassigned physical rows, or opaque pages are encountered,
-/// <see cref="CompactToAsync"/> and <see cref="CompactAsync"/> can write a validated salvage copy
-/// when <see cref="AccessCompactOptions.AllowPartialRecovery"/> is <see langword="true"/>, while
-/// <see cref="CompactInPlaceAsync"/> always requires complete ownership and zero salvage diagnostics
-/// (<see cref="AccessCompactReport.ReplacementAuthorized"/>) before replacing the original file.
+/// When damaged catalog headers, unassigned physical rows, damaged user-table indexes, damaged data-page
+/// headers, or opaque pages are encountered, <see cref="CompactToAsync"/> and <see cref="CompactAsync"/>
+/// can write a validated salvage copy when <see cref="AccessCompactOptions.AllowPartialRecovery"/> is
+/// <see langword="true"/>, while <see cref="CompactInPlaceAsync"/> always requires complete ownership and
+/// zero blocking salvage diagnostics (<see cref="AccessCompactReport.ReplacementAuthorized"/>) before
+/// replacing the original file.
 /// </para>
 /// </remarks>
 public static class AccessDatabaseCompact
 {
+    /// <summary>
+    /// Performs a read-only dry-run health, ownership, index, counter, and space-reclamation inspection on <paramref name="source"/>
+    /// without writing a destination database.
+    /// </summary>
+    /// <param name="source">The readable, seekable source database stream, left open.</param>
+    /// <param name="options">Optional compact configuration, password, and resource budgets.</param>
+    /// <param name="cancellationToken">Cancels discovery and inspection.</param>
+    /// <returns>An <see cref="AccessCompactReport"/> summarizing discovered tables, counters, diagnostics, and reclaimable pages.</returns>
+    public static async ValueTask<AccessCompactReport> InspectAsync(
+        Stream source,
+        AccessCompactOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        DiagnosticTrace.ThrowIfReentrant();
+        Guard.NotNull(source, nameof(source));
+        Guard.RequireReadableSeekableStream(source, nameof(source));
+
+        options ??= new AccessCompactOptions();
+        options.Validate();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        long originalPosition = source.Position;
+        try
+        {
+            return await ExecuteInspectCoreAsync(source, string.Empty, options, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (source.CanSeek)
+            {
+                source.Position = originalPosition;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Performs a read-only dry-run health, ownership, index, counter, and space-reclamation inspection on the database at <paramref name="path"/>
+    /// without modifying the file.
+    /// </summary>
+    /// <param name="path">The path to the database file to inspect.</param>
+    /// <param name="options">Optional compact configuration, password, and resource budgets.</param>
+    /// <param name="cancellationToken">Cancels discovery and inspection.</param>
+    /// <returns>An <see cref="AccessCompactReport"/> summarizing discovered tables, counters, diagnostics, and reclaimable pages.</returns>
+    public static async ValueTask<AccessCompactReport> InspectAsync(
+        string path,
+        AccessCompactOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        DiagnosticTrace.ThrowIfReentrant();
+        Guard.NotNullOrEmpty(path, nameof(path));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        path = Path.GetFullPath(path);
+        options ??= new AccessCompactOptions();
+        options.Validate();
+        _ = EncryptionReplacementIntent.Recover(path, cancellationToken: cancellationToken);
+        Guard.RequireExistingDatabaseFile(path, nameof(path));
+
+        var lockFile = new LockFileCoordinator(
+            path,
+            nameof(AccessDatabaseCompact),
+            options.CreateLockFileSettings(respectExisting: true),
+            recoverableWriter: false);
+        FileStream? sourceStream = null;
+        try
+        {
+            sourceStream = FileStreamFactory.Open(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            _ = RecoverableWriterLock.Recover(path);
+            PersistentRollbackJournal.RejectHotJournal(sourceStream);
+            lockFile.Acquire();
+
+            return await ExecuteInspectCoreAsync(sourceStream, path, options, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            try
+            {
+                if (sourceStream is not null)
+                {
+                    await sourceStream.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                lockFile.Dispose();
+            }
+        }
+    }
+
     /// <summary>
     /// Compacts and repairs a database from <paramref name="source"/> into <paramref name="destination"/>.
     /// </summary>
@@ -342,14 +442,13 @@ public static class AccessDatabaseCompact
         }
     }
 
-    private static async ValueTask<AccessCompactReport> ExecuteCompactCoreAsync(
+    private static async ValueTask<AccessCompactReport> ExecuteInspectCoreAsync(
         Stream sourceStream,
         string sourcePath,
         AccessCompactOptions options,
-        bool inPlace,
-        Func<string, CancellationToken, ValueTask> publishAsync,
         CancellationToken cancellationToken)
     {
+        options.Progress?.Report(new AccessCompactProgress(AccessCompactPhase.Planning, 0, 2));
         sourceStream.Position = 0;
         byte[] header = await EncryptionManager.ReadOpenHeaderPageAsync(sourceStream, cancellationToken).ConfigureAwait(false);
         try
@@ -372,12 +471,125 @@ public static class AccessDatabaseCompact
                     Work = discoveryBudget,
                 };
 
-                CompactDatabasePlannerResult plan = await CompactDatabasePlanner.PlanAsync(
+                CompactDataPageSalvageResult salvage = await CompactDataPageSalvager.InspectAndCreateOverlayAsync(
                     database.Pages,
                     database.Format,
                     discoveryBudget,
-                    activeTableBudget,
+                    allowDataSalvage: true,
                     cancellationToken).ConfigureAwait(false);
+
+                CompactDatabasePlannerResult plan = await CompactDatabasePlanner.PlanAsync(
+                    salvage.EffectiveSource,
+                    database.Format,
+                    discoveryBudget,
+                    activeTableBudget,
+                    cancellationToken,
+                    salvage,
+                    rebuildDamagedIndexes: options.RebuildDamagedIndexes,
+                    repairTableCounters: options.RepairTableCounters).ConfigureAwait(false);
+
+                int quarantinedCount = plan.QuarantineRecords?.Count ?? 0;
+                if (quarantinedCount > 0 && plan.QuarantineRecords is not null)
+                {
+                    await WriteQuarantineRecordsAsync(options, plan.QuarantineRecords, cancellationToken).ConfigureAwait(false);
+                }
+
+                DatabaseFormat formatKind = database.Format.Kind;
+                int pageSize = database.Format.PageSize;
+                long sourcePages = database.Pages.PageCount;
+
+                options.Progress?.Report(new AccessCompactProgress(AccessCompactPhase.Completed, 2, 2));
+
+                return new AccessCompactReport
+                {
+                    Format = formatKind,
+                    PageSize = pageSize,
+                    SourcePages = sourcePages,
+                    DestinationPages = plan.Reclamation.RetainedPrefixPages,
+                    RetainedPrefixPages = plan.Reclamation.RetainedPrefixPages,
+                    ReclaimedPages = plan.Reclamation.ReclaimedPages,
+                    ScrubbedFreePages = plan.Reclamation.ScrubbedPrefixPageCount,
+                    PackedInteriorPages = 0,
+                    TruncatedSourceTailPages = plan.Reclamation.TruncatedTailPages,
+                    RebuiltTableCount = plan.Tables.Count,
+                    CatalogObjectCount = plan.CatalogObjectCount,
+                    ActiveRowCount = plan.ActiveRowCount,
+                    RecoveredCatalogRowCount = plan.RecoveredCatalogRowCount,
+                    UnassignedRowCount = plan.UnassignedRowCount,
+                    RegeneratedIndexCount = plan.RegeneratedIndexCount,
+                    SalvagedRowCount = plan.SalvagedRowCount,
+                    RepairedCounterTableCount = plan.RepairedCounterTableCount,
+                    QuarantinedRecordCount = quarantinedCount,
+                    ReadBytes = checked(sourcePages * pageSize),
+                    WrittenBytes = 0,
+                    IsEncrypted = isEncrypted,
+                    IsComplete = plan.Reclamation.IsComplete && plan.UnassignedRowCount == 0,
+                    DatabaseValidated = false,
+                    ReclamationAuthorized = plan.Reclamation.ReclamationAuthorized,
+                    ReplacementAuthorized = plan.Reclamation.IsComplete && plan.UnassignedRowCount == 0,
+                    Diagnostics = plan.Diagnostics,
+                    Tables = plan.TableSummaries ?? [],
+                };
+            }
+            finally
+            {
+                await database.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(header);
+        }
+    }
+
+    private static async ValueTask<AccessCompactReport> ExecuteCompactCoreAsync(
+        Stream sourceStream,
+        string sourcePath,
+        AccessCompactOptions options,
+        bool inPlace,
+        Func<string, CancellationToken, ValueTask> publishAsync,
+        CancellationToken cancellationToken)
+    {
+        const int totalSteps = 6;
+        options.Progress?.Report(new AccessCompactProgress(AccessCompactPhase.Planning, 0, totalSteps));
+        sourceStream.Position = 0;
+        byte[] header = await EncryptionManager.ReadOpenHeaderPageAsync(sourceStream, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            AccessEncryptionFormat encryptionFormat = EncryptionConverter.Detect(header);
+            bool isEncrypted = encryptionFormat != AccessEncryptionFormat.None;
+            var database = DatabaseFile.ForReader(
+                sourceStream,
+                header,
+                options.Password,
+                sourcePath,
+                leaveOpen: true,
+                options,
+                cancellationToken: cancellationToken);
+            try
+            {
+                CompactDiscoveryBudget discoveryBudget = CreateDiscoveryBudget(options);
+                CompactActiveTableBudget activeTableBudget = new()
+                {
+                    Work = discoveryBudget,
+                };
+
+                CompactDataPageSalvageResult salvage = await CompactDataPageSalvager.InspectAndCreateOverlayAsync(
+                    database.Pages,
+                    database.Format,
+                    discoveryBudget,
+                    allowDataSalvage: options.AllowPartialRecovery,
+                    cancellationToken).ConfigureAwait(false);
+
+                CompactDatabasePlannerResult plan = await CompactDatabasePlanner.PlanAsync(
+                    salvage.EffectiveSource,
+                    database.Format,
+                    discoveryBudget,
+                    activeTableBudget,
+                    cancellationToken,
+                    salvage,
+                    rebuildDamagedIndexes: options.RebuildDamagedIndexes,
+                    repairTableCounters: options.RepairTableCounters).ConfigureAwait(false);
 
                 if (!plan.Reclamation.IsComplete)
                 {
@@ -392,7 +604,7 @@ public static class AccessDatabaseCompact
                     {
                         throw new JetCorruptDataException(
                             JetErrorCode.CorruptPage,
-                            "Compact & Repair discovered damaged ownership, unassigned rows, or opaque storage; enable AllowPartialRecovery on CompactToAsync to write a separate salvage copy.");
+                            "Compact & Repair discovered damaged ownership, unassigned rows, damaged indexes, or opaque storage; enable AllowPartialRecovery on CompactToAsync to write a separate salvage copy.");
                     }
                 }
 
@@ -429,9 +641,10 @@ public static class AccessDatabaseCompact
                         },
                         static (_, _) => default);
 
+                    options.Progress?.Report(new AccessCompactProgress(AccessCompactPhase.Building, 1, totalSteps));
                     CompactPinnedDatabaseBuilderBudget builderBudget = CreateBuilderBudget(options, discoveryBudget, activeTableBudget);
                     CompactPinnedDatabaseBuilderResult buildResult = await CompactPinnedDatabaseBuilder.BuildAndValidateAsync(
-                        database.Pages,
+                        salvage.EffectiveSource,
                         database.Format,
                         plan.Tables,
                         workspace,
@@ -458,9 +671,63 @@ public static class AccessDatabaseCompact
                     string finalArtifactPath = decryptedDestinationPath;
                     long extraReadBytes = 0;
                     long extraWrittenBytes = 0;
+                    long finalDestinationPages = buildResult.Validation.Allocations.DestinationPages;
+                    int finalScrubbedFreePages = plan.Reclamation.ScrubbedPrefixPageCount;
+                    int packedInteriorPages = 0;
+
+                    if (options.PackInteriorFreePages
+                        && plan.Reclamation.ReclamationAuthorized
+                        && plan.Reclamation.ScrubbedPrefixPageCount > 0)
+                    {
+                        options.Progress?.Report(new AccessCompactProgress(AccessCompactPhase.PackingInteriorPages, 2, totalSteps));
+                        var hydratedByOwner = new Dictionary<long, IReadOnlyList<ColumnInfo>?>(plan.Tables.Count);
+                        foreach (CompactPinnedDatabaseBuildTable plannedTable in plan.Tables)
+                        {
+                            hydratedByOwner[plannedTable.Owner] = plannedTable.HydratedColumns;
+                        }
+
+                        CompactPrefixHolePackResult packResult = await CompactPrefixHolePacker.PackAndValidateAsync(
+                            salvage.EffectiveSource,
+                            database.Format,
+                            plan.Reclamation,
+                            buildResult.Tables,
+                            hydratedByOwner,
+                            decryptedDestinationPath,
+                            builderBudget,
+                            cancellationToken).ConfigureAwait(false);
+                        if (packResult.PackedPages > 0)
+                        {
+                            packedInteriorPages = packResult.PackedPages;
+                            finalScrubbedFreePages = packResult.RemainingScrubbedPages;
+                            finalDestinationPages = packResult.DestinationPages;
+                            extraReadBytes = checked(extraReadBytes + packResult.ReadBytes);
+                            extraWrittenBytes = checked(extraWrittenBytes + packResult.WrittenBytes);
+                        }
+                    }
+
+                    if (options.RepairTableCounters
+                        && plan.RepairedCounterTableCount > 0
+                        && plan.CounterEvaluations is not null)
+                    {
+                        options.Progress?.Report(new AccessCompactProgress(AccessCompactPhase.RepairingCounters, 3, totalSteps));
+                        await using FileStream counterStream = FileStreamFactory.Open(
+                            decryptedDestinationPath,
+                            FileMode.Open,
+                            FileAccess.ReadWrite,
+                            FileShare.None,
+                            FileOptions.Asynchronous | FileOptions.RandomAccess);
+                        (long counterRead, long counterWritten) = await CompactTableCounterRepairer.ApplyAndValidateAsync(
+                            counterStream,
+                            database.Format,
+                            plan.CounterEvaluations,
+                            cancellationToken).ConfigureAwait(false);
+                        extraReadBytes = checked(extraReadBytes + counterRead);
+                        extraWrittenBytes = checked(extraWrittenBytes + counterWritten);
+                    }
 
                     if (isEncrypted)
                     {
+                        options.Progress?.Report(new AccessCompactProgress(AccessCompactPhase.Encrypting, 4, totalSteps));
                         string encodedDestinationPath = Path.Combine(workDir, "Encoded-Destination.bin");
                         var encodedWorkspace = new CompactEncodedDatabaseWorkspace(
                             token =>
@@ -512,32 +779,45 @@ public static class AccessDatabaseCompact
                             encodedWorkspace,
                             encodedBudget,
                             cancellationToken).ConfigureAwait(false);
-                        extraReadBytes = encodedResult.ReadBytes;
-                        extraWrittenBytes = encodedResult.WrittenBytes;
+                        extraReadBytes = checked(extraReadBytes + encodedResult.ReadBytes);
+                        extraWrittenBytes = checked(extraWrittenBytes + encodedResult.WrittenBytes);
                         finalArtifactPath = encodedDestinationPath;
                     }
 
-                    Enums.DatabaseFormat formatKind = database.Format.Kind;
+                    int quarantinedCount = plan.QuarantineRecords?.Count ?? 0;
+                    if (quarantinedCount > 0 && plan.QuarantineRecords is not null)
+                    {
+                        await WriteQuarantineRecordsAsync(options, plan.QuarantineRecords, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    DatabaseFormat formatKind = database.Format.Kind;
                     int pageSize = database.Format.PageSize;
                     long sourcePages = database.Pages.PageCount;
 
+                    options.Progress?.Report(new AccessCompactProgress(AccessCompactPhase.Publishing, 5, totalSteps));
                     await publishAsync(finalArtifactPath, cancellationToken).ConfigureAwait(false);
+                    options.Progress?.Report(new AccessCompactProgress(AccessCompactPhase.Completed, totalSteps, totalSteps));
 
                     return new AccessCompactReport
                     {
                         Format = formatKind,
                         PageSize = pageSize,
                         SourcePages = sourcePages,
-                        DestinationPages = buildResult.Validation.Allocations.DestinationPages,
+                        DestinationPages = finalDestinationPages,
                         RetainedPrefixPages = plan.Reclamation.RetainedPrefixPages,
                         ReclaimedPages = plan.Reclamation.ReclaimedPages,
-                        ScrubbedFreePages = plan.Reclamation.ScrubbedPrefixPageCount,
+                        ScrubbedFreePages = finalScrubbedFreePages,
+                        PackedInteriorPages = packedInteriorPages,
                         TruncatedSourceTailPages = plan.Reclamation.TruncatedTailPages,
                         RebuiltTableCount = buildResult.Validation.Tables,
                         CatalogObjectCount = buildResult.Validation.CatalogObjects,
                         ActiveRowCount = plan.ActiveRowCount,
                         RecoveredCatalogRowCount = plan.RecoveredCatalogRowCount,
                         UnassignedRowCount = Math.Max(plan.UnassignedRowCount, buildResult.Validation.UnassignedRows),
+                        RegeneratedIndexCount = plan.RegeneratedIndexCount,
+                        SalvagedRowCount = plan.SalvagedRowCount,
+                        RepairedCounterTableCount = plan.RepairedCounterTableCount,
+                        QuarantinedRecordCount = quarantinedCount,
                         ReadBytes = checked(buildResult.ReadBytes + buildResult.Validation.ReadBytes + extraReadBytes),
                         WrittenBytes = checked(buildResult.WrittenBytes + extraWrittenBytes),
                         IsEncrypted = isEncrypted,
@@ -546,6 +826,7 @@ public static class AccessDatabaseCompact
                         ReclamationAuthorized = buildResult.ReclamationAuthorized,
                         ReplacementAuthorized = buildResult.PublicationAuthorized,
                         Diagnostics = plan.Diagnostics,
+                        Tables = plan.TableSummaries ?? [],
                     };
                 }
                 finally
@@ -562,6 +843,127 @@ public static class AccessDatabaseCompact
         {
             CryptographicOperations.ZeroMemory(header);
         }
+    }
+
+    private static async ValueTask WriteQuarantineRecordsAsync(
+        AccessCompactOptions options,
+        IReadOnlyList<AccessCompactQuarantineRecord> records,
+        CancellationToken cancellationToken)
+    {
+        if (options.QuarantineStream is not null)
+        {
+            await WriteQuarantineRecordsToStreamAsync(options.QuarantineStream, records, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(options.QuarantinePath))
+        {
+            string fullPath = Path.GetFullPath(options.QuarantinePath);
+            string? dir = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                _ = Directory.CreateDirectory(dir);
+            }
+
+            await using FileStream fileStream = FileStreamFactory.Open(
+                fullPath,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await WriteQuarantineRecordsToStreamAsync(fileStream, records, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async ValueTask WriteQuarantineRecordsToStreamAsync(
+        Stream stream,
+        IReadOnlyList<AccessCompactQuarantineRecord> records,
+        CancellationToken cancellationToken)
+    {
+        var sb = new StringBuilder(1024);
+        foreach (AccessCompactQuarantineRecord record in records)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _ = sb.Clear();
+            _ = sb.Append("{\"kind\":");
+            AppendJsonString(sb, record.Kind);
+            _ = sb.Append(",\"pageNumber\":").Append(record.PageNumber.ToString(CultureInfo.InvariantCulture));
+            _ = sb.Append(",\"ownerTDefPage\":");
+            _ = record.OwnerTDefPage is long owner
+                ? sb.Append(owner.ToString(CultureInfo.InvariantCulture))
+                : sb.Append("null");
+            _ = sb.Append(",\"tableName\":");
+            if (record.TableName is not null)
+            {
+                AppendJsonString(sb, record.TableName);
+            }
+            else
+            {
+                _ = sb.Append("null");
+            }
+
+            _ = sb.Append(",\"rowIndex\":");
+            _ = record.RowIndex is int rowIndex
+                ? sb.Append(rowIndex.ToString(CultureInfo.InvariantCulture))
+                : sb.Append("null");
+            _ = sb.Append(",\"reason\":");
+            AppendJsonString(sb, record.Reason);
+            _ = sb.Append(",\"sha256\":");
+            AppendJsonString(sb, record.Sha256);
+            _ = sb.Append(",\"rawBytesBase64\":");
+            AppendJsonString(sb, record.RawBytesBase64);
+            _ = sb.Append("}\n");
+
+            byte[] utf8 = Encoding.UTF8.GetBytes(sb.ToString());
+            await stream.WriteAsync(utf8.AsMemory(), cancellationToken).ConfigureAwait(false);
+        }
+
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void AppendJsonString(StringBuilder sb, string value)
+    {
+        _ = sb.Append('"');
+        foreach (char c in value)
+        {
+            switch (c)
+            {
+                case '"':
+                    _ = sb.Append("\\\"");
+                    break;
+                case '\\':
+                    _ = sb.Append("\\\\");
+                    break;
+                case '\b':
+                    _ = sb.Append("\\b");
+                    break;
+                case '\f':
+                    _ = sb.Append("\\f");
+                    break;
+                case '\n':
+                    _ = sb.Append("\\n");
+                    break;
+                case '\r':
+                    _ = sb.Append("\\r");
+                    break;
+                case '\t':
+                    _ = sb.Append("\\t");
+                    break;
+                default:
+                    if (c < ' ')
+                    {
+                        _ = sb.Append("\\u").Append(((int)c).ToString("X4", CultureInfo.InvariantCulture));
+                    }
+                    else
+                    {
+                        _ = sb.Append(c);
+                    }
+
+                    break;
+            }
+        }
+
+        _ = sb.Append('"');
     }
 
     private static CompactDiscoveryBudget CreateDiscoveryBudget(AccessCompactOptions options)

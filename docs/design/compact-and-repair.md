@@ -2,26 +2,50 @@
 
 ## Contract and current boundary
 
-`AccessDatabaseCompact` (`CompactAsync`, `CompactToAsync` and `CompactInPlaceAsync`),
-`AccessCompactOptions`, `AccessCompactReport` and `AccessCompactDiagnostic` provide
-managed Compact & Repair and bounded space reclamation, and
-`JetDatabaseWriter.FormatProbe compact` exposes the same pipeline from the CLI.
-`CompactDatabasePlanner` inventories local tables, catalog identities, calculated
-`ResultType` declarations, stored index entries and source-page ownership, then
-produces a `CompactReclamationPlan` consumed by `CompactPinnedDatabaseBuilder` and
+`AccessDatabaseCompact` (`CompactAsync`, `CompactToAsync`, `CompactInPlaceAsync` and
+read-only `InspectAsync`), `AccessCompactOptions`, `AccessCompactReport`,
+`AccessCompactDiagnostic` (`AccessCompactDiagnosticCategory`),
+`AccessCompactTableSummary`, `AccessCompactQuarantineRecord` and
+`AccessCompactProgress` (`AccessCompactPhase`) provide managed Compact & Repair,
+dry-run health inspection, damaged-index regeneration, damaged-header data-page
+salvage, quarantine export, table-counter repair and bounded space reclamation,
+and `JetDatabaseWriter.FormatProbe compact` (`--verify-only`, `--quarantine`)
+exposes the same pipeline from the CLI. `CompactDatabasePlanner` inventories local
+tables, catalog identities, calculated `ResultType` declarations, stored index
+entries, `TDef` header counters and source-page ownership, then produces a
+`CompactReclamationPlan` consumed by `CompactPinnedDatabaseBuilder` and
 independently verified by `CompactPinnedDatabaseValidator`. When source-page
 ownership is complete (`ReclamationAuthorized`), trailing source pages owned by
-rebuilt tables or already globally free are truncated (`RetainedPrefixPages`) and
-interior reclaimed source pages below `RetainedPrefixPages` are zero-scrubbed to
+rebuilt tables or already globally free are truncated (`RetainedPrefixPages`),
+`CompactPrefixHolePacker` (`PackInteriorFreePages = true`) relocates rebuilt table
+allocations into scrubbed interior prefix holes (`3 .. RetainedPrefixPages - 1`)
+using a strictly order-preserving page bijection before leaving pages appended at
+the end, and any remaining interior reclaimed prefix pages are zero-scrubbed to
 canonical Freed (`0x06`) pages and marked free in Page 1's global usage map for
-immediate writer reuse. When catalog recovery, unassigned physical rows or
-opaque/unassigned pages withhold complete ownership proof, all source prefix pages
-remain pinned, `CompactInPlaceAsync` refuses replacement, and `CompactAsync` /
-`CompactToAsync` require `AllowPartialRecovery = true` to publish partial salvage
-output with explicit diagnostics. `ShrinkDatabaseAsync` remains available when a
-writer only needs to truncate globally free tail pages in place. Broader native
-feature variants, unsupported key regeneration, opaque incoming-reference proofs
-and physical power-loss namespace qualification remain open under I17.
+immediate writer reuse. When a user table's stored physical index B-tree or index
+ownership map is damaged and `RebuildDamagedIndexes = true`,
+`CompactIndexKeyRegenerator` derives canonical `IndexEntry` keys directly from
+verified active rows for supported scalar, ordinary Memo and complex-reference
+descriptors, enforces `PrimaryKey`, `Unique` and `Required` constraints, and
+rebuilds the B-tree and ownership map. When `RepairTableCounters = true`,
+`CompactTableCounterRepairer` audits and repairs out-of-sync `TDef` `NumRows`
+(plus Jet4/ACE `num_idx_rows` slots), resets `AutoNumber` to `0` on empty
+AutoNumber tables, and raises `AutoNumber` / `ComplexAutoNumber` high-water marks
+when active rows contain higher allocated values. Under `AllowPartialRecovery = true`
+(or `InspectAsync`), `CompactDataPageSalvager` repairs damaged page-type header
+bytes (`-> 0x01`) on user-table DATA pages whose owner, row directory and live
+fields verify cleanly, and isolates genuinely unrecoverable user-table DATA pages
+into `AccessCompactQuarantineRecord` entries (optionally exported as NDJSON via
+`QuarantinePath` / `QuarantineStream` / `--quarantine`) so surviving table pages
+still compact. When catalog recovery, damaged-page salvage/quarantine, index
+regeneration, unassigned physical rows or opaque/unassigned pages withhold
+complete ownership proof, all source prefix pages remain pinned,
+`CompactInPlaceAsync` refuses replacement, and `CompactAsync` / `CompactToAsync`
+require `AllowPartialRecovery = true` to publish partial salvage output with
+explicit diagnostics. `ShrinkDatabaseAsync` remains available when a writer only
+needs to truncate globally free tail pages in place. Broader native feature
+variants, unsupported key regeneration, opaque incoming-reference proofs and
+physical power-loss namespace qualification remain open under I17.
 
 The operation must rebuild into a separate database, validate that result, and
 preserve the original until replacement is safe. Preserve the source format,
@@ -681,13 +705,19 @@ global-map validator; arbitrary mutable-page exceptions are not accepted.
 Definition traversal, cumulative requested reads and retained patch storage have
 bounds.
 
-`CompactDatabasePlanner` and `CompactReclaimingDatabaseTests` compose discovery,
-active-row corroboration, calculated `ResultType` hydration, stored-index entry
-streaming, `CompactReclamationPlan` classification and `AccessDatabaseCompact`
-across Jet3, Jet4 and ACE databases (including encrypted databases, relationships,
-calculated and complex columns, frozen application/workgroup fixtures, damaged
-catalog headers, unassigned physical table rows, and DAO3.6/DAO120 reopen,
-mutation and native re-compaction).
+`CompactDatabasePlanner`, `CompactPrefixHolePacker`, `CompactIndexKeyRegenerator`,
+`CompactDataPageSalvager`, `CompactTableCounterRepairer`,
+`CompactReclaimingDatabaseTests` and `CompactOptimalCapabilitiesTests` compose
+discovery, active-row corroboration, calculated `ResultType` hydration, stored-index
+entry streaming and damaged-index key regeneration, damaged-header DATA page
+salvage, unrecoverable DATA page quarantine export, `TDef` counter repair,
+`CompactReclamationPlan` classification, monotone interior prefix hole packing,
+read-only `InspectAsync` health checks and `AccessDatabaseCompact` across Jet3,
+Jet4 and ACE databases (including encrypted databases, relationships, calculated
+and complex columns, frozen application/workgroup fixtures, damaged catalog
+headers, damaged primary/secondary index roots, damaged DATA page headers,
+unassigned physical table rows, and DAO3.6/DAO120 reopen, mutation and native
+re-compaction).
 
 `CompactPinnedDatabaseCompositionTests` assembles multiple generated tables on
 Jet3/Jet4/ACE, then independently compares their reopened table/index allocations,

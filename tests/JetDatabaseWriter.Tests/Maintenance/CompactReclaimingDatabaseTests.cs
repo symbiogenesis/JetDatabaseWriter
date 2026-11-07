@@ -138,7 +138,7 @@ public sealed class CompactReclaimingDatabaseTests
                 "EarlyTable",
                 [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Secret", typeof(string), 20_000)],
                 cancellationToken: Ct);
-            for (int i = 0; i < 12; i++)
+            for (int i = 0; i < 160; i++)
             {
                 await writer.InsertRowAsync("EarlyTable", [i, secretMarker], Ct);
             }
@@ -149,7 +149,7 @@ public sealed class CompactReclaimingDatabaseTests
                 cancellationToken: Ct);
             await writer.InsertRowAsync("LateTable", [1, "keep"], Ct);
 
-            for (int i = 1; i < 12; i++)
+            for (int i = 1; i < 160; i++)
             {
                 Assert.Equal(1, await writer.DeleteRowsAsync("EarlyTable", "Id", i, Ct));
             }
@@ -162,6 +162,7 @@ public sealed class CompactReclaimingDatabaseTests
         Assert.True(report.DatabaseValidated);
         Assert.True(report.ReclamationAuthorized);
         Assert.True(report.ReplacementAuthorized);
+        Assert.True(report.PackedInteriorPages > 0);
         Assert.True(report.ScrubbedFreePages > 0);
 
         byte[] compactedBytes = compactedStream.ToArray();

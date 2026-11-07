@@ -13,6 +13,12 @@ using JetDatabaseWriter.Models;
 /// <param name="RecoveredCatalogRowCount">The number of catalog rows recovered from index bookmarks despite damaged owner headers.</param>
 /// <param name="UnassignedRowCount">The number of unassigned physical table rows excluded from rebuilt tables and preserved pinned.</param>
 /// <param name="Diagnostics">The bounded list of diagnostics and salvage observations recorded during planning.</param>
+/// <param name="TableSummaries">The per-table summaries in deterministic rebuild order.</param>
+/// <param name="CounterEvaluations">The per-table counter evaluations and repair patches.</param>
+/// <param name="QuarantineRecords">The quarantined unrecoverable data pages and excluded unassigned rows collected during planning.</param>
+/// <param name="RegeneratedIndexCount">The total number of damaged physical real indexes regenerated from verified active rows.</param>
+/// <param name="SalvagedRowCount">The total number of active rows salvaged from data pages with damaged page-type headers.</param>
+/// <param name="RepairedCounterTableCount">The total number of tables whose <c>TDef</c> counters were repaired or reset.</param>
 internal sealed record CompactDatabasePlannerResult(
     IReadOnlyList<CompactPinnedDatabaseBuildTable> Tables,
     CompactReclamationPlan Reclamation,
@@ -20,4 +26,10 @@ internal sealed record CompactDatabasePlannerResult(
     long ActiveRowCount,
     int RecoveredCatalogRowCount,
     long UnassignedRowCount,
-    IReadOnlyList<AccessCompactDiagnostic> Diagnostics);
+    IReadOnlyList<AccessCompactDiagnostic> Diagnostics,
+    IReadOnlyList<AccessCompactTableSummary>? TableSummaries = null,
+    IReadOnlyList<CompactTableCounterEvaluation>? CounterEvaluations = null,
+    IReadOnlyList<AccessCompactQuarantineRecord>? QuarantineRecords = null,
+    int RegeneratedIndexCount = 0,
+    long SalvagedRowCount = 0,
+    int RepairedCounterTableCount = 0);

@@ -29,6 +29,9 @@ public sealed record AccessCompactReport
     /// <summary>Gets the number of interior prefix pages scrubbed to canonical reusable free pages and marked free in the global usage map.</summary>
     public int ScrubbedFreePages { get; init; }
 
+    /// <summary>Gets the number of reclaimed interior prefix holes filled with rebuilt table pages before appending past <see cref="RetainedPrefixPages"/>.</summary>
+    public int PackedInteriorPages { get; init; }
+
     /// <summary>Gets the number of trailing source pages truncated from the retained prefix before appending rebuilt tables.</summary>
     public int TruncatedSourceTailPages { get; init; }
 
@@ -46,6 +49,18 @@ public sealed record AccessCompactReport
 
     /// <summary>Gets the number of unassigned physical table rows excluded from rebuilt tables and preserved pinned.</summary>
     public long UnassignedRowCount { get; init; }
+
+    /// <summary>Gets the number of damaged physical real indexes regenerated from verified active table rows.</summary>
+    public int RegeneratedIndexCount { get; init; }
+
+    /// <summary>Gets the number of active rows salvaged from data pages whose page-type header byte was damaged.</summary>
+    public long SalvagedRowCount { get; init; }
+
+    /// <summary>Gets the number of local tables whose <c>TDef</c> row-count or <c>AutoNumber</c> counters were repaired or reset.</summary>
+    public int RepairedCounterTableCount { get; init; }
+
+    /// <summary>Gets the number of quarantined unrecoverable data pages or excluded unassigned rows recorded during partial recovery.</summary>
+    public int QuarantinedRecordCount { get; init; }
 
     /// <summary>Gets the cumulative bytes read during construction and independent reopened validation.</summary>
     public long ReadBytes { get; init; }
@@ -70,4 +85,7 @@ public sealed record AccessCompactReport
 
     /// <summary>Gets the bounded list of diagnostics and salvage observations recorded during planning and construction.</summary>
     public IReadOnlyList<AccessCompactDiagnostic> Diagnostics { get; init; } = [];
+
+    /// <summary>Gets the per-table summaries in deterministic plan order.</summary>
+    public IReadOnlyList<AccessCompactTableSummary> Tables { get; init; } = [];
 }

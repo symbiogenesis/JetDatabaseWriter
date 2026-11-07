@@ -168,11 +168,12 @@ internal static class CompactPinnedDatabaseBuilder
                 admission.Check(cancellationToken);
                 if (reclamation is null)
                 {
-                    return new(membership, validation, admission.ReadBytes, admission.WrittenBytes);
+                    return new(membership, validation, admission.ReadBytes, admission.WrittenBytes) { Tables = Array.AsReadOnly(compared) };
                 }
 
                 return new(membership, validation, admission.ReadBytes, admission.WrittenBytes)
                 {
+                    Tables = Array.AsReadOnly(compared),
                     DatabaseValidated = validation.DatabaseValidated,
                     ReclamationAuthorized = validation.ReclamationAuthorized,
                     PublicationAuthorized = validation.DatabaseValidated

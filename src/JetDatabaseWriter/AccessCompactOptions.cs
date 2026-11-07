@@ -1,6 +1,8 @@
 namespace JetDatabaseWriter;
 
 using System;
+using System.IO;
+using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Configuration options for <see cref="AccessDatabaseCompact"/> operations.
@@ -27,12 +29,52 @@ public sealed class AccessCompactOptions : AccessOptions
     /// <summary>
     /// Gets a value indicating whether <see cref="AccessDatabaseCompact.CompactToAsync"/> and
     /// <see cref="AccessDatabaseCompact.CompactAsync"/> may write a validated salvage copy to a separate
-    /// destination when damaged catalog headers, unassigned rows, or opaque pages prevent complete reclamation.
+    /// destination when damaged catalog headers, unassigned rows, damaged indexes, or opaque pages prevent complete reclamation.
     /// In-place replacement (<see cref="AccessDatabaseCompact.CompactInPlaceAsync"/>) always requires
-    /// <see cref="Models.AccessCompactReport.ReplacementAuthorized"/> and never replaces a database with a partial recovery.
+    /// <see cref="AccessCompactReport.ReplacementAuthorized"/> and never replaces a database with a partial recovery.
     /// Default: <see langword="false"/>.
     /// </summary>
     public bool AllowPartialRecovery { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether reclaimed interior prefix holes (<c>3 .. RetainedPrefixPages - 1</c>)
+    /// are packed with rebuilt table pages before leaving pages appended at the end of the compacted file.
+    /// Default: <see langword="true"/>.
+    /// </summary>
+    public bool PackInteriorFreePages { get; init; } = true;
+
+    /// <summary>
+    /// Gets a value indicating whether damaged real indexes on user tables are regenerated from verified active
+    /// table rows when <see cref="AllowPartialRecovery"/> is <see langword="true"/> (or during <see cref="AccessDatabaseCompact.InspectAsync(string, AccessCompactOptions?, System.Threading.CancellationToken)"/>).
+    /// Default: <see langword="true"/>.
+    /// </summary>
+    public bool RebuildDamagedIndexes { get; init; } = true;
+
+    /// <summary>
+    /// Gets a value indicating whether out-of-sync table-definition row counts (<c>NumRows</c>) and
+    /// <c>AutoNumber</c> high-water counters are verified and repaired during compaction.
+    /// Default: <see langword="true"/>.
+    /// </summary>
+    public bool RepairTableCounters { get; init; } = true;
+
+    /// <summary>
+    /// Gets an optional file path to receive newline-delimited JSON (<see cref="AccessCompactQuarantineRecord"/>)
+    /// records for unrecoverable data pages or excluded unassigned rows encountered during partial recovery.
+    /// Cannot be combined with <see cref="QuarantineStream"/>.
+    /// </summary>
+    public string? QuarantinePath { get; init; }
+
+    /// <summary>
+    /// Gets an optional writable stream to receive newline-delimited JSON (<see cref="AccessCompactQuarantineRecord"/>)
+    /// records for unrecoverable data pages or excluded unassigned rows encountered during partial recovery.
+    /// Cannot be combined with <see cref="QuarantinePath"/>.
+    /// </summary>
+    public Stream? QuarantineStream { get; init; }
+
+    /// <summary>
+    /// Gets an optional progress sink notified as compaction or inspection advances through its stages.
+    /// </summary>
+    public IProgress<AccessCompactProgress>? Progress { get; init; }
 
     /// <summary>
     /// Gets the maximum physical page count permitted for source and destination databases during compaction.
@@ -109,6 +151,21 @@ public sealed class AccessCompactOptions : AccessOptions
         if (this.MaxWriteBytes <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(this.MaxWriteBytes), this.MaxWriteBytes, "MaxWriteBytes must be positive.");
+        }
+
+        if (this.QuarantinePath is not null && string.IsNullOrWhiteSpace(this.QuarantinePath))
+        {
+            throw new ArgumentException("QuarantinePath cannot be empty or whitespace.", nameof(this.QuarantinePath));
+        }
+
+        if (this.QuarantineStream?.CanWrite == false)
+        {
+            throw new ArgumentException("QuarantineStream must be writable.", nameof(this.QuarantineStream));
+        }
+
+        if (this.QuarantinePath is not null && this.QuarantineStream is not null)
+        {
+            throw new ArgumentException("Specify at most one of QuarantinePath or QuarantineStream.", nameof(this.QuarantineStream));
         }
 
         _ = ValidateLockTimeoutMilliseconds(this.LockTimeoutMilliseconds);
