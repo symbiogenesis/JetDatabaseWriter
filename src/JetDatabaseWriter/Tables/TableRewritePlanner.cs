@@ -180,7 +180,7 @@ internal sealed class TableRewritePlanner(
             _ = projectedIndexes.RemoveAll(index => string.Equals(index.Name, droppedIndexName, StringComparison.OrdinalIgnoreCase));
         }
 
-        ReserveShortcutPrimaryKeyName(newDefs, projectedIndexes, existingIndexes, originalProperties);
+        IndexDefinition? shortcutPrimaryKey = ReserveShortcutPrimaryKeyName(newDefs, projectedIndexes, existingIndexes, originalProperties);
         if (addedIndex is not null)
         {
             ValidateAddedIndexName(tableName, addedIndex, existingIndexes);
@@ -218,12 +218,16 @@ internal sealed class TableRewritePlanner(
         // A dropped column's unreadable value is projected away and does not block.
         var projectedRows = new List<object[]>(snapshot.Count);
         var projectedFixedText = new List<IReadOnlyDictionary<int, byte[]>?>(snapshot.Count);
-        int[] requiredKeyPositions = addedIndex is { IsPrimaryKey: true } or { IsRequired: true }
-            ? new int[addedIndex.Columns.Count]
+        IndexDefinition? requiredIndex = addedIndex is { IsPrimaryKey: true } or { IsRequired: true }
+            ? addedIndex
+            : shortcutPrimaryKey;
+        int[] requiredKeyPositions = requiredIndex is not null
+            ? new int[requiredIndex.Columns.Count]
             : [];
         for (int key = 0; key < requiredKeyPositions.Length; key++)
         {
-            requiredKeyPositions[key] = tableDef.FindColumnIndex(addedIndex!.Columns[key]);
+            string keyColumn = requiredIndex!.Columns[key];
+            requiredKeyPositions[key] = newDefs.FindIndex(column => string.Equals(column.Name, keyColumn, StringComparison.OrdinalIgnoreCase));
         }
 
         Dictionary<string, int>? targetIndexes = null;
@@ -232,14 +236,6 @@ internal sealed class TableRewritePlanner(
             cancellationToken.ThrowIfCancellationRequested();
             object[] projected = projectRow(row.Values, tableDef);
             UnreadableLongValue.ThrowIfAny(projected, tableName);
-            foreach (int position in requiredKeyPositions)
-            {
-                if (projected[position] is null or DBNull)
-                {
-                    throw new JetConstraintException(JetErrorCode.NotNullViolation, $"Index '{addedIndex!.Name}' on table '{tableName}' requires a value for every key column.", new JetErrorInfo { TableName = tableName, IndexName = addedIndex.Name });
-                }
-            }
-
             projectedRows.Add(projected);
             Dictionary<int, byte[]>? textBytes = null;
             if (row.TextBytes is not null)
@@ -268,6 +264,16 @@ internal sealed class TableRewritePlanner(
         }
 
         await constraints.PopulateAddedCalculatedColumnsAsync(tableName, newDefs, format, projectedRows, cancellationToken).ConfigureAwait(false);
+        foreach (object[] projected in projectedRows)
+        {
+            foreach (int position in requiredKeyPositions)
+            {
+                if (projected[position] is null or DBNull)
+                {
+                    throw new JetConstraintException(JetErrorCode.NotNullViolation, $"Index '{requiredIndex!.Name}' on table '{tableName}' requires a value for every key column.", new JetErrorInfo { TableName = tableName, IndexName = requiredIndex.Name });
+                }
+            }
+        }
 
         await this.InitializeNewComplexReferencesAsync(tableName, tableDef, newDefs, projectedRows, cancellationToken).ConfigureAwait(false);
 
@@ -398,7 +404,8 @@ internal sealed class TableRewritePlanner(
     /// <param name="indexes">The projected ordinary indexes.</param>
     /// <param name="originalIndexes">Every source logical index, including foreign keys.</param>
     /// <param name="properties">The source property maps.</param>
-    private static void ReserveShortcutPrimaryKeyName(
+    /// <returns>The synthesized primary-key index definition when column-level <see cref="ColumnDefinition.IsPrimaryKey"/> was used; otherwise <see langword="null"/>.</returns>
+    private static IndexDefinition? ReserveShortcutPrimaryKeyName(
         List<ColumnDefinition> columns,
         List<IndexDefinition> indexes,
         IReadOnlyList<IndexMetadata> originalIndexes,
@@ -406,7 +413,7 @@ internal sealed class TableRewritePlanner(
     {
         if (indexes.Exists(static index => index.IsPrimaryKey))
         {
-            return;
+            return null;
         }
 
         var keys = new List<string>();
@@ -420,7 +427,7 @@ internal sealed class TableRewritePlanner(
 
         if (keys.Count == 0)
         {
-            return;
+            return null;
         }
 
         var names = new List<string>();
@@ -441,12 +448,8 @@ internal sealed class TableRewritePlanner(
         }
 
         string name = IndexHelpers.MakeUniqueLogicalIdxName("PrimaryKey", names);
-        if (string.Equals(name, "PrimaryKey", StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        indexes.Add(new IndexDefinition(name, keys) { IsPrimaryKey = true });
+        var primaryKey = new IndexDefinition(name, keys) { IsPrimaryKey = true };
+        indexes.Add(primaryKey);
         for (int index = 0; index < columns.Count; index++)
         {
             if (columns[index].IsPrimaryKey)
@@ -454,6 +457,8 @@ internal sealed class TableRewritePlanner(
                 columns[index] = columns[index] with { IsPrimaryKey = false, IsNullable = false };
             }
         }
+
+        return primaryKey;
     }
 
     /// <summary>

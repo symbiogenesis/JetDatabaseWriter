@@ -454,6 +454,10 @@ internal sealed class ConstraintRegistry(
                     value = ConvertIntegral(next, c.ClrType);
                     isNull = false;
                 }
+                else if (!isNull && c.IsAutoIncrement && c.ClrType != typeof(Guid))
+                {
+                    await this.KeepAutoCounterAboveAsync(tableName, tableDef, c, i, value!, checkpoints ??= [with(1)], cancellationToken).ConfigureAwait(false);
+                }
 
                 if (isNull && !c.IsNullable)
                 {
@@ -520,43 +524,57 @@ internal sealed class ConstraintRegistry(
             throw new ArgumentException($"Table '{tableName}' requires {tableDef.Columns.Count} values, but the row has {values.Length}.", nameof(values));
         }
 
-        var assigned = new List<int>(assignedColumns);
-        foreach (int i in assigned)
+        List<(ColumnConstraint Constraint, long? PreviousValue)>? checkpoints = null;
+        try
         {
-            ColumnConstraint c = list[i];
-            if (c.IsCalculated)
+            var assigned = new List<int>(assignedColumns);
+            foreach (int i in assigned)
             {
-                // Recomputed below; the stored value never comes from the caller.
-                continue;
+                ColumnConstraint c = list[i];
+                if (c.IsCalculated)
+                {
+                    // Recomputed below; the stored value never comes from the caller.
+                    continue;
+                }
+
+                object? value = values[i];
+                bool isNull = value is null or DBNull;
+
+                if (value is CalculatedError)
+                {
+                    throw new ArgumentException($"Column '{c.Name}' is not calculated and cannot store a calculation error.", nameof(values));
+                }
+
+                // Integer AutoNumbers cannot be null. GUID AutoNumbers use a default
+                // only on omission; an explicit null follows Required and indexes.
+                if (isNull && (!c.IsNullable || (c.IsAutoIncrement && c.ClrType != typeof(Guid))))
+                {
+                    throw new JetConstraintException(JetErrorCode.NotNullViolation, $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and cannot be set to null.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
+                }
+
+                ValidateZeroLength(tableName, c, value);
+
+                if (!isNull && c.ValidationRule != null && !c.ValidationRule(value is NativeDate nativeDate ? nativeDate.Value : value))
+                {
+                    throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Validation rule for column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
+                }
+
+                if (!isNull && c.IsAutoIncrement && c.ClrType != typeof(Guid))
+                {
+                    await this.KeepAutoCounterAboveAsync(tableName, tableDef, c, i, value!, checkpoints ??= [with(1)], cancellationToken).ConfigureAwait(false);
+                }
             }
 
-            object? value = values[i];
-            bool isNull = value is null or DBNull;
-
-            if (value is CalculatedError)
-            {
-                throw new ArgumentException($"Column '{c.Name}' is not calculated and cannot store a calculation error.", nameof(values));
-            }
-
-            // Integer AutoNumbers cannot be null. GUID AutoNumbers use a default
-            // only on omission; an explicit null follows Required and indexes.
-            if (isNull && (!c.IsNullable || (c.IsAutoIncrement && c.ClrType != typeof(Guid))))
-            {
-                throw new JetConstraintException(JetErrorCode.NotNullViolation, $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and cannot be set to null.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
-            }
-
-            ValidateZeroLength(tableName, c, value);
-
-            if (!isNull && c.ValidationRule != null && !c.ValidationRule(value is NativeDate nativeDate ? nativeDate.Value : value))
-            {
-                throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Validation rule for column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
-            }
+            CalculatedExpressionEvaluator.Apply(tableDef, list, values, tableName, textCollation, calculatedCulture);
+            ValidateCalculatedResults(tableName, list, values);
+            CheckValidationRuleExpressions(tableName, tableDef, list, values, assigned, textCollation);
+            await this.CheckTableValidationRuleAsync(tableName, tableDef, list, values, cancellationToken).ConfigureAwait(false);
         }
-
-        CalculatedExpressionEvaluator.Apply(tableDef, list, values, tableName, textCollation, calculatedCulture);
-        ValidateCalculatedResults(tableName, list, values);
-        CheckValidationRuleExpressions(tableName, tableDef, list, values, assigned, textCollation);
-        await this.CheckTableValidationRuleAsync(tableName, tableDef, list, values, cancellationToken).ConfigureAwait(false);
+        catch
+        {
+            RestoreAutoCounters(checkpoints);
+            throw;
+        }
     }
 
     /// <summary>
@@ -1233,6 +1251,30 @@ internal sealed class ConstraintRegistry(
         {
             checkpoints.Add((holder, holder.NextAutoValue));
             holder.NextAutoValue = Math.Max(next, supplied + 1);
+        }
+    }
+
+    private async ValueTask KeepAutoCounterAboveAsync(
+        string tableName,
+        TableDef tableDef,
+        ColumnConstraint c,
+        int columnIndex,
+        object value,
+        List<(ColumnConstraint Constraint, long? PreviousValue)> checkpoints,
+        CancellationToken cancellationToken)
+    {
+        if (!AutoNumberMaintainer.TryGetAutoNumberCandidate(value, out long supplied))
+        {
+            return;
+        }
+
+        long next = c.NextAutoValue ?? ((readUsedAutoNumberHighWater is null
+            ? 0
+            : await readUsedAutoNumberHighWater(tableName, tableDef, columnIndex, cancellationToken).ConfigureAwait(false)) + 1);
+        if (supplied >= next || c.NextAutoValue is null)
+        {
+            checkpoints.Add((c, c.NextAutoValue));
+            c.NextAutoValue = Math.Max(next, supplied + 1);
         }
     }
 

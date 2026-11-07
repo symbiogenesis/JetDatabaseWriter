@@ -151,7 +151,7 @@ internal sealed class TableStorageEditor(
         // just written at the locations the inserts returned, rather than
         // re-reading the copy. Re-emitted FK entries need the rebuild even on
         // an empty table, so it records their leaves in the index usage map.
-        if (fkIndexNumbers.Count > 0 || (projectedIndexes.Count > 0 && writtenRows.Count > 0))
+        if (fkIndexNumbers.Count > 0 || ((projectedIndexes.Count > 0 || initialIndexPages.Length > 0) && writtenRows.Count > 0))
         {
             await indexMaintainer.RebuildIndexesAsync(tempEntry.TDefPage, tempDef, tempName, writtenRows, cancellationToken).ConfigureAwait(false);
         }

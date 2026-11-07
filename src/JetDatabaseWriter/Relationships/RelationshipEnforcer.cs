@@ -102,6 +102,13 @@ internal sealed class RelationshipEnforcer(
             foreach ((RowLocation location, object[] oldRow, object[] newRow) in cascade.Rows)
             {
                 changes.Update(location, oldRow, newRow, cascade.TextBytes[location]);
+                for (int index = 0; index < newRow.Length && index < table.Definition.Columns.Count; index++)
+                {
+                    if (table.Definition.Columns[index].IsAutoNumber && !Equals(oldRow[index], newRow[index]))
+                    {
+                        changes.RaiseAutoNumbers = true;
+                    }
+                }
             }
         }
     }

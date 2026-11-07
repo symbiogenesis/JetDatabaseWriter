@@ -9,6 +9,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>Checks destination admission and ownership throughout stream database creation.</summary>
@@ -73,6 +74,11 @@ public sealed class StreamDatabaseCreationTests
         Assert.True(stream.Faulted);
         Assert.Equal(leaveOpen ? 0 : 1, stream.DisposeCalls);
         Assert.Equal(leaveOpen, stream.CanRead);
+        if (leaveOpen)
+        {
+            Assert.Equal(0, stream.Length);
+            Assert.Equal(0, stream.Position);
+        }
     }
 
     [Theory]
@@ -94,6 +100,107 @@ public sealed class StreamDatabaseCreationTests
         Assert.True(stream.Faulted);
         Assert.Equal(leaveOpen ? 0 : 1, stream.DisposeCalls);
         Assert.Equal(leaveOpen, stream.CanRead);
+        if (leaveOpen)
+        {
+            Assert.Equal(0, stream.Length);
+            Assert.Equal(0, stream.Position);
+        }
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true)]
+    [InlineData(DatabaseFormat.AceAccdb, false)]
+    [InlineData(DatabaseFormat.AceAccdb, true)]
+    public async Task CreateDatabase_StreamFaultSweep_RestoresEmptyStreamAndRetriesCleanly(DatabaseFormat format, bool encrypted)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        var options = new AccessWriterOptions(encrypted ? "StreamCreate123" : null)
+        {
+            UseLockFile = false,
+            UseByteRangeLocks = false,
+            PageCacheSize = 0,
+        };
+
+        int writes;
+        int reads;
+        await using (var baseline = new WriteFaultStream())
+        {
+            await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(baseline, format, options, leaveOpen: true, ct);
+            writes = baseline.WriteCount;
+            reads = baseline.ReadCount;
+        }
+
+        Assert.True(writes >= 2);
+        Assert.True(reads >= 2);
+
+        await using var stream = new WriteFaultStream();
+        for (int point = 1; point <= writes; point++)
+        {
+            stream.FailOnWrite(point);
+            await Assert.ThrowsAsync<IOException>(async () => await AccessWriter.CreateDatabaseAsync(stream, format, options, leaveOpen: true, ct));
+            Assert.True(stream.Faulted);
+            Assert.Equal(0, stream.Length);
+            Assert.Equal(0, stream.Position);
+
+            stream.FailDuringWrite(point);
+            await Assert.ThrowsAsync<IOException>(async () => await AccessWriter.CreateDatabaseAsync(stream, format, options, leaveOpen: true, ct));
+            Assert.True(stream.Faulted);
+            Assert.Equal(0, stream.Length);
+            Assert.Equal(0, stream.Position);
+        }
+
+        for (int flush = 1; flush <= 2; flush++)
+        {
+            stream.FailOnFlush(flush);
+            await Assert.ThrowsAsync<IOException>(async () => await AccessWriter.CreateDatabaseAsync(stream, format, options, leaveOpen: true, ct));
+            Assert.True(stream.Faulted);
+            Assert.Equal(0, stream.Length);
+            Assert.Equal(0, stream.Position);
+        }
+
+        for (int point = 1; point <= reads; point++)
+        {
+            stream.FailOnRead(point);
+            await Assert.ThrowsAsync<IOException>(async () => await AccessWriter.CreateDatabaseAsync(stream, format, options, leaveOpen: true, ct));
+            Assert.True(stream.Faulted);
+            Assert.Equal(0, stream.Length);
+            Assert.Equal(0, stream.Position);
+
+            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            stream.CancelAfterReads(point, cancellation);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await AccessWriter.CreateDatabaseAsync(stream, format, options, leaveOpen: true, cancellation.Token));
+            Assert.True(stream.Faulted);
+            Assert.Equal(0, stream.Length);
+            Assert.Equal(0, stream.Position);
+        }
+
+        // When both initialization and SetLength(0) fail, both exceptions are reported.
+        stream.FailOnWrite(1);
+        stream.FailOnTruncate(afterTruncate: false);
+        AggregateException aggregate = await Assert.ThrowsAsync<AggregateException>(async () => await AccessWriter.CreateDatabaseAsync(stream, format, options, leaveOpen: true, ct));
+        Assert.Equal(2, aggregate.InnerExceptions.Count);
+        Assert.All(aggregate.InnerExceptions, inner => Assert.IsType<IOException>(inner));
+        stream.SetLength(0);
+        stream.Position = 0;
+
+        // Without manual stream reset after the restored faults above, retry creation and run DML + DDL.
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, options, leaveOpen: true, ct))
+        {
+            await writer.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int)) { IsAutoIncrement = true, IsPrimaryKey = true }, new ColumnDefinition("Label", typeof(string), 50)], ct);
+            _ = await writer.InsertRowsAsync("Items", [[DBNull.Value, "alpha"], [DBNull.Value, "beta"], [DBNull.Value, "gamma"]], ct);
+            _ = await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 2), new RowValues { ["Label"] = "beta-updated" }, ct);
+            _ = await writer.DeleteRowsAsync("Items", RowCriteria.Where("Id", 1), ct);
+            await writer.AddColumnAsync("Items", new ColumnDefinition("Extra", typeof(int)) { DefaultValue = 9 }, ct);
+            await writer.InsertRowAsync("Items", [DBNull.Value, "delta", DbDefault.Value], ct);
+        }
+
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions(encrypted ? "StreamCreate123" : null) { UseLockFile = false }, leaveOpen: true, ct);
+        string[] rows = [.. (await reader.Rows("Items", cancellationToken: ct).ToArrayAsync(ct)).Select(r => $"{r[0]}|{r[1]}|{r[2]}")];
+        Assert.Equal(["3|gamma|", "2|beta-updated|", "4|delta|9"], rows);
     }
 
     [Theory]

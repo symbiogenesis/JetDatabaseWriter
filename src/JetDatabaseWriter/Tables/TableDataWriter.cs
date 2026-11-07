@@ -417,7 +417,26 @@ internal sealed class TableDataWriter(
             changes.Update(rows[i].Location, oldRow, newRow, rows[i].GetPreservedText(newRow, updateIndexes.Keys), longValues: rows[i].GetPreservedLongValues(newRow, updateIndexes.Keys), assignedColumns: updateIndexes.Keys);
         }
 
-        changes.RaiseAutoNumbers = AssignsAutoNumberColumn(tableDef, updateIndexes.Keys);
+        bool raiseAutoNumbers = AssignsAutoNumberColumn(tableDef, updateIndexes.Keys);
+        if (!raiseAutoNumbers)
+        {
+            for (int columnIndex = 0; columnIndex < tableDef.Columns.Count; columnIndex++)
+            {
+                if (tableDef.Columns[columnIndex].IsAutoNumber)
+                {
+                    foreach ((_, object[] oldRow, object[] newRow) in pendingUpdates)
+                    {
+                        if (!Equals(oldRow[columnIndex], newRow[columnIndex]))
+                        {
+                            raiseAutoNumbers = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        changes.RaiseAutoNumbers = raiseAutoNumbers;
         AppendOnlyHistoryWriter.AddToPlan(plan, historyBatches);
         await mutations.ApplyAsync(plan, cancellationToken).ConfigureAwait(false);
         return pendingUpdates.Count;

@@ -99,6 +99,48 @@ internal sealed class AutoNumberMaintainer(JetFormat format, TableDefReader tabl
         return highWater;
     }
 
+    internal static bool TryGetAutoNumberCandidate(object boxed, out long value)
+    {
+        // AutoNumber columns are always Long Integer identity values, but the boxed
+        // row payload may carry any integer-family CLR type (or a numeric string)
+        // depending on how the caller supplied the row. Resolve the candidate
+        // without throwing so an unexpected non-integer value is skipped
+        // deterministically rather than masked by an empty catch around Convert.ToInt64.
+        switch (boxed)
+        {
+            case int i:
+                value = i;
+                return true;
+            case long l:
+                value = l;
+                return true;
+            case short s:
+                value = s;
+                return true;
+            case byte b:
+                value = b;
+                return true;
+            case sbyte sb:
+                value = sb;
+                return true;
+            case ushort us:
+                value = us;
+                return true;
+            case uint ui:
+                value = ui;
+                return true;
+            case ulong ul when ul <= long.MaxValue:
+                value = (long)ul;
+                return true;
+            case string text when long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed):
+                value = parsed;
+                return true;
+            default:
+                value = 0;
+                return false;
+        }
+    }
+
     /// <summary>
     /// Reads the AutoNumber high-water value from the TDEF at
     /// <paramref name="tdefPage"/> through <see cref="Pager"/>, so an
@@ -282,48 +324,6 @@ internal sealed class AutoNumberMaintainer(JetFormat format, TableDefReader tabl
         }
 
         return highWater > 0 ? this.RaiseComplexHighWaterAsync(tdefPage, highWater, cancellationToken) : default;
-    }
-
-    private static bool TryGetAutoNumberCandidate(object boxed, out long value)
-    {
-        // AutoNumber columns are always Long Integer identity values, but the boxed
-        // row payload may carry any integer-family CLR type (or a numeric string)
-        // depending on how the caller supplied the row. Resolve the candidate
-        // without throwing so an unexpected non-integer value is skipped
-        // deterministically rather than masked by an empty catch around Convert.ToInt64.
-        switch (boxed)
-        {
-            case int i:
-                value = i;
-                return true;
-            case long l:
-                value = l;
-                return true;
-            case short s:
-                value = s;
-                return true;
-            case byte b:
-                value = b;
-                return true;
-            case sbyte sb:
-                value = sb;
-                return true;
-            case ushort us:
-                value = us;
-                return true;
-            case uint ui:
-                value = ui;
-                return true;
-            case ulong ul when ul <= long.MaxValue:
-                value = (long)ul;
-                return true;
-            case string text when long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed):
-                value = parsed;
-                return true;
-            default:
-                value = 0;
-                return false;
-        }
     }
 
     /// <summary>

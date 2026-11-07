@@ -972,6 +972,15 @@ internal sealed class Pager : PageFile
         }
     }
 
+    /// <summary>Discards buffered scope writes before tearing down a failed initialization.</summary>
+    internal void DiscardDirtyPages()
+    {
+        this.dirtyPages.Clear();
+        this.scopeHasWrites = false;
+        this.bufferedPageCount = this.zeroReservations.Count == 0 ? this.PhysicalPageCount : Math.Max(this.PhysicalPageCount, checked(this.zeroReservations.Max + 1));
+        this.InvalidateAll();
+    }
+
     /// <summary>Ends one scope, flushing only the outermost scope.</summary>
     /// <returns>The completion.</returns>
     internal async ValueTask EndWriteScopeAsync()

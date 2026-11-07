@@ -640,9 +640,19 @@ internal sealed class IndexMaintainer(
                     : null;
                 foreach ((RowLocation location, object[] values) in rows)
                 {
-                    if (rie.IgnoreNulls && IndexHelpers.CountNullKeyColumns(keyColInfos, values) == keyColInfos.Count)
+                    int nullKeyColumns = IndexHelpers.CountNullKeyColumns(keyColInfos, values);
+                    if (rie.IgnoreNulls && nullKeyColumns == keyColInfos.Count)
                     {
                         continue;
+                    }
+
+                    if (nullKeyColumns > 0 && (rie.IsRequired || catalog.Catalog.PkRealIdxNums.Contains(rieKey)))
+                    {
+                        string indexName = catalog.Catalog.GetNameOrFallback(rieKey);
+                        throw new JetConstraintException(
+                            JetErrorCode.NotNullViolation,
+                            $"Index '{indexName}' on table '{tableName}' requires a value for every key column.",
+                            new JetErrorInfo { TableName = tableName, IndexName = indexName });
                     }
 
                     for (int k = 0; k < keyColInfos.Count; k++)

@@ -36,17 +36,24 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         : base(DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize, options, cancellationToken))
     {
         this.lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
-
-        this.lockFileCoordinator.Acquire();
+        WriterServices? services = null;
+        bool constructionComplete = false;
         try
         {
+            this.lockFileCoordinator.Acquire();
             pager.ByteRangeLock = options.CreateByteRangeLock(stream);
-            this.Services = new WriterServices(this.Database, pager, options, pager.ByteRangeLock);
+            services = new WriterServices(this.Database, pager, options, pager.ByteRangeLock);
+            this.Services = services;
+            constructionComplete = true;
         }
-        catch
+        finally
         {
-            this.lockFileCoordinator.Dispose();
-            throw;
+            if (!constructionComplete)
+            {
+                services?.Dispose();
+                this.lockFileCoordinator.Dispose();
+                this.Database.DisposeManagedResources();
+            }
         }
     }
 
@@ -186,7 +193,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// The stream must be readable, writable, seekable, and empty. Creation starts at offset zero
     /// regardless of the stream's initial position. Argument validation and file-backed recovery
     /// preflight do not modify or take ownership of the stream. Once destination initialization starts, a failure
-    /// can leave a partial database; the stream is disposed unless <paramref name="leaveOpen"/> is true.
+    /// truncates the stream back to zero bytes before disposing it (unless <paramref name="leaveOpen"/> is true).
     /// </summary>
     /// <param name="stream">An empty, readable, writable, seekable stream to write the new database into.</param>
     /// <param name="format">The database format to use (Jet4 .mdb or ACE .accdb).</param>
@@ -196,6 +203,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the new database.</returns>
     /// <exception cref="ArgumentException">The stream is not readable, writable, seekable, or empty. Nothing is written and the stream is not disposed.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The writer options contain an invalid resource budget or lock timeout. The stream is not read, written or disposed.</exception>
+    /// <exception cref="AggregateException">Destination initialization and stream truncation both failed.</exception>
     public static async ValueTask<AccessWriter> CreateDatabaseAsync(Stream stream, DatabaseFormat format, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
         DiagnosticTrace.ThrowIfReentrant();
@@ -227,15 +235,28 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             await writer.InitializeFreshDatabaseAsync(cancellationToken).ConfigureAwait(false);
             return writer;
         }
-        catch
+        catch (Exception failure)
         {
-            if (writer is not null)
+            try
             {
-                await writer.DisposeAsync().ConfigureAwait(false);
+                writer?.Pager.DiscardDirtyPages();
+                stream.Position = 0;
+                stream.SetLength(0);
             }
-            else if (!leaveOpen)
+            catch (Exception restoreFailure)
             {
-                await stream.DisposeAsync().ConfigureAwait(false);
+                throw new AggregateException("Database creation failed and the destination stream could not be restored.", failure, restoreFailure);
+            }
+            finally
+            {
+                if (writer is not null)
+                {
+                    await writer.DisposeAsync().ConfigureAwait(false);
+                }
+                else if (!leaveOpen)
+                {
+                    await stream.DisposeAsync().ConfigureAwait(false);
+                }
             }
 
             throw;
@@ -758,10 +779,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     private async ValueTask InitializeFreshDatabaseAsync(CancellationToken cancellationToken)
     {
         await using WriteScope scope = this.Services.Transactions.BeginWriteScope();
-        long coreSystemTableStartPage = await this.Services.CatalogArtifacts.ReserveFreshCoreSystemTablePagesAsync(cancellationToken).ConfigureAwait(false);
-        await this.Services.CatalogArtifacts.InitializeFreshCatalogIndexesAsync(cancellationToken).ConfigureAwait(false);
-        await this.Services.SystemCatalog.CreateCoreSystemTablesAsync(coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
-        await this.Services.ComplexColumns.ScaffoldComplexSystemTablesAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            long coreSystemTableStartPage = await this.Services.CatalogArtifacts.ReserveFreshCoreSystemTablePagesAsync(cancellationToken).ConfigureAwait(false);
+            await this.Services.CatalogArtifacts.InitializeFreshCatalogIndexesAsync(cancellationToken).ConfigureAwait(false);
+            await this.Services.SystemCatalog.CreateCoreSystemTablesAsync(coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
+            await this.Services.ComplexColumns.ScaffoldComplexSystemTablesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            this.Pager.DiscardDirtyPages();
+            throw;
+        }
     }
 
     private ValueTask CreateLinkedOdbcTableCoreAsync(
