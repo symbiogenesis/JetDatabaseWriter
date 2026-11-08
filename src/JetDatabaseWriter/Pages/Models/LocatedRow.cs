@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Pages.Models;
 
 using System.Collections.Generic;
-using JetDatabaseWriter.LongValues.Models;
 
 /// <summary>
 /// One live row of a table decoded from the data page at <see cref="Location"/>.
@@ -23,23 +22,7 @@ internal readonly record struct LocatedRow(RowLocation Location, object[] Values
     /// <param name="newValues">The composed replacement values.</param>
     /// <param name="assignedColumns">Columns explicitly assigned by the mutation.</param>
     internal IReadOnlyDictionary<int, byte[]>? GetPreservedLongValues(object[] newValues, IEnumerable<int>? assignedColumns = null)
-    {
-        Dictionary<int, byte[]>? preserved = this.PreserveSlots(this.LongValues, newValues, assignedColumns);
-        if (this.LongValues is not null && preserved is not null)
-        {
-            foreach ((int column, byte[] bytes) in this.LongValues)
-            {
-                if (!preserved.ContainsKey(column) && LongValueDescriptor.TryRead(bytes, out LongValueDescriptor descriptor) && descriptor.IsExternal)
-                {
-                    // Mixed retained/replaced external roots need complete incoming
-                    // ownership before selective reclamation can be enabled.
-                    return null;
-                }
-            }
-        }
-
-        return preserved;
-    }
+        => this.PreserveSlots(this.LongValues, newValues, assignedColumns);
 
     /// <summary>Selects unchanged Text slots that this mutation did not assign.</summary>
     /// <param name="newValues">The composed replacement values.</param>

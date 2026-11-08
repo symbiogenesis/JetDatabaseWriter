@@ -12,6 +12,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -373,7 +374,7 @@ public sealed class InPlaceRowUpdateTests
         Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Token", token.ToString()), new RowValues { ["Name"] = "coerced" }, ct));
     }
 
-    /// <summary>Scan snapshots retain full stored values and descriptors only for matching rows.</summary>
+    /// <summary>Scan snapshots retain full stored values and descriptors only for matching rows without reading non-matching external LVAL chains.</summary>
     /// <param name="format">The native file generation.</param>
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
@@ -382,23 +383,35 @@ public sealed class InPlaceRowUpdateTests
     public async Task MatchingSnapshots_RetainOnlySelectedRowsAndPreserveTheirLongValues(DatabaseFormat format)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using var stream = new MemoryStream();
-        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
-        await writer.CreateTableAsync("Items", [new ColumnDefinition("Name", typeof(string), maxLength: 30), new ColumnDefinition("Score", typeof(int)), new ColumnDefinition("Note", typeof(string))], ct);
+        await using var source = new MemoryStream();
         string memo = new('m', 12_000);
-        await writer.InsertRowsAsync("Items", Enumerable.Range(1, 32).Select(id => new object[] { $"item{id}", 0, memo }), ct);
+        await using (AccessWriter creator = await AccessWriter.CreateDatabaseAsync(source, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await creator.CreateTableAsync("Items", [new ColumnDefinition("Name", typeof(string), maxLength: 30), new ColumnDefinition("Score", typeof(int)), new ColumnDefinition("Note", typeof(string))], ct);
+            await creator.InsertRowsAsync("Items", Enumerable.Range(1, 32).Select(id => new object[] { $"item{id}", 0, memo }), ct);
+        }
+
+        await using var trace = new CountingStream(source);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(trace, new AccessWriterOptions { UseLockFile = false, PageCacheSize = 0 }, leaveOpen: true, ct);
         ResolvedTable? table = await writer.Services.Snapshots.ResolveTableAsync("Items", ct);
         Assert.NotNull(table);
-        var criteria = RowCriteria.Where("Name", "item1");
+        RowCriteria criteria = RowCriteria.Where("Name", "item1").And("Note", memo);
         var predicate = RowCriteriaEvaluator.Compile(criteria, table.Definition, "Items", nameof(criteria));
+        trace.Reset();
         List<LocatedRow> retained = await writer.Services.Snapshots.ReadMatchingRowsAsync(table, predicate, ct);
+        Assert.True(trace.BytesRead < source.Length / 4, $"Filtered scan read {trace.BytesRead} bytes from a {source.Length}-byte database.");
         LocatedRow selected = Assert.Single(retained);
         Assert.Equal("item1", selected.Values[0]);
         Assert.Equal(memo, selected.Values[2]);
         Assert.NotNull(selected.TextBytes);
         Assert.NotNull(selected.LongValues);
-        Assert.Equal(1, await writer.UpdateRowsAsync("Items", criteria, new RowValues { ["Score"] = 4 }, ct));
-        Assert.Equal(1, await writer.DeleteRowsAsync("Items", criteria.And("Score", 4), ct));
+        trace.Reset();
+        Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Name", "item1"), new RowValues { ["Score"] = 4 }, ct));
+        Assert.True(trace.BytesRead < source.Length / 4, $"Scan-fallback update read {trace.BytesRead} bytes from a {source.Length}-byte database.");
+        trace.Reset();
+        Assert.Equal(0, await writer.DeleteRowsAsync("Items", RowCriteria.Where("Name", "missing"), ct));
+        Assert.True(trace.BytesRead < source.Length / 4, $"Scan-fallback delete target discovery read {trace.BytesRead} bytes from a {source.Length}-byte database.");
+        Assert.Equal(1, await writer.DeleteRowsAsync("Items", RowCriteria.Where("Name", "item1").And("Score", 4), ct));
         Assert.Empty(await writer.Services.Snapshots.ReadMatchingRowsAsync(table, predicate, ct));
     }
 
@@ -662,7 +675,7 @@ public sealed class InPlaceRowUpdateTests
         }
     }
 
-    /// <summary>Point updates of non-unique indexed columns seek the target row and leave unaffected index trees untouched.</summary>
+    /// <summary>Point updates of non-unique indexed columns seek the target row and leave unaffected index trees and TDEF metadata untouched.</summary>
     /// <param name="format">The native file generation.</param>
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
@@ -678,13 +691,16 @@ public sealed class InPlaceRowUpdateTests
             [
                 new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
                 new ColumnDefinition("Score", typeof(int)),
+                new ColumnDefinition("OptionalCode", typeof(int)),
                 new ColumnDefinition("Filler", typeof(string), maxLength: 200),
             ],
             ct);
         await writer.CreateIndexAsync("Items", new IndexDefinition("IX_Score", ["Score"]) { IsUnique = false }, ct);
+        await writer.CreateIndexAsync("Items", new IndexDefinition("IX_Optional", ["OptionalCode"]) { IgnoreNulls = true }, ct);
+        await writer.CreateIndexAsync("Items", new IndexDefinition("IX_Filler", ["Filler"]) { IsUnique = false }, ct);
         for (int id = 1; id <= 40; id++)
         {
-            await writer.InsertRowAsync("Items", [id, id * 10, new string('f', 150)], ct);
+            await writer.InsertRowAsync("Items", [id, id * 10, DBNull.Value, $"{id:D4}-" + new string('f', 150)], ct);
         }
 
         ResolvedTable? resolved = await writer.Services.Snapshots.ResolveTableAsync("Items", ct);
@@ -706,6 +722,7 @@ public sealed class InPlaceRowUpdateTests
 
         Assert.Equal(2, changedPages.Count);
         Assert.Contains(targetBefore.Location.PageNumber, changedPages);
+        Assert.DoesNotContain(resolved.Entry.TDefPage, changedPages);
 
         LocatedRow updated = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct), row => Equals(row.Values[1], 999));
         Assert.Equal(1, updated.Values[0]);
@@ -768,5 +785,66 @@ public sealed class InPlaceRowUpdateTests
         Assert.NotNull(beforeChild.LongValues);
         Assert.NotNull(afterChild.LongValues);
         Assert.Equal(beforeChild.LongValues[3], afterChild.LongValues[3]);
+    }
+
+    /// <summary>Relocated row updates with multiple long-value columns preserve unchanged descriptors while reclaiming replaced unshared LVAL chains.</summary>
+    /// <param name="format">The native file generation.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task RelocatedRowUpdate_WithMixedLongValueColumns_PreservesUnchangedDescriptorAndReclaimsReplacedChain(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var stream = new MemoryStream();
+        var options = new AccessWriterOptions
+        {
+            UseLockFile = false,
+            SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages,
+        };
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, options, leaveOpen: true, ct);
+        await writer.CreateTableAsync(
+            "Items",
+            [
+                new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                new ColumnDefinition("Label", typeof(string), maxLength: 80),
+                new ColumnDefinition("MemoA", typeof(string)),
+                new ColumnDefinition("MemoB", typeof(string)),
+            ],
+            ct);
+        string memoA = new('a', 12_000);
+        string memoB = new('b', 12_000);
+        await writer.InsertRowAsync("Items", [1, "short", memoA, memoB], ct);
+
+        ResolvedTable? table = await writer.Services.Snapshots.ResolveTableAsync("Items", ct);
+        Assert.NotNull(table);
+        LocatedRow before = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, ct));
+        Assert.NotNull(before.LongValues);
+        Assert.True(LongValueDescriptor.TryRead(before.LongValues[2], out LongValueDescriptor oldMemoADescriptor));
+        Assert.True(LongValueDescriptor.TryRead(before.LongValues[3], out LongValueDescriptor oldMemoBDescriptor));
+        byte[] snapshotBefore = stream.ToArray();
+
+        await using (JetTransaction tx = await writer.BeginTransactionAsync(ct))
+        {
+            Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 1), new RowValues { ["Label"] = "a much wider relocated label", ["MemoA"] = "inline-replacement" }, ct));
+            await tx.RollbackAsync(ct);
+        }
+
+        Assert.Equal(snapshotBefore, stream.ToArray());
+
+        Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 1), new RowValues { ["Label"] = "a much wider relocated label", ["MemoA"] = "inline-replacement" }, ct));
+        LocatedRow after = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, ct));
+        Assert.Equal("a much wider relocated label", after.Values[1]);
+        Assert.Equal("inline-replacement", after.Values[2]);
+        Assert.Equal(memoB, after.Values[3]);
+        Assert.NotNull(after.LongValues);
+        Assert.True(LongValueDescriptor.TryRead(after.LongValues[2], out LongValueDescriptor newMemoADescriptor));
+        Assert.True(newMemoADescriptor.IsInline);
+        Assert.Equal(before.LongValues[3], after.LongValues[3]);
+        Assert.True(LongValueDescriptor.TryRead(after.LongValues[3], out LongValueDescriptor preservedMemoBDescriptor));
+        Assert.Equal(oldMemoBDescriptor.FirstDp, preservedMemoBDescriptor.FirstDp);
+
+        byte[] oldMemoAPage = await writer.Database.Pages.ReadPageCopyAsync(oldMemoADescriptor.FirstDp >> 8, ct);
+        Assert.Equal(Constants.PageTypes.Freed, oldMemoAPage[0]);
     }
 }

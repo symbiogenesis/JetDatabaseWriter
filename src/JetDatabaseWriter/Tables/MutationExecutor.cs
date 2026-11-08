@@ -88,7 +88,7 @@ internal sealed class MutationExecutor(JetFormat format, Pager pager, OwnedDataP
                 if (change.Location is RowLocation location)
                 {
                     bool retainLongValues = false;
-                    if (change.LongValues is { Count: > 0 } longValues)
+                    if (change.Replacement is null && change.LongValues is { Count: > 0 } longValues)
                     {
                         foreach (byte[] bytes in longValues.Values)
                         {
@@ -100,7 +100,14 @@ internal sealed class MutationExecutor(JetFormat format, Pager pager, OwnedDataP
                         }
                     }
 
-                    await rows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, table.Definition, change.DataMode, retainLongValues, cancellationToken).ConfigureAwait(false);
+                    await rows.MarkRowDeletedAsync(
+                        location.PageNumber,
+                        location.RowIndex,
+                        table.Definition,
+                        change.DataMode,
+                        retainLongValues,
+                        change.Replacement is null ? null : change.LongValues,
+                        cancellationToken).ConfigureAwait(false);
                     if (change.Original is object[] original)
                     {
                         deleted.Add((location, original));

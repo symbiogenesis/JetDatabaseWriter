@@ -502,26 +502,28 @@ internal sealed class RowDecodePlan
         ref bool needsLongValue)
     {
         bool isOle = column.Type == OleType;
-        if (LongValueDescriptor.TryRead(page.AsSpan(start, length), out LongValueDescriptor descriptor)
-            && descriptor.IsInline)
+        if (LongValueDescriptor.TryRead(page.AsSpan(start, length), out LongValueDescriptor descriptor))
         {
-            int valueLength = descriptor.Length;
-            int valueStart = start + Constants.LongValue.HeaderSize;
-            longValueDecoder.ValidateStoredLength(valueLength);
-            if (valueLength > length - Constants.LongValue.HeaderSize
-                || longValueDecoder.IsIncompletePlainMemo(page.AsSpan(valueStart, valueLength), isOle, compressedStorage: true))
+            longValueDecoder.ValidateStoredLength(descriptor.Length);
+            if (descriptor.IsInline)
             {
-                // Resolve the same fault policy as an external long value.
-                needsLongValue = true;
-                return new LongValueRef(start, length, isOle);
+                int valueLength = descriptor.Length;
+                int valueStart = start + Constants.LongValue.HeaderSize;
+                if (valueLength > length - Constants.LongValue.HeaderSize
+                    || longValueDecoder.IsIncompletePlainMemo(page.AsSpan(valueStart, valueLength), isOle, compressedStorage: true))
+                {
+                    // Resolve the same fault policy as an external long value.
+                    needsLongValue = true;
+                    return new LongValueRef(start, length, isOle);
+                }
+
+                int inlineLength = valueLength;
+
+                // An OLE value is its stored bytes; OleObjectValue unwraps them on request.
+                return isOle
+                    ? BinaryBuffer.CopySlice(page, valueStart, inlineLength)
+                    : longValueDecoder.DecodeLongValue(page, valueStart, inlineLength, isOle: false);
             }
-
-            int inlineLength = valueLength;
-
-            // An OLE value is its stored bytes; OleObjectValue unwraps them on request.
-            return isOle
-                ? BinaryBuffer.CopySlice(page, valueStart, inlineLength)
-                : longValueDecoder.DecodeLongValue(page, valueStart, inlineLength, isOle: false);
         }
 
         needsLongValue = true;
@@ -1028,7 +1030,7 @@ internal sealed class RowDecodePlan
 
         if (column.IsCalculated)
         {
-            return this.DecodeCalculatedTypedVariableValue(source, page, start, length, column, ref needsLongValue);
+            return this.DecodeCalculatedTypedVariableValue(source, page, start, length, column, longValueDecoder, ref needsLongValue);
         }
 
         try
@@ -1113,6 +1115,7 @@ internal sealed class RowDecodePlan
         int start,
         int length,
         ColumnInfo column,
+        LongValueDecoder longValueDecoder,
         ref bool needsLongValue)
     {
         try
@@ -1139,6 +1142,11 @@ internal sealed class RowDecodePlan
 
             if (JetTypeInfo.UsesLongValueStorage(column))
             {
+                if (LongValueDescriptor.TryRead(page.AsSpan(start, length), out LongValueDescriptor descriptor))
+                {
+                    longValueDecoder.ValidateStoredLength(descriptor.Length);
+                }
+
                 needsLongValue = true;
                 return new CalculatedLongValueRef(start, length, valueType != MemoType);
             }

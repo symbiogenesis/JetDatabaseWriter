@@ -1251,15 +1251,15 @@ internal sealed class IndexMaintainer(
         int numRealIdx,
         CancellationToken cancellationToken)
     {
-        if (slots.Count == 0)
-        {
-            return [];
-        }
-
         long usageMapPage = this.ReadTableUsageMapPage(tdefBuffer);
         if (!format.IsJet3 && (usageMapPage <= 0 || usageMapPage >= pager.PageCount))
         {
             return null;
+        }
+
+        if (slots.Count == 0)
+        {
+            return [];
         }
 
         long[][] indexPageGroups = new long[numRealIdx][];
@@ -1304,11 +1304,11 @@ internal sealed class IndexMaintainer(
     /// <param name="slots">The maintained real-index descriptors.</param>
     /// <param name="indexPageGroups">The pages of each real index's tree, by real-index number.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask WriteIncrementalIndexUsageMapsAsync(long tdefPage, byte[] tdefBuffer, List<(int RealIdxNum, RealIdxEntry Entry)> slots, long[][] indexPageGroups, CancellationToken cancellationToken)
+    private async ValueTask<bool> WriteIncrementalIndexUsageMapsAsync(long tdefPage, byte[] tdefBuffer, List<(int RealIdxNum, RealIdxEntry Entry)> slots, long[][] indexPageGroups, CancellationToken cancellationToken)
     {
         if (indexPageGroups.Length == 0)
         {
-            return;
+            return false;
         }
 
         var indexPointers = new UsageMapPointer[indexPageGroups.Length];
@@ -1320,7 +1320,7 @@ internal sealed class IndexMaintainer(
         long[][] mapPageGroups = await this.FilterUnchangedIndexMapsAsync(indexPointers, indexPageGroups, cancellationToken).ConfigureAwait(false);
         if (!HasAnyIndexPageGroup(mapPageGroups))
         {
-            return;
+            return false;
         }
 
         var entriesByNumber = new Dictionary<int, RealIdxEntry>();
@@ -1343,6 +1343,8 @@ internal sealed class IndexMaintainer(
                 WriteIndexUsageMapPointer(tdefBuffer, entry.FirstDpOffset - 4, pointer.RowIndex, pointer.PageNumber);
             }
         }
+
+        return true;
     }
 
     /// <summary>Elides map writes only when strict membership already equals the current tree.</summary>
@@ -1977,10 +1979,19 @@ internal sealed class IndexMaintainer(
             metadata.RequireExactRelationshipMaps = true;
         }
 
+        Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
+        List<(int RealIdxNum, RealIdxEntry Entry)> activeSlots = this.FilterActiveIncrementalSlots(
+            slots,
+            tableDef,
+            snapshotIndexByColNum,
+            insertedRows,
+            deletedRows,
+            preserveStoredKeys);
+
         if (format.IsJet3)
         {
             var entriesByNumber = new Dictionary<int, RealIdxEntry>();
-            foreach ((int realIdxNum, RealIdxEntry entry) in slots)
+            foreach ((int realIdxNum, RealIdxEntry entry) in activeSlots)
             {
                 entriesByNumber.Add(realIdxNum, entry);
             }
@@ -1989,10 +2000,8 @@ internal sealed class IndexMaintainer(
         }
         else
         {
-            metadata.ReplacedPageGroups = await this.TryCollectIncrementalIndexPageGroupsAsync(tdefPage, metadata.Buffer, layout, slots, numRealIdx, cancellationToken).ConfigureAwait(false);
+            metadata.ReplacedPageGroups = await this.TryCollectIncrementalIndexPageGroupsAsync(tdefPage, metadata.Buffer, layout, activeSlots, numRealIdx, cancellationToken).ConfigureAwait(false);
         }
-
-        Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
 
         foreach ((_, RealIdxEntry rie) in slots)
         {
@@ -2102,7 +2111,6 @@ internal sealed class IndexMaintainer(
                 return false;
             }
 
-            bool anyCancelled = false;
             for (int addIdx = addEntries.Count - 1; addIdx >= 0; addIdx--)
             {
                 IndexEntry added = addEntries[addIdx];
@@ -2115,13 +2123,12 @@ internal sealed class IndexMaintainer(
                     {
                         addEntries.RemoveAt(addIdx);
                         removeEntries.RemoveAt(remIdx);
-                        anyCancelled = true;
                         break;
                     }
                 }
             }
 
-            if (anyCancelled && addEntries.Count == 0 && removeEntries.Count == 0)
+            if (addEntries.Count == 0 && removeEntries.Count == 0)
             {
                 if (rootPage[0] is not Constants.IndexLeafPage.PageTypeIntermediate
                     and not Constants.IndexLeafPage.PageTypeLeaf)
@@ -2291,7 +2298,74 @@ internal sealed class IndexMaintainer(
             await pager.WritePageAsync(firstDp, newLeaf, cancellationToken).ConfigureAwait(false);
         }
 
-        return await this.CommitIncrementalMetadataAsync(tdefPage, layout, slots, numRealIdx, metadata, runs, cancellationToken).ConfigureAwait(false);
+        List<(int RealIdxNum, RealIdxEntry Entry)> metadataSlots = metadata.RequireExactRelationshipMaps ? slots : activeSlots;
+        return await this.CommitIncrementalMetadataAsync(tdefPage, layout, metadataSlots, numRealIdx, metadata, runs, cancellationToken).ConfigureAwait(false);
+    }
+
+    private List<(int RealIdxNum, RealIdxEntry Entry)> FilterActiveIncrementalSlots(
+        List<(int RealIdxNum, RealIdxEntry Entry)> slots,
+        TableDef tableDef,
+        Dictionary<int, int> snapshotIndexByColNum,
+        List<(RowLocation Loc, object[] Row)>? insertedRows,
+        List<(RowLocation Loc, object[] Row)>? deletedRows,
+        bool preserveStoredKeys)
+    {
+        var active = new List<(int RealIdxNum, RealIdxEntry Entry)>(slots.Count);
+        foreach ((int realIdxNum, RealIdxEntry rie) in slots)
+        {
+            if (!IndexLayout.TryResolveKeyColumnInfos(rie.IndexKeyColumns, tableDef.Columns, snapshotIndexByColNum, out List<KeyColumnInfo>? keyColInfos))
+            {
+                active.Add((realIdxNum, rie));
+                continue;
+            }
+
+            if (preserveStoredKeys)
+            {
+                if (rie.IgnoreNulls
+                    && deletedRows is { Count: 1 }
+                    && insertedRows is { Count: 1 }
+                    && IndexHelpers.CountNullKeyColumns(keyColInfos, deletedRows[0].Row) == keyColInfos.Count
+                    && IndexHelpers.CountNullKeyColumns(keyColInfos, insertedRows[0].Row) == keyColInfos.Count)
+                {
+                    continue;
+                }
+
+                active.Add((realIdxNum, rie));
+                continue;
+            }
+
+            List<IndexEntry>? addEntries = this.EncodeHintEntries(insertedRows, keyColInfos, rie.IgnoreNulls);
+            List<IndexEntry>? removeEntries = this.EncodeHintEntries(deletedRows, keyColInfos, rie.IgnoreNulls);
+            if (addEntries is null || removeEntries is null)
+            {
+                active.Add((realIdxNum, rie));
+                continue;
+            }
+
+            for (int addIdx = addEntries.Count - 1; addIdx >= 0; addIdx--)
+            {
+                IndexEntry added = addEntries[addIdx];
+                for (int remIdx = 0; remIdx < removeEntries.Count; remIdx++)
+                {
+                    IndexEntry removed = removeEntries[remIdx];
+                    if (added.DataPage == removed.DataPage
+                        && added.DataRow == removed.DataRow
+                        && added.Key.AsSpan().SequenceEqual(removed.Key))
+                    {
+                        addEntries.RemoveAt(addIdx);
+                        removeEntries.RemoveAt(remIdx);
+                        break;
+                    }
+                }
+            }
+
+            if (addEntries.Count > 0 || removeEntries.Count > 0)
+            {
+                active.Add((realIdxNum, rie));
+            }
+        }
+
+        return active;
     }
 
     private async ValueTask<List<IndexEntry>> ReadStoredIndexEntriesAsync(IndexPageLayout layout, long root, byte[] rootPage, CancellationToken cancellationToken)
@@ -2582,14 +2656,14 @@ internal sealed class IndexMaintainer(
         // The usage-map rows and the TDEF write below link every tree
         // rebuilt since the last TDEF write.
         runs.MarkLinked();
-        await this.WriteIncrementalIndexUsageMapsAsync(tdefPage, metadata.Buffer, slots, indexPageGroups, cancellationToken).ConfigureAwait(false);
+        bool mapsUpdated = await this.WriteIncrementalIndexUsageMapsAsync(tdefPage, metadata.Buffer, slots, indexPageGroups, cancellationToken).ConfigureAwait(false);
 
         if (metadata.RequireExactRelationshipMaps && !await this.HaveExactDisjointIndexMapsAsync(metadata.Buffer, slots, indexPageGroups, cancellationToken).ConfigureAwait(false))
         {
             throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "Relationship index trees and usage maps disagree after incremental maintenance.", new JetErrorInfo { PageNumber = tdefPage });
         }
 
-        metadata.Dirty = true;
+        metadata.Dirty |= mapsUpdated;
 
         if (metadata.Dirty)
         {

@@ -367,20 +367,13 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                     throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "The row is shorter than its column-count field", token).ConfigureAwait(false);
                 }
 
-                object?[] values = await this.CrackTypedRowWithContextAsync(row, decodePlan, token).ConfigureAwait(false)
-                    ?? throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "The stored row layout cannot be decoded", token).ConfigureAwait(false);
-
-                if (tableDef.HasHyperlinkColumns)
+                (object?[]? values, bool matched) = await this.DecodeSnapshotRowValuesAsync(row, decodePlan, tableDef, predicate, token).ConfigureAwait(false);
+                if (values is null)
                 {
-                    TableReader.WrapHyperlinkColumns(values, tableDef.ClrTypes);
+                    throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "The stored row layout cannot be decoded", token).ConfigureAwait(false);
                 }
 
-                for (int i = 0; i < values.Length; i++)
-                {
-                    values[i] ??= DBNull.Value;
-                }
-
-                if (predicate?.Matches(values) == false)
+                if (!matched)
                 {
                     return true;
                 }
@@ -484,6 +477,142 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                 PageBuffers.Return(page);
             }
         }
+    }
+
+    /// <summary>
+    /// Decodes a live row's inline values synchronously, evaluates <paramref name="predicate"/>
+    /// while resolving only referenced external long-value columns on demand, and resolves
+    /// remaining external long-value columns only when the row matches.
+    /// </summary>
+    /// <param name="row">The live row and the page holding its bytes.</param>
+    /// <param name="plan">The typed projection and write-back policy.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="predicate">An optional filter evaluated before non-referenced external long values are read.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The decoded values (or <see langword="null"/> when the row layout cannot be decoded) and whether the row matched <paramref name="predicate"/>.</returns>
+    /// <exception cref="JetCorruptDataException">A selected scalar value cannot be decoded.</exception>
+    private async ValueTask<(object?[]? Values, bool Matched)> DecodeSnapshotRowValuesAsync(
+        OwnedDataPages.TableRow row,
+        RowDecodePlan plan,
+        TableDef tableDef,
+        RowCriteriaEvaluator? predicate,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        object?[]? values;
+        bool needsLongValue;
+        try
+        {
+            if (!rows.TryCrackRowSync(row.Page, row.Location.RowStart, row.Location.RowSize, plan, out values, out needsLongValue))
+            {
+                return (null, false);
+            }
+        }
+        catch (JetCorruptDataException failure) when (failure.ErrorCode == JetErrorCode.MalformedValue && failure.ErrorInfo.PageNumber is null)
+        {
+            throw new JetCorruptDataException(
+                failure.ErrorCode,
+                failure.Message,
+                failure.ErrorInfo with
+                {
+                    PageNumber = row.Location.DataPageNumber,
+                    Reason = $"Row slot {row.Location.DataRowIndex} at offset {row.Location.RowStart} occupies {row.Location.RowSize} bytes. {failure.ErrorInfo.Reason}",
+                },
+                failure);
+        }
+
+        if (!needsLongValue)
+        {
+            if (tableDef.HasHyperlinkColumns)
+            {
+                TableReader.WrapHyperlinkColumns(values!, tableDef.ClrTypes);
+            }
+
+            for (int i = 0; i < values!.Length; i++)
+            {
+                values[i] ??= DBNull.Value;
+            }
+
+            return (values, predicate?.Matches(values) ?? true);
+        }
+
+        if (tableDef.HasHyperlinkColumns)
+        {
+            TableReader.WrapHyperlinkColumns(values!, tableDef.ClrTypes);
+        }
+
+        for (int i = 0; i < values!.Length; i++)
+        {
+            if (values[i] is not LongValueRef and not CalculatedLongValueRef)
+            {
+                values[i] ??= DBNull.Value;
+            }
+        }
+
+        if (predicate is not null)
+        {
+            bool matched = await predicate.MatchesAsync(
+                values,
+                columnIndex => this.ResolveSnapshotLongValueSlotIfDeferredAsync(values, columnIndex, row, plan, tableDef, cancellationToken)).ConfigureAwait(false);
+            if (!matched)
+            {
+                return (values, false);
+            }
+        }
+
+        for (int i = 0; i < values.Length; i++)
+        {
+            if (values[i] is LongValueRef or CalculatedLongValueRef)
+            {
+                await this.ResolveSnapshotLongValueSlotAsync(values, i, row, plan, tableDef, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return (values, true);
+    }
+
+    private ValueTask ResolveSnapshotLongValueSlotIfDeferredAsync(
+        object?[] values,
+        int columnIndex,
+        OwnedDataPages.TableRow row,
+        RowDecodePlan plan,
+        TableDef tableDef,
+        CancellationToken cancellationToken)
+        => values[columnIndex] is LongValueRef or CalculatedLongValueRef
+            ? this.ResolveSnapshotLongValueSlotAsync(values, columnIndex, row, plan, tableDef, cancellationToken)
+            : default;
+
+    private async ValueTask ResolveSnapshotLongValueSlotAsync(
+        object?[] values,
+        int columnIndex,
+        OwnedDataPages.TableRow row,
+        RowDecodePlan plan,
+        TableDef tableDef,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await rows.ResolveLongValueSlotAsync(values, columnIndex, row.Page, plan, cancellationToken).ConfigureAwait(false);
+        }
+        catch (JetCorruptDataException failure) when (failure.ErrorCode == JetErrorCode.MalformedValue && failure.ErrorInfo.PageNumber is null)
+        {
+            throw new JetCorruptDataException(
+                failure.ErrorCode,
+                failure.Message,
+                failure.ErrorInfo with
+                {
+                    PageNumber = row.Location.DataPageNumber,
+                    Reason = $"Row slot {row.Location.DataRowIndex} at offset {row.Location.RowStart} occupies {row.Location.RowSize} bytes. {failure.ErrorInfo.Reason}",
+                },
+                failure);
+        }
+
+        if (tableDef.HasHyperlinkColumns && tableDef.ClrTypes[columnIndex] == typeof(Hyperlink) && values[columnIndex] is string raw)
+        {
+            values[columnIndex] = (object?)Hyperlink.Parse(raw) ?? DBNull.Value;
+        }
+
+        values[columnIndex] ??= DBNull.Value;
     }
 
     /// <summary>Adds physical row coordinates to scalar failures that have only column context.</summary>

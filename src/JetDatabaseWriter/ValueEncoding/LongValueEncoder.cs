@@ -340,7 +340,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
         return LongValueDescriptor.Chained(data.Length, nextDp, lvalToken).ToHeaderBytes();
     }
 
-    internal List<LongValueDescriptor> CollectLongValueRoots(byte[] page, RowBound rowBound, TableDef tableDef)
+    internal List<LongValueDescriptor> CollectLongValueRoots(byte[] page, RowBound rowBound, TableDef tableDef, IReadOnlyDictionary<int, byte[]>? preservedLongValues = null)
     {
         var roots = new List<LongValueDescriptor>();
         bool hasVarColumns = false;
@@ -358,8 +358,14 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
             return roots;
         }
 
-        foreach (ColumnInfo column in tableDef.Columns)
+        for (int index = 0; index < tableDef.Columns.Count; index++)
         {
+            if (preservedLongValues?.ContainsKey(index) == true)
+            {
+                continue;
+            }
+
+            ColumnInfo column = tableDef.Columns[index];
             if (!UsesLongValueStorage(column))
             {
                 continue;
@@ -400,8 +406,9 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
     /// <param name="descriptors">The external values to release.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="tableTdefPage">The owning table, or zero for standalone storage tests.</param>
+    /// <param name="protectedDps">Optional set of LVAL row pointers still referenced by surviving rows or preserved columns.</param>
     /// <returns>A task completed after releasing each reachable LVAL row.</returns>
-    internal async ValueTask DeallocateLongValuesAsync(IReadOnlyList<LongValueDescriptor> descriptors, CancellationToken cancellationToken, long tableTdefPage = 0)
+    internal async ValueTask DeallocateLongValuesAsync(IReadOnlyList<LongValueDescriptor> descriptors, CancellationToken cancellationToken, long tableTdefPage = 0, HashSet<uint>? protectedDps = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!descriptors.Any(descriptor => descriptor.IsExternal && descriptor.FirstDp != 0))
@@ -421,13 +428,75 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
 
             foreach (LongValueDescriptor descriptor in descriptors)
             {
-                await LongValueStore.DeallocateExternalPagesAsync(descriptor, (pointer, ct) => this.ReleaseLvalRowAsync(pointer, release, tableTdefPage, ct), cancellationToken).ConfigureAwait(false);
+                await LongValueStore.DeallocateExternalPagesAsync(descriptor, (pointer, ct) => this.ReleaseLvalRowAsync(pointer, release, tableTdefPage, ct), cancellationToken, protectedDps).ConfigureAwait(false);
             }
         }
         finally
         {
             release?.Dispose();
         }
+    }
+
+    internal async ValueTask<bool> TryCollectChainDpsAsync(
+        LongValueDescriptor descriptor,
+        HashSet<uint> protectedDps,
+        CancellationToken cancellationToken)
+    {
+        if (!descriptor.IsExternal || descriptor.FirstDp == 0)
+        {
+            return true;
+        }
+
+        if (descriptor.IsSinglePage)
+        {
+            long pageNumber = LongValueStore.PageNumber(descriptor.FirstDp);
+            if (pageNumber <= 1 || pageNumber >= pager.PageCount)
+            {
+                return false;
+            }
+
+            _ = protectedDps.Add(descriptor.FirstDp);
+            return true;
+        }
+
+        uint currentDp = descriptor.FirstDp;
+        var seenInChain = new HashSet<uint>();
+        while (currentDp != 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!seenInChain.Add(currentDp))
+            {
+                return false;
+            }
+
+            _ = protectedDps.Add(currentDp);
+            long pageNumber = LongValueStore.PageNumber(currentDp);
+            int rowIndex = LongValueStore.RowIndex(currentDp);
+            if (pageNumber <= 1 || pageNumber >= pager.PageCount)
+            {
+                return false;
+            }
+
+            byte[] lvalPage = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (!LongValueStore.IsLvalPage(lvalPage)
+                    || !DataPageRows.TryGetSlotBound(format, lvalPage, rowIndex, out RowBound bound)
+                    || (Ru16(lvalPage, format.DataPage.RowsStart + (rowIndex * 2)) & Constants.DataPage.NonLiveRowFlags) != 0
+                    || bound.RowSize < 4)
+                {
+                    return false;
+                }
+
+                currentDp = Ru32(lvalPage, bound.RowStart);
+            }
+            finally
+            {
+                PageBuffers.Return(lvalPage);
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

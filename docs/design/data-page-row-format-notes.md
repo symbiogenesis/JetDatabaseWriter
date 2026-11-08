@@ -581,8 +581,23 @@ offset. Deleted slots may alias offsets, and deleted overflow targets remain
 valid. An unresolved overflow pointer, a live row too short for its
 column-count field, or a layout that cannot be decoded raises a contextual
 "MalformedValue" corruption error before row updates or schema rewrites. The
-snapshot cannot omit that row and reinsert only the readable rows. Ordinary
-public table reads retain their own decode-fault policy. Catalog identity scans
-require complete `MSysObjects` row directories and resolved overflow chains
-regardless of `StrictParsing`; traversal failures become `CorruptCatalog` with
-table, page and reason context before any table list or system lookup is cached.
+snapshot cannot omit that row and reinsert only the readable rows. Filtered
+mutation snapshots (`ReadMatchingRowsAsync`) decode every visited row's inline
+layout and validate every stored LVAL descriptor length synchronously, resolve
+external `LongValueRef` and `CalculatedLongValueRef` chains on demand in
+left-to-right short-circuit predicate order (`RowCriteriaEvaluator.MatchesAsync`),
+and resolve remaining external LVAL chains and raw slot byte dictionaries only
+for matching rows. Relocated row replacements preserve unchanged long-value
+descriptors per column (`LocatedRow.GetPreservedLongValues`) even when another
+long-value column on the row is modified; `TableRowStore.MarkRowDeletedAsync`
+collects protected chain pointers across preserved descriptors and surviving
+live rows of the owning table so unshared prefix nodes of replaced chains are
+reclaimed while shared roots and interior tails survive. Multi-index incremental
+updates skip unchanged index trees (including `IgnoreNulls` Null-key cancels),
+filter unchanged index slots out of post-edit ownership and non-relationship
+usage-map walks, and rewrite the TDEF chain only when root or usage-map pointers
+change. Ordinary public table reads retain their own decode-fault policy.
+Catalog identity scans require complete `MSysObjects` row directories and
+resolved overflow chains regardless of `StrictParsing`; traversal failures
+become `CorruptCatalog` with table, page and reason context before any table
+list or system lookup is cached.

@@ -645,44 +645,50 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
     }
 
     /// <summary>
-    /// Buffer-aware mirror of <c>ResolveLongValueRefsAsync</c>: walks only
-    /// the first <paramref name="validLength"/> slots of
-    /// <paramref name="buffer"/> (the pooled array may be larger than
-    /// <c>td.Columns.Count</c>).
+    /// Resolves a single deferred <see cref="LongValueRef"/> or
+    /// <see cref="CalculatedLongValueRef"/> slot in <paramref name="buffer"/>.
     /// </summary>
-    /// <param name="buffer">The buffer.</param>
-    /// <param name="validLength">The valid length.</param>
+    /// <param name="buffer">The row value buffer.</param>
+    /// <param name="columnIndex">The slot index to resolve.</param>
     /// <param name="page">The page bytes.</param>
     /// <param name="decodePlan">The decode plan, which selects how MEMO / OLE values are resolved.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask ResolveLongValueSlotAsync(object?[] buffer, int columnIndex, byte[] page, RowDecodePlan decodePlan, CancellationToken cancellationToken)
+    {
+        if (buffer[columnIndex] is LongValueRef lvr)
+        {
+            if (decodePlan.PreservesStoredValues)
+            {
+                buffer[columnIndex] = await this.ReadLongValueForWriteBackAsync(page, lvr.Start, lvr.Len, lvr.IsOle, decodePlan.GetColumnName(columnIndex), cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                try
+                {
+                    // An OLE value is its stored bytes; OleObjectValue unwraps them on request.
+                    buffer[columnIndex] = lvr.IsOle
+                        ? await longValues.ReadLongValueRawBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
+                        : await longValues.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
+                }
+                catch (JetCorruptDataException ex)
+                {
+                    buffer[columnIndex] = LongValueReadPolicy.MissingValue(decodePlan.GetColumnName(columnIndex), ex, strictParsing);
+                }
+            }
+        }
+        else if (buffer[columnIndex] is CalculatedLongValueRef clvr)
+        {
+            buffer[columnIndex] = await this.ResolveCalculatedLongValueRefAsync(page, clvr, decodePlan, columnIndex, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private async ValueTask<bool> ResolveLongValueRefsIntoBufferAsync(object?[] buffer, int validLength, byte[] page, RowDecodePlan decodePlan, CancellationToken cancellationToken)
     {
         for (int i = 0; i < validLength; i++)
         {
-            if (buffer[i] is LongValueRef lvr)
+            if (buffer[i] is LongValueRef or CalculatedLongValueRef)
             {
-                if (decodePlan.PreservesStoredValues)
-                {
-                    buffer[i] = await this.ReadLongValueForWriteBackAsync(page, lvr.Start, lvr.Len, lvr.IsOle, decodePlan.GetColumnName(i), cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    try
-                    {
-                        // An OLE value is its stored bytes; OleObjectValue unwraps them on request.
-                        buffer[i] = lvr.IsOle
-                            ? await longValues.ReadLongValueRawBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
-                            : await longValues.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (JetCorruptDataException ex)
-                    {
-                        buffer[i] = LongValueReadPolicy.MissingValue(decodePlan.GetColumnName(i), ex, strictParsing);
-                    }
-                }
-            }
-            else if (buffer[i] is CalculatedLongValueRef clvr)
-            {
-                buffer[i] = await this.ResolveCalculatedLongValueRefAsync(page, clvr, decodePlan, i, cancellationToken).ConfigureAwait(false);
+                await this.ResolveLongValueSlotAsync(buffer, i, page, decodePlan, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -802,7 +808,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
     /// <param name="decodePlan">The decode plan.</param>
     /// <param name="row">The row values or row bytes.</param>
     /// <param name="needsLongValue">The needs long value.</param>
-    private bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, RowDecodePlan decodePlan, out object?[]? row, out bool needsLongValue)
+    internal bool TryCrackRowSync(byte[] page, int rowStart, int rowSize, RowDecodePlan decodePlan, out object?[]? row, out bool needsLongValue)
     {
         object?[] result = new object?[decodePlan.ColumnCount];
         if (!this.TryCrackRowSyncIntoBuffer(page, rowStart, rowSize, decodePlan, result, out needsLongValue))

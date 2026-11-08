@@ -102,7 +102,7 @@ internal sealed class RelationshipEnforcer(
             foreach ((RowLocation location, object[] oldRow, object[] newRow) in cascade.Rows)
             {
                 cascade.LongValues.TryGetValue(location, out IReadOnlyDictionary<int, byte[]>? longValues);
-                cascade.AssignedColumns.TryGetValue(location, out IReadOnlySet<int>? assignedColumns);
+                cascade.AssignedColumns.TryGetValue(location, out IReadOnlyCollection<int>? assignedColumns);
                 changes.Update(location, oldRow, newRow, cascade.TextBytes[location], longValues: longValues, assignedColumns: assignedColumns);
                 for (int index = 0; index < newRow.Length && index < table.Definition.Columns.Count; index++)
                 {

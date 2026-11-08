@@ -24,5 +24,5 @@ internal sealed record CascadeUpdate(string TableName, ResolvedTable Table, List
     internal Dictionary<RowLocation, IReadOnlyDictionary<int, byte[]>?> LongValues { get; } = [];
 
     /// <summary>Gets the explicitly cascaded column positions for each planned row rewrite.</summary>
-    internal Dictionary<RowLocation, IReadOnlySet<int>?> AssignedColumns { get; } = [];
+    internal Dictionary<RowLocation, IReadOnlyCollection<int>?> AssignedColumns { get; } = [];
 }

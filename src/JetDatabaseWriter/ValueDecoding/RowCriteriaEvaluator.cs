@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.ValueDecoding;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
@@ -72,6 +73,32 @@ internal sealed class RowCriteriaEvaluator
     {
         foreach (CompiledPredicate compiled in this.predicates)
         {
+            object? cellValue = compiled.ColumnIndex < row.Count ? row[compiled.ColumnIndex] : null;
+            if (!Evaluate(compiled.Predicate, cellValue))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Evaluates the compiled criteria against one partially decoded row, invoking
+    /// <paramref name="resolveColumnAsync"/> before inspecting each predicate's target column.
+    /// </summary>
+    /// <param name="row">The decoded row values, in table-column order.</param>
+    /// <param name="resolveColumnAsync">Resolves a deferred column slot on demand.</param>
+    /// <returns><see langword="true"/> when every predicate is satisfied.</returns>
+    public async ValueTask<bool> MatchesAsync(IReadOnlyList<object?> row, Func<int, ValueTask> resolveColumnAsync)
+    {
+        foreach (CompiledPredicate compiled in this.predicates)
+        {
+            if (compiled.ColumnIndex < row.Count)
+            {
+                await resolveColumnAsync(compiled.ColumnIndex).ConfigureAwait(false);
+            }
+
             object? cellValue = compiled.ColumnIndex < row.Count ? row[compiled.ColumnIndex] : null;
             if (!Evaluate(compiled.Predicate, cellValue))
             {

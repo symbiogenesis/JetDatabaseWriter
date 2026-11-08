@@ -220,6 +220,7 @@ public sealed class CatalogLongValuePreservationTests
         await using var stream = new MemoryStream();
         await SeedAsync(stream, format, "P", new byte[128], largeProperties: true);
         byte[] expectedPayload;
+        uint unsharedRootDp;
         stream.Position = 0;
         await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
@@ -230,6 +231,7 @@ public sealed class CatalogLongValuePreservationTests
             {
                 Assert.True(LongValueDescriptor.TryRead(page.AsSpan(location.RowStart + source.DataStart, source.DataLen), out LongValueDescriptor descriptor));
                 Assert.True(descriptor.UsesChainedPages);
+                unsharedRootDp = descriptor.FirstDp;
                 byte[] root = await writer.Database.Pages.ReadPageCopyAsync(descriptor.FirstDp >> 8, Ct);
                 Assert.True(DataPageRows.TryGetSlotBound(writer.Database.Format, root, checked((int)(descriptor.FirstDp & 0xFF)), out RowBound bound));
                 uint tail = BinaryPrimitives.ReadUInt32LittleEndian(root.AsSpan(bound.RowStart));
@@ -270,6 +272,14 @@ public sealed class CatalogLongValuePreservationTests
         Snapshot actual = await ReadAsync(stream, "P");
         Assert.Equal(expected.Field, actual.Field);
         Assert.Equal(expected.Rows, actual.Rows);
+        stream.Position = 0;
+        await using (AccessWriter verifier = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
+        {
+            byte[] reusedRoot = await verifier.Database.Pages.ReadPageCopyAsync(unsharedRootDp >> 8, Ct);
+            Assert.True(DataPageRows.TryGetSlotBound(verifier.Database.Format, reusedRoot, checked((int)(unsharedRootDp & 0xFF)), out RowBound reusedBound));
+            Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(reusedRoot.AsSpan(reusedBound.RowStart)));
+        }
+
         stream.Position = 0;
         await using (AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct))
         {

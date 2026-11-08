@@ -311,11 +311,13 @@ internal static class LongValueStore
     /// it held, or 0 when the row is not a live LVAL row, which ends the walk.
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="protectedDps">Optional set of LVAL row pointers still referenced by surviving rows or preserved columns.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     internal static async ValueTask DeallocateExternalPagesAsync(
         LongValueDescriptor descriptor,
         Func<uint, CancellationToken, ValueTask<uint>> releaseRowAsync,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        HashSet<uint>? protectedDps = null)
     {
         if (!descriptor.IsExternal || descriptor.FirstDp == 0)
         {
@@ -324,13 +326,17 @@ internal static class LongValueStore
 
         if (descriptor.IsSinglePage)
         {
-            _ = await releaseRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
+            if (protectedDps?.Add(descriptor.FirstDp) != false)
+            {
+                _ = await releaseRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
+            }
+
             return;
         }
 
         uint currentDp = descriptor.FirstDp;
         SmallLvalDpSet seen = default;
-        while (currentDp != 0 && seen.Add(currentDp))
+        while (currentDp != 0 && seen.Add(currentDp) && (protectedDps?.Add(currentDp) ?? true))
         {
             cancellationToken.ThrowIfCancellationRequested();
             currentDp = await releaseRowAsync(currentDp, cancellationToken).ConfigureAwait(false);

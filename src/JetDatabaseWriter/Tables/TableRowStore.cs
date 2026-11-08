@@ -318,7 +318,10 @@ internal sealed class TableRowStore(
         => await this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef, DeletedRowDataMode.Default, cancellationToken).ConfigureAwait(false);
 
     internal ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef tableDef, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
-        => this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef, dataMode, retainLongValues: false, cancellationToken);
+        => this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef, dataMode, retainLongValues: false, preservedLongValues: null, cancellationToken);
+
+    internal ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef tableDef, DeletedRowDataMode dataMode, bool retainLongValues, CancellationToken cancellationToken)
+        => this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef, dataMode, retainLongValues, preservedLongValues: null, cancellationToken);
 
     /// <summary>
     /// Flags the row at (<paramref name="pageNumber"/>, <paramref name="rowIndex"/>)
@@ -333,8 +336,16 @@ internal sealed class TableRowStore(
     /// <param name="tableDef">The row's table, needed to free its long values under secure erase.</param>
     /// <param name="dataMode">Whether the row's bytes are cleared.</param>
     /// <param name="retainLongValues">Whether to retain all original chains because a replacement can share their rows.</param>
+    /// <param name="preservedLongValues">Unchanged long-value descriptors transferred to the replacement row.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef tableDef, DeletedRowDataMode dataMode, bool retainLongValues, CancellationToken cancellationToken)
+    internal async ValueTask MarkRowDeletedAsync(
+        long pageNumber,
+        int rowIndex,
+        TableDef tableDef,
+        DeletedRowDataMode dataMode,
+        bool retainLongValues,
+        IReadOnlyDictionary<int, byte[]>? preservedLongValues,
+        CancellationToken cancellationToken)
     {
         byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         List<LongValueDescriptor>? longValueRoots = null;
@@ -342,7 +353,7 @@ internal sealed class TableRowStore(
         int raw = Ru16(page, offsetPos);
         if ((raw & Constants.DataPage.NonLiveRowFlags) == Constants.DataPage.OverflowRowFlag)
         {
-            await this.MarkOverflowRowDeletedAsync(pageNumber, page, rowIndex, tableDef, dataMode, retainLongValues, cancellationToken).ConfigureAwait(false);
+            await this.MarkOverflowRowDeletedAsync(pageNumber, page, rowIndex, tableDef, dataMode, retainLongValues, preservedLongValues, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -360,9 +371,7 @@ internal sealed class TableRowStore(
                     continue;
                 }
 
-                // Different roots can converge on a retained chain tail. Without
-                // complete ownership evidence, retain every original chain.
-                longValueRoots = retainLongValues ? [] : longValueEncoder.CollectLongValueRoots(page, rowBound, tableDef);
+                longValueRoots = retainLongValues ? [] : longValueEncoder.CollectLongValueRoots(page, rowBound, tableDef, preservedLongValues);
 
                 if (dataMode == DeletedRowDataMode.Clear || options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
                 {
@@ -381,12 +390,22 @@ internal sealed class TableRowStore(
         PageBuffers.Return(page);
         await dataPages.SetFreePageStateAsync(owner, pageNumber, hasRoom, cancellationToken).ConfigureAwait(false);
 
-        if (longValueRoots is null)
+        if (longValueRoots is null or { Count: 0 })
         {
             return;
         }
 
-        await longValueEncoder.DeallocateLongValuesAsync(longValueRoots, cancellationToken, tableDef.TDefPageNumber ?? 0).ConfigureAwait(false);
+        HashSet<uint>? protectedDps = null;
+        if (preservedLongValues is { Count: > 0 } || owner == 2)
+        {
+            protectedDps = await this.TryCollectProtectedLongValueDpsAsync(owner, tableDef, preservedLongValues, cancellationToken).ConfigureAwait(false);
+            if (protectedDps is null)
+            {
+                return;
+            }
+        }
+
+        await longValueEncoder.DeallocateLongValuesAsync(longValueRoots, cancellationToken, owner > 0 ? owner : (tableDef.TDefPageNumber ?? 0), protectedDps).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -399,9 +418,18 @@ internal sealed class TableRowStore(
     /// <param name="tableDef">The row's table, needed to free its long values under secure erase.</param>
     /// <param name="dataMode">Whether the row's bytes are cleared.</param>
     /// <param name="retainLongValues">Whether to retain all original chains because a replacement can share their rows.</param>
+    /// <param name="preservedLongValues">Unchanged long-value descriptors transferred to the replacement row.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="JetCorruptDataException">The overflow storage has invalid bounds, unresolved pointers or shared live targets.</exception>
-    private async ValueTask MarkOverflowRowDeletedAsync(long pageNumber, byte[] page, int rowIndex, TableDef tableDef, DeletedRowDataMode dataMode, bool retainLongValues, CancellationToken cancellationToken)
+    private async ValueTask MarkOverflowRowDeletedAsync(
+        long pageNumber,
+        byte[] page,
+        int rowIndex,
+        TableDef tableDef,
+        DeletedRowDataMode dataMode,
+        bool retainLongValues,
+        IReadOnlyDictionary<int, byte[]>? preservedLongValues,
+        CancellationToken cancellationToken)
     {
         List<LongValueDescriptor> longValueRoots;
         long owner = Ri32(page, format.DataPage.TDefOff);
@@ -426,7 +454,7 @@ internal sealed class TableRowStore(
                 longValueRoots = [];
                 if (resolvedTarget is { } target)
                 {
-                    longValueRoots = retainLongValues ? [] : longValueEncoder.CollectLongValueRoots(target.Page, target.Bound, tableDef);
+                    longValueRoots = retainLongValues ? [] : longValueEncoder.CollectLongValueRoots(target.Page, target.Bound, tableDef, preservedLongValues);
 
                     AddSlot(target.PageNumber, target.Bound);
                     foreach ((long number, RowBound bound) in intermediateSlots)
@@ -571,6 +599,77 @@ internal sealed class TableRowStore(
             PageBuffers.Return(page);
         }
 
-        await longValueEncoder.DeallocateLongValuesAsync(longValueRoots, cancellationToken, owner).ConfigureAwait(false);
+        if (longValueRoots.Count == 0)
+        {
+            return;
+        }
+
+        HashSet<uint>? protectedDps = null;
+        if (preservedLongValues is { Count: > 0 } || owner == 2)
+        {
+            protectedDps = await this.TryCollectProtectedLongValueDpsAsync(owner, tableDef, preservedLongValues, cancellationToken).ConfigureAwait(false);
+            if (protectedDps is null)
+            {
+                return;
+            }
+        }
+
+        await longValueEncoder.DeallocateLongValuesAsync(longValueRoots, cancellationToken, owner, protectedDps).ConfigureAwait(false);
+    }
+
+    private async ValueTask<HashSet<uint>?> TryCollectProtectedLongValueDpsAsync(
+        long owner,
+        TableDef tableDef,
+        IReadOnlyDictionary<int, byte[]>? preservedLongValues,
+        CancellationToken cancellationToken)
+    {
+        var protectedDps = new HashSet<uint>();
+        if (preservedLongValues is not null)
+        {
+            foreach (byte[] bytes in preservedLongValues.Values)
+            {
+                if (LongValueDescriptor.TryRead(bytes, out LongValueDescriptor descriptor)
+                    && descriptor.IsExternal
+                    && descriptor.FirstDp != 0
+                    && !await longValueEncoder.TryCollectChainDpsAsync(descriptor, protectedDps, cancellationToken).ConfigureAwait(false))
+                {
+                    return null;
+                }
+            }
+        }
+
+        if (owner <= 0)
+        {
+            return protectedDps;
+        }
+
+        bool valid = true;
+        try
+        {
+            await ownedPages.ForEachLiveTableRowAsync(
+                owner,
+                async (row, token) =>
+                {
+                    var bound = new RowBound(row.Location.DataRowIndex, row.Location.RowStart, row.Location.RowSize);
+                    foreach (LongValueDescriptor descriptor in longValueEncoder.CollectLongValueRoots(row.Page, bound, tableDef))
+                    {
+                        if (!await longValueEncoder.TryCollectChainDpsAsync(descriptor, protectedDps, token).ConfigureAwait(false))
+                        {
+                            valid = false;
+                            return false;
+                        }
+                    }
+
+                    return true;
+                },
+                cancellationToken,
+                requireCompleteRows: true).ConfigureAwait(false);
+        }
+        catch (JetCorruptDataException)
+        {
+            return null;
+        }
+
+        return valid ? protectedDps : null;
     }
 }
