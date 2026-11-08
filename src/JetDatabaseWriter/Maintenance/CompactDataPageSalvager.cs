@@ -3997,6 +3997,7 @@ internal static class CompactDataPageSalvager
 
                     var location = new RowLocation(pageNumber, slot, bound.RowStart, bound.RowSize);
                     bool nonLvalValid = true;
+                    bool hasOverlongVarFields = false;
                     var corruptLvalFields = new List<(CompactRawField Field, LongValueDescriptor? Descriptor, bool TruncatedDescriptor)>();
                     try
                     {
@@ -4038,7 +4039,14 @@ internal static class CompactDataPageSalvager
                                 }
                                 else if (!field.Column.IsFixed && !field.Column.IsCalculated && field.Column.Size > 0 && field.RawBytes.Length > field.Column.Size)
                                 {
-                                    nonLvalValid = false;
+                                    if (format.IsJet3 && rowLayout.JumpCount > 0)
+                                    {
+                                        nonLvalValid = false;
+                                    }
+                                    else
+                                    {
+                                        hasOverlongVarFields = true;
+                                    }
                                 }
                             },
                             cancellationToken).ConfigureAwait(false);
@@ -4048,7 +4056,7 @@ internal static class CompactDataPageSalvager
                         nonLvalValid = false;
                     }
 
-                    if (!nonLvalValid || corruptLvalFields.Count == 0)
+                    if (!nonLvalValid || (corruptLvalFields.Count == 0 && !hasOverlongVarFields))
                     {
                         continue;
                     }
@@ -4211,6 +4219,32 @@ internal static class CompactDataPageSalvager
                         totalQuarantinedFields++;
                     }
 
+                    if (hasOverlongVarFields)
+                    {
+                        (int truncatedFieldCount, bool varFieldSalvaged) = await TrySalvageOverlongVariableFieldsInRowAsync(
+                            source,
+                            format,
+                            budget,
+                            def,
+                            owner,
+                            tableName,
+                            pageNumber,
+                            slot,
+                            bound,
+                            modifiedPage,
+                            overlayPages,
+                            diagnostics,
+                            quarantineRecords,
+                            quarantinedRowsByOwner,
+                            forceRegenerateOwners,
+                            cancellationToken).ConfigureAwait(false);
+                        if (varFieldSalvaged)
+                        {
+                            rowSalvaged = true;
+                            totalQuarantinedFields += truncatedFieldCount;
+                        }
+                    }
+
                     if (rowSalvaged)
                     {
                         salvagedRowsByOwner.TryGetValue(owner, out long sCount);
@@ -4307,6 +4341,253 @@ internal static class CompactDataPageSalvager
         }
 
         return (totalSalvagedRows, totalQuarantinedFields);
+    }
+
+    private static async ValueTask<(int TruncatedFieldCount, bool RowSalvaged)> TrySalvageOverlongVariableFieldsInRowAsync(
+        IPageSource source,
+        JetFormat format,
+        CompactDiscoveryBudget budget,
+        TDefImage def,
+        long owner,
+        string tableName,
+        long pageNumber,
+        int slot,
+        RowBound bound,
+        byte[] modifiedPage,
+        Dictionary<long, byte[]> overlayPages,
+        List<AccessCompactDiagnostic> diagnostics,
+        List<AccessCompactQuarantineRecord> quarantineRecords,
+        Dictionary<long, long> quarantinedRowsByOwner,
+        HashSet<long> forceRegenerateOwners,
+        CancellationToken cancellationToken)
+    {
+        var truncatedFields = new List<(string ColumnName, int DeclaredSize, int OldLen, int NewLen, byte[] RawFieldBytes)>();
+        var skippedVarIndices = new HashSet<int>();
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Span<byte> rowSpan = modifiedPage.AsSpan(bound.RowStart, bound.RowSize);
+            if (!RowDecodePlan.TryParseRowLayout(format.RowFields, rowSpan, 0, bound.RowSize, def.Header.VariableColumnCount > 0, out RowLayout layout)
+                || (format.IsJet3 && layout.JumpCount > 0))
+            {
+                break;
+            }
+
+            var location = new RowLocation(pageNumber, slot, 0, bound.RowSize);
+            (ColumnInfo? targetCol, int rowOffset, byte[]? rawBytes, bool found) = (null, 0, null, false);
+            try
+            {
+                await CompactRawFieldReader.ScanAsync(
+                    format,
+                    def,
+                    location,
+                    modifiedPage.AsMemory(bound.RowStart, bound.RowSize),
+                    (field, _) =>
+                    {
+                        if (!found
+                            && field.Kind == CompactRawFieldKind.Stored
+                            && !field.IsLongValue
+                            && !field.Column.IsFixed
+                            && !field.Column.IsCalculated
+                            && field.Column.Size > 0
+                            && field.RawBytes.Length > field.Column.Size
+                            && !skippedVarIndices.Contains(field.Column.VarIdx))
+                        {
+                            targetCol = field.Column;
+                            rowOffset = field.RowOffset;
+                            rawBytes = field.RawBytes.ToArray();
+                            found = true;
+                        }
+
+                        return default;
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException)
+            {
+                break;
+            }
+
+            if (!found || targetCol is null || rawBytes is null)
+            {
+                break;
+            }
+
+            int oldLen = rawBytes.Length;
+            int newLen = ComputeTruncatedVariableFieldLength(format, targetCol, rawBytes);
+            int shrink = oldLen - newLen;
+            int trailingStart = rowOffset + oldLen;
+            int trailingLen = layout.Eod - trailingStart;
+            if (shrink <= 0 || trailingLen < 0 || layout.Eod - shrink < format.RowFields.NumCols)
+            {
+                _ = skippedVarIndices.Add(targetCol.VarIdx);
+                continue;
+            }
+
+            byte[] rowBackup = modifiedPage.AsSpan(bound.RowStart, bound.RowSize).ToArray();
+            Span<byte> editSpan = modifiedPage.AsSpan(bound.RowStart, bound.RowSize);
+            if (trailingLen > 0)
+            {
+                editSpan.Slice(trailingStart, trailingLen).CopyTo(editSpan.Slice(rowOffset + newLen, trailingLen));
+            }
+
+            editSpan.Slice(layout.Eod - shrink, shrink).Clear();
+            int eodPos = layout.VarTableStart - format.RowFields.Eod;
+            int newEod = layout.Eod - shrink;
+            if (format.IsJet3)
+            {
+                editSpan[eodPos] = checked((byte)newEod);
+            }
+            else
+            {
+                BinaryPrimitives.WriteUInt16LittleEndian(editSpan.Slice(eodPos, 2), checked((ushort)newEod));
+            }
+
+            for (int v = targetCol.VarIdx + 1; v < layout.VarLen; v++)
+            {
+                int entryPos = layout.VarTableStart + ((layout.VarLen - 1 - v) * format.RowFields.VarEntry);
+                int oldOff = format.RowFields.ReadVarEntry(editSpan, entryPos);
+                int newOff = oldOff - shrink;
+                if (format.IsJet3)
+                {
+                    editSpan[entryPos] = checked((byte)newOff);
+                }
+                else
+                {
+                    BinaryPrimitives.WriteUInt16LittleEndian(editSpan.Slice(entryPos, 2), checked((ushort)newOff));
+                }
+            }
+
+            try
+            {
+                await CompactRawFieldReader.ScanAsync(
+                    format,
+                    def,
+                    location,
+                    modifiedPage.AsMemory(bound.RowStart, bound.RowSize),
+                    static (_, _) => default,
+                    cancellationToken).ConfigureAwait(false);
+                truncatedFields.Add((targetCol.Name, targetCol.Size, oldLen, newLen, rawBytes));
+            }
+            catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException)
+            {
+                rowBackup.CopyTo(modifiedPage.AsSpan(bound.RowStart, bound.RowSize));
+                _ = skippedVarIndices.Add(targetCol.VarIdx);
+            }
+        }
+
+        if (truncatedFields.Count == 0)
+        {
+            return (0, false);
+        }
+
+        _ = forceRegenerateOwners.Add(owner);
+        IPageSource rowSource = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+        IReadOnlyDictionary<string, object?>? decodedRowFields = await TryDecodeQuarantinedRowFieldsAsync(
+            rowSource,
+            format,
+            def,
+            modifiedPage.AsMemory(bound.RowStart, bound.RowSize),
+            cancellationToken).ConfigureAwait(false);
+
+        foreach ((string colName, int declaredSize, int oldLen, int newLen, byte[] rawFieldBytes) in truncatedFields)
+        {
+            string truncReason = $"Truncated overlong variable-length column '{colName}' at row {pageNumber}:{slot} from {oldLen} bytes to {newLen} bytes (declared column size {declaredSize}) while preserving the row.";
+            quarantineRecords.Add(
+                new AccessCompactQuarantineRecord(
+                    "quarantined-corrupt-variable-field",
+                    pageNumber,
+                    owner,
+                    tableName,
+                    slot,
+                    truncReason,
+                    ComputeSha256Hex(rawFieldBytes),
+                    Convert.ToBase64String(rawFieldBytes),
+                    decodedRowFields));
+            if (diagnostics.Count < budget.MaxDiagnostics)
+            {
+                diagnostics.Add(
+                    new AccessCompactDiagnostic(
+                        "salvaged-truncated-variable-field",
+                        pageNumber,
+                        owner,
+                        slot,
+                        truncReason,
+                        AccessCompactDiagnosticCategory.SalvagedDataPage,
+                        tableName));
+            }
+
+            if (diagnostics.Count < budget.MaxDiagnostics)
+            {
+                diagnostics.Add(
+                    new AccessCompactDiagnostic(
+                        "quarantined-corrupt-variable-field",
+                        pageNumber,
+                        owner,
+                        slot,
+                        truncReason,
+                        AccessCompactDiagnosticCategory.QuarantinedRow,
+                        tableName));
+            }
+
+            quarantinedRowsByOwner.TryGetValue(owner, out long qExisting);
+            quarantinedRowsByOwner[owner] = qExisting + 1;
+        }
+
+        return (truncatedFields.Count, true);
+    }
+
+    private static int ComputeTruncatedVariableFieldLength(
+        JetFormat format,
+        ColumnInfo column,
+        ReadOnlySpan<byte> rawBytes)
+    {
+        int maxLen = Math.Min(rawBytes.Length, Math.Max(0, column.Size));
+        if (maxLen <= 0 || column.Type != ColumnType.TextType || format.IsJet3)
+        {
+            return maxLen;
+        }
+
+        bool compressed = column.IsCompressedUnicode
+            && !column.IsFixed
+            && rawBytes.Length >= 2
+            && rawBytes[0] == 0xFF
+            && rawBytes[1] == 0xFE;
+        if (!compressed)
+        {
+            return maxLen & ~1;
+        }
+
+        if (maxLen < 2)
+        {
+            return 0;
+        }
+
+        int validPrefixLen = 2;
+        bool singleByte = true;
+        for (int offset = 2; offset < maxLen; offset++)
+        {
+            if (rawBytes[offset] == 0)
+            {
+                singleByte = !singleByte;
+            }
+            else if (singleByte)
+            {
+                validPrefixLen = offset + 1;
+            }
+            else if (offset + 1 < maxLen)
+            {
+                offset++;
+                validPrefixLen = offset + 1;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return validPrefixLen;
     }
 
     private static async ValueTask<(int SurvivingBytes, long LastGoodPage, int LastGoodRowStart, long BadPage)> TryFindSurvivingChainedLvalPrefixAsync(

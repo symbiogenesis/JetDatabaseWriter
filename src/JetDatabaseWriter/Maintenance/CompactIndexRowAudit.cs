@@ -644,6 +644,15 @@ internal static class CompactIndexRowAudit
             return null;
         }
 
+        if (!field.Column.IsFixed
+            && !field.Column.IsCalculated
+            && !field.IsLongValue
+            && field.Column.Size > 0
+            && field.RawBytes.Length > field.Column.Size)
+        {
+            throw Corrupt(field.Location.PageNumber, $"An indexed variable column '{field.Column.Name}' length ({field.RawBytes.Length}) exceeds its declared size ({field.Column.Size}).");
+        }
+
         if (field.Column.Type == ColumnType.DateTimeType)
         {
             return JetTypeInfo.ReadDoubleLittleEndian(field.RawBytes.Span);

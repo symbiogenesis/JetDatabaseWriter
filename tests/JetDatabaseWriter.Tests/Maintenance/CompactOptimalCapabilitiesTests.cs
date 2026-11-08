@@ -2790,6 +2790,135 @@ public sealed class CompactOptimalCapabilitiesTests
         Assert.Equal("Row-Thirty", rows[2][1]);
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CompactAsync_OverlongVariableColumnField_TruncatesCorruptFieldAndPreservesRow(DatabaseFormat kind)
+    {
+        await using var sourceStream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            sourceStream,
+            kind,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            Ct))
+        {
+            await writer.CreateTableAsync(
+                "OverlongFieldVictim",
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("Code", typeof(string), 16) { IsNullable = false },
+                    new("Tag", typeof(string), 16) { IsNullable = false },
+                    new("Score", typeof(int)) { IsNullable = false },
+                ],
+                [new IndexDefinition("IX_Code", "Code")],
+                Ct);
+
+            await writer.InsertRowAsync("OverlongFieldVictim", [1, "ALPHA", "TAG-ONE", 100], Ct);
+            await writer.InsertRowAsync("OverlongFieldVictim", [2, "0123456789ABCDEF", "TAG-TWO", 200], Ct);
+            await writer.InsertRowAsync("OverlongFieldVictim", [3, "CHARLIE", "TAG-THREE", 300], Ct);
+        }
+
+        AccessCompactReport inspect = await AccessDatabaseCompact.InspectAsync(sourceStream, cancellationToken: Ct);
+        long owner = Assert.Single(inspect.Tables, static t => t.TableName == "OverlongFieldVictim").OwnerTDefPage;
+
+        byte[] bytes = sourceStream.ToArray();
+        int pageSize = kind == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
+        long targetDataPage = -1;
+        for (long p = 3; p < bytes.Length / pageSize; p++)
+        {
+            int pageOff = checked((int)(p * pageSize));
+            if (bytes[pageOff] == 0x01 && BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(pageOff + 4, 4)) == owner)
+            {
+                targetDataPage = p;
+                break;
+            }
+        }
+
+        Assert.True(targetDataPage >= 3);
+
+        // Reduce Code's declared column size in the TDEF descriptor from 16 chars (16/32 bytes) to 8 chars (8/16 bytes)
+        // so Row 2 ("0123456789ABCDEF") exceeds the column's declared size while Rows 1 and 3 remain within bounds.
+        int tdefOff = checked((int)(owner * pageSize));
+        int codeSizeOffset = kind == DatabaseFormat.Jet3Mdb
+            ? 43 + (2 * 8) + (1 * 18) + 16
+            : 63 + (2 * 12) + (1 * 25) + 23;
+        ushort expectedInitialSize = (ushort)(kind == DatabaseFormat.Jet3Mdb ? 16 : 32);
+        ushort reducedSize = (ushort)(kind == DatabaseFormat.Jet3Mdb ? 8 : 16);
+        Assert.Equal(expectedInitialSize, BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(tdefOff + codeSizeOffset, 2)));
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(tdefOff + codeSizeOffset, 2), reducedSize);
+
+        await using (var strictSource = new MemoryStream(bytes, writable: false))
+        await using (var strictDest = new MemoryStream())
+        {
+            await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                await AccessDatabaseCompact.CompactAsync(
+                    strictSource,
+                    strictDest,
+                    new AccessCompactOptions
+                    {
+                        AllowPartialRecovery = false,
+                        RebuildDamagedIndexes = false,
+                    },
+                    Ct));
+        }
+
+        await using var salvageSource = new MemoryStream(bytes, writable: false);
+        await using var salvageDest = new MemoryStream();
+        await using var quarantineStream = new MemoryStream();
+        AccessCompactReport report = await AccessDatabaseCompact.CompactAsync(
+            salvageSource,
+            salvageDest,
+            new AccessCompactOptions
+            {
+                AllowPartialRecovery = true,
+                RebuildDamagedIndexes = true,
+                RepairTableCounters = true,
+                QuarantineStream = quarantineStream,
+            },
+            Ct);
+
+        Assert.True(report.DatabaseValidated);
+        Assert.Contains(
+            report.Diagnostics,
+            d => d.Kind == "salvaged-truncated-variable-field"
+                && d.Category == AccessCompactDiagnosticCategory.SalvagedDataPage
+                && d.PageNumber == targetDataPage
+                && d.RowIndex == 1
+                && d.TableName == "OverlongFieldVictim");
+        Assert.Contains(
+            report.Diagnostics,
+            d => d.Kind == "quarantined-corrupt-variable-field"
+                && d.Category == AccessCompactDiagnosticCategory.QuarantinedRow
+                && d.PageNumber == targetDataPage
+                && d.RowIndex == 1
+                && d.TableName == "OverlongFieldVictim");
+
+        AccessCompactQuarantineRecord qRec = Assert.Single(report.QuarantinedRecords);
+        Assert.Equal("quarantined-corrupt-variable-field", qRec.Kind);
+        Assert.Equal(targetDataPage, qRec.PageNumber);
+        Assert.Equal(1, qRec.RowIndex);
+        Assert.NotNull(qRec.DecodedFields);
+        Assert.Equal(2, qRec.DecodedFields!["Id"]);
+        Assert.Equal("TAG-TWO", qRec.DecodedFields["Tag"]);
+        Assert.Equal(200, qRec.DecodedFields["Score"]);
+
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(salvageDest, cancellationToken: Ct);
+        Assert.Equal(3, await reader.GetRealRowCountAsync("OverlongFieldVictim", Ct));
+        var rows = new List<object[]>();
+        await foreach (object[] row in reader.Rows("OverlongFieldVictim", cancellationToken: Ct))
+        {
+            rows.Add(row);
+        }
+
+        Assert.Equal(3, rows.Count);
+        object[] rescuedRow = Assert.Single(rows, static r => (int)r[0] == 2);
+        Assert.Equal(kind == DatabaseFormat.Jet3Mdb ? "01234567" : "0123456789ABCD", Assert.IsType<string>(rescuedRow[1]));
+        Assert.Equal("TAG-TWO", Assert.IsType<string>(rescuedRow[2]));
+        Assert.Equal(200, rescuedRow[3]);
+    }
+
     private static void CorruptUsageMapSlot(byte[] bytes, int pageSize, int rowsStartOff, uint mapPtr)
     {
         long mapPage = mapPtr >> 8;

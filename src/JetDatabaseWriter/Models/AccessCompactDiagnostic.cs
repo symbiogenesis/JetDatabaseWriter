@@ -40,16 +40,22 @@ public sealed record AccessCompactDiagnostic(
             "salvaged-data-page-header"
                 or "salvaged-data-page-owner"
                 or "salvaged-partial-data-page"
+                or "salvaged-tdef-header"
                 or "salvaged-tdef-continuation"
                 or "salvaged-dead-tdef-page"
                 or "salvaged-overflow-target-page"
-                or "salvaged-overflow-row" => AccessCompactDiagnosticCategory.SalvagedDataPage,
+                or "salvaged-overflow-row"
+                or "salvaged-lval-page-header"
+                or "salvaged-truncated-lval-chain"
+                or "salvaged-truncated-variable-field"
+                or "salvaged-usage-map" => AccessCompactDiagnosticCategory.SalvagedDataPage,
             "quarantined-data-page" => AccessCompactDiagnosticCategory.QuarantinedDataPage,
             "quarantined-corrupt-row"
                 or "quarantined-orphan-complex-row"
                 or "quarantined-orphan-fk-row"
                 or "quarantined-constraint-row"
-                or "quarantined-corrupt-lval-field" => AccessCompactDiagnosticCategory.QuarantinedRow,
+                or "quarantined-corrupt-lval-field"
+                or "quarantined-corrupt-variable-field" => AccessCompactDiagnosticCategory.QuarantinedRow,
             "repaired-table-counter" => AccessCompactDiagnosticCategory.RepairedTableCounter,
             _ => AccessCompactDiagnosticCategory.Other,
         };

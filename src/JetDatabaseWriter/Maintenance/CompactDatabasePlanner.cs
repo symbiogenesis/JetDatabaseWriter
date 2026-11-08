@@ -332,8 +332,33 @@ internal static class CompactDatabasePlanner
                         var unmappedRowList = new List<(RowLocation Location, byte[] Payload)>();
                         await session.ScanRowsAsync(
                             owner,
-                            (location, payload, _) =>
+                            async (location, payload, rowToken) =>
                             {
+                                if (!CompactDataPageSalvager.IsSystemTableName(tableName))
+                                {
+                                    await CompactRawFieldReader.ScanAsync(
+                                        format,
+                                        definition,
+                                        location,
+                                        payload,
+                                        static (field, _) =>
+                                        {
+                                            if (field.Kind == CompactRawFieldKind.Stored
+                                                && !field.IsLongValue
+                                                && !field.Column.IsFixed
+                                                && !field.Column.IsCalculated
+                                                && field.Column.Size > 0
+                                                && field.RawBytes.Length > field.Column.Size)
+                                            {
+                                                throw Corrupt(field.Location.PageNumber, $"Row slot {field.Location.RowIndex} variable column '{field.Column.Name}' length ({field.RawBytes.Length}) exceeds declared size ({field.Column.Size}).");
+                                            }
+
+                                            return default;
+                                        },
+                                        rowToken,
+                                        hydratedColumns).ConfigureAwait(false);
+                                }
+
                                 bool isMapped = mappedPages?.Contains(location.PageNumber) == true
                                     && mappedPages.Contains(location.DataPageNumber);
                                 if (isMapped)
@@ -344,8 +369,6 @@ internal static class CompactDatabasePlanner
                                 {
                                     unmappedRowList.Add((location, payload.ToArray()));
                                 }
-
-                                return default;
                             },
                             token).ConfigureAwait(false);
 
