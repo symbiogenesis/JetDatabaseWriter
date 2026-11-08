@@ -1066,7 +1066,7 @@ public sealed class JetEntityFrameworkCoreProviderTests
             var projected = await projectionStore.Orders
                 .Include(o => o.Customer)
                 .OrderBy(o => o.TotalAmount)
-                .Select(o => new { Order = o, Customer = o.Customer, Pair = new ValueTuple<Order, Customer?>(o, o.Customer) })
+                .Select(o => new { Order = o, o.Customer, Pair = new ValueTuple<Order, Customer?>(o, o.Customer) })
                 .FirstAsync(ct);
 
             Assert.NotNull(projected.Customer);
@@ -1303,6 +1303,101 @@ public sealed class JetEntityFrameworkCoreProviderTests
         }
     }
 
+    [Fact]
+    public async Task ModelValidation_And_JetMetadataExtensions_Calculated_DefaultExpressions_ValidationRules_Currency_And_DateTimeExtended_Work()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+
+        // 1. JetModelValidator rejects TPT (derived entity mapped to a separate table)
+        await using MemoryStream invalidStream = new();
+        DbContextOptions<InvalidTptDbContext> invalidOptions = new DbContextOptionsBuilder<InvalidTptDbContext>()
+            .UseJetDatabaseWriter(invalidStream, DatabaseFormat.AceAccdb, leaveOpen: true)
+            .Options;
+        await using (InvalidTptDbContext invalidCtx = new(invalidOptions))
+        {
+            InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => _ = invalidCtx.Model);
+            Assert.Contains("TPH", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // 2. Access column metadata extensions: calculated column, default value expression,
+        //    validation rule + text, description, allow zero length, currency, and Date/Time Extended.
+        await using MemoryStream stream = new();
+        DbContextOptions<InvoiceDbContext> options = new DbContextOptionsBuilder<InvoiceDbContext>()
+            .UseJetDatabaseWriter(stream, DatabaseFormat.AceAccdb, leaveOpen: true)
+            .Options;
+
+        DateTime preciseTimestamp = new DateTime(2026, 7, 15, 14, 30, 45, DateTimeKind.Unspecified).AddTicks(1234567);
+
+        await using (InvoiceDbContext context = new(options))
+        {
+            Assert.True(await context.Database.EnsureCreatedAsync(ct));
+
+            InvoiceLine line = new()
+            {
+                Sku = "SKU-100",
+                Quantity = 3,
+                UnitPrice = 12.50m,
+                RecordedAt = preciseTimestamp,
+            };
+            context.Lines.Add(line);
+            _ = await context.SaveChangesAsync(ct);
+
+            // Calculated column ([Quantity] * [UnitPrice]) and DefaultValueExpression (=10 + 5) read back into tracked entity
+            Assert.Equal(1, line.Id);
+            Assert.Equal(15, line.DiscountPoints);
+            Assert.Equal(37.50m, line.LineTotal);
+
+            // Updating Quantity recomputes calculated LineTotal and updates tracked entity
+            line.Quantity = 4;
+            _ = await context.SaveChangesAsync(ct);
+            Assert.Equal(50.00m, line.LineTotal);
+
+            // Validation rule (> 0) rejects Quantity == 0 with DbUpdateException
+            InvoiceLine invalidQty = new()
+            {
+                Sku = "SKU-BAD",
+                Quantity = 0,
+                UnitPrice = 10m,
+                RecordedAt = preciseTimestamp,
+            };
+            context.Lines.Add(invalidQty);
+            DbUpdateException ruleEx = await Assert.ThrowsAsync<DbUpdateException>(() => context.SaveChangesAsync(ct));
+            Assert.Contains("Quantity must be positive", ruleEx.Message, StringComparison.Ordinal);
+            context.Entry(invalidQty).State = EntityState.Detached;
+
+            // AllowZeroLength(false) rejects empty Sku with DbUpdateException
+            InvoiceLine emptySku = new()
+            {
+                Sku = string.Empty,
+                Quantity = 1,
+                UnitPrice = 10m,
+                RecordedAt = preciseTimestamp,
+            };
+            context.Lines.Add(emptySku);
+            _ = await Assert.ThrowsAsync<DbUpdateException>(() => context.SaveChangesAsync(ct));
+        }
+
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, leaveOpen: true, cancellationToken: ct);
+        IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync("InvoiceLines", ct);
+        ColumnMetadata skuCol = cols.Single(static c => c.Name == "Sku");
+        Assert.False(skuCol.AllowZeroLength);
+
+        ColumnMetadata qtyCol = cols.Single(static c => c.Name == "Quantity");
+        Assert.Equal("> 0", qtyCol.ValidationRuleExpression);
+        Assert.Equal("Quantity must be positive", qtyCol.ValidationText);
+        Assert.Equal("Line item quantity", qtyCol.Description);
+
+        ColumnMetadata priceCol = cols.Single(static c => c.Name == "UnitPrice");
+        Assert.True(priceCol.IsCurrency);
+
+        ColumnMetadata totalCol = cols.Single(static c => c.Name == "LineTotal");
+        Assert.True(totalCol.IsCalculated);
+
+        ColumnMetadata recordedCol = cols.Single(static c => c.Name == "RecordedAt");
+        Assert.Equal("Date/Time Extended", recordedCol.TypeName);
+    }
+
     private sealed class StoreDbContext(DbContextOptions<StoreDbContext> options) : DbContext(options)
     {
         public DbSet<Customer> Customers => this.Set<Customer>();
@@ -1536,5 +1631,66 @@ public sealed class JetEntityFrameworkCoreProviderTests
         public string RoutingNumber { get; set; } = string.Empty;
 
         public string BankName { get; set; } = string.Empty;
+    }
+
+    private sealed class InvalidTptDbContext(DbContextOptions<InvalidTptDbContext> options) : DbContext(options)
+    {
+        public DbSet<PaymentMethod> PaymentMethods => this.Set<PaymentMethod>();
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            _ = modelBuilder.Entity<PaymentMethod>(entity =>
+            {
+                _ = entity.ToTable("PaymentMethods");
+                _ = entity.HasKey(p => p.Id);
+            });
+
+            _ = modelBuilder.Entity<CardPaymentMethod>(static entity => _ = entity.ToTable("CardPaymentMethods"));
+        }
+    }
+
+    private sealed class InvoiceDbContext(DbContextOptions<InvoiceDbContext> options) : DbContext(options)
+    {
+        public DbSet<InvoiceLine> Lines => this.Set<InvoiceLine>();
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+            _ = modelBuilder.Entity<InvoiceLine>(entity =>
+            {
+                _ = entity.ToTable("InvoiceLines");
+                _ = entity.HasKey(l => l.Id);
+                _ = entity.Property(l => l.Sku)
+                    .HasMaxLength(40)
+                    .IsRequired()
+                    .HasJetAllowZeroLength(false);
+                _ = entity.Property(l => l.Quantity)
+                    .HasJetValidationRule("> 0", "Quantity must be positive")
+                    .HasJetDescription("Line item quantity");
+                _ = entity.Property(l => l.DiscountPoints)
+                    .HasJetDefaultValueExpression("=10 + 5");
+                _ = entity.Property(l => l.UnitPrice)
+                    .UseJetCurrency();
+                _ = entity.Property(l => l.LineTotal)
+                    .UseJetCurrency()
+                    .HasJetCalculatedExpression("[Quantity] * [UnitPrice]");
+                _ = entity.Property(l => l.RecordedAt)
+                    .UseJetDateTimeExtended();
+            });
+    }
+
+    private sealed class InvoiceLine
+    {
+        public int Id { get; set; }
+
+        public string Sku { get; set; } = string.Empty;
+
+        public int Quantity { get; set; }
+
+        public int DiscountPoints { get; set; }
+
+        public decimal UnitPrice { get; set; }
+
+        public decimal LineTotal { get; set; }
+
+        public DateTime RecordedAt { get; set; }
     }
 }

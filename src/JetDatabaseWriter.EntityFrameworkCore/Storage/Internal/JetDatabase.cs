@@ -11,6 +11,7 @@ using JetDatabaseWriter.EntityFrameworkCore.Query.Internal;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using Microsoft.EntityFrameworkCore;
@@ -104,24 +105,26 @@ public sealed class JetDatabase : Database
 
                 if (entry.EntityState == EntityState.Added)
                 {
-                    (RowValues rowValues, IProperty? autoIncrementProperty) = PrepareInsertRow(entry);
+                    (RowValues rowValues, IProperty? autoIncrementProperty, List<IProperty>? serverGeneratedProps) = PrepareInsertRow(entry);
                     string tableName = JetEntityTypeMetadata.GetTableName(entry.EntityType);
 
                     if (autoIncrementProperty is null)
                     {
                         List<RowValues> batchRows = [rowValues];
+                        List<(IUpdateEntry Entry, List<IProperty>? ServerProps)> batchEntries = [(entry, serverGeneratedProps)];
                         int nextIdx = index + 1;
                         while (nextIdx < orderedEntries.Count
                             && orderedEntries[nextIdx].EntityState == EntityState.Added
                             && string.Equals(JetEntityTypeMetadata.GetTableName(orderedEntries[nextIdx].EntityType), tableName, StringComparison.OrdinalIgnoreCase))
                         {
-                            (RowValues nextRow, IProperty? nextAutoInc) = PrepareInsertRow(orderedEntries[nextIdx]);
+                            (RowValues nextRow, IProperty? nextAutoInc, List<IProperty>? nextServerProps) = PrepareInsertRow(orderedEntries[nextIdx]);
                             if (nextAutoInc is not null)
                             {
                                 break;
                             }
 
                             batchRows.Add(nextRow);
+                            batchEntries.Add((orderedEntries[nextIdx], nextServerProps));
                             nextIdx++;
                         }
 
@@ -134,12 +137,21 @@ public sealed class JetDatabase : Database
                             await writer.InsertRowsAsync(tableName, batchRows, cancellationToken).ConfigureAwait(false);
                         }
 
+                        foreach ((IUpdateEntry itemEntry, List<IProperty>? itemServerProps) in batchEntries)
+                        {
+                            if (itemServerProps is { Count: > 0 })
+                            {
+                                await PopulateStoreGeneratedColumnsAsync(writer, tableName, itemEntry, itemServerProps, cancellationToken).ConfigureAwait(false);
+                            }
+                        }
+
                         totalAffected += batchRows.Count;
                         index = nextIdx;
                         continue;
                     }
 
-                    List<(RowValues Values, IUpdateEntry Entry, IProperty Property)> autoIncBatch = [(rowValues, entry, autoIncrementProperty)];
+                    List<(RowValues Values, IUpdateEntry Entry, IProperty Property, List<IProperty>? ServerProps)> autoIncBatch =
+                        [(rowValues, entry, autoIncrementProperty, serverGeneratedProps)];
                     int nextAutoIdx = index + 1;
                     if (!HasSelfReferencingForeignKey(entry.EntityType))
                     {
@@ -148,13 +160,13 @@ public sealed class JetDatabase : Database
                             && string.Equals(JetEntityTypeMetadata.GetTableName(orderedEntries[nextAutoIdx].EntityType), tableName, StringComparison.OrdinalIgnoreCase)
                             && !HasSelfReferencingForeignKey(orderedEntries[nextAutoIdx].EntityType))
                         {
-                            (RowValues nextRow, IProperty? nextAutoInc) = PrepareInsertRow(orderedEntries[nextAutoIdx]);
+                            (RowValues nextRow, IProperty? nextAutoInc, List<IProperty>? nextServerProps) = PrepareInsertRow(orderedEntries[nextAutoIdx]);
                             if (nextAutoInc is null)
                             {
                                 break;
                             }
 
-                            autoIncBatch.Add((nextRow, orderedEntries[nextAutoIdx], nextAutoInc));
+                            autoIncBatch.Add((nextRow, orderedEntries[nextAutoIdx], nextAutoInc, nextServerProps));
                             nextAutoIdx++;
                         }
                     }
@@ -204,7 +216,7 @@ public sealed class JetDatabase : Database
 #pragma warning restore CA1031, RCS1075
             }
 
-            if (ex is IJetException)
+            if (ex is IJetException || (ex is ArgumentException && activeEntry is not null))
             {
                 IReadOnlyList<IUpdateEntry> failedEntries = activeEntry is not null ? [activeEntry] : [.. orderedEntries];
                 throw new DbUpdateException(ex.Message, ex, failedEntries);
@@ -465,17 +477,25 @@ public sealed class JetDatabase : Database
         return false;
     }
 
-    private static (RowValues Values, IProperty? AutoIncrementProperty) PrepareInsertRow(IUpdateEntry entry)
+    private static (RowValues Values, IProperty? AutoIncrementProperty, List<IProperty>? ServerGeneratedProperties) PrepareInsertRow(IUpdateEntry entry)
     {
         IEntityType entityType = entry.EntityType;
         RowValues rowValues = [];
         HashSet<string> populatedColumns = [with(StringComparer.OrdinalIgnoreCase)];
         IProperty? autoIncrementProperty = null;
+        List<IProperty>? serverGeneratedProperties = null;
 
         foreach (IProperty property in entityType.GetProperties())
         {
             string columnName = JetEntityTypeMetadata.GetColumnName(property);
             _ = populatedColumns.Add(columnName);
+            if (!string.IsNullOrWhiteSpace(JetEntityTypeMetadata.GetCalculatedExpression(property)))
+            {
+                serverGeneratedProperties ??= [];
+                serverGeneratedProperties.Add(property);
+                continue;
+            }
+
             if (JetEntityTypeMetadata.IsAutoIncrementProperty(property))
             {
                 object? currentVal = entry.GetCurrentValue(property);
@@ -505,6 +525,15 @@ public sealed class JetDatabase : Database
 
             object? modelValue = entry.GetCurrentValue(property);
             if (property.ValueGenerated == ValueGenerated.OnAdd
+                && !string.IsNullOrWhiteSpace(JetEntityTypeMetadata.GetDefaultValueExpression(property))
+                && (entry.HasTemporaryValue(property) || IsClrDefaultOrSentinel(property, modelValue)))
+            {
+                serverGeneratedProperties ??= [];
+                serverGeneratedProperties.Add(property);
+                continue;
+            }
+
+            if (property.ValueGenerated == ValueGenerated.OnAdd
                 && JetEntityTypeMetadata.TryGetDefaultValue(property, out object? defaultValue)
                 && defaultValue is not (null or DBNull)
                 && (entry.HasTemporaryValue(property) || IsClrDefaultOrSentinel(property, modelValue)))
@@ -518,7 +547,8 @@ public sealed class JetDatabase : Database
 
         foreach (IProperty hierarchyProp in JetEntityTypeMetadata.GetHierarchyProperties(entityType.GetRootType()))
         {
-            if (JetEntityTypeMetadata.IsAutoIncrementProperty(hierarchyProp))
+            if (JetEntityTypeMetadata.IsAutoIncrementProperty(hierarchyProp)
+                || !string.IsNullOrWhiteSpace(JetEntityTypeMetadata.GetCalculatedExpression(hierarchyProp)))
             {
                 continue;
             }
@@ -530,7 +560,7 @@ public sealed class JetDatabase : Database
             }
         }
 
-        return (rowValues, autoIncrementProperty);
+        return (rowValues, autoIncrementProperty, serverGeneratedProperties);
     }
 
     private static bool IsClrDefaultOrSentinel(IProperty property, object? value)
@@ -594,7 +624,7 @@ public sealed class JetDatabase : Database
     private static async ValueTask ExecuteAutoIncrementBatchInsertAsync(
         AccessWriter writer,
         string tableName,
-        List<(RowValues Values, IUpdateEntry Entry, IProperty Property)> batch,
+        List<(RowValues Values, IUpdateEntry Entry, IProperty Property, List<IProperty>? ServerProps)> batch,
         Dictionary<string, long> tdefPageByTable,
         CancellationToken cancellationToken)
     {
@@ -605,7 +635,7 @@ public sealed class JetDatabase : Database
         else
         {
             List<RowValues> rows = [with(batch.Count)];
-            foreach ((RowValues values, _, _) in batch)
+            foreach ((RowValues values, _, _, _) in batch)
             {
                 rows.Add(values);
             }
@@ -625,17 +655,74 @@ public sealed class JetDatabase : Database
             tdefPageByTable[tableName] = tdefPage;
         }
 
-        using PageLease lease = await writer.Services.SnapshotPages.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        int autoNumberOffset = writer.PageSize == 2048
-            ? TDefHeaderLayout.Jet3.AutoNumber
-            : TDefHeaderLayout.Jet4.AutoNumber;
-        long highWater = JetTypeInfo.Ru32(lease.Buffer, autoNumberOffset);
-        long firstAssigned = highWater - batch.Count + 1;
+        using (PageLease lease = await writer.Services.SnapshotPages.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false))
+        {
+            int autoNumberOffset = writer.PageSize == 2048
+                ? TDefHeaderLayout.Jet3.AutoNumber
+                : TDefHeaderLayout.Jet4.AutoNumber;
+            long highWater = JetTypeInfo.Ru32(lease.Buffer, autoNumberOffset);
+            long firstAssigned = highWater - batch.Count + 1;
+            for (int i = 0; i < batch.Count; i++)
+            {
+                (_, IUpdateEntry itemEntry, IProperty itemProperty, _) = batch[i];
+                object? storeGenerated = JetEntityTypeMetadata.ConvertFromProvider(itemProperty, firstAssigned + i);
+                itemEntry.SetStoreGeneratedValue(itemProperty, storeGenerated);
+            }
+        }
+
         for (int i = 0; i < batch.Count; i++)
         {
-            (_, IUpdateEntry itemEntry, IProperty itemProperty) = batch[i];
-            object? storeGenerated = JetEntityTypeMetadata.ConvertFromProvider(itemProperty, firstAssigned + i);
-            itemEntry.SetStoreGeneratedValue(itemProperty, storeGenerated);
+            (_, IUpdateEntry itemEntry, _, List<IProperty>? serverProps) = batch[i];
+            if (serverProps is { Count: > 0 })
+            {
+                await PopulateStoreGeneratedColumnsAsync(writer, tableName, itemEntry, serverProps, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static async ValueTask PopulateStoreGeneratedColumnsAsync(
+        AccessWriter writer,
+        string tableName,
+        IUpdateEntry entry,
+        List<IProperty> serverProperties,
+        CancellationToken cancellationToken)
+    {
+        IKey? primaryKey = entry.EntityType.FindPrimaryKey();
+        if (primaryKey is null || primaryKey.Properties.Count == 0)
+        {
+            return;
+        }
+
+        ResolvedTable? resolved = await writer.Services.Snapshots.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved is null)
+        {
+            return;
+        }
+
+        RowCriteria pkCriteria = [];
+        foreach (IProperty pkProp in primaryKey.Properties)
+        {
+            string colName = JetEntityTypeMetadata.GetColumnName(pkProp);
+            object? pkVal = JetEntityTypeMetadata.ConvertToProvider(pkProp, entry.GetCurrentValue(pkProp));
+            pkCriteria.Add(ColumnPredicate.EqualTo(colName, pkVal));
+        }
+
+        List<LocatedRow>? matched = await writer.Services.Snapshots.TryReadIndexedRowsAsync(resolved, pkCriteria, cancellationToken).ConfigureAwait(false);
+        if (matched is not { Count: > 0 })
+        {
+            return;
+        }
+
+        object?[] rowValues = matched[0].Values;
+        foreach (IProperty prop in serverProperties)
+        {
+            string colName = JetEntityTypeMetadata.GetColumnName(prop);
+            int colIdx = resolved.Definition.FindColumnIndex(colName);
+            if ((uint)colIdx < (uint)rowValues.Length)
+            {
+                object? converted = JetEntityTypeMetadata.ConvertFromProvider(prop, rowValues[colIdx]);
+                entry.SetStoreGeneratedValue(prop, converted);
+            }
         }
     }
 
@@ -648,9 +735,17 @@ public sealed class JetDatabase : Database
         string tableName = JetEntityTypeMetadata.GetTableName(entityType);
         RowCriteria criteria = BuildIdentityAndConcurrencyCriteria(entry);
         RowValues updatedValues = [];
+        List<IProperty>? calculatedProperties = null;
 
         foreach (IProperty property in entityType.GetProperties())
         {
+            if (!string.IsNullOrWhiteSpace(JetEntityTypeMetadata.GetCalculatedExpression(property)))
+            {
+                calculatedProperties ??= [];
+                calculatedProperties.Add(property);
+                continue;
+            }
+
             if (property.IsPrimaryKey() || !entry.IsModified(property))
             {
                 continue;
@@ -672,6 +767,11 @@ public sealed class JetDatabase : Database
             throw new DbUpdateConcurrencyException(
                 "The database operation was expected to affect 1 row(s), but actually affected 0 row(s); data may have been modified or deleted since entities were loaded.",
                 [entry]);
+        }
+
+        if (calculatedProperties is { Count: > 0 })
+        {
+            await PopulateStoreGeneratedColumnsAsync(writer, tableName, entry, calculatedProperties, cancellationToken).ConfigureAwait(false);
         }
 
         return affected;

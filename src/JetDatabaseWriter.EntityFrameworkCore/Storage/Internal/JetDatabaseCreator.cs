@@ -107,9 +107,17 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         string columnName = JetEntityTypeMetadata.GetColumnName(property);
         Type storageType = JetEntityTypeMetadata.GetStorageClrType(property);
         bool isAutoIncrement = JetEntityTypeMetadata.IsAutoIncrementProperty(property);
+        string? calculatedExpression = JetEntityTypeMetadata.GetCalculatedExpression(property);
+        bool isCalculated = !string.IsNullOrWhiteSpace(calculatedExpression);
         bool isDerivedProperty = !ReferenceEquals(property.DeclaringType, property.DeclaringType.ContainingEntityType.GetRootType());
         bool isNullable = !isAutoIncrement && !property.IsPrimaryKey() && (property.IsNullable || isDerivedProperty);
-        object? defaultValue = TryResolveSupportedDefaultValue(property, isAutoIncrement);
+        object? defaultValue = isCalculated ? null : TryResolveSupportedDefaultValue(property, isAutoIncrement);
+        string? defaultValueExpression = isAutoIncrement || isCalculated
+            ? null
+            : JetEntityTypeMetadata.GetDefaultValueExpression(property);
+        string? validationRule = JetEntityTypeMetadata.GetValidationRuleExpression(property);
+        string? validationText = JetEntityTypeMetadata.GetValidationText(property);
+        string? description = JetEntityTypeMetadata.GetDescription(property);
 
         if (storageType == typeof(string))
         {
@@ -135,8 +143,14 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             return new ColumnDefinition(columnName, typeof(string), resolvedMaxLength)
             {
                 IsNullable = isNullable,
-                AllowZeroLength = true,
+                AllowZeroLength = JetEntityTypeMetadata.GetAllowZeroLength(property),
                 DefaultValue = defaultValue,
+                DefaultValueExpression = defaultValueExpression,
+                IsCalculated = isCalculated,
+                CalculationExpression = calculatedExpression,
+                ValidationRuleExpression = validationRule,
+                ValidationText = validationText,
+                Description = description,
             };
         }
 
@@ -148,7 +162,8 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             int defaultScale = isIntegerBackedDecimal ? 0 : 4;
             int precision = Math.Clamp(property.GetPrecision() ?? defaultPrecision, 1, 28);
             int scale = Math.Clamp(property.GetScale() ?? defaultScale, 0, precision);
-            bool isCurrency = format == DatabaseFormat.Jet3Mdb && (precision - scale > 14 || scale > 4);
+            bool isCurrency = JetEntityTypeMetadata.GetIsCurrency(property)
+                || (format == DatabaseFormat.Jet3Mdb && (precision - scale > 14 || scale > 4));
             return new ColumnDefinition(columnName, typeof(decimal))
             {
                 IsNullable = isNullable,
@@ -156,6 +171,12 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                 NumericPrecision = (byte)precision,
                 NumericScale = (byte)scale,
                 DefaultValue = defaultValue,
+                DefaultValueExpression = defaultValueExpression,
+                IsCalculated = isCalculated,
+                CalculationExpression = calculatedExpression,
+                ValidationRuleExpression = validationRule,
+                ValidationText = validationText,
+                Description = description,
             };
         }
 
@@ -163,7 +184,14 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         {
             IsNullable = isNullable,
             IsAutoIncrement = isAutoIncrement,
+            IsDateTimeExtended = storageType == typeof(DateTime) && JetEntityTypeMetadata.GetIsDateTimeExtended(property),
             DefaultValue = defaultValue,
+            DefaultValueExpression = defaultValueExpression,
+            IsCalculated = isCalculated,
+            CalculationExpression = calculatedExpression,
+            ValidationRuleExpression = validationRule,
+            ValidationText = validationText,
+            Description = description,
         };
     }
 

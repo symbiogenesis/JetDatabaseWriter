@@ -19,7 +19,17 @@ internal static class JetEntityTypeMetadata
     private const string RelationalTableNameAnnotation = "Relational:TableName";
     private const string RelationalColumnNameAnnotation = "Relational:ColumnName";
     private const string RelationalDefaultValueAnnotation = "Relational:DefaultValue";
+    private const string RelationalDefaultValueSqlAnnotation = "Relational:DefaultValueSql";
+    private const string RelationalComputedColumnSqlAnnotation = "Relational:ComputedColumnSql";
     private const string JetDefaultValueAnnotation = "Jet:DefaultValue";
+    private const string JetDefaultValueExpressionAnnotation = "Jet:DefaultValueExpression";
+    private const string JetCalculatedExpressionAnnotation = "Jet:CalculatedExpression";
+    private const string JetValidationRuleAnnotation = "Jet:ValidationRule";
+    private const string JetValidationTextAnnotation = "Jet:ValidationText";
+    private const string JetDescriptionAnnotation = "Jet:Description";
+    private const string JetAllowZeroLengthAnnotation = "Jet:AllowZeroLength";
+    private const string JetIsCurrencyAnnotation = "Jet:IsCurrency";
+    private const string JetIsDateTimeExtendedAnnotation = "Jet:IsDateTimeExtended";
 
     /// <summary>
     /// Resolves the physical JET table name for <paramref name="entityType"/>.
@@ -135,6 +145,104 @@ internal static class JetEntityTypeMetadata
 
         defaultValue = null;
         return false;
+    }
+
+    /// <summary>
+    /// Gets the configured Access default-value expression for <paramref name="property"/>, if any.
+    /// </summary>
+    /// <param name="property">The EF Core property.</param>
+    /// <returns>The configured default-value expression, or <see langword="null"/>.</returns>
+    internal static string? GetDefaultValueExpression(IReadOnlyProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+
+        return property.FindAnnotation(JetDefaultValueExpressionAnnotation)?.Value as string
+            ?? property.FindAnnotation(RelationalDefaultValueSqlAnnotation)?.Value as string;
+    }
+
+    /// <summary>
+    /// Gets the configured Access calculated-column expression for <paramref name="property"/>, if any.
+    /// </summary>
+    /// <param name="property">The EF Core property.</param>
+    /// <returns>The configured calculated-column expression, or <see langword="null"/>.</returns>
+    internal static string? GetCalculatedExpression(IReadOnlyProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+
+        return property.FindAnnotation(JetCalculatedExpressionAnnotation)?.Value as string
+            ?? property.FindAnnotation(RelationalComputedColumnSqlAnnotation)?.Value as string;
+    }
+
+    /// <summary>
+    /// Gets the configured Access validation-rule expression for <paramref name="property"/>, if any.
+    /// </summary>
+    /// <param name="property">The EF Core property.</param>
+    /// <returns>The configured validation-rule expression, or <see langword="null"/>.</returns>
+    internal static string? GetValidationRuleExpression(IReadOnlyProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+
+        return property.FindAnnotation(JetValidationRuleAnnotation)?.Value as string;
+    }
+
+    /// <summary>
+    /// Gets the configured Access validation message for <paramref name="property"/>, if any.
+    /// </summary>
+    /// <param name="property">The EF Core property.</param>
+    /// <returns>The configured validation message, or <see langword="null"/>.</returns>
+    internal static string? GetValidationText(IReadOnlyProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+
+        return property.FindAnnotation(JetValidationTextAnnotation)?.Value as string;
+    }
+
+    /// <summary>
+    /// Gets the configured Access column description for <paramref name="property"/>, if any.
+    /// </summary>
+    /// <param name="property">The EF Core property.</param>
+    /// <returns>The configured column description, or <see langword="null"/>.</returns>
+    internal static string? GetDescription(IReadOnlyProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+
+        return property.FindAnnotation(JetDescriptionAnnotation)?.Value as string;
+    }
+
+    /// <summary>
+    /// Gets the configured <c>AllowZeroLength</c> flag for <paramref name="property"/>, defaulting to <see langword="true"/>.
+    /// </summary>
+    /// <param name="property">The EF Core property.</param>
+    /// <returns><see langword="true"/> if empty strings are allowed; otherwise, <see langword="false"/>.</returns>
+    internal static bool GetAllowZeroLength(IReadOnlyProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+
+        return property.FindAnnotation(JetAllowZeroLengthAnnotation)?.Value is not bool flag || flag;
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether <paramref name="property"/> is explicitly configured as an Access <c>Currency</c> column.
+    /// </summary>
+    /// <param name="property">The EF Core property.</param>
+    /// <returns><see langword="true"/> if configured as <c>Currency</c>; otherwise, <see langword="false"/>.</returns>
+    internal static bool GetIsCurrency(IReadOnlyProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+
+        return property.FindAnnotation(JetIsCurrencyAnnotation)?.Value is true;
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether <paramref name="property"/> is explicitly configured as an Access <c>Date/Time Extended</c> column.
+    /// </summary>
+    /// <param name="property">The EF Core property.</param>
+    /// <returns><see langword="true"/> if configured as <c>Date/Time Extended</c>; otherwise, <see langword="false"/>.</returns>
+    internal static bool GetIsDateTimeExtended(IReadOnlyProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+
+        return property.FindAnnotation(JetIsDateTimeExtendedAnnotation)?.Value is true;
     }
 
     /// <summary>
