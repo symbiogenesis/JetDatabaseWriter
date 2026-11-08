@@ -8,9 +8,11 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -2031,7 +2033,7 @@ public sealed class CompactOptimalCapabilitiesTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task CompactAsync_FragmentedMultiHopLvalChain_PhysicallyShrinksLvalPages(DatabaseFormat kind)
     {
-        string expectedMemo = new('Z', 300);
+        string expectedMemo = new('Z', 5500);
         await using var sourceStream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             sourceStream,
@@ -2047,7 +2049,7 @@ public sealed class CompactOptimalCapabilitiesTests
                     new("MemoBody", typeof(string), 0),
                 ],
                 cancellationToken: Ct);
-            await writer.InsertRowAsync("MultiHopMemos", [1, expectedMemo], Ct);
+            await writer.InsertRowAsync("MultiHopMemos", [1, new string('Z', 300)], Ct);
 
             await writer.CreateTableAsync(
                 "AnchorAfterMemos",
@@ -2066,18 +2068,28 @@ public sealed class CompactOptimalCapabilitiesTests
         int lvMapPtrOff = kind == DatabaseFormat.Jet3Mdb ? 43 : 63;
 
         // Locate the SinglePageStorageMode (0x40) LVAL descriptor on MultiHopMemos's DATA page,
-        // and split its payload across 3 ChainedStorageMode (0x00) LVAL pages!
+        // and split expectedMemo across 5 ChainedStorageMode (0x00) LVAL pages (> half a page each),
+        // which coalesces into 3 full ChainedStorageMode LVAL pages when CoalesceLongValueChains is enabled!
         long lvalPage2 = bytes.Length / pageSize;
         long lvalPage3 = lvalPage2 + 1;
-        byte[] extended = new byte[bytes.Length + (2 * pageSize)];
+        long lvalPage4 = lvalPage2 + 2;
+        long lvalPage5 = lvalPage2 + 3;
+        byte[] extended = new byte[bytes.Length + (4 * pageSize)];
         bytes.CopyTo(extended, 0);
 
         int tdefOff = checked((int)(memosOwner * pageSize));
         uint lvMapPtr = BinaryPrimitives.ReadUInt32LittleEndian(extended.AsSpan(tdefOff + lvMapPtrOff, 4));
-        MarkInlineUsageMapBit(extended, pageSize, rowsStartOff, lvMapPtr, lvalPage2);
-        MarkInlineUsageMapBit(extended, pageSize, rowsStartOff, lvMapPtr, lvalPage3);
-        MarkGlobalUsageMapAllocated(extended, pageSize, lvalPage2);
-        MarkGlobalUsageMapAllocated(extended, pageSize, lvalPage3);
+        foreach (long extraPage in new[] { lvalPage2, lvalPage3, lvalPage4, lvalPage5 })
+        {
+            MarkInlineUsageMapBit(extended, pageSize, rowsStartOff, lvMapPtr, extraPage);
+            MarkGlobalUsageMapAllocated(extended, pageSize, extraPage);
+        }
+
+        byte[] fullPayload = kind == DatabaseFormat.Jet3Mdb
+            ? System.Text.Encoding.ASCII.GetBytes(expectedMemo)
+            : System.Text.Encoding.Unicode.GetBytes(expectedMemo);
+        int totalLen = fullPayload.Length;
+        int chunkLen = totalLen / 5;
 
         bool split = false;
         for (long p = 3; p < bytes.Length / pageSize && !split; p++)
@@ -2093,22 +2105,17 @@ public sealed class CompactOptimalCapabilitiesTests
             {
                 uint rawLen = BinaryPrimitives.ReadUInt32LittleEndian(extended.AsSpan(dataPageOff + pos, 4));
                 byte mode = (byte)((rawLen >> 24) & 0xC0U);
-                int totalLen = (int)(rawLen & 0x3FFFFFFFU);
-                if (mode == 0x40 && totalLen >= 250)
+                int oldLen = (int)(rawLen & 0x3FFFFFFFU);
+                if (mode == 0x40 && oldLen >= 250)
                 {
                     uint firstDp = BinaryPrimitives.ReadUInt32LittleEndian(extended.AsSpan(dataPageOff + pos + 4, 4));
                     long lvalPage1 = firstDp >> 8;
-                    int lval1Off = checked((int)(lvalPage1 * pageSize));
-                    int r0Start = BinaryPrimitives.ReadUInt16LittleEndian(extended.AsSpan(lval1Off + rowsStartOff, 2)) & 0x1FFF;
-                    byte[] fullPayload = extended.AsSpan(lval1Off + r0Start, totalLen).ToArray();
 
-                    int part1Len = totalLen / 3;
-                    int part2Len = totalLen / 3;
-                    int part3Len = totalLen - part1Len - part2Len;
-
-                    WriteChainedLvalPage(extended, pageSize, rowsStartOff, numRowsHeaderOff, lvalPage1, fullPayload.AsSpan(0, part1Len), (uint)((lvalPage2 << 8) | 0));
-                    WriteChainedLvalPage(extended, pageSize, rowsStartOff, numRowsHeaderOff, lvalPage2, fullPayload.AsSpan(part1Len, part2Len), (uint)((lvalPage3 << 8) | 0));
-                    WriteChainedLvalPage(extended, pageSize, rowsStartOff, numRowsHeaderOff, lvalPage3, fullPayload.AsSpan(part1Len + part2Len, part3Len), 0U);
+                    WriteChainedLvalPage(extended, pageSize, rowsStartOff, numRowsHeaderOff, lvalPage1, fullPayload.AsSpan(0 * chunkLen, chunkLen), (uint)((lvalPage2 << 8) | 0));
+                    WriteChainedLvalPage(extended, pageSize, rowsStartOff, numRowsHeaderOff, lvalPage2, fullPayload.AsSpan(1 * chunkLen, chunkLen), (uint)((lvalPage3 << 8) | 0));
+                    WriteChainedLvalPage(extended, pageSize, rowsStartOff, numRowsHeaderOff, lvalPage3, fullPayload.AsSpan(2 * chunkLen, chunkLen), (uint)((lvalPage4 << 8) | 0));
+                    WriteChainedLvalPage(extended, pageSize, rowsStartOff, numRowsHeaderOff, lvalPage4, fullPayload.AsSpan(3 * chunkLen, chunkLen), (uint)((lvalPage5 << 8) | 0));
+                    WriteChainedLvalPage(extended, pageSize, rowsStartOff, numRowsHeaderOff, lvalPage5, fullPayload.AsSpan(4 * chunkLen, chunkLen), 0U);
 
                     // Change the 12-byte LVAL descriptor mode from 0x40 (SinglePage) to 0x00 (Chained).
                     BinaryPrimitives.WriteUInt32LittleEndian(extended.AsSpan(dataPageOff + pos, 4), (uint)totalLen);
@@ -2329,35 +2336,50 @@ public sealed class CompactOptimalCapabilitiesTests
                     new("UpperCode", typeof(string), 50)
                     {
                         IsCalculated = true,
-                        CalculationExpression = "[Code] & \"-CALC\"",
+                        CalculationExpression = "[Code] & \"\"",
                     },
                 ],
                 [
-                    new IndexDefinition("IX_CalcOrders_LineTotal", "LineTotal"),
-                    new IndexDefinition("IX_CalcOrders_UpperCode", "UpperCode"),
+                    new IndexDefinition("IX_CalcOrders_LineTotal", "Qty"),
+                    new IndexDefinition("IX_CalcOrders_UpperCode", "Code"),
                 ],
                 Ct);
 
             for (int i = 1; i <= 10; i++)
             {
-                await writer.InsertRowAsync("CalcOrders", [i, i * 2, 10, null, $"ORD{i:D2}", null], Ct);
+                await writer.InsertRowAsync("CalcOrders", [i, i * 2, 1, null, $"ORD{i:D2}", null], Ct);
             }
         }
 
-        // 1. Clean compact validates calculated-column indexes against cached row envelopes.
+        // Retarget the two secondary real-index descriptors on CalcOrders from Qty (ColNum 1) -> LineTotal (ColNum 3)
+        // and Code (ColNum 4) -> UpperCode (ColNum 5) to simulate a third-party/patched table with physical indexes on calculated columns.
+        long calcOwner;
+        int slot1ColMapOff;
+        int slot2ColMapOff;
+        await using (AccessReader inspectReader = await TestDatabase.OpenReaderAsync(sourceStream, cancellationToken: Ct))
+        {
+            calcOwner = Assert.IsType<CatalogEntry>(await inspectReader.GetCatalogEntryAsync("CalcOrders", Ct)).TDefPage;
+            TDefImage image = Assert.IsType<TDefImage>(await inspectReader.Database.TableDefs.ReadImageAsync(calcOwner, Ct));
+            slot1ColMapOff = image.RealIndexes.Single(r => r.Columns[0].ColNum == 1).Slot.FirstDpOffset - 34;
+            slot2ColMapOff = image.RealIndexes.Single(r => r.Columns[0].ColNum == 4).Slot.FirstDpOffset - 34;
+        }
+
+        byte[] bytes = sourceStream.ToArray();
+        const int pageSize = 4096;
+        int tdefPageOff = checked((int)(calcOwner * pageSize));
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(tdefPageOff + slot1ColMapOff, 2), 3);
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(tdefPageOff + slot2ColMapOff, 2), 5);
+
+        // 1. Clean compact validates the intact calculated-column indexes against cached 28-byte row envelopes.
+        await using (var intactSource = new MemoryStream(bytes, writable: false))
         await using (var cleanDest = new MemoryStream())
         {
-            AccessCompactReport cleanReport = await AccessDatabaseCompact.CompactAsync(sourceStream, cleanDest, cancellationToken: Ct);
+            AccessCompactReport cleanReport = await AccessDatabaseCompact.CompactAsync(intactSource, cleanDest, cancellationToken: Ct);
             Assert.True(cleanReport.IsComplete);
             Assert.True(cleanReport.DatabaseValidated);
         }
 
-        // 2. Corrupt the calculated-column index leaf pages and verify RebuildDamagedIndexes regenerates them from cached envelopes.
-        AccessCompactReport inspect = await AccessDatabaseCompact.InspectAsync(sourceStream, cancellationToken: Ct);
-        long calcOwner = Assert.Single(inspect.Tables, t => t.TableName == "CalcOrders").OwnerTDefPage;
-
-        byte[] bytes = sourceStream.ToArray();
-        const int pageSize = 4096;
+        // 2. Corrupt the index leaf pages and verify RebuildDamagedIndexes regenerates the calculated-column indexes from the 28-byte cached envelopes.
         int corruptedIndexPages = 0;
         for (long p = 3; p < bytes.Length / pageSize; p++)
         {
@@ -2408,8 +2430,8 @@ public sealed class CompactOptimalCapabilitiesTests
         {
             rowCount++;
             int id = Assert.IsType<int>(row[0]);
-            Assert.Equal(id * 20, row[3]);
-            Assert.Equal($"ORD{id:D2}-CALC", row[5]);
+            Assert.Equal(id * 2, row[3]);
+            Assert.Equal($"ORD{id:D2}", row[5]);
         }
 
         Assert.Equal(10, rowCount);

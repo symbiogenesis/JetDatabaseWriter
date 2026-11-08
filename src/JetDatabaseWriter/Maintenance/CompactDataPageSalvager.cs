@@ -94,6 +94,7 @@ internal static class CompactDataPageSalvager
         }
 
         definitions[2] = catalogDef;
+        var knownNonDataTablePages = new HashSet<long> { 0, 1, 2 };
         try
         {
             var traversalBudget = new CompactTraversalBudget
@@ -117,14 +118,45 @@ internal static class CompactDataPageSalvager
                 budget.MaxReferences,
                 budget.MaxMapSteps,
                 cancellationToken).ConfigureAwait(false);
+            var physicalCatalogRows = new List<CatalogRow>(physical.Rows.Count);
             foreach (CompactCatalogRecovery.RecoveredRow recovered in physical.Rows)
             {
                 CatalogRow row = recovered.Identity;
+                physicalCatalogRows.Add(row);
+                _ = knownNonDataTablePages.Add(row.PageNumber);
+                _ = knownNonDataTablePages.Add(recovered.Location.DataPageNumber);
                 bool isLocalTable = row.ObjectType == Constants.SystemObjects.UserTableType
                     || (row.ObjectType == Constants.SystemObjects.LinkedOdbcType && row.Id > 0);
                 if (isLocalTable && row.TDefPage >= 2 && row.TDefPage < source.PageCount)
                 {
                     tableNames[row.TDefPage] = row.Name;
+                }
+            }
+
+            if (physical.Diagnostics.Count > 0 || physical.Rows.Count == 0)
+            {
+                CompactCatalogRecovery.Result indexRecovered = await CompactCatalogRecovery.ScanAsync(
+                    earlySource,
+                    format,
+                    catalogDef,
+                    catalogReader,
+                    traversalBudget,
+                    physicalCatalogRows,
+                    Math.Max(1, budget.MaxReferences - physical.References),
+                    Math.Max(1, budget.MaxMapSteps - physical.DirectorySlots - physical.OverflowHops),
+                    budget.MaxWorkingBytes,
+                    cancellationToken).ConfigureAwait(false);
+                foreach (CompactCatalogRecovery.RecoveredRow recovered in indexRecovered.Rows)
+                {
+                    CatalogRow row = recovered.Identity;
+                    _ = knownNonDataTablePages.Add(row.PageNumber);
+                    _ = knownNonDataTablePages.Add(recovered.Location.DataPageNumber);
+                    bool isLocalTable = row.ObjectType == Constants.SystemObjects.UserTableType
+                        || (row.ObjectType == Constants.SystemObjects.LinkedOdbcType && row.Id > 0);
+                    if (isLocalTable && row.TDefPage >= 2 && row.TDefPage < source.PageCount)
+                    {
+                        tableNames[row.TDefPage] = row.Name;
+                    }
                 }
             }
         }
@@ -153,7 +185,6 @@ internal static class CompactDataPageSalvager
         long totalQuarantinedRows = 0;
         long totalInlinePromoted = 0;
 
-        var knownNonDataTablePages = new HashSet<long> { 0, 1, 2 };
         var tableOwnedPages = new Dictionary<long, HashSet<long>>();
         var tableOwnedMapPointers = new Dictionary<long, UsageMapPointer>();
         var tableFreeMapPointers = new Dictionary<long, UsageMapPointer>();
@@ -233,7 +264,14 @@ internal static class CompactDataPageSalvager
                 {
                     _ = knownNonDataTablePages.Add(ownedPtr.PageNumber);
                     HashSet<long> ownedMembers = await ReadUsageMapMembersSafeAsync(defSource, format, ownedPtr, knownNonDataTablePages, cancellationToken).ConfigureAwait(false);
-                    if (owner >= 3)
+                    if (owner == 2 || IsSystemTableName(pair.Value))
+                    {
+                        foreach (long sysPage in ownedMembers)
+                        {
+                            _ = knownNonDataTablePages.Add(sysPage);
+                        }
+                    }
+                    else if (owner >= 3)
                     {
                         tableOwnedMapPointers[owner] = ownedPtr;
                         tableOwnedPages[owner] = ownedMembers;
@@ -905,7 +943,7 @@ internal static class CompactDataPageSalvager
         }
 
         int relocatedTDefPages = 0;
-        if (packInteriorFreePages && !diagnostics.Exists(static d => d.IsBlocking))
+        if (packInteriorFreePages)
         {
             relocatedTDefPages = await RelocateHighTDefContinuationPagesAsync(
                 source,
@@ -1571,7 +1609,7 @@ internal static class CompactDataPageSalvager
                     return (false, $"Overflow target slot {nextPage}:{nextRow} is not marked with DeletedRowFlag.");
                 }
 
-                if (!UsageMap.TryGetRowBound(targetPage, format.DataPage, format.PageSize, nextRow, out RowBound bound)
+                if (!TryGetAnySlotRowBound(targetPage, format.DataPage, format.PageSize, nextRow, out RowBound bound)
                     || bound.RowSize <= 0)
                 {
                     return (false, $"Overflow target slot {nextPage}:{nextRow} has invalid slice bounds.");
@@ -1610,6 +1648,53 @@ internal static class CompactDataPageSalvager
         }
 
         return (false, $"Overflow slot {headerSlot} exceeds maximum overflow hops.");
+    }
+
+    private static bool TryGetAnySlotRowBound(ReadOnlySpan<byte> page, DataPageLayout layout, int pageSize, int rowIndex, out RowBound rowBound)
+    {
+        rowBound = default;
+        if (rowIndex < 0)
+        {
+            return false;
+        }
+
+        int rowCount = BinaryPrimitives.ReadUInt16LittleEndian(page.Slice(layout.NumRows, 2));
+        if (rowCount <= rowIndex)
+        {
+            return false;
+        }
+
+        int maxRows = Math.Min(rowCount, (pageSize - layout.RowsStart) / 2);
+        if (rowIndex >= maxRows)
+        {
+            return false;
+        }
+
+        int rawRowStart = BinaryPrimitives.ReadUInt16LittleEndian(page.Slice(layout.RowsStart + (rowIndex * 2), 2));
+        int rowStart = rawRowStart & Constants.DataPage.RowOffsetMask;
+        int slotTableEnd = layout.RowsStart + (maxRows * 2);
+        if (rowStart < slotTableEnd || rowStart >= pageSize)
+        {
+            return false;
+        }
+
+        int rowEnd = pageSize;
+        for (int candidateIndex = 0; candidateIndex < maxRows; candidateIndex++)
+        {
+            if (candidateIndex == rowIndex)
+            {
+                continue;
+            }
+
+            int candidateStart = BinaryPrimitives.ReadUInt16LittleEndian(page.Slice(layout.RowsStart + (candidateIndex * 2), 2)) & Constants.DataPage.RowOffsetMask;
+            if (candidateStart > rowStart && candidateStart < rowEnd)
+            {
+                rowEnd = candidateStart;
+            }
+        }
+
+        rowBound = new RowBound(rowIndex, rowStart, rowEnd - rowStart);
+        return rowBound.RowSize > 0;
     }
 
     private static async ValueTask<PartialPageSalvageAttempt> TrySalvagePartialDataPageAsync(
@@ -6878,7 +6963,7 @@ internal static class CompactDataPageSalvager
                     int raw = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.RowsStart + (slot * 2), 2));
                     if ((raw & Constants.DataPage.DeletedRowFlag) != 0
                         || (raw & Constants.DataPage.OverflowRowFlag) == 0
-                        || !UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, slot, out RowBound bound)
+                        || !TryGetAnySlotRowBound(page, format.DataPage, format.PageSize, slot, out RowBound bound)
                         || bound.RowSize != 4)
                     {
                         continue;
@@ -7079,7 +7164,7 @@ internal static class CompactDataPageSalvager
                         {
                             survivingLiveRows++;
                             if ((raw & Constants.DataPage.OverflowRowFlag) != 0
-                                && UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, slot, out RowBound bound)
+                                && TryGetAnySlotRowBound(page, format.DataPage, format.PageSize, slot, out RowBound bound)
                                 && bound.RowSize == 4)
                             {
                                 int nextRow = page[bound.RowStart];

@@ -27,7 +27,8 @@ public sealed record AccessCompactDiagnostic(
         : MapKindToCategory(Kind);
 
     /// <summary>Gets a value indicating whether this diagnostic prevents complete reclamation and in-place replacement.</summary>
-    internal bool IsBlocking => this.Category != AccessCompactDiagnosticCategory.RepairedTableCounter;
+    internal bool IsBlocking => this.Category != AccessCompactDiagnosticCategory.RepairedTableCounter
+        && this.Kind != "salvaged-dead-tdef-page";
 
     private static AccessCompactDiagnosticCategory MapKindToCategory(string? kind)
         => kind switch

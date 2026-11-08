@@ -1698,7 +1698,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactOptimalCapabilitiesTests.cs",
-          "sha256": "7ea8e08e5cf46de6d55ed02b8270634d18cb1d9917251822286d80f82ad192ae"
+          "sha256": "e31cf434c9d723bfbc121269a2d477bb0f5cb4abb7dc11d672917f7ee7cbc5a0"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawDataLongValueRelocatorTests.cs",
