@@ -2607,6 +2607,111 @@ public sealed class CompactOptimalCapabilitiesTests
         }
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CompactAsync_CoalesceLongValueChains_GreedyInlinePromotionOnNearlyFullDataPage_PromotesFittingRows(DatabaseFormat kind)
+    {
+        await using var sourceStream = new MemoryStream();
+        int rowCount = kind == DatabaseFormat.Jet3Mdb ? 12 : 23;
+        string pad = new('P', kind == DatabaseFormat.Jet3Mdb ? 130 : 165);
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            sourceStream,
+            kind,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync(
+                "DenseMemos",
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("Padding", typeof(string), 200) { IsNullable = false },
+                    new("MemoText", typeof(string), 0),
+                ],
+                cancellationToken: Ct);
+
+            for (int i = 1; i <= rowCount; i++)
+            {
+                await writer.InsertRowAsync("DenseMemos", [i, pad, new string('M', 700)], Ct);
+            }
+        }
+
+        byte[] bytes = sourceStream.ToArray();
+        int pageSize = kind == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
+        int rowsStartOff = kind == DatabaseFormat.Jet3Mdb ? 10 : 14;
+        AccessCompactReport inspect = await AccessDatabaseCompact.InspectAsync(sourceStream, cancellationToken: Ct);
+        long memosOwner = Assert.Single(inspect.Tables, static t => t.TableName == "DenseMemos").OwnerTDefPage;
+
+        byte[] smallEncoded = kind == DatabaseFormat.Jet3Mdb
+            ? System.Text.Encoding.ASCII.GetBytes(new string('S', 60))
+            : System.Text.Encoding.Unicode.GetBytes(new string('S', 30));
+
+        // Shrink every external 0x40 LVAL descriptor on DenseMemos's first DATA page down to 60 bytes.
+        // Because the page holds multiple 200+ byte rows, promoting ALL rows on the page (+60 bytes * rowCount)
+        // would overflow pageSize, whereas greedy per-row promotion promotes the subset of rows that fit!
+        int patchedOnFirstDataPage = 0;
+        for (long p = 3; p < bytes.Length / pageSize; p++)
+        {
+            int dataPageOff = checked((int)(p * pageSize));
+            if (bytes[dataPageOff] != 0x01 || BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(dataPageOff + 4, 4)) != memosOwner)
+            {
+                continue;
+            }
+
+            int numRows = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(dataPageOff + (kind == DatabaseFormat.Jet3Mdb ? 8 : 12), 2));
+            for (int r = 0; r < numRows; r++)
+            {
+                int rowStart = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(dataPageOff + rowsStartOff + (r * 2), 2)) & 0x1FFF;
+                for (int pos = rowStart; pos <= pageSize - 12; pos++)
+                {
+                    uint rawLen = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(dataPageOff + pos, 4));
+                    byte mode = (byte)((rawLen >> 24) & 0xC0U);
+                    int len = (int)(rawLen & 0x3FFFFFFFU);
+                    if (mode == 0x40 && len >= 600)
+                    {
+                        uint firstDp = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(dataPageOff + pos + 4, 4));
+                        long lvalPage = firstDp >> 8;
+                        int lvalRow = (int)(firstDp & 0xFFU);
+                        if (lvalPage >= 3 && lvalPage < bytes.Length / pageSize && lvalRow == 0)
+                        {
+                            int lvalPageOff = checked((int)(lvalPage * pageSize));
+                            int r0Start = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(lvalPageOff + rowsStartOff, 2)) & 0x1FFF;
+                            smallEncoded.CopyTo(bytes.AsSpan(lvalPageOff + r0Start, smallEncoded.Length));
+                            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(dataPageOff + pos, 4), 0x40000000U | (uint)smallEncoded.Length);
+                            patchedOnFirstDataPage++;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (patchedOnFirstDataPage > 0)
+            {
+                break;
+            }
+        }
+
+        Assert.True(patchedOnFirstDataPage >= 3);
+
+        await using var coalescedSource = new MemoryStream(bytes, writable: false);
+        await using var coalescedDest = new MemoryStream();
+        AccessCompactReport report = await AccessDatabaseCompact.CompactAsync(
+            coalescedSource,
+            coalescedDest,
+            new AccessCompactOptions
+            {
+                CoalesceLongValueChains = true,
+            },
+            Ct);
+
+        Assert.True(report.IsComplete);
+        Assert.True(report.DatabaseValidated);
+        Assert.True(report.CoalescedLongValueCount > 0);
+        Assert.True(report.CoalescedLongValueCount < patchedOnFirstDataPage);
+    }
+
     private static void CorruptUsageMapSlot(byte[] bytes, int pageSize, int rowsStartOff, uint mapPtr)
     {
         long mapPage = mapPtr >> 8;

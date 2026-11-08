@@ -4677,10 +4677,11 @@ internal static class CompactDataPageSalvager
                         continue;
                     }
 
+                    int directoryEnd = format.DataPage.RowsStart + (numRows * 2);
+                    var liveSlotsInOrder = new List<int>();
                     var liveRowsBySlot = new Dictionary<int, byte[]>();
                     bool canRepackPage = true;
-                    long promotedOnPage = 0;
-                    int totalRowBytes = 0;
+                    int originalTotalRowBytes = 0;
 
                     for (int slot = 0; slot < numRows; slot++)
                     {
@@ -4699,6 +4700,22 @@ internal static class CompactDataPageSalvager
                         }
 
                         byte[] currentRow = page.AsSpan(bound.RowStart, bound.RowSize).ToArray();
+                        liveSlotsInOrder.Add(slot);
+                        liveRowsBySlot[slot] = currentRow;
+                        originalTotalRowBytes += currentRow.Length;
+                    }
+
+                    int remainingPageSlack = format.PageSize - directoryEnd - originalTotalRowBytes;
+                    if (!canRepackPage || remainingPageSlack < 0)
+                    {
+                        continue;
+                    }
+
+                    long promotedOnPage = 0;
+                    int totalRowBytes = 0;
+                    foreach (int slot in liveSlotsInOrder)
+                    {
+                        byte[] currentRow = liveRowsBySlot[slot];
                         (byte[] updatedRow, int promotedInRow) = await TryPromoteRowSmallExternalLongValuesAsync(
                             cur,
                             format,
@@ -4706,14 +4723,15 @@ internal static class CompactDataPageSalvager
                             p,
                             slot,
                             currentRow,
+                            remainingPageSlack,
                             cancellationToken).ConfigureAwait(false);
+                        remainingPageSlack -= updatedRow.Length - currentRow.Length;
                         liveRowsBySlot[slot] = updatedRow;
                         promotedOnPage += promotedInRow;
                         totalRowBytes += updatedRow.Length;
                     }
 
-                    int directoryEnd = format.DataPage.RowsStart + (numRows * 2);
-                    if (!canRepackPage || promotedOnPage == 0 || directoryEnd + totalRowBytes > format.PageSize)
+                    if (promotedOnPage == 0 || directoryEnd + totalRowBytes > format.PageSize)
                     {
                         continue;
                     }
@@ -4783,12 +4801,15 @@ internal static class CompactDataPageSalvager
         long pageNumber,
         int slotIndex,
         byte[] rowBytes,
+        int maxAdditionalBytes,
         CancellationToken cancellationToken)
     {
         byte[] current = rowBytes;
         int promoted = 0;
+        int remainingBudget = maxAdditionalBytes;
+        var skippedVarIndices = new HashSet<int>();
 
-        while (true)
+        while (remainingBudget >= 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!RowDecodePlan.TryParseRowLayout(format.RowFields, current, 0, current.Length, true, out RowLayout layout))
@@ -4816,11 +4837,13 @@ internal static class CompactDataPageSalvager
                             && field.Kind == CompactRawFieldKind.Stored
                             && field.IsLongValue
                             && !field.Column.IsCalculated
+                            && !skippedVarIndices.Contains(field.Column.VarIdx)
                             && field.RawBytes.Length == Constants.LongValue.HeaderSize
                             && LongValueDescriptor.TryRead(field.RawBytes.Span, out LongValueDescriptor desc)
                             && desc.IsExternal
                             && desc.FirstDp != 0
-                            && desc.Length is >= 0 and <= Constants.LongValue.MaxInlineBytes)
+                            && desc.Length is >= 0 and <= Constants.LongValue.MaxInlineBytes
+                            && desc.Length <= remainingBudget)
                         {
                             targetVarIdx = field.Column.VarIdx;
                             rowOffset = field.RowOffset;
@@ -4845,14 +4868,16 @@ internal static class CompactDataPageSalvager
             byte[]? payload = await TryReadExternalLongValuePayloadAsync(source, format, targetDesc, cancellationToken).ConfigureAwait(false);
             if (payload is null || payload.Length != targetDesc.Length)
             {
-                break;
+                _ = skippedVarIndices.Add(targetVarIdx);
+                continue;
             }
 
             int delta = payload.Length;
             int newEod = layout.Eod + delta;
             if (format.IsJet3 && newEod > 255)
             {
-                break;
+                _ = skippedVarIndices.Add(targetVarIdx);
+                continue;
             }
 
             byte[] candidate = new byte[current.Length + delta];
@@ -4900,11 +4925,12 @@ internal static class CompactDataPageSalvager
                 var verifyLoc = new RowLocation(pageNumber, slotIndex, 0, candidate.Length);
                 await CompactRawFieldReader.ScanAsync(format, definition, verifyLoc, candidate, static (_, _) => default, cancellationToken).ConfigureAwait(false);
                 current = candidate;
+                remainingBudget -= delta;
                 promoted++;
             }
             catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException)
             {
-                break;
+                _ = skippedVarIndices.Add(targetVarIdx);
             }
         }
 
