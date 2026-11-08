@@ -2543,6 +2543,70 @@ public sealed class CompactOptimalCapabilitiesTests
         BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(pageOff + 2, 2), checked((ushort)(rowStart - rowsStartOff - 2)));
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CompactAsync_ClusterByPrimaryKey_MultiPageSecondaryIndexWithDuplicates_ClustersAndValidates(DatabaseFormat kind)
+    {
+        await using var sourceStream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            sourceStream,
+            kind,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync(
+                "Events",
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("CategoryKey", typeof(string), 120) { IsNullable = false },
+                ],
+                [new IndexDefinition("IX_CategoryKey", "CategoryKey")],
+                Ct);
+
+            // Insert 90 rows in reverse PK order with duplicate CategoryKey values (3 rows per category)
+            // long enough to force IX_CategoryKey across multiple leaf pages and an intermediate root page.
+            for (int id = 90; id >= 1; id--)
+            {
+                int bucket = (id - 1) / 3;
+                string category = $"Category_{bucket:D3}_" + new string((char)('A' + (bucket % 26)), 85);
+                await writer.InsertRowAsync("Events", [id, category], Ct);
+            }
+        }
+
+        sourceStream.Position = 0;
+        await using var destStream = new MemoryStream();
+        AccessCompactReport report = await AccessDatabaseCompact.CompactAsync(
+            sourceStream,
+            destStream,
+            new AccessCompactOptions
+            {
+                ClusterByPrimaryKey = true,
+            },
+            Ct);
+
+        Assert.True(report.ReplacementAuthorized);
+        Assert.Equal(1, report.ClusteredTableCount);
+        AccessCompactTableSummary summary = Assert.Single(report.Tables, static t => t.TableName == "Events");
+        Assert.True(summary.ClusteredByPrimaryKey);
+
+        destStream.Position = 0;
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(destStream, cancellationToken: Ct);
+        var ids = new List<int>();
+        await foreach (object[] row in reader.Rows("Events", cancellationToken: Ct))
+        {
+            ids.Add(Assert.IsType<int>(row[0]));
+        }
+
+        Assert.Equal(90, ids.Count);
+        for (int i = 0; i < 90; i++)
+        {
+            Assert.Equal(i + 1, ids[i]);
+        }
+    }
+
     private static void CorruptUsageMapSlot(byte[] bytes, int pageSize, int rowsStartOff, uint mapPtr)
     {
         long mapPage = mapPtr >> 8;

@@ -386,91 +386,142 @@ internal static class CompactTableLayoutOptimizer
             }
             else
             {
-                for (long p = indexAlloc.Tree.FirstPageNumber; p < indexAlloc.Tree.FirstPageNumber + indexAlloc.Tree.PageCount; p++)
+                var visitedLeaves = new HashSet<long>();
+                var leafChain = new List<(long PageNum, long Prev, long Next, int EntryCount)>();
+                var allLeafEntries = new List<IndexEntry>();
+                long firstTreePage = indexAlloc.Tree.FirstPageNumber;
+                long endTreePage = firstTreePage + indexAlloc.Tree.PageCount;
+                long curLeaf = firstTreePage;
+
+                while (curLeaf != 0)
                 {
-                    byte[] indexPage = getAppendedPage(p);
-                    if (IndexPageCodec.IsLeaf(indexPage))
+                    if (curLeaf < firstTreePage || curLeaf >= endTreePage || !visitedLeaves.Add(curLeaf))
                     {
-                        long prev = IndexPageCodec.ReadPrevPage(format.IndexPage, indexPage);
-                        long next = IndexPageCodec.ReadNextPage(format.IndexPage, indexPage);
-                        if (!IndexPageCodec.TryDecodeLeafEntries(format.IndexPage, indexPage, format.PageSize, out List<IndexEntry> entries))
-                        {
-                            return false;
-                        }
-
-                        for (int idx = 0; idx < entries.Count; idx++)
-                        {
-                            IndexEntry oldEntry = entries[idx];
-                            if (!bookmarkMap.TryGetValue((oldEntry.DataPage, oldEntry.DataRow), out (long NewPage, byte NewRow) mapped))
-                            {
-                                return false;
-                            }
-
-                            entries[idx] = new IndexEntry(oldEntry.Key, checked((uint)mapped.NewPage), mapped.NewRow);
-                            if (idx > 0 && CompareIndexEntries(entries[idx - 1], entries[idx]) >= 0)
-                            {
-                                // Duplicate keys across multi-page leaves changed tie-break order; skip clustering this table.
-                                return false;
-                            }
-                        }
-
-                        try
-                        {
-                            stagedIndexReplacements[p] = IndexPageCodec.BuildLeafPage(
-                                format.IndexPage,
-                                format.PageSize,
-                                table.Owner,
-                                entries,
-                                prev,
-                                next,
-                                0,
-                                enablePrefixCompression: true);
-                        }
-                        catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException or InvalidOperationException)
-                        {
-                            return false;
-                        }
+                        return false;
                     }
-                    else if (IndexPageCodec.IsIntermediate(indexPage))
+
+                    byte[] leafPage = getAppendedPage(curLeaf);
+                    if (!IndexPageCodec.IsLeaf(leafPage))
                     {
-                        long prev = IndexPageCodec.ReadPrevPage(format.IndexPage, indexPage);
-                        long next = IndexPageCodec.ReadNextPage(format.IndexPage, indexPage);
-                        long tail = IndexPageCodec.ReadTailPage(format.IndexPage, indexPage);
-                        if (!IndexPageCodec.TryDecodeIntermediateEntries(format.IndexPage, indexPage, format.PageSize, out List<DecodedIntermediateEntry> entries))
+                        return false;
+                    }
+
+                    long prev = IndexPageCodec.ReadPrevPage(format.IndexPage, leafPage);
+                    long next = IndexPageCodec.ReadNextPage(format.IndexPage, leafPage);
+                    if (!IndexPageCodec.TryDecodeLeafEntries(format.IndexPage, leafPage, format.PageSize, out List<IndexEntry> entries)
+                        || entries.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    for (int idx = 0; idx < entries.Count; idx++)
+                    {
+                        IndexEntry oldEntry = entries[idx];
+                        if (!bookmarkMap.TryGetValue((oldEntry.DataPage, oldEntry.DataRow), out (long NewPage, byte NewRow) mapped))
                         {
                             return false;
                         }
 
-                        for (int idx = 0; idx < entries.Count; idx++)
-                        {
-                            DecodedIntermediateEntry oldEntry = entries[idx];
-                            if (!bookmarkMap.TryGetValue((oldEntry.Entry.DataPage, oldEntry.Entry.DataRow), out (long NewPage, byte NewRow) mapped))
-                            {
-                                return false;
-                            }
+                        allLeafEntries.Add(new IndexEntry(oldEntry.Key, checked((uint)mapped.NewPage), mapped.NewRow));
+                    }
 
+                    leafChain.Add((curLeaf, prev, next, entries.Count));
+                    curLeaf = next;
+                }
+
+                if (leafChain.Count == 0)
+                {
+                    return false;
+                }
+
+                allLeafEntries.Sort(CompareIndexEntries);
+                for (int idx = 1; idx < allLeafEntries.Count; idx++)
+                {
+                    if (CompareIndexEntries(allLeafEntries[idx - 1], allLeafEntries[idx]) >= 0)
+                    {
+                        return false;
+                    }
+                }
+
+                var maxEntryByPage = new Dictionary<long, IndexEntry>();
+                int entryCursor = 0;
+                foreach ((long leafPageNum, long prev, long next, int count) in leafChain)
+                {
+                    List<IndexEntry> leafEntries = allLeafEntries.GetRange(entryCursor, count);
+                    entryCursor += count;
+                    try
+                    {
+                        stagedIndexReplacements[leafPageNum] = IndexPageCodec.BuildLeafPage(
+                            format.IndexPage,
+                            format.PageSize,
+                            table.Owner,
+                            leafEntries,
+                            prev,
+                            next,
+                            0,
+                            enablePrefixCompression: true);
+                        maxEntryByPage[leafPageNum] = leafEntries[^1];
+                    }
+                    catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException or InvalidOperationException)
+                    {
+                        return false;
+                    }
+                }
+
+                for (long p = firstTreePage; p < endTreePage; p++)
+                {
+                    if (visitedLeaves.Contains(p))
+                    {
+                        continue;
+                    }
+
+                    byte[] indexPage = getAppendedPage(p);
+                    if (!IndexPageCodec.IsIntermediate(indexPage))
+                    {
+                        return false;
+                    }
+
+                    long prev = IndexPageCodec.ReadPrevPage(format.IndexPage, indexPage);
+                    long next = IndexPageCodec.ReadNextPage(format.IndexPage, indexPage);
+                    long tail = IndexPageCodec.ReadTailPage(format.IndexPage, indexPage);
+                    if (!IndexPageCodec.TryDecodeIntermediateEntries(format.IndexPage, indexPage, format.PageSize, out List<DecodedIntermediateEntry> entries)
+                        || entries.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    for (int idx = 0; idx < entries.Count; idx++)
+                    {
+                        DecodedIntermediateEntry oldEntry = entries[idx];
+                        if (maxEntryByPage.TryGetValue(oldEntry.ChildPage, out IndexEntry childMax))
+                        {
+                            entries[idx] = new DecodedIntermediateEntry(childMax, oldEntry.ChildPage);
+                        }
+                        else if (bookmarkMap.TryGetValue((oldEntry.Entry.DataPage, oldEntry.Entry.DataRow), out (long NewPage, byte NewRow) mapped))
+                        {
                             entries[idx] = new DecodedIntermediateEntry(
                                 new IndexEntry(oldEntry.Entry.Key, checked((uint)mapped.NewPage), mapped.NewRow),
                                 oldEntry.ChildPage);
                         }
-
-                        try
-                        {
-                            stagedIndexReplacements[p] = IndexPageCodec.BuildIntermediatePage(
-                                format.IndexPage,
-                                format.PageSize,
-                                table.Owner,
-                                entries,
-                                prev,
-                                next,
-                                tail);
-                        }
-                        catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException or InvalidOperationException)
+                        else
                         {
                             return false;
                         }
                     }
-                    else
+
+                    try
+                    {
+                        stagedIndexReplacements[p] = IndexPageCodec.BuildIntermediatePage(
+                            format.IndexPage,
+                            format.PageSize,
+                            table.Owner,
+                            entries,
+                            prev,
+                            next,
+                            tail);
+                        maxEntryByPage[p] = entries[^1].Entry;
+                    }
+                    catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException or InvalidOperationException)
                     {
                         return false;
                     }
