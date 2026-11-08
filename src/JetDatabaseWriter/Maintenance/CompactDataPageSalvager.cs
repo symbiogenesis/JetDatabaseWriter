@@ -332,6 +332,18 @@ internal static class CompactDataPageSalvager
                 overlayPages,
                 diagnostics,
                 cancellationToken).ConfigureAwait(false);
+
+            await ReconstructMissingRelationshipCatalogRowsAsync(
+                source,
+                format,
+                budget,
+                maxSchemaBytes,
+                definitions,
+                tableNames,
+                tableOwnedPages,
+                overlayPages,
+                diagnostics,
+                cancellationToken).ConfigureAwait(false);
         }
 
         if (!allowDataSalvage)
@@ -2777,12 +2789,12 @@ internal static class CompactDataPageSalvager
             }
         }
 
-        var orphanTables = new List<(long TDefPage, string RecoveredName)>();
-        var usedNames = new HashSet<string>(tableNames.Values, StringComparer.OrdinalIgnoreCase);
+        var allUserTableImages = new Dictionary<long, TDefImage>();
+        var orphanCandidateImages = new List<(long TDefPage, TDefImage Image)>();
         foreach (long candidatePage in candidateRootTDefPages)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (continuationTDefPages.Contains(candidatePage) || tableNames.ContainsKey(candidatePage))
+            if (continuationTDefPages.Contains(candidatePage))
             {
                 continue;
             }
@@ -2798,25 +2810,55 @@ internal static class CompactDataPageSalvager
                     continue;
                 }
 
-                string baseName = $"RecoveredTable_{candidatePage}";
-                string recoveredName = baseName;
-                int suffix = 2;
-                while (!usedNames.Add(recoveredName))
+                allUserTableImages[candidatePage] = image;
+                if (!tableNames.ContainsKey(candidatePage))
                 {
-                    recoveredName = $"{baseName}_{suffix++}";
+                    orphanCandidateImages.Add((candidatePage, image));
                 }
-
-                orphanTables.Add((candidatePage, recoveredName));
             }
             catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException)
             {
-                // Not a valid orphan user-table TDef.
+                // Not a valid user-table TDef.
             }
         }
 
-        if (orphanTables.Count == 0)
+        if (orphanCandidateImages.Count == 0)
         {
             return;
+        }
+
+        Dictionary<string, (string ChildTable, string ParentTable)> relNamesByRelName = await ReadRelationshipObjectNamesAsync(
+            source,
+            format,
+            maxSchemaBytes,
+            tableDefs,
+            tableNames,
+            cancellationToken).ConfigureAwait(false);
+
+        var orphanTables = new List<(long TDefPage, string RecoveredName)>();
+        var usedNames = new HashSet<string>(tableNames.Values, StringComparer.OrdinalIgnoreCase);
+        foreach ((long candidatePage, TDefImage image) in orphanCandidateImages)
+        {
+            string? originalName = TryResolveOrphanTableOriginalName(
+                candidatePage,
+                image,
+                allUserTableImages,
+                relNamesByRelName);
+            if (!string.IsNullOrWhiteSpace(originalName) && usedNames.Add(originalName))
+            {
+                orphanTables.Add((candidatePage, originalName));
+                continue;
+            }
+
+            string baseName = $"RecoveredTable_{candidatePage}";
+            string recoveredName = baseName;
+            int suffix = 2;
+            while (!usedNames.Add(recoveredName))
+            {
+                recoveredName = $"{baseName}_{suffix++}";
+            }
+
+            orphanTables.Add((candidatePage, recoveredName));
         }
 
         // Locate MSysObjects DATA pages and extract an existing Owner SID if available.
@@ -2946,81 +2988,714 @@ internal static class CompactDataPageSalvager
         }
 
         // Synchronize Page 2 (MSysObjects) row counts and single-page leaf indexes in overlayPages.
-        IPageSource postAttachSource = new OverlayPageSource(source, overlayPages);
-        var liveCatalogRows = new List<(RowLocation Location, byte[] Payload)>();
-        foreach (long catPageNum in catalogDataPages)
+        await SynchronizeTableTDefAndSinglePageIndexesInOverlayAsync(
+            source,
+            format,
+            budget,
+            maxSchemaBytes,
+            2,
+            catalogDef,
+            catalogDataPages,
+            definitions,
+            overlayPages,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<Dictionary<string, (string ChildTable, string ParentTable)>> ReadRelationshipObjectNamesAsync(
+        IPageSource source,
+        JetFormat format,
+        int maxSchemaBytes,
+        TableDefReader tableDefs,
+        Dictionary<long, string> tableNames,
+        CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<string, (string ChildTable, string ParentTable)>(StringComparer.OrdinalIgnoreCase);
+        long relTDefPage = 0;
+        foreach (KeyValuePair<long, string> pair in tableNames)
         {
-            byte[] catPage = await postAttachSource.ReadUncachedPageAsync(catPageNum, cancellationToken).ConfigureAwait(false);
+            if (string.Equals(pair.Value, Constants.SystemTableNames.Relationships, StringComparison.OrdinalIgnoreCase))
+            {
+                relTDefPage = pair.Key;
+                break;
+            }
+        }
+
+        if (relTDefPage < 3 || relTDefPage >= source.PageCount)
+        {
+            return result;
+        }
+
+        TDefImage? relDef;
+        try
+        {
+            relDef = await tableDefs.ReadImageAsync(relTDefPage, maxSchemaBytes, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException)
+        {
+            return result;
+        }
+
+        if (relDef is null || relDef.Issues != TDefParseIssues.None)
+        {
+            return result;
+        }
+
+        ColumnInfo? relNameCol = relDef.Definition.FindColumn("szRelationship");
+        ColumnInfo? objCol = relDef.Definition.FindColumn("szObject");
+        ColumnInfo? refObjCol = relDef.Definition.FindColumn("szReferencedObject");
+        if (relNameCol is null || objCol is null || refObjCol is null)
+        {
+            return result;
+        }
+
+        for (long p = 3; p < source.PageCount; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            byte[] page = await source.ReadUncachedPageAsync(p, cancellationToken).ConfigureAwait(false);
             try
             {
-                int numRows = BinaryPrimitives.ReadUInt16LittleEndian(catPage.AsSpan(format.DataPage.NumRows, 2));
+                if (page[0] != Constants.PageTypes.Data
+                    || BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(format.DataPage.TDefOff, 4)) != (uint)relTDefPage)
+                {
+                    continue;
+                }
+
+                int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.NumRows, 2));
+                int maxRows = (format.PageSize - format.DataPage.RowsStart) / 2;
+                if (numRows <= 0 || numRows > maxRows || numRows > Constants.DataPage.MaxRowsPerPage)
+                {
+                    continue;
+                }
+
                 for (int r = 0; r < numRows; r++)
                 {
-                    if (!UsageMap.TryGetRowBound(catPage, format.DataPage, format.PageSize, r, out RowBound bound) || bound.RowSize <= 0)
+                    int raw = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.RowsStart + (r * 2), 2));
+                    if ((raw & Constants.DataPage.NonLiveRowFlags) != 0
+                        || !UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, r, out RowBound bound)
+                        || bound.RowSize <= 0)
                     {
                         continue;
                     }
 
-                    int raw = BinaryPrimitives.ReadUInt16LittleEndian(catPage.AsSpan(format.DataPage.RowsStart + (r * 2), 2));
+                    string relName = ScalarColumnReader.DecodeSimpleColumnValue(format, page, bound.RowStart, bound.RowSize, relNameCol);
+                    string childObj = ScalarColumnReader.DecodeSimpleColumnValue(format, page, bound.RowStart, bound.RowSize, objCol);
+                    string parentObj = ScalarColumnReader.DecodeSimpleColumnValue(format, page, bound.RowStart, bound.RowSize, refObjCol);
+                    if (!string.IsNullOrWhiteSpace(relName) && (!string.IsNullOrWhiteSpace(childObj) || !string.IsNullOrWhiteSpace(parentObj)))
+                    {
+                        result[relName] = (childObj, parentObj);
+                    }
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+        }
+
+        return result;
+    }
+
+    private static string? TryResolveOrphanTableOriginalName(
+        long candidatePage,
+        TDefImage image,
+        Dictionary<long, TDefImage> allUserTableImages,
+        Dictionary<string, (string ChildTable, string ParentTable)> relNamesByRelName)
+    {
+        if (relNamesByRelName.Count == 0)
+        {
+            return null;
+        }
+
+        byte[] imageBytes = image.CopyBytes();
+        foreach (TDefLogicalIndexDescriptor logical in image.LogicalIndexes)
+        {
+            int relTypePos = logical.Entry.FieldsOffset + Constants.TableDefinition.Jet3.LogicalIdx.RelTblTypeOffset;
+            if (logical.Entry.IndexType != IndexKind.ForeignKey
+                || relTypePos < 0
+                || relTypePos >= imageBytes.Length)
+            {
+                continue;
+            }
+
+            byte relTblType = imageBytes[relTypePos];
+            string lookupName = logical.Name;
+            if (logical.Entry.RelTblPage == candidatePage
+                && lookupName.EndsWith("_FK", StringComparison.OrdinalIgnoreCase)
+                && lookupName.Length > 3)
+            {
+                lookupName = lookupName[..^3];
+            }
+
+            if (relTblType == Constants.TableDefinition.ChildRelationshipTableType)
+            {
+                if (relNamesByRelName.TryGetValue(lookupName, out (string ChildTable, string ParentTable) relTables)
+                    && !string.IsNullOrWhiteSpace(relTables.ChildTable))
+                {
+                    return relTables.ChildTable;
+                }
+            }
+            else if (relTblType == Constants.TableDefinition.ParentRelationshipTableType)
+            {
+                if (relNamesByRelName.TryGetValue(lookupName, out (string ChildTable, string ParentTable) directRel)
+                    && !string.IsNullOrWhiteSpace(directRel.ParentTable))
+                {
+                    return directRel.ParentTable;
+                }
+
+                long childPartnerPage = logical.Entry.RelTblPage;
+                if (childPartnerPage >= 3
+                    && allUserTableImages.TryGetValue(childPartnerPage, out TDefImage? childDef)
+                    && TryMatchPartnerChildRelationshipName(candidatePage, logical.Entry.RelIdxNum, childDef, relNamesByRelName, out string? resolvedParentName))
+                {
+                    return resolvedParentName;
+                }
+            }
+        }
+
+        foreach (KeyValuePair<long, TDefImage> partnerPair in allUserTableImages)
+        {
+            if (partnerPair.Key == candidatePage)
+            {
+                continue;
+            }
+
+            byte[] partnerBytes = partnerPair.Value.CopyBytes();
+            foreach (TDefLogicalIndexDescriptor partnerLogical in partnerPair.Value.LogicalIndexes)
+            {
+                int relTypePos = partnerLogical.Entry.FieldsOffset + Constants.TableDefinition.Jet3.LogicalIdx.RelTblTypeOffset;
+                if (partnerLogical.Entry.IndexType != IndexKind.ForeignKey
+                    || partnerLogical.Entry.RelTblPage != candidatePage
+                    || relTypePos < 0
+                    || relTypePos >= partnerBytes.Length)
+                {
+                    continue;
+                }
+
+                byte partnerRelType = partnerBytes[relTypePos];
+                if (partnerRelType == Constants.TableDefinition.ChildRelationshipTableType
+                    && relNamesByRelName.TryGetValue(partnerLogical.Name, out (string ChildTable, string ParentTable) relTables)
+                    && !string.IsNullOrWhiteSpace(relTables.ParentTable))
+                {
+                    return relTables.ParentTable;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryMatchPartnerChildRelationshipName(
+        long parentPage,
+        int expectedChildIdxNum,
+        TDefImage childDef,
+        Dictionary<string, (string ChildTable, string ParentTable)> relNamesByRelName,
+        out string? parentTableName)
+    {
+        foreach (TDefLogicalIndexDescriptor childLogical in childDef.LogicalIndexes)
+        {
+            if (childLogical.Entry.IndexType == IndexKind.ForeignKey
+                && (childLogical.Entry.IndexNum == expectedChildIdxNum || childLogical.Entry.RelTblPage == parentPage)
+                && relNamesByRelName.TryGetValue(childLogical.Name, out (string ChildTable, string ParentTable) partnerRel)
+                && !string.IsNullOrWhiteSpace(partnerRel.ParentTable))
+            {
+                parentTableName = partnerRel.ParentTable;
+                return true;
+            }
+        }
+
+        parentTableName = null;
+        return false;
+    }
+
+    private static TDefLogicalIndexDescriptor? FindPartnerParentLogicalIndex(
+        TDefImage parentDef,
+        int expectedParentIdxNum,
+        long childOwner)
+    {
+        foreach (TDefLogicalIndexDescriptor candidateParentLogical in parentDef.LogicalIndexes)
+        {
+            if (candidateParentLogical.Entry.IndexType == IndexKind.ForeignKey
+                && candidateParentLogical.Entry.IndexNum == expectedParentIdxNum
+                && candidateParentLogical.Entry.RelTblPage == childOwner)
+            {
+                return candidateParentLogical;
+            }
+        }
+
+        return null;
+    }
+
+    private static async ValueTask ReconstructMissingRelationshipCatalogRowsAsync(
+        IPageSource source,
+        JetFormat format,
+        CompactDiscoveryBudget budget,
+        int maxSchemaBytes,
+        Dictionary<long, TDefImage> definitions,
+        Dictionary<long, string> tableNames,
+        Dictionary<long, HashSet<long>> tableOwnedPages,
+        Dictionary<long, byte[]> overlayPages,
+        List<AccessCompactDiagnostic> diagnostics,
+        CancellationToken cancellationToken)
+    {
+        long relTDefPage = 0;
+        foreach (KeyValuePair<long, string> pair in tableNames)
+        {
+            if (string.Equals(pair.Value, Constants.SystemTableNames.Relationships, StringComparison.OrdinalIgnoreCase))
+            {
+                relTDefPage = pair.Key;
+                break;
+            }
+        }
+
+        if (relTDefPage < 3 || !definitions.TryGetValue(relTDefPage, out TDefImage? relDef))
+        {
+            return;
+        }
+
+        TableDef msysRelTableDef = relDef.Definition;
+        ColumnInfo? relNameCol = msysRelTableDef.FindColumn("szRelationship");
+        ColumnInfo? objCol = msysRelTableDef.FindColumn("szObject");
+        ColumnInfo? refObjCol = msysRelTableDef.FindColumn("szReferencedObject");
+        ColumnInfo? colCol = msysRelTableDef.FindColumn("szColumn");
+        ColumnInfo? refColCol = msysRelTableDef.FindColumn("szReferencedColumn");
+        ColumnInfo? icolCol = msysRelTableDef.FindColumn("icolumn");
+        ColumnInfo? ccolCol = msysRelTableDef.FindColumn("ccolumn");
+        ColumnInfo? grbitCol = msysRelTableDef.FindColumn("grbit");
+        if (relNameCol is null || objCol is null || refObjCol is null || colCol is null
+            || refColCol is null || icolCol is null || ccolCol is null || grbitCol is null)
+        {
+            return;
+        }
+
+        var relDataPageSet = new SortedSet<long>();
+        if (tableOwnedPages.TryGetValue(relTDefPage, out HashSet<long>? ownedRelPages))
+        {
+            foreach (long p in ownedRelPages)
+            {
+                if (p >= 3 && p < source.PageCount)
+                {
+                    _ = relDataPageSet.Add(p);
+                }
+            }
+        }
+
+        IPageSource scanSource = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+        for (long p = 3; p < source.PageCount; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            byte[] page = await scanSource.ReadUncachedPageAsync(p, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] == Constants.PageTypes.Data
+                    && BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(format.DataPage.TDefOff, 4)) == (uint)relTDefPage)
+                {
+                    _ = relDataPageSet.Add(p);
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+        }
+
+        if (relDataPageSet.Count == 0)
+        {
+            return;
+        }
+
+        var relDataPages = new List<long>(relDataPageSet);
+        var existingRelationships = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool anyPageCleaned = false;
+
+        foreach (long relPageNum in relDataPages)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            IPageSource cur = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+            byte[] page = await cur.ReadUncachedPageAsync(relPageNum, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != Constants.PageTypes.Data
+                    || BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(format.DataPage.TDefOff, 4)) != (uint)relTDefPage)
+                {
+                    continue;
+                }
+
+                int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.NumRows, 2));
+                int maxRows = (format.PageSize - format.DataPage.RowsStart) / 2;
+                if (numRows <= 0 || numRows > maxRows || numRows > Constants.DataPage.MaxRowsPerPage)
+                {
+                    continue;
+                }
+
+                byte[]? modifiedRelPage = null;
+                for (int r = 0; r < numRows; r++)
+                {
+                    int slotOff = format.DataPage.RowsStart + (r * 2);
+                    int raw = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(slotOff, 2));
                     if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
                     {
                         continue;
                     }
 
-                    var loc = new RowLocation(catPageNum, r, bound.RowStart, bound.RowSize);
-                    liveCatalogRows.Add((loc, catPage.AsSpan(bound.RowStart, bound.RowSize).ToArray()));
+                    bool slotValid = false;
+                    if (UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, r, out RowBound bound) && bound.RowSize > 0)
+                    {
+                        try
+                        {
+                            var loc = new RowLocation(relPageNum, r, bound.RowStart, bound.RowSize);
+                            await CompactRawFieldReader.ScanAsync(
+                                format,
+                                relDef,
+                                loc,
+                                page.AsMemory(bound.RowStart, bound.RowSize),
+                                static (_, _) => default,
+                                cancellationToken).ConfigureAwait(false);
+                            string relName = ScalarColumnReader.DecodeSimpleColumnValue(format, page, bound.RowStart, bound.RowSize, relNameCol);
+                            if (!string.IsNullOrWhiteSpace(relName))
+                            {
+                                _ = existingRelationships.Add(relName);
+                                slotValid = true;
+                            }
+                        }
+                        catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException)
+                        {
+                            slotValid = false;
+                        }
+                    }
+
+                    if (!slotValid)
+                    {
+                        modifiedRelPage ??= page.AsSpan(0, format.PageSize).ToArray();
+                        int start = raw & Constants.DataPage.RowOffsetMask;
+                        ushort deletedEntry = checked((ushort)(Constants.DataPage.DeletedRowFlag | start));
+                        BinaryPrimitives.WriteUInt16LittleEndian(modifiedRelPage.AsSpan(slotOff, 2), deletedEntry);
+                        anyPageCleaned = true;
+                    }
+                }
+
+                if (modifiedRelPage is not null)
+                {
+                    overlayPages[relPageNum] = modifiedRelPage;
                 }
             }
             finally
             {
-                PageBuffers.Return(catPage);
+                PageBuffers.Return(page);
             }
         }
 
-        byte[] rawPage2 = await postAttachSource.ReadUncachedPageAsync(2, cancellationToken).ConfigureAwait(false);
+        var rowEncoder = new RowEncoder(format);
+        bool anyReconstructed = false;
+
+        foreach (KeyValuePair<long, TDefImage> pair in definitions)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            long childOwner = pair.Key;
+            TDefImage childDef = pair.Value;
+            if (childOwner < 3
+                || !tableNames.TryGetValue(childOwner, out string? childTableName)
+                || IsSystemTableName(childTableName))
+            {
+                continue;
+            }
+
+            byte[] childBytes = childDef.CopyBytes();
+            foreach (TDefLogicalIndexDescriptor childLogical in childDef.LogicalIndexes)
+            {
+                int relTypePos = childLogical.Entry.FieldsOffset + Constants.TableDefinition.Jet3.LogicalIdx.RelTblTypeOffset;
+                int cascadeUpsPos = childLogical.Entry.FieldsOffset + Constants.TableDefinition.Jet3.LogicalIdx.CascadeUpsOffset;
+                int cascadeDelsPos = childLogical.Entry.FieldsOffset + Constants.TableDefinition.Jet3.LogicalIdx.CascadeDelsOffset;
+                if (childLogical.Entry.IndexType != IndexKind.ForeignKey
+                    || childLogical.Entry.RelTblPage < 3
+                    || relTypePos < 0
+                    || cascadeDelsPos >= childBytes.Length
+                    || childBytes[relTypePos] != Constants.TableDefinition.ChildRelationshipTableType)
+                {
+                    continue;
+                }
+
+                long parentOwner = childLogical.Entry.RelTblPage;
+                if (!definitions.TryGetValue(parentOwner, out TDefImage? parentDef)
+                    || !tableNames.TryGetValue(parentOwner, out string? parentTableName)
+                    || IsSystemTableName(parentTableName))
+                {
+                    continue;
+                }
+
+                TDefLogicalIndexDescriptor? parentLogical = FindPartnerParentLogicalIndex(
+                    parentDef,
+                    childLogical.Entry.RelIdxNum,
+                    childOwner);
+                if (parentLogical is null)
+                {
+                    continue;
+                }
+
+                int childRealIdxNum = childLogical.Entry.IndexNum2;
+                int parentRealIdxNum = parentLogical.Entry.IndexNum2;
+                if (childRealIdxNum < 0 || childRealIdxNum >= childDef.RealIndexes.Count
+                    || parentRealIdxNum < 0 || parentRealIdxNum >= parentDef.RealIndexes.Count)
+                {
+                    continue;
+                }
+
+                TDefIndexDescriptor childRealIdx = childDef.RealIndexes[childRealIdxNum];
+                TDefIndexDescriptor parentRealIdx = parentDef.RealIndexes[parentRealIdxNum];
+                int ccolumn = childRealIdx.Columns.Count;
+                if (ccolumn <= 0 || parentRealIdx.Columns.Count != ccolumn)
+                {
+                    continue;
+                }
+
+                string relName = childLogical.Name;
+                if (childOwner == parentOwner
+                    && relName.EndsWith("_FK", StringComparison.OrdinalIgnoreCase)
+                    && relName.Length > 3)
+                {
+                    relName = relName[..^3];
+                }
+
+                if (string.IsNullOrWhiteSpace(relName) || existingRelationships.Contains(relName))
+                {
+                    continue;
+                }
+
+                string[] fkColNames = new string[ccolumn];
+                string[] pkColNames = new string[ccolumn];
+                bool colsResolved = true;
+                for (int i = 0; i < ccolumn; i++)
+                {
+                    int fkColNum = childRealIdx.Columns[i].ColNum;
+                    int pkColNum = parentRealIdx.Columns[i].ColNum;
+                    string? fkColName = null;
+                    string? pkColName = null;
+                    foreach (ColumnInfo c in childDef.Columns)
+                    {
+                        if (c.ColNum == fkColNum)
+                        {
+                            fkColName = c.Name;
+                            break;
+                        }
+                    }
+
+                    foreach (ColumnInfo c in parentDef.Columns)
+                    {
+                        if (c.ColNum == pkColNum)
+                        {
+                            pkColName = c.Name;
+                            break;
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(fkColName) || string.IsNullOrWhiteSpace(pkColName))
+                    {
+                        colsResolved = false;
+                        break;
+                    }
+
+                    fkColNames[i] = fkColName;
+                    pkColNames[i] = pkColName;
+                }
+
+                if (!colsResolved)
+                {
+                    continue;
+                }
+
+                uint grbit = 0;
+                if (childBytes[cascadeUpsPos] == 1)
+                {
+                    grbit |= Constants.RelationshipFlags.CascadeUpdates;
+                }
+
+                if (childBytes[cascadeDelsPos] == 1)
+                {
+                    grbit |= Constants.RelationshipFlags.CascadeDeletes;
+                }
+
+                int grbitInt = unchecked((int)grbit);
+                var encodedRows = new List<byte[]>(ccolumn);
+                for (int colIdx = 0; colIdx < ccolumn; colIdx++)
+                {
+                    object[] values = msysRelTableDef.CreateNullValueRow();
+                    msysRelTableDef.SetValueByName(values, "ccolumn", ccolumn);
+                    msysRelTableDef.SetValueByName(values, "grbit", grbitInt);
+                    msysRelTableDef.SetValueByName(values, "icolumn", colIdx);
+                    msysRelTableDef.SetValueByName(values, "szColumn", fkColNames[colIdx]);
+                    msysRelTableDef.SetValueByName(values, "szObject", childTableName);
+                    msysRelTableDef.SetValueByName(values, "szReferencedColumn", pkColNames[colIdx]);
+                    msysRelTableDef.SetValueByName(values, "szReferencedObject", parentTableName);
+                    msysRelTableDef.SetValueByName(values, "szRelationship", relName);
+                    byte[]? encoded = rowEncoder.TrySerializeRow(msysRelTableDef, values, out _);
+                    if (encoded is null)
+                    {
+                        encodedRows.Clear();
+                        break;
+                    }
+
+                    encodedRows.Add(encoded);
+                }
+
+                if (encodedRows.Count != ccolumn)
+                {
+                    continue;
+                }
+
+                bool allInserted = true;
+                foreach (byte[] encodedRow in encodedRows)
+                {
+                    bool inserted = false;
+                    foreach (long relPageNum in relDataPages)
+                    {
+                        IPageSource cur = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+                        byte[] relPage = await cur.ReadUncachedPageAsync(relPageNum, cancellationToken).ConfigureAwait(false);
+                        try
+                        {
+                            if (TryInsertRowIntoDataPage(relPage, format, checked((uint)relTDefPage), encodedRow, out byte[]? updatedRelPage) && updatedRelPage is not null)
+                            {
+                                overlayPages[relPageNum] = updatedRelPage;
+                                inserted = true;
+                                break;
+                            }
+                        }
+                        finally
+                        {
+                            PageBuffers.Return(relPage);
+                        }
+                    }
+
+                    if (!inserted)
+                    {
+                        allInserted = false;
+                        break;
+                    }
+                }
+
+                if (allInserted)
+                {
+                    _ = existingRelationships.Add(relName);
+                    anyReconstructed = true;
+                    if (diagnostics.Count < budget.MaxDiagnostics)
+                    {
+                        diagnostics.Add(
+                            new AccessCompactDiagnostic(
+                                "salvaged-relationship-catalog",
+                                relTDefPage,
+                                relTDefPage,
+                                null,
+                                $"Reconstructed missing MSysRelationships catalog row(s) for relationship '{relName}' ('{parentTableName}' -> '{childTableName}') from reciprocal TDEF foreign-key descriptors.",
+                                AccessCompactDiagnosticCategory.CatalogUncertainty,
+                                childTableName));
+                    }
+                }
+            }
+        }
+
+        if (!anyReconstructed && !anyPageCleaned)
+        {
+            return;
+        }
+
+        await SynchronizeTableTDefAndSinglePageIndexesInOverlayAsync(
+            source,
+            format,
+            budget,
+            maxSchemaBytes,
+            relTDefPage,
+            relDef,
+            relDataPages,
+            definitions,
+            overlayPages,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask SynchronizeTableTDefAndSinglePageIndexesInOverlayAsync(
+        IPageSource source,
+        JetFormat format,
+        CompactDiscoveryBudget budget,
+        int maxSchemaBytes,
+        long ownerTDefPage,
+        TDefImage tableDef,
+        IReadOnlyList<long> tableDataPages,
+        Dictionary<long, TDefImage> definitions,
+        Dictionary<long, byte[]> overlayPages,
+        CancellationToken cancellationToken)
+    {
+        IPageSource postAttachSource = new OverlayPageSource(source, overlayPages);
+        var liveTableRows = new List<(RowLocation Location, byte[] Payload)>();
+        foreach (long dataPageNum in tableDataPages)
+        {
+            byte[] dataPage = await postAttachSource.ReadUncachedPageAsync(dataPageNum, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                int numRows = BinaryPrimitives.ReadUInt16LittleEndian(dataPage.AsSpan(format.DataPage.NumRows, 2));
+                for (int r = 0; r < numRows; r++)
+                {
+                    if (!UsageMap.TryGetRowBound(dataPage, format.DataPage, format.PageSize, r, out RowBound bound) || bound.RowSize <= 0)
+                    {
+                        continue;
+                    }
+
+                    int raw = BinaryPrimitives.ReadUInt16LittleEndian(dataPage.AsSpan(format.DataPage.RowsStart + (r * 2), 2));
+                    if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
+                    {
+                        continue;
+                    }
+
+                    var loc = new RowLocation(dataPageNum, r, bound.RowStart, bound.RowSize);
+                    liveTableRows.Add((loc, dataPage.AsSpan(bound.RowStart, bound.RowSize).ToArray()));
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(dataPage);
+            }
+        }
+
+        byte[] rawTDefPage = await postAttachSource.ReadUncachedPageAsync(ownerTDefPage, cancellationToken).ConfigureAwait(false);
         try
         {
-            byte[] updatedPage2 = new byte[format.PageSize];
-            Buffer.BlockCopy(rawPage2, 0, updatedPage2, 0, format.PageSize);
-            uint newCatalogRowCount = checked((uint)liveCatalogRows.Count);
-            BinaryPrimitives.WriteUInt32LittleEndian(updatedPage2.AsSpan(format.TDef.NumRows, 4), newCatalogRowCount);
+            byte[] updatedTDefPage = new byte[format.PageSize];
+            Buffer.BlockCopy(rawTDefPage, 0, updatedTDefPage, 0, format.PageSize);
+            uint newRowCount = checked((uint)liveTableRows.Count);
+            BinaryPrimitives.WriteUInt32LittleEndian(updatedTDefPage.AsSpan(format.TDef.NumRows, 4), newRowCount);
             if (!format.IsJet3)
             {
-                int realIdxCount = catalogDef.RealIndexes.Count;
+                int realIdxCount = tableDef.RealIndexes.Count;
                 int slotEnd = format.TDef.BlockEnd + (realIdxCount * format.TDef.RealIdxEntrySz);
                 if (realIdxCount is > 0 and <= Constants.TableDefinition.MaxIndexes && slotEnd <= format.PageSize)
                 {
                     for (int i = 0; i < realIdxCount; i++)
                     {
                         int countOffset = format.TDef.BlockEnd + (i * format.TDef.RealIdxEntrySz) + 4;
-                        BinaryPrimitives.WriteUInt32LittleEndian(updatedPage2.AsSpan(countOffset, 4), newCatalogRowCount);
+                        BinaryPrimitives.WriteUInt32LittleEndian(updatedTDefPage.AsSpan(countOffset, 4), newRowCount);
                     }
                 }
             }
 
-            overlayPages[2] = updatedPage2;
+            overlayPages[ownerTDefPage] = updatedTDefPage;
         }
         finally
         {
-            PageBuffers.Return(rawPage2);
+            PageBuffers.Return(rawTDefPage);
         }
 
-        for (int idxSlot = 0; idxSlot < catalogDef.RealIndexes.Count; idxSlot++)
+        for (int idxSlot = 0; idxSlot < tableDef.RealIndexes.Count; idxSlot++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            TDefIndexDescriptor descriptor = catalogDef.RealIndexes[idxSlot];
-            if (descriptor.RootPage < 3 || descriptor.RootPage >= source.PageCount || !CompactIndexRowAudit.SupportsDescriptor(catalogDef, idxSlot))
+            TDefIndexDescriptor descriptor = tableDef.RealIndexes[idxSlot];
+            if (descriptor.RootPage < 3 || descriptor.RootPage >= source.PageCount || !CompactIndexRowAudit.SupportsDescriptor(tableDef, idxSlot))
             {
                 continue;
             }
 
             bool ignoreNulls = (descriptor.Slot.Flags & Constants.TableDefinition.IgnoreNullsIndexFlag) != 0;
-            var entries = new List<IndexEntry>(liveCatalogRows.Count);
-            foreach ((RowLocation loc, byte[] payload) in liveCatalogRows)
+            var entries = new List<IndexEntry>(liveTableRows.Count);
+            foreach ((RowLocation loc, byte[] payload) in liveTableRows)
             {
                 (byte[] key, bool allNull) = await CompactIndexRowAudit.ReadKeyAsync(
                     format,
-                    catalogDef,
+                    tableDef,
                     idxSlot,
                     loc,
                     payload,
@@ -3049,7 +3724,7 @@ internal static class CompactDataPageSalvager
                 return pageCmp != 0 ? pageCmp : left.DataRow.CompareTo(right.DataRow);
             });
 
-            byte[]? rebuiltLeaf = IndexPageCodec.TryBuildLeafPage(format.IndexPage, format.PageSize, 2, entries);
+            byte[]? rebuiltLeaf = IndexPageCodec.TryBuildLeafPage(format.IndexPage, format.PageSize, ownerTDefPage, entries);
             if (rebuiltLeaf is not null)
             {
                 overlayPages[descriptor.RootPage] = rebuiltLeaf;
@@ -3057,10 +3732,10 @@ internal static class CompactDataPageSalvager
         }
 
         using var refreshedTableDefs = new TableDefReader(new OverlayPageSource(source, overlayPages), format, cacheResults: false, budget.MaxDefinitionBytes, maxSchemaBytes);
-        TDefImage? refreshedCatalogDef = await refreshedTableDefs.ReadImageAsync(2, maxSchemaBytes, cancellationToken).ConfigureAwait(false);
-        if (refreshedCatalogDef is not null && refreshedCatalogDef.Issues == TDefParseIssues.None)
+        TDefImage? refreshedDef = await refreshedTableDefs.ReadImageAsync(ownerTDefPage, maxSchemaBytes, cancellationToken).ConfigureAwait(false);
+        if (refreshedDef is not null && refreshedDef.Issues == TDefParseIssues.None)
         {
-            definitions[2] = refreshedCatalogDef;
+            definitions[ownerTDefPage] = refreshedDef;
         }
     }
 

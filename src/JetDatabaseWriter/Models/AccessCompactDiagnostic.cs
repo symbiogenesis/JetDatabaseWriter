@@ -33,7 +33,10 @@ public sealed record AccessCompactDiagnostic(
         => kind switch
         {
             "opaque-page" => AccessCompactDiagnosticCategory.OpaquePage,
-            "inventory-diagnostic" or "catalog-recovered-row" => AccessCompactDiagnosticCategory.CatalogUncertainty,
+            "inventory-diagnostic"
+                or "catalog-recovered-row"
+                or "salvaged-orphan-table"
+                or "salvaged-relationship-catalog" => AccessCompactDiagnosticCategory.CatalogUncertainty,
             "unresolved-reference" or "unassigned-tdef-page" or "unassigned-owner-page" => AccessCompactDiagnosticCategory.UnassignedStorage,
             "unassigned-table-row" => AccessCompactDiagnosticCategory.UnassignedTableRow,
             "regenerated-index" => AccessCompactDiagnosticCategory.RegeneratedIndex,

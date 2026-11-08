@@ -28,10 +28,12 @@ the end, and any remaining interior reclaimed prefix pages are zero-scrubbed to
 canonical Freed (`0x06`) pages and marked free in Page 1's global usage map for
 immediate writer reuse. `CompactTableLayoutOptimizer` optionally reorders rebuilt
 user-table DATA rows into canonical Primary Key order (`ClusterByPrimaryKey = true`,
-updating physical B-tree index bookmarks and duplicate secondary-key runs) and
+updating physical B-tree index bookmarks and duplicate secondary-key runs across both
+single-leaf and multi-page B-trees) and
 coalesces fragmented multi-hop `ChainedStorageMode` `LVAL` values into
-`SinglePageStorageMode` (`0x40`) or maximally dense full-page chunks
-(`CoalesceLongValueChains = true`). When a user table's stored physical index B-tree or index
+`SinglePageStorageMode` (`0x40`) or maximally dense full-page chunks while greedily
+promoting fitting `<= 64`-byte external `LVAL`s inline per row (`CoalesceLongValueChains = true`).
+When a user table's stored physical index B-tree or index
 ownership map is damaged and `RebuildDamagedIndexes = true`,
 `CompactIndexKeyRegenerator` derives canonical `IndexEntry` keys directly from
 verified active rows for supported scalar, ordinary Memo and complex-reference
@@ -41,9 +43,16 @@ rebuilds the B-tree and ownership map. When `RepairTableCounters = true`,
 (plus Jet4/ACE `num_idx_rows` slots), resets `AutoNumber` to `0` on empty
 AutoNumber tables, and raises `AutoNumber` / `ComplexAutoNumber` high-water marks
 when active rows contain higher allocated values. Under `AllowPartialRecovery = true`
-(or `InspectAsync`), `CompactDataPageSalvager` repairs damaged page-type header
+(or `InspectAsync`), `CompactDataPageSalvager` repairs damaged root `TDef` headers
+(`salvaged-tdef-header`) and continuation chains (`salvaged-tdef-continuation`),
+reattaches orphaned user-table root `TDef`s to `MSysObjects` (`salvaged-orphan-table`,
+recovering original table names from `MSysRelationships` when available), reconstructs
+missing `MSysRelationships` catalog rows from reciprocal user-table `TDef` foreign-key
+descriptors (`salvaged-relationship-catalog`), repairs damaged page-type header
 bytes (`-> 0x01`) and reconstructs damaged 4-byte `TDef` owner pointers using a
 three-tier evidence hierarchy (`usage-map`, `index-bookmarks`, `schema-signature`),
+truncates overlong variable-length columns in-place (`salvaged-truncated-variable-field`,
+`quarantined-corrupt-variable-field`) while preserving the row,
 salvages surviving live rows on partially corrupt DATA pages while quarantining
 only the damaged row slots (`quarantined-corrupt-row`, preserving slot boundaries
 via `DeletedRowFlag | start`), quarantines orphaned `MSysComplexColumns` flat-table

@@ -2919,6 +2919,228 @@ public sealed class CompactOptimalCapabilitiesTests
         Assert.Equal(200, rescuedRow[3]);
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CompactAsync_OrphanedUserTableInRelationship_RecoversOriginalTableNameFromMSysRelationships(DatabaseFormat kind)
+    {
+        await using var sourceStream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            sourceStream,
+            kind,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            Ct))
+        {
+            await writer.CreateTableAsync(
+                "Departments",
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("DeptName", typeof(string), 40) { IsNullable = false },
+                ],
+                cancellationToken: Ct);
+            await writer.CreateTableAsync(
+                "Employees",
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("DeptId", typeof(int)) { IsNullable = false },
+                    new("EmpName", typeof(string), 40) { IsNullable = false },
+                ],
+                cancellationToken: Ct);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_Employees_Departments", "Departments", "Id", "Employees", "DeptId")
+                {
+                    CascadeDeletes = true,
+                },
+                Ct);
+
+            await writer.InsertRowAsync("Departments", [1, "Engineering"], Ct);
+            await writer.InsertRowAsync("Departments", [2, "Research"], Ct);
+            await writer.InsertRowAsync("Employees", [100, 1, "Ada"], Ct);
+            await writer.InsertRowAsync("Employees", [200, 2, "Grace"], Ct);
+        }
+
+        AccessCompactReport inspect = await AccessDatabaseCompact.InspectAsync(sourceStream, cancellationToken: Ct);
+        long employeesTDef = Assert.Single(inspect.Tables, static t => t.TableName == "Employees").OwnerTDefPage;
+
+        byte[] bytes = sourceStream.ToArray();
+        int pageSize = kind == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
+        int rowsStartOff = kind == DatabaseFormat.Jet3Mdb ? 10 : 14;
+        int numRowsHeaderOff = kind == DatabaseFormat.Jet3Mdb ? 8 : 12;
+        int fixedIdOff = kind == DatabaseFormat.Jet3Mdb ? 1 : 2;
+
+        // Delete the MSysObjects row for "Employees" so it becomes an orphaned user-table TDEF.
+        bool deletedCatalogRow = false;
+        for (long p = 3; p < bytes.Length / pageSize && !deletedCatalogRow; p++)
+        {
+            int pageOff = checked((int)(p * pageSize));
+            if (bytes[pageOff] != 0x01 || BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(pageOff + 4, 4)) != 2U)
+            {
+                continue;
+            }
+
+            int numRows = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(pageOff + numRowsHeaderOff, 2));
+            for (int r = 0; r < numRows; r++)
+            {
+                int slotOff = pageOff + rowsStartOff + (r * 2);
+                ushort rawSlot = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(slotOff, 2));
+                if ((rawSlot & 0xC000) != 0)
+                {
+                    continue;
+                }
+
+                int rowStart = rawSlot & 0x1FFF;
+                int id = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(pageOff + rowStart + fixedIdOff, 4));
+                if (id == (int)employeesTDef)
+                {
+                    BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(slotOff, 2), (ushort)(rawSlot | 0x8000));
+                    deletedCatalogRow = true;
+                    break;
+                }
+            }
+        }
+
+        Assert.True(deletedCatalogRow);
+
+        await using var corruptedSource = new MemoryStream(bytes, writable: false);
+        await using var compactedDest = new MemoryStream();
+        AccessCompactReport report = await AccessDatabaseCompact.CompactAsync(
+            corruptedSource,
+            compactedDest,
+            new AccessCompactOptions
+            {
+                AllowPartialRecovery = true,
+                RebuildDamagedIndexes = true,
+                RepairTableCounters = true,
+            },
+            Ct);
+
+        Assert.True(report.DatabaseValidated);
+        Assert.Contains(
+            report.Diagnostics,
+            d => d.Kind == "salvaged-orphan-table"
+                && d.Category == AccessCompactDiagnosticCategory.CatalogUncertainty
+                && d.PageNumber == employeesTDef
+                && d.TableName == "Employees");
+
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(compactedDest, cancellationToken: Ct);
+        var empNames = new List<string>();
+        await foreach (object[] row in reader.Rows("Employees", cancellationToken: Ct))
+        {
+            empNames.Add(Assert.IsType<string>(row[2]));
+        }
+
+        Assert.Equal(["Ada", "Grace"], empNames);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CompactAsync_MissingMSysRelationshipsRows_ReconstructsRelationshipCatalogFromReciprocalTDefDescriptors(DatabaseFormat kind)
+    {
+        await using var sourceStream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            sourceStream,
+            kind,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            Ct))
+        {
+            await writer.CreateTableAsync(
+                "Customers",
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("CustomerName", typeof(string), 40) { IsNullable = false },
+                ],
+                cancellationToken: Ct);
+            await writer.CreateTableAsync(
+                "Orders",
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("CustomerId", typeof(int)) { IsNullable = false },
+                    new("Total", typeof(int)) { IsNullable = false },
+                ],
+                cancellationToken: Ct);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_Orders_Customers", "Customers", "Id", "Orders", "CustomerId")
+                {
+                    CascadeUpdates = true,
+                    CascadeDeletes = true,
+                },
+                Ct);
+
+            await writer.InsertRowAsync("Customers", [1, "Acme"], Ct);
+            await writer.InsertRowAsync("Orders", [10, 1, 250], Ct);
+        }
+
+        AccessCompactReport inspect = await AccessDatabaseCompact.InspectAsync(sourceStream, cancellationToken: Ct);
+        long relTDefPage = Assert.Single(inspect.Tables, static t => t.TableName == "MSysRelationships").OwnerTDefPage;
+
+        byte[] bytes = sourceStream.ToArray();
+        int pageSize = kind == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
+        int rowsStartOff = kind == DatabaseFormat.Jet3Mdb ? 10 : 14;
+        int numRowsHeaderOff = kind == DatabaseFormat.Jet3Mdb ? 8 : 12;
+
+        // Mark all rows on MSysRelationships's DATA page as deleted while leaving the user tables' reciprocal TDEF foreign-key descriptors intact.
+        bool deletedRelRow = false;
+        for (long p = 3; p < bytes.Length / pageSize; p++)
+        {
+            int pageOff = checked((int)(p * pageSize));
+            if (bytes[pageOff] != 0x01 || BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(pageOff + 4, 4)) != (uint)relTDefPage)
+            {
+                continue;
+            }
+
+            int numRows = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(pageOff + numRowsHeaderOff, 2));
+            for (int r = 0; r < numRows; r++)
+            {
+                int slotOff = pageOff + rowsStartOff + (r * 2);
+                ushort rawSlot = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(slotOff, 2));
+                if ((rawSlot & 0xC000) == 0)
+                {
+                    BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(slotOff, 2), (ushort)(rawSlot | 0x8000));
+                    deletedRelRow = true;
+                }
+            }
+        }
+
+        Assert.True(deletedRelRow);
+
+        await using var corruptedSource = new MemoryStream(bytes, writable: false);
+        await using var compactedDest = new MemoryStream();
+        AccessCompactReport report = await AccessDatabaseCompact.CompactAsync(
+            corruptedSource,
+            compactedDest,
+            new AccessCompactOptions
+            {
+                AllowPartialRecovery = true,
+                RebuildDamagedIndexes = true,
+                RepairTableCounters = true,
+            },
+            Ct);
+
+        Assert.True(report.DatabaseValidated);
+        Assert.Contains(
+            report.Diagnostics,
+            d => d.Kind == "salvaged-relationship-catalog"
+                && d.Category == AccessCompactDiagnosticCategory.CatalogUncertainty
+                && d.PageNumber == relTDefPage
+                && d.TableName == "Orders");
+
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(compactedDest, cancellationToken: Ct);
+        IReadOnlyList<RelationshipMetadata> relationships = await reader.ListRelationshipsAsync(Ct);
+        RelationshipMetadata rel = Assert.Single(relationships, static r => r.Name == "FK_Orders_Customers");
+        Assert.Equal("Customers", rel.PrimaryTable);
+        Assert.Equal("Orders", rel.ForeignTable);
+        Assert.Equal(["Id"], rel.PrimaryColumns);
+        Assert.Equal(["CustomerId"], rel.ForeignColumns);
+        Assert.True(rel.EnforcesReferentialIntegrity);
+        Assert.True(rel.CascadeUpdates);
+        Assert.True(rel.CascadeDeletes);
+    }
+
     private static void CorruptUsageMapSlot(byte[] bytes, int pageSize, int rowsStartOff, uint mapPtr)
     {
         long mapPage = mapPtr >> 8;
