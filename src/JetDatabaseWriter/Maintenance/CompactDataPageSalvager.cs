@@ -5333,19 +5333,39 @@ internal static class CompactDataPageSalvager
 
         IPageSource currentSource = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
         byte[] rootPage = await currentSource.ReadUncachedPageAsync(owner, cancellationToken).ConfigureAwait(false);
+        byte origRootType;
+        bool rootHeaderDamaged;
+        byte[]? candidateRoot = null;
         byte vc2;
         byte vc3;
         long nextPage;
         int declaredLogicalLen;
         try
         {
-            if (rootPage[0] != Constants.PageTypes.TableDefinition)
+            origRootType = rootPage[0];
+            if (origRootType != Constants.PageTypes.TableDefinition && IsRecognizedPageType(origRootType))
             {
                 return;
             }
 
-            vc2 = rootPage[2];
-            vc3 = rootPage[3];
+            rootHeaderDamaged = origRootType != Constants.PageTypes.TableDefinition
+                || rootPage[1] != 1
+                || (format.IsJet3 && (rootPage[2] != 0x56 || rootPage[3] != 0x43));
+            if (rootHeaderDamaged)
+            {
+                candidateRoot = new byte[format.PageSize];
+                Buffer.BlockCopy(rootPage, 0, candidateRoot, 0, format.PageSize);
+                candidateRoot[0] = Constants.PageTypes.TableDefinition;
+                candidateRoot[1] = 1;
+                if (format.IsJet3)
+                {
+                    candidateRoot[2] = 0x56;
+                    candidateRoot[3] = 0x43;
+                }
+            }
+
+            vc2 = candidateRoot is not null ? candidateRoot[2] : rootPage[2];
+            vc3 = candidateRoot is not null ? candidateRoot[3] : rootPage[3];
             nextPage = Ru32(rootPage, 4);
             declaredLogicalLen = Ri32(rootPage, 8);
         }
@@ -5354,58 +5374,78 @@ internal static class CompactDataPageSalvager
             PageBuffers.Return(rootPage);
         }
 
-        if (nextPage < 3 || nextPage >= source.PageCount || declaredLogicalLen <= format.PageSize - 8 || declaredLogicalLen > budget.MaxDefinitionBytes)
+        if (declaredLogicalLen < format.TDef.BlockEnd || declaredLogicalLen > budget.MaxDefinitionBytes)
         {
             return;
         }
 
         var testOverlay = new Dictionary<long, byte[]>(overlayPages);
-        var repairedPages = new List<(long PageNumber, byte OldType, byte[] RepairedBytes)>();
-        var visited = new HashSet<long> { owner };
-        long curPage = nextPage;
-        int remaining = declaredLogicalLen + 8 - format.PageSize;
-
-        while (curPage != 0 && remaining > 0)
+        if (candidateRoot is not null)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (curPage < 3 || curPage >= source.PageCount || !visited.Add(curPage))
+            testOverlay[owner] = candidateRoot;
+        }
+
+        var repairedPages = new List<(long PageNumber, byte OldType, byte[] RepairedBytes)>();
+        if (nextPage == 0)
+        {
+            if (!rootHeaderDamaged || declaredLogicalLen > format.PageSize - 8)
+            {
+                return;
+            }
+        }
+        else
+        {
+            if (nextPage < 3 || nextPage >= source.PageCount || declaredLogicalLen <= format.PageSize - 8)
             {
                 return;
             }
 
-            IPageSource stepSource = new OverlayPageSource(source, testOverlay);
-            byte[] page = await stepSource.ReadUncachedPageAsync(curPage, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != Constants.PageTypes.TableDefinition)
-                {
-                    byte oldType = page[0];
-                    byte[] candidate = new byte[format.PageSize];
-                    Buffer.BlockCopy(page, 0, candidate, 0, format.PageSize);
-                    candidate[0] = Constants.PageTypes.TableDefinition;
-                    candidate[1] = 1;
-                    if (format.IsJet3 && vc2 == 0x56 && vc3 == 0x43)
-                    {
-                        candidate[2] = vc2;
-                        candidate[3] = vc3;
-                    }
+            var visited = new HashSet<long> { owner };
+            long curPage = nextPage;
+            int remaining = declaredLogicalLen + 8 - format.PageSize;
 
-                    testOverlay[curPage] = candidate;
-                    repairedPages.Add((curPage, oldType, candidate));
+            while (curPage != 0 && remaining > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (curPage < 3 || curPage >= source.PageCount || !visited.Add(curPage))
+                {
+                    return;
                 }
 
-                curPage = Ru32(page, 4);
-                remaining -= format.PageSize - 8;
-            }
-            finally
-            {
-                PageBuffers.Return(page);
-            }
-        }
+                IPageSource stepSource = new OverlayPageSource(source, testOverlay);
+                byte[] page = await stepSource.ReadUncachedPageAsync(curPage, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (page[0] != Constants.PageTypes.TableDefinition)
+                    {
+                        byte oldType = page[0];
+                        byte[] candidate = new byte[format.PageSize];
+                        Buffer.BlockCopy(page, 0, candidate, 0, format.PageSize);
+                        candidate[0] = Constants.PageTypes.TableDefinition;
+                        candidate[1] = 1;
+                        if (format.IsJet3 && vc2 == 0x56 && vc3 == 0x43)
+                        {
+                            candidate[2] = vc2;
+                            candidate[3] = vc3;
+                        }
 
-        if (repairedPages.Count == 0)
-        {
-            return;
+                        testOverlay[curPage] = candidate;
+                        repairedPages.Add((curPage, oldType, candidate));
+                    }
+
+                    curPage = Ru32(page, 4);
+                    remaining -= format.PageSize - 8;
+                }
+                finally
+                {
+                    PageBuffers.Return(page);
+                }
+            }
+
+            if (!rootHeaderDamaged && repairedPages.Count == 0)
+            {
+                return;
+            }
         }
 
         try
@@ -5413,7 +5453,11 @@ internal static class CompactDataPageSalvager
             var verifySource = new OverlayPageSource(source, testOverlay);
             using var verifyReader = new TableDefReader(verifySource, format, cacheResults: false, budget.MaxDefinitionBytes, maxSchemaBytes);
             TDefImage? image = await verifyReader.ReadImageAsync(owner, maxSchemaBytes, cancellationToken).ConfigureAwait(false);
-            if (image is null || image.Issues != TDefParseIssues.None || image.Columns.Count == 0)
+            if (image is null
+                || image.Issues != TDefParseIssues.None
+                || image.Columns.Count == 0
+                || image.Header.TableType is not (Constants.TableDefinition.UserTableType or Constants.TableDefinition.SystemTableType)
+                || (owner == 2 && image.Columns.Count < 6))
             {
                 return;
             }
@@ -5424,6 +5468,23 @@ internal static class CompactDataPageSalvager
         }
 
         string resolvedName = tableName ?? $"Table_{owner}";
+        if (rootHeaderDamaged && candidateRoot is not null)
+        {
+            overlayPages[owner] = candidateRoot;
+            if (diagnostics.Count < budget.MaxDiagnostics)
+            {
+                diagnostics.Add(
+                    new AccessCompactDiagnostic(
+                        "salvaged-tdef-header",
+                        owner,
+                        owner,
+                        null,
+                        $"Repaired damaged page-type header byte (0x{origRootType:X2} -> 0x02) on root TDEF page {owner} for table '{resolvedName}' after verifying the table definition schema.",
+                        AccessCompactDiagnosticCategory.SalvagedDataPage,
+                        resolvedName));
+            }
+        }
+
         foreach ((long contPage, byte oldType, byte[] repairedBytes) in repairedPages)
         {
             overlayPages[contPage] = repairedBytes;

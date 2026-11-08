@@ -2712,6 +2712,84 @@ public sealed class CompactOptimalCapabilitiesTests
         Assert.True(report.CoalescedLongValueCount < patchedOnFirstDataPage);
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CompactAsync_DamagedRootTDefHeader_SalvagesTDefHeaderAndRecoversTableRows(DatabaseFormat kind)
+    {
+        await using var sourceStream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            sourceStream,
+            kind,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync(
+                "RootTDefVictim",
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("Title", typeof(string), 60) { IsNullable = false },
+                ],
+                cancellationToken: Ct);
+
+            await writer.InsertRowAsync("RootTDefVictim", [10, "Row-Ten"], Ct);
+            await writer.InsertRowAsync("RootTDefVictim", [20, "Row-Twenty"], Ct);
+            await writer.InsertRowAsync("RootTDefVictim", [30, "Row-Thirty"], Ct);
+        }
+
+        AccessCompactReport inspect = await AccessDatabaseCompact.InspectAsync(sourceStream, cancellationToken: Ct);
+        long victimTDef = Assert.Single(inspect.Tables, static t => t.TableName == "RootTDefVictim").OwnerTDefPage;
+
+        byte[] bytes = sourceStream.ToArray();
+        int pageSize = kind == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
+
+        // Corrupt the root TDEF page's page-type byte (0x02 -> 0x7F).
+        bytes[checked((int)(victimTDef * pageSize))] = 0x7F;
+
+        await using (var strictSource = new MemoryStream(bytes, writable: false))
+        await using (var strictDest = new MemoryStream())
+        {
+            await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                await AccessDatabaseCompact.CompactAsync(
+                    strictSource,
+                    strictDest,
+                    new AccessCompactOptions { AllowPartialRecovery = false },
+                    Ct));
+        }
+
+        await using var salvageSource = new MemoryStream(bytes, writable: false);
+        await using var salvageDest = new MemoryStream();
+        AccessCompactReport report = await AccessDatabaseCompact.CompactAsync(
+            salvageSource,
+            salvageDest,
+            new AccessCompactOptions { AllowPartialRecovery = true },
+            Ct);
+
+        Assert.True(report.DatabaseValidated);
+        Assert.Contains(
+            report.Diagnostics,
+            d => d.Kind == "salvaged-tdef-header"
+                && d.Category == AccessCompactDiagnosticCategory.SalvagedDataPage
+                && d.PageNumber == victimTDef
+                && d.TableName == "RootTDefVictim");
+
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(salvageDest, cancellationToken: Ct);
+        Assert.Equal(3, await reader.GetRealRowCountAsync("RootTDefVictim", Ct));
+        var rows = new List<object[]>();
+        await foreach (object[] row in reader.Rows("RootTDefVictim", cancellationToken: Ct))
+        {
+            rows.Add(row);
+        }
+
+        Assert.Equal(3, rows.Count);
+        Assert.Equal(10, rows[0][0]);
+        Assert.Equal("Row-Ten", rows[0][1]);
+        Assert.Equal(30, rows[2][0]);
+        Assert.Equal("Row-Thirty", rows[2][1]);
+    }
+
     private static void CorruptUsageMapSlot(byte[] bytes, int pageSize, int rowsStartOff, uint mapPtr)
     {
         long mapPage = mapPtr >> 8;
