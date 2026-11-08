@@ -14,6 +14,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
@@ -120,7 +121,7 @@ internal static class CompactTableLayoutOptimizer
                 bool isUserTable = table.Owner >= 3 && !CompactDataPageSalvager.IsSystemTableName(tableName);
                 hydratedColumnsByOwner.TryGetValue(table.Owner, out IReadOnlyList<ColumnInfo>? hydratedColumns);
 
-                if (isUserTable && clusterByPrimaryKey && TryClusterTableByPrimaryKey(format, table, GetAppendedPage, modifiedPageNumbers))
+                if (isUserTable && clusterByPrimaryKey && await TryClusterTableByPrimaryKeyAsync(format, table, hydratedColumns, GetAppendedPage, modifiedPageNumbers, cancellationToken).ConfigureAwait(false))
                 {
                     _ = clusteredOwners.Add(table.Owner);
                 }
@@ -189,11 +190,13 @@ internal static class CompactTableLayoutOptimizer
             WrittenBytes: writtenBytes);
     }
 
-    private static bool TryClusterTableByPrimaryKey(
+    private static async ValueTask<bool> TryClusterTableByPrimaryKeyAsync(
         JetFormat format,
         CompactPinnedDatabaseTable table,
+        IReadOnlyList<ColumnInfo>? hydratedColumns,
         Func<long, byte[]> getAppendedPage,
-        HashSet<long> modifiedPageNumbers)
+        HashSet<long> modifiedPageNumbers,
+        CancellationToken cancellationToken)
     {
         CompactRawDataBuilderResult dataAlloc = table.Allocation.Table.Data;
         if (dataAlloc.RowCount <= 1 || dataAlloc.PageCount <= 0)
@@ -201,25 +204,39 @@ internal static class CompactTableLayoutOptimizer
             return false;
         }
 
-        int pkSlot = -1;
-        foreach (TDefLogicalIndexDescriptor logical in table.Definition.LogicalIndexes)
+        // Extract all current rows from dataAlloc pages in physical order.
+        var rowsByOldBookmark = new Dictionary<(long Page, int Row), byte[]>((int)dataAlloc.RowCount);
+        var orderedOldBookmarks = new List<(long Page, int Row)>((int)dataAlloc.RowCount);
+        for (long p = dataAlloc.FirstPageNumber; p < dataAlloc.FirstPageNumber + dataAlloc.PageCount; p++)
         {
-            if (logical.Entry.IndexType == IndexKind.PrimaryKey)
+            byte[] page = getAppendedPage(p);
+            int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.NumRows, 2));
+            for (int slot = 0; slot < numRows; slot++)
             {
-                pkSlot = logical.Entry.IndexNum2;
-                break;
+                if (!UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, slot, out RowBound bound) || bound.RowSize <= 0)
+                {
+                    return false;
+                }
+
+                rowsByOldBookmark[(p, slot)] = page.AsSpan(bound.RowStart, bound.RowSize).ToArray();
+                orderedOldBookmarks.Add((p, slot));
             }
         }
 
-        if (pkSlot < 0 || pkSlot >= table.Allocation.Indexes.Count)
+        if (rowsByOldBookmark.Count != dataAlloc.RowCount)
         {
             return false;
         }
 
-        // Walk the Primary Key leaf chain to obtain the canonical PK bookmark order.
-        CompactRawIndexBuilderResult pkTree = table.Allocation.Indexes[pkSlot].Tree;
-        if (!TryReadOrderedLeafChainEntries(format, pkTree, getAppendedPage, out List<IndexEntry> pkEntries)
-            || pkEntries.Count != dataAlloc.RowCount)
+        List<IndexEntry>? pkEntries = await TryResolveClusteringEntriesAsync(
+            format,
+            table,
+            hydratedColumns,
+            rowsByOldBookmark,
+            orderedOldBookmarks,
+            getAppendedPage,
+            cancellationToken).ConfigureAwait(false);
+        if (pkEntries is null || pkEntries.Count != dataAlloc.RowCount)
         {
             return false;
         }
@@ -244,45 +261,17 @@ internal static class CompactTableLayoutOptimizer
             return false;
         }
 
-        // Extract all current rows from dataAlloc pages.
-        var rowsByOldBookmark = new Dictionary<(long Page, int Row), byte[]>((int)dataAlloc.RowCount);
-        for (long p = dataAlloc.FirstPageNumber; p < dataAlloc.FirstPageNumber + dataAlloc.PageCount; p++)
-        {
-            byte[] page = getAppendedPage(p);
-            int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.NumRows, 2));
-            for (int slot = 0; slot < numRows; slot++)
-            {
-                if (!UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, slot, out RowBound bound) || bound.RowSize <= 0)
-                {
-                    return false;
-                }
-
-                rowsByOldBookmark[(p, slot)] = page.AsSpan(bound.RowStart, bound.RowSize).ToArray();
-            }
-        }
-
-        if (rowsByOldBookmark.Count != pkEntries.Count)
+        // Greedily bin-pack rows in clustering order across pages, then split multi-row intervals if fewer than targetPageCount pages were used.
+        int targetPageCount = checked((int)dataAlloc.PageCount);
+        if (pkEntries.Count < targetPageCount)
         {
             return false;
         }
 
-        // Pack rows in PK order across the exact dataAlloc.PageCount pages, ensuring every page receives at least 1 row.
-        int targetPageCount = checked((int)dataAlloc.PageCount);
-        byte[][] newDataPages = new byte[targetPageCount][];
-        for (int i = 0; i < targetPageCount; i++)
-        {
-            byte[] dp = new byte[format.PageSize];
-            dp[0] = Constants.PageTypes.Data;
-            dp[1] = 1;
-            BinaryPrimitives.WriteInt32LittleEndian(dp.AsSpan(format.DataPage.TDefOff, 4), checked((int)table.Owner));
-            newDataPages[i] = dp;
-        }
-
-        var bookmarkMap = new Dictionary<(long Page, int Row), (long Page, byte Row)>(pkEntries.Count);
-        int currentPageIdx = 0;
-        int currentRowCount = 0;
-        int currentRowStart = format.PageSize;
-
+        var pageIntervals = new List<(int StartIdx, int EndIdx)>(targetPageCount);
+        int intervalStart = 0;
+        int curCount = 0;
+        int curRowStart = format.PageSize;
         for (int i = 0; i < pkEntries.Count; i++)
         {
             IndexEntry pkEntry = pkEntries[i];
@@ -291,47 +280,100 @@ internal static class CompactTableLayoutOptimizer
                 return false;
             }
 
-            int remainingRowsAfterThis = pkEntries.Count - 1 - i;
-            int remainingPagesAfterCurrent = targetPageCount - 1 - currentPageIdx;
-            bool forceAdvanceToKeepAllPagesNonEmpty = currentRowCount > 0 && remainingRowsAfterThis < remainingPagesAfterCurrent;
-            bool pageFull = currentRowCount >= Constants.DataPage.MaxRowsPerPage
-                || currentRowStart - rowBytes.Length < format.DataPage.RowsStart + ((currentRowCount + 1) * 2);
-
-            if (forceAdvanceToKeepAllPagesNonEmpty || pageFull)
+            bool pageFull = curCount >= Constants.DataPage.MaxRowsPerPage
+                || curRowStart - rowBytes.Length < format.DataPage.RowsStart + ((curCount + 1) * 2);
+            if (pageFull)
             {
-                currentPageIdx++;
-                if (currentPageIdx >= targetPageCount)
+                if (curCount == 0)
                 {
                     return false;
                 }
 
-                currentRowCount = 0;
-                currentRowStart = format.PageSize;
+                pageIntervals.Add((intervalStart, i - 1));
+                intervalStart = i;
+                curCount = 0;
+                curRowStart = format.PageSize;
             }
 
-            byte[] targetPage = newDataPages[currentPageIdx];
-            currentRowStart -= rowBytes.Length;
-            if (currentRowStart < format.DataPage.RowsStart + ((currentRowCount + 1) * 2))
+            curRowStart -= rowBytes.Length;
+            if (curRowStart < format.DataPage.RowsStart + ((curCount + 1) * 2))
             {
                 return false;
             }
 
-            rowBytes.CopyTo(targetPage.AsSpan(currentRowStart));
-            BinaryPrimitives.WriteUInt16LittleEndian(
-                targetPage.AsSpan(format.DataPage.RowsStart + (currentRowCount * 2), 2),
-                checked((ushort)currentRowStart));
-            int slotIndex = currentRowCount;
-            currentRowCount++;
-            BinaryPrimitives.WriteUInt16LittleEndian(targetPage.AsSpan(format.DataPage.NumRows, 2), checked((ushort)currentRowCount));
-            BinaryPrimitives.WriteUInt16LittleEndian(
-                targetPage.AsSpan(2, 2),
-                checked((ushort)(currentRowStart - format.DataPage.RowsStart - (currentRowCount * 2))));
-
-            long newPageNumber = dataAlloc.FirstPageNumber + currentPageIdx;
-            bookmarkMap[(pkEntry.DataPage, pkEntry.DataRow)] = (newPageNumber, checked((byte)slotIndex));
+            curCount++;
         }
 
-        if (currentPageIdx != targetPageCount - 1 || bookmarkMap.Count != pkEntries.Count)
+        if (curCount > 0)
+        {
+            pageIntervals.Add((intervalStart, pkEntries.Count - 1));
+        }
+
+        if (pageIntervals.Count == 0 || pageIntervals.Count > targetPageCount)
+        {
+            return false;
+        }
+
+        while (pageIntervals.Count < targetPageCount)
+        {
+            int splitIdx = -1;
+            for (int idx = pageIntervals.Count - 1; idx >= 0; idx--)
+            {
+                if (pageIntervals[idx].EndIdx > pageIntervals[idx].StartIdx)
+                {
+                    splitIdx = idx;
+                    break;
+                }
+            }
+
+            if (splitIdx < 0)
+            {
+                return false;
+            }
+
+            (int s, int e) = pageIntervals[splitIdx];
+            pageIntervals[splitIdx] = (s, e - 1);
+            pageIntervals.Insert(splitIdx + 1, (e, e));
+        }
+
+        byte[][] newDataPages = new byte[targetPageCount][];
+        var bookmarkMap = new Dictionary<(long Page, int Row), (long Page, byte Row)>(pkEntries.Count);
+        for (int pageIdx = 0; pageIdx < targetPageCount; pageIdx++)
+        {
+            byte[] dp = new byte[format.PageSize];
+            dp[0] = Constants.PageTypes.Data;
+            dp[1] = 1;
+            BinaryPrimitives.WriteInt32LittleEndian(dp.AsSpan(format.DataPage.TDefOff, 4), checked((int)table.Owner));
+
+            (int s, int e) = pageIntervals[pageIdx];
+            int rowCountOnPage = e - s + 1;
+            int writeStart = format.PageSize;
+            long newPageNumber = dataAlloc.FirstPageNumber + pageIdx;
+            for (int slot = 0; slot < rowCountOnPage; slot++)
+            {
+                IndexEntry pkEntry = pkEntries[s + slot];
+                byte[] rowBytes = rowsByOldBookmark[(pkEntry.DataPage, pkEntry.DataRow)];
+                writeStart -= rowBytes.Length;
+                if (writeStart < format.DataPage.RowsStart + (rowCountOnPage * 2))
+                {
+                    return false;
+                }
+
+                rowBytes.CopyTo(dp.AsSpan(writeStart));
+                BinaryPrimitives.WriteUInt16LittleEndian(
+                    dp.AsSpan(format.DataPage.RowsStart + (slot * 2), 2),
+                    checked((ushort)writeStart));
+                bookmarkMap[(pkEntry.DataPage, pkEntry.DataRow)] = (newPageNumber, checked((byte)slot));
+            }
+
+            BinaryPrimitives.WriteUInt16LittleEndian(dp.AsSpan(format.DataPage.NumRows, 2), checked((ushort)rowCountOnPage));
+            BinaryPrimitives.WriteUInt16LittleEndian(
+                dp.AsSpan(2, 2),
+                checked((ushort)(writeStart - format.DataPage.RowsStart - (rowCountOnPage * 2))));
+            newDataPages[pageIdx] = dp;
+        }
+
+        if (bookmarkMap.Count != pkEntries.Count)
         {
             return false;
         }
@@ -946,6 +988,157 @@ internal static class CompactTableLayoutOptimizer
         }
 
         return true;
+    }
+
+    private static async ValueTask<List<IndexEntry>?> TryResolveClusteringEntriesAsync(
+        JetFormat format,
+        CompactPinnedDatabaseTable table,
+        IReadOnlyList<ColumnInfo>? hydratedColumns,
+        Dictionary<(long Page, int Row), byte[]> rowsByOldBookmark,
+        List<(long Page, int Row)> orderedOldBookmarks,
+        Func<long, byte[]> getAppendedPage,
+        CancellationToken cancellationToken)
+    {
+        int expectedRowCount = orderedOldBookmarks.Count;
+
+        // 1. PrimaryKey logical index.
+        foreach (TDefLogicalIndexDescriptor logical in table.Definition.LogicalIndexes)
+        {
+            if (logical.Entry.IndexType == IndexKind.PrimaryKey
+                && logical.Entry.IndexNum2 >= 0
+                && logical.Entry.IndexNum2 < table.Allocation.Indexes.Count)
+            {
+                CompactRawIndexBuilderResult pkTree = table.Allocation.Indexes[logical.Entry.IndexNum2].Tree;
+                if (TryReadOrderedLeafChainEntries(format, pkTree, getAppendedPage, out List<IndexEntry> pkEntries)
+                    && pkEntries.Count == expectedRowCount)
+                {
+                    return pkEntries;
+                }
+            }
+        }
+
+        // 2. Fallback to the first Unique index (LogicalIndexes with UniqueIndexFlag, then RealIndexes with UniqueIndexFlag).
+        var candidateUniqueSlots = new List<int>();
+        foreach (TDefLogicalIndexDescriptor logical in table.Definition.LogicalIndexes)
+        {
+            if (logical.Entry.IndexType == IndexKind.Normal
+                && logical.Entry.IndexNum2 >= 0
+                && logical.Entry.IndexNum2 < table.Definition.RealIndexes.Count
+                && logical.Entry.IndexNum2 < table.Allocation.Indexes.Count
+                && (table.Definition.RealIndexes[logical.Entry.IndexNum2].Slot.Flags & Constants.TableDefinition.UniqueIndexFlag) != 0
+                && !candidateUniqueSlots.Contains(logical.Entry.IndexNum2))
+            {
+                candidateUniqueSlots.Add(logical.Entry.IndexNum2);
+            }
+        }
+
+        for (int idx = 0; idx < table.Definition.RealIndexes.Count && idx < table.Allocation.Indexes.Count; idx++)
+        {
+            if ((table.Definition.RealIndexes[idx].Slot.Flags & Constants.TableDefinition.UniqueIndexFlag) != 0
+                && !candidateUniqueSlots.Contains(idx))
+            {
+                candidateUniqueSlots.Add(idx);
+            }
+        }
+
+        foreach (int uniqueSlot in candidateUniqueSlots)
+        {
+            CompactRawIndexBuilderResult uniqueTree = table.Allocation.Indexes[uniqueSlot].Tree;
+            if (TryReadOrderedLeafChainEntries(format, uniqueTree, getAppendedPage, out List<IndexEntry> uniqueEntries)
+                && uniqueEntries.Count > 0
+                && uniqueEntries.Count <= expectedRowCount)
+            {
+                if (uniqueEntries.Count < expectedRowCount)
+                {
+                    var seen = new HashSet<(long Page, int Row)>(uniqueEntries.Count);
+                    foreach (IndexEntry entry in uniqueEntries)
+                    {
+                        _ = seen.Add((entry.DataPage, entry.DataRow));
+                    }
+
+                    foreach ((long p, int r) in orderedOldBookmarks)
+                    {
+                        if (seen.Add((p, r)))
+                        {
+                            uniqueEntries.Add(new IndexEntry([], checked((uint)p), checked((byte)r)));
+                        }
+                    }
+                }
+
+                if (uniqueEntries.Count == expectedRowCount)
+                {
+                    return uniqueEntries;
+                }
+            }
+        }
+
+        // 3. Fallback to the first AutoNumber column in key order.
+        ColumnInfo? autoCol = null;
+        foreach (ColumnInfo col in hydratedColumns ?? table.Definition.Columns)
+        {
+            if (col.IsAutoNumber)
+            {
+                autoCol = col;
+                break;
+            }
+        }
+
+        if (autoCol is null)
+        {
+            return null;
+        }
+
+        var autoEntries = new List<IndexEntry>(expectedRowCount);
+        foreach ((long p, int r) in orderedOldBookmarks)
+        {
+            byte[] rowBytes = rowsByOldBookmark[(p, r)];
+            var loc = new RowLocation(p, r, 0, rowBytes.Length);
+            byte[]? encodedKey = null;
+            bool scanOk = true;
+            try
+            {
+                await CompactRawFieldReader.ScanAsync(
+                    format,
+                    table.Definition,
+                    loc,
+                    rowBytes,
+                    (field, _) =>
+                    {
+                        if (field.Column.ColNum == autoCol.ColNum)
+                        {
+                            object? decoded = field.Kind == CompactRawFieldKind.Stored && field.RawBytes.Length > 0
+                                ? JetTypeInfo.ReadFixedTyped(field.RawBytes.Span, 0, autoCol, field.RawBytes.Length, strictNumeric: false)
+                                : null;
+                            encodedKey = IndexKeyEncoder.TryEncodeColumnEntry(
+                                autoCol.Type,
+                                decoded,
+                                ascending: true,
+                                autoCol.NumericScale,
+                                format.LegacyNumericIndexKeys,
+                                format.DefaultTextSortOrder,
+                                autoCol.Size);
+                        }
+
+                        return default;
+                    },
+                    cancellationToken,
+                    hydratedColumns).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException)
+            {
+                scanOk = false;
+            }
+
+            if (!scanOk || encodedKey is null)
+            {
+                return null;
+            }
+
+            autoEntries.Add(new IndexEntry(encodedKey, checked((uint)p), checked((byte)r)));
+        }
+
+        autoEntries.Sort(CompareIndexEntries);
+        return autoEntries;
     }
 
     private static int CompareIndexEntries(IndexEntry left, IndexEntry right)

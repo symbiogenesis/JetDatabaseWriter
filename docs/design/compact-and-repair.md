@@ -20,7 +20,12 @@ entries, `TDef` header counters and source-page ownership, then produces a
 independently verified by `CompactPinnedDatabaseValidator`. When source-page
 ownership is complete (`ReclamationAuthorized`), trailing source pages owned by
 rebuilt tables or already globally free are truncated (`RetainedPrefixPages`),
-`CompactPrefixHolePacker` (`PackInteriorFreePages = true`) relocates rebuilt table
+`CompactPrefixHolePacker` (`PackInteriorFreePages = true`) relocates high-page
+`TDef` continuation pages and unpinned single-page user-table root `TDef`s into
+globally free interior holes (atomically updating `MSysObjects.Id`/`ParentId` and
+its catalog indexes, owned `DATA`/index `TDef` headers, `MSysACEs` `ObjectId`
+references and reciprocal foreign-key `ReferenceTablePageNumber` descriptors when
+no application/query objects are present) and relocates rebuilt table
 allocations (for both `Inline` and multi-page `Reference` usage-map tables) into
 scrubbed interior prefix holes (`3 .. RetainedPrefixPages - 1`)
 using a strictly order-preserving page bijection before leaving pages appended at
@@ -28,11 +33,17 @@ the end, and any remaining interior reclaimed prefix pages are zero-scrubbed to
 canonical Freed (`0x06`) pages and marked free in Page 1's global usage map for
 immediate writer reuse. `CompactTableLayoutOptimizer` optionally reorders rebuilt
 user-table DATA rows into canonical Primary Key order (`ClusterByPrimaryKey = true`,
-updating physical B-tree index bookmarks and duplicate secondary-key runs across both
-single-leaf and multi-page B-trees) and
+falling back to the table's first `Unique` index or `AutoNumber` key order when no
+formal `PrimaryKey` exists, densely re-bin-packing variable-width rows across DATA
+pages, and updating physical B-tree index bookmarks and duplicate secondary-key runs across both
+single-leaf and multi-page B-trees), losslessly normalizes uncompressed UTF-16LE
+Text and Memo payloads to `0xFF 0xFE` compressed representation on `CompressedUnicode`
+columns in Jet4/ACE when round-trip-identical and strictly smaller, and
 coalesces fragmented multi-hop `ChainedStorageMode` `LVAL` values into
-`SinglePageStorageMode` (`0x40`) or maximally dense full-page chunks while greedily
-promoting fitting `<= 64`-byte external `LVAL`s inline per row (`CoalesceLongValueChains = true`).
+`SinglePageStorageMode` (`0x40`) or maximally dense full-page chunks while
+promoting eligible `<= 64`-byte external `LVAL`s inline per row (spilling overflowing
+rows onto an additional overlay DATA page when source pages lack free byte slack)
+(`CoalesceLongValueChains = true`).
 When a user table's stored physical index B-tree or index
 ownership map is damaged and `RebuildDamagedIndexes = true`,
 `CompactIndexKeyRegenerator` derives canonical `IndexEntry` keys directly from
@@ -49,13 +60,16 @@ reattaches orphaned user-table root `TDef`s to `MSysObjects` (`salvaged-orphan-t
 recovering original table names from `MSysRelationships` when available), reconstructs
 missing `MSysRelationships` catalog rows from reciprocal user-table `TDef` foreign-key
 descriptors (`salvaged-relationship-catalog`), repairs damaged page-type header
-bytes (`-> 0x01`) and reconstructs damaged 4-byte `TDef` owner pointers using a
+bytes (`-> 0x01`, including `MSysObjects` `owner == 2` catalog DATA pages) and reconstructs damaged 4-byte `TDef` owner pointers using a
 three-tier evidence hierarchy (`usage-map`, `index-bookmarks`, `schema-signature`),
 truncates overlong variable-length columns in-place (`salvaged-truncated-variable-field`,
-`quarantined-corrupt-variable-field`) while preserving the row,
-salvages surviving live rows on partially corrupt DATA pages while quarantining
+`quarantined-corrupt-variable-field`) and repairs or null-resets damaged 23-byte
+calculated-column envelopes in-place (`salvaged-calculated-envelope`,
+`quarantined-corrupt-calculated-field`) while preserving the row,
+salvages surviving live rows on partially corrupt user and `MSysObjects` catalog DATA pages while quarantining
 only the damaged row slots (`quarantined-corrupt-row`, preserving slot boundaries
-via `DeletedRowFlag | start`), quarantines orphaned `MSysComplexColumns` flat-table
+via `DeletedRowFlag | start` and rescuing surviving prefix chunks of broken multi-hop
+`LVAL` chains into `AccessCompactQuarantineRecord.DecodedFields`), quarantines orphaned `MSysComplexColumns` flat-table
 rows (`quarantined-orphan-complex-row`) and orphaned enforced foreign-key child
 rows (`quarantined-orphan-fk-row`, when `QuarantineOrphanedChildRows = true`),
 and isolates genuinely unrecoverable user-table DATA pages

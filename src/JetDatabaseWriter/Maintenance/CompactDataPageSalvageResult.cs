@@ -19,7 +19,8 @@ using JetDatabaseWriter.Pages.Paging;
 /// <param name="TotalQuarantinedRows">The total number of quarantined individual row slots and orphaned child rows across all tables.</param>
 /// <param name="InlinePromotedLongValuesByOwner">Counts of small external LVAL values promoted inline or multi-hop chains coalesced keyed by owner TDEF page.</param>
 /// <param name="TotalInlinePromotedLongValues">The total number of small external LVAL values promoted inline or multi-hop chains coalesced across all tables.</param>
-/// <param name="RelocatedTDefContinuationPages">The number of multi-page TDef continuation pages relocated into lower interior free pages.</param>
+/// <param name="RelocatedTDefContinuationPages">The number of root or multi-page TDef pages relocated into lower interior free pages.</param>
+/// <param name="ClusteredOwners">Table owners whose data rows were clustered and re-bin-packed in the pre-planning overlay.</param>
 internal sealed record CompactDataPageSalvageResult(
     IPageSource EffectiveSource,
     IReadOnlyDictionary<long, string> TableNames,
@@ -33,4 +34,5 @@ internal sealed record CompactDataPageSalvageResult(
     long TotalQuarantinedRows = 0,
     IReadOnlyDictionary<long, long>? InlinePromotedLongValuesByOwner = null,
     long TotalInlinePromotedLongValues = 0,
-    int RelocatedTDefContinuationPages = 0);
+    int RelocatedTDefContinuationPages = 0,
+    HashSet<long>? ClusteredOwners = null);

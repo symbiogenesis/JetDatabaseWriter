@@ -589,7 +589,9 @@ public static class AccessDatabaseCompact
                     quarantineOrphanedChildRows: options.QuarantineOrphanedChildRows,
                     quarantineConstraintViolatingRows: options.QuarantineConstraintViolatingRows,
                     coalesceLongValueChains: options.CoalesceLongValueChains,
-                    packInteriorFreePages: options.PackInteriorFreePages).ConfigureAwait(false);
+                    packInteriorFreePages: options.PackInteriorFreePages,
+                    clusterByPrimaryKey: options.ClusterByPrimaryKey,
+                    normalizeUnicodeCompression: true).ConfigureAwait(false);
 
                 CompactDatabasePlannerResult plan = await CompactDatabasePlanner.PlanAsync(
                     salvage.EffectiveSource,
@@ -684,7 +686,7 @@ public static class AccessDatabaseCompact
                     long finalDestinationPages = buildResult.Validation.Allocations.DestinationPages;
                     int finalScrubbedFreePages = plan.Reclamation.ScrubbedPrefixPageCount;
                     int packedInteriorPages = salvage.RelocatedTDefContinuationPages;
-                    int clusteredTableCount = 0;
+                    int clusteredTableCount = salvage.ClusteredOwners?.Count ?? 0;
                     long coalescedLongValueCount = salvage.TotalInlinePromotedLongValues;
                     IReadOnlyList<AccessCompactTableSummary> finalTableSummaries = plan.TableSummaries ?? [];
 
@@ -714,7 +716,13 @@ public static class AccessDatabaseCompact
                             cancellationToken).ConfigureAwait(false);
                         extraReadBytes = checked(extraReadBytes + optResult.ReadBytes);
                         extraWrittenBytes = checked(extraWrittenBytes + optResult.WrittenBytes);
-                        clusteredTableCount = optResult.ClusteredTableCount;
+                        var allClusteredOwners = new HashSet<long>(optResult.ClusteredOwners);
+                        if (salvage.ClusteredOwners is not null)
+                        {
+                            allClusteredOwners.UnionWith(salvage.ClusteredOwners);
+                        }
+
+                        clusteredTableCount = allClusteredOwners.Count;
                         coalescedLongValueCount = checked(coalescedLongValueCount + optResult.CoalescedLongValueCount);
 
                         if (clusteredTableCount > 0 || coalescedLongValueCount > 0)
@@ -722,7 +730,7 @@ public static class AccessDatabaseCompact
                             var updatedSummaries = new List<AccessCompactTableSummary>(finalTableSummaries.Count);
                             foreach (AccessCompactTableSummary summary in finalTableSummaries)
                             {
-                                bool clustered = optResult.ClusteredOwners.Contains(summary.OwnerTDefPage);
+                                bool clustered = allClusteredOwners.Contains(summary.OwnerTDefPage);
                                 optResult.CoalescedByOwner.TryGetValue(summary.OwnerTDefPage, out long coalescedLvals);
                                 long inlinePromoted = salvage.InlinePromotedLongValuesByOwner?.GetValueOrDefault(summary.OwnerTDefPage, 0) ?? 0;
                                 updatedSummaries.Add(

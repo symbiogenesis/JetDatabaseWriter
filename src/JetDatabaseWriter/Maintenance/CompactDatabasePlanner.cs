@@ -341,19 +341,28 @@ internal static class CompactDatabasePlanner
                                         definition,
                                         location,
                                         payload,
-                                        static (field, _) =>
+                                        async (field, fieldToken) =>
                                         {
-                                            if (field.Kind == CompactRawFieldKind.Stored
-                                                && !field.IsLongValue
+                                            if (field.Kind != CompactRawFieldKind.Stored)
+                                            {
+                                                return;
+                                            }
+
+                                            if (field.Column.IsCalculated)
+                                            {
+                                                (bool calcValid, string? calcError) = await CompactDataPageSalvager.TryValidateCalculatedFieldAsync(source, format, field, fieldToken).ConfigureAwait(false);
+                                                if (!calcValid)
+                                                {
+                                                    throw Corrupt(field.Location.PageNumber, calcError ?? $"Row slot {field.Location.RowIndex} calculated column '{field.Column.Name}' has a malformed 23-byte envelope.");
+                                                }
+                                            }
+                                            else if (!field.IsLongValue
                                                 && !field.Column.IsFixed
-                                                && !field.Column.IsCalculated
                                                 && field.Column.Size > 0
                                                 && field.RawBytes.Length > field.Column.Size)
                                             {
                                                 throw Corrupt(field.Location.PageNumber, $"Row slot {field.Location.RowIndex} variable column '{field.Column.Name}' length ({field.RawBytes.Length}) exceeds declared size ({field.Column.Size}).");
                                             }
-
-                                            return default;
                                         },
                                         rowToken,
                                         hydratedColumns).ConfigureAwait(false);
