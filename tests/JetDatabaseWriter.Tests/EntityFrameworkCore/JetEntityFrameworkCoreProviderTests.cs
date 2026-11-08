@@ -1189,6 +1189,120 @@ public sealed class JetEntityFrameworkCoreProviderTests
         }
     }
 
+    [Fact]
+    public async Task Query_ContainsIndexSeek_ColumnProjection_RowLimits_And_BatchedAutoNumberInserts_Work_Correctly()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions<StoreDbContext> options = new DbContextOptionsBuilder<StoreDbContext>()
+            .UseJetDatabaseWriter(stream, DatabaseFormat.AceAccdb, leaveOpen: true)
+            .Options;
+
+        await using (StoreDbContext seed = new(options))
+        {
+            Assert.True(await seed.Database.EnsureCreatedAsync(ct));
+
+            Customer c1 = new() { Code = "C-01", Name = "One", CreditLimit = 100m, RowVersion = 1, Notes = new string('A', 2000) };
+            Customer c2 = new() { Code = "C-02", Name = "Two", CreditLimit = 200m, RowVersion = 1, Notes = new string('B', 2000) };
+            Customer c3 = new() { Code = "C-03", Name = "Three", CreditLimit = 300m, RowVersion = 1, IsVip = true };
+            Customer c4 = new() { Code = "C-04", Name = "Four", CreditLimit = 400m, RowVersion = 1, IsVip = true };
+
+            Order o1 = new()
+            {
+                Customer = c2,
+                OrderDate = new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc),
+                TotalAmount = 50m,
+                Status = OrderStatus.Shipped,
+                TrackingId = Guid.NewGuid(),
+                Payload = new byte[4096],
+            };
+            Order o2 = new()
+            {
+                Customer = c4,
+                OrderDate = new DateTime(2026, 6, 2, 0, 0, 0, DateTimeKind.Utc),
+                TotalAmount = 150m,
+                Status = OrderStatus.Shipped,
+                TrackingId = Guid.NewGuid(),
+                Payload = new byte[4096],
+            };
+
+            seed.Customers.AddRange(c1, c2, c3, c4);
+            seed.Orders.AddRange(o1, o2);
+            seed.ScheduleItems.AddRange(
+                new ScheduleItem { Title = "S1", ScheduledDate = new DateOnly(2026, 6, 1), StartTime = new TimeOnly(8, 0), Duration = TimeSpan.FromHours(1) },
+                new ScheduleItem { Title = "S2", ScheduledDate = new DateOnly(2026, 6, 2), StartTime = new TimeOnly(9, 0), Duration = TimeSpan.FromHours(1) },
+                new ScheduleItem { Title = "S3", ScheduledDate = new DateOnly(2026, 6, 3), StartTime = new TimeOnly(10, 0), Duration = TimeSpan.FromHours(1) });
+
+            int saved = await seed.SaveChangesAsync(ct);
+            Assert.Equal(9, saved);
+            Assert.Equal([1, 2, 3, 4], [c1.Id, c2.Id, c3.Id, c4.Id]);
+            Assert.Equal(c2.Id, o1.CustomerId);
+            Assert.Equal(c4.Id, o2.CustomerId);
+        }
+
+        await using (StoreDbContext queryContext = new(options))
+        {
+            // Array & List .Contains index seek pushdown (with duplicate element deduplication)
+            string[] targetCodes = ["C-02", "C-04", "C-02"];
+            List<string> matchedNames = await queryContext.Customers
+                .AsNoTracking()
+                .Where(c => targetCodes.Contains(c.Code))
+                .OrderBy(c => c.Code)
+                .Select(c => c.Name)
+                .ToListAsync(ct);
+            Assert.Equal(["Two", "Four"], matchedNames);
+
+            List<int> targetIds = [1, 3];
+            List<string> matchedByIds = await queryContext.Customers
+                .AsNoTracking()
+                .Where(c => targetIds.Contains(c.Id))
+                .OrderBy(c => c.Id)
+                .Select(c => c.Code)
+                .ToListAsync(ct);
+            Assert.Equal(["C-01", "C-03"], matchedByIds);
+
+            string[] emptyCodes = [];
+            Assert.Empty(await queryContext.Customers
+                .AsNoTracking()
+                .Where(c => emptyCodes.Contains(c.Code))
+                .ToListAsync(ct));
+
+            // Terminal predicate seek pushdown (Count, LongCount, Any, Last) and scalar aggregate projection
+            Assert.Equal(1, await queryContext.Customers.CountAsync(c => c.Code == "C-03", ct));
+            Assert.Equal(1L, await queryContext.Customers.LongCountAsync(c => c.Code == "C-03", ct));
+            Assert.True(await queryContext.Customers.AnyAsync(c => c.Code == "C-03", ct));
+            Assert.False(await queryContext.Customers.AnyAsync(c => c.Code == "C-99", ct));
+            Customer lastC3 = await queryContext.Customers.AsNoTracking().OrderBy(c => c.Id).LastAsync(c => c.Code == "C-03", ct);
+            Assert.Equal("Three", lastC3.Name);
+
+            decimal shippedTotal = await queryContext.Orders
+                .Where(o => o.Status == OrderStatus.Shipped)
+                .SumAsync(o => o.TotalAmount, ct);
+            Assert.Equal(200m, shippedTotal);
+
+            // Unfiltered row limit pushdown (Any, First, Take)
+            Assert.True(await queryContext.ScheduleItems.AnyAsync(ct));
+            ScheduleItem firstItem = await queryContext.ScheduleItems.AsNoTracking().FirstAsync(ct);
+            Assert.Equal("S1", firstItem.Title);
+            List<string> takenTitles = await queryContext.ScheduleItems
+                .AsNoTracking()
+                .Take(2)
+                .Select(s => s.Title)
+                .ToListAsync(ct);
+            Assert.Equal(2, takenTitles.Count);
+
+            // Active transaction .Contains seek pushdown
+            await using IDbContextTransaction tx = await queryContext.Database.BeginTransactionAsync(ct);
+            List<string> txMatchedCodes = await queryContext.Customers
+                .AsNoTracking()
+                .Where(c => targetCodes.Contains(c.Code))
+                .OrderBy(c => c.Code)
+                .Select(c => c.Code)
+                .ToListAsync(ct);
+            Assert.Equal(["C-02", "C-04"], txMatchedCodes);
+        }
+    }
+
     private sealed class StoreDbContext(DbContextOptions<StoreDbContext> options) : DbContext(options)
     {
         public DbSet<Customer> Customers => this.Set<Customer>();

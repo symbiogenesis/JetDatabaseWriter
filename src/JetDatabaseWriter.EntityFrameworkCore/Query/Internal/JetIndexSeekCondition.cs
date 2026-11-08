@@ -23,6 +23,9 @@ public enum JetIndexSeekOperator
 
     /// <summary>Less-than-or-equal comparison (<c>&lt;=</c>).</summary>
     LessThanOrEqual = 4,
+
+    /// <summary>Set membership comparison (<c>Contains</c> / <c>IN</c>).</summary>
+    In = 5,
 }
 
 /// <summary>

@@ -378,7 +378,10 @@ internal static class JetAsyncQueryExecutor
         {
             IEntityType rootEntityType = tablePlan.RootEntityType;
             IReadOnlyList<ValueBuffer> buffers;
-            if (tablePlan.SeekConditions.Count == 0 && unindexedBufferCache.TryGetValue(rootEntityType, out IReadOnlyList<ValueBuffer>? cachedBuffers))
+            bool canShareUnindexedCache = tablePlan.SeekConditions.Count == 0
+                && tablePlan.RequiredProperties is null
+                && tablePlan.MaxRowsToRead is null;
+            if (canShareUnindexedCache && unindexedBufferCache.TryGetValue(rootEntityType, out IReadOnlyList<ValueBuffer>? cachedBuffers))
             {
                 buffers = cachedBuffers;
             }
@@ -388,8 +391,10 @@ internal static class JetAsyncQueryExecutor
                     rootEntityType,
                     tablePlan.SeekConditions,
                     queryContext.Parameters,
+                    tablePlan.RequiredProperties,
+                    tablePlan.MaxRowsToRead,
                     cancellationToken).ConfigureAwait(false);
-                if (tablePlan.SeekConditions.Count == 0)
+                if (canShareUnindexedCache)
                 {
                     unindexedBufferCache[rootEntityType] = buffers;
                 }
@@ -1453,6 +1458,10 @@ internal static class JetAsyncQueryExecutor
         public IEntityType QueryEntityType { get; } = queryEntityType;
 
         public List<JetIndexSeekCondition> SeekConditions { get; } = seekConditions;
+
+        public IReadOnlySet<IProperty>? RequiredProperties { get; set; }
+
+        public int? MaxRowsToRead { get; set; }
     }
 
     private sealed class EntityNavigationPairComparer : IEqualityComparer<(object Entity, INavigation Navigation)>
@@ -1612,6 +1621,22 @@ internal static class JetAsyncQueryExecutor
                 }
             }
 
+            if (extractor.rootTables.Count == 1
+                && extractor.includeChains.Count == 0
+                && extractor.queryReferencedNavigations.Count == 0)
+            {
+                JetTableLoadPlan singlePlan = extractor.rootTables[0];
+                singlePlan.RequiredProperties = TryComputeRequiredProperties(
+                    query,
+                    compilationContext.Model,
+                    singlePlan,
+                    extractor.IgnoreQueryFilters);
+                singlePlan.MaxRowsToRead = TryComputeUnfilteredMaxRows(
+                    query,
+                    singlePlan,
+                    extractor.IgnoreQueryFilters);
+            }
+
             return new JetQueryPlan(
                 extractor.rootTables,
                 extractor.rootPlansByExpression,
@@ -1673,6 +1698,11 @@ internal static class JetAsyncQueryExecutor
                     or nameof(Queryable.FirstOrDefault)
                     or nameof(Queryable.Single)
                     or nameof(Queryable.SingleOrDefault)
+                    or nameof(Queryable.Last)
+                    or nameof(Queryable.LastOrDefault)
+                    or nameof(Queryable.Count)
+                    or nameof(Queryable.LongCount)
+                    or nameof(Queryable.Any)
                     && node.Arguments.Count == 2
                     && StripQuotes(node.Arguments[1]) is LambdaExpression predicate
                     && TryFindDirectRootExpression(node.Arguments[0], out EntityQueryRootExpression? queryRoot))
@@ -1839,6 +1869,150 @@ internal static class JetAsyncQueryExecutor
             return true;
         }
 
+        private static HashSet<IProperty>? TryComputeRequiredProperties(
+            Expression query,
+            IModel model,
+            JetTableLoadPlan tablePlan,
+            bool ignoreQueryFilters)
+        {
+            Type unwrappedResultType = UnwrapSequenceType(query.Type);
+            if (model.FindEntityType(unwrappedResultType) is not null)
+            {
+                return null;
+            }
+
+            RootEntityPropertyUsageAnalyzer analyzer = new(model, tablePlan.RootEntityType);
+            _ = analyzer.Visit(query);
+            if (analyzer.EntityEscapes)
+            {
+                return null;
+            }
+
+            if (!ignoreQueryFilters)
+            {
+                foreach (IQueryFilter filter in GetAllQueryFilters(tablePlan.QueryEntityType))
+                {
+                    if (filter.Expression is LambdaExpression filterLambda)
+                    {
+                        _ = analyzer.Visit(filterLambda);
+                        if (analyzer.EntityEscapes)
+                        {
+                            return null;
+                        }
+                    }
+                }
+            }
+
+            IKey? pk = tablePlan.RootEntityType.FindPrimaryKey();
+            if (pk is not null)
+            {
+                foreach (IProperty pkProp in pk.Properties)
+                {
+                    _ = analyzer.ReferencedProperties.Add(pkProp);
+                }
+            }
+
+            IProperty? discriminator = tablePlan.RootEntityType.FindDiscriminatorProperty();
+            if (discriminator is not null)
+            {
+                _ = analyzer.ReferencedProperties.Add(discriminator);
+            }
+
+            return analyzer.ReferencedProperties;
+        }
+
+        private static int? TryComputeUnfilteredMaxRows(
+            Expression query,
+            JetTableLoadPlan tablePlan,
+            bool ignoreQueryFilters)
+        {
+            if (tablePlan.QueryEntityType != tablePlan.RootEntityType)
+            {
+                return null;
+            }
+
+            if (!ignoreQueryFilters && GetAllQueryFilters(tablePlan.QueryEntityType).Count > 0)
+            {
+                return null;
+            }
+
+            int? limit = null;
+            Expression current = query;
+            while (current is MethodCallExpression call)
+            {
+                if (call.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
+                    && call.Method.Name is nameof(EntityFrameworkQueryableExtensions.AsNoTracking)
+                        or nameof(EntityFrameworkQueryableExtensions.AsNoTrackingWithIdentityResolution)
+                        or nameof(EntityFrameworkQueryableExtensions.AsTracking)
+                        or nameof(EntityFrameworkQueryableExtensions.IgnoreQueryFilters)
+                        or nameof(EntityFrameworkQueryableExtensions.IgnoreAutoIncludes))
+                {
+                    current = call.Arguments[0];
+                    continue;
+                }
+
+                if (call.Method.DeclaringType == typeof(Queryable))
+                {
+                    if (call.Method.Name == nameof(Queryable.Select) && call.Arguments.Count == 2)
+                    {
+                        current = call.Arguments[0];
+                        continue;
+                    }
+
+                    if (call.Method.Name is nameof(Queryable.Any)
+                        or nameof(Queryable.First)
+                        or nameof(Queryable.FirstOrDefault)
+                        && call.Arguments.Count == 1)
+                    {
+                        limit = limit is int existing ? Math.Min(existing, 1) : 1;
+                        current = call.Arguments[0];
+                        continue;
+                    }
+
+                    if (call.Method.Name is nameof(Queryable.Single)
+                        or nameof(Queryable.SingleOrDefault)
+                        && call.Arguments.Count == 1)
+                    {
+                        limit = limit is int existing ? Math.Min(existing, 2) : 2;
+                        current = call.Arguments[0];
+                        continue;
+                    }
+
+                    if (call.Method.Name == nameof(Queryable.Take)
+                        && call.Arguments.Count == 2
+                        && StripQuotes(call.Arguments[1]) is ConstantExpression { Value: int takeCount }
+                        && takeCount >= 0)
+                    {
+                        limit = limit is int existing ? Math.Min(existing, takeCount) : takeCount;
+                        current = call.Arguments[0];
+                        continue;
+                    }
+                }
+
+                return null;
+            }
+
+            return current is EntityQueryRootExpression ? limit : null;
+        }
+
+        private static Type UnwrapSequenceType(Type type)
+        {
+            if (type.IsGenericType)
+            {
+                Type genericDef = type.GetGenericTypeDefinition();
+                if (genericDef == typeof(IQueryable<>)
+                    || genericDef == typeof(IOrderedQueryable<>)
+                    || genericDef == typeof(IEnumerable<>)
+                    || genericDef == typeof(IAsyncEnumerable<>)
+                    || genericDef == typeof(Task<>))
+                {
+                    return type.GetGenericArguments()[0];
+                }
+            }
+
+            return type;
+        }
+
         private JetTableLoadPlan GetOrCreateRootPlan(EntityQueryRootExpression queryRoot)
         {
             if (!this.rootPlansByExpression.TryGetValue(queryRoot, out JetTableLoadPlan? plan))
@@ -1968,6 +2142,88 @@ internal static class JetAsyncQueryExecutor
     {
         public override Expression? Visit(Expression? node)
             => ReferenceEquals(node, target) ? replacement : base.Visit(node);
+    }
+
+    private sealed class RootEntityPropertyUsageAnalyzer(IModel model, IEntityType rootEntityType) : ExpressionVisitor
+    {
+        public HashSet<IProperty> ReferencedProperties { get; } = [];
+
+        public bool EntityEscapes { get; private set; }
+
+        protected override Expression VisitLambda<T>(Expression<T> node)
+        {
+            _ = this.Visit(node.Body);
+            return node;
+        }
+
+        protected override Expression VisitMember(MemberExpression node)
+        {
+            if (node.Expression is not null
+                && UnwrapQuotesAndConverts(node.Expression) is ParameterExpression param
+                && model.FindEntityType(param.Type) is IEntityType paramEntityType
+                && paramEntityType.GetRootType() == rootEntityType)
+            {
+                IProperty? prop = paramEntityType.FindProperty(node.Member);
+                if (prop is not null)
+                {
+                    _ = this.ReferencedProperties.Add(prop);
+                    return node;
+                }
+            }
+
+            return base.VisitMember(node);
+        }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.Name == nameof(EF.Property)
+                && node.Method.DeclaringType == typeof(EF)
+                && node.Arguments.Count == 2
+                && UnwrapQuotesAndConverts(node.Arguments[0]) is ParameterExpression param
+                && model.FindEntityType(param.Type) is IEntityType paramEntityType
+                && paramEntityType.GetRootType() == rootEntityType
+                && UnwrapQuotesAndConverts(node.Arguments[1]) is ConstantExpression { Value: string propName })
+            {
+                IProperty? prop = paramEntityType.FindProperty(propName);
+                if (prop is not null)
+                {
+                    _ = this.ReferencedProperties.Add(prop);
+                    return node;
+                }
+            }
+
+            if (node.Method.DeclaringType == typeof(Queryable)
+                && node.Method.Name == nameof(Queryable.GroupBy)
+                && node.Arguments.Count < 3)
+            {
+                this.EntityEscapes = true;
+            }
+
+            return base.VisitMethodCall(node);
+        }
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (model.FindEntityType(node.Type) is IEntityType paramEntityType
+                && paramEntityType.GetRootType() == rootEntityType)
+            {
+                this.EntityEscapes = true;
+            }
+
+            return base.VisitParameter(node);
+        }
+
+        private static Expression UnwrapQuotesAndConverts(Expression expression)
+        {
+            Expression current = expression;
+            while (current is UnaryExpression unary
+                   && unary.NodeType is ExpressionType.Quote or ExpressionType.Convert or ExpressionType.ConvertChecked)
+            {
+                current = unary.Operand;
+            }
+
+            return current;
+        }
     }
 
     private sealed class JetCompiledExpressionRewriter(

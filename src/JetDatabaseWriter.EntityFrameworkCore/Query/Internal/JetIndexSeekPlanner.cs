@@ -71,6 +71,11 @@ internal static class JetIndexSeekPlanner
         TableDef tableDef = resolved.Definition;
         foreach (JetIndexSeekCondition condition in conditions)
         {
+            if (condition.Operator == JetIndexSeekOperator.In)
+            {
+                continue;
+            }
+
             object? evaluated = condition.ValueEvaluator(parameters);
             if (evaluated is null or DBNull)
             {
@@ -91,34 +96,60 @@ internal static class JetIndexSeekPlanner
             }
         }
 
-        if (seekable.Count == 0)
+        if (seekable.Count > 0)
         {
-            return null;
+            IReadOnlyList<IndexMetadata> indexes = await reader.Services.Indexes.ListSeekableIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
+            if (indexes.Count > 0)
+            {
+                string tableName = resolved.Entry.Name;
+                JetFormat format = reader.Database.Format;
+                IndexPlan? plan = IndexPlanner.TryPlan(
+                    indexes,
+                    seekable,
+                    candidate => CanEncodePlan(format, tableDef, tableName, candidate));
+                if (plan is not null)
+                {
+                    return reader.Services.Indexes.ReadIndexRowsAsObjectsAsync(
+                        tableName,
+                        plan.Index.Name,
+                        plan.Criteria,
+                        wantedColumns,
+                        cancellationToken);
+                }
+            }
         }
 
-        IReadOnlyList<IndexMetadata> indexes = await reader.Services.Indexes.ListSeekableIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
-        if (indexes.Count == 0)
+        foreach (JetIndexSeekCondition condition in conditions)
         {
-            return null;
+            if (condition.Operator != JetIndexSeekOperator.In)
+            {
+                continue;
+            }
+
+            if (condition.ValueEvaluator(parameters) is not IReadOnlyList<object?[]> inKeyTuples)
+            {
+                continue;
+            }
+
+            if (inKeyTuples.Count == 0)
+            {
+                return YieldRowsAsync([]);
+            }
+
+            List<object[]>? multiKeyRows = await TryReadMultiKeyIndexRowsAsync(
+                reader,
+                resolved,
+                [condition.Property],
+                inKeyTuples,
+                wantedColumns,
+                cancellationToken).ConfigureAwait(false);
+            if (multiKeyRows is not null)
+            {
+                return YieldRowsAsync(multiKeyRows);
+            }
         }
 
-        string tableName = resolved.Entry.Name;
-        JetFormat format = reader.Database.Format;
-        IndexPlan? plan = IndexPlanner.TryPlan(
-            indexes,
-            seekable,
-            candidate => CanEncodePlan(format, tableDef, tableName, candidate));
-        if (plan is null)
-        {
-            return null;
-        }
-
-        return reader.Services.Indexes.ReadIndexRowsAsObjectsAsync(
-            tableName,
-            plan.Index.Name,
-            plan.Criteria,
-            wantedColumns,
-            cancellationToken);
+        return null;
     }
 
     /// <summary>
@@ -335,6 +366,7 @@ internal static class JetIndexSeekPlanner
             JetIndexSeekOperator.GreaterThanOrEqual => ColumnPredicateOperator.GreaterThanOrEqual,
             JetIndexSeekOperator.LessThan => ColumnPredicateOperator.LessThan,
             JetIndexSeekOperator.LessThanOrEqual => ColumnPredicateOperator.LessThanOrEqual,
+            JetIndexSeekOperator.In => ColumnPredicateOperator.Equal,
             _ => ColumnPredicateOperator.Equal,
         };
 
@@ -349,6 +381,13 @@ internal static class JetIndexSeekPlanner
         {
             ExtractConjunctions(entityType, entityParam, andAlso.Left, conditions);
             ExtractConjunctions(entityType, entityParam, andAlso.Right, conditions);
+            return;
+        }
+
+        if (unwrapped is MethodCallExpression methodCall
+            && TryExtractContainsCondition(entityType, entityParam, methodCall, out JetIndexSeekCondition? inCondition))
+        {
+            conditions.Add(inCondition!);
             return;
         }
 
@@ -496,6 +535,165 @@ internal static class JetIndexSeekPlanner
             Expression.Lambda<Func<IReadOnlyDictionary<string, object?>, object?>>(boxed, dictParam).Compile();
         evaluator = parameters => JetEntityTypeMetadata.ConvertToProvider(property, compiled(parameters));
         return true;
+    }
+
+    private static async IAsyncEnumerable<object[]> YieldRowsAsync(List<object[]> rows)
+    {
+        await Task.CompletedTask.ConfigureAwait(false);
+        foreach (object[] row in rows)
+        {
+            yield return row;
+        }
+    }
+
+    private static bool TryExtractContainsCondition(
+        IEntityType entityType,
+        ParameterExpression entityParam,
+        MethodCallExpression methodCall,
+        out JetIndexSeekCondition? condition)
+    {
+        condition = null;
+        if (!string.Equals(methodCall.Method.Name, nameof(Enumerable.Contains), StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        Expression? collectionExpr = null;
+        Expression? itemExpr = null;
+        if (methodCall.Object is not null && methodCall.Arguments.Count == 1)
+        {
+            collectionExpr = methodCall.Object;
+            itemExpr = methodCall.Arguments[0];
+        }
+        else if (methodCall.Object is null && methodCall.Arguments.Count is 2 or 3)
+        {
+            if (methodCall.Arguments.Count == 3 && methodCall.Arguments[2] is not ConstantExpression { Value: null })
+            {
+                return false;
+            }
+
+            collectionExpr = methodCall.Arguments[0];
+            itemExpr = methodCall.Arguments[1];
+        }
+
+        if (collectionExpr is null || itemExpr is null)
+        {
+            return false;
+        }
+
+        collectionExpr = UnwrapSpanConversion(collectionExpr);
+        if (collectionExpr.Type.IsByRefLike
+            || !typeof(System.Collections.IEnumerable).IsAssignableFrom(collectionExpr.Type)
+            || collectionExpr.Type == typeof(string)
+            || ReferencesParameter(collectionExpr, entityParam)
+            || !TryExtractPropertyAccess(entityType, entityParam, itemExpr, out IProperty? property))
+        {
+            return false;
+        }
+
+        if (!TryBuildInValuesEvaluator(collectionExpr, out Func<IReadOnlyDictionary<string, object?>, object?>? inEvaluator))
+        {
+            return false;
+        }
+
+        condition = new JetIndexSeekCondition(
+            property!,
+            JetEntityTypeMetadata.GetColumnName(property!),
+            JetIndexSeekOperator.In,
+            inEvaluator!);
+        return true;
+    }
+
+    private static Expression UnwrapSpanConversion(Expression expression)
+    {
+        Expression current = StripQuotesAndConverts(expression);
+        while (current.Type.IsByRefLike)
+        {
+            if (current is UnaryExpression { Operand: not null } unary)
+            {
+                current = StripQuotesAndConverts(unary.Operand);
+                continue;
+            }
+
+            if (current is MethodCallExpression { Arguments.Count: >= 1 } call
+                && call.Method.Name is "op_Implicit" or nameof(MemoryExtensions.AsSpan))
+            {
+                current = StripQuotesAndConverts(call.Arguments[0]);
+                continue;
+            }
+
+            if (current is NewExpression { Arguments.Count: >= 1 } newExpr)
+            {
+                current = StripQuotesAndConverts(newExpr.Arguments[0]);
+                continue;
+            }
+
+            break;
+        }
+
+        return current;
+    }
+
+    private static bool TryBuildInValuesEvaluator(
+        Expression collectionExpression,
+        out Func<IReadOnlyDictionary<string, object?>, object?>? evaluator)
+    {
+        if (collectionExpression is ConstantExpression constantExpr)
+        {
+            IReadOnlyList<object?[]>? staticTuples = ConvertEnumerableToDistinctKeyTuples(constantExpr.Value);
+            evaluator = _ => staticTuples;
+            return true;
+        }
+
+        if (collectionExpression is QueryParameterExpression queryParam)
+        {
+            string paramName = queryParam.Name;
+            evaluator = parameters =>
+                parameters.TryGetValue(paramName, out object? raw)
+                    ? ConvertEnumerableToDistinctKeyTuples(raw)
+                    : null;
+            return true;
+        }
+
+        ParameterExpression dictParam = Expression.Parameter(typeof(IReadOnlyDictionary<string, object?>), "parameters");
+        ParameterRewritingVisitor rewriter = new(dictParam);
+        Expression rewritten = rewriter.Visit(collectionExpression);
+        if (!rewriter.IsSupported || rewritten.Type.IsByRefLike)
+        {
+            evaluator = null;
+            return false;
+        }
+
+        Expression boxed = Expression.Convert(rewritten, typeof(object));
+        Func<IReadOnlyDictionary<string, object?>, object?> compiled =
+            Expression.Lambda<Func<IReadOnlyDictionary<string, object?>, object?>>(boxed, dictParam).Compile();
+        evaluator = parameters => ConvertEnumerableToDistinctKeyTuples(compiled(parameters));
+        return true;
+    }
+
+    private static List<object?[]>? ConvertEnumerableToDistinctKeyTuples(object? rawEnumerable)
+    {
+        if (rawEnumerable is not System.Collections.IEnumerable enumerable || rawEnumerable is string)
+        {
+            return null;
+        }
+
+        List<object?[]> tuples = [];
+        HashSet<object> seen = [];
+        foreach (object? item in enumerable)
+        {
+            if (item is null or DBNull)
+            {
+                continue;
+            }
+
+            if (seen.Add(item))
+            {
+                tuples.Add([item]);
+            }
+        }
+
+        return tuples;
     }
 
     private static Expression StripQuotesAndConverts(Expression expression)

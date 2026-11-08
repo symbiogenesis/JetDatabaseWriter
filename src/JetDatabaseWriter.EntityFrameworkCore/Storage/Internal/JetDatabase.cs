@@ -139,15 +139,35 @@ public sealed class JetDatabase : Database
                         continue;
                     }
 
-                    await ExecuteAutoIncrementInsertAsync(
+                    List<(RowValues Values, IUpdateEntry Entry, IProperty Property)> autoIncBatch = [(rowValues, entry, autoIncrementProperty)];
+                    int nextAutoIdx = index + 1;
+                    if (!HasSelfReferencingForeignKey(entry.EntityType))
+                    {
+                        while (nextAutoIdx < orderedEntries.Count
+                            && orderedEntries[nextAutoIdx].EntityState == EntityState.Added
+                            && string.Equals(JetEntityTypeMetadata.GetTableName(orderedEntries[nextAutoIdx].EntityType), tableName, StringComparison.OrdinalIgnoreCase)
+                            && !HasSelfReferencingForeignKey(orderedEntries[nextAutoIdx].EntityType))
+                        {
+                            (RowValues nextRow, IProperty? nextAutoInc) = PrepareInsertRow(orderedEntries[nextAutoIdx]);
+                            if (nextAutoInc is null)
+                            {
+                                break;
+                            }
+
+                            autoIncBatch.Add((nextRow, orderedEntries[nextAutoIdx], nextAutoInc));
+                            nextAutoIdx++;
+                        }
+                    }
+
+                    await ExecuteAutoIncrementBatchInsertAsync(
                         writer,
                         tableName,
-                        rowValues,
-                        entry,
-                        autoIncrementProperty,
+                        autoIncBatch,
                         tdefPageByTable,
                         cancellationToken).ConfigureAwait(false);
-                    totalAffected++;
+                    totalAffected += autoIncBatch.Count;
+                    index = nextAutoIdx;
+                    continue;
                 }
                 else if (entry.EntityState == EntityState.Modified)
                 {
@@ -557,16 +577,41 @@ public sealed class JetDatabase : Database
         };
     }
 
-    private static async ValueTask ExecuteAutoIncrementInsertAsync(
+    private static bool HasSelfReferencingForeignKey(IEntityType entityType)
+    {
+        IEntityType rootType = entityType.GetRootType();
+        foreach (IForeignKey fk in entityType.GetForeignKeys())
+        {
+            if (fk.PrincipalEntityType.GetRootType() == rootType)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async ValueTask ExecuteAutoIncrementBatchInsertAsync(
         AccessWriter writer,
         string tableName,
-        RowValues rowValues,
-        IUpdateEntry entry,
-        IProperty autoIncrementProperty,
+        List<(RowValues Values, IUpdateEntry Entry, IProperty Property)> batch,
         Dictionary<string, long> tdefPageByTable,
         CancellationToken cancellationToken)
     {
-        await writer.InsertRowAsync(tableName, rowValues, cancellationToken).ConfigureAwait(false);
+        if (batch.Count == 1)
+        {
+            await writer.InsertRowAsync(tableName, batch[0].Values, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            List<RowValues> rows = [with(batch.Count)];
+            foreach ((RowValues values, _, _) in batch)
+            {
+                rows.Add(values);
+            }
+
+            await writer.InsertRowsAsync(tableName, rows, cancellationToken).ConfigureAwait(false);
+        }
 
         if (!tdefPageByTable.TryGetValue(tableName, out long tdefPage))
         {
@@ -585,8 +630,13 @@ public sealed class JetDatabase : Database
             ? TDefHeaderLayout.Jet3.AutoNumber
             : TDefHeaderLayout.Jet4.AutoNumber;
         long highWater = JetTypeInfo.Ru32(lease.Buffer, autoNumberOffset);
-        object? storeGenerated = JetEntityTypeMetadata.ConvertFromProvider(autoIncrementProperty, highWater);
-        entry.SetStoreGeneratedValue(autoIncrementProperty, storeGenerated);
+        long firstAssigned = highWater - batch.Count + 1;
+        for (int i = 0; i < batch.Count; i++)
+        {
+            (_, IUpdateEntry itemEntry, IProperty itemProperty) = batch[i];
+            object? storeGenerated = JetEntityTypeMetadata.ConvertFromProvider(itemProperty, firstAssigned + i);
+            itemEntry.SetStoreGeneratedValue(itemProperty, storeGenerated);
+        }
     }
 
     private static async ValueTask<int> ExecuteUpdateAsync(

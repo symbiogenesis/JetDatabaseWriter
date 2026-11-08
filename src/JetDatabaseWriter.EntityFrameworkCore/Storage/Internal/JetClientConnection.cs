@@ -1,8 +1,10 @@
 namespace JetDatabaseWriter.EntityFrameworkCore.Storage.Internal;
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -25,6 +27,7 @@ public sealed class JetClientConnection : IJetClientConnection
     private static readonly List<WeakReference<JetClientConnection>> LiveConnections = [];
     private static readonly Lock LiveConnectionsGate = new();
     private static readonly bool DefaultWriterByteRangeLocks = new AccessWriterOptions().UseByteRangeLocks;
+    private static readonly ConcurrentDictionary<Type, object> BoxedDefaultValues = [];
 
     private readonly SemaphoreSlim connectionGate = new(1, 1);
     private readonly List<(string Name, JetTransaction Scope)> savepoints = [];
@@ -457,7 +460,16 @@ public sealed class JetClientConnection : IJetClientConnection
         IReadOnlyList<JetIndexSeekCondition>? seekConditions,
         IReadOnlyDictionary<string, object?> parameters,
         CancellationToken cancellationToken = default)
-        => this.ReadTableValueBuffersAsync(entityType, seekConditions, parameters, requiredProperties: null, cancellationToken);
+        => this.ReadTableValueBuffersAsync(entityType, seekConditions, parameters, requiredProperties: null, maxRows: null, cancellationToken);
+
+    /// <inheritdoc/>
+    public ValueTask<IReadOnlyList<ValueBuffer>> ReadTableValueBuffersAsync(
+        IEntityType entityType,
+        IReadOnlyList<JetIndexSeekCondition>? seekConditions,
+        IReadOnlyDictionary<string, object?> parameters,
+        IReadOnlySet<IProperty>? requiredProperties,
+        CancellationToken cancellationToken = default)
+        => this.ReadTableValueBuffersAsync(entityType, seekConditions, parameters, requiredProperties, maxRows: null, cancellationToken);
 
     /// <inheritdoc/>
     public async ValueTask<IReadOnlyList<ValueBuffer>> ReadTableValueBuffersAsync(
@@ -465,11 +477,17 @@ public sealed class JetClientConnection : IJetClientConnection
         IReadOnlyList<JetIndexSeekCondition>? seekConditions,
         IReadOnlyDictionary<string, object?> parameters,
         IReadOnlySet<IProperty>? requiredProperties,
+        int? maxRows,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(entityType);
         ArgumentNullException.ThrowIfNull(parameters);
         ObjectDisposedException.ThrowIf(this.disposed, this);
+
+        if (maxRows is <= 0)
+        {
+            return [];
+        }
 
         IEntityType rootType = entityType.GetRootType();
         string tableName = JetEntityTypeMetadata.GetTableName(rootType);
@@ -487,6 +505,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 seekConditions,
                 parameters,
                 requiredProperties,
+                maxRows,
                 cancellationToken).ConfigureAwait(false);
         }
 
@@ -503,6 +522,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 seekConditions,
                 parameters,
                 requiredProperties,
+                maxRows,
                 cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -819,6 +839,7 @@ public sealed class JetClientConnection : IJetClientConnection
         IReadOnlyList<JetIndexSeekCondition>? seekConditions,
         IReadOnlyDictionary<string, object?> parameters,
         IReadOnlySet<IProperty>? requiredProperties,
+        int? maxRows,
         CancellationToken cancellationToken)
     {
         ResolvedTable? resolved = await reader.Services.Tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -850,6 +871,10 @@ public sealed class JetClientConnection : IJetClientConnection
             await foreach (object[] row in rowSource.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
                 localResults.Add(CreateValueBuffer(rootType, properties, bufferLength, propertyToColumnOrdinal, row));
+                if (maxRows is int limit && localResults.Count >= limit)
+                {
+                    break;
+                }
             }
 
             return localResults;
@@ -861,6 +886,10 @@ public sealed class JetClientConnection : IJetClientConnection
         await foreach (object[] row in reader.Rows(tableName, progress: null, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             results.Add(CreateValueBuffer(rootType, properties, bufferLength, fallbackColumnMap, row));
+            if (maxRows is int limit && results.Count >= limit)
+            {
+                break;
+            }
         }
 
         return results;
@@ -1028,6 +1057,15 @@ public sealed class JetClientConnection : IJetClientConnection
             if (propertyToColumnOrdinal[i] is int colIdx && (uint)colIdx < (uint)row.Length)
             {
                 object? converted = JetEntityTypeMetadata.ConvertFromProvider(property, row[colIdx]);
+                if (converted is null
+                    && property.ClrType.IsValueType
+                    && Nullable.GetUnderlyingType(property.ClrType) is null)
+                {
+                    converted = BoxedDefaultValues.GetOrAdd(
+                        property.ClrType,
+                        static t => Expression.Lambda<Func<object>>(Expression.Convert(Expression.Default(t), typeof(object))).Compile()());
+                }
+
                 if (converted is not null || buffer[targetIndex] is null)
                 {
                     buffer[targetIndex] = converted;
@@ -1070,30 +1108,60 @@ public sealed class JetClientConnection : IJetClientConnection
         IReadOnlyList<JetIndexSeekCondition>? seekConditions,
         IReadOnlyDictionary<string, object?> parameters,
         IReadOnlySet<IProperty>? requiredProperties,
+        int? maxRows,
         CancellationToken cancellationToken)
     {
         ResolvedTable resolved = await writer.Services.Catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         int?[] propertyToColumnOrdinal = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
         bool wrapHyperlinks = resolved.Definition.HasHyperlinkColumns;
 
-        if (seekConditions is { Count: > 0 }
-            && JetIndexSeekPlanner.TryBuildExactRowCriteria(seekConditions, parameters, resolved.Definition) is RowCriteria criteria)
+        if (seekConditions is { Count: > 0 })
         {
-            List<LocatedRow>? indexedRows = await writer.Services.Snapshots.TryReadIndexedRowsAsync(resolved, criteria, cancellationToken).ConfigureAwait(false);
-            if (indexedRows is not null)
+            if (JetIndexSeekPlanner.TryBuildExactRowCriteria(seekConditions, parameters, resolved.Definition) is RowCriteria criteria)
             {
-                List<ValueBuffer> seekResults = [];
-                foreach (LocatedRow located in indexedRows)
+                List<LocatedRow>? indexedRows = await writer.Services.Snapshots.TryReadIndexedRowsAsync(resolved, criteria, cancellationToken).ConfigureAwait(false);
+                if (indexedRows is not null)
                 {
-                    if (wrapHyperlinks)
+                    List<ValueBuffer> seekResults = [];
+                    foreach (LocatedRow located in indexedRows)
                     {
-                        TableReader.WrapHyperlinkColumns(located.Values, resolved.Definition.ClrTypes);
+                        if (wrapHyperlinks)
+                        {
+                            TableReader.WrapHyperlinkColumns(located.Values, resolved.Definition.ClrTypes);
+                        }
+
+                        seekResults.Add(CreateValueBuffer(rootType, properties, bufferLength, propertyToColumnOrdinal, located.Values));
+                        if (maxRows is int limit && seekResults.Count >= limit)
+                        {
+                            break;
+                        }
                     }
 
-                    seekResults.Add(CreateValueBuffer(rootType, properties, bufferLength, propertyToColumnOrdinal, located.Values));
+                    return seekResults;
                 }
+            }
 
-                return seekResults;
+            foreach (JetIndexSeekCondition condition in seekConditions)
+            {
+                if (condition.Operator == JetIndexSeekOperator.In
+                    && condition.ValueEvaluator(parameters) is IReadOnlyList<object?[]> inKeyTuples)
+                {
+                    if (inKeyTuples.Count == 0)
+                    {
+                        return [];
+                    }
+
+                    return await ReadByKeysFromActiveWriterAsync(
+                        writer,
+                        tableName,
+                        rootType,
+                        properties,
+                        bufferLength,
+                        [condition.Property],
+                        inKeyTuples,
+                        requiredProperties,
+                        cancellationToken).ConfigureAwait(false);
+                }
             }
         }
 
@@ -1118,7 +1186,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 }
 
                 results.Add(CreateValueBuffer(rootType, properties, bufferLength, propertyToColumnOrdinal, values));
-                return new ValueTask<bool>(true);
+                return new ValueTask<bool>(maxRows is not int limit || results.Count < limit);
             },
             cancellationToken).ConfigureAwait(false);
 

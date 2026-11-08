@@ -239,6 +239,45 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
 
     private async ValueTask BuildSchemaAsync(AccessWriter writer, CancellationToken cancellationToken)
     {
+        JetTransaction? schemaTransaction = this.connection.ActiveTransaction is null
+            ? await writer.BeginTransactionAsync(cancellationToken).ConfigureAwait(false)
+            : null;
+        try
+        {
+            await this.BuildSchemaCoreAsync(writer, cancellationToken).ConfigureAwait(false);
+            if (schemaTransaction is not null)
+            {
+                await schemaTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            if (schemaTransaction is not null)
+            {
+#pragma warning disable CA1031, RCS1075 // Preserve original exception when rollback fails.
+                try
+                {
+                    await schemaTransaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                }
+#pragma warning restore CA1031, RCS1075
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (schemaTransaction is not null)
+            {
+                await schemaTransaction.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async ValueTask BuildSchemaCoreAsync(AccessWriter writer, CancellationToken cancellationToken)
+    {
         DatabaseFormat format = this.connection.Format;
         List<IEntityType> entityTypes = [.. this.model.GetEntityTypes().Where(static et => !et.IsOwned())];
         Dictionary<string, List<IEntityType>> tableGroups = [with(StringComparer.OrdinalIgnoreCase)];
