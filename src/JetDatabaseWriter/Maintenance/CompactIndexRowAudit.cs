@@ -16,6 +16,7 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>Compares stored leaf keys with independently scanned raw rows for explicitly supported scalar encodings.</summary>
 /// <remarks>
@@ -25,8 +26,9 @@ using JetDatabaseWriter.Schema.Models;
 /// Every included row must appear exactly once; ignored all-null rows must not appear. Ordinary Boolean
 /// masks derive native non-null keys for both values; schema-absent Boolean slots derive false. Complex keys compare
 /// only the stored four-byte parent reference, without following items. Ordinary Memo keys follow complete
-/// bounded LVAL storage and decode only its exact declared payload. Calculated and unsupported
-/// keys refuse. Intermediate keys must also match their independent rows, and complete
+/// bounded LVAL storage and decode only its exact declared payload. Calculated keys require independently hydrated
+/// <see cref="ColumnInfo.CalculatedResultType"/> metadata and unwrap the cached 23-byte calculated envelope without
+/// evaluating expressions; unhydrated calculated and unsupported keys refuse. Intermediate keys must also match their independent rows, and complete
 /// observed leaf chains, routing, exact separators and bookmark targets must agree. Date keys use their exact
 /// stored double without calendar conversion. Native constraints,
 /// complete source ownership, recovered catalog identities and reclamation remain separate requirements.
@@ -36,12 +38,19 @@ internal static class CompactIndexRowAudit
     /// <summary>Checks whether the descriptor names distinct known scalar columns with supported key codecs.</summary>
     /// <param name="definition">The immutable independently verified native definition.</param>
     /// <param name="descriptorIndex">The physical index ordinal.</param>
+    /// <param name="hydratedColumns">Optional independently hydrated calculated column projections.</param>
     /// <returns>Whether metadata supports attempted validation; malformed or unrepresentable stored values can still refuse.</returns>
-    internal static bool SupportsDescriptor(TDefImage definition, int descriptorIndex)
+    internal static bool SupportsDescriptor(TDefImage definition, int descriptorIndex, IReadOnlyList<ColumnInfo>? hydratedColumns = null)
     {
         Guard.NotNull(definition, nameof(definition));
         if (definition.Issues != TDefParseIssues.None || definition.Columns.Count > Constants.TableDefinition.MaxColumns
             || descriptorIndex < 0 || descriptorIndex >= definition.RealIndexes.Count)
+        {
+            return false;
+        }
+
+        IReadOnlyList<ColumnInfo> columns = hydratedColumns ?? definition.Columns;
+        if (columns.Count > Constants.TableDefinition.MaxColumns)
         {
             return false;
         }
@@ -64,7 +73,7 @@ internal static class CompactIndexRowAudit
             }
 
             ColumnInfo? found = null;
-            foreach (ColumnInfo column in definition.Columns)
+            foreach (ColumnInfo column in columns)
             {
                 if (column.ColNum == key.ColNum)
                 {
@@ -77,7 +86,24 @@ internal static class CompactIndexRowAudit
                 }
             }
 
-            if (found?.IsCalculated != false || !SupportedType(found.Type)
+            if (found is null)
+            {
+                return false;
+            }
+
+            if (found.IsCalculated)
+            {
+                ColumnType calcType = found.CalculatedResultType;
+                if (hydratedColumns is null || calcType == default || !SupportedCalculatedType(calcType)
+                    || (calcType is ColumnType.TextType or ColumnType.MemoType && !found.TextSortOrder.IsSupported))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!SupportedType(found.Type)
                 || (found.Type is ColumnType.TextType or ColumnType.MemoType && !found.TextSortOrder.IsSupported))
             {
                 return false;
@@ -87,17 +113,21 @@ internal static class CompactIndexRowAudit
         return true;
     }
 
-    /// <summary>Checks whether an already supported descriptor requires ordinary Memo traversal.</summary>
+    /// <summary>Checks whether an already supported descriptor requires ordinary or calculated Memo traversal.</summary>
     /// <param name="definition">The independently verified definition.</param>
     /// <param name="descriptorIndex">The supported physical descriptor ordinal.</param>
-    /// <returns>Whether an indexed column stores ordinary Memo values.</returns>
-    internal static bool HasMemoColumn(TDefImage definition, int descriptorIndex)
+    /// <param name="hydratedColumns">Optional independently hydrated calculated column projections.</param>
+    /// <returns>Whether an indexed column stores Memo values.</returns>
+    internal static bool HasMemoColumn(TDefImage definition, int descriptorIndex, IReadOnlyList<ColumnInfo>? hydratedColumns = null)
     {
+        IReadOnlyList<ColumnInfo> columns = hydratedColumns ?? definition.Columns;
         foreach (KeyColumn key in definition.RealIndexes[descriptorIndex].Columns)
         {
-            foreach (ColumnInfo column in definition.Columns)
+            foreach (ColumnInfo column in columns)
             {
-                if (column.ColNum == key.ColNum && column.Type == ColumnType.MemoType)
+                if (column.ColNum == key.ColNum
+                    && (column.Type == ColumnType.MemoType
+                        || (column.IsCalculated && column.CalculatedResultType == ColumnType.MemoType)))
                 {
                     return true;
                 }
@@ -118,11 +148,23 @@ internal static class CompactIndexRowAudit
     /// <param name="budget">Retained derived-key and scalar-decoding admission limits.</param>
     /// <param name="cancellationToken">Cancels both source scans, scalar derivation and final coverage inspection.</param>
     /// <param name="activeRows">Optional exact source-bound active membership; all unassigned physical originals remain pinned and replayed.</param>
+    /// <param name="hydratedColumns">Optional independently hydrated calculated column projections.</param>
     /// <returns>Scoped leaf correspondence evidence without a global ownership or database-validity claim.</returns>
     /// <exception cref="JetNotSupportedException">A key type, collation or stored scalar value has no supported faithful encoding.</exception>
     /// <exception cref="JetCorruptDataException">Definition identity, raw rows or stored leaf correspondence are malformed or incomplete.</exception>
     /// <exception cref="JetLimitationException">Row, index, key-length or simultaneous storage admission is exhausted.</exception>
-    internal static async ValueTask<CompactIndexRowAuditResult> ValidateAsync(IPageSource pages, JetFormat format, long ownerTDefPage, TDefImage definition, int descriptorIndex, CompactRawRowBudget rowBudget, CompactIndexBudget indexBudget, CompactIndexRowBudget budget, CancellationToken cancellationToken, CompactActiveTableRows? activeRows = null)
+    internal static async ValueTask<CompactIndexRowAuditResult> ValidateAsync(
+        IPageSource pages,
+        JetFormat format,
+        long ownerTDefPage,
+        TDefImage definition,
+        int descriptorIndex,
+        CompactRawRowBudget rowBudget,
+        CompactIndexBudget indexBudget,
+        CompactIndexRowBudget budget,
+        CancellationToken cancellationToken,
+        CompactActiveTableRows? activeRows = null,
+        IReadOnlyList<ColumnInfo>? hydratedColumns = null)
     {
         Guard.NotNull(pages, nameof(pages));
         Guard.NotNull(format, nameof(format));
@@ -134,7 +176,7 @@ internal static class CompactIndexRowAudit
         Guard.Positive(budget.MaxKeyBytes, nameof(budget));
         Guard.InRange(budget.MaxWorkingBytes, 1L, long.MaxValue, nameof(budget));
         cancellationToken.ThrowIfCancellationRequested();
-        if (!SupportsDescriptor(definition, descriptorIndex))
+        if (!SupportsDescriptor(definition, descriptorIndex, hydratedColumns))
         {
             throw Unsupported(ownerTDefPage, "The stored index requires an unsupported or ambiguous scalar-key interpretation.");
         }
@@ -147,7 +189,7 @@ internal static class CompactIndexRowAudit
         TDefIndexDescriptor index = definition.RealIndexes[descriptorIndex];
         var accounting = CompactDiscoveryAccounting.ForWorkingStorage(budget.MaxWorkingBytes, budget.Accounting);
         CompactDiscoverySession? memoValues = null;
-        if (HasMemoColumn(definition, descriptorIndex))
+        if (HasMemoColumn(definition, descriptorIndex, hydratedColumns))
         {
             Guard.NotNull(budget.LongValues, nameof(budget));
             IPageSource memoPages = activeRows?.MemoAuditPages(pages, definition, cancellationToken) ?? pages;
@@ -241,7 +283,7 @@ internal static class CompactIndexRowAudit
             }
 
             sourceRows++;
-            (byte[] key, bool allNull) = await ReadKeyAsync(format, definition, descriptorIndex, location, payload, budget.MaxKeyBytes, accounting, memoValues, budget.LongValues, token).ConfigureAwait(false);
+            (byte[] key, bool allNull) = await ReadKeyAsync(format, definition, descriptorIndex, location, payload, budget.MaxKeyBytes, accounting, memoValues, budget.LongValues, token, hydratedColumns).ConfigureAwait(false);
             if (allNull && (index.Slot.Flags & Constants.TableDefinition.IgnoreNullsIndexFlag) != 0)
             {
                 excluded++;
@@ -330,16 +372,28 @@ internal static class CompactIndexRowAudit
     /// <param name="memoValues">The admitted source session for complete ordinary Memo traversal.</param>
     /// <param name="memoBudget">The source session's immutable per-value and cumulative Memo limits.</param>
     /// <param name="cancellationToken">Cancels field inspection.</param>
+    /// <param name="hydratedColumns">Optional independently hydrated calculated column projections.</param>
     /// <returns>The complete native key and whether every key component was null.</returns>
     /// <exception cref="JetNotSupportedException">A stored value has no faithful supported key encoding.</exception>
     /// <exception cref="JetLimitationException">The combined key exceeds its byte allowance.</exception>
-    internal static async ValueTask<(byte[] Key, bool AllNull)> ReadKeyAsync(JetFormat format, TDefImage definition, int descriptorIndex, RowLocation location, ReadOnlyMemory<byte> payload, int maxKeyBytes, CompactDiscoveryAccounting? accounting, CompactDiscoverySession? memoValues, CompactDiscoveryBudget memoBudget, CancellationToken cancellationToken)
+    internal static async ValueTask<(byte[] Key, bool AllNull)> ReadKeyAsync(
+        JetFormat format,
+        TDefImage definition,
+        int descriptorIndex,
+        RowLocation location,
+        ReadOnlyMemory<byte> payload,
+        int maxKeyBytes,
+        CompactDiscoveryAccounting? accounting,
+        CompactDiscoverySession? memoValues,
+        CompactDiscoveryBudget memoBudget,
+        CancellationToken cancellationToken,
+        IReadOnlyList<ColumnInfo>? hydratedColumns = null)
     {
         TDefIndexDescriptor index = definition.RealIndexes[descriptorIndex];
         byte[][] parts = new byte[index.Columns.Count][];
         bool allNull = true;
         int keyLength = 0;
-        await CompactRawFieldReader.ScanAsync(format, definition, location, payload, InspectFieldAsync, cancellationToken).ConfigureAwait(false);
+        await CompactRawFieldReader.ScanAsync(format, definition, location, payload, InspectFieldAsync, cancellationToken, hydratedColumns).ConfigureAwait(false);
         byte[] key = new byte[keyLength];
         int offset = 0;
         foreach (byte[] part in parts)
@@ -363,7 +417,41 @@ internal static class CompactIndexRowAudit
                 }
 
                 byte[] encoded;
-                if (field.Column.Type == ColumnType.BooleanType)
+                if (field.Column.IsCalculated)
+                {
+                    ColumnType calcType = field.Column.CalculatedResultType;
+                    if (calcType == default)
+                    {
+                        throw Unsupported(location.PageNumber, "An indexed calculated column requires a hydrated CalculatedResultType.");
+                    }
+
+                    if (calcType == ColumnType.MemoType)
+                    {
+                        if (field.Kind is CompactRawFieldKind.Absent or CompactRawFieldKind.Null)
+                        {
+                            encoded = EncodeCalculatedFieldKey(format, field, column, calcType, null);
+                        }
+                        else
+                        {
+                            (byte[] memoKey, bool memoNull) = await ReadCalculatedMemoKeyAsync(
+                                format,
+                                field,
+                                column,
+                                memoValues ?? throw Unsupported(location.PageNumber, "An indexed Memo requires an admitted immutable source session."),
+                                memoBudget,
+                                token).ConfigureAwait(false);
+                            allNull &= memoNull;
+                            encoded = memoKey;
+                        }
+                    }
+                    else
+                    {
+                        object? calcValue = DecodeCalculatedField(format, field, calcType);
+                        allNull &= calcValue is null;
+                        encoded = EncodeCalculatedFieldKey(format, field, column, calcType, calcValue);
+                    }
+                }
+                else if (field.Column.Type == ColumnType.BooleanType)
                 {
                     if (field.Kind is not (CompactRawFieldKind.Boolean or CompactRawFieldKind.Absent))
                     {
@@ -406,6 +494,148 @@ internal static class CompactIndexRowAudit
             or ColumnType.MoneyType or ColumnType.GuidType or ColumnType.NumericType or ColumnType.BigIntType
             or ColumnType.TextType or ColumnType.MemoType or ColumnType.BinaryType or ColumnType.DateTimeExtendedType
             or ColumnType.FloatType or ColumnType.DoubleType or ColumnType.DateTimeType or ColumnType.ComplexType;
+
+    private static bool SupportedCalculatedType(ColumnType type)
+        => type is ColumnType.BooleanType or ColumnType.ByteType or ColumnType.IntegerType or ColumnType.LongIntegerType
+            or ColumnType.MoneyType or ColumnType.GuidType or ColumnType.NumericType or ColumnType.BigIntType
+            or ColumnType.TextType or ColumnType.MemoType or ColumnType.BinaryType or ColumnType.DateTimeExtendedType
+            or ColumnType.FloatType or ColumnType.DoubleType or ColumnType.DateTimeType;
+
+    private static object? DecodeCalculatedField(JetFormat format, CompactRawField field, ColumnType calcType)
+    {
+        if (field.Kind is CompactRawFieldKind.Absent or CompactRawFieldKind.Null)
+        {
+            return null;
+        }
+
+        try
+        {
+            RowValueDecodePolicy.ValidateCalculatedEnvelope(field.RawBytes.Span);
+        }
+        catch (JetCorruptDataException ex)
+        {
+            throw Corrupt(field.Location.PageNumber, ex.Message);
+        }
+
+        ReadOnlySpan<byte> inner = CalculatedColumnUtil.Unwrap(field.RawBytes.Span);
+        if (inner.IsEmpty)
+        {
+            return calcType == ColumnType.TextType ? string.Empty : null;
+        }
+
+        if (calcType == ColumnType.BooleanType)
+        {
+            if (inner.Length != 1)
+            {
+                throw Corrupt(field.Location.PageNumber, "An indexed calculated Boolean envelope payload does not occupy 1 byte.");
+            }
+
+            return inner[0] != 0;
+        }
+
+        if (calcType == ColumnType.DateTimeType)
+        {
+            return JetTypeInfo.ReadDoubleLittleEndian(inner);
+        }
+
+        if (calcType is ColumnType.BinaryType or ColumnType.DateTimeExtendedType)
+        {
+            return inner.ToArray();
+        }
+
+        if (calcType == ColumnType.TextType)
+        {
+            return DecodeTextField(format, field, inner.ToArray(), compressedStorage: true);
+        }
+
+        ColumnInfo scalarProjection = field.Column with
+        {
+            Type = calcType,
+            Flags = (byte)(field.Column.Flags | Constants.ColumnDescriptorFlags.Fixed),
+        };
+        object value = JetTypeInfo.ReadFixedTyped(inner, 0, scalarProjection, inner.Length, strictNumeric: true);
+        if (value is DBNull)
+        {
+            throw Corrupt(field.Location.PageNumber, "An assigned calculated scalar key value could not be decoded faithfully.");
+        }
+
+        return value;
+    }
+
+    private static byte[] EncodeCalculatedFieldKey(JetFormat format, CompactRawField field, KeyColumn column, ColumnType calcType, object? value)
+    {
+        if (calcType == ColumnType.BooleanType && value is bool boolValue)
+        {
+            return column.Ascending
+                ? [0x7F, boolValue ? (byte)0 : byte.MaxValue]
+                : [0x80, boolValue ? byte.MaxValue : (byte)0];
+        }
+
+        ColumnType keyType = calcType == ColumnType.DateTimeType ? ColumnType.DoubleType : calcType;
+        return IndexKeyEncoder.TryEncodeColumnEntry(keyType, value, column.Ascending, field.Column.NumericScale, format.LegacyNumericIndexKeys, field.Column.TextSortOrder, 0)
+            ?? throw Unsupported(field.Location.PageNumber, "An independently decoded calculated scalar value has no supported exact index-key encoding.");
+    }
+
+    private static async ValueTask<(byte[] Key, bool IsNull)> ReadCalculatedMemoKeyAsync(
+        JetFormat format,
+        CompactRawField field,
+        KeyColumn column,
+        CompactDiscoverySession values,
+        CompactDiscoveryBudget budget,
+        CancellationToken token)
+    {
+        if (!LongValueDescriptor.TryRead(field.RawBytes.Span, out LongValueDescriptor descriptor))
+        {
+            throw Corrupt(field.Location.PageNumber, "An indexed calculated Memo has a truncated native long-value descriptor.");
+        }
+
+        if (descriptor.Length > budget.MaxValueBytes)
+        {
+            throw Limit(field.Location.PageNumber, "An indexed calculated Memo payload exceeds MaxValueBytes.");
+        }
+
+        values.Accounting.Charge(CompactDiscoveryCharge.LongValuePayloadBytes, descriptor.Length, field.Location.PageNumber);
+        using IDisposable storage = values.Accounting.ReserveWorkingBytes((8L * descriptor.Length) + 65_536, field.Location.PageNumber);
+        byte[] envelopeBytes = new byte[descriptor.Length];
+        int offset = 0;
+        bool terminal = false;
+        await values.AuditLongValueAsync(field.RawBytes, InspectAsync, token).ConfigureAwait(false);
+        if (!terminal || offset != envelopeBytes.Length)
+        {
+            throw Corrupt(field.Location.PageNumber, "The independently audited indexed calculated Memo payload is incomplete.");
+        }
+
+        try
+        {
+            RowValueDecodePolicy.ValidateCalculatedEnvelope(envelopeBytes);
+        }
+        catch (JetCorruptDataException ex)
+        {
+            throw Corrupt(field.Location.PageNumber, ex.Message);
+        }
+
+        ReadOnlySpan<byte> inner = CalculatedColumnUtil.Unwrap(envelopeBytes);
+        string text = inner.IsEmpty
+            ? string.Empty
+            : DecodeTextField(format, field, inner.ToArray(), descriptor.IsInline || descriptor.IsSinglePage);
+        return (EncodeCalculatedFieldKey(format, field, column, ColumnType.MemoType, text), false);
+
+        ValueTask InspectAsync(CompactLongValueRecord record, CancellationToken recordToken)
+        {
+            recordToken.ThrowIfCancellationRequested();
+            if (record.DeclaredPayloadBytes < 0 || record.DeclaredPayloadBytes > envelopeBytes.Length - offset
+                || record.PayloadOffset < 0 || record.PayloadOffset > record.RawBytes.Length
+                || record.DeclaredPayloadBytes > record.RawBytes.Length - record.PayloadOffset)
+            {
+                throw Corrupt(field.Location.PageNumber, "An indexed calculated Memo audit delivered bytes outside the admitted payload or borrowed row.");
+            }
+
+            record.RawBytes.Slice(record.PayloadOffset, record.DeclaredPayloadBytes).CopyTo(envelopeBytes.AsMemory(offset));
+            offset += record.DeclaredPayloadBytes;
+            terminal |= record.Kind == "lval-terminal";
+            return default;
+        }
+    }
 
     private static object? DecodeField(JetFormat format, CompactRawField field)
     {

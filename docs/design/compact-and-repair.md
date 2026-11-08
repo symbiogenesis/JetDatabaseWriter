@@ -257,7 +257,7 @@ same-owner raw rows and supported stored long values and compares every leaf and
 rows must appear exactly once; an IgnoreNulls descriptor omits only all-null
 keys. Date keys retain their stored IEEE double rather than converting through
 calendar rounding. Strict lossless text decoding and supported stored
-collations are required. Positive four-byte complex parent references retain their stored identities without following hidden items. Calculated, non-Memo long-value and unsupported key
+collations are required. Positive four-byte complex parent references retain their stored identities without following hidden items. Calculated keys with independently hydrated ResultType metadata unwrap the cached 23-byte calculated envelope (including inline and external calculated Memo envelopes) without expression evaluation; unhydrated calculated, non-Memo long-value and unsupported key
 interpretations refuse. Ordinary Memo keys use the complete declared payload under per-value storage and cumulative read/field/LVAL admission; the full chain is audited even beyond its declared payload. Descriptor storage mode controls compressed-marker eligibility independently of the column flag, and incomplete code units refuse. Complete observed reciprocal leaf chains, conservative routing, exact child maxima and independently resolved bookmark payloads must agree. The result covers the physically discovered row set;
 it does not choose which historical same-owner rows remain active or establish
 missing ownership and complete source coverage.

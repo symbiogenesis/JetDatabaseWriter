@@ -25,6 +25,7 @@ internal sealed partial class CompactActiveTableRows : IDisposable
     private readonly IPageSource source;
     private readonly JetFormat format;
     private readonly TDefImage definition;
+    private readonly IReadOnlyList<ColumnInfo>? hydratedColumns;
     private readonly CompactActiveTableBudget budget;
     private readonly CompactDiscoveryAccounting accounting;
     private readonly CompactDiscoverySession? memoValues;
@@ -42,12 +43,21 @@ internal sealed partial class CompactActiveTableRows : IDisposable
     private int activeIndexAudit;
     private bool failed;
 
-    private CompactActiveTableRows(IPageSource source, JetFormat format, long owner, TDefImage definition, int descriptorIndex, CompactActiveTableBudget budget, Func<CompactActiveTableRowRecord, CancellationToken, ValueTask> observer)
+    private CompactActiveTableRows(
+        IPageSource source,
+        JetFormat format,
+        long owner,
+        TDefImage definition,
+        int descriptorIndex,
+        CompactActiveTableBudget budget,
+        Func<CompactActiveTableRowRecord, CancellationToken, ValueTask> observer,
+        IReadOnlyList<ColumnInfo>? hydratedColumns = null)
     {
         this.source = source;
         this.format = format;
         this.OwnerTDefPage = owner;
         this.definition = definition;
+        this.hydratedColumns = hydratedColumns;
         this.descriptorIndex = descriptorIndex;
         this.budget = budget;
         this.observer = observer;
@@ -55,7 +65,7 @@ internal sealed partial class CompactActiveTableRows : IDisposable
         this.accounting = new(budget.Work, budget.Accounting);
         this.pages = new(this);
         this.memoPages = new(this, admitReads: false);
-        if (CompactIndexRowAudit.HasMemoColumn(definition, descriptorIndex))
+        if (CompactIndexRowAudit.HasMemoColumn(definition, descriptorIndex, hydratedColumns))
         {
             this.memoValues = new(this.memoPages, format, budget.Work, this.accounting);
         }
@@ -76,11 +86,21 @@ internal sealed partial class CompactActiveTableRows : IDisposable
     /// <param name="budget">Lifetime cumulative admission limits.</param>
     /// <param name="observer">Mandatory awaited observer for all unassigned original bytes and terminal counts.</param>
     /// <param name="cancellationToken">Cancels native inspection and observer delivery.</param>
+    /// <param name="hydratedColumns">Optional hydrated column definitions supplying <see cref="ColumnInfo.CalculatedResultType"/>.</param>
     /// <returns>Evidence valid only for this source and image until disposed or a consumption fails.</returns>
     /// <exception cref="JetCorruptDataException">Independent source, metadata, map, tree or row evidence disagrees.</exception>
     /// <exception cref="JetNotSupportedException">The explicitly selected index cannot be derived faithfully.</exception>
     /// <exception cref="JetLimitationException">Lifetime work or simultaneous storage admission is exhausted.</exception>
-    internal static async ValueTask<CompactActiveTableRows> ValidateAsync(IPageSource source, JetFormat format, long ownerTDefPage, TDefImage definition, int coveringIndexOrdinal, CompactActiveTableBudget budget, Func<CompactActiveTableRowRecord, CancellationToken, ValueTask> observer, CancellationToken cancellationToken)
+    internal static async ValueTask<CompactActiveTableRows> ValidateAsync(
+        IPageSource source,
+        JetFormat format,
+        long ownerTDefPage,
+        TDefImage definition,
+        int coveringIndexOrdinal,
+        CompactActiveTableBudget budget,
+        Func<CompactActiveTableRowRecord, CancellationToken, ValueTask> observer,
+        CancellationToken cancellationToken,
+        IReadOnlyList<ColumnInfo>? hydratedColumns = null)
     {
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(format, nameof(format));
@@ -103,12 +123,12 @@ internal sealed partial class CompactActiveTableRows : IDisposable
             throw Limit(ownerTDefPage, "Active table source, definition or declared rows exceed admission limits.");
         }
 
-        if (!CompactIndexRowAudit.SupportsDescriptor(definition, coveringIndexOrdinal))
+        if (!CompactIndexRowAudit.SupportsDescriptor(definition, coveringIndexOrdinal, hydratedColumns))
         {
             throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Active membership requires a supported faithful scalar covering index.");
         }
 
-        CompactActiveTableRows? pending = new(source, format, ownerTDefPage, definition, coveringIndexOrdinal, budget, observer);
+        CompactActiveTableRows? pending = new(source, format, ownerTDefPage, definition, coveringIndexOrdinal, budget, observer, hydratedColumns);
         try
         {
             await pending.DeriveAsync(cancellationToken).ConfigureAwait(false);
@@ -221,7 +241,8 @@ internal sealed partial class CompactActiveTableRows : IDisposable
                         MaxWorkingBytes = this.budget.Work.MaxWorkingBytes,
                     },
                     cancellationToken,
-                    this).ConfigureAwait(false);
+                    this,
+                    this.hydratedColumns).ConfigureAwait(false);
             }
 
             this.CheckSource(this.source, this.definition, cancellationToken);
@@ -423,7 +444,7 @@ internal sealed partial class CompactActiveTableRows : IDisposable
                 }
 
                 bool allNull;
-                (key, allNull) = await CompactIndexRowAudit.ReadKeyAsync(this.format, this.definition, this.descriptorIndex, location, payload, this.budget.MaxKeyBytes, this.accounting, this.memoValues, this.budget.Work, rowToken).ConfigureAwait(false);
+                (key, allNull) = await CompactIndexRowAudit.ReadKeyAsync(this.format, this.definition, this.descriptorIndex, location, payload, this.budget.MaxKeyBytes, this.accounting, this.memoValues, this.budget.Work, rowToken, this.hydratedColumns).ConfigureAwait(false);
                 if (allNull && (this.definition.RealIndexes[this.descriptorIndex].Slot.Flags & Constants.TableDefinition.IgnoreNullsIndexFlag) != 0)
                 {
                     throw Corrupt(location.PageNumber, "The selected index omits an all-null active row and cannot cover this table.");

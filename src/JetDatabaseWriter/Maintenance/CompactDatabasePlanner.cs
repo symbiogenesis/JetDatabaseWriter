@@ -362,7 +362,8 @@ internal static class CompactDatabasePlanner
                                 activeTableBudget with { Accounting = session.Accounting },
                                 diagnostics,
                                 budget.MaxDiagnostics,
-                                token).ConfigureAwait(false);
+                                token,
+                                hydratedColumns).ConfigureAwait(false);
                             if (activeIndexOrdinal is not null)
                             {
                                 tableActiveRows = mappedRows;
@@ -372,6 +373,13 @@ internal static class CompactDatabasePlanner
                                 totalExcludedUnassignedRows = checked(totalExcludedUnassignedRows + unmappedRows);
                                 foreach ((RowLocation loc, byte[] rawRow) in unmappedRowList)
                                 {
+                                    IReadOnlyDictionary<string, object?>? decoded = await CompactDataPageSalvager.TryDecodeQuarantinedRowFieldsAsync(
+                                        source,
+                                        format,
+                                        definition,
+                                        rawRow,
+                                        token,
+                                        hydratedColumns).ConfigureAwait(false);
                                     quarantineRecords.Add(
                                         new AccessCompactQuarantineRecord(
                                             "quarantined-unassigned-row",
@@ -381,7 +389,8 @@ internal static class CompactDatabasePlanner
                                             loc.RowIndex,
                                             "Physical row lies outside the corroborated active table usage map and was excluded by covering-index verification.",
                                             CompactDataPageSalvager.ComputeSha256Hex(rawRow),
-                                            Convert.ToBase64String(rawRow)));
+                                            Convert.ToBase64String(rawRow),
+                                            decoded));
                                 }
                             }
                             else
@@ -399,6 +408,13 @@ internal static class CompactDatabasePlanner
                                             $"Physical row {location.PageNumber}:{location.RowIndex} on table owner {owner} lies outside the table's owned usage map and has no supported covering index to corroborate exclusion; all rows and source pages remain pinned.",
                                             AccessCompactDiagnosticCategory.UnassignedTableRow,
                                             tableName));
+                                    IReadOnlyDictionary<string, object?>? decoded = await CompactDataPageSalvager.TryDecodeQuarantinedRowFieldsAsync(
+                                        source,
+                                        format,
+                                        definition,
+                                        rawRow,
+                                        token,
+                                        hydratedColumns).ConfigureAwait(false);
                                     quarantineRecords.Add(
                                         new AccessCompactQuarantineRecord(
                                             "quarantined-unassigned-row",
@@ -408,7 +424,8 @@ internal static class CompactDatabasePlanner
                                             location.RowIndex,
                                             "Unmapped physical row has no covering index to corroborate exclusion.",
                                             CompactDataPageSalvager.ComputeSha256Hex(rawRow),
-                                            Convert.ToBase64String(rawRow)));
+                                            Convert.ToBase64String(rawRow),
+                                            decoded));
                                 }
 
                                 tableActiveRows = checked(mappedRows + unmappedRows);
@@ -493,6 +510,34 @@ internal static class CompactDatabasePlanner
 
                         if (!forceRegenerateTable)
                         {
+                            Dictionary<(long Page, int Row), byte[]>? expectedKeysByBookmark = null;
+                            if (retainedRowsForTable is not null
+                                && HasCalculatedKeyColumn(definition, slot, hydratedColumns)
+                                && CompactIndexRowAudit.SupportsDescriptor(definition, slot, hydratedColumns))
+                            {
+                                expectedKeysByBookmark = [];
+                                CompactDiscoverySession? memoSession = CompactIndexRowAudit.HasMemoColumn(definition, slot, hydratedColumns) ? session : null;
+                                foreach ((RowLocation rowLoc, byte[] rowPayload) in retainedRowsForTable)
+                                {
+                                    (byte[] expectedKey, bool allNull) = await CompactIndexRowAudit.ReadKeyAsync(
+                                        format,
+                                        definition,
+                                        slot,
+                                        rowLoc,
+                                        rowPayload,
+                                        activeTableBudget.MaxKeyBytes,
+                                        session.Accounting,
+                                        memoSession,
+                                        budget,
+                                        token,
+                                        hydratedColumns).ConfigureAwait(false);
+                                    if (!(allNull && ignoreNulls))
+                                    {
+                                        expectedKeysByBookmark[(rowLoc.PageNumber, rowLoc.RowIndex)] = expectedKey;
+                                    }
+                                }
+                            }
+
                             try
                             {
                                 userFirstLeafPage = await PreAuditUserIndexAsync(
@@ -506,7 +551,8 @@ internal static class CompactDatabasePlanner
                                     session.Accounting,
                                     activeBookmarks,
                                     enforceBookmarkCount,
-                                    token).ConfigureAwait(false);
+                                    token,
+                                    expectedKeysByBookmark).ConfigureAwait(false);
                             }
                             catch (JetCorruptDataException ex)
                             {
@@ -547,7 +593,7 @@ internal static class CompactDatabasePlanner
                         }
                         else
                         {
-                            if (!rebuildDamagedIndexes || !CompactIndexRowAudit.SupportsDescriptor(definition, slot) || retainedRowsForTable is null)
+                            if (!rebuildDamagedIndexes || !CompactIndexRowAudit.SupportsDescriptor(definition, slot, hydratedColumns) || retainedRowsForTable is null)
                             {
                                 throw indexError ?? Corrupt(descriptor.RootPage, $"Damaged index slot {slot} on table '{tableName}' (owner {owner}) cannot be regenerated.");
                             }
@@ -560,9 +606,10 @@ internal static class CompactDatabasePlanner
                                 retainedRowsForTable,
                                 activeTableBudget.MaxKeyBytes,
                                 session.Accounting,
-                                CompactIndexRowAudit.HasMemoColumn(definition, slot) ? session : null,
+                                CompactIndexRowAudit.HasMemoColumn(definition, slot, hydratedColumns) ? session : null,
                                 budget,
-                                token).ConfigureAwait(false);
+                                token,
+                                hydratedColumns).ConfigureAwait(false);
                             indexes[slot] = new(descriptor.RootPage, ownedPages, regenerated);
                             tableRegeneratedIndexes++;
                             totalRegeneratedIndexes++;
@@ -768,6 +815,33 @@ internal static class CompactDatabasePlanner
             totalQuarantinedRows);
     }
 
+    private static bool HasCalculatedKeyColumn(
+        TDefImage definition,
+        int descriptorIndex,
+        IReadOnlyList<ColumnInfo>? hydratedColumns)
+    {
+        if ((uint)descriptorIndex >= (uint)definition.RealIndexes.Count)
+        {
+            return false;
+        }
+
+        TDefIndexDescriptor descriptor = definition.RealIndexes[descriptorIndex];
+        IReadOnlyList<ColumnInfo> columns = hydratedColumns ?? definition.Columns;
+        for (int i = 0; i < descriptor.Columns.Count; i++)
+        {
+            int colNum = descriptor.Columns[i].ColNum;
+            for (int c = 0; c < columns.Count; c++)
+            {
+                if (columns[c].ColNum == colNum && columns[c].IsCalculated)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private static async ValueTask<long> PreAuditUserIndexAsync(
         IPageSource source,
         JetFormat format,
@@ -779,7 +853,8 @@ internal static class CompactDatabasePlanner
         CompactDiscoveryAccounting accounting,
         HashSet<(long Page, int Row)>? activeBookmarks,
         bool enforceBookmarkCount,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Dictionary<(long Page, int Row), byte[]>? expectedKeysByBookmark = null)
     {
         long indexCoordinates = Math.Min(int.MaxValue, budget.MaxIndexPages);
         long mapCoordinates = Math.Min(int.MaxValue, budget.MaxObjects);
@@ -847,6 +922,13 @@ internal static class CompactDatabasePlanner
                         {
                             throw Corrupt(record.PageNumber, $"Stored index leaf entry on page {record.PageNumber} references non-active or duplicate row bookmark {tgtPage}:{tgtRow}.");
                         }
+
+                        if (expectedKeysByBookmark is not null
+                            && (!expectedKeysByBookmark.TryGetValue((tgtPage, tgtRow), out byte[]? expectedKey)
+                                || !record.CanonicalKey.AsSpan().SequenceEqual(expectedKey)))
+                        {
+                            throw Corrupt(record.PageNumber, $"Stored calculated index leaf key on page {record.PageNumber} disagrees with the cached row envelope at {tgtPage}:{tgtRow}.");
+                        }
                     }
                 }
                 else if (record.Kind == "index-terminal")
@@ -865,9 +947,10 @@ internal static class CompactDatabasePlanner
             throw Corrupt(rootPage, "A stored index B-tree failed structural, key-routing, or leaf-chain ordering verification.");
         }
 
-        if (enforceBookmarkCount && activeBookmarks is not null && leafEntryCount != activeBookmarks.Count)
+        if ((enforceBookmarkCount && activeBookmarks is not null && leafEntryCount != activeBookmarks.Count)
+            || (expectedKeysByBookmark is not null && leafEntryCount != expectedKeysByBookmark.Count))
         {
-            throw Corrupt(rootPage, $"Stored index leaf entry count ({leafEntryCount}) disagrees with active row count ({activeBookmarks.Count}).");
+            throw Corrupt(rootPage, $"Stored index leaf entry count ({leafEntryCount}) disagrees with active row count ({activeBookmarks?.Count ?? expectedKeysByBookmark?.Count ?? 0}).");
         }
 
         await singleOwnership.CompleteAsync(IgnoreOwnershipAsync, cancellationToken).ConfigureAwait(false);
@@ -981,12 +1064,13 @@ internal static class CompactDatabasePlanner
         CompactActiveTableBudget activeTableBudget,
         List<AccessCompactDiagnostic> diagnostics,
         long maxDiagnostics,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<ColumnInfo>? hydratedColumns = null)
     {
         Exception? lastError = null;
         for (int ordinal = 0; ordinal < definition.RealIndexes.Count; ordinal++)
         {
-            if (!CompactIndexRowAudit.SupportsDescriptor(definition, ordinal))
+            if (!CompactIndexRowAudit.SupportsDescriptor(definition, ordinal, hydratedColumns))
             {
                 continue;
             }
@@ -1019,7 +1103,8 @@ internal static class CompactDatabasePlanner
 
                         return default;
                     },
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    hydratedColumns).ConfigureAwait(false);
                 _ = await active.ValidateIndexesAsync(cancellationToken).ConfigureAwait(false);
                 foreach (AccessCompactDiagnostic diagnostic in candidateDiagnostics)
                 {

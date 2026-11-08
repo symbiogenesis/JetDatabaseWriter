@@ -28,7 +28,8 @@ internal static class CompactIndexKeyRegenerator
         CompactDiscoveryAccounting? accounting,
         CompactDiscoverySession? memoSession,
         CompactDiscoveryBudget memoBudget,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<ColumnInfo>? hydratedColumns = null)
     {
         Guard.NotNull(format, nameof(format));
         Guard.NotNull(definition, nameof(definition));
@@ -36,7 +37,7 @@ internal static class CompactIndexKeyRegenerator
         Guard.NotNull(memoBudget, nameof(memoBudget));
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (!CompactIndexRowAudit.SupportsDescriptor(definition, descriptorIndex))
+        if (!CompactIndexRowAudit.SupportsDescriptor(definition, descriptorIndex, hydratedColumns))
         {
             throw new JetCorruptDataException(
                 JetErrorCode.CorruptIndex,
@@ -78,7 +79,8 @@ internal static class CompactIndexKeyRegenerator
 
                         return default;
                     },
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    hydratedColumns).ConfigureAwait(false);
                 if (hasNullComponent)
                 {
                     throw new JetCorruptDataException(
@@ -97,7 +99,8 @@ internal static class CompactIndexKeyRegenerator
                 accounting,
                 memoSession,
                 memoBudget,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                hydratedColumns).ConfigureAwait(false);
             if (allNull && ignoreNulls)
             {
                 continue;

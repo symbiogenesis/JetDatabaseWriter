@@ -43,7 +43,8 @@ internal static class CompactDataPageSalvager
         CancellationToken cancellationToken,
         bool quarantineOrphanedChildRows = true,
         bool quarantineConstraintViolatingRows = false,
-        bool coalesceLongValueChains = false)
+        bool coalesceLongValueChains = false,
+        bool packInteriorFreePages = false)
     {
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(format, nameof(format));
@@ -56,8 +57,25 @@ internal static class CompactDataPageSalvager
         };
         var definitions = new Dictionary<long, TDefImage>();
         int maxSchemaBytes = checked((int)Math.Min(int.MaxValue, budget.MaxSchemaBytes));
-        using var tableDefs = new TableDefReader(source, format, cacheResults: false, budget.MaxDefinitionBytes, maxSchemaBytes);
-        using var ownedData = new OwnedDataPages(source, format, cacheResults: false);
+        var earlyOverlayPages = new Dictionary<long, byte[]>();
+        var earlyDiagnostics = new List<AccessCompactDiagnostic>();
+        if (allowDataSalvage)
+        {
+            await TrySalvageSingleTDefChainContinuationsAsync(
+                source,
+                format,
+                budget,
+                maxSchemaBytes,
+                2,
+                Constants.SystemTableNames.Objects,
+                earlyOverlayPages,
+                earlyDiagnostics,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        IPageSource earlySource = earlyOverlayPages.Count > 0 ? new OverlayPageSource(source, earlyOverlayPages) : source;
+        using var tableDefs = new TableDefReader(earlySource, format, cacheResults: false, budget.MaxDefinitionBytes, maxSchemaBytes);
+        using var ownedData = new OwnedDataPages(earlySource, format, cacheResults: false);
         var catalogReader = new CatalogRowReader(format, tableDefs, ownedData);
 
         TDefImage? catalogDef;
@@ -91,7 +109,7 @@ internal static class CompactDataPageSalvager
                 MaxWorkingBytes = budget.MaxWorkingBytes,
             };
             CompactCatalogRecovery.Result physical = await CompactCatalogRecovery.ScanPhysicalAsync(
-                source,
+                earlySource,
                 format,
                 catalogDef,
                 catalogReader,
@@ -112,19 +130,19 @@ internal static class CompactDataPageSalvager
         }
         catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException)
         {
-            if (!allowDataSalvage && !coalesceLongValueChains)
+            if (!allowDataSalvage && !coalesceLongValueChains && !packInteriorFreePages)
             {
                 return EmptyResult(source, tableNames);
             }
         }
 
-        if (!allowDataSalvage && !coalesceLongValueChains)
+        if (!allowDataSalvage && !coalesceLongValueChains && !packInteriorFreePages)
         {
             return EmptyResult(source, tableNames);
         }
 
-        var overlayPages = new Dictionary<long, byte[]>();
-        var diagnostics = new List<AccessCompactDiagnostic>();
+        var overlayPages = new Dictionary<long, byte[]>(earlyOverlayPages);
+        var diagnostics = new List<AccessCompactDiagnostic>(earlyDiagnostics);
         var quarantineRecords = new List<AccessCompactQuarantineRecord>();
         var salvagedRowsByOwner = new Dictionary<long, long>();
         var quarantinedPagesByOwner = new Dictionary<long, int>();
@@ -151,14 +169,29 @@ internal static class CompactDataPageSalvager
             knownNonDataTablePages,
             cancellationToken).ConfigureAwait(false);
 
+        var knownTDefChainPages = new HashSet<long> { 2 };
+
         if (allowDataSalvage)
         {
-            await RecoverOrphanedTablesAsync(
+            await TrySalvageAllTDefContinuationsAsync(
                 source,
                 format,
                 budget,
                 maxSchemaBytes,
-                tableDefs,
+                tableNames,
+                globalFreePages,
+                overlayPages,
+                diagnostics,
+                cancellationToken).ConfigureAwait(false);
+
+            IPageSource orphanScanSource = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+            using var orphanTableDefs = new TableDefReader(orphanScanSource, format, cacheResults: false, budget.MaxDefinitionBytes, maxSchemaBytes);
+            await RecoverOrphanedTablesAsync(
+                orphanScanSource,
+                format,
+                budget,
+                maxSchemaBytes,
+                orphanTableDefs,
                 catalogDef,
                 definitions,
                 tableNames,
@@ -175,7 +208,7 @@ internal static class CompactDataPageSalvager
         {
             cancellationToken.ThrowIfCancellationRequested();
             long owner = pair.Key;
-            if (owner < 3 || owner >= source.PageCount)
+            if (owner < 2 || owner >= source.PageCount)
             {
                 continue;
             }
@@ -186,6 +219,7 @@ internal static class CompactDataPageSalvager
                 foreach (long tdefPage in chain.PageNumbers)
                 {
                     _ = knownNonDataTablePages.Add(tdefPage);
+                    _ = knownTDefChainPages.Add(tdefPage);
                 }
 
                 TDefImage? image = await effectiveTableDefs.ReadImageAsync(owner, maxSchemaBytes, cancellationToken).ConfigureAwait(false);
@@ -197,16 +231,23 @@ internal static class CompactDataPageSalvager
                 definitions[owner] = image;
                 if (UsageMap.TryReadPointer(chain.Bytes, format.TDef.UsedPages, out UsageMapPointer ownedPtr) && ownedPtr.PageNumber > 0)
                 {
-                    tableOwnedMapPointers[owner] = ownedPtr;
                     _ = knownNonDataTablePages.Add(ownedPtr.PageNumber);
-                    tableOwnedPages[owner] = await ReadUsageMapMembersSafeAsync(defSource, format, ownedPtr, knownNonDataTablePages, cancellationToken).ConfigureAwait(false);
+                    HashSet<long> ownedMembers = await ReadUsageMapMembersSafeAsync(defSource, format, ownedPtr, knownNonDataTablePages, cancellationToken).ConfigureAwait(false);
+                    if (owner >= 3)
+                    {
+                        tableOwnedMapPointers[owner] = ownedPtr;
+                        tableOwnedPages[owner] = ownedMembers;
+                    }
                 }
 
                 if (UsageMap.TryReadPointer(chain.Bytes, format.TDef.FreePages, out UsageMapPointer freePtr) && freePtr.PageNumber > 0)
                 {
-                    tableFreeMapPointers[owner] = freePtr;
                     _ = knownNonDataTablePages.Add(freePtr.PageNumber);
                     _ = await ReadUsageMapMembersSafeAsync(defSource, format, freePtr, knownNonDataTablePages, cancellationToken).ConfigureAwait(false);
+                    if (owner >= 3)
+                    {
+                        tableFreeMapPointers[owner] = freePtr;
+                    }
                 }
 
                 foreach (TDefIndexDescriptor index in image.RealIndexes)
@@ -218,13 +259,17 @@ internal static class CompactDataPageSalvager
 
                     if (UsageMap.TryReadPointer(chain.Bytes, index.Slot.FirstDpOffset - 4, out UsageMapPointer idxPtr) && idxPtr.PageNumber > 0)
                     {
-                        if (!tableIndexOwnedMapPointers.TryGetValue(owner, out List<UsageMapPointer>? idxPtrList))
+                        if (owner >= 3)
                         {
-                            idxPtrList = [];
-                            tableIndexOwnedMapPointers[owner] = idxPtrList;
+                            if (!tableIndexOwnedMapPointers.TryGetValue(owner, out List<UsageMapPointer>? idxPtrList))
+                            {
+                                idxPtrList = [];
+                                tableIndexOwnedMapPointers[owner] = idxPtrList;
+                            }
+
+                            idxPtrList.Add(idxPtr);
                         }
 
-                        idxPtrList.Add(idxPtr);
                         _ = knownNonDataTablePages.Add(idxPtr.PageNumber);
                         HashSet<long> idxMembers = await ReadUsageMapMembersSafeAsync(defSource, format, idxPtr, knownNonDataTablePages, cancellationToken).ConfigureAwait(false);
                         foreach (long idxPage in idxMembers)
@@ -276,6 +321,19 @@ internal static class CompactDataPageSalvager
             }
         }
 
+        if (allowDataSalvage)
+        {
+            await ReclaimDeadTDefPagesAsync(
+                source,
+                format,
+                budget,
+                knownTDefChainPages,
+                globalFreePages,
+                overlayPages,
+                diagnostics,
+                cancellationToken).ConfigureAwait(false);
+        }
+
         if (!allowDataSalvage)
         {
             if (coalesceLongValueChains)
@@ -287,6 +345,24 @@ internal static class CompactDataPageSalvager
                     tableNames,
                     overlayPages,
                     inlinePromotedByOwner,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            int relocatedNoSalvage = 0;
+            if (packInteriorFreePages)
+            {
+                relocatedNoSalvage = await RelocateHighTDefContinuationPagesAsync(
+                    source,
+                    format,
+                    budget,
+                    maxSchemaBytes,
+                    definitions,
+                    tableOwnedPages,
+                    tableOwnedMapPointers,
+                    tableFreeMapPointers,
+                    knownNonDataTablePages,
+                    globalFreePages,
+                    overlayPages,
                     cancellationToken).ConfigureAwait(false);
             }
 
@@ -305,7 +381,8 @@ internal static class CompactDataPageSalvager
                 quarantinedRowsByOwner,
                 totalQuarantinedRows,
                 inlinePromotedByOwner,
-                totalInlinePromoted);
+                totalInlinePromoted,
+                RelocatedTDefContinuationPages: relocatedNoSalvage);
         }
 
         // Pass 0.5: Reconstruct structurally corrupt usage-map rows/pages for user tables.
@@ -517,6 +594,22 @@ internal static class CompactDataPageSalvager
             }
         }
 
+        // Pass 1.5: Repair damaged overflow target DATA pages referenced by live OverflowRowFlag pointers.
+        long overflowTargetSalvagedRows = await RepairOverflowTargetDataPagesAsync(
+            source,
+            format,
+            budget,
+            definitions,
+            tableNames,
+            knownNonDataTablePages,
+            tableOwnedPages,
+            tableOwnedMapPointers,
+            overlayPages,
+            diagnostics,
+            salvagedRowsByOwner,
+            cancellationToken).ConfigureAwait(false);
+        totalSalvagedRows += overflowTargetSalvagedRows;
+
         // Pass 1.8: Field-level LVAL salvage (truncate damaged multi-hop LVAL chains to surviving prefix, or null unrecoverable LVAL fields in-place while preserving scalar row columns).
         (long lvalFieldSalvagedRows, long lvalFieldQuarantinedCount) = await SalvageCorruptLongValueFieldsAndUnrecoverableLvalPagesAsync(
             source,
@@ -632,6 +725,12 @@ internal static class CompactDataPageSalvager
 
                     foreach (CorruptSlotInfo corruptSlot in partial.CorruptSlots)
                     {
+                        IReadOnlyDictionary<string, object?>? decodedCorruptRow = await TryDecodeQuarantinedRowFieldsAsync(
+                            pass1Overlay,
+                            format,
+                            def,
+                            corruptSlot.RawBytes,
+                            cancellationToken).ConfigureAwait(false);
                         quarantineRecords.Add(
                             new AccessCompactQuarantineRecord(
                                 "quarantined-corrupt-row",
@@ -641,7 +740,8 @@ internal static class CompactDataPageSalvager
                                 corruptSlot.SlotIndex,
                                 corruptSlot.Reason,
                                 ComputeSha256Hex(corruptSlot.RawBytes),
-                                Convert.ToBase64String(corruptSlot.RawBytes)));
+                                Convert.ToBase64String(corruptSlot.RawBytes),
+                                decodedCorruptRow));
                         if (diagnostics.Count < budget.MaxDiagnostics)
                         {
                             diagnostics.Add(
@@ -725,6 +825,23 @@ internal static class CompactDataPageSalvager
             }
         }
 
+        // Pass 2.5: Promote unreferenced moved-row target payloads on surviving DATA pages when their pointer page or slot was quarantined.
+        long promotedOverflowRows = await SalvageOrphanedMovedRowPayloadsAsync(
+            source,
+            format,
+            budget,
+            definitions,
+            tableNames,
+            knownNonDataTablePages,
+            quarantinedPagesByOwner,
+            quarantinedRowsByOwner,
+            overlayPages,
+            diagnostics,
+            salvagedRowsByOwner,
+            forceRegenerateOwners,
+            cancellationToken).ConfigureAwait(false);
+        totalSalvagedRows += promotedOverflowRows;
+
         // Pass 3: Quarantine orphaned complex flat-table child rows (MSysComplexColumns) and orphaned enforced foreign-key child rows.
         if (quarantineOrphanedChildRows)
         {
@@ -750,6 +867,7 @@ internal static class CompactDataPageSalvager
                 source,
                 format,
                 budget,
+                catalogDef,
                 definitions,
                 tableNames,
                 overlayPages,
@@ -774,6 +892,24 @@ internal static class CompactDataPageSalvager
                 cancellationToken).ConfigureAwait(false);
         }
 
+        int relocatedTDefPages = 0;
+        if (packInteriorFreePages && !diagnostics.Exists(static d => d.IsBlocking))
+        {
+            relocatedTDefPages = await RelocateHighTDefContinuationPagesAsync(
+                source,
+                format,
+                budget,
+                maxSchemaBytes,
+                definitions,
+                tableOwnedPages,
+                tableOwnedMapPointers,
+                tableFreeMapPointers,
+                knownNonDataTablePages,
+                globalFreePages,
+                overlayPages,
+                cancellationToken).ConfigureAwait(false);
+        }
+
         IPageSource effectiveSource = overlayPages.Count > 0
             ? new OverlayPageSource(source, overlayPages)
             : source;
@@ -790,7 +926,8 @@ internal static class CompactDataPageSalvager
             quarantinedRowsByOwner,
             totalQuarantinedRows,
             inlinePromotedByOwner,
-            totalInlinePromoted);
+            totalInlinePromoted,
+            RelocatedTDefContinuationPages: relocatedTDefPages);
     }
 
     internal static bool IsSystemTableName(string? tableName)
@@ -818,6 +955,59 @@ internal static class CompactDataPageSalvager
 
         return new string(chars);
 #endif
+    }
+
+    internal static async ValueTask<IReadOnlyDictionary<string, object?>?> TryDecodeQuarantinedRowFieldsAsync(
+        IPageSource source,
+        JetFormat format,
+        TDefImage definition,
+        ReadOnlyMemory<byte> rawRow,
+        CancellationToken cancellationToken,
+        IReadOnlyList<ColumnInfo>? hydratedColumns = null)
+    {
+        if (rawRow.IsEmpty || rawRow.Length < format.RowFields.NumCols)
+        {
+            return null;
+        }
+
+        var decoded = new Dictionary<string, object?>(StringComparer.Ordinal);
+        bool fullScanSucceeded = false;
+        try
+        {
+            var location = new RowLocation(0, 0, 0, rawRow.Length);
+            await CompactRawFieldReader.ScanAsync(
+                format,
+                definition,
+                location,
+                rawRow,
+                async (field, token) =>
+                {
+                    if (string.IsNullOrEmpty(field.Column.Name))
+                    {
+                        return;
+                    }
+
+                    (bool ok, object? val) = await TryDecodeSingleQuarantinedFieldAsync(source, format, field, token).ConfigureAwait(false);
+                    if (ok)
+                    {
+                        decoded[field.Column.Name] = val;
+                    }
+                },
+                cancellationToken,
+                hydratedColumns).ConfigureAwait(false);
+            fullScanSucceeded = decoded.Count > 0;
+        }
+        catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException or InvalidOperationException or FormatException or IndexOutOfRangeException)
+        {
+            // Fall back to fixed-column rescue when variable-offset metadata is damaged.
+        }
+
+        if (!fullScanSucceeded)
+        {
+            TryDecodeFixedColumnsFallback(format, definition, rawRow.Span, hydratedColumns, decoded);
+        }
+
+        return decoded.Count > 0 ? decoded : null;
     }
 
     private static CompactDataPageSalvageResult EmptyResult(IPageSource source, Dictionary<long, string> tableNames)
@@ -2094,6 +2284,12 @@ internal static class CompactDataPageSalvager
                     BinaryPrimitives.WriteUInt16LittleEndian(modifiedPage.AsSpan(format.DataPage.RowsStart + (slot * 2), 2), deletedEntry);
 
                     string reason = $"Complex flat-table row {pageNumber}:{slot} on '{flatTableName}' has complex reference {linkVal?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"} not present in any surviving row of '{parentTableName}.{parentColumnName}'.";
+                    IReadOnlyDictionary<string, object?>? decodedOrphanFields = await TryDecodeQuarantinedRowFieldsAsync(
+                        currentOverlay,
+                        format,
+                        flatDef,
+                        rawRowBytes,
+                        cancellationToken).ConfigureAwait(false);
                     quarantineRecords.Add(
                         new AccessCompactQuarantineRecord(
                             "quarantined-orphan-complex-row",
@@ -2103,7 +2299,8 @@ internal static class CompactDataPageSalvager
                             slot,
                             reason,
                             ComputeSha256Hex(rawRowBytes),
-                            Convert.ToBase64String(rawRowBytes)));
+                            Convert.ToBase64String(rawRowBytes),
+                            decodedOrphanFields));
                     if (diagnostics.Count < budget.MaxDiagnostics)
                     {
                         diagnostics.Add(
@@ -2308,6 +2505,12 @@ internal static class CompactDataPageSalvager
                     BinaryPrimitives.WriteUInt16LittleEndian(modifiedPage.AsSpan(format.DataPage.RowsStart + (slot * 2), 2), deletedEntry);
 
                     string reason = $"Child row {pageNumber}:{slot} on table '{childTableName}' violates enforced foreign-key relationship '{relationshipName}' because its referenced parent row in '{parentTableName}' is missing.";
+                    IReadOnlyDictionary<string, object?>? decodedFkFields = await TryDecodeQuarantinedRowFieldsAsync(
+                        currentOverlay,
+                        format,
+                        childDef,
+                        rawRowBytes,
+                        cancellationToken).ConfigureAwait(false);
                     quarantineRecords.Add(
                         new AccessCompactQuarantineRecord(
                             "quarantined-orphan-fk-row",
@@ -2317,7 +2520,8 @@ internal static class CompactDataPageSalvager
                             slot,
                             reason,
                             ComputeSha256Hex(rawRowBytes),
-                            Convert.ToBase64String(rawRowBytes)));
+                            Convert.ToBase64String(rawRowBytes),
+                            decodedFkFields));
                     if (diagnostics.Count < budget.MaxDiagnostics)
                     {
                         diagnostics.Add(
@@ -3897,6 +4101,13 @@ internal static class CompactDataPageSalvager
                                 rowSalvaged = true;
 
                                 string truncReason = $"Truncated damaged multi-hop LVAL chain on column '{field.Column.Name}' at row {pageNumber}:{slot} to its verified {survivingBytes}-byte prefix (original declared length {desc.Length}).";
+                                IPageSource truncRowSource = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+                                IReadOnlyDictionary<string, object?>? decodedTruncFields = await TryDecodeQuarantinedRowFieldsAsync(
+                                    truncRowSource,
+                                    format,
+                                    def,
+                                    modifiedPage.AsMemory(bound.RowStart, bound.RowSize),
+                                    cancellationToken).ConfigureAwait(false);
                                 quarantineRecords.Add(
                                     new AccessCompactQuarantineRecord(
                                         "quarantined-corrupt-lval-field",
@@ -3906,7 +4117,8 @@ internal static class CompactDataPageSalvager
                                         slot,
                                         truncReason,
                                         ComputeSha256Hex(rawFieldBytes),
-                                        Convert.ToBase64String(rawFieldBytes)));
+                                        Convert.ToBase64String(rawFieldBytes),
+                                        decodedTruncFields));
                                 if (diagnostics.Count < budget.MaxDiagnostics)
                                 {
                                     diagnostics.Add(
@@ -3963,6 +4175,13 @@ internal static class CompactDataPageSalvager
                         _ = forceRegenerateOwners.Add(owner);
 
                         string nullReason = $"Isolated unrecoverable LVAL field on column '{field.Column.Name}' at row {pageNumber}:{slot} and set column to NULL while preserving all intact row columns.";
+                        IPageSource nullRowSource = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+                        IReadOnlyDictionary<string, object?>? decodedNullFields = await TryDecodeQuarantinedRowFieldsAsync(
+                            nullRowSource,
+                            format,
+                            def,
+                            modifiedPage.AsMemory(bound.RowStart, bound.RowSize),
+                            cancellationToken).ConfigureAwait(false);
                         quarantineRecords.Add(
                             new AccessCompactQuarantineRecord(
                                 "quarantined-corrupt-lval-field",
@@ -3972,7 +4191,8 @@ internal static class CompactDataPageSalvager
                                 slot,
                                 nullReason,
                                 ComputeSha256Hex(rawFieldBytes),
-                                Convert.ToBase64String(rawFieldBytes)));
+                                Convert.ToBase64String(rawFieldBytes),
+                                decodedNullFields));
                         if (diagnostics.Count < budget.MaxDiagnostics)
                         {
                             diagnostics.Add(
@@ -4157,6 +4377,7 @@ internal static class CompactDataPageSalvager
         IPageSource baseSource,
         JetFormat format,
         CompactDiscoveryBudget budget,
+        TDefImage? catalogDef,
         Dictionary<long, TDefImage> definitions,
         Dictionary<long, string> tableNames,
         Dictionary<long, byte[]> overlayPages,
@@ -4178,10 +4399,20 @@ internal static class CompactDataPageSalvager
                 continue;
             }
 
+            IPageSource hydrateSource = overlayPages.Count > 0 ? new OverlayPageSource(baseSource, overlayPages) : baseSource;
+            IReadOnlyList<ColumnInfo>? hydratedColumns = await HydrateTableCalculatedColumnsAsync(
+                hydrateSource,
+                format,
+                budget,
+                catalogDef,
+                owner,
+                def,
+                cancellationToken).ConfigureAwait(false);
+
             var constraintIndexes = new List<(int DescriptorIndex, bool IsUnique, bool IsRequired, bool IgnoreNulls, HashSet<int> KeyColNums, HashSet<byte[]> SeenKeys)>();
             for (int idx = 0; idx < def.RealIndexes.Count; idx++)
             {
-                if (!CompactIndexRowAudit.SupportsDescriptor(def, idx))
+                if (!CompactIndexRowAudit.SupportsDescriptor(def, idx, hydratedColumns))
                 {
                     continue;
                 }
@@ -4273,7 +4504,8 @@ internal static class CompactDataPageSalvager
 
                                         return default;
                                     },
-                                    cancellationToken).ConfigureAwait(false);
+                                    cancellationToken,
+                                    hydratedColumns).ConfigureAwait(false);
                                 if (hasNullKey)
                                 {
                                     violationReason = $"Row {pageNumber}:{slot} on table '{tableName}' contains a NULL key value in required/primary-key index descriptor {descIdx}.";
@@ -4293,7 +4525,8 @@ internal static class CompactDataPageSalvager
                                     null,
                                     null,
                                     budget,
-                                    cancellationToken).ConfigureAwait(false);
+                                    cancellationToken,
+                                    hydratedColumns).ConfigureAwait(false);
                                 if (!(allNull && ignoreNulls) && constraintIndexes[c].SeenKeys.Contains(key))
                                 {
                                     violationReason = $"Row {pageNumber}:{slot} on table '{tableName}' has a duplicate key in unique/primary-key index descriptor {descIdx}.";
@@ -4319,7 +4552,8 @@ internal static class CompactDataPageSalvager
                                         null,
                                         null,
                                         budget,
-                                        cancellationToken).ConfigureAwait(false);
+                                        cancellationToken,
+                                        hydratedColumns).ConfigureAwait(false);
                                     if (!(allNull && ignoreNulls))
                                     {
                                         _ = seenKeys.Add(key);
@@ -4335,6 +4569,13 @@ internal static class CompactDataPageSalvager
                         ushort deletedEntry = checked((ushort)(Constants.DataPage.DeletedRowFlag | bound.RowStart));
                         BinaryPrimitives.WriteUInt16LittleEndian(modifiedPage.AsSpan(format.DataPage.RowsStart + (slot * 2), 2), deletedEntry);
 
+                        IReadOnlyDictionary<string, object?>? decodedConstraintFields = await TryDecodeQuarantinedRowFieldsAsync(
+                            currentOverlay,
+                            format,
+                            def,
+                            rawRowBytes,
+                            cancellationToken,
+                            hydratedColumns).ConfigureAwait(false);
                         quarantineRecords.Add(
                             new AccessCompactQuarantineRecord(
                                 "quarantined-constraint-row",
@@ -4344,7 +4585,8 @@ internal static class CompactDataPageSalvager
                                 slot,
                                 violationReason,
                                 ComputeSha256Hex(rawRowBytes),
-                                Convert.ToBase64String(rawRowBytes)));
+                                Convert.ToBase64String(rawRowBytes),
+                                decodedConstraintFields));
                         if (diagnostics.Count < budget.MaxDiagnostics)
                         {
                             diagnostics.Add(
@@ -4521,6 +4763,15 @@ internal static class CompactDataPageSalvager
                 }
             }
         }
+
+        long coalescedExternal = await CoalesceExternalLongValueChainsInOverlayAsync(
+            baseSource,
+            format,
+            definitions,
+            overlayPages,
+            inlinePromotedByOwner,
+            cancellationToken).ConfigureAwait(false);
+        totalPromoted += coalescedExternal;
 
         return totalPromoted;
     }
@@ -4735,6 +4986,1537 @@ internal static class CompactDataPageSalvager
         }
 
         return written == desc.Length ? payload : null;
+    }
+
+    private static async ValueTask<(bool Succeeded, object? Value)> TryDecodeSingleQuarantinedFieldAsync(
+        IPageSource source,
+        JetFormat format,
+        CompactRawField field,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            ColumnInfo column = field.Column;
+            if (!column.IsCalculated && column.Type == ColumnType.BooleanType)
+            {
+                return field.Kind == CompactRawFieldKind.Boolean ? (true, field.BoolValue) : (false, null);
+            }
+
+            if (field.Kind is CompactRawFieldKind.Null or CompactRawFieldKind.Absent)
+            {
+                return (true, null);
+            }
+
+            ReadOnlySpan<byte> span = field.RawBytes.Span;
+            if (span.IsEmpty)
+            {
+                ColumnType effType = column.IsCalculated ? ResolveValueType(column) : column.Type;
+                if (effType is ColumnType.TextType or ColumnType.MemoType)
+                {
+                    return (true, string.Empty);
+                }
+
+                if (effType is ColumnType.BinaryType or ColumnType.BigBinaryType or ColumnType.OleType)
+                {
+                    return (true, Array.Empty<byte>());
+                }
+
+                return (true, null);
+            }
+
+            if (column.IsCalculated)
+            {
+                if (CalculatedColumnUtil.ReadError(span) is CalculatedError calcErr)
+                {
+                    return (true, calcErr.ToString());
+                }
+
+                if (field.IsLongValue)
+                {
+                    if (!LongValueDescriptor.TryRead(span, out LongValueDescriptor calcLvDesc))
+                    {
+                        return (false, null);
+                    }
+
+                    byte[]? lvBytes = null;
+                    if (calcLvDesc.IsInline)
+                    {
+                        if (calcLvDesc.Length >= 0 && span.Length - Constants.LongValue.HeaderSize >= calcLvDesc.Length)
+                        {
+                            lvBytes = span.Slice(Constants.LongValue.HeaderSize, calcLvDesc.Length).ToArray();
+                        }
+                    }
+                    else if (calcLvDesc.IsExternal && calcLvDesc.FirstDp != 0 && calcLvDesc.Length is >= 0 and <= 1_048_576)
+                    {
+                        lvBytes = await TryReadExternalLongValuePayloadAsync(source, format, calcLvDesc, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    if (lvBytes is null || lvBytes.Length < Constants.CalculatedColumn.ExtraDataLen)
+                    {
+                        return (false, null);
+                    }
+
+                    if (CalculatedColumnUtil.ReadError(lvBytes) is CalculatedError lvCalcErr)
+                    {
+                        return (true, lvCalcErr.ToString());
+                    }
+
+                    RowValueDecodePolicy.ValidateCalculatedEnvelope(lvBytes);
+                    byte[] lvInner = CalculatedColumnUtil.Unwrap(lvBytes);
+                    ColumnType lvValType = ResolveValueType(column);
+                    return lvValType == ColumnType.MemoType
+                        ? (true, format.DecodeCalculatedText(lvInner, 0, lvInner.Length))
+                        : (true, lvInner);
+                }
+
+                if (span.Length < Constants.CalculatedColumn.ExtraDataLen)
+                {
+                    return (false, null);
+                }
+
+                RowValueDecodePolicy.ValidateCalculatedEnvelope(span);
+                ReadOnlySpan<byte> inner = CalculatedColumnUtil.Unwrap(span);
+                ColumnType valueType = ResolveValueType(column);
+                object? calcVal;
+                if (valueType == ColumnType.TextType)
+                {
+                    byte[] innerArr = inner.ToArray();
+                    calcVal = format.DecodeCalculatedText(innerArr, 0, innerArr.Length);
+                }
+                else if (valueType == ColumnType.BinaryType)
+                {
+                    calcVal = inner.ToArray();
+                }
+                else
+                {
+                    calcVal = CalculatedColumnUtil.ReadPayloadTyped(inner, valueType, strictNumeric: false);
+                }
+
+                return (true, calcVal);
+            }
+
+            if (field.IsLongValue)
+            {
+                if (!LongValueDescriptor.TryRead(span, out LongValueDescriptor desc))
+                {
+                    return (false, null);
+                }
+
+                byte[]? payload = null;
+                if (desc.IsInline)
+                {
+                    if (desc.Length >= 0 && span.Length - Constants.LongValue.HeaderSize >= desc.Length)
+                    {
+                        payload = span.Slice(Constants.LongValue.HeaderSize, desc.Length).ToArray();
+                    }
+                }
+                else if (desc.IsExternal && desc.FirstDp != 0 && desc.Length is >= 0 and <= 1_048_576)
+                {
+                    payload = await TryReadExternalLongValuePayloadAsync(source, format, desc, cancellationToken).ConfigureAwait(false);
+                }
+
+                if (payload is null)
+                {
+                    return (false, null);
+                }
+
+                return column.Type == ColumnType.MemoType
+                    ? (true, format.DecodeText(payload, 0, payload.Length))
+                    : (true, payload);
+            }
+
+            object? scalar;
+            if (column.Type == ColumnType.TextType)
+            {
+                byte[] textArr = span.ToArray();
+                scalar = format.DecodeText(textArr, 0, textArr.Length);
+            }
+            else if (column.Type is ColumnType.BinaryType or ColumnType.BigBinaryType)
+            {
+                scalar = span.ToArray();
+            }
+            else
+            {
+                scalar = ReadFixedTyped(span, 0, column, span.Length, strictNumeric: false);
+                if (scalar is DBNull)
+                {
+                    scalar = null;
+                }
+            }
+
+            return (true, scalar);
+        }
+        catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException or InvalidOperationException or FormatException or IndexOutOfRangeException)
+        {
+            return (false, null);
+        }
+    }
+
+    private static void TryDecodeFixedColumnsFallback(
+        JetFormat format,
+        TDefImage definition,
+        ReadOnlySpan<byte> rawRow,
+        IReadOnlyList<ColumnInfo>? hydratedColumns,
+        Dictionary<string, object?> decoded)
+    {
+        if (rawRow.Length < format.RowFields.NumCols)
+        {
+            return;
+        }
+
+        int rowNumCols = format.IsJet3 ? rawRow[0] : BinaryPrimitives.ReadUInt16LittleEndian(rawRow);
+        if (rowNumCols is <= 0 or > Constants.TableDefinition.MaxColumns)
+        {
+            return;
+        }
+
+        int nullMaskBytes = JetFormat.GetNullMaskSizeBytes(rowNumCols);
+        bool hasNullMask = rawRow.Length >= format.RowFields.NumCols + nullMaskBytes;
+        int nullMaskStart = rawRow.Length - nullMaskBytes;
+        foreach (ColumnInfo col in hydratedColumns ?? definition.Columns)
+        {
+            if (!col.IsFixed || col.IsCalculated || col.ColNum >= rowNumCols || string.IsNullOrEmpty(col.Name) || decoded.ContainsKey(col.Name))
+            {
+                continue;
+            }
+
+            bool isNonNull = true;
+            if (hasNullMask)
+            {
+                int maskByteIdx = nullMaskStart + (col.ColNum >> 3);
+                if (maskByteIdx >= format.RowFields.NumCols && maskByteIdx < rawRow.Length)
+                {
+                    isNonNull = (rawRow[maskByteIdx] & (1 << (col.ColNum & 7))) != 0;
+                }
+            }
+
+            if (col.Type == ColumnType.BooleanType)
+            {
+                if (hasNullMask)
+                {
+                    decoded[col.Name] = isNonNull;
+                }
+
+                continue;
+            }
+
+            if (!isNonNull)
+            {
+                decoded[col.Name] = null;
+                continue;
+            }
+
+            int sliceStart = format.RowFields.NumCols + col.FixedOff;
+            if (sliceStart < format.RowFields.NumCols || col.Size <= 0 || sliceStart + col.Size > (hasNullMask ? nullMaskStart : rawRow.Length))
+            {
+                continue;
+            }
+
+            ReadOnlySpan<byte> slice = rawRow.Slice(sliceStart, col.Size);
+            try
+            {
+                object? val = col.Type == ColumnType.BinaryType
+                    ? slice.ToArray()
+                    : ReadFixedTyped(slice, 0, col, slice.Length, strictNumeric: false);
+                if (val is DBNull)
+                {
+                    val = null;
+                }
+
+                decoded[col.Name] = val;
+            }
+            catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException or InvalidOperationException or FormatException)
+            {
+                // Skip unreadable fixed column slice.
+            }
+        }
+    }
+
+    private static async ValueTask<IReadOnlyList<ColumnInfo>?> HydrateTableCalculatedColumnsAsync(
+        IPageSource source,
+        JetFormat format,
+        CompactDiscoveryBudget budget,
+        TDefImage? catalogDef,
+        long owner,
+        TDefImage definition,
+        CancellationToken cancellationToken)
+    {
+        if (catalogDef is null)
+        {
+            return null;
+        }
+
+        bool hasCalculated = false;
+        foreach (ColumnInfo col in definition.Columns)
+        {
+            if (col.IsCalculated)
+            {
+                hasCalculated = true;
+                break;
+            }
+        }
+
+        if (!hasCalculated)
+        {
+            return null;
+        }
+
+        try
+        {
+            var session = new CompactDiscoverySession(source, format, budget);
+            using var hydrator = new CompactCalculatedColumnHydrator(
+                format,
+                budget,
+                session.Accounting,
+                session.ScanRowsAsync,
+                session.AuditLongValueAsync);
+            hydrator.SetCatalog(catalogDef);
+            IReadOnlyList<ColumnInfo>? result = null;
+            await hydrator.WithColumnsAsync(
+                owner,
+                definition,
+                (cols, _) =>
+                {
+                    result = cols is null ? null : [.. cols];
+                    return default;
+                },
+                cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static async ValueTask TrySalvageSingleTDefChainContinuationsAsync(
+        IPageSource source,
+        JetFormat format,
+        CompactDiscoveryBudget budget,
+        int maxSchemaBytes,
+        long owner,
+        string? tableName,
+        Dictionary<long, byte[]> overlayPages,
+        List<AccessCompactDiagnostic> diagnostics,
+        CancellationToken cancellationToken)
+    {
+        if (owner < 2 || owner >= source.PageCount)
+        {
+            return;
+        }
+
+        IPageSource currentSource = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+        byte[] rootPage = await currentSource.ReadUncachedPageAsync(owner, cancellationToken).ConfigureAwait(false);
+        byte vc2;
+        byte vc3;
+        long nextPage;
+        int declaredLogicalLen;
+        try
+        {
+            if (rootPage[0] != Constants.PageTypes.TableDefinition)
+            {
+                return;
+            }
+
+            vc2 = rootPage[2];
+            vc3 = rootPage[3];
+            nextPage = Ru32(rootPage, 4);
+            declaredLogicalLen = Ri32(rootPage, 8);
+        }
+        finally
+        {
+            PageBuffers.Return(rootPage);
+        }
+
+        if (nextPage < 3 || nextPage >= source.PageCount || declaredLogicalLen <= format.PageSize - 8 || declaredLogicalLen > budget.MaxDefinitionBytes)
+        {
+            return;
+        }
+
+        var testOverlay = new Dictionary<long, byte[]>(overlayPages);
+        var repairedPages = new List<(long PageNumber, byte OldType, byte[] RepairedBytes)>();
+        var visited = new HashSet<long> { owner };
+        long curPage = nextPage;
+        int remaining = declaredLogicalLen + 8 - format.PageSize;
+
+        while (curPage != 0 && remaining > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (curPage < 3 || curPage >= source.PageCount || !visited.Add(curPage))
+            {
+                return;
+            }
+
+            IPageSource stepSource = new OverlayPageSource(source, testOverlay);
+            byte[] page = await stepSource.ReadUncachedPageAsync(curPage, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != Constants.PageTypes.TableDefinition)
+                {
+                    byte oldType = page[0];
+                    byte[] candidate = new byte[format.PageSize];
+                    Buffer.BlockCopy(page, 0, candidate, 0, format.PageSize);
+                    candidate[0] = Constants.PageTypes.TableDefinition;
+                    candidate[1] = 1;
+                    if (format.IsJet3 && vc2 == 0x56 && vc3 == 0x43)
+                    {
+                        candidate[2] = vc2;
+                        candidate[3] = vc3;
+                    }
+
+                    testOverlay[curPage] = candidate;
+                    repairedPages.Add((curPage, oldType, candidate));
+                }
+
+                curPage = Ru32(page, 4);
+                remaining -= format.PageSize - 8;
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+        }
+
+        if (repairedPages.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var verifySource = new OverlayPageSource(source, testOverlay);
+            using var verifyReader = new TableDefReader(verifySource, format, cacheResults: false, budget.MaxDefinitionBytes, maxSchemaBytes);
+            TDefImage? image = await verifyReader.ReadImageAsync(owner, maxSchemaBytes, cancellationToken).ConfigureAwait(false);
+            if (image is null || image.Issues != TDefParseIssues.None || image.Columns.Count == 0)
+            {
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException)
+        {
+            return;
+        }
+
+        string resolvedName = tableName ?? $"Table_{owner}";
+        foreach ((long contPage, byte oldType, byte[] repairedBytes) in repairedPages)
+        {
+            overlayPages[contPage] = repairedBytes;
+            if (diagnostics.Count < budget.MaxDiagnostics)
+            {
+                diagnostics.Add(
+                    new AccessCompactDiagnostic(
+                        "salvaged-tdef-continuation",
+                        contPage,
+                        owner,
+                        null,
+                        $"Repaired damaged page-type header byte (0x{oldType:X2} -> 0x02) on TDEF continuation page {contPage} for table '{resolvedName}' (owner {owner}) after verifying the assembled multi-page table definition.",
+                        AccessCompactDiagnosticCategory.SalvagedDataPage,
+                        resolvedName));
+            }
+        }
+    }
+
+    private static async ValueTask TrySalvageAllTDefContinuationsAsync(
+        IPageSource source,
+        JetFormat format,
+        CompactDiscoveryBudget budget,
+        int maxSchemaBytes,
+        Dictionary<long, string> tableNames,
+        HashSet<long> globalFreePages,
+        Dictionary<long, byte[]> overlayPages,
+        List<AccessCompactDiagnostic> diagnostics,
+        CancellationToken cancellationToken)
+    {
+        foreach (KeyValuePair<long, string> pair in tableNames)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pair.Key >= 3)
+            {
+                await TrySalvageSingleTDefChainContinuationsAsync(
+                    source,
+                    format,
+                    budget,
+                    maxSchemaBytes,
+                    pair.Key,
+                    pair.Value,
+                    overlayPages,
+                    diagnostics,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        for (long p = 3; p < source.PageCount; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (tableNames.ContainsKey(p) || globalFreePages.Contains(p))
+            {
+                continue;
+            }
+
+            IPageSource cur = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+            byte[] page = await cur.ReadUncachedPageAsync(p, cancellationToken).ConfigureAwait(false);
+            bool isMultiPageTDefCandidate;
+            try
+            {
+                isMultiPageTDefCandidate = page[0] == Constants.PageTypes.TableDefinition
+                    && Ru32(page, 4) >= 3
+                    && Ri32(page, 8) > format.PageSize - 8;
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+
+            if (isMultiPageTDefCandidate)
+            {
+                await TrySalvageSingleTDefChainContinuationsAsync(
+                    source,
+                    format,
+                    budget,
+                    maxSchemaBytes,
+                    p,
+                    $"RecoveredTable_{p}",
+                    overlayPages,
+                    diagnostics,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static async ValueTask ReclaimDeadTDefPagesAsync(
+        IPageSource source,
+        JetFormat format,
+        CompactDiscoveryBudget budget,
+        HashSet<long> knownTDefChainPages,
+        HashSet<long> globalFreePages,
+        Dictionary<long, byte[]> overlayPages,
+        List<AccessCompactDiagnostic> diagnostics,
+        CancellationToken cancellationToken)
+    {
+        IPageSource cur = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+        for (long p = 3; p < cur.PageCount; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (knownTDefChainPages.Contains(p) || globalFreePages.Contains(p))
+            {
+                continue;
+            }
+
+            byte[] page = await cur.ReadUncachedPageAsync(p, cancellationToken).ConfigureAwait(false);
+            bool isDeadTDef;
+            try
+            {
+                isDeadTDef = page[0] == Constants.PageTypes.TableDefinition;
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+
+            if (!isDeadTDef)
+            {
+                continue;
+            }
+
+            overlayPages[p] = CompactReclamationPlan.CreateScrubbedFreePage(format);
+            await SetUsageMapBitInOverlayAsync(
+                source,
+                format,
+                new UsageMapPointer(0, 1),
+                p,
+                isMarked: true,
+                overlayPages,
+                cancellationToken).ConfigureAwait(false);
+            _ = globalFreePages.Add(p);
+
+            if (diagnostics.Count < budget.MaxDiagnostics)
+            {
+                diagnostics.Add(
+                    new AccessCompactDiagnostic(
+                        "salvaged-dead-tdef-page",
+                        p,
+                        p,
+                        null,
+                        $"Reclaimed and scrubbed unreferenced dead TDEF page {p} to a canonical free page (0x06) and marked it free in the global usage map.",
+                        AccessCompactDiagnosticCategory.SalvagedDataPage));
+            }
+        }
+    }
+
+    private static async ValueTask<int> RelocateHighTDefContinuationPagesAsync(
+        IPageSource source,
+        JetFormat format,
+        CompactDiscoveryBudget budget,
+        int maxSchemaBytes,
+        Dictionary<long, TDefImage> definitions,
+        Dictionary<long, HashSet<long>> tableOwnedPages,
+        Dictionary<long, UsageMapPointer> tableOwnedMapPointers,
+        Dictionary<long, UsageMapPointer> tableFreeMapPointers,
+        HashSet<long> knownNonDataTablePages,
+        HashSet<long> globalFreePages,
+        Dictionary<long, byte[]> overlayPages,
+        CancellationToken cancellationToken)
+    {
+        var orderedOwners = new List<long>(definitions.Keys);
+        orderedOwners.Sort();
+
+        IPageSource cur = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+        using var reader = new TableDefReader(cur, format, cacheResults: false, budget.MaxDefinitionBytes, maxSchemaBytes);
+
+        var chainsByOwner = new Dictionary<long, LogicalTDefChain>();
+        var allTDefPages = new HashSet<long> { 0, 1, 2 };
+        bool anyMultiPageTDef = false;
+
+        foreach (long owner in orderedOwners)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                LogicalTDefChain chain = await reader.ReadTDefChainAsync(owner, cancellationToken).ConfigureAwait(false);
+                chainsByOwner[owner] = chain;
+                foreach (long p in chain.PageNumbers)
+                {
+                    _ = allTDefPages.Add(p);
+                }
+
+                if (chain.PageNumbers.Count > 1)
+                {
+                    anyMultiPageTDef = true;
+                }
+            }
+            catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException)
+            {
+                return 0;
+            }
+        }
+
+        if (!anyMultiPageTDef)
+        {
+            return 0;
+        }
+
+        // Collect candidate interior target pages:
+        // 1. Globally free pages (3 .. source.PageCount - 1) not in allTDefPages or knownNonDataTablePages.
+        // 2. Empty DATA pages (0 live rows and 0 referenced overflow targets) owned by active tables and not holding any usage maps.
+        var candidateTargets = new List<(long PageNumber, long? EmptyDataOwner)>();
+        var addedCandidates = new HashSet<long>();
+        foreach (long freePage in globalFreePages)
+        {
+            if (freePage >= 3
+                && freePage < source.PageCount
+                && !allTDefPages.Contains(freePage)
+                && !knownNonDataTablePages.Contains(freePage)
+                && addedCandidates.Add(freePage))
+            {
+                candidateTargets.Add((freePage, null));
+            }
+        }
+
+        foreach (KeyValuePair<long, HashSet<long>> pair in tableOwnedPages)
+        {
+            long dataOwner = pair.Key;
+            if (dataOwner < 3)
+            {
+                continue;
+            }
+
+            foreach (long ownedPage in pair.Value)
+            {
+                if (ownedPage < 3
+                    || ownedPage >= source.PageCount
+                    || allTDefPages.Contains(ownedPage)
+                    || knownNonDataTablePages.Contains(ownedPage)
+                    || addedCandidates.Contains(ownedPage))
+                {
+                    continue;
+                }
+
+                byte[] page = await cur.ReadUncachedPageAsync(ownedPage, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (page[0] != Constants.PageTypes.Data
+                        || BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(format.DataPage.TDefOff, 4)) != dataOwner)
+                    {
+                        continue;
+                    }
+
+                    int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.NumRows, 2));
+                    int maxRows = (format.PageSize - format.DataPage.RowsStart) / 2;
+                    if (numRows < 0 || numRows > maxRows || numRows > Constants.DataPage.MaxRowsPerPage)
+                    {
+                        continue;
+                    }
+
+                    bool hasAnyLiveOrOverflowTarget = false;
+                    for (int slot = 0; slot < numRows; slot++)
+                    {
+                        int raw = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.RowsStart + (slot * 2), 2));
+                        if ((raw & Constants.DataPage.DeletedRowFlag) == 0)
+                        {
+                            hasAnyLiveOrOverflowTarget = true;
+                            break;
+                        }
+                    }
+
+                    if (!hasAnyLiveOrOverflowTarget && addedCandidates.Add(ownedPage))
+                    {
+                        candidateTargets.Add((ownedPage, dataOwner));
+                    }
+                }
+                finally
+                {
+                    PageBuffers.Return(page);
+                }
+            }
+        }
+
+        if (candidateTargets.Count == 0)
+        {
+            return 0;
+        }
+
+        candidateTargets.Sort(static (a, b) => a.PageNumber.CompareTo(b.PageNumber));
+        int targetIdx = 0;
+        int relocatedCount = 0;
+        var ownersToRefresh = new HashSet<long>();
+
+        foreach (long owner in orderedOwners)
+        {
+            if (!chainsByOwner.TryGetValue(owner, out LogicalTDefChain? chain) || chain.PageNumbers.Count <= 1)
+            {
+                continue;
+            }
+
+            var currentPages = new List<long>(chain.PageNumbers);
+            for (int i = 1; i < currentPages.Count && targetIdx < candidateTargets.Count; i++)
+            {
+                long contPage = currentPages[i];
+                (long targetPage, long? emptyDataOwner) = candidateTargets[targetIdx];
+                if (targetPage >= contPage)
+                {
+                    continue;
+                }
+
+                targetIdx++;
+                if (emptyDataOwner is long dOwner)
+                {
+                    if (tableOwnedMapPointers.TryGetValue(dOwner, out UsageMapPointer ownedPtr))
+                    {
+                        await SetUsageMapBitInOverlayAsync(source, format, ownedPtr, targetPage, isMarked: false, overlayPages, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    if (tableFreeMapPointers.TryGetValue(dOwner, out UsageMapPointer freePtr))
+                    {
+                        await SetUsageMapBitInOverlayAsync(source, format, freePtr, targetPage, isMarked: false, overlayPages, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    if (tableOwnedPages.TryGetValue(dOwner, out HashSet<long>? ownedSet))
+                    {
+                        _ = ownedSet.Remove(targetPage);
+                    }
+
+                    _ = ownersToRefresh.Add(dOwner);
+                }
+
+                IPageSource stepCur = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+                byte[] contBytes = await stepCur.ReadUncachedPageAsync(contPage, cancellationToken).ConfigureAwait(false);
+                byte[] relocatedCopy;
+                try
+                {
+                    relocatedCopy = contBytes.AsSpan(0, format.PageSize).ToArray();
+                }
+                finally
+                {
+                    PageBuffers.Return(contBytes);
+                }
+
+                long predPage = currentPages[i - 1];
+                byte[] predBytes = await stepCur.ReadUncachedPageAsync(predPage, cancellationToken).ConfigureAwait(false);
+                byte[] predCopy;
+                try
+                {
+                    predCopy = predBytes.AsSpan(0, format.PageSize).ToArray();
+                }
+                finally
+                {
+                    PageBuffers.Return(predBytes);
+                }
+
+                BinaryPrimitives.WriteUInt32LittleEndian(predCopy.AsSpan(4, 4), checked((uint)targetPage));
+                overlayPages[predPage] = predCopy;
+                overlayPages[targetPage] = relocatedCopy;
+                overlayPages[contPage] = CompactReclamationPlan.CreateScrubbedFreePage(format);
+
+                await SetUsageMapBitInOverlayAsync(source, format, new UsageMapPointer(0, 1), targetPage, isMarked: false, overlayPages, cancellationToken).ConfigureAwait(false);
+                await SetUsageMapBitInOverlayAsync(source, format, new UsageMapPointer(0, 1), contPage, isMarked: true, overlayPages, cancellationToken).ConfigureAwait(false);
+
+                _ = globalFreePages.Remove(targetPage);
+                _ = globalFreePages.Add(contPage);
+                _ = knownNonDataTablePages.Remove(contPage);
+                _ = knownNonDataTablePages.Add(targetPage);
+                currentPages[i] = targetPage;
+                _ = ownersToRefresh.Add(owner);
+                relocatedCount++;
+            }
+        }
+
+        if (relocatedCount > 0)
+        {
+            IPageSource updatedSource = new OverlayPageSource(source, overlayPages);
+            using var updatedReader = new TableDefReader(updatedSource, format, cacheResults: false, budget.MaxDefinitionBytes, maxSchemaBytes);
+            foreach (long refreshOwner in ownersToRefresh)
+            {
+                TDefImage? refreshed = await updatedReader.ReadImageAsync(refreshOwner, maxSchemaBytes, cancellationToken).ConfigureAwait(false);
+                if (refreshed is not null && refreshed.Issues == TDefParseIssues.None)
+                {
+                    definitions[refreshOwner] = refreshed;
+                }
+            }
+        }
+
+        return relocatedCount;
+    }
+
+    private static async ValueTask<long> RepairOverflowTargetDataPagesAsync(
+        IPageSource source,
+        JetFormat format,
+        CompactDiscoveryBudget budget,
+        Dictionary<long, TDefImage> definitions,
+        Dictionary<long, string> tableNames,
+        HashSet<long> knownNonDataTablePages,
+        Dictionary<long, HashSet<long>> tableOwnedPages,
+        Dictionary<long, UsageMapPointer> tableOwnedMapPointers,
+        Dictionary<long, byte[]> overlayPages,
+        List<AccessCompactDiagnostic> diagnostics,
+        Dictionary<long, long> salvagedRowsByOwner,
+        CancellationToken cancellationToken)
+    {
+        long totalSalvaged = 0;
+        IPageSource cur = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+
+        for (long pageNumber = 3; pageNumber < cur.PageCount; pageNumber++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (knownNonDataTablePages.Contains(pageNumber))
+            {
+                continue;
+            }
+
+            byte[] page = await cur.ReadUncachedPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != Constants.PageTypes.Data)
+                {
+                    continue;
+                }
+
+                uint rawOwner = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(format.DataPage.TDefOff, 4));
+                if (rawOwner < 3 || rawOwner == 0x4C41564CU || !definitions.TryGetValue(rawOwner, out TDefImage? def))
+                {
+                    continue;
+                }
+
+                long owner = rawOwner;
+                string tableName = tableNames.GetValueOrDefault(owner, $"Table_{owner}");
+                if (IsSystemTableName(tableName))
+                {
+                    continue;
+                }
+
+                int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.NumRows, 2));
+                int maxRows = (format.PageSize - format.DataPage.RowsStart) / 2;
+                if (numRows <= 0 || numRows > maxRows || numRows > Constants.DataPage.MaxRowsPerPage)
+                {
+                    continue;
+                }
+
+                for (int slot = 0; slot < numRows; slot++)
+                {
+                    int raw = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.RowsStart + (slot * 2), 2));
+                    if ((raw & Constants.DataPage.DeletedRowFlag) != 0
+                        || (raw & Constants.DataPage.OverflowRowFlag) == 0
+                        || !UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, slot, out RowBound bound)
+                        || bound.RowSize != 4)
+                    {
+                        continue;
+                    }
+
+                    ReadOnlyMemory<byte> ptrMemory = page.AsMemory(bound.RowStart, 4);
+                    int targetRow = ptrMemory.Span[0];
+                    long targetPageNum = ptrMemory.Span[1] | (ptrMemory.Span[2] << 8) | (ptrMemory.Span[3] << 16);
+                    if (targetPageNum < 3 || targetPageNum >= cur.PageCount || knownNonDataTablePages.Contains(targetPageNum))
+                    {
+                        continue;
+                    }
+
+                    byte[] targetPage = await cur.ReadUncachedPageAsync(targetPageNum, cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        byte targetType = targetPage[0];
+                        uint targetOwner = BinaryPrimitives.ReadUInt32LittleEndian(targetPage.AsSpan(format.DataPage.TDefOff, 4));
+                        if (targetType == Constants.PageTypes.Data && targetOwner == owner)
+                        {
+                            // Ensure targetPageNum is marked in tableOwnedPages even if its header was already intact.
+                            if (!tableOwnedPages.TryGetValue(owner, out HashSet<long>? existingSet))
+                            {
+                                existingSet = [];
+                                tableOwnedPages[owner] = existingSet;
+                            }
+
+                            if (!existingSet.Contains(targetPageNum))
+                            {
+                                (bool ptrOk, string? _) = await TryValidateOverflowPointerAsync(cur, format, owner, def, pageNumber, slot, ptrMemory, cancellationToken).ConfigureAwait(false);
+                                if (ptrOk && existingSet.Add(targetPageNum) && tableOwnedMapPointers.TryGetValue(owner, out UsageMapPointer mapPtr))
+                                {
+                                    await SetUsageMapBitInOverlayAsync(source, format, mapPtr, targetPageNum, isMarked: true, overlayPages, cancellationToken).ConfigureAwait(false);
+                                }
+                            }
+
+                            continue;
+                        }
+
+                        if (targetType != Constants.PageTypes.Data && IsRecognizedPageType(targetType))
+                        {
+                            continue;
+                        }
+
+                        byte[] candidateTarget = new byte[format.PageSize];
+                        Buffer.BlockCopy(targetPage, 0, candidateTarget, 0, format.PageSize);
+                        candidateTarget[0] = Constants.PageTypes.Data;
+                        candidateTarget[1] = 1;
+                        BinaryPrimitives.WriteUInt32LittleEndian(candidateTarget.AsSpan(format.DataPage.TDefOff, 4), checked((uint)owner));
+
+                        var testOverlay = new Dictionary<long, byte[]>(overlayPages)
+                        {
+                            [targetPageNum] = candidateTarget,
+                        };
+                        var testSource = new OverlayPageSource(source, testOverlay);
+                        (bool validTargetPage, int _, string? _) = await TryValidateCandidateDataPageAsync(
+                            testSource,
+                            format,
+                            owner,
+                            def,
+                            targetPageNum,
+                            candidateTarget,
+                            requirePositiveLiveRows: false,
+                            cancellationToken).ConfigureAwait(false);
+                        if (!validTargetPage)
+                        {
+                            continue;
+                        }
+
+                        (bool validOverflow, string? _) = await TryValidateOverflowPointerAsync(
+                            testSource,
+                            format,
+                            owner,
+                            def,
+                            pageNumber,
+                            slot,
+                            ptrMemory,
+                            cancellationToken).ConfigureAwait(false);
+                        if (!validOverflow)
+                        {
+                            continue;
+                        }
+
+                        overlayPages[targetPageNum] = candidateTarget;
+                        cur = new OverlayPageSource(source, overlayPages);
+
+                        if (!tableOwnedPages.TryGetValue(owner, out HashSet<long>? ownedSet))
+                        {
+                            ownedSet = [];
+                            tableOwnedPages[owner] = ownedSet;
+                        }
+
+                        if (ownedSet.Add(targetPageNum) && tableOwnedMapPointers.TryGetValue(owner, out UsageMapPointer ownedPtr))
+                        {
+                            await SetUsageMapBitInOverlayAsync(source, format, ownedPtr, targetPageNum, isMarked: true, overlayPages, cancellationToken).ConfigureAwait(false);
+                        }
+
+                        salvagedRowsByOwner.TryGetValue(owner, out long existingSalvaged);
+                        salvagedRowsByOwner[owner] = existingSalvaged + 1;
+                        totalSalvaged++;
+
+                        if (diagnostics.Count < budget.MaxDiagnostics)
+                        {
+                            diagnostics.Add(
+                                new AccessCompactDiagnostic(
+                                    "salvaged-overflow-target-page",
+                                    targetPageNum,
+                                    owner,
+                                    targetRow,
+                                    $"Repaired damaged overflow target DATA page {targetPageNum} (type 0x{targetType:X2} -> 0x01, owner 0x{targetOwner:X8} -> {owner}) referenced by moved-row pointer {pageNumber}:{slot} on table '{tableName}'.",
+                                    AccessCompactDiagnosticCategory.SalvagedDataPage,
+                                    tableName));
+                        }
+                    }
+                    finally
+                    {
+                        PageBuffers.Return(targetPage);
+                    }
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+        }
+
+        return totalSalvaged;
+    }
+
+    private static async ValueTask<long> SalvageOrphanedMovedRowPayloadsAsync(
+        IPageSource source,
+        JetFormat format,
+        CompactDiscoveryBudget budget,
+        Dictionary<long, TDefImage> definitions,
+        Dictionary<long, string> tableNames,
+        HashSet<long> knownNonDataTablePages,
+        Dictionary<long, int> quarantinedPagesByOwner,
+        Dictionary<long, long> quarantinedRowsByOwner,
+        Dictionary<long, byte[]> overlayPages,
+        List<AccessCompactDiagnostic> diagnostics,
+        Dictionary<long, long> salvagedRowsByOwner,
+        HashSet<long> forceRegenerateOwners,
+        CancellationToken cancellationToken)
+    {
+        long totalPromoted = 0;
+        foreach (KeyValuePair<long, TDefImage> pair in definitions)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            long owner = pair.Key;
+            TDefImage def = pair.Value;
+            string tableName = tableNames.GetValueOrDefault(owner, $"Table_{owner}");
+            if (owner < 3 || IsSystemTableName(tableName))
+            {
+                continue;
+            }
+
+            bool hadQuarantine = quarantinedPagesByOwner.GetValueOrDefault(owner, 0) > 0
+                || quarantinedRowsByOwner.GetValueOrDefault(owner, 0) > 0;
+            if (!hadQuarantine)
+            {
+                continue;
+            }
+
+            IPageSource cur = overlayPages.Count > 0 ? new OverlayPageSource(source, overlayPages) : source;
+            long survivingLiveRows = 0;
+            var referencedOverflowTargets = new HashSet<(long Page, int Row)>();
+            var ownerDataPages = new List<long>();
+
+            for (long p = 3; p < cur.PageCount; p++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (knownNonDataTablePages.Contains(p))
+                {
+                    continue;
+                }
+
+                byte[] page = await cur.ReadUncachedPageAsync(p, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (page[0] != Constants.PageTypes.Data
+                        || BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(format.DataPage.TDefOff, 4)) != owner)
+                    {
+                        continue;
+                    }
+
+                    ownerDataPages.Add(p);
+                    int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.NumRows, 2));
+                    int maxRows = (format.PageSize - format.DataPage.RowsStart) / 2;
+                    if (numRows <= 0 || numRows > maxRows || numRows > Constants.DataPage.MaxRowsPerPage)
+                    {
+                        continue;
+                    }
+
+                    for (int slot = 0; slot < numRows; slot++)
+                    {
+                        int raw = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.RowsStart + (slot * 2), 2));
+                        if ((raw & Constants.DataPage.DeletedRowFlag) == 0)
+                        {
+                            survivingLiveRows++;
+                            if ((raw & Constants.DataPage.OverflowRowFlag) != 0
+                                && UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, slot, out RowBound bound)
+                                && bound.RowSize == 4)
+                            {
+                                int nextRow = page[bound.RowStart];
+                                long nextPage = page[bound.RowStart + 1] | (page[bound.RowStart + 2] << 8) | (page[bound.RowStart + 3] << 16);
+                                _ = referencedOverflowTargets.Add((nextPage, nextRow));
+                            }
+                        }
+                    }
+                }
+                finally
+                {
+                    PageBuffers.Return(page);
+                }
+            }
+
+            long missingRows = def.Header.Counters.RowCount - survivingLiveRows;
+            if (missingRows <= 0 || ownerDataPages.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (long pageNumber in ownerDataPages)
+            {
+                if (missingRows <= 0)
+                {
+                    break;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                byte[] page = await cur.ReadUncachedPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.NumRows, 2));
+                    int directoryEnd = format.DataPage.RowsStart + (numRows * 2);
+                    byte[]? modifiedPage = null;
+
+                    int[] rawSlots = new int[numRows];
+                    int[] sorted = new int[numRows];
+                    for (int slot = 0; slot < numRows; slot++)
+                    {
+                        int raw = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.RowsStart + (slot * 2), 2));
+                        rawSlots[slot] = raw;
+                        int start = raw & Constants.DataPage.RowOffsetMask;
+                        sorted[slot] = (start << 16) | slot;
+                    }
+
+                    Array.Sort(sorted, 0, numRows);
+
+                    for (int slot = 0; slot < numRows && missingRows > 0; slot++)
+                    {
+                        int raw = rawSlots[slot];
+                        if ((raw & Constants.DataPage.DeletedRowFlag) == 0
+                            || (raw & Constants.DataPage.OverflowRowFlag) != 0
+                            || referencedOverflowTargets.Contains((pageNumber, slot)))
+                        {
+                            continue;
+                        }
+
+                        int start = raw & Constants.DataPage.RowOffsetMask;
+                        if (start < directoryEnd || start >= format.PageSize)
+                        {
+                            continue;
+                        }
+
+                        // Ensure no other slot shares the exact same start offset.
+                        bool duplicateStart = false;
+                        int nextHigherOffset = format.PageSize;
+                        for (int idx = 0; idx < numRows; idx++)
+                        {
+                            int otherSlot = sorted[idx] & 0xFFFF;
+                            int otherStart = sorted[idx] >> 16;
+                            if (otherSlot != slot && otherStart == start)
+                            {
+                                duplicateStart = true;
+                                break;
+                            }
+
+                            if (otherStart > start && otherStart < nextHigherOffset)
+                            {
+                                nextHigherOffset = otherStart;
+                            }
+                        }
+
+                        if (duplicateStart || nextHigherOffset <= start)
+                        {
+                            continue;
+                        }
+
+                        int length = nextHigherOffset - start;
+                        var location = new RowLocation(pageNumber, slot, start, length);
+                        (bool validPayload, string? _) = await TryValidateInlineRowAsync(
+                            cur,
+                            format,
+                            def,
+                            location,
+                            page.AsMemory(start, length),
+                            requireStrictSchemaSignature: true,
+                            cancellationToken).ConfigureAwait(false);
+                        if (!validPayload)
+                        {
+                            continue;
+                        }
+
+                        modifiedPage ??= page.AsSpan(0, format.PageSize).ToArray();
+                        BinaryPrimitives.WriteUInt16LittleEndian(
+                            modifiedPage.AsSpan(format.DataPage.RowsStart + (slot * 2), 2),
+                            checked((ushort)start));
+                        rawSlots[slot] = start;
+                        missingRows--;
+                        totalPromoted++;
+                        salvagedRowsByOwner.TryGetValue(owner, out long existingSalvaged);
+                        salvagedRowsByOwner[owner] = existingSalvaged + 1;
+                        _ = forceRegenerateOwners.Add(owner);
+
+                        if (diagnostics.Count < budget.MaxDiagnostics)
+                        {
+                            diagnostics.Add(
+                                new AccessCompactDiagnostic(
+                                    "salvaged-overflow-row",
+                                    pageNumber,
+                                    owner,
+                                    slot,
+                                    $"Promoted orphaned moved-row target payload at {pageNumber}:{slot} on table '{tableName}' (owner {owner}) to a live row after its overflow pointer page or slot was quarantined.",
+                                    AccessCompactDiagnosticCategory.SalvagedDataPage,
+                                    tableName));
+                        }
+                    }
+
+                    if (modifiedPage is not null)
+                    {
+                        overlayPages[pageNumber] = modifiedPage;
+                        cur = new OverlayPageSource(source, overlayPages);
+                    }
+                }
+                finally
+                {
+                    PageBuffers.Return(page);
+                }
+            }
+        }
+
+        return totalPromoted;
+    }
+
+    private static async ValueTask<long> CoalesceExternalLongValueChainsInOverlayAsync(
+        IPageSource baseSource,
+        JetFormat format,
+        Dictionary<long, TDefImage> definitions,
+        Dictionary<long, byte[]> overlayPages,
+        Dictionary<long, long> inlinePromotedByOwner,
+        CancellationToken cancellationToken)
+    {
+        long totalCoalesced = 0;
+        int maxSingleChunkPayload = format.PageSize - format.DataPage.RowsStart - 2;
+        int maxChainedChunkPayload = maxSingleChunkPayload - 4;
+
+        foreach (KeyValuePair<long, TDefImage> pair in definitions)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            long owner = pair.Key;
+            TDefImage def = pair.Value;
+            if (owner < 2)
+            {
+                continue;
+            }
+
+            bool hasLvalCol = false;
+            foreach (ColumnInfo col in def.Columns)
+            {
+                if (!col.IsFixed && (col.Type is ColumnType.MemoType or ColumnType.OleType || col.IsCalculated))
+                {
+                    hasLvalCol = true;
+                    break;
+                }
+            }
+
+            if (!hasLvalCol)
+            {
+                continue;
+            }
+
+            IPageSource cur = overlayPages.Count > 0 ? new OverlayPageSource(baseSource, overlayPages) : baseSource;
+            for (long p = 3; p < cur.PageCount; p++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                byte[] page = await cur.ReadUncachedPageAsync(p, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (page[0] != Constants.PageTypes.Data
+                        || BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(format.DataPage.TDefOff, 4)) != owner)
+                    {
+                        continue;
+                    }
+
+                    int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.NumRows, 2));
+                    int maxRows = (format.PageSize - format.DataPage.RowsStart) / 2;
+                    if (numRows <= 0 || numRows > maxRows || numRows > Constants.DataPage.MaxRowsPerPage)
+                    {
+                        continue;
+                    }
+
+                    byte[]? modifiedDataPage = null;
+                    long coalescedOnPage = 0;
+
+                    for (int slot = 0; slot < numRows; slot++)
+                    {
+                        int raw = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.RowsStart + (slot * 2), 2));
+                        if ((raw & Constants.DataPage.NonLiveRowFlags) != 0
+                            || !UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, slot, out RowBound bound)
+                            || bound.RowSize <= 0)
+                        {
+                            continue;
+                        }
+
+                        var loc = new RowLocation(p, slot, bound.RowStart, bound.RowSize);
+                        ReadOnlyMemory<byte> rowMem = (modifiedDataPage ?? page).AsMemory(bound.RowStart, bound.RowSize);
+                        var candidateSites = new List<(int RowOffset, LongValueDescriptor Desc)>();
+                        try
+                        {
+                            await CompactRawFieldReader.ScanAsync(
+                                format,
+                                def,
+                                loc,
+                                rowMem,
+                                (field, _) =>
+                                {
+                                    if (field.Kind == CompactRawFieldKind.Stored
+                                        && field.IsLongValue
+                                        && field.RawBytes.Length >= Constants.LongValue.HeaderSize
+                                        && LongValueDescriptor.TryRead(field.RawBytes.Span, out LongValueDescriptor desc)
+                                        && desc.UsesChainedPages
+                                        && desc.FirstDp != 0
+                                        && desc.Length > 0)
+                                    {
+                                        candidateSites.Add((field.RowOffset, desc));
+                                    }
+
+                                    return default;
+                                },
+                                cancellationToken).ConfigureAwait(false);
+                        }
+                        catch (Exception ex) when (ex is JetCorruptDataException or JetLimitationException or ArgumentException)
+                        {
+                            continue;
+                        }
+
+                        foreach ((int fieldRowOffset, LongValueDescriptor desc) in candidateSites)
+                        {
+                            (bool coalesced, LongValueDescriptor updatedDesc) = await TryCoalesceSingleChainInOverlayAsync(
+                                baseSource,
+                                format,
+                                desc,
+                                maxSingleChunkPayload,
+                                maxChainedChunkPayload,
+                                overlayPages,
+                                cancellationToken).ConfigureAwait(false);
+                            if (coalesced)
+                            {
+                                modifiedDataPage ??= page.AsSpan(0, format.PageSize).ToArray();
+                                updatedDesc.WriteTo(modifiedDataPage.AsSpan(bound.RowStart + fieldRowOffset, Constants.LongValue.HeaderSize));
+                                coalescedOnPage++;
+                            }
+                        }
+                    }
+
+                    if (modifiedDataPage is not null && coalescedOnPage > 0)
+                    {
+                        overlayPages[p] = modifiedDataPage;
+                        inlinePromotedByOwner.TryGetValue(owner, out long existing);
+                        inlinePromotedByOwner[owner] = existing + coalescedOnPage;
+                        totalCoalesced += coalescedOnPage;
+                        cur = new OverlayPageSource(baseSource, overlayPages);
+                    }
+                }
+                finally
+                {
+                    PageBuffers.Return(page);
+                }
+            }
+        }
+
+        return totalCoalesced;
+    }
+
+    private static async ValueTask<(bool Coalesced, LongValueDescriptor UpdatedDescriptor)> TryCoalesceSingleChainInOverlayAsync(
+        IPageSource baseSource,
+        JetFormat format,
+        LongValueDescriptor desc,
+        int maxSingleChunkPayload,
+        int maxChainedChunkPayload,
+        Dictionary<long, byte[]> overlayPages,
+        CancellationToken cancellationToken)
+    {
+        if (!desc.UsesChainedPages || desc.Length <= 0 || desc.FirstDp == 0)
+        {
+            return (false, desc);
+        }
+
+        IPageSource cur = overlayPages.Count > 0 ? new OverlayPageSource(baseSource, overlayPages) : baseSource;
+        byte[] payload = new byte[desc.Length];
+        var hopPages = new List<long>();
+        var hopPagesSet = new HashSet<long>();
+        var hopSlotsByPage = new Dictionary<long, HashSet<int>>();
+        long currentPage = desc.FirstDp >> 8;
+        int currentRow = (int)(desc.FirstDp & 0xFFU);
+        uint firstPageToken = 0;
+        bool hasMixedPageTokens = false;
+        int written = 0;
+        int chunkCount = 0;
+
+        while (written < desc.Length && ++chunkCount <= 4096)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (currentPage < 3 || currentPage >= cur.PageCount)
+            {
+                return (false, desc);
+            }
+
+            if (hopPagesSet.Add(currentPage))
+            {
+                hopPages.Add(currentPage);
+            }
+
+            if (!hopSlotsByPage.TryGetValue(currentPage, out HashSet<int>? slotSet))
+            {
+                slotSet = [];
+                hopSlotsByPage[currentPage] = slotSet;
+            }
+
+            if (!slotSet.Add(currentRow))
+            {
+                return (false, desc);
+            }
+
+            byte[] lvalPage = await cur.ReadUncachedPageAsync(currentPage, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (lvalPage[0] != Constants.PageTypes.Data
+                    || BinaryPrimitives.ReadUInt32LittleEndian(lvalPage.AsSpan(4, 4)) != 0x4C41564CU
+                    || !UsageMap.TryGetRowBound(lvalPage, format.DataPage, format.PageSize, currentRow, out RowBound bound)
+                    || bound.RowSize < 4)
+                {
+                    return (false, desc);
+                }
+
+                if (!format.IsJet3)
+                {
+                    uint tok = BinaryPrimitives.ReadUInt32LittleEndian(lvalPage.AsSpan(8, 4));
+                    if (chunkCount == 1)
+                    {
+                        firstPageToken = tok;
+                    }
+                    else if (tok != firstPageToken)
+                    {
+                        hasMixedPageTokens = true;
+                    }
+                }
+
+                int take = Math.Min(desc.Length - written, bound.RowSize - 4);
+                Buffer.BlockCopy(lvalPage, bound.RowStart + 4, payload, written, take);
+                written += take;
+                uint nextBookmark = BinaryPrimitives.ReadUInt32LittleEndian(lvalPage.AsSpan(bound.RowStart, 4));
+                if (nextBookmark == 0)
+                {
+                    break;
+                }
+
+                currentPage = nextBookmark >> 8;
+                currentRow = (int)(nextBookmark & 0xFFU);
+            }
+            finally
+            {
+                PageBuffers.Return(lvalPage);
+            }
+        }
+
+        if (written != desc.Length)
+        {
+            return (false, desc);
+        }
+
+        bool canPromoteToSingle = desc.Length <= maxSingleChunkPayload;
+        int optimalChunks = canPromoteToSingle
+            ? 1
+            : (desc.Length + maxChainedChunkPayload - 1) / maxChainedChunkPayload;
+        if (!canPromoteToSingle && chunkCount <= optimalChunks && !hasMixedPageTokens)
+        {
+            return (false, desc);
+        }
+
+        // Verify that the hop pages used by this chain do not contain unrelated live LVAL rows on pages we need to rewrite.
+        int pagesNeeded = optimalChunks;
+        if (pagesNeeded > hopPages.Count)
+        {
+            return (false, desc);
+        }
+
+        for (int i = 0; i < pagesNeeded; i++)
+        {
+            long hp = hopPages[i];
+            byte[] page = await cur.ReadUncachedPageAsync(hp, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.NumRows, 2));
+                HashSet<int> chainSlots = hopSlotsByPage[hp];
+                for (int r = 0; r < numRows; r++)
+                {
+                    int raw = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.RowsStart + (r * 2), 2));
+                    if ((raw & Constants.DataPage.DeletedRowFlag) == 0 && !chainSlots.Contains(r))
+                    {
+                        return (false, desc);
+                    }
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+        }
+
+        if (canPromoteToSingle)
+        {
+            long targetPage = hopPages[0];
+            byte[] newPage = new byte[format.PageSize];
+            newPage[0] = Constants.PageTypes.Data;
+            newPage[1] = 1;
+            "LVAL"u8.CopyTo(newPage.AsSpan(4, 4));
+            if (!format.IsJet3)
+            {
+                BinaryPrimitives.WriteUInt32LittleEndian(newPage.AsSpan(8, 4), firstPageToken);
+            }
+
+            int rowStart = format.PageSize - payload.Length;
+            Buffer.BlockCopy(payload, 0, newPage, rowStart, payload.Length);
+            BinaryPrimitives.WriteUInt16LittleEndian(newPage.AsSpan(format.DataPage.NumRows, 2), 1);
+            BinaryPrimitives.WriteUInt16LittleEndian(newPage.AsSpan(format.DataPage.RowsStart, 2), checked((ushort)rowStart));
+            BinaryPrimitives.WriteUInt16LittleEndian(
+                newPage.AsSpan(2, 2),
+                checked((ushort)(rowStart - format.DataPage.RowsStart - 2)));
+            overlayPages[targetPage] = newPage;
+
+            uint newFirstDp = checked(((uint)targetPage << 8) | 0U);
+            return (true, new LongValueDescriptor(desc.Length, Constants.LongValue.SinglePageStorageMode, newFirstDp, desc.Token));
+        }
+
+        // Multi-chunk optimal ChainedStorageMode rewrite across hopPages[0 .. optimalChunks - 1].
+        int offset = 0;
+        for (int i = 0; i < optimalChunks; i++)
+        {
+            long targetPage = hopPages[i];
+            int take = Math.Min(maxChainedChunkPayload, desc.Length - offset);
+            int chunkLen = 4 + take;
+            uint nextBm = i + 1 < optimalChunks
+                ? checked(((uint)hopPages[i + 1] << 8) | 0U)
+                : 0U;
+
+            byte[] newPage = new byte[format.PageSize];
+            newPage[0] = Constants.PageTypes.Data;
+            newPage[1] = 1;
+            "LVAL"u8.CopyTo(newPage.AsSpan(4, 4));
+            if (!format.IsJet3)
+            {
+                BinaryPrimitives.WriteUInt32LittleEndian(newPage.AsSpan(8, 4), firstPageToken);
+            }
+
+            int rowStart = format.PageSize - chunkLen;
+            BinaryPrimitives.WriteUInt32LittleEndian(newPage.AsSpan(rowStart, 4), nextBm);
+            Buffer.BlockCopy(payload, offset, newPage, rowStart + 4, take);
+            offset += take;
+
+            BinaryPrimitives.WriteUInt16LittleEndian(newPage.AsSpan(format.DataPage.NumRows, 2), 1);
+            BinaryPrimitives.WriteUInt16LittleEndian(newPage.AsSpan(format.DataPage.RowsStart, 2), checked((ushort)rowStart));
+            BinaryPrimitives.WriteUInt16LittleEndian(
+                newPage.AsSpan(2, 2),
+                checked((ushort)(rowStart - format.DataPage.RowsStart - 2)));
+            overlayPages[targetPage] = newPage;
+        }
+
+        uint chainedFirstDp = checked(((uint)hopPages[0] << 8) | 0U);
+        return (true, new LongValueDescriptor(desc.Length, Constants.LongValue.ChainedStorageMode, chainedFirstDp, desc.Token));
     }
 
     private readonly record struct CorruptSlotInfo(int SlotIndex, string Reason, byte[] RawBytes);

@@ -17,8 +17,9 @@ using JetDatabaseWriter.Pages.Paging;
 /// <param name="TotalSalvagedRows">The total number of salvaged rows across all tables.</param>
 /// <param name="QuarantinedRowsByOwner">Quarantined individual row counts keyed by owner TDEF page.</param>
 /// <param name="TotalQuarantinedRows">The total number of quarantined individual row slots and orphaned child rows across all tables.</param>
-/// <param name="InlinePromotedLongValuesByOwner">Counts of small external LVAL values promoted inline keyed by owner TDEF page.</param>
-/// <param name="TotalInlinePromotedLongValues">The total number of small external LVAL values promoted inline across all tables.</param>
+/// <param name="InlinePromotedLongValuesByOwner">Counts of small external LVAL values promoted inline or multi-hop chains coalesced keyed by owner TDEF page.</param>
+/// <param name="TotalInlinePromotedLongValues">The total number of small external LVAL values promoted inline or multi-hop chains coalesced across all tables.</param>
+/// <param name="RelocatedTDefContinuationPages">The number of multi-page TDef continuation pages relocated into lower interior free pages.</param>
 internal sealed record CompactDataPageSalvageResult(
     IPageSource EffectiveSource,
     IReadOnlyDictionary<long, string> TableNames,
@@ -31,4 +32,5 @@ internal sealed record CompactDataPageSalvageResult(
     IReadOnlyDictionary<long, long>? QuarantinedRowsByOwner = null,
     long TotalQuarantinedRows = 0,
     IReadOnlyDictionary<long, long>? InlinePromotedLongValuesByOwner = null,
-    long TotalInlinePromotedLongValues = 0);
+    long TotalInlinePromotedLongValues = 0,
+    int RelocatedTDefContinuationPages = 0);

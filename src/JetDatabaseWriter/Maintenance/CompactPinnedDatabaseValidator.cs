@@ -167,7 +167,8 @@ internal static class CompactPinnedDatabaseValidator
                                         ordinal,
                                         activeBudget with { Accounting = session.Discovery.Accounting },
                                         observeUnassignedRow!,
-                                        tableToken).ConfigureAwait(false);
+                                        tableToken,
+                                        table.HydratedColumns).ConfigureAwait(false);
                                     _ = await active.ValidateIndexesAsync(tableToken).ConfigureAwait(false);
                                     references[index] = await session.Discovery.WithActiveTableRowsAsync(
                                         active,

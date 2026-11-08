@@ -258,7 +258,8 @@ internal static class CompactPinnedDatabaseBuilder
             ordinal,
             budget with { Accounting = assembly.Discovery.Accounting },
             workspace.ObserveUnassignedRow!,
-            token).ConfigureAwait(false);
+            token,
+            table.HydratedColumns).ConfigureAwait(false);
         _ = await active.ValidateIndexesAsync(token).ConfigureAwait(false);
         CompactPinnedTableAssemblyAllocation built = await assembly.Discovery.WithActiveTableRowsAsync(
             active,

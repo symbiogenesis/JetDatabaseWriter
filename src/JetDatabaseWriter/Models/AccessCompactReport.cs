@@ -95,6 +95,9 @@ public sealed record AccessCompactReport
     /// <summary>Gets the bounded list of diagnostics and salvage observations recorded during planning and construction.</summary>
     public IReadOnlyList<AccessCompactDiagnostic> Diagnostics { get; init; } = [];
 
+    /// <summary>Gets the bounded list of quarantined unrecoverable data pages and row slots recorded during partial recovery.</summary>
+    public IReadOnlyList<AccessCompactQuarantineRecord> QuarantinedRecords { get; init; } = [];
+
     /// <summary>Gets the per-table summaries in deterministic plan order.</summary>
     public IReadOnlyList<AccessCompactTableSummary> Tables { get; init; } = [];
 }

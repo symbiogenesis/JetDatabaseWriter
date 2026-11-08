@@ -533,6 +533,7 @@ public static class AccessDatabaseCompact
                     ReclamationAuthorized = plan.Reclamation.ReclamationAuthorized,
                     ReplacementAuthorized = plan.Reclamation.IsComplete && plan.UnassignedRowCount == 0,
                     Diagnostics = plan.Diagnostics,
+                    QuarantinedRecords = plan.QuarantineRecords ?? [],
                     Tables = plan.TableSummaries ?? [],
                 };
             }
@@ -587,7 +588,8 @@ public static class AccessDatabaseCompact
                     cancellationToken,
                     quarantineOrphanedChildRows: options.QuarantineOrphanedChildRows,
                     quarantineConstraintViolatingRows: options.QuarantineConstraintViolatingRows,
-                    coalesceLongValueChains: options.CoalesceLongValueChains).ConfigureAwait(false);
+                    coalesceLongValueChains: options.CoalesceLongValueChains,
+                    packInteriorFreePages: options.PackInteriorFreePages).ConfigureAwait(false);
 
                 CompactDatabasePlannerResult plan = await CompactDatabasePlanner.PlanAsync(
                     salvage.EffectiveSource,
@@ -681,7 +683,7 @@ public static class AccessDatabaseCompact
                     long extraWrittenBytes = 0;
                     long finalDestinationPages = buildResult.Validation.Allocations.DestinationPages;
                     int finalScrubbedFreePages = plan.Reclamation.ScrubbedPrefixPageCount;
-                    int packedInteriorPages = 0;
+                    int packedInteriorPages = salvage.RelocatedTDefContinuationPages;
                     int clusteredTableCount = 0;
                     long coalescedLongValueCount = salvage.TotalInlinePromotedLongValues;
                     IReadOnlyList<AccessCompactTableSummary> finalTableSummaries = plan.TableSummaries ?? [];
@@ -752,7 +754,7 @@ public static class AccessDatabaseCompact
                             cancellationToken).ConfigureAwait(false);
                         if (packResult.PackedPages > 0)
                         {
-                            packedInteriorPages = packResult.PackedPages;
+                            packedInteriorPages = checked(packedInteriorPages + packResult.PackedPages);
                             finalScrubbedFreePages = packResult.RemainingScrubbedPages;
                             finalDestinationPages = packResult.DestinationPages;
                             extraReadBytes = checked(extraReadBytes + packResult.ReadBytes);
@@ -884,6 +886,7 @@ public static class AccessDatabaseCompact
                         ReclamationAuthorized = buildResult.ReclamationAuthorized,
                         ReplacementAuthorized = buildResult.PublicationAuthorized,
                         Diagnostics = plan.Diagnostics,
+                        QuarantinedRecords = plan.QuarantineRecords ?? [],
                         Tables = finalTableSummaries,
                     };
                 }
@@ -970,6 +973,26 @@ public static class AccessDatabaseCompact
             AppendJsonString(sb, record.Sha256);
             _ = sb.Append(",\"rawBytesBase64\":");
             AppendJsonString(sb, record.RawBytesBase64);
+            if (record.DecodedFields is not null)
+            {
+                _ = sb.Append(",\"decodedFields\":{");
+                bool firstField = true;
+                foreach (KeyValuePair<string, object?> field in record.DecodedFields)
+                {
+                    if (!firstField)
+                    {
+                        _ = sb.Append(',');
+                    }
+
+                    firstField = false;
+                    AppendJsonString(sb, field.Key);
+                    _ = sb.Append(':');
+                    AppendJsonValue(sb, field.Value);
+                }
+
+                _ = sb.Append('}');
+            }
+
             _ = sb.Append("}\n");
 
             byte[] utf8 = Encoding.UTF8.GetBytes(sb.ToString());
@@ -977,6 +1000,47 @@ public static class AccessDatabaseCompact
         }
 
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void AppendJsonValue(StringBuilder sb, object? value)
+    {
+        switch (value)
+        {
+            case null:
+                _ = sb.Append("null");
+                break;
+            case bool b:
+                _ = sb.Append(b ? "true" : "false");
+                break;
+            case string s:
+                AppendJsonString(sb, s);
+                break;
+            case byte[] bytes:
+                AppendJsonString(sb, Convert.ToBase64String(bytes));
+                break;
+            case DateTime dt:
+                AppendJsonString(sb, dt.ToString("O", CultureInfo.InvariantCulture));
+                break;
+            case Guid g:
+                AppendJsonString(sb, g.ToString("D", CultureInfo.InvariantCulture));
+                break;
+            case float f:
+                _ = float.IsNaN(f) || float.IsInfinity(f)
+                    ? sb.Append("null")
+                    : sb.Append(f.ToString("R", CultureInfo.InvariantCulture));
+                break;
+            case double d:
+                _ = double.IsNaN(d) || double.IsInfinity(d)
+                    ? sb.Append("null")
+                    : sb.Append(d.ToString("R", CultureInfo.InvariantCulture));
+                break;
+            case IFormattable formattable:
+                _ = sb.Append(formattable.ToString(null, CultureInfo.InvariantCulture));
+                break;
+            default:
+                AppendJsonString(sb, value.ToString() ?? string.Empty);
+                break;
+        }
     }
 
     private static void AppendJsonString(StringBuilder sb, string value)

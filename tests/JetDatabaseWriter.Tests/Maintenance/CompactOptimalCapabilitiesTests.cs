@@ -1838,6 +1838,711 @@ public sealed class CompactOptimalCapabilitiesTests
         Assert.Equal("Trailing-Row", trailingRow[1]);
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CompactAsync_MultiPageTDefContinuationPackingAndDeadTDefReclamation_PacksContinuationPagesAndReclaimsDeadTDefs(DatabaseFormat kind)
+    {
+        await using var sourceStream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            sourceStream,
+            kind,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync(
+                "EarlySpacer",
+                [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Pad", typeof(string), 250)],
+                cancellationToken: Ct);
+            for (int i = 1; i <= 25; i++)
+            {
+                await writer.InsertRowAsync("EarlySpacer", [i, new string('S', 220)], Ct);
+            }
+
+            var wideColumns = new List<ColumnDefinition>(120)
+            {
+                new("Id", typeof(int)) { IsPrimaryKey = true },
+            };
+            for (int c = 1; c < 120; c++)
+            {
+                wideColumns.Add(new($"WideField_{c:D3}", typeof(int)));
+            }
+
+            await writer.CreateTableAsync("WideTable", wideColumns, cancellationToken: Ct);
+            object?[] rowValues = new object?[120];
+            for (int c = 0; c < 120; c++)
+            {
+                rowValues[c] = c + 1;
+            }
+
+            await writer.InsertRowAsync("WideTable", rowValues, Ct);
+
+            for (int i = 2; i <= 25; i++)
+            {
+                Assert.Equal(1, await writer.DeleteRowsAsync("EarlySpacer", "Id", i, Ct));
+            }
+        }
+
+        // Append an orphaned/dead 0x02 TDef page at the end of the file and mark it allocated in the global usage map (page 1, row 0).
+        byte[] bytes = sourceStream.ToArray();
+        int pageSize = kind == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
+        long deadTDefPage = bytes.Length / pageSize;
+        byte[] extended = new byte[bytes.Length + pageSize];
+        bytes.CopyTo(extended, 0);
+        int deadOff = checked((int)(deadTDefPage * pageSize));
+        extended[deadOff] = 0x02;
+        extended[deadOff + 1] = 0x01;
+        BinaryPrimitives.WriteUInt32LittleEndian(extended.AsSpan(deadOff + 8, 4), 63U);
+        MarkGlobalUsageMapAllocated(extended, pageSize, deadTDefPage);
+
+        await using var unpackedSource = new MemoryStream(extended, writable: false);
+        await using var unpackedDest = new MemoryStream();
+        AccessCompactReport unpackedReport = await AccessDatabaseCompact.CompactAsync(
+            unpackedSource,
+            unpackedDest,
+            new AccessCompactOptions
+            {
+                AllowPartialRecovery = true,
+                PackInteriorFreePages = false,
+            },
+            Ct);
+
+        await using var packedSource = new MemoryStream(extended, writable: false);
+        await using var packedDest = new MemoryStream();
+        AccessCompactReport packedReport = await AccessDatabaseCompact.CompactAsync(
+            packedSource,
+            packedDest,
+            new AccessCompactOptions
+            {
+                AllowPartialRecovery = true,
+                PackInteriorFreePages = true,
+            },
+            Ct);
+
+        Assert.True(packedReport.DatabaseValidated);
+        Assert.Contains(
+            packedReport.Diagnostics,
+            d => d.Kind == "salvaged-dead-tdef-page"
+                && d.Category == AccessCompactDiagnosticCategory.SalvagedDataPage
+                && d.PageNumber == deadTDefPage);
+        Assert.True(packedReport.PackedInteriorPages > 0);
+        Assert.True(packedReport.DestinationPages < unpackedReport.DestinationPages);
+
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(packedDest, cancellationToken: Ct);
+        Assert.Equal(1, await reader.GetRealRowCountAsync("WideTable", Ct));
+        object[] readRow = await reader.Rows("WideTable", cancellationToken: Ct).SingleAsync(Ct);
+        Assert.Equal(1, readRow[0]);
+        Assert.Equal(120, readRow[119]);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CompactAsync_DamagedMultiPageTDefContinuationHeader_SalvagesTDefChainAndRecoversTableRows(DatabaseFormat kind)
+    {
+        await using var sourceStream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            sourceStream,
+            kind,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: Ct))
+        {
+            var wideColumns = new List<ColumnDefinition>(120)
+            {
+                new("Id", typeof(int)) { IsPrimaryKey = true },
+            };
+            for (int c = 1; c < 120; c++)
+            {
+                wideColumns.Add(new($"ColName_{c:D3}", typeof(int)));
+            }
+
+            await writer.CreateTableAsync("MultiPageTDefTable", wideColumns, cancellationToken: Ct);
+            for (int r = 1; r <= 3; r++)
+            {
+                object?[] vals = new object?[120];
+                vals[0] = r;
+                for (int c = 1; c < 120; c++)
+                {
+                    vals[c] = (r * 1000) + c;
+                }
+
+                await writer.InsertRowAsync("MultiPageTDefTable", vals, Ct);
+            }
+        }
+
+        AccessCompactReport inspect = await AccessDatabaseCompact.InspectAsync(sourceStream, cancellationToken: Ct);
+        long wideTDef = Assert.Single(inspect.Tables, t => t.TableName == "MultiPageTDefTable").OwnerTDefPage;
+
+        byte[] bytes = sourceStream.ToArray();
+        int pageSize = kind == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
+        int headOff = checked((int)(wideTDef * pageSize));
+        uint contPage = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(headOff + 4, 4));
+        Assert.True(contPage >= 3);
+
+        // Corrupt the TDef continuation page's page-type byte (0x02 -> 0x7F).
+        bytes[checked((int)(contPage * pageSize))] = 0x7F;
+
+        await using (var strictSource = new MemoryStream(bytes, writable: false))
+        await using (var strictDest = new MemoryStream())
+        {
+            await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                await AccessDatabaseCompact.CompactAsync(
+                    strictSource,
+                    strictDest,
+                    new AccessCompactOptions { AllowPartialRecovery = false },
+                    Ct));
+        }
+
+        await using var salvageSource = new MemoryStream(bytes, writable: false);
+        await using var salvageDest = new MemoryStream();
+        AccessCompactReport report = await AccessDatabaseCompact.CompactAsync(
+            salvageSource,
+            salvageDest,
+            new AccessCompactOptions { AllowPartialRecovery = true },
+            Ct);
+
+        Assert.True(report.DatabaseValidated);
+        Assert.Contains(
+            report.Diagnostics,
+            d => d.Kind == "salvaged-tdef-continuation"
+                && d.Category == AccessCompactDiagnosticCategory.SalvagedDataPage
+                && d.PageNumber == contPage);
+
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(salvageDest, cancellationToken: Ct);
+        Assert.Equal(3, await reader.GetRealRowCountAsync("MultiPageTDefTable", Ct));
+        var rows = new List<object[]>();
+        await foreach (object[] row in reader.Rows("MultiPageTDefTable", cancellationToken: Ct))
+        {
+            rows.Add(row);
+        }
+
+        Assert.Equal(3, rows.Count);
+        Assert.Equal(1119, rows[0][119]);
+        Assert.Equal(3119, rows[2][119]);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CompactAsync_FragmentedMultiHopLvalChain_PhysicallyShrinksLvalPages(DatabaseFormat kind)
+    {
+        string expectedMemo = new('Z', 300);
+        await using var sourceStream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            sourceStream,
+            kind,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync(
+                "MultiHopMemos",
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("MemoBody", typeof(string), 0),
+                ],
+                cancellationToken: Ct);
+            await writer.InsertRowAsync("MultiHopMemos", [1, expectedMemo], Ct);
+
+            await writer.CreateTableAsync(
+                "AnchorAfterMemos",
+                [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Name", typeof(string), 30)],
+                cancellationToken: Ct);
+            await writer.InsertRowAsync("AnchorAfterMemos", [1, "Anchor"], Ct);
+        }
+
+        AccessCompactReport inspect = await AccessDatabaseCompact.InspectAsync(sourceStream, cancellationToken: Ct);
+        long memosOwner = Assert.Single(inspect.Tables, t => t.TableName == "MultiHopMemos").OwnerTDefPage;
+
+        byte[] bytes = sourceStream.ToArray();
+        int pageSize = kind == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
+        int rowsStartOff = kind == DatabaseFormat.Jet3Mdb ? 10 : 14;
+        int numRowsHeaderOff = kind == DatabaseFormat.Jet3Mdb ? 8 : 12;
+        int lvMapPtrOff = kind == DatabaseFormat.Jet3Mdb ? 43 : 63;
+
+        // Locate the SinglePageStorageMode (0x40) LVAL descriptor on MultiHopMemos's DATA page,
+        // and split its payload across 3 ChainedStorageMode (0x00) LVAL pages!
+        long lvalPage2 = bytes.Length / pageSize;
+        long lvalPage3 = lvalPage2 + 1;
+        byte[] extended = new byte[bytes.Length + (2 * pageSize)];
+        bytes.CopyTo(extended, 0);
+
+        int tdefOff = checked((int)(memosOwner * pageSize));
+        uint lvMapPtr = BinaryPrimitives.ReadUInt32LittleEndian(extended.AsSpan(tdefOff + lvMapPtrOff, 4));
+        MarkInlineUsageMapBit(extended, pageSize, rowsStartOff, lvMapPtr, lvalPage2);
+        MarkInlineUsageMapBit(extended, pageSize, rowsStartOff, lvMapPtr, lvalPage3);
+        MarkGlobalUsageMapAllocated(extended, pageSize, lvalPage2);
+        MarkGlobalUsageMapAllocated(extended, pageSize, lvalPage3);
+
+        bool split = false;
+        for (long p = 3; p < bytes.Length / pageSize && !split; p++)
+        {
+            int dataPageOff = checked((int)(p * pageSize));
+            if (extended[dataPageOff] != 0x01 || BinaryPrimitives.ReadUInt32LittleEndian(extended.AsSpan(dataPageOff + 4, 4)) != memosOwner)
+            {
+                continue;
+            }
+
+            int slot0Start = BinaryPrimitives.ReadUInt16LittleEndian(extended.AsSpan(dataPageOff + rowsStartOff, 2)) & 0x1FFF;
+            for (int pos = slot0Start; pos <= pageSize - 12; pos++)
+            {
+                uint rawLen = BinaryPrimitives.ReadUInt32LittleEndian(extended.AsSpan(dataPageOff + pos, 4));
+                byte mode = (byte)((rawLen >> 24) & 0xC0U);
+                int totalLen = (int)(rawLen & 0x3FFFFFFFU);
+                if (mode == 0x40 && totalLen >= 250)
+                {
+                    uint firstDp = BinaryPrimitives.ReadUInt32LittleEndian(extended.AsSpan(dataPageOff + pos + 4, 4));
+                    long lvalPage1 = firstDp >> 8;
+                    int lval1Off = checked((int)(lvalPage1 * pageSize));
+                    int r0Start = BinaryPrimitives.ReadUInt16LittleEndian(extended.AsSpan(lval1Off + rowsStartOff, 2)) & 0x1FFF;
+                    byte[] fullPayload = extended.AsSpan(lval1Off + r0Start, totalLen).ToArray();
+
+                    int part1Len = totalLen / 3;
+                    int part2Len = totalLen / 3;
+                    int part3Len = totalLen - part1Len - part2Len;
+
+                    WriteChainedLvalPage(extended, pageSize, rowsStartOff, numRowsHeaderOff, lvalPage1, fullPayload.AsSpan(0, part1Len), (uint)((lvalPage2 << 8) | 0));
+                    WriteChainedLvalPage(extended, pageSize, rowsStartOff, numRowsHeaderOff, lvalPage2, fullPayload.AsSpan(part1Len, part2Len), (uint)((lvalPage3 << 8) | 0));
+                    WriteChainedLvalPage(extended, pageSize, rowsStartOff, numRowsHeaderOff, lvalPage3, fullPayload.AsSpan(part1Len + part2Len, part3Len), 0U);
+
+                    // Change the 12-byte LVAL descriptor mode from 0x40 (SinglePage) to 0x00 (Chained).
+                    BinaryPrimitives.WriteUInt32LittleEndian(extended.AsSpan(dataPageOff + pos, 4), (uint)totalLen);
+                    BinaryPrimitives.WriteUInt32LittleEndian(extended.AsSpan(dataPageOff + pos + 4, 4), (uint)((lvalPage1 << 8) | 0));
+                    split = true;
+                    break;
+                }
+            }
+        }
+
+        Assert.True(split);
+
+        await using var uncoalescedSource = new MemoryStream(extended, writable: false);
+        await using var uncoalescedDest = new MemoryStream();
+        AccessCompactReport uncoalescedReport = await AccessDatabaseCompact.CompactAsync(
+            uncoalescedSource,
+            uncoalescedDest,
+            new AccessCompactOptions
+            {
+                CoalesceLongValueChains = false,
+                PackInteriorFreePages = false,
+            },
+            Ct);
+
+        await using var coalescedSource = new MemoryStream(extended, writable: false);
+        await using var coalescedDest = new MemoryStream();
+        AccessCompactReport coalescedReport = await AccessDatabaseCompact.CompactAsync(
+            coalescedSource,
+            coalescedDest,
+            new AccessCompactOptions
+            {
+                CoalesceLongValueChains = true,
+                PackInteriorFreePages = false,
+            },
+            Ct);
+
+        Assert.True(coalescedReport.IsComplete);
+        Assert.True(coalescedReport.DatabaseValidated);
+        Assert.Equal(1, coalescedReport.CoalescedLongValueCount);
+        Assert.True(coalescedReport.DestinationPages <= uncoalescedReport.DestinationPages - 2);
+
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(coalescedDest, cancellationToken: Ct);
+        object[] row = await reader.Rows("MultiHopMemos", cancellationToken: Ct).SingleAsync(Ct);
+        Assert.Equal(1, row[0]);
+        Assert.Equal(expectedMemo, row[1]);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CompactAsync_BrokenRowOverflowChain_SalvagesDamagedTargetPageAndPromotesOrphanedMovedRow(DatabaseFormat kind)
+    {
+        await using var sourceStream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            sourceStream,
+            kind,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync(
+                "MovedRowsTable",
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("Note", typeof(string), 80),
+                ],
+                cancellationToken: Ct);
+            await writer.InsertRowAsync("MovedRowsTable", [1, "FirstInlineRow"], Ct);
+            await writer.InsertRowAsync("MovedRowsTable", [2, "SecondMovedRowPayload"], Ct);
+        }
+
+        AccessCompactReport inspect = await AccessDatabaseCompact.InspectAsync(sourceStream, cancellationToken: Ct);
+        long tableOwner = Assert.Single(inspect.Tables, t => t.TableName == "MovedRowsTable").OwnerTDefPage;
+
+        byte[] baseBytes = sourceStream.ToArray();
+        int pageSize = kind == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
+        int rowsStartOff = kind == DatabaseFormat.Jet3Mdb ? 10 : 14;
+        int numRowsHeaderOff = kind == DatabaseFormat.Jet3Mdb ? 8 : 12;
+        int usedPagesOff = kind == DatabaseFormat.Jet3Mdb ? 35 : 55;
+
+        // Allocate a second DATA page (targetPage) for MovedRowsTable and turn row 1 on sourceDataPage into
+        // an OverflowRowFlag (0x4000) pointer targeting slot 0 (DeletedRowFlag 0x8000) on targetPage!
+        long targetPage = baseBytes.Length / pageSize;
+        byte[] overflowBytes = new byte[baseBytes.Length + pageSize];
+        baseBytes.CopyTo(overflowBytes, 0);
+
+        int tdefOff = checked((int)(tableOwner * pageSize));
+        uint usedMapPtr = BinaryPrimitives.ReadUInt32LittleEndian(overflowBytes.AsSpan(tdefOff + usedPagesOff, 4));
+        MarkInlineUsageMapBit(overflowBytes, pageSize, rowsStartOff, usedMapPtr, targetPage);
+        MarkGlobalUsageMapAllocated(overflowBytes, pageSize, targetPage);
+
+        long sourceDataPage = 0;
+        for (long p = 3; p < baseBytes.Length / pageSize; p++)
+        {
+            int pageOff = checked((int)(p * pageSize));
+            if (overflowBytes[pageOff] == 0x01 && BinaryPrimitives.ReadUInt32LittleEndian(overflowBytes.AsSpan(pageOff + 4, 4)) == tableOwner)
+            {
+                sourceDataPage = p;
+                int slot0Start = BinaryPrimitives.ReadUInt16LittleEndian(overflowBytes.AsSpan(pageOff + rowsStartOff, 2)) & 0x1FFF;
+                int slot1Start = BinaryPrimitives.ReadUInt16LittleEndian(overflowBytes.AsSpan(pageOff + rowsStartOff + 2, 2)) & 0x1FFF;
+                int row1Len = slot0Start - slot1Start;
+                byte[] row1Payload = overflowBytes.AsSpan(pageOff + slot1Start, row1Len).ToArray();
+
+                // Write targetPage with 0 direct live rows and 1 moved-row target slot (0x8000 | targetRowStart) at slot 0.
+                int targetOff = checked((int)(targetPage * pageSize));
+                overflowBytes[targetOff] = 0x01;
+                overflowBytes[targetOff + 1] = 0x01;
+                BinaryPrimitives.WriteUInt32LittleEndian(overflowBytes.AsSpan(targetOff + 4, 4), checked((uint)tableOwner));
+                BinaryPrimitives.WriteUInt16LittleEndian(overflowBytes.AsSpan(targetOff + numRowsHeaderOff, 2), 1);
+                int targetRowStart = pageSize - row1Len;
+                row1Payload.CopyTo(overflowBytes.AsSpan(targetOff + targetRowStart, row1Len));
+                BinaryPrimitives.WriteUInt16LittleEndian(overflowBytes.AsSpan(targetOff + rowsStartOff, 2), checked((ushort)(0x8000 | targetRowStart)));
+                BinaryPrimitives.WriteUInt16LittleEndian(overflowBytes.AsSpan(targetOff + 2, 2), checked((ushort)(targetRowStart - rowsStartOff - 2)));
+
+                // Replace row 1 on sourceDataPage with a 4-byte overflow pointer (0x4000 | ptrStart) pointing to (targetPage, row 0).
+                int ptrStart = slot0Start - 4;
+                BinaryPrimitives.WriteUInt32LittleEndian(overflowBytes.AsSpan(pageOff + ptrStart, 4), checked((uint)((targetPage << 8) | 0)));
+                BinaryPrimitives.WriteUInt16LittleEndian(overflowBytes.AsSpan(pageOff + rowsStartOff + 2, 2), checked((ushort)(0x4000 | ptrStart)));
+                BinaryPrimitives.WriteUInt16LittleEndian(overflowBytes.AsSpan(pageOff + 2, 2), checked((ushort)(ptrStart - rowsStartOff - 4)));
+                break;
+            }
+        }
+
+        Assert.True(sourceDataPage >= 3);
+
+        // Part A: Corrupt targetPage's page-type byte (0x7F) and owner header (0U).
+        // Even though targetPage has 0 direct live rows (only a 0x8000 moved-row target slot),
+        // SalvageDamagedOverflowTargetPagesAsync repairs targetPage ("salvaged-overflow-target-page")!
+        byte[] targetDamagedBytes = (byte[])overflowBytes.Clone();
+        int targetPageOff = checked((int)(targetPage * pageSize));
+        targetDamagedBytes[targetPageOff] = 0x7F;
+        BinaryPrimitives.WriteUInt32LittleEndian(targetDamagedBytes.AsSpan(targetPageOff + 4, 4), 0U);
+
+        await using (var targetSource = new MemoryStream(targetDamagedBytes, writable: false))
+        await using (var targetDest = new MemoryStream())
+        {
+            AccessCompactReport targetReport = await AccessDatabaseCompact.CompactAsync(
+                targetSource,
+                targetDest,
+                new AccessCompactOptions { AllowPartialRecovery = true },
+                Ct);
+
+            Assert.True(targetReport.DatabaseValidated);
+            Assert.Contains(
+                targetReport.Diagnostics,
+                d => d.Kind == "salvaged-overflow-target-page"
+                    && d.Category == AccessCompactDiagnosticCategory.SalvagedDataPage
+                    && d.PageNumber == targetPage);
+
+            await using AccessReader targetReader = await TestDatabase.OpenReaderAsync(targetDest, cancellationToken: Ct);
+            var notes = new List<string>();
+            await foreach (object[] row in targetReader.Rows("MovedRowsTable", cancellationToken: Ct))
+            {
+                notes.Add(Assert.IsType<string>(row[1]));
+            }
+
+            Assert.Equal(["FirstInlineRow", "SecondMovedRowPayload"], notes);
+        }
+
+        // Part B: Corrupt sourceDataPage's row directory (numRows = 9999) so sourceDataPage is quarantined ("quarantined-data-page"),
+        // orphaning the 0x8000 moved-row payload on targetPage. PromoteOrphanedMovedRowPayloadsAsync promotes it ("salvaged-overflow-row")!
+        byte[] pointerQuarantinedBytes = (byte[])overflowBytes.Clone();
+        int sourcePageOff = checked((int)(sourceDataPage * pageSize));
+        BinaryPrimitives.WriteUInt16LittleEndian(pointerQuarantinedBytes.AsSpan(sourcePageOff + numRowsHeaderOff, 2), 9999);
+
+        await using (var orphanSource = new MemoryStream(pointerQuarantinedBytes, writable: false))
+        await using (var orphanDest = new MemoryStream())
+        {
+            AccessCompactReport orphanReport = await AccessDatabaseCompact.CompactAsync(
+                orphanSource,
+                orphanDest,
+                new AccessCompactOptions
+                {
+                    AllowPartialRecovery = true,
+                    RebuildDamagedIndexes = true,
+                    RepairTableCounters = true,
+                },
+                Ct);
+
+            Assert.True(orphanReport.DatabaseValidated);
+            Assert.Contains(
+                orphanReport.Diagnostics,
+                d => d.Kind == "salvaged-overflow-row"
+                    && d.Category == AccessCompactDiagnosticCategory.SalvagedDataPage
+                    && d.PageNumber == targetPage);
+
+            await using AccessReader orphanReader = await TestDatabase.OpenReaderAsync(orphanDest, cancellationToken: Ct);
+            object[] rescuedRow = await orphanReader.Rows("MovedRowsTable", cancellationToken: Ct).SingleAsync(Ct);
+            Assert.Equal(2, rescuedRow[0]);
+            Assert.Equal("SecondMovedRowPayload", rescuedRow[1]);
+        }
+    }
+
+    [Fact]
+    public async Task CompactAsync_CalculatedColumnIndex_VerifiesStoredKeysAndRegeneratesDamagedOrStaleCalculatedIndex()
+    {
+        await using var sourceStream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            sourceStream,
+            DatabaseFormat.AceAccdb,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync(
+                "CalcOrders",
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("Qty", typeof(int)),
+                    new("Price", typeof(int)),
+                    new("LineTotal", typeof(int))
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "[Qty] * [Price]",
+                    },
+                    new("Code", typeof(string), 40),
+                    new("UpperCode", typeof(string), 50)
+                    {
+                        IsCalculated = true,
+                        CalculationExpression = "[Code] & \"-CALC\"",
+                    },
+                ],
+                [
+                    new IndexDefinition("IX_CalcOrders_LineTotal", "LineTotal"),
+                    new IndexDefinition("IX_CalcOrders_UpperCode", "UpperCode"),
+                ],
+                Ct);
+
+            for (int i = 1; i <= 10; i++)
+            {
+                await writer.InsertRowAsync("CalcOrders", [i, i * 2, 10, null, $"ORD{i:D2}", null], Ct);
+            }
+        }
+
+        // 1. Clean compact validates calculated-column indexes against cached row envelopes.
+        await using (var cleanDest = new MemoryStream())
+        {
+            AccessCompactReport cleanReport = await AccessDatabaseCompact.CompactAsync(sourceStream, cleanDest, cancellationToken: Ct);
+            Assert.True(cleanReport.IsComplete);
+            Assert.True(cleanReport.DatabaseValidated);
+        }
+
+        // 2. Corrupt the calculated-column index leaf pages and verify RebuildDamagedIndexes regenerates them from cached envelopes.
+        AccessCompactReport inspect = await AccessDatabaseCompact.InspectAsync(sourceStream, cancellationToken: Ct);
+        long calcOwner = Assert.Single(inspect.Tables, t => t.TableName == "CalcOrders").OwnerTDefPage;
+
+        byte[] bytes = sourceStream.ToArray();
+        const int pageSize = 4096;
+        int corruptedIndexPages = 0;
+        for (long p = 3; p < bytes.Length / pageSize; p++)
+        {
+            int off = checked((int)(p * pageSize));
+            if (bytes[off] == 0x04 && BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(off + 4, 4)) == calcOwner)
+            {
+                bytes[off] = 0x7F;
+                corruptedIndexPages++;
+            }
+        }
+
+        Assert.True(corruptedIndexPages >= 2);
+
+        await using (var strictSource = new MemoryStream(bytes, writable: false))
+        await using (var strictDest = new MemoryStream())
+        {
+            await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                await AccessDatabaseCompact.CompactAsync(
+                    strictSource,
+                    strictDest,
+                    new AccessCompactOptions { AllowPartialRecovery = false },
+                    Ct));
+        }
+
+        await using var regenSource = new MemoryStream(bytes, writable: false);
+        await using var regenDest = new MemoryStream();
+        AccessCompactReport regenReport = await AccessDatabaseCompact.CompactAsync(
+            regenSource,
+            regenDest,
+            new AccessCompactOptions
+            {
+                AllowPartialRecovery = true,
+                RebuildDamagedIndexes = true,
+            },
+            Ct);
+
+        Assert.True(regenReport.DatabaseValidated);
+        Assert.Equal(3, regenReport.RegeneratedIndexCount);
+
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(regenDest, cancellationToken: Ct);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("CalcOrders", Ct);
+        Assert.Equal(3, indexes.Count);
+        Assert.Contains(indexes, idx => idx.Name == "IX_CalcOrders_LineTotal");
+        Assert.Contains(indexes, idx => idx.Name == "IX_CalcOrders_UpperCode");
+
+        int rowCount = 0;
+        await foreach (object[] row in reader.Rows("CalcOrders", cancellationToken: Ct))
+        {
+            rowCount++;
+            int id = Assert.IsType<int>(row[0]);
+            Assert.Equal(id * 20, row[3]);
+            Assert.Equal($"ORD{id:D2}-CALC", row[5]);
+        }
+
+        Assert.Equal(10, rowCount);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CompactAsync_QuarantinedRows_PopulatesStructuredDecodedFieldsAndFixedColumnFallbackInReportAndNdjson(DatabaseFormat kind)
+    {
+        await using var sourceStream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            sourceStream,
+            kind,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            cancellationToken: Ct))
+        {
+            await writer.CreateTableAsync(
+                "AuditMembers",
+                [
+                    new("Id", typeof(int)) { IsAutoIncrement = true, IsPrimaryKey = true },
+                    new("Name", typeof(string), 40),
+                    new("Score", typeof(int)),
+                ],
+                cancellationToken: Ct);
+            await writer.InsertRowAsync("AuditMembers", [1, "Alice", 100], Ct);
+            await writer.InsertRowAsync("AuditMembers", [2, "BobCorruptVarOffsets", 250], Ct);
+            await writer.InsertRowAsync("AuditMembers", [3, "Charlie", 300], Ct);
+        }
+
+        AccessCompactReport inspect = await AccessDatabaseCompact.InspectAsync(sourceStream, cancellationToken: Ct);
+        long owner = Assert.Single(inspect.Tables, t => t.TableName == "AuditMembers").OwnerTDefPage;
+
+        byte[] bytes = sourceStream.ToArray();
+        int pageSize = kind == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
+        int rowsStartOff = kind == DatabaseFormat.Jet3Mdb ? 10 : 14;
+        for (long p = 3; p < bytes.Length / pageSize; p++)
+        {
+            int pageOff = checked((int)(p * pageSize));
+            if (bytes[pageOff] == 0x01 && BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(pageOff + 4, 4)) == owner)
+            {
+                // Corrupt row 1's variable-offset table at the end of row 1 (just before the null mask),
+                // leaving its fixed columns (Id=2, Score=250) intact so TryDecodeFixedColumnsFallback rescues them!
+                int slot0Start = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(pageOff + rowsStartOff, 2)) & 0x0FFF;
+                for (int pos = slot0Start - 4; pos < slot0Start - 1; pos++)
+                {
+                    bytes[pageOff + pos] = 0xFF;
+                }
+
+                break;
+            }
+        }
+
+        await using var corruptedSource = new MemoryStream(bytes, writable: false);
+        await using var salvagedDest = new MemoryStream();
+        await using var quarantineStream = new MemoryStream();
+        AccessCompactReport report = await AccessDatabaseCompact.CompactAsync(
+            corruptedSource,
+            salvagedDest,
+            new AccessCompactOptions
+            {
+                AllowPartialRecovery = true,
+                RebuildDamagedIndexes = true,
+                RepairTableCounters = true,
+                QuarantineStream = quarantineStream,
+            },
+            Ct);
+
+        Assert.True(report.DatabaseValidated);
+        AccessCompactQuarantineRecord qRec = Assert.Single(report.QuarantinedRecords);
+        Assert.Equal("quarantined-corrupt-row", qRec.Kind);
+        Assert.NotNull(qRec.DecodedFields);
+        Assert.Equal(2, qRec.DecodedFields!["Id"]);
+        Assert.Equal(250, qRec.DecodedFields["Score"]);
+
+        quarantineStream.Position = 0;
+        using var sr = new StreamReader(quarantineStream);
+        string ndjsonLine = (await sr.ReadToEndAsync(Ct)).Trim();
+        using var jsonDoc = JsonDocument.Parse(ndjsonLine);
+        JsonElement decodedFieldsElem = jsonDoc.RootElement.GetProperty("decodedFields");
+        Assert.Equal(2, decodedFieldsElem.GetProperty("Id").GetInt32());
+        Assert.Equal(250, decodedFieldsElem.GetProperty("Score").GetInt32());
+    }
+
+    private static void MarkGlobalUsageMapAllocated(byte[] bytes, int pageSize, long pageNumber)
+    {
+        int rowsStartOff = pageSize == 2048 ? 10 : 14;
+        int page1Off = pageSize;
+        int row0Start = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(page1Off + rowsStartOff, 2)) & 0x1FFF;
+        int bitmapStart = page1Off + row0Start + 5;
+        int byteIndex = checked((int)(pageNumber >> 3));
+        int bitMask = 1 << (int)(pageNumber & 7);
+        bytes[bitmapStart + byteIndex] = (byte)(bytes[bitmapStart + byteIndex] & ~bitMask);
+    }
+
+    private static void MarkInlineUsageMapBit(byte[] bytes, int pageSize, int rowsStartOff, uint mapPtr, long pageNumber)
+    {
+        long mapPage = mapPtr >> 8;
+        int mapRow = (int)(mapPtr & 0xFFU);
+        int pageOff = checked((int)(mapPage * pageSize));
+        int slotOff = pageOff + rowsStartOff + (mapRow * 2);
+        int rowStart = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(slotOff, 2)) & 0x1FFF;
+        int startPage = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(pageOff + rowStart + 1, 4));
+        int relativeBit = checked((int)(pageNumber - startPage));
+        int bitmapStart = pageOff + rowStart + 5;
+        bytes[bitmapStart + (relativeBit >> 3)] |= (byte)(1 << (relativeBit & 7));
+    }
+
+    private static void WriteChainedLvalPage(
+        byte[] bytes,
+        int pageSize,
+        int rowsStartOff,
+        int numRowsHeaderOff,
+        long lvalPage,
+        ReadOnlySpan<byte> chunkPayload,
+        uint nextPointer)
+    {
+        int pageOff = checked((int)(lvalPage * pageSize));
+        Array.Clear(bytes, pageOff, pageSize);
+        bytes[pageOff] = 0x01;
+        bytes[pageOff + 1] = 0x01;
+        "LVAL"u8.CopyTo(bytes.AsSpan(pageOff + 4, 4));
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(pageOff + numRowsHeaderOff, 2), 1);
+        int rowLen = 4 + chunkPayload.Length;
+        int rowStart = pageSize - rowLen;
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(pageOff + rowStart, 4), nextPointer);
+        chunkPayload.CopyTo(bytes.AsSpan(pageOff + rowStart + 4, chunkPayload.Length));
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(pageOff + rowsStartOff, 2), checked((ushort)rowStart));
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(pageOff + 2, 2), checked((ushort)(rowStart - rowsStartOff - 2)));
+    }
+
     private static void CorruptUsageMapSlot(byte[] bytes, int pageSize, int rowsStartOff, uint mapPtr)
     {
         long mapPage = mapPtr >> 8;

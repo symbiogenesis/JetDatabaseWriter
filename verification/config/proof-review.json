@@ -502,7 +502,7 @@
         },
         {
           "path": "docs/design/compact-and-repair.md",
-          "sha256": "01575e557ddc3ed071b1b387fb90b0cecd6e18b1abf4066ecb5d90fb93d85050"
+          "sha256": "2426f01d05a38c41d71d561788909b18635fb0a624fc663c0e2e4bd81ce5ba0b"
         },
         {
           "path": "docs/design/complex-columns-format-notes.md",
@@ -874,7 +874,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Maintenance/CompactDatabasePlanner.cs",
-          "sha256": "6459c1c3abff1e28af0d7cc762f5c49644261f7e592199c1f0ac53476d1987dc"
+          "sha256": "ce74e9bcf9b2caecbd933131200995c78d31447889826ddb49d05b03b3e83e80"
         },
         {
           "path": "src/JetDatabaseWriter/Maintenance/CompactDiscoverySession.cs",
@@ -894,7 +894,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Maintenance/CompactPinnedDatabaseValidator.cs",
-          "sha256": "075652f6f21177ce13a31ee04bc83f6fa653d0068324186cc3ee1827ccd707d9"
+          "sha256": "cd553470098632ccd6f03f5f3c0a5ad9434975f7c46d48c1358fede581920996"
         },
         {
           "path": "src/JetDatabaseWriter/Maintenance/CompactPinnedPrefixValidator.cs",
@@ -1698,7 +1698,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactOptimalCapabilitiesTests.cs",
-          "sha256": "ca905066bb846a17d73d2ed03b30b5a71492472a8dea4f2ed440440048ebb8c1"
+          "sha256": "4cf0c6245091f6dd59559b23607493c45f74cb47375e668520b6206332cf9d50"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactRawDataLongValueRelocatorTests.cs",

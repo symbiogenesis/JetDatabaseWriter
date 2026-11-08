@@ -17,8 +17,8 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
-/// Optimizes the physical storage layout of staged user tables after initial monotone build validation:
-/// clusters table <c>DATA</c> rows into canonical Primary Key order (<c>ClusterByPrimaryKey</c>)
+/// Optimizes the physical storage layout of staged tables after initial monotone build validation:
+/// clusters user-table <c>DATA</c> rows into canonical Primary Key order (<c>ClusterByPrimaryKey</c>)
 /// and coalesces fragmented multi-hop external <c>LVAL</c> chains into single-page or maximally dense
 /// full-page <c>LVAL</c> chunks (<c>CoalesceLongValueChains</c>), then independently validates the result.
 /// </summary>
@@ -111,20 +111,16 @@ internal static class CompactTableLayoutOptimizer
             foreach (CompactPinnedDatabaseTable table in tables)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (table.Owner < 3)
+                if (table.Owner < 2)
                 {
                     continue;
                 }
 
                 string tableName = tableNames.GetValueOrDefault(table.Owner, $"Table_{table.Owner}");
-                if (CompactDataPageSalvager.IsSystemTableName(tableName))
-                {
-                    continue;
-                }
-
+                bool isUserTable = table.Owner >= 3 && !CompactDataPageSalvager.IsSystemTableName(tableName);
                 hydratedColumnsByOwner.TryGetValue(table.Owner, out IReadOnlyList<ColumnInfo>? hydratedColumns);
 
-                if (clusterByPrimaryKey && TryClusterTableByPrimaryKey(format, table, GetAppendedPage, modifiedPageNumbers))
+                if (isUserTable && clusterByPrimaryKey && TryClusterTableByPrimaryKey(format, table, GetAppendedPage, modifiedPageNumbers))
                 {
                     _ = clusteredOwners.Add(table.Owner);
                 }
