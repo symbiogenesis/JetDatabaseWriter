@@ -123,4 +123,37 @@ public interface IJetClientConnection : IAsyncDisposable, IDisposable
         IReadOnlyList<JetIndexSeekCondition>? seekConditions,
         IReadOnlyDictionary<string, object?> parameters,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reads rows for <paramref name="entityType"/> as <see cref="ValueBuffer"/> instances, decoding only <paramref name="requiredProperties"/> when specified.
+    /// </summary>
+    /// <param name="entityType">The EF Core entity type to read.</param>
+    /// <param name="seekConditions">Optional index seek conditions extracted from the query.</param>
+    /// <param name="parameters">The current query parameter values.</param>
+    /// <param name="requiredProperties">Optional set of properties required by the query projection.</param>
+    /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
+    /// <returns>The loaded <see cref="ValueBuffer"/> rows.</returns>
+    public ValueTask<IReadOnlyList<ValueBuffer>> ReadTableValueBuffersAsync(
+        IEntityType entityType,
+        IReadOnlyList<JetIndexSeekCondition>? seekConditions,
+        IReadOnlyDictionary<string, object?> parameters,
+        IReadOnlySet<IProperty>? requiredProperties,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reads rows for <paramref name="entityType"/> matching any of <paramref name="keyTuples"/> on <paramref name="keyProperties"/>,
+    /// using B-tree index seeks when a covering index is available.
+    /// </summary>
+    /// <param name="entityType">The EF Core entity type to read.</param>
+    /// <param name="keyProperties">The properties forming the lookup key.</param>
+    /// <param name="keyTuples">The distinct non-null model key tuples to match.</param>
+    /// <param name="requiredProperties">Optional set of properties required by the query.</param>
+    /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
+    /// <returns>The matching <see cref="ValueBuffer"/> rows.</returns>
+    public ValueTask<IReadOnlyList<ValueBuffer>> ReadTableValueBuffersByKeysAsync(
+        IEntityType entityType,
+        IReadOnlyList<IProperty> keyProperties,
+        IReadOnlyList<object?[]> keyTuples,
+        IReadOnlySet<IProperty>? requiredProperties = null,
+        CancellationToken cancellationToken = default);
 }

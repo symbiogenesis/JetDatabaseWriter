@@ -7,9 +7,10 @@ using JetDatabaseWriter.EntityFrameworkCore.Infrastructure.Internal;
 using JetDatabaseWriter.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 /// <summary>
-/// Extension methods on <see cref="DbContextOptionsBuilder"/> for configuring a <see cref="DbContext"/>
+/// Extension methods on <see cref="DbContextOptionsBuilder"/> and <see cref="PropertyBuilder"/> for configuring a <see cref="DbContext"/>
 /// to use the <see cref="JetDatabaseWriter"/> pure-managed Microsoft Access provider.
 /// </summary>
 public static class JetDbContextOptionsBuilderExtensions
@@ -170,4 +171,37 @@ public static class JetDbContextOptionsBuilderExtensions
             format,
             leaveOpen,
             jetOptionsAction);
+
+    /// <summary>
+    /// Configures the default value for the column that the property maps to when targeting <see cref="JetDatabaseWriter"/>.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="value">The default value of the column.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static PropertyBuilder HasDefaultValue(
+        this PropertyBuilder propertyBuilder,
+        object? value = null)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+
+        propertyBuilder.Metadata.SetAnnotation("Relational:DefaultValue", value);
+        return propertyBuilder.ValueGeneratedOnAdd();
+    }
+
+    /// <summary>
+    /// Configures the default value for the column that the property maps to when targeting <see cref="JetDatabaseWriter"/>.
+    /// </summary>
+    /// <typeparam name="TProperty">The type of the property being configured.</typeparam>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="value">The default value of the column.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static PropertyBuilder<TProperty> HasDefaultValue<TProperty>(
+        this PropertyBuilder<TProperty> propertyBuilder,
+        object? value = null)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+
+        propertyBuilder.Metadata.SetAnnotation("Relational:DefaultValue", value);
+        return propertyBuilder.ValueGeneratedOnAdd();
+    }
 }

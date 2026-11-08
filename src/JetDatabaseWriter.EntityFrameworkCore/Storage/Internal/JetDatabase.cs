@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
 using JetDatabaseWriter.EntityFrameworkCore.Query.Internal;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Paging;
@@ -82,6 +83,7 @@ public sealed class JetDatabase : Database
         List<IUpdateEntry> orderedEntries = OrderEntries(entries);
         (AccessWriter writer, bool ownedByCaller) = await this.connection.RentWriterAsync(cancellationToken).ConfigureAwait(false);
         JetTransaction? batchTransaction = null;
+        IUpdateEntry? activeEntry = null;
         try
         {
             if (this.connection.ActiveTransaction is null && orderedEntries.Count > 1)
@@ -89,13 +91,60 @@ public sealed class JetDatabase : Database
                 batchTransaction = await writer.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             }
 
+            Dictionary<string, long> tdefPageByTable = [with(StringComparer.OrdinalIgnoreCase)];
             int totalAffected = 0;
-            foreach (IUpdateEntry entry in orderedEntries)
+            int index = 0;
+            while (index < orderedEntries.Count)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                IUpdateEntry entry = orderedEntries[index];
+                activeEntry = entry;
+
                 if (entry.EntityState == EntityState.Added)
                 {
-                    await ExecuteInsertAsync(writer, entry, cancellationToken).ConfigureAwait(false);
+                    (RowValues rowValues, IProperty? autoIncrementProperty) = PrepareInsertRow(entry);
+                    string tableName = JetEntityTypeMetadata.GetTableName(entry.EntityType);
+
+                    if (autoIncrementProperty is null)
+                    {
+                        List<RowValues> batchRows = [rowValues];
+                        int nextIdx = index + 1;
+                        while (nextIdx < orderedEntries.Count
+                            && orderedEntries[nextIdx].EntityState == EntityState.Added
+                            && string.Equals(JetEntityTypeMetadata.GetTableName(orderedEntries[nextIdx].EntityType), tableName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            (RowValues nextRow, IProperty? nextAutoInc) = PrepareInsertRow(orderedEntries[nextIdx]);
+                            if (nextAutoInc is not null)
+                            {
+                                break;
+                            }
+
+                            batchRows.Add(nextRow);
+                            nextIdx++;
+                        }
+
+                        if (batchRows.Count == 1)
+                        {
+                            await writer.InsertRowAsync(tableName, rowValues, cancellationToken).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            await writer.InsertRowsAsync(tableName, batchRows, cancellationToken).ConfigureAwait(false);
+                        }
+
+                        totalAffected += batchRows.Count;
+                        index = nextIdx;
+                        continue;
+                    }
+
+                    await ExecuteAutoIncrementInsertAsync(
+                        writer,
+                        tableName,
+                        rowValues,
+                        entry,
+                        autoIncrementProperty,
+                        tdefPageByTable,
+                        cancellationToken).ConfigureAwait(false);
                     totalAffected++;
                 }
                 else if (entry.EntityState == EntityState.Modified)
@@ -106,8 +155,11 @@ public sealed class JetDatabase : Database
                 {
                     totalAffected += await ExecuteDeleteAsync(writer, entry, cancellationToken).ConfigureAwait(false);
                 }
+
+                index++;
             }
 
+            activeEntry = null;
             if (batchTransaction is not null)
             {
                 await batchTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -115,7 +167,7 @@ public sealed class JetDatabase : Database
 
             return totalAffected;
         }
-        catch
+        catch (Exception ex)
         {
             if (batchTransaction is not null)
             {
@@ -128,6 +180,12 @@ public sealed class JetDatabase : Database
                 {
                 }
 #pragma warning restore CA1031, RCS1075
+            }
+
+            if (ex is IJetException)
+            {
+                IReadOnlyList<IUpdateEntry> failedEntries = activeEntry is not null ? [activeEntry] : [.. orderedEntries];
+                throw new DbUpdateException(ex.Message, ex, failedEntries);
             }
 
             throw;
@@ -145,65 +203,191 @@ public sealed class JetDatabase : Database
 
     private static List<IUpdateEntry> OrderEntries(IList<IUpdateEntry> entries)
     {
-        List<IUpdateEntry> added = [];
-        List<IUpdateEntry> modified = [];
-        List<IUpdateEntry> deleted = [];
-
+        List<IUpdateEntry> candidates = [];
         foreach (IUpdateEntry entry in entries)
         {
-            if (entry.EntityState == EntityState.Added)
+            if (entry.EntityState is EntityState.Added or EntityState.Modified or EntityState.Deleted)
             {
-                added.Add(entry);
-            }
-            else if (entry.EntityState == EntityState.Modified)
-            {
-                modified.Add(entry);
-            }
-            else if (entry.EntityState == EntityState.Deleted)
-            {
-                deleted.Add(entry);
+                candidates.Add(entry);
             }
         }
 
-        List<IUpdateEntry> sortedAdded = SortByDependencyOrder(added, principalsFirst: true);
-        List<IUpdateEntry> sortedDeleted = SortByDependencyOrder(deleted, principalsFirst: false);
+        int count = candidates.Count;
+        if (count <= 1)
+        {
+            return candidates;
+        }
 
-        return [.. sortedAdded, .. modified, .. sortedDeleted];
+        var outgoing = new List<int>[count];
+        int[] indegree = new int[count];
+        for (int i = 0; i < count; i++)
+        {
+            outgoing[i] = [];
+        }
+
+        void AddEdge(int from, int to)
+        {
+            if (from == to || outgoing[from].Contains(to))
+            {
+                return;
+            }
+
+            outgoing[from].Add(to);
+            indegree[to]++;
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            IUpdateEntry left = candidates[i];
+            IEntityType leftRoot = left.EntityType.GetRootType();
+
+            for (int j = 0; j < count; j++)
+            {
+                if (i == j)
+                {
+                    continue;
+                }
+
+                IUpdateEntry right = candidates[j];
+                IEntityType rightRoot = right.EntityType.GetRootType();
+
+                if (leftRoot == rightRoot)
+                {
+                    if (left.EntityState == EntityState.Deleted && right.EntityState is EntityState.Added or EntityState.Modified)
+                    {
+                        AddEdge(i, j);
+                    }
+                    else if (left.EntityState == right.EntityState
+                        && left.EntityState is EntityState.Added or EntityState.Deleted
+                        && ReferencesSameTypeEntry(left, right))
+                    {
+                        if (left.EntityState == EntityState.Added)
+                        {
+                            AddEdge(j, i);
+                        }
+                        else
+                        {
+                            AddEdge(i, j);
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (DependsOn(leftRoot, rightRoot, []))
+                {
+                    if (right.EntityState == EntityState.Added && left.EntityState is EntityState.Added or EntityState.Modified)
+                    {
+                        AddEdge(j, i);
+                    }
+
+                    if (right.EntityState == EntityState.Deleted && left.EntityState is EntityState.Deleted or EntityState.Modified)
+                    {
+                        AddEdge(i, j);
+                    }
+                }
+            }
+        }
+
+        List<IUpdateEntry> ordered = [];
+        bool[] placed = new bool[count];
+        for (int step = 0; step < count; step++)
+        {
+            int chosen = -1;
+            int chosenPriority = int.MaxValue;
+            for (int i = 0; i < count; i++)
+            {
+                if (placed[i] || indegree[i] != 0)
+                {
+                    continue;
+                }
+
+                int priority = GetStatePriority(candidates[i].EntityState);
+                if (priority < chosenPriority)
+                {
+                    chosen = i;
+                    chosenPriority = priority;
+                }
+            }
+
+            if (chosen < 0)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    if (!placed[i])
+                    {
+                        chosen = i;
+                        break;
+                    }
+                }
+            }
+
+            placed[chosen] = true;
+            ordered.Add(candidates[chosen]);
+            foreach (int neighbor in outgoing[chosen])
+            {
+                indegree[neighbor]--;
+            }
+        }
+
+        return ordered;
     }
 
-    private static List<IUpdateEntry> SortByDependencyOrder(List<IUpdateEntry> items, bool principalsFirst)
+    private static int GetStatePriority(EntityState state)
     {
-        if (items.Count <= 1)
+        if (state == EntityState.Deleted)
         {
-            return items;
+            return 0;
         }
 
-        List<IUpdateEntry> sorted = [.. items];
-        sorted.Sort((left, right) =>
+        if (state == EntityState.Added)
         {
-            IEntityType leftType = left.EntityType.GetRootType();
-            IEntityType rightType = right.EntityType.GetRootType();
-            if (leftType == rightType)
+            return 1;
+        }
+
+        if (state == EntityState.Modified)
+        {
+            return 2;
+        }
+
+        return 3;
+    }
+
+    private static bool ReferencesSameTypeEntry(IUpdateEntry childCandidate, IUpdateEntry parentCandidate)
+    {
+        IEntityType rootType = childCandidate.EntityType.GetRootType();
+        foreach (IForeignKey fk in childCandidate.EntityType.GetForeignKeys())
+        {
+            if (fk.PrincipalEntityType.GetRootType() != rootType
+                || fk.Properties.Count == 0
+                || fk.Properties.Count != fk.PrincipalKey.Properties.Count)
             {
-                return 0;
+                continue;
             }
 
-            bool leftDependsOnRight = DependsOn(leftType, rightType, []);
-            bool rightDependsOnLeft = DependsOn(rightType, leftType, []);
-            if (leftDependsOnRight && !rightDependsOnLeft)
+            bool matchesAll = true;
+            for (int i = 0; i < fk.Properties.Count; i++)
             {
-                return principalsFirst ? 1 : -1;
+                object? fkVal = childCandidate.EntityState == EntityState.Deleted
+                    ? childCandidate.GetOriginalValue(fk.Properties[i])
+                    : childCandidate.GetCurrentValue(fk.Properties[i]);
+                object? pkVal = parentCandidate.EntityState == EntityState.Deleted
+                    ? parentCandidate.GetOriginalValue(fk.PrincipalKey.Properties[i])
+                    : parentCandidate.GetCurrentValue(fk.PrincipalKey.Properties[i]);
+                if (fkVal is null || !Equals(fkVal, pkVal))
+                {
+                    matchesAll = false;
+                    break;
+                }
             }
 
-            if (rightDependsOnLeft && !leftDependsOnRight)
+            if (matchesAll)
             {
-                return principalsFirst ? -1 : 1;
+                return true;
             }
+        }
 
-            return 0;
-        });
-
-        return sorted;
+        return false;
     }
 
     private static bool DependsOn(IEntityType dependentCandidate, IEntityType principalCandidate, HashSet<IEntityType> visited)
@@ -230,13 +414,9 @@ public sealed class JetDatabase : Database
         return false;
     }
 
-    private static async ValueTask ExecuteInsertAsync(
-        AccessWriter writer,
-        IUpdateEntry entry,
-        CancellationToken cancellationToken)
+    private static (RowValues Values, IProperty? AutoIncrementProperty) PrepareInsertRow(IUpdateEntry entry)
     {
         IEntityType entityType = entry.EntityType;
-        string tableName = JetEntityTypeMetadata.GetTableName(entityType);
         RowValues rowValues = [];
         IProperty? autoIncrementProperty = null;
 
@@ -271,25 +451,95 @@ public sealed class JetDatabase : Database
             }
 
             object? modelValue = entry.GetCurrentValue(property);
+            if (property.ValueGenerated == ValueGenerated.OnAdd
+                && JetEntityTypeMetadata.TryGetDefaultValue(property, out object? defaultValue)
+                && defaultValue is not (null or DBNull)
+                && (entry.HasTemporaryValue(property) || IsClrDefaultOrSentinel(property, modelValue)))
+            {
+                entry.SetStoreGeneratedValue(property, defaultValue);
+                modelValue = defaultValue;
+            }
+
             rowValues[columnName] = JetEntityTypeMetadata.ConvertToProvider(property, modelValue);
         }
 
+        return (rowValues, autoIncrementProperty);
+    }
+
+    private static bool IsClrDefaultOrSentinel(IProperty property, object? value)
+    {
+        if (property.Sentinel is not null && Equals(value, property.Sentinel))
+        {
+            return true;
+        }
+
+        if (value is null)
+        {
+            return true;
+        }
+
+        Type clrType = property.ClrType;
+        if (!clrType.IsValueType || Nullable.GetUnderlyingType(clrType) is not null)
+        {
+            return false;
+        }
+
+        return value switch
+        {
+            bool b => !b,
+            byte u8 => u8 == 0,
+            sbyte i8 => i8 == 0,
+            short i16 => i16 == 0,
+            ushort u16 => u16 == 0,
+            int i32 => i32 == 0,
+            uint u32 => u32 == 0,
+            long i64 => i64 == 0L,
+            ulong u64 => u64 == 0UL,
+            float f32 => f32 == 0f,
+            double f64 => f64 == 0d,
+            decimal dec => dec == 0m,
+            char c => c == '\0',
+            DateTime dt => dt == default,
+            DateTimeOffset dto => dto == default,
+            DateOnly d => d == default,
+            TimeOnly t => t == default,
+            TimeSpan ts => ts == default,
+            Guid g => g == Guid.Empty,
+            Enum e => Convert.ToInt64(e, System.Globalization.CultureInfo.InvariantCulture) == 0L,
+            _ => false,
+        };
+    }
+
+    private static async ValueTask ExecuteAutoIncrementInsertAsync(
+        AccessWriter writer,
+        string tableName,
+        RowValues rowValues,
+        IUpdateEntry entry,
+        IProperty autoIncrementProperty,
+        Dictionary<string, long> tdefPageByTable,
+        CancellationToken cancellationToken)
+    {
         await writer.InsertRowAsync(tableName, rowValues, cancellationToken).ConfigureAwait(false);
 
-        if (autoIncrementProperty is not null)
+        if (!tdefPageByTable.TryGetValue(tableName, out long tdefPage))
         {
             ResolvedTable? resolved = await writer.Services.Snapshots.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-            if (resolved is not null)
+            if (resolved is null)
             {
-                using PageLease lease = await writer.Services.SnapshotPages.ReadPageAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-                int autoNumberOffset = writer.PageSize == 2048
-                    ? TDefHeaderLayout.Jet3.AutoNumber
-                    : TDefHeaderLayout.Jet4.AutoNumber;
-                long highWater = JetTypeInfo.Ru32(lease.Buffer, autoNumberOffset);
-                object? storeGenerated = JetEntityTypeMetadata.ConvertFromProvider(autoIncrementProperty, highWater);
-                entry.SetStoreGeneratedValue(autoIncrementProperty, storeGenerated);
+                return;
             }
+
+            tdefPage = resolved.Entry.TDefPage;
+            tdefPageByTable[tableName] = tdefPage;
         }
+
+        using PageLease lease = await writer.Services.SnapshotPages.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        int autoNumberOffset = writer.PageSize == 2048
+            ? TDefHeaderLayout.Jet3.AutoNumber
+            : TDefHeaderLayout.Jet4.AutoNumber;
+        long highWater = JetTypeInfo.Ru32(lease.Buffer, autoNumberOffset);
+        object? storeGenerated = JetEntityTypeMetadata.ConvertFromProvider(autoIncrementProperty, highWater);
+        entry.SetStoreGeneratedValue(autoIncrementProperty, storeGenerated);
     }
 
     private static async ValueTask<int> ExecuteUpdateAsync(

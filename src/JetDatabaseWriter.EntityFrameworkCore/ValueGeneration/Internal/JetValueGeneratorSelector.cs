@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.EntityFrameworkCore.ValueGeneration.Internal;
 
 using System;
+using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.ValueGeneration;
 
@@ -17,25 +18,23 @@ public sealed class JetValueGeneratorSelector(ValueGeneratorSelectorDependencies
         ArgumentNullException.ThrowIfNull(typeBase);
         ArgumentNullException.ThrowIfNull(clrType);
 
-        Type unwrapped = Nullable.GetUnderlyingType(clrType) ?? clrType;
-        if (unwrapped == typeof(int))
+        if (JetEntityTypeMetadata.IsAutoIncrementProperty(property))
         {
-            return new JetTemporaryIntegerValueGenerator<int>();
-        }
+            Type unwrapped = Nullable.GetUnderlyingType(clrType) ?? clrType;
+            if (unwrapped == typeof(int))
+            {
+                return new JetTemporaryIntegerValueGenerator<int>();
+            }
 
-        if (unwrapped == typeof(long))
-        {
-            return new JetTemporaryIntegerValueGenerator<long>();
-        }
+            if (unwrapped == typeof(long))
+            {
+                return new JetTemporaryIntegerValueGenerator<long>();
+            }
 
-        if (unwrapped == typeof(short))
-        {
-            return new JetTemporaryIntegerValueGenerator<short>();
-        }
-
-        if (unwrapped == typeof(byte))
-        {
-            return new JetTemporaryIntegerValueGenerator<byte>();
+            if (unwrapped == typeof(short))
+            {
+                return new JetTemporaryIntegerValueGenerator<short>();
+            }
         }
 
         return base.FindForType(property, typeBase, clrType);

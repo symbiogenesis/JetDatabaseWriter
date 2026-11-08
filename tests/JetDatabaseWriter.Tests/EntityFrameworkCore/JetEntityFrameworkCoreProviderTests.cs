@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -270,6 +271,7 @@ public sealed class JetEntityFrameworkCoreProviderTests
             Assert.Equal(2, visibleCustomers.Count);
             Assert.Equal("Alpha LLC", visibleCustomers[0].Name);
             Assert.Equal("Delta Corp", visibleCustomers[1].Name);
+            Assert.Equal(2, queryContext.ChangeTracker.Entries<Customer>().Count());
 
             List<Customer> allCustomers = await queryContext.Customers
                 .IgnoreQueryFilters()
@@ -292,6 +294,12 @@ public sealed class JetEntityFrameworkCoreProviderTests
                 .SingleAsync(c => EF.Property<string>(c, nameof(Customer.Code)) == efPropCode, ct);
             Assert.Equal("Alpha LLC", byEfProperty.Name);
 
+            List<Customer> likeMatches = await queryContext.Customers
+                .Where(c => EF.Functions.Like(c.Name, "alpha%") && EF.Functions.Like(c.Code, "C-_00"))
+                .ToListAsync(ct);
+            Customer likeMatch = Assert.Single(likeMatches);
+            Assert.Equal("C-200", likeMatch.Code);
+
             Assert.Equal(3, await queryContext.Orders.CountAsync(ct));
             Assert.Equal(3L, await queryContext.Orders.LongCountAsync(ct));
             Assert.True(await queryContext.Orders.AnyAsync(o => o.Status == OrderStatus.Shipped, ct));
@@ -299,6 +307,7 @@ public sealed class JetEntityFrameworkCoreProviderTests
             Assert.Equal(150m, await queryContext.Orders.MinAsync(o => o.TotalAmount, ct));
             Assert.Equal(700m, await queryContext.Orders.MaxAsync(o => o.TotalAmount, ct));
             Assert.Equal(1150m, await queryContext.Orders.SumAsync(o => o.TotalAmount, ct));
+            Assert.Empty(queryContext.ChangeTracker.Entries<Order>());
 
             List<string> pagedCodes = await queryContext.Customers
                 .IgnoreQueryFilters()
@@ -317,6 +326,8 @@ public sealed class JetEntityFrameworkCoreProviderTests
                 .SingleAsync(c => c.Code == "C-100", ct);
             Assert.Equal(2, deltaWithOrders.Orders.Count);
             Assert.All(deltaWithOrders.Orders, o => Assert.Same(deltaWithOrders, o.Customer));
+            Assert.Single(includeContext.ChangeTracker.Entries<Customer>());
+            Assert.Equal(2, includeContext.ChangeTracker.Entries<Order>().Count());
 
             List<Order> untrackedOrders = await includeContext.Orders
                 .AsNoTrackingWithIdentityResolution()
@@ -327,10 +338,40 @@ public sealed class JetEntityFrameworkCoreProviderTests
             Assert.NotNull(untrackedOrders[0].Customer);
             Assert.Same(untrackedOrders[0].Customer, untrackedOrders[1].Customer);
         }
+
+        await using (StoreDbContext filteredIncludeContext = new(options))
+        {
+            Customer deltaFiltered = await filteredIncludeContext.Customers
+                .Include(c => c.Orders.Where(o => o.TotalAmount >= 500m))
+                .SingleAsync(c => c.Code == "C-100", ct);
+            Order filteredOrder = Assert.Single(deltaFiltered.Orders);
+            Assert.Equal(700m, filteredOrder.TotalAmount);
+            Assert.Single(filteredIncludeContext.ChangeTracker.Entries<Order>());
+        }
+
+        await using (StoreDbContext multiRootContext = new(options))
+        {
+            List<Customer> aboveAlpha = await multiRootContext.Customers
+                .Where(c => c.CreditLimit > multiRootContext.Customers
+                    .Where(x => x.Code == "C-200")
+                    .Select(x => x.CreditLimit)
+                    .FirstOrDefault())
+                .ToListAsync(ct);
+            Customer aboveMatch = Assert.Single(aboveAlpha);
+            Assert.Equal("C-100", aboveMatch.Code);
+
+            List<Customer> unionResult = await multiRootContext.Customers
+                .Where(c => c.Code == "C-100")
+                .Union(multiRootContext.Customers.Where(c => c.Code == "C-200"))
+                .OrderBy(c => c.Code)
+                .ToListAsync(ct);
+            Assert.Equal(2, unionResult.Count);
+            Assert.Equal(["C-100", "C-200"], unionResult.Select(static c => c.Code).ToArray());
+        }
     }
 
     [Fact]
-    public async Task Explicit_Transactions_Support_Uncommitted_Reads_Rollback_And_Commit()
+    public async Task Explicit_Transactions_Support_Uncommitted_Reads_Hyperlinks_Rollback_And_Commit()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = new();
@@ -351,6 +392,14 @@ public sealed class JetEntityFrameworkCoreProviderTests
                     CreditLimit = 100m,
                     RowVersion = 1,
                 });
+                context.ScheduleItems.Add(new ScheduleItem
+                {
+                    Title = "Tx Hyperlink Check",
+                    ScheduledDate = new DateOnly(2026, 5, 1),
+                    StartTime = new TimeOnly(9, 0, 0),
+                    Duration = TimeSpan.FromHours(1),
+                    Website = new Hyperlink("Docs", "https://docs.example.com"),
+                });
                 _ = await context.SaveChangesAsync(ct);
 
                 Customer? visibleInsideTx = await context.Customers
@@ -358,11 +407,19 @@ public sealed class JetEntityFrameworkCoreProviderTests
                     .SingleOrDefaultAsync(c => c.Code == "TX-ROLLBACK", ct);
                 Assert.NotNull(visibleInsideTx);
 
+                ScheduleItem? scheduleInsideTx = await context.ScheduleItems
+                    .AsNoTracking()
+                    .SingleOrDefaultAsync(s => s.Title == "Tx Hyperlink Check", ct);
+                Assert.NotNull(scheduleInsideTx);
+                Assert.NotNull(scheduleInsideTx.Website);
+                Assert.Equal("https://docs.example.com", scheduleInsideTx.Website.Address);
+
                 await tx.RollbackAsync(ct);
             }
 
             context.ChangeTracker.Clear();
             Assert.Equal(0, await context.Customers.CountAsync(ct));
+            Assert.Equal(0, await context.ScheduleItems.CountAsync(ct));
 
             await using (IDbContextTransaction tx2 = await context.Database.BeginTransactionAsync(ct))
             {
@@ -399,6 +456,8 @@ public sealed class JetEntityFrameworkCoreProviderTests
                     jet => jet.WithPassword("SecretPass123"))
                 .Options;
 
+            TimeSpan preciseDuration = TimeSpan.FromDays(400) + TimeSpan.FromTicks(1234567);
+
             await using (StoreDbContext context = new(options))
             {
                 Assert.True(await context.Database.EnsureCreatedAsync(ct));
@@ -408,7 +467,7 @@ public sealed class JetEntityFrameworkCoreProviderTests
                     Title = "Morning Shift",
                     ScheduledDate = new DateOnly(2026, 7, 4),
                     StartTime = new TimeOnly(8, 15, 30),
-                    Duration = TimeSpan.FromMinutes(90),
+                    Duration = preciseDuration,
                     Website = new Hyperlink("Example", "https://example.com"),
                 };
                 context.ScheduleItems.Add(item);
@@ -421,9 +480,176 @@ public sealed class JetEntityFrameworkCoreProviderTests
                 Assert.Equal("Morning Shift", loaded.Title);
                 Assert.Equal(new DateOnly(2026, 7, 4), loaded.ScheduledDate);
                 Assert.Equal(new TimeOnly(8, 15, 30), loaded.StartTime);
-                Assert.Equal(TimeSpan.FromMinutes(90), loaded.Duration);
+                Assert.Equal(preciseDuration, loaded.Duration);
                 Assert.NotNull(loaded.Website);
                 Assert.Equal("https://example.com", loaded.Website.Address);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(SupportedFormats))]
+    public async Task Advanced_Schema_LongAutoNumber_Defaults_Seeds_AlternateKeys_Tph_And_SaveOrdering_Work(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions<AdvancedCatalogDbContext> options = new DbContextOptionsBuilder<AdvancedCatalogDbContext>()
+            .UseJetDatabaseWriter(stream, format, leaveOpen: true)
+            .Options;
+
+        await using (AdvancedCatalogDbContext context = new(options))
+        {
+            Assert.True(await context.Database.EnsureCreatedAsync(ct));
+
+            List<CategoryNode> seededCategories = await context.Categories.AsNoTracking().OrderBy(c => c.Id).ToListAsync(ct);
+            CategoryNode seededCategory = Assert.Single(seededCategories);
+            Assert.Equal("ROOT", seededCategory.Code);
+            Assert.Equal("General", seededCategory.Tier);
+
+            CategoryNode parentCat = new()
+            {
+                Code = "ELECTRONICS",
+                Name = "Electronics",
+                UnannotatedDescription = new string('D', 600),
+            };
+            CategoryNode childCat = new()
+            {
+                Code = "LAPTOPS",
+                Name = "Laptops",
+                Parent = parentCat,
+            };
+
+            AuditEntry audit = new()
+            {
+                CategoryCode = "ELECTRONICS",
+                Message = "Created Electronics category",
+            };
+
+            CardPaymentMethod card = new()
+            {
+                AccountNumber = "ACC-01",
+                CardNetwork = "Visa",
+                LastFourDigits = "4242",
+            };
+            BankPaymentMethod bank = new()
+            {
+                AccountNumber = "ACC-02",
+                RoutingNumber = "111000025",
+                BankName = "First National",
+            };
+
+            context.Audits.Add(audit);
+            context.PaymentMethods.AddRange(card, bank);
+            context.Categories.AddRange(childCat, parentCat);
+            _ = await context.SaveChangesAsync(ct);
+
+            Assert.True(parentCat.Id > 1L);
+            Assert.True(childCat.Id > parentCat.Id);
+            Assert.Equal(parentCat.Id, childCat.ParentId);
+            Assert.Equal("General", parentCat.Tier);
+            Assert.True(audit.Id > 0L);
+        }
+
+        await using (AdvancedCatalogDbContext verifyContext = new(options))
+        {
+            CategoryNode electronics = await verifyContext.Categories
+                .Include(c => c.Children)
+                .SingleAsync(c => c.Code == "ELECTRONICS", ct);
+            Assert.Equal(600, electronics.UnannotatedDescription?.Length);
+            Assert.Equal("General", electronics.Tier);
+            CategoryNode laptops = Assert.Single(electronics.Children);
+            Assert.Equal("LAPTOPS", laptops.Code);
+
+            List<PaymentMethod> methods = await verifyContext.PaymentMethods
+                .OrderBy(p => p.AccountNumber)
+                .ToListAsync(ct);
+            Assert.Equal(2, methods.Count);
+            CardPaymentMethod loadedCard = Assert.IsType<CardPaymentMethod>(methods[0]);
+            Assert.Equal("Visa", loadedCard.CardNetwork);
+            Assert.Equal("4242", loadedCard.LastFourDigits);
+            BankPaymentMethod loadedBank = Assert.IsType<BankPaymentMethod>(methods[1]);
+            Assert.Equal("111000025", loadedBank.RoutingNumber);
+            Assert.Equal("First National", loadedBank.BankName);
+
+            verifyContext.Categories.Remove(laptops);
+            verifyContext.Categories.Add(new CategoryNode
+            {
+                Code = "LAPTOPS",
+                Name = "Laptops Replaced",
+                ParentId = electronics.Id,
+            });
+            _ = await verifyContext.SaveChangesAsync(ct);
+
+            CategoryNode replaced = await verifyContext.Categories.AsNoTracking().SingleAsync(c => c.Code == "LAPTOPS", ct);
+            Assert.Equal("Laptops Replaced", replaced.Name);
+        }
+
+        await using (AdvancedCatalogDbContext dupContext = new(options))
+        {
+            dupContext.Categories.Add(new CategoryNode
+            {
+                Code = "ELECTRONICS",
+                Name = "Duplicate Code",
+            });
+            DbUpdateException dupEx = await Assert.ThrowsAsync<DbUpdateException>(() => dupContext.SaveChangesAsync(ct));
+            _ = Assert.IsType<IJetException>(dupEx.InnerException, exactMatch: false);
+        }
+    }
+
+    [Fact]
+    public async Task Synchronous_Dispose_And_Concurrent_File_DbContexts_Release_Reader_Locks()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string tempDir = Path.Combine(Path.GetTempPath(), $"jdw-efcore-sync-{Guid.NewGuid():N}");
+        string dbPath = Path.Combine(tempDir, "concurrent.accdb");
+
+        try
+        {
+            DbContextOptions<StoreDbContext> fileOptions = new DbContextOptionsBuilder<StoreDbContext>()
+                .UseJetDatabaseWriter(dbPath, DatabaseFormat.AceAccdb)
+                .Options;
+
+#pragma warning disable RCS1261 // Intentionally testing synchronous IDisposable.Dispose.
+            using (StoreDbContext syncDisposedContext = new(fileOptions))
+            {
+                _ = await syncDisposedContext.Database.EnsureCreatedAsync(ct);
+                syncDisposedContext.Customers.Add(new Customer
+                {
+                    Code = "C-SYNC",
+                    Name = "Sync Dispose Customer",
+                    CreditLimit = 100m,
+                    RowVersion = 1,
+                });
+                _ = await syncDisposedContext.SaveChangesAsync(ct);
+                _ = await syncDisposedContext.Customers.ToListAsync(ct);
+            }
+#pragma warning restore RCS1261
+
+            await using (StoreDbContext readerContext = new(fileOptions))
+            await using (StoreDbContext writerContext = new(fileOptions))
+            {
+                List<Customer> initial = await readerContext.Customers.AsNoTracking().ToListAsync(ct);
+                Assert.Single(initial);
+
+                writerContext.Customers.Add(new Customer
+                {
+                    Code = "C-CONCURRENT",
+                    Name = "Added By Second Context",
+                    CreditLimit = 250m,
+                    RowVersion = 1,
+                });
+                _ = await writerContext.SaveChangesAsync(ct);
+
+                List<Customer> refreshed = await readerContext.Customers.AsNoTracking().OrderBy(c => c.Code).ToListAsync(ct);
+                Assert.Equal(2, refreshed.Count);
+                Assert.Equal(["C-CONCURRENT", "C-SYNC"], refreshed.Select(static c => c.Code).ToArray());
             }
         }
         finally
@@ -507,6 +733,73 @@ public sealed class JetEntityFrameworkCoreProviderTests
         }
     }
 
+    private sealed class AdvancedCatalogDbContext(DbContextOptions<AdvancedCatalogDbContext> options) : DbContext(options)
+    {
+        public DbSet<CategoryNode> Categories => this.Set<CategoryNode>();
+
+        public DbSet<AuditEntry> Audits => this.Set<AuditEntry>();
+
+        public DbSet<PaymentMethod> PaymentMethods => this.Set<PaymentMethod>();
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            _ = modelBuilder.Entity<CategoryNode>(entity =>
+            {
+                _ = entity.ToTable("Categories");
+                _ = entity.HasKey(c => c.Id);
+                _ = entity.HasAlternateKey(c => c.Code);
+                _ = entity.Property(c => c.Code).HasMaxLength(40).IsRequired();
+                _ = entity.Property(c => c.Name).HasMaxLength(100).IsRequired();
+                _ = entity.Property(c => c.Tier).HasMaxLength(40).HasDefaultValue("General");
+                _ = entity.HasOne(c => c.Parent)
+                    .WithMany(c => c.Children)
+                    .HasForeignKey(c => c.ParentId)
+                    .OnDelete(DeleteBehavior.NoAction);
+                _ = entity.HasData(new CategoryNode
+                {
+                    Id = 1L,
+                    Code = "ROOT",
+                    Name = "Root Category",
+                    Tier = "General",
+                });
+            });
+
+            _ = modelBuilder.Entity<AuditEntry>(entity =>
+            {
+                _ = entity.ToTable("Audits");
+                _ = entity.HasKey(a => a.Id);
+                _ = entity.Property(a => a.CategoryCode).HasMaxLength(40).IsRequired();
+                _ = entity.Property(a => a.Message).HasMaxLength(200).IsRequired();
+                _ = entity.HasOne(a => a.Category)
+                    .WithMany()
+                    .HasForeignKey(a => a.CategoryCode)
+                    .HasPrincipalKey(c => c.Code);
+            });
+
+            _ = modelBuilder.Entity<PaymentMethod>(entity =>
+            {
+                _ = entity.ToTable("PaymentMethods");
+                _ = entity.HasKey(p => p.Id);
+                _ = entity.Property(p => p.AccountNumber).HasMaxLength(40).IsRequired();
+                _ = entity.HasDiscriminator<string>("MethodKind")
+                    .HasValue<CardPaymentMethod>("Card")
+                    .HasValue<BankPaymentMethod>("Bank");
+            });
+
+            _ = modelBuilder.Entity<CardPaymentMethod>(entity =>
+            {
+                _ = entity.Property(c => c.CardNetwork).HasMaxLength(30);
+                _ = entity.Property(c => c.LastFourDigits).HasMaxLength(4);
+            });
+
+            _ = modelBuilder.Entity<BankPaymentMethod>(entity =>
+            {
+                _ = entity.Property(b => b.RoutingNumber).HasMaxLength(20);
+                _ = entity.Property(b => b.BankName).HasMaxLength(80);
+            });
+        }
+    }
+
     [Table("Customers")]
     private sealed class Customer
     {
@@ -571,5 +864,56 @@ public sealed class JetEntityFrameworkCoreProviderTests
         public TimeSpan Duration { get; set; }
 
         public Hyperlink? Website { get; set; }
+    }
+
+    private sealed class CategoryNode
+    {
+        public long Id { get; set; }
+
+        public string Code { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
+
+        public string? Tier { get; set; }
+
+        public string? UnannotatedDescription { get; set; }
+
+        public long? ParentId { get; set; }
+
+        public CategoryNode? Parent { get; set; }
+
+        public List<CategoryNode> Children { get; set; } = [];
+    }
+
+    private sealed class AuditEntry
+    {
+        public long Id { get; set; }
+
+        public string CategoryCode { get; set; } = string.Empty;
+
+        public string Message { get; set; } = string.Empty;
+
+        public CategoryNode? Category { get; set; }
+    }
+
+    private abstract class PaymentMethod
+    {
+        public int Id { get; set; }
+
+        public string AccountNumber { get; set; } = string.Empty;
+    }
+
+    private sealed class CardPaymentMethod : PaymentMethod
+    {
+        public string CardNetwork { get; set; } = string.Empty;
+
+        public string LastFourDigits { get; set; } = string.Empty;
+    }
+
+    private sealed class BankPaymentMethod : PaymentMethod
+    {
+        public string RoutingNumber { get; set; } = string.Empty;
+
+        public string BankName { get; set; } = string.Empty;
     }
 }

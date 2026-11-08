@@ -66,8 +66,14 @@ public sealed class JetDbContextTransaction : IDbContextTransaction
     /// <inheritdoc/>
     public void Dispose()
     {
-        this.completed = true;
-        this.manager.ClearCurrentTransaction();
+        if (this.completed)
+        {
+            return;
+        }
+
+#pragma warning disable RS0030, MA0042 // IDisposable.Dispose is a required synchronous callback boundary.
+        this.DisposeAsync().AsTask().GetAwaiter().GetResult();
+#pragma warning restore RS0030, MA0042
     }
 
     /// <inheritdoc/>

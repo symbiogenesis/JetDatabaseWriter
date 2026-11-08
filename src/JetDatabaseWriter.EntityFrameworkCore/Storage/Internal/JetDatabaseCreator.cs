@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -101,49 +102,60 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
     public async Task<bool> CanConnectAsync(CancellationToken cancellationToken = default)
         => await this.connection.CanConnectAsync(cancellationToken).ConfigureAwait(false);
 
-    private static ColumnDefinition CreateColumnDefinition(IProperty property)
+    private static ColumnDefinition CreateColumnDefinition(IProperty property, DatabaseFormat format)
     {
         string columnName = JetEntityTypeMetadata.GetColumnName(property);
         Type storageType = JetEntityTypeMetadata.GetStorageClrType(property);
         bool isAutoIncrement = JetEntityTypeMetadata.IsAutoIncrementProperty(property);
-        bool isNullable = !isAutoIncrement && !property.IsPrimaryKey() && property.IsNullable;
+        bool isDerivedProperty = !ReferenceEquals(property.DeclaringType, property.DeclaringType.ContainingEntityType.GetRootType());
+        bool isNullable = !isAutoIncrement && !property.IsPrimaryKey() && (property.IsNullable || isDerivedProperty);
+        object? defaultValue = TryResolveSupportedDefaultValue(property, isAutoIncrement);
 
         if (storageType == typeof(string))
         {
             int? maxLength = property.GetMaxLength();
             bool participatesInIndex = property.IsPrimaryKey()
                 || property.IsForeignKey()
+                || property.IsKey()
                 || property.GetContainingIndexes().Any();
             int resolvedMaxLength;
-            if (maxLength is > 255 && !participatesInIndex)
-            {
-                resolvedMaxLength = 0;
-            }
-            else if (maxLength is > 0 and <= 255)
+            if (maxLength is > 0 and <= 255)
             {
                 resolvedMaxLength = maxLength.Value;
             }
-            else
+            else if (participatesInIndex)
             {
                 resolvedMaxLength = 255;
+            }
+            else
+            {
+                resolvedMaxLength = 0;
             }
 
             return new ColumnDefinition(columnName, typeof(string), resolvedMaxLength)
             {
                 IsNullable = isNullable,
                 AllowZeroLength = true,
+                DefaultValue = defaultValue,
             };
         }
 
         if (storageType == typeof(decimal))
         {
-            int precision = Math.Clamp(property.GetPrecision() ?? 18, 1, 28);
-            int scale = Math.Clamp(property.GetScale() ?? 4, 0, precision);
+            Type unwrappedClr = Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType;
+            bool isIntegerBackedDecimal = unwrappedClr == typeof(TimeSpan) || unwrappedClr == typeof(ulong);
+            int defaultPrecision = isIntegerBackedDecimal ? 20 : 18;
+            int defaultScale = isIntegerBackedDecimal ? 0 : 4;
+            int precision = Math.Clamp(property.GetPrecision() ?? defaultPrecision, 1, 28);
+            int scale = Math.Clamp(property.GetScale() ?? defaultScale, 0, precision);
+            bool isCurrency = format == DatabaseFormat.Jet3Mdb && (precision - scale > 14 || scale > 4);
             return new ColumnDefinition(columnName, typeof(decimal))
             {
                 IsNullable = isNullable,
+                IsCurrency = isCurrency,
                 NumericPrecision = (byte)precision,
                 NumericScale = (byte)scale,
+                DefaultValue = defaultValue,
             };
         }
 
@@ -151,7 +163,58 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         {
             IsNullable = isNullable,
             IsAutoIncrement = isAutoIncrement,
+            DefaultValue = defaultValue,
         };
+    }
+
+    private static object? TryResolveSupportedDefaultValue(IProperty property, bool isAutoIncrement)
+    {
+        if (isAutoIncrement
+            || !JetEntityTypeMetadata.TryGetDefaultValue(property, out object? rawDefault)
+            || rawDefault is null or DBNull)
+        {
+            return null;
+        }
+
+        object? converted = JetEntityTypeMetadata.ConvertToProvider(property, rawDefault);
+        return converted switch
+        {
+            string or bool or byte or short or int or long or float or double or decimal or DateTime or Guid => converted,
+            _ => null,
+        };
+    }
+
+    private static List<IEntityType> SortEntityTypesTopologically(List<IEntityType> entityTypes)
+    {
+        List<IEntityType> result = [];
+        HashSet<IEntityType> visited = [];
+        HashSet<IEntityType> candidateSet = [.. entityTypes];
+
+        void Visit(IEntityType current)
+        {
+            if (!visited.Add(current))
+            {
+                return;
+            }
+
+            foreach (IForeignKey fk in current.GetForeignKeys())
+            {
+                IEntityType principal = fk.PrincipalEntityType;
+                if (principal != current && candidateSet.Contains(principal))
+                {
+                    Visit(principal);
+                }
+            }
+
+            result.Add(current);
+        }
+
+        foreach (IEntityType entityType in entityTypes)
+        {
+            Visit(entityType);
+        }
+
+        return result;
     }
 
     private static string BuildIndexName(string tableName, IReadOnlyList<string> columns, string? explicitName)
@@ -176,6 +239,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
 
     private async ValueTask BuildSchemaAsync(AccessWriter writer, CancellationToken cancellationToken)
     {
+        DatabaseFormat format = this.connection.Format;
         List<IEntityType> entityTypes = [.. this.model.GetEntityTypes().Where(static et => !et.IsOwned())];
         Dictionary<string, List<IEntityType>> tableGroups = [with(StringComparer.OrdinalIgnoreCase)];
         foreach (IEntityType entityType in entityTypes)
@@ -204,7 +268,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                     string columnName = JetEntityTypeMetadata.GetColumnName(property);
                     if (addedColumns.Add(columnName))
                     {
-                        columns.Add(CreateColumnDefinition(property));
+                        columns.Add(CreateColumnDefinition(property, format));
                     }
                 }
             }
@@ -234,6 +298,31 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
 
             foreach (IEntityType entityType in mappedTypes)
             {
+                foreach (IKey key in entityType.GetDeclaredKeys())
+                {
+                    if (key.IsPrimaryKey() || key.Properties.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    List<string> akCols = [];
+                    foreach (IProperty akProp in key.Properties)
+                    {
+                        akCols.Add(JetEntityTypeMetadata.GetColumnName(akProp));
+                    }
+
+                    string akName = TruncateObjectName($"AK_{tableName}_{string.Join("_", akCols)}");
+                    if (createdIndexNames.Add(akName))
+                    {
+                        tableIndexes.Add(new IndexDefinition(akName, akCols)
+                        {
+                            IsPrimaryKey = false,
+                            IsUnique = true,
+                            IgnoreNulls = false,
+                        });
+                    }
+                }
+
                 foreach (IIndex index in entityType.GetDeclaredIndexes())
                 {
                     if (index.Properties.Count == 0)
@@ -341,6 +430,47 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                     CascadeDeletes = foreignKey.DeleteBehavior == DeleteBehavior.Cascade,
                 };
                 await writer.CreateRelationshipAsync(relDef, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        foreach (IEntityType entityType in SortEntityTypesTopologically(entityTypes))
+        {
+            List<IDictionary<string, object?>> rawSeeds = [.. entityType.GetSeedData()];
+            if (rawSeeds.Count == 0)
+            {
+                continue;
+            }
+
+            List<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(entityType);
+            Dictionary<string, IProperty> propertyByName = [with(StringComparer.Ordinal)];
+            foreach (IProperty prop in properties)
+            {
+                propertyByName[prop.Name] = prop;
+            }
+
+            string tableName = JetEntityTypeMetadata.GetTableName(entityType);
+            List<RowValues> seedRows = [];
+            foreach (IDictionary<string, object?> seedDict in rawSeeds)
+            {
+                RowValues row = [];
+                foreach (KeyValuePair<string, object?> kvp in seedDict)
+                {
+                    if (propertyByName.TryGetValue(kvp.Key, out IProperty? prop))
+                    {
+                        string colName = JetEntityTypeMetadata.GetColumnName(prop);
+                        row[colName] = JetEntityTypeMetadata.ConvertToProvider(prop, kvp.Value);
+                    }
+                }
+
+                if (row.Count > 0)
+                {
+                    seedRows.Add(row);
+                }
+            }
+
+            if (seedRows.Count > 0)
+            {
+                await writer.InsertRowsAsync(tableName, seedRows, cancellationToken).ConfigureAwait(false);
             }
         }
     }
