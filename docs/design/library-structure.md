@@ -32,20 +32,33 @@ row operations build `MutationPlan` changes grouped by TDEF in first-use order.
 Contributors retain their validation and assignment policy and must resolve the
 same native layout. Conflicting index policies refuse before application.
 Rows carry their original locations/values, final replacements, frozen explicit
-assignment indexes for public updates, unassigned ordinary Text bytes, erase
-policy and count adjustments. Text snapshots retain
-both fixed and variable slots; assignments and changed cascade keys use the
-encoder while unchanged slots keep their original stored representation.
+assignment indexes for public updates and cascades, unassigned ordinary raw slot
+bytes, erase policy and count adjustments. Snapshots retain both fixed and
+variable raw slots (including hidden fixed-slot bytes under null values);
+assignments and changed cascade keys use the encoder while unchanged slots keep
+their original stored representation (schema rewrites project preserved Text
+slots).
 
-Snapshots also retain unchanged long-value descriptor bytes. Compatible direct
-updates re-resolve the current live slot by page/row identity, so an earlier
-relocation or compaction in the same prepared batch cannot leave stale geometry.
-Generated `DataPageKernel.PatchColumn` preserves every unassigned field byte and
-unselected null/Boolean bit; `ReplaceRow` admits only the current unaliased live
-interval and preserves the rest of its page. Index maintenance is skipped only
-when the row bookmark and encoded keys remain unchanged. Incompatible layouts
-retain relocation, with external descriptor reuse only under the conservative
-all-surviving-roots policy. A complete supported unique scalar equality may seek targets in either direction, including composite keys; Text semantics, key assignments, calculated fields and unsupported criteria keep scans. Safe update/delete scan fallbacks decode each visited row completely, evaluate the predicate once in traversal order and retain only matching snapshots. Key-changing/calculated updates retain the complete-set validation path.
+Snapshots also retain unchanged long-value descriptor bytes across public and
+cascaded updates, spilling preserved inline descriptors to external LVAL pages
+only when a wider replacement exceeds single-page row capacity. Compatible direct
+updates (including zero-width variable Null/empty transitions and fixed/same-width
+cascade updates) re-resolve the current live slot by page/row identity, so an
+earlier relocation or compaction in the same prepared batch cannot leave stale
+geometry. Generated `DataPageKernel.PatchColumn` preserves every unassigned field
+byte and unselected null/Boolean bit; `ReplaceRow` admits only the current
+unaliased live interval and preserves the rest of its page. Index maintenance is
+skipped entirely when the row bookmark and all encoded keys remain unchanged, and
+per-index incremental maintenance skips individual index trees whose `(Key,
+DataPage, DataRow)` entries cancel out. Incompatible layouts retain relocation,
+with external descriptor reuse only under the conservative all-surviving-roots
+policy. A complete supported unique scalar equality may seek targets in either
+direction, including composite keys, when no unique/primary-key index or
+relationship column is assigned or calculated; Text semantics, unique-key/relationship
+assignments and unsupported criteria keep scans. Safe update/delete scan
+fallbacks decode each visited row completely, evaluate the predicate once in
+traversal order and retain only matching snapshots. Unique-key-changing and
+unique-calculated updates retain the complete-set validation path.
 
 `MutationExecutor.ApplyAsync` checks every replacement's arity, unreadable-value
 admission and encoded capacity before the first row effect. It applies the

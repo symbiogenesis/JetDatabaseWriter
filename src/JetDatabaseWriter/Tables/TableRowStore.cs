@@ -128,15 +128,21 @@ internal sealed class TableRowStore(
                     ColumnSlice after = column.IsFixed
                         ? RowDecodePlan.ResolveFixedColumnSlice(format.RowFields, encoded, 0, updated, column)
                         : RowDecodePlan.ResolveColumnSlice(format.RowFields, encoded, 0, encoded.Length, updated, column);
-                    if (before.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var)
-                        || after.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var)
-                        || before.DataLen != after.DataLen)
+                    bool zeroWidthNullTransition = !column.IsFixed
+                        && before.DataLen == 0
+                        && after.DataLen == 0
+                        && before.Kind is ColumnSliceKind.Var or ColumnSliceKind.Null
+                        && after.Kind is ColumnSliceKind.Var or ColumnSliceKind.Null;
+                    if (!zeroWidthNullTransition
+                        && (before.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var)
+                            || after.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var)
+                            || before.DataLen != after.DataLen))
                     {
                         return false;
                     }
 
-                    targetOffset = before.DataStart;
-                    sourceOffset = after.DataStart;
+                    targetOffset = zeroWidthNullTransition ? 0 : before.DataStart;
+                    sourceOffset = zeroWidthNullTransition ? 0 : after.DataStart;
                     width = before.DataLen;
                 }
 

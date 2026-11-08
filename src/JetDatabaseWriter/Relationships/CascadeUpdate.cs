@@ -17,6 +17,12 @@ using JetDatabaseWriter.Pages.Models;
 /// </param>
 internal sealed record CascadeUpdate(string TableName, ResolvedTable Table, List<(RowLocation Location, object[] OldRow, object[] NewRow)> Rows)
 {
-    /// <summary>Gets unchanged Text slots retained by each planned row rewrite.</summary>
+    /// <summary>Gets unchanged raw slots retained by each planned row rewrite.</summary>
     internal Dictionary<RowLocation, IReadOnlyDictionary<int, byte[]>?> TextBytes { get; } = [];
+
+    /// <summary>Gets unchanged long-value descriptors retained by each planned row rewrite.</summary>
+    internal Dictionary<RowLocation, IReadOnlyDictionary<int, byte[]>?> LongValues { get; } = [];
+
+    /// <summary>Gets the explicitly cascaded column positions for each planned row rewrite.</summary>
+    internal Dictionary<RowLocation, IReadOnlySet<int>?> AssignedColumns { get; } = [];
 }

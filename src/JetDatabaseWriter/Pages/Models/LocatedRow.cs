@@ -58,7 +58,7 @@ internal readonly record struct LocatedRow(RowLocation Location, object[] Values
         var preserved = new Dictionary<int, byte[]>();
         foreach ((int column, byte[] bytes) in slots)
         {
-            if (assigned?.Contains(column) != true && Equals(this.Values[column], newValues[column]))
+            if (assigned?.Contains(column) != true && (Equals(this.Values[column], newValues[column]) || (this.Values[column] is byte[] oldBytes && newValues[column] is byte[] newBytes && System.MemoryExtensions.SequenceEqual(oldBytes, newBytes))))
             {
                 preserved.Add(column, bytes);
             }

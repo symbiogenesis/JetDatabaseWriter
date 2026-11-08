@@ -101,7 +101,9 @@ internal sealed class RelationshipEnforcer(
             MutationPlan.TableChanges changes = plan.ForTable(table.Entry.TDefPage, table.Definition, cascade.TableName);
             foreach ((RowLocation location, object[] oldRow, object[] newRow) in cascade.Rows)
             {
-                changes.Update(location, oldRow, newRow, cascade.TextBytes[location]);
+                cascade.LongValues.TryGetValue(location, out IReadOnlyDictionary<int, byte[]>? longValues);
+                cascade.AssignedColumns.TryGetValue(location, out IReadOnlySet<int>? assignedColumns);
+                changes.Update(location, oldRow, newRow, cascade.TextBytes[location], longValues: longValues, assignedColumns: assignedColumns);
                 for (int index = 0; index < newRow.Length && index < table.Definition.Columns.Count; index++)
                 {
                     if (table.Definition.Columns[index].IsAutoNumber && !Equals(oldRow[index], newRow[index]))
@@ -696,8 +698,12 @@ internal sealed class RelationshipEnforcer(
             foreach ((RowLocation location, _, object[] newRow) in rewrites)
             {
                 LocatedRow stored = storedRows[location];
-                IReadOnlyDictionary<int, byte[]>? textBytes = stored.GetPreservedText(newRow, keyAssignments[newRow].Columns);
+                HashSet<int> assignedCols = keyAssignments[newRow].Columns;
+                IReadOnlyDictionary<int, byte[]>? textBytes = stored.GetPreservedText(newRow, assignedCols);
+                IReadOnlyDictionary<int, byte[]>? longValues = stored.GetPreservedLongValues(newRow, assignedCols);
                 cascade.TextBytes.Add(location, textBytes);
+                cascade.LongValues.Add(location, longValues);
+                cascade.AssignedColumns.Add(location, assignedCols);
             }
         }
 

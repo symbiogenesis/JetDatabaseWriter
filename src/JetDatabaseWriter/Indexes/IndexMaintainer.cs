@@ -77,22 +77,19 @@ internal sealed class IndexMaintainer(
     /// <returns>Whether selected rows suffice for unchanged-key uniqueness validation.</returns>
     internal async ValueTask<bool> CanSeekUpdateTargetsAsync(long tdefPage, TableDef tableDef, string tableName, ICollection<int> assigned, CancellationToken cancellationToken)
     {
-        foreach (ColumnInfo column in tableDef.Columns)
-        {
-            if (column.IsCalculated)
-            {
-                return false;
-            }
-        }
-
         (_, IndexCatalogReader.ResolvedIndexCatalog? catalog) = await this.ResolveMaintainableIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
         if (catalog is not null)
         {
-            foreach (List<KeyColumnInfo> columns in catalog.KeyColumnInfosByRealIdx.Values)
+            foreach ((int realIdxNum, List<KeyColumnInfo> columns) in catalog.KeyColumnInfosByRealIdx)
             {
+                if (!catalog.Catalog.IsUniqueOrPk(realIdxNum))
+                {
+                    continue;
+                }
+
                 foreach (KeyColumnInfo key in columns)
                 {
-                    if (assigned.Contains(key.SnapIdx))
+                    if (assigned.Contains(key.SnapIdx) || key.Col.IsCalculated)
                     {
                         return false;
                     }
@@ -2105,7 +2102,38 @@ internal sealed class IndexMaintainer(
                 return false;
             }
 
-            List<(long DataPage, byte DataRow)> removePtrs = [with(delCount)];
+            bool anyCancelled = false;
+            for (int addIdx = addEntries.Count - 1; addIdx >= 0; addIdx--)
+            {
+                IndexEntry added = addEntries[addIdx];
+                for (int remIdx = 0; remIdx < removeEntries.Count; remIdx++)
+                {
+                    IndexEntry removed = removeEntries[remIdx];
+                    if (added.DataPage == removed.DataPage
+                        && added.DataRow == removed.DataRow
+                        && added.Key.AsSpan().SequenceEqual(removed.Key))
+                    {
+                        addEntries.RemoveAt(addIdx);
+                        removeEntries.RemoveAt(remIdx);
+                        anyCancelled = true;
+                        break;
+                    }
+                }
+            }
+
+            if (anyCancelled && addEntries.Count == 0 && removeEntries.Count == 0)
+            {
+                if (rootPage[0] is not Constants.IndexLeafPage.PageTypeIntermediate
+                    and not Constants.IndexLeafPage.PageTypeLeaf)
+                {
+                    this.LastIncrementalBail = $"C6 rootPage[0]={rootPage[0]:X2}";
+                    return false;
+                }
+
+                continue;
+            }
+
+            List<(long DataPage, byte DataRow)> removePtrs = [with(removeEntries.Count)];
             foreach ((_, long dpDel, byte drDel) in removeEntries)
             {
                 removePtrs.Add((dpDel, drDel));
@@ -2141,7 +2169,7 @@ internal sealed class IndexMaintainer(
                 // overshoot. Falls through to the bulk rebuild on overflow,
                 // deletes, out-of-order inserts, missing tail_page, or any
                 // malformed page.
-                if (delCount == 0 && addEntries.Count > 0)
+                if (removeEntries.Count == 0 && addEntries.Count > 0)
                 {
                     bool tailHandled = await this.btreeEditor.TryAppendToTailLeafAsync(
                         layout,

@@ -112,6 +112,14 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
             {
                 inline.Add((i, data));
             }
+            else if (values[i] is PreEncodedLongValue { PendingPayload: null } preEncoded
+                && LongValueDescriptor.TryRead(preEncoded.HeaderBytes, out LongValueDescriptor descriptor)
+                && descriptor.IsInline
+                && descriptor.Length > 0
+                && preEncoded.HeaderBytes.Length == Constants.LongValue.HeaderSize + descriptor.Length)
+            {
+                inline.Add((i, preEncoded.HeaderBytes.AsSpan(Constants.LongValue.HeaderSize, descriptor.Length).ToArray()));
+            }
         }
 
         inline.Sort(static (a, b) =>

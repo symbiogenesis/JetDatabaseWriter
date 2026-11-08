@@ -393,8 +393,8 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                     {
                         ColumnInfo column = tableDef.Columns[index];
                         bool longValue = UsesLongValueStorage(column);
-                        bool text = !column.IsCalculated && column.Type == TextType;
-                        if ((!longValue && !text) || column.ColNum >= layout.NumCols)
+                        bool preserveRawSlot = !column.IsCalculated && !longValue && column.Type != BooleanType;
+                        if ((!longValue && !preserveRawSlot) || column.ColNum >= layout.NumCols)
                         {
                             continue;
                         }
@@ -402,7 +402,7 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                         ColumnSlice slice = column.IsFixed
                             ? RowDecodePlan.ResolveFixedColumnSlice(format.RowFields, row.Page, row.Location.RowStart, layout, column)
                             : RowDecodePlan.ResolveColumnSlice(format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, layout, column);
-                        if (slice.Kind == ColumnSliceKind.Var)
+                        if (slice.Kind == ColumnSliceKind.Var || (column.IsFixed && !longValue && slice.Kind == ColumnSliceKind.Fixed))
                         {
                             byte[] bytes = row.Page.AsSpan(row.Location.RowStart + slice.DataStart, slice.DataLen).ToArray();
                             if (longValue)

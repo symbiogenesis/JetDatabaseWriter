@@ -518,4 +518,255 @@ public sealed class InPlaceRowUpdateTests
 
         Assert.Equal(bytes, stream.ToArray());
     }
+
+    /// <summary>Zero-width variable Null and empty transitions patch the row in place and roll back cleanly.</summary>
+    /// <param name="format">The native file generation.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task ZeroWidthVariableNullAndEmptyTransitions_PatchRowInPlaceAndRollback(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var seed = new MemoryStream();
+        int hiddenOffset;
+        await using (AccessWriter creator = await AccessWriter.CreateDatabaseAsync(seed, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await creator.CreateTableAsync(
+                "Items",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("Label", typeof(string), maxLength: 40) { AllowZeroLength = true },
+                    new ColumnDefinition("Payload", typeof(byte[]), maxLength: 32) { ForceVariableLengthStorage = true },
+                    new ColumnDefinition("Spare", typeof(int)),
+                    new ColumnDefinition("Note", typeof(string)),
+                ],
+                ct);
+            await creator.InsertRowAsync("Items", [1, DBNull.Value, Array.Empty<byte>(), DBNull.Value, new string('z', 8_000)], ct);
+            ResolvedTable? table = await creator.Services.Snapshots.ResolveTableAsync("Items", ct);
+            Assert.NotNull(table);
+            LocatedRow stored = Assert.Single(await creator.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, ct));
+            hiddenOffset = checked((int)(stored.Location.PageNumber * creator.PageSize)) + stored.Location.RowStart + creator.Database.Format.RowFields.NumCols + table.Definition.Columns[3].FixedOff;
+        }
+
+        byte[] bytes = seed.ToArray();
+        bytes.AsSpan(hiddenOffset, sizeof(int)).Fill(0x5B);
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(bytes, ct);
+        stream.Position = 0;
+        await using AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+        ResolvedTable? resolved = await writer.Services.Snapshots.ResolveTableAsync("Items", ct);
+        Assert.NotNull(resolved);
+        LocatedRow original = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct));
+
+        await using (JetTransaction transaction = await writer.BeginTransactionAsync(ct))
+        {
+            Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 1), new RowValues { ["Label"] = string.Empty, ["Payload"] = DBNull.Value }, ct));
+            byte[] afterFirst = stream.ToArray();
+            for (int offset = 0; offset < bytes.Length; offset += writer.PageSize)
+            {
+                if (offset / writer.PageSize != original.Location.PageNumber)
+                {
+                    Assert.True(bytes.AsSpan(offset, writer.PageSize).SequenceEqual(afterFirst.AsSpan(offset, writer.PageSize)));
+                }
+            }
+
+            Assert.True(afterFirst.AsSpan(hiddenOffset, sizeof(int)).SequenceEqual(bytes.AsSpan(hiddenOffset, sizeof(int))));
+            LocatedRow first = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct));
+            Assert.Equal(original.Location, first.Location);
+            Assert.Equal(string.Empty, first.Values[1]);
+            Assert.Equal(DBNull.Value, first.Values[2]);
+
+            Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 1), new RowValues { ["Label"] = DBNull.Value, ["Payload"] = Array.Empty<byte>() }, ct));
+            LocatedRow second = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct));
+            Assert.Equal(original.Location, second.Location);
+            Assert.Equal(DBNull.Value, second.Values[1]);
+            Assert.Empty(Assert.IsType<byte[]>(second.Values[2]));
+
+            await transaction.RollbackAsync(ct);
+        }
+
+        Assert.Equal(bytes, stream.ToArray());
+    }
+
+    /// <summary>Relocated row updates preserve unassigned Null fixed-slot bytes and raw variable/fixed slots.</summary>
+    /// <param name="format">The native file generation.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task RelocatedRowUpdate_PreservesUnassignedNullFixedPayloadAndRawSlots(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var seed = new MemoryStream();
+        int hiddenRelative;
+        int hiddenOffset;
+        int doubleRelative;
+        int doubleOffset;
+        await using (AccessWriter creator = await AccessWriter.CreateDatabaseAsync(seed, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await creator.CreateTableAsync(
+                "Items",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("Label", typeof(string), maxLength: 80),
+                    new ColumnDefinition("Spare", typeof(int)),
+                    new ColumnDefinition("Measure", typeof(double)),
+                    new ColumnDefinition("Raw", typeof(byte[]), maxLength: 16) { ForceVariableLengthStorage = true },
+                    new ColumnDefinition("Note", typeof(string)),
+                ],
+                ct);
+            await creator.InsertRowAsync("Items", [1, "a", DBNull.Value, 0.0d, new byte[] { 0xDE, 0xAD, 0xBE, 0xEF }, new string('m', 8_000)], ct);
+            ResolvedTable? table = await creator.Services.Snapshots.ResolveTableAsync("Items", ct);
+            Assert.NotNull(table);
+            LocatedRow stored = Assert.Single(await creator.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, ct));
+            hiddenRelative = creator.Database.Format.RowFields.NumCols + table.Definition.Columns[2].FixedOff;
+            hiddenOffset = checked((int)(stored.Location.PageNumber * creator.PageSize)) + stored.Location.RowStart + hiddenRelative;
+            doubleRelative = creator.Database.Format.RowFields.NumCols + table.Definition.Columns[3].FixedOff;
+            doubleOffset = checked((int)(stored.Location.PageNumber * creator.PageSize)) + stored.Location.RowStart + doubleRelative;
+        }
+
+        byte[] bytes = seed.ToArray();
+        bytes.AsSpan(hiddenOffset, sizeof(int)).Fill(0x5B);
+        byte[] negativeZeroBytes = new byte[sizeof(double)];
+        BinaryPrimitives.WriteDoubleLittleEndian(negativeZeroBytes, -0.0d);
+        negativeZeroBytes.CopyTo(bytes.AsSpan(doubleOffset, sizeof(double)));
+
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(bytes, ct);
+        stream.Position = 0;
+        await using AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+        ResolvedTable? resolved = await writer.Services.Snapshots.ResolveTableAsync("Items", ct);
+        Assert.NotNull(resolved);
+        LocatedRow original = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct));
+
+        Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 1), new RowValues { ["Label"] = "relocated-row-label" }, ct));
+        LocatedRow relocated = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct));
+        Assert.NotEqual(original.Location.RowSize, relocated.Location.RowSize);
+        Assert.Equal("relocated-row-label", relocated.Values[1]);
+        Assert.Equal(DBNull.Value, relocated.Values[2]);
+        Assert.Equal(new byte[] { 0xDE, 0xAD, 0xBE, 0xEF }, Assert.IsType<byte[]>(relocated.Values[4]));
+        Assert.NotNull(original.LongValues);
+        Assert.NotNull(relocated.LongValues);
+        Assert.Equal(original.LongValues[5], relocated.LongValues[5]);
+
+        byte[] page = await writer.Database.Pages.ReadPageAsync(relocated.Location.PageNumber, ct);
+        try
+        {
+            Assert.True(page.AsSpan(relocated.Location.RowStart + hiddenRelative, sizeof(int)).SequenceEqual(bytes.AsSpan(hiddenOffset, sizeof(int))));
+            Assert.True(page.AsSpan(relocated.Location.RowStart + doubleRelative, sizeof(double)).SequenceEqual(negativeZeroBytes));
+        }
+        finally
+        {
+            PageBuffers.Return(page);
+        }
+    }
+
+    /// <summary>Point updates of non-unique indexed columns seek the target row and leave unaffected index trees untouched.</summary>
+    /// <param name="format">The native file generation.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task PointUpdateOfNonUniqueIndexedColumn_SeeksTargetAndLeavesPrimaryKeyIndexUntouched(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var stream = new MemoryStream();
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+        await writer.CreateTableAsync(
+            "Items",
+            [
+                new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                new ColumnDefinition("Score", typeof(int)),
+                new ColumnDefinition("Filler", typeof(string), maxLength: 200),
+            ],
+            ct);
+        await writer.CreateIndexAsync("Items", new IndexDefinition("IX_Score", ["Score"]) { IsUnique = false }, ct);
+        for (int id = 1; id <= 40; id++)
+        {
+            await writer.InsertRowAsync("Items", [id, id * 10, new string('f', 150)], ct);
+        }
+
+        ResolvedTable? resolved = await writer.Services.Snapshots.ResolveTableAsync("Items", ct);
+        Assert.NotNull(resolved);
+        LocatedRow targetBefore = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct), row => Equals(row.Values[0], 1));
+        byte[] before = stream.ToArray();
+
+        Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 1), new RowValues { ["Score"] = 999 }, ct));
+        byte[] after = stream.ToArray();
+
+        var changedPages = new List<long>();
+        for (int offset = 0; offset < before.Length; offset += writer.PageSize)
+        {
+            if (!before.AsSpan(offset, writer.PageSize).SequenceEqual(after.AsSpan(offset, writer.PageSize)))
+            {
+                changedPages.Add(offset / writer.PageSize);
+            }
+        }
+
+        Assert.Equal(2, changedPages.Count);
+        Assert.Contains(targetBefore.Location.PageNumber, changedPages);
+
+        LocatedRow updated = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct), row => Equals(row.Values[1], 999));
+        Assert.Equal(1, updated.Values[0]);
+        Assert.Equal(999, updated.Values[1]);
+    }
+
+    /// <summary>Cascading fixed-key updates patch child rows in place while preserving LVAL descriptors and hidden bytes.</summary>
+    /// <param name="format">The native file generation.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CascadeUpdate_FixedKey_PatchesChildRowInPlaceAndPreservesLongValuesAndHiddenBytes(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var seed = new MemoryStream();
+        int hiddenOffset;
+        await using (AccessWriter creator = await AccessWriter.CreateDatabaseAsync(seed, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await creator.CreateTableAsync("Parents", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], ct);
+            await creator.CreateTableAsync(
+                "Children",
+                [
+                    new ColumnDefinition("ChildId", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("ParentId", typeof(int)),
+                    new ColumnDefinition("Spare", typeof(int)),
+                    new ColumnDefinition("Note", typeof(string)),
+                ],
+                ct);
+            await creator.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_Children_Parents", "Parents", ["Id"], "Children", ["ParentId"]) { EnforceReferentialIntegrity = true, CascadeUpdates = true },
+                ct);
+            await creator.InsertRowAsync("Parents", [10], ct);
+            await creator.InsertRowAsync("Children", [1, 10, DBNull.Value, new string('c', 8_000)], ct);
+
+            ResolvedTable? childTable = await creator.Services.Snapshots.ResolveTableAsync("Children", ct);
+            Assert.NotNull(childTable);
+            LocatedRow storedChild = Assert.Single(await creator.Services.Snapshots.ReadRowsAsync(childTable.Entry.TDefPage, ct));
+            hiddenOffset = checked((int)(storedChild.Location.PageNumber * creator.PageSize)) + storedChild.Location.RowStart + creator.Database.Format.RowFields.NumCols + childTable.Definition.Columns[2].FixedOff;
+        }
+
+        byte[] bytes = seed.ToArray();
+        bytes.AsSpan(hiddenOffset, sizeof(int)).Fill(0x5B);
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(bytes, ct);
+        stream.Position = 0;
+        await using AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+        ResolvedTable? resolvedChild = await writer.Services.Snapshots.ResolveTableAsync("Children", ct);
+        Assert.NotNull(resolvedChild);
+        LocatedRow beforeChild = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(resolvedChild.Entry.TDefPage, ct));
+
+        Assert.Equal(1, await writer.UpdateRowsAsync("Parents", RowCriteria.Where("Id", 10), new RowValues { ["Id"] = 20 }, ct));
+        byte[] afterBytes = stream.ToArray();
+        Assert.Equal(bytes.Length, afterBytes.Length);
+        Assert.True(afterBytes.AsSpan(hiddenOffset, sizeof(int)).SequenceEqual(bytes.AsSpan(hiddenOffset, sizeof(int))));
+
+        LocatedRow afterChild = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(resolvedChild.Entry.TDefPage, ct));
+        Assert.Equal(beforeChild.Location, afterChild.Location);
+        Assert.Equal(20, afterChild.Values[1]);
+        Assert.NotNull(beforeChild.LongValues);
+        Assert.NotNull(afterChild.LongValues);
+        Assert.Equal(beforeChild.LongValues[3], afterChild.LongValues[3]);
+    }
 }

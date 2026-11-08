@@ -251,6 +251,11 @@ internal sealed class TableRewritePlanner(
 
                 foreach ((int sourceIndex, byte[] bytes) in row.TextBytes)
                 {
+                    if (tableDef.Columns[sourceIndex].Type != ColumnType.TextType)
+                    {
+                        continue;
+                    }
+
                     string? targetName = mapColumnName(tableDef.Columns[sourceIndex].Name);
                     if (targetName is not null && targetIndexes.TryGetValue(targetName, out int targetIndex))
                     {

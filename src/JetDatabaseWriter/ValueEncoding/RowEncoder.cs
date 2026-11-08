@@ -362,7 +362,7 @@ internal sealed class RowEncoder(JetFormat format)
                 throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, $"Column '{column.Name}' has a malformed BIGBINARY descriptor; native Jet4 storage requires 3992 fixed bytes.", new JetErrorInfo { ColumnName = column.Name });
             }
 
-            if (column.IsFixed && column.Type is BinaryType or BigBinaryType && values[i] is { } binary && binary is not DBNull
+            if (column.IsFixed && column.Type is BinaryType or BigBinaryType && textBytes?.ContainsKey(i) != true && values[i] is { } binary && binary is not DBNull
                 && this.EncodeBinaryValue(binary, maxSize: 0) is { } bytes && bytes.Length > column.Size)
             {
                 throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Fixed Binary column '{column.Name}' holds at most {column.Size} bytes; the value occupies {bytes.Length}.", new JetErrorInfo { ColumnName = column.Name });
@@ -420,7 +420,12 @@ internal sealed class RowEncoder(JetFormat format)
                 if (column.IsFixed && column.Type is BinaryType or BigBinaryType)
                 {
                     fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + column.Size);
-                    if (value is not DBNull && this.EncodeBinaryValue(value, maxSize: 0) is { } bytes)
+                    if (!column.IsCalculated && textBytes?.TryGetValue(i, out byte[]? storedBinary) == true && storedBinary.Length == column.Size)
+                    {
+                        storedBinary.AsSpan().CopyTo(fixedArea.AsSpan(column.FixedOff, column.Size));
+                        JetFormat.SetNullMaskBit(nullMask, column.ColNum, value is not DBNull);
+                    }
+                    else if (value is not DBNull && this.EncodeBinaryValue(value, maxSize: 0) is { } bytes)
                     {
                         bytes.AsSpan().CopyTo(fixedArea.AsSpan(column.FixedOff, column.Size));
                         JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
@@ -461,6 +466,17 @@ internal sealed class RowEncoder(JetFormat format)
 
                 if (value is DBNull && !column.IsCalculated)
                 {
+                    if (column.IsFixed && this.CanStoreFixedColumn(column))
+                    {
+                        int nullFixedSize = JetTypeInfo.GetFixedStorageSize(column.Type, column.Size);
+                        if (nullFixedSize > 0 && textBytes?.TryGetValue(i, out byte[]? storedNullFixed) == true && storedNullFixed.Length == nullFixedSize)
+                        {
+                            storedNullFixed.AsSpan().CopyTo(fixedArea.AsSpan(column.FixedOff, nullFixedSize));
+                            fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + nullFixedSize);
+                            continue;
+                        }
+                    }
+
                     if (column.IsFixed && (column.Type == ComplexType))
                     {
                         fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + JetTypeInfo.GetFixedSize(column.Type));
@@ -482,6 +498,14 @@ internal sealed class RowEncoder(JetFormat format)
                         continue;
                     }
 
+                    if (!column.IsCalculated && textBytes?.TryGetValue(i, out byte[]? storedFixed) == true && storedFixed.Length == fixedSize)
+                    {
+                        storedFixed.AsSpan().CopyTo(fixedArea.AsSpan(column.FixedOff, fixedSize));
+                        fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + fixedSize);
+                        JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
+                        continue;
+                    }
+
                     int written = TryEncodeFixedValue(column.Type, column, value, fixedArea.AsSpan(column.FixedOff, fixedSize));
                     if (written == 0)
                     {
@@ -493,8 +517,8 @@ internal sealed class RowEncoder(JetFormat format)
                 }
                 else
                 {
-                    byte[]? variableValue = !column.IsCalculated && column.Type == TextType && textBytes?.TryGetValue(i, out byte[]? storedText) == true
-                        ? storedText
+                    byte[]? variableValue = !column.IsCalculated && !UsesLongValueStorage(column) && textBytes?.TryGetValue(i, out byte[]? storedVar) == true
+                        ? storedVar
                         : this.EncodeVariableValue(column, value);
                     if (variableValue == null)
                     {

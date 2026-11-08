@@ -278,7 +278,8 @@ internal sealed class TableDataWriter(
             {
                 foreach (string column in relationship.PrimaryColumns)
                 {
-                    canSeek &= !updateIndexes.ContainsKey(tableDef.FindColumnIndex(column));
+                    int colIdx = tableDef.FindColumnIndex(column);
+                    canSeek &= !updateIndexes.ContainsKey(colIdx) && (colIdx < 0 || !tableDef.Columns[colIdx].IsCalculated);
                 }
             }
 
@@ -286,7 +287,8 @@ internal sealed class TableDataWriter(
             {
                 foreach (string column in relationship.ForeignColumns)
                 {
-                    canSeek &= !updateIndexes.ContainsKey(tableDef.FindColumnIndex(column));
+                    int colIdx = tableDef.FindColumnIndex(column);
+                    canSeek &= !updateIndexes.ContainsKey(colIdx) && (colIdx < 0 || !tableDef.Columns[colIdx].IsCalculated);
                 }
             }
         }
