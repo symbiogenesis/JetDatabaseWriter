@@ -228,7 +228,7 @@ PLDI 2022, adds verified double-fetch freedom using forward-stream permissions,
 alongside memory, arithmetic and format correctness. User parsing actions'
 functional correctness remains outside its stated specifications.
 
-For V8/S1/S3, relate validation to the exact bytes consumed by
+For V8/S1, relate validation to the exact bytes consumed by
 [RowDecoder](../../src/JetDatabaseWriter/ValueDecoding/RowDecoder.cs),
 [DataPageRows](../../src/JetDatabaseWriter/Pages/DataPageRows.cs) and long-value
 traversal. Compose cursor progress, layout admission, output effects and

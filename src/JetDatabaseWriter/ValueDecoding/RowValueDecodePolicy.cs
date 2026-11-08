@@ -100,7 +100,28 @@ internal static class RowValueDecodePolicy
             throw new JetCorruptDataException(JetErrorCode.MalformedValue, $"Calculated payload needs {required} byte(s), found {payload.Length}.");
         }
 
+        if (type != NumericType && required > 0 && payload.Length > required)
+        {
+            throw new JetCorruptDataException(JetErrorCode.MalformedValue, $"Calculated payload is {payload.Length} bytes, which exceeds the {required}-byte layout.");
+        }
+
+        if (type == BooleanType && payload[0] is not (0x00 or 0xFF))
+        {
+            throw new JetCorruptDataException(JetErrorCode.MalformedValue, $"Calculated Boolean payload carries an invalid byte 0x{payload[0]:X2}.");
+        }
+
         return true;
+    }
+
+    internal static void ValidateCalculatedTextPayload(JetFormat source, ReadOnlySpan<byte> payload)
+    {
+        if (!source.IsJet3
+            && !payload.IsEmpty
+            && (payload.Length < 2 || payload[0] != 0xFF || payload[1] != 0xFE)
+            && (payload.Length & 1) != 0)
+        {
+            throw new JetCorruptDataException(JetErrorCode.MalformedValue, "Calculated Text payload contains an incomplete UTF-16 code unit.");
+        }
     }
 
     internal static object EmptyVariableValue(ColumnInfo column)

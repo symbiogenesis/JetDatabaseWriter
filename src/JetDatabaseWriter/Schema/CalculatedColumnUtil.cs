@@ -121,7 +121,12 @@ internal static class CalculatedColumnUtil
     {
         if (type == BooleanType)
         {
-            return ReadBooleanPayload(payload) ? "True" : "False";
+            if (ReadBooleanPayload(payload, strictNumeric) is bool booleanValue)
+            {
+                return booleanValue ? "True" : "False";
+            }
+
+            return string.Empty;
         }
 
         if (type == NumericType)
@@ -134,6 +139,11 @@ internal static class CalculatedColumnUtil
 
         if (TryGetVariableSlotFixedPayloadSize(type, out int required))
         {
+            if (strictNumeric && payload.Length != required)
+            {
+                throw new JetCorruptDataException(JetErrorCode.MalformedValue, $"Calculated {GetTypeDisplayName(type)} payload needs {required} byte(s), found {payload.Length}.");
+            }
+
             return payload.Length >= required
                 ? ReadFixedString(payload, 0, type, required, strictNumeric)
                 : string.Empty;
@@ -151,7 +161,7 @@ internal static class CalculatedColumnUtil
     {
         if (type == BooleanType)
         {
-            return ReadBooleanPayload(payload);
+            return ReadBooleanPayload(payload, strictNumeric);
         }
 
         if (type == NumericType)
@@ -161,6 +171,11 @@ internal static class CalculatedColumnUtil
 
         if (TryGetVariableSlotFixedPayloadSize(type, out int required))
         {
+            if (strictNumeric && payload.Length != required)
+            {
+                throw new JetCorruptDataException(JetErrorCode.MalformedValue, $"Calculated {GetTypeDisplayName(type)} payload needs {required} byte(s), found {payload.Length}.");
+            }
+
             return payload.Length >= required
                 ? ReadFixedTyped(payload, 0, type, required, strictNumeric)
                 : DBNull.Value;
@@ -174,8 +189,20 @@ internal static class CalculatedColumnUtil
         throw new JetOperationException(JetErrorCode.InvalidOperationState, $"Unknown column type: {GetTypeDisplayName(type)}");
     }
 
-    private static bool ReadBooleanPayload(ReadOnlySpan<byte> payload)
-        => payload.Length > 0 && payload[0] != 0;
+    private static object ReadBooleanPayload(ReadOnlySpan<byte> payload, bool strict)
+    {
+        if (payload.Length != 1 || payload[0] is not (0x00 or 0xFF))
+        {
+            if (strict)
+            {
+                throw new JetCorruptDataException(JetErrorCode.MalformedValue, $"Calculated Boolean payload is invalid (length={payload.Length}).");
+            }
+
+            return payload.Length > 0 && payload[0] != 0;
+        }
+
+        return payload[0] != 0;
+    }
 
     private static object ReadNumericPayload(ReadOnlySpan<byte> payload, bool strict)
     {

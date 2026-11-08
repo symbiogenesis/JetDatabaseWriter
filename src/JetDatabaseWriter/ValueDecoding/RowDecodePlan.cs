@@ -508,7 +508,8 @@ internal sealed class RowDecodePlan
             int valueLength = descriptor.Length;
             int valueStart = start + Constants.LongValue.HeaderSize;
             longValueDecoder.ValidateStoredLength(valueLength);
-            if (valueLength > length - Constants.LongValue.HeaderSize)
+            if (valueLength > length - Constants.LongValue.HeaderSize
+                || longValueDecoder.IsIncompletePlainMemo(page.AsSpan(valueStart, valueLength), isOle, compressedStorage: true))
             {
                 // Resolve the same fault policy as an external long value.
                 needsLongValue = true;
@@ -909,6 +910,7 @@ internal sealed class RowDecodePlan
             if (valueType == TextType)
             {
                 byte[] textPayload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
+                RowValueDecodePolicy.ValidateCalculatedTextPayload(source, textPayload);
                 return source.DecodeCalculatedText(textPayload, 0, textPayload.Length);
             }
 
@@ -921,9 +923,19 @@ internal sealed class RowDecodePlan
                     return error.ToString();
                 }
 
+                if (payload.Length == 0)
+                {
+                    return string.Empty;
+                }
+
                 if (valueType == BinaryType)
                 {
                     return JetTypeInfo.ToHexStringNoSeparator(payload);
+                }
+
+                if (longValueDecoder.IsIncompletePlainMemo(payload, valueType == OleType, compressedStorage: false))
+                {
+                    throw new JetCorruptDataException(JetErrorCode.MalformedValue, "Calculated Memo payload contains an incomplete UTF-16 code unit.");
                 }
 
                 return longValueDecoder.DecodeLongValue(payload, 0, payload.Length, valueType == OleType, compressedStorage: false);
@@ -935,6 +947,11 @@ internal sealed class RowDecodePlan
                 if (!RowValueDecodePolicy.HasCalculatedPayload(payload, valueType))
                 {
                     return string.Empty;
+                }
+
+                if (valueType == ComplexType)
+                {
+                    ValidateComplexReference(payload, 0, payload.Length);
                 }
 
                 if (valueType is DateTimeType or DateTimeExtendedType)
@@ -1115,6 +1132,7 @@ internal sealed class RowDecodePlan
             if (valueType == TextType)
             {
                 byte[] textPayload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
+                RowValueDecodePolicy.ValidateCalculatedTextPayload(source, textPayload);
                 string text = source.DecodeCalculatedText(textPayload, 0, textPayload.Length);
                 return text.Length == 0 ? DBNull.Value : text;
             }
@@ -1131,6 +1149,11 @@ internal sealed class RowDecodePlan
                 if (!RowValueDecodePolicy.HasCalculatedPayload(payload, valueType))
                 {
                     return DBNull.Value;
+                }
+
+                if (valueType == ComplexType)
+                {
+                    ValidateComplexReference(payload, 0, payload.Length);
                 }
 
                 if (valueType is DateTimeType or DateTimeExtendedType)

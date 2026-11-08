@@ -79,16 +79,23 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
         return location;
     }
 
+    internal bool IsIncompletePlainMemo(ReadOnlySpan<byte> payload, bool isOle, bool compressedStorage)
+        => !isOle
+            && !format.IsJet3
+            && (!compressedStorage || payload.Length < 2 || payload[0] != 0xFF || payload[1] != 0xFE)
+            && (payload.Length & 1) != 0;
+
     internal async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
     {
         byte[] bytes = await this.ReadLongValueBytesExactAsync(row, start, len, cancellationToken).ConfigureAwait(false);
         LongValueDescriptor.TryRead(row, start, len, out LongValueDescriptor descriptor);
-        if (!isOle && !format.IsJet3 && descriptor.UsesChainedPages && (bytes.Length & 1) != 0)
+        bool compressedStorage = descriptor.IsInline || descriptor.IsSinglePage;
+        if (this.IsIncompletePlainMemo(bytes, isOle, compressedStorage))
         {
-            throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "The plain chained Memo payload contains an incomplete UTF-16 code unit.");
+            throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "The plain Memo payload contains an incomplete UTF-16 code unit.");
         }
 
-        return this.DecodeLongValue(bytes, 0, bytes.Length, isOle, compressedStorage: descriptor.IsInline || descriptor.IsSinglePage);
+        return this.DecodeLongValue(bytes, 0, bytes.Length, isOle, compressedStorage);
     }
 
     internal ValueTask<byte[]> ReadLongValueRawBytesAsync(byte[] row, int start, int len, CancellationToken cancellationToken)

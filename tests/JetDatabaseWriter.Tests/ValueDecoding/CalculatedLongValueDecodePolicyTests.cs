@@ -31,7 +31,7 @@ public sealed class CalculatedLongValueDecodePolicyTests
     public static TheoryData<int, int, bool, ColumnType> EnvelopeCases()
     {
         var data = new TheoryData<int, int, bool, ColumnType>();
-        for (int fault = 0; fault < 6; fault++)
+        for (int fault = 0; fault < 7; fault++)
         {
             foreach (int valueLength in new[] { 7, 300, 3000 })
             {
@@ -39,6 +39,11 @@ public sealed class CalculatedLongValueDecodePolicyTests
                 {
                     foreach (ColumnType type in new[] { ColumnType.MemoType, ColumnType.BinaryType, ColumnType.OleType })
                     {
+                        if (fault == 6 && type != ColumnType.MemoType)
+                        {
+                            continue;
+                        }
+
                         data.Add(fault, valueLength, strict, type);
                     }
                 }
@@ -51,13 +56,35 @@ public sealed class CalculatedLongValueDecodePolicyTests
     public static TheoryData<int, int, ColumnType> WriteBackCases()
     {
         var data = new TheoryData<int, int, ColumnType>();
-        for (int fault = 0; fault < 6; fault++)
+        for (int fault = 0; fault < 7; fault++)
         {
             foreach (int valueLength in new[] { 7, 300, 3000 })
             {
                 foreach (ColumnType type in new[] { ColumnType.MemoType, ColumnType.BinaryType, ColumnType.OleType })
                 {
+                    if (fault == 6 && type != ColumnType.MemoType)
+                    {
+                        continue;
+                    }
+
                     data.Add(fault, valueLength, type);
+                }
+            }
+        }
+
+        return data;
+    }
+
+    public static TheoryData<int, bool, ColumnType> NullEnvelopeCases()
+    {
+        var data = new TheoryData<int, bool, ColumnType>();
+        foreach (int valueLength in new[] { 7, 300, 3000 })
+        {
+            foreach (bool strict in new[] { false, true })
+            {
+                foreach (ColumnType type in new[] { ColumnType.MemoType, ColumnType.BinaryType, ColumnType.OleType })
+                {
+                    data.Add(valueLength, strict, type);
                 }
             }
         }
@@ -83,11 +110,19 @@ public sealed class CalculatedLongValueDecodePolicyTests
                 JetCorruptDataException strings = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct));
                 JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
                 JetCorruptDataException table = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
-                foreach (JetCorruptDataException failure in new[] { typed, strings, poco, table })
+                JetCorruptDataException stringTable = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ReadTableAsStringsAsync("Values", cancellationToken: ct));
+                foreach (JetCorruptDataException failure in new[] { typed, strings, poco, table, stringTable })
                 {
                     Assert.Equal(JetErrorCode.MalformedValue, failure.ErrorCode);
                     Assert.Equal("Value", failure.ErrorInfo.ColumnName);
                     Assert.NotNull(failure.InnerException);
+                }
+
+                if (resultType != ColumnType.MemoType)
+                {
+                    JetCorruptDataException binaryPoco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<BinaryValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
+                    Assert.Equal(JetErrorCode.MalformedValue, binaryPoco.ErrorCode);
+                    Assert.Equal("Value", binaryPoco.ErrorInfo.ColumnName);
                 }
             }
             else
@@ -95,7 +130,13 @@ public sealed class CalculatedLongValueDecodePolicyTests
                 Assert.Equal(DBNull.Value, Assert.Single(await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct))[1]);
                 Assert.Null(Assert.Single(await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct))[1]);
                 Assert.Null(Assert.Single(await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
+                if (resultType != ColumnType.MemoType)
+                {
+                    Assert.Null(Assert.Single(await reader.Rows<BinaryValueRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
+                }
+
                 Assert.Equal(DBNull.Value, Assert.Single((await reader.ReadTableAsync("Values", cancellationToken: ct)).Rows.Cast<System.Data.DataRow>())[1]);
+                Assert.Equal(DBNull.Value, Assert.Single((await reader.ReadTableAsStringsAsync("Values", cancellationToken: ct)).Rows.Cast<System.Data.DataRow>())[1]);
                 listener.Flush();
                 Assert.Contains("calculated", messages.ToString(), StringComparison.Ordinal);
                 Assert.Contains("column 'Value' is unreadable and was returned as a missing value", messages.ToString(), StringComparison.Ordinal);
@@ -118,6 +159,25 @@ public sealed class CalculatedLongValueDecodePolicyTests
         JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await writer.UpdateRowsAsync("Values", RowCriteria.All(), new RowValues { ["Id"] = 2 }, ct));
         Assert.Contains("Value", failure.Message, StringComparison.Ordinal);
         Assert.Equal(before, stream.ToArray());
+    }
+
+    [Theory]
+    [MemberData(nameof(NullEnvelopeCases))]
+    public async Task NullCalculatedLongValue_PublicReadsPreserveMissingValue(int valueLength, bool strict, ColumnType resultType)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateDamagedDatabaseAsync(fault: 7, valueLength, resultType, ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: ct);
+        Assert.Equal(DBNull.Value, Assert.Single(await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct))[1]);
+        Assert.Equal(string.Empty, Assert.Single(await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct))[1]);
+        Assert.Null(Assert.Single(await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
+        if (resultType != ColumnType.MemoType)
+        {
+            Assert.Null(Assert.Single(await reader.Rows<BinaryValueRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
+        }
+
+        Assert.Equal(DBNull.Value, Assert.Single((await reader.ReadTableAsync("Values", cancellationToken: ct)).Rows.Cast<System.Data.DataRow>())[1]);
+        Assert.Equal(string.Empty, Assert.Single((await reader.ReadTableAsStringsAsync("Values", cancellationToken: ct)).Rows.Cast<System.Data.DataRow>())[1]);
     }
 
     private static async Task<MemoryStream> CreateDamagedDatabaseAsync(int fault, int valueLength, ColumnType resultType, CancellationToken ct)
@@ -193,6 +253,12 @@ public sealed class CalculatedLongValueDecodePolicyTests
                 case 5:
                     BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(payloadOffset + Constants.CalculatedColumn.DataLenOffset), descriptor.Length - Constants.CalculatedColumn.DataOffset);
                     break;
+                case 6:
+                    BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(payloadOffset + Constants.CalculatedColumn.DataLenOffset), descriptor.Length - Constants.CalculatedColumn.ExtraDataLen - 1);
+                    break;
+                case 7:
+                    BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(payloadOffset + Constants.CalculatedColumn.DataLenOffset), 0);
+                    break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(fault));
             }
@@ -206,5 +272,10 @@ public sealed class CalculatedLongValueDecodePolicyTests
     private sealed class ValueRow
     {
         public string? Value { get; set; }
+    }
+
+    private sealed class BinaryValueRow
+    {
+        public byte[]? Value { get; set; }
     }
 }

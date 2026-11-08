@@ -772,6 +772,11 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
                 return DBNull.Value;
             }
 
+            if (longValues.IsIncompletePlainMemo(payload, reference.IsOle, compressedStorage: false))
+            {
+                throw new JetCorruptDataException(JetErrorCode.MalformedValue, "Calculated Memo payload contains an incomplete UTF-16 code unit.");
+            }
+
             return reference.IsOle
                 ? payload
                 : longValues.DecodeLongValue(payload, 0, payload.Length, isOle: false, compressedStorage: false);
