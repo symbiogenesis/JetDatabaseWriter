@@ -1005,6 +1005,190 @@ public sealed class JetEntityFrameworkCoreProviderTests
         }
     }
 
+    [Fact]
+    public async Task Query_IdentityResolution_IncludeTrees_NullSafeNavigation_And_InheritedQueryFilter_Work_Correctly()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream storeStream = new();
+        DbContextOptions<StoreDbContext> storeOptions = new DbContextOptionsBuilder<StoreDbContext>()
+            .UseJetDatabaseWriter(storeStream, DatabaseFormat.AceAccdb, leaveOpen: true)
+            .Options;
+
+        await using (StoreDbContext seedStore = new(storeOptions))
+        {
+            Assert.True(await seedStore.Database.EnsureCreatedAsync(ct));
+            Customer alice = new()
+            {
+                Code = "Q-ALICE",
+                Name = "Alice",
+                IsVip = false,
+                CreditLimit = 100m,
+                RowVersion = 1,
+                Orders =
+                [
+                    new Order
+                    {
+                        OrderDate = new DateTime(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc),
+                        TotalAmount = 25m,
+                        Status = OrderStatus.Pending,
+                        TrackingId = Guid.NewGuid(),
+                    },
+                    new Order
+                    {
+                        OrderDate = new DateTime(2026, 5, 2, 0, 0, 0, DateTimeKind.Utc),
+                        TotalAmount = 75m,
+                        Status = OrderStatus.Shipped,
+                        TrackingId = Guid.NewGuid(),
+                    },
+                ],
+            };
+            seedStore.Customers.Add(alice);
+            _ = await seedStore.SaveChangesAsync(ct);
+        }
+
+        // 1. Pre-tracked entity with unsaved in-memory edit:
+        //    Database Where predicate evaluates against on-disk value (IsVip == false),
+        //    while surviving query result resolves to the tracked instance (preserving unsaved IsVip == true).
+        await using (StoreDbContext trackedStore = new(storeOptions))
+        {
+            Customer trackedAlice = await trackedStore.Customers.SingleAsync(c => c.Code == "Q-ALICE", ct);
+            trackedAlice.IsVip = true; // unsaved in-memory edit
+
+            Assert.Empty(await trackedStore.Customers.Where(c => c.IsVip).ToListAsync(ct));
+            Customer fromDbFalseQuery = await trackedStore.Customers.SingleAsync(c => !c.IsVip, ct);
+            Assert.Same(trackedAlice, fromDbFalseQuery);
+            Assert.True(fromDbFalseQuery.IsVip);
+        }
+
+        // 2. Projected entity inside anonymous type and ValueTuple is tracked in ChangeTracker.
+        await using (StoreDbContext projectionStore = new(storeOptions))
+        {
+            var projected = await projectionStore.Orders
+                .Include(o => o.Customer)
+                .OrderBy(o => o.TotalAmount)
+                .Select(o => new { Order = o, Customer = o.Customer, Pair = new ValueTuple<Order, Customer?>(o, o.Customer) })
+                .FirstAsync(ct);
+
+            Assert.NotNull(projected.Customer);
+            Assert.Equal(EntityState.Unchanged, projectionStore.Entry(projected.Order).State);
+            Assert.Equal(EntityState.Unchanged, projectionStore.Entry(projected.Customer!).State);
+            Assert.Same(projected.Order, projected.Pair.Item1);
+            Assert.Same(projected.Customer, projected.Pair.Item2);
+        }
+
+        // 3. Combining Where(c => c.Orders.Any(...)) with filtered .Include(c => c.Orders.Where(...EF.Property...))
+        //    does not leak unfiltered orders into the included collection or fail on EF.Property(o, ...).
+        await using (StoreDbContext filteredIncludeStore = new(storeOptions))
+        {
+            Customer loaded = await filteredIncludeStore.Customers
+                .Where(c => c.Orders.Any(o => o.Status == OrderStatus.Pending))
+                .Include(c => c.Orders.Where(o => EF.Property<OrderStatus>(o, nameof(Order.Status)) == OrderStatus.Shipped))
+                .SingleAsync(ct);
+
+            Order singleOrder = Assert.Single(loaded.Orders);
+            Assert.Equal(OrderStatus.Shipped, singleOrder.Status);
+        }
+
+        // 4. Self-referencing multi-level Include/ThenInclude, multi-hop navigation predicate,
+        //    null-safe value-type navigation comparison, and inherited TPH base query filter.
+        await using MemoryStream advStream = new();
+        DbContextOptions<AdvancedCatalogDbContext> advOptions = new DbContextOptionsBuilder<AdvancedCatalogDbContext>()
+            .UseJetDatabaseWriter(advStream, DatabaseFormat.AceAccdb, leaveOpen: true)
+            .Options;
+
+        await using (AdvancedCatalogDbContext adv = new(advOptions))
+        {
+            Assert.True(await adv.Database.EnsureCreatedAsync(ct));
+
+            adv.Categories.AddRange(
+                new CategoryNode
+                {
+                    Id = 2L,
+                    Code = "CHILD",
+                    Name = "Child Category",
+                    ParentId = 1L,
+                    Priority = 20,
+                },
+                new CategoryNode
+                {
+                    Id = 3L,
+                    Code = "GRANDCHILD",
+                    Name = "Grandchild Category",
+                    ParentId = 2L,
+                    Priority = 30,
+                });
+
+            adv.Audits.Add(new AuditEntry
+            {
+                CategoryCode = "GRANDCHILD",
+                Message = "Leaf audit",
+            });
+
+            adv.PaymentMethods.AddRange(
+                new CardPaymentMethod
+                {
+                    AccountNumber = "ACC-ACTIVE",
+                    CardNetwork = "VISA",
+                    LastFourDigits = "1111",
+                    IsArchived = false,
+                },
+                new CardPaymentMethod
+                {
+                    AccountNumber = "ACC-ARCHIVED",
+                    CardNetwork = "MC",
+                    LastFourDigits = "2222",
+                    IsArchived = true,
+                });
+
+            _ = await adv.SaveChangesAsync(ct);
+        }
+
+        await using (AdvancedCatalogDbContext verifyAdv = new(advOptions))
+        {
+            CategoryNode root = await verifyAdv.Categories
+                .AsNoTracking()
+                .Include(c => c.Children)
+                .ThenInclude(c => c.Children)
+                .SingleAsync(c => c.Id == 1L, ct);
+
+            CategoryNode child = Assert.Single(root.Children);
+            Assert.Equal("CHILD", child.Code);
+            CategoryNode grandchild = Assert.Single(child.Children);
+            Assert.Equal("GRANDCHILD", grandchild.Code);
+
+            // Multi-hop navigation in Where without explicit Include
+            AuditEntry audit = await verifyAdv.Audits
+                .AsNoTracking()
+                .SingleAsync(a => a.Category!.Parent!.Parent!.Code == "ROOT", ct);
+            Assert.Equal("GRANDCHILD", audit.CategoryCode);
+
+            // Null-safe value-type navigation comparison: root has Parent == null, so Parent.Priority == 0 must not match root!
+            Assert.Empty(await verifyAdv.Categories
+                .AsNoTracking()
+                .Where(c => c.Parent!.Priority == 0)
+                .ToListAsync(ct));
+            List<string> childrenOfPriority10 = await verifyAdv.Categories
+                .AsNoTracking()
+                .Where(c => c.Parent!.Priority == 10)
+                .Select(c => c.Code)
+                .ToListAsync(ct);
+            Assert.Equal(["CHILD"], childrenOfPriority10);
+
+            // Inherited TPH base query filter on derived DbSet<CardPaymentMethod>()
+            List<CardPaymentMethod> activeCards = await verifyAdv.Set<CardPaymentMethod>()
+                .AsNoTracking()
+                .ToListAsync(ct);
+            CardPaymentMethod activeCard = Assert.Single(activeCards);
+            Assert.Equal("ACC-ACTIVE", activeCard.AccountNumber);
+
+            List<CardPaymentMethod> allCards = await verifyAdv.Set<CardPaymentMethod>()
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .ToListAsync(ct);
+            Assert.Equal(2, allCards.Count);
+        }
+    }
+
     private sealed class StoreDbContext(DbContextOptions<StoreDbContext> options) : DbContext(options)
     {
         public DbSet<Customer> Customers => this.Set<Customer>();
@@ -1099,6 +1283,7 @@ public sealed class JetEntityFrameworkCoreProviderTests
                 _ = entity.ToTable("PaymentMethods");
                 _ = entity.HasKey(p => p.Id);
                 _ = entity.Property(p => p.AccountNumber).HasMaxLength(40).IsRequired();
+                _ = entity.HasQueryFilter(p => !p.IsArchived);
                 _ = entity.HasDiscriminator<string>("MethodKind")
                     .HasValue<CardPaymentMethod>("Card")
                     .HasValue<BankPaymentMethod>("Bank");
@@ -1221,6 +1406,8 @@ public sealed class JetEntityFrameworkCoreProviderTests
         public int Id { get; set; }
 
         public string AccountNumber { get; set; } = string.Empty;
+
+        public bool IsArchived { get; set; }
     }
 
     private sealed class CardPaymentMethod : PaymentMethod

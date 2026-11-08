@@ -221,7 +221,7 @@ internal static class JetAsyncQueryExecutor
 
         QueryTrackingBehavior trackingBehavior = plan.TrackingBehaviorOverride
             ?? queryContext.Context.ChangeTracker.QueryTrackingBehavior;
-        bool isTracking = trackingBehavior == QueryTrackingBehavior.TrackAll && resultEntityType is not null;
+        bool isTracking = trackingBehavior == QueryTrackingBehavior.TrackAll;
         bool resolveIdentityUntracked = trackingBehavior == QueryTrackingBehavior.NoTrackingWithIdentityResolution;
 
         if (isTracking)
@@ -238,49 +238,46 @@ internal static class JetAsyncQueryExecutor
 
         List<TElement> results = [.. compiledQuery(queryContext, state)];
 
-        if (resultEntityType is not null && results.Count > 0)
+        if (results.Count > 0)
         {
-            IEntityType rootResultType = resultEntityType.GetRootType();
-            List<(object Entity, ValueBuffer Buffer)> FinalizeResultEntities()
+            Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType = [];
+            if (isTracking)
             {
-                List<(object Entity, ValueBuffer Buffer)> finalized = [];
-                for (int i = 0; i < results.Count; i++)
-                {
-                    if (results[i] is not object entityObj)
-                    {
-                        continue;
-                    }
-
-                    if (!state.EntityBuffers.TryGetValue(entityObj, out ValueBuffer buffer))
-                    {
-                        continue;
-                    }
-
-                    object effectiveEntity = entityObj;
-                    if (isTracking && !state.AlreadyTrackedEntities.Contains(entityObj))
-                    {
-                        IEntityType concreteType = queryContext.Context.Model.FindEntityType(entityObj.GetType()) ?? rootResultType;
-                        effectiveEntity = plan.GetTrackedMaterializer(concreteType)(queryContext, buffer);
-                        state.EntityBuffers[effectiveEntity] = buffer;
-                        _ = state.AlreadyTrackedEntities.Add(effectiveEntity);
-                        results[i] = (TElement)effectiveEntity;
-                    }
-
-                    finalized.Add((effectiveEntity, buffer));
-                }
-
-                return finalized;
+                PopulateExistingTrackedEntities(queryContext, state, existingTrackedByType);
             }
 
-            List<(object Entity, ValueBuffer Buffer)> rootRowsForIncludes = FinalizeResultEntities();
-            if (plan.IncludeSpecs.Count > 0 && rootRowsForIncludes.Count > 0)
+            List<(object Entity, ValueBuffer Buffer)> rootRowsForIncludes = [];
+            HashSet<object> seenIncludeRoots = [with(ReferenceEqualityComparer.Instance)];
+            for (int i = 0; i < results.Count; i++)
+            {
+                if (results[i] is not object elementObj)
+                {
+                    continue;
+                }
+
+                object? promoted = PromoteResultGraph(
+                    elementObj,
+                    queryContext,
+                    plan,
+                    state,
+                    existingTrackedByType,
+                    isTracking,
+                    rootRowsForIncludes,
+                    seenIncludeRoots);
+                if (promoted is TElement typedPromoted)
+                {
+                    results[i] = typedPromoted;
+                }
+            }
+
+            if (resultEntityType is not null && plan.IncludeChains.Count > 0 && rootRowsForIncludes.Count > 0)
             {
                 await LoadIncludesForResultEntitiesAsync(
                     (JetQueryContext)queryContext,
                     plan,
                     state,
-                    rootResultType,
                     rootRowsForIncludes,
+                    existingTrackedByType,
                     isTracking,
                     resolveIdentityUntracked,
                     effectiveToken).ConfigureAwait(false);
@@ -305,7 +302,7 @@ internal static class JetAsyncQueryExecutor
 
         QueryTrackingBehavior trackingBehavior = plan.TrackingBehaviorOverride
             ?? queryContext.Context.ChangeTracker.QueryTrackingBehavior;
-        bool isTracking = trackingBehavior == QueryTrackingBehavior.TrackAll && resultEntityType is not null;
+        bool isTracking = trackingBehavior == QueryTrackingBehavior.TrackAll;
         bool resolveIdentityUntracked = trackingBehavior == QueryTrackingBehavior.NoTrackingWithIdentityResolution;
 
         if (isTracking)
@@ -322,27 +319,38 @@ internal static class JetAsyncQueryExecutor
 
         TScalar result = compiledQuery(queryContext, state);
 
-        if (resultEntityType is not null && result is object entityObj && state.EntityBuffers.TryGetValue(entityObj, out ValueBuffer buffer))
+        if (result is object resultObj)
         {
-            IEntityType rootResultType = resultEntityType.GetRootType();
-            object effectiveEntity = entityObj;
-            if (isTracking && !state.AlreadyTrackedEntities.Contains(entityObj))
+            Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType = [];
+            if (isTracking)
             {
-                IEntityType concreteType = queryContext.Context.Model.FindEntityType(entityObj.GetType()) ?? rootResultType;
-                effectiveEntity = plan.GetTrackedMaterializer(concreteType)(queryContext, buffer);
-                state.EntityBuffers[effectiveEntity] = buffer;
-                _ = state.AlreadyTrackedEntities.Add(effectiveEntity);
-                result = (TScalar)effectiveEntity;
+                PopulateExistingTrackedEntities(queryContext, state, existingTrackedByType);
             }
 
-            if (plan.IncludeSpecs.Count > 0)
+            List<(object Entity, ValueBuffer Buffer)> rootRowsForIncludes = [];
+            HashSet<object> seenIncludeRoots = [with(ReferenceEqualityComparer.Instance)];
+            object? promoted = PromoteResultGraph(
+                resultObj,
+                queryContext,
+                plan,
+                state,
+                existingTrackedByType,
+                isTracking,
+                rootRowsForIncludes,
+                seenIncludeRoots);
+            if (promoted is TScalar typedPromoted)
+            {
+                result = typedPromoted;
+            }
+
+            if (resultEntityType is not null && plan.IncludeChains.Count > 0 && rootRowsForIncludes.Count > 0)
             {
                 await LoadIncludesForResultEntitiesAsync(
                     (JetQueryContext)queryContext,
                     plan,
                     state,
-                    rootResultType,
-                    [(effectiveEntity, buffer)],
+                    rootRowsForIncludes,
+                    existingTrackedByType,
                     isTracking,
                     resolveIdentityUntracked,
                     effectiveToken).ConfigureAwait(false);
@@ -362,14 +370,9 @@ internal static class JetAsyncQueryExecutor
         var jetContext = (JetQueryContext)queryContext;
         JetExecutionMaterializedState state = new();
 
-        Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType = [];
-        if (isTracking)
-        {
-            PopulateExistingTrackedEntities(queryContext, state, existingTrackedByType);
-        }
-
         Dictionary<IEntityType, IReadOnlyList<ValueBuffer>> unindexedBufferCache = [];
         Dictionary<IEntityType, Dictionary<StructuralKey, object>> untrackedIdentityMaps = [];
+        bool deduplicateCandidates = isTracking || resolveIdentityUntracked;
 
         foreach (JetTableLoadPlan tablePlan in plan.RootTables)
         {
@@ -398,9 +401,7 @@ internal static class JetAsyncQueryExecutor
                 buffers,
                 plan,
                 state,
-                isTracking,
-                resolveIdentityUntracked,
-                existingTrackedByType,
+                deduplicateCandidates,
                 untrackedIdentityMaps,
                 cancellationToken);
             state.RootRows[tablePlan.RootId] = rows;
@@ -440,38 +441,46 @@ internal static class JetAsyncQueryExecutor
                     declaringBuffers,
                     plan,
                     state,
-                    isTracking,
-                    resolveIdentityUntracked,
-                    existingTrackedByType,
+                    deduplicateCandidates,
                     untrackedIdentityMaps,
                     cancellationToken);
                 state.TablesByEntityType[declaringRoot] = declaringRows;
             }
 
+            IReadOnlyList<ValueBuffer> targetBuffers = await LoadRelatedValueBuffersAsync(
+                jetContext,
+                navigation,
+                declaringRows,
+                cancellationToken).ConfigureAwait(false);
+            List<(object Entity, ValueBuffer Buffer)> loadedTargetRows = MaterializeCandidateRows(
+                queryContext,
+                targetRoot,
+                targetBuffers,
+                plan,
+                state,
+                deduplicateCandidates: true,
+                untrackedIdentityMaps,
+                cancellationToken);
+            if (!plan.IgnoreQueryFilters)
+            {
+                loadedTargetRows = ApplyEntityQueryFilters(queryContext, state, targetRoot, loadedTargetRows);
+            }
+
             if (!state.TablesByEntityType.TryGetValue(targetRoot, out List<(object Entity, ValueBuffer Buffer)>? targetRows))
             {
-                IReadOnlyList<ValueBuffer> targetBuffers = await LoadRelatedValueBuffersAsync(
-                    jetContext,
-                    navigation,
-                    declaringRows,
-                    cancellationToken).ConfigureAwait(false);
-                targetRows = MaterializeCandidateRows(
-                    queryContext,
-                    targetRoot,
-                    targetBuffers,
-                    plan,
-                    state,
-                    isTracking,
-                    resolveIdentityUntracked,
-                    existingTrackedByType,
-                    untrackedIdentityMaps,
-                    cancellationToken);
-                if (!plan.IgnoreQueryFilters)
-                {
-                    targetRows = ApplyEntityQueryFilters(queryContext, state, targetRoot, targetRows);
-                }
-
+                targetRows = loadedTargetRows;
                 state.TablesByEntityType[targetRoot] = targetRows;
+            }
+            else if (loadedTargetRows.Count > 0)
+            {
+                HashSet<object> seenTargetEntities = [with(ReferenceEqualityComparer.Instance), .. targetRows.Select(static r => r.Entity)];
+                foreach ((object Entity, ValueBuffer Buffer) row in loadedTargetRows)
+                {
+                    if (seenTargetEntities.Add(row.Entity))
+                    {
+                        targetRows.Add(row);
+                    }
+                }
             }
 
             FixupNavigation(
@@ -480,6 +489,7 @@ internal static class JetAsyncQueryExecutor
                 declaringRows,
                 targetRows,
                 collectionTransform: null,
+                state,
                 markNavigationLoaded: false);
         }
 
@@ -490,82 +500,60 @@ internal static class JetAsyncQueryExecutor
         JetQueryContext queryContext,
         JetQueryPlan plan,
         JetExecutionMaterializedState state,
-        IEntityType rootResultType,
         List<(object Entity, ValueBuffer Buffer)> resultRows,
+        Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType,
         bool isTracking,
         bool resolveIdentityUntracked,
         CancellationToken cancellationToken)
     {
-        Dictionary<IEntityType, List<(object Entity, ValueBuffer Buffer)>> activeParentsByType = [];
-        activeParentsByType[rootResultType] = resultRows;
-
-        Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType = [];
-        if (isTracking)
-        {
-            PopulateExistingTrackedEntities(queryContext, state, existingTrackedByType);
-        }
-
         Dictionary<IEntityType, Dictionary<StructuralKey, object>> untrackedIdentityMaps = [];
+        HashSet<(object Entity, INavigation Navigation)> initializedCollections = [with(EntityNavigationPairComparer.Instance)];
 
-        foreach (JetIncludeSpec includeSpec in plan.IncludeSpecs)
+        foreach (JetIncludeChain chain in plan.IncludeChains)
         {
-            INavigation navigation = includeSpec.Navigation;
-            IEntityType declaringRoot = navigation.DeclaringEntityType.GetRootType();
-            IEntityType targetRoot = navigation.TargetEntityType.GetRootType();
-
-            if (!activeParentsByType.TryGetValue(declaringRoot, out List<(object Entity, ValueBuffer Buffer)>? declaringRows)
-                || declaringRows.Count == 0)
+            List<(object Entity, ValueBuffer Buffer)> currentDeclaringRows = resultRows;
+            foreach (JetIncludeStep step in chain.Steps)
             {
-                continue;
-            }
-
-            IReadOnlyList<ValueBuffer> targetBuffers = await LoadRelatedValueBuffersAsync(
-                queryContext,
-                navigation,
-                declaringRows,
-                cancellationToken).ConfigureAwait(false);
-
-            List<(object Entity, ValueBuffer Buffer)> candidateTargetRows = MaterializeCandidateRows(
-                queryContext,
-                targetRoot,
-                targetBuffers,
-                plan,
-                state,
-                isTracking,
-                resolveIdentityUntracked,
-                existingTrackedByType,
-                untrackedIdentityMaps,
-                cancellationToken);
-
-            if (!plan.IgnoreQueryFilters)
-            {
-                candidateTargetRows = ApplyEntityQueryFilters(queryContext, state, targetRoot, candidateTargetRows);
-            }
-
-            List<(object Entity, ValueBuffer Buffer)> matchedTargetRows = FixupNavigationAndPromoteMatchedTargets(
-                queryContext,
-                navigation,
-                declaringRows,
-                candidateTargetRows,
-                includeSpec.CollectionFilter,
-                plan,
-                state,
-                isTracking);
-
-            if (!activeParentsByType.TryGetValue(targetRoot, out List<(object Entity, ValueBuffer Buffer)>? existingTargetRows))
-            {
-                activeParentsByType[targetRoot] = matchedTargetRows;
-            }
-            else
-            {
-                HashSet<object> seen = [with(ReferenceEqualityComparer.Instance), .. existingTargetRows.Select(static r => r.Entity)];
-                foreach ((object Entity, ValueBuffer Buffer) row in matchedTargetRows)
+                if (currentDeclaringRows.Count == 0)
                 {
-                    if (seen.Add(row.Entity))
-                    {
-                        existingTargetRows.Add(row);
-                    }
+                    break;
                 }
+
+                INavigation navigation = step.Navigation;
+                IEntityType targetRoot = navigation.TargetEntityType.GetRootType();
+
+                IReadOnlyList<ValueBuffer> targetBuffers = await LoadRelatedValueBuffersAsync(
+                    queryContext,
+                    navigation,
+                    currentDeclaringRows,
+                    cancellationToken).ConfigureAwait(false);
+
+                List<(object Entity, ValueBuffer Buffer)> candidateTargetRows = MaterializeCandidateRows(
+                    queryContext,
+                    targetRoot,
+                    targetBuffers,
+                    plan,
+                    state,
+                    deduplicateCandidates: isTracking || resolveIdentityUntracked,
+                    untrackedIdentityMaps,
+                    cancellationToken);
+
+                if (!plan.IgnoreQueryFilters)
+                {
+                    candidateTargetRows = ApplyEntityQueryFilters(queryContext, state, targetRoot, candidateTargetRows);
+                }
+
+                currentDeclaringRows = FixupNavigationAndPromoteMatchedTargets(
+                    queryContext,
+                    navigation,
+                    currentDeclaringRows,
+                    candidateTargetRows,
+                    step.CollectionFilter,
+                    plan,
+                    state,
+                    existingTrackedByType,
+                    initializedCollections,
+                    isTracking);
             }
         }
     }
@@ -691,29 +679,203 @@ internal static class JetAsyncQueryExecutor
         }
     }
 
+    private static object? PromoteResultGraph(
+        object? value,
+        QueryContext queryContext,
+        JetQueryPlan plan,
+        JetExecutionMaterializedState state,
+        Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType,
+        bool isTracking,
+        List<(object Entity, ValueBuffer Buffer)> rootRowsForIncludes,
+        HashSet<object> seenIncludeRoots)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        if (state.EntityBuffers.TryGetValue(value, out ValueBuffer buffer))
+        {
+            object effectiveEntity = isTracking
+                ? PromoteEntityInstance(value, buffer, queryContext, plan, state, existingTrackedByType)
+                : value;
+            if (seenIncludeRoots.Add(effectiveEntity))
+            {
+                rootRowsForIncludes.Add((effectiveEntity, buffer));
+            }
+
+            return effectiveEntity;
+        }
+
+        if (!isTracking)
+        {
+            return value;
+        }
+
+        Type type = value.GetType();
+        if (type.IsPrimitive || type.IsEnum || type == typeof(string) || type == typeof(decimal)
+            || type == typeof(DateTime) || type == typeof(DateTimeOffset) || type == typeof(DateOnly)
+            || type == typeof(TimeOnly) || type == typeof(TimeSpan) || type == typeof(Guid) || value is IEnumerable)
+        {
+            return value;
+        }
+
+        if (type.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false)
+            && type.Name.Contains("AnonymousType", StringComparison.Ordinal))
+        {
+            ConstructorInfo[] ctors = type.GetConstructors();
+            PropertyInfo[] props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            if (ctors.Length == 1 && ctors[0].GetParameters().Length == props.Length)
+            {
+                object?[] args = new object?[props.Length];
+                bool anyChanged = false;
+                for (int i = 0; i < props.Length; i++)
+                {
+                    object? origVal = props[i].GetValue(value);
+                    object? promotedVal = PromoteResultGraph(
+                        origVal,
+                        queryContext,
+                        plan,
+                        state,
+                        existingTrackedByType,
+                        isTracking,
+                        rootRowsForIncludes,
+                        seenIncludeRoots);
+                    args[i] = promotedVal;
+                    if (!ReferenceEquals(origVal, promotedVal))
+                    {
+                        anyChanged = true;
+                    }
+                }
+
+                return anyChanged ? ctors[0].Invoke(args) : value;
+            }
+        }
+
+        if (type.IsValueType && type.FullName?.StartsWith("System.ValueTuple`", StringComparison.Ordinal) == true)
+        {
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.Instance);
+            ConstructorInfo? tupleCtor = type.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == fields.Length);
+            if (tupleCtor is not null)
+            {
+                object?[] args = new object?[fields.Length];
+                bool anyChanged = false;
+                for (int i = 0; i < fields.Length; i++)
+                {
+                    object? origVal = fields[i].GetValue(value);
+                    object? promotedVal = PromoteResultGraph(
+                        origVal,
+                        queryContext,
+                        plan,
+                        state,
+                        existingTrackedByType,
+                        isTracking,
+                        rootRowsForIncludes,
+                        seenIncludeRoots);
+                    args[i] = promotedVal;
+                    if (!ReferenceEquals(origVal, promotedVal))
+                    {
+                        anyChanged = true;
+                    }
+                }
+
+                return anyChanged ? tupleCtor.Invoke(args) : value;
+            }
+        }
+
+        if (!type.IsValueType)
+        {
+            foreach (PropertyInfo prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (!prop.CanRead || !prop.CanWrite || prop.GetIndexParameters().Length != 0)
+                {
+                    continue;
+                }
+
+                object? origVal = prop.GetValue(value);
+                if (origVal is not null && state.EntityBuffers.TryGetValue(origVal, out ValueBuffer propBuf))
+                {
+                    object promotedProp = PromoteEntityInstance(origVal, propBuf, queryContext, plan, state, existingTrackedByType);
+                    if (!ReferenceEquals(origVal, promotedProp))
+                    {
+                        prop.SetValue(value, promotedProp);
+                    }
+                }
+            }
+        }
+
+        return value;
+    }
+
+    private static object PromoteEntityInstance(
+        object candidateEntity,
+        ValueBuffer buffer,
+        QueryContext queryContext,
+        JetQueryPlan plan,
+        JetExecutionMaterializedState state,
+        Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType)
+    {
+        if (state.AlreadyTrackedEntities.Contains(candidateEntity))
+        {
+            return candidateEntity;
+        }
+
+        if (state.PromotedEntities.TryGetValue(candidateEntity, out object? alreadyPromoted))
+        {
+            return alreadyPromoted;
+        }
+
+        IEntityType? concreteType = queryContext.Context.Model.FindEntityType(candidateEntity.GetType());
+        if (concreteType is null)
+        {
+            return candidateEntity;
+        }
+
+        IEntityType rootType = concreteType.GetRootType();
+        IKey? primaryKey = rootType.FindPrimaryKey();
+        if (primaryKey is not null
+            && existingTrackedByType.TryGetValue(rootType, out Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>? trackedMap)
+            && trackedMap.TryGetValue(ExtractKey(primaryKey, buffer), out (object Entity, ValueBuffer Buffer) trackedEntry))
+        {
+            state.PromotedEntities[candidateEntity] = trackedEntry.Entity;
+            state.EntityBuffers[trackedEntry.Entity] = buffer;
+            _ = state.AlreadyTrackedEntities.Add(trackedEntry.Entity);
+            return trackedEntry.Entity;
+        }
+
+        object tracked = plan.GetTrackedMaterializer(concreteType)(queryContext, buffer);
+        state.PromotedEntities[candidateEntity] = tracked;
+        state.EntityBuffers[tracked] = buffer;
+        _ = state.AlreadyTrackedEntities.Add(tracked);
+        if (primaryKey is not null)
+        {
+            if (!existingTrackedByType.TryGetValue(rootType, out Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>? map))
+            {
+                map = [];
+                existingTrackedByType[rootType] = map;
+            }
+
+            map[ExtractKey(primaryKey, buffer)] = (tracked, buffer);
+        }
+
+        return tracked;
+    }
+
     private static List<(object Entity, ValueBuffer Buffer)> MaterializeCandidateRows(
         QueryContext queryContext,
         IEntityType rootEntityType,
         IReadOnlyList<ValueBuffer> buffers,
         JetQueryPlan plan,
         JetExecutionMaterializedState state,
-        bool isTracking,
-        bool resolveIdentityUntracked,
-        Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType,
+        bool deduplicateCandidates,
         Dictionary<IEntityType, Dictionary<StructuralKey, object>> untrackedIdentityMaps,
         CancellationToken cancellationToken)
     {
         Func<QueryContext, ValueBuffer, object> untrackedMaterializer = plan.GetUntrackedMaterializer(rootEntityType);
         IKey? primaryKey = rootEntityType.FindPrimaryKey();
 
-        Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>? trackedMap = null;
-        if (isTracking && primaryKey is not null)
-        {
-            _ = existingTrackedByType.TryGetValue(rootEntityType, out trackedMap);
-        }
-
         Dictionary<StructuralKey, object>? untrackedMap = null;
-        if ((resolveIdentityUntracked || isTracking)
+        if (deduplicateCandidates
             && primaryKey is not null
             && !untrackedIdentityMaps.TryGetValue(rootEntityType, out untrackedMap))
         {
@@ -726,27 +888,16 @@ internal static class JetAsyncQueryExecutor
         {
             cancellationToken.ThrowIfCancellationRequested();
             object entity;
-            if (primaryKey is not null)
+            if (primaryKey is not null && untrackedMap is not null)
             {
                 StructuralKey key = ExtractKey(primaryKey, buffer);
-                if (trackedMap is not null && trackedMap.TryGetValue(key, out (object Entity, ValueBuffer Buffer) trackedEntry))
+                if (!untrackedMap.TryGetValue(key, out object? existing))
                 {
-                    entity = trackedEntry.Entity;
+                    existing = untrackedMaterializer(queryContext, buffer);
+                    untrackedMap[key] = existing;
                 }
-                else if (untrackedMap is not null)
-                {
-                    if (!untrackedMap.TryGetValue(key, out object? existing))
-                    {
-                        existing = untrackedMaterializer(queryContext, buffer);
-                        untrackedMap[key] = existing;
-                    }
 
-                    entity = existing;
-                }
-                else
-                {
-                    entity = untrackedMaterializer(queryContext, buffer);
-                }
+                entity = existing;
             }
             else
             {
@@ -760,6 +911,17 @@ internal static class JetAsyncQueryExecutor
         return loadedRows;
     }
 
+    private static List<IQueryFilter> GetAllQueryFilters(IEntityType entityType)
+    {
+        List<IQueryFilter> filters = [];
+        foreach (IEntityType current in entityType.GetAllBaseTypesInclusive())
+        {
+            filters.AddRange(current.GetDeclaredQueryFilters());
+        }
+
+        return filters;
+    }
+
     private static List<(object Entity, ValueBuffer Buffer)> ApplyEntityQueryFilters(
         QueryContext queryContext,
         JetExecutionMaterializedState state,
@@ -771,7 +933,7 @@ internal static class JetAsyncQueryExecutor
             return rows;
         }
 
-        IReadOnlyCollection<IQueryFilter> declaredFilters = entityType.GetDeclaredQueryFilters();
+        List<IQueryFilter> declaredFilters = GetAllQueryFilters(entityType);
         if (declaredFilters.Count == 0)
         {
             return rows;
@@ -833,25 +995,21 @@ internal static class JetAsyncQueryExecutor
         INavigation navigation,
         List<(object Entity, ValueBuffer Buffer)> declaringRows,
         List<(object Entity, ValueBuffer Buffer)> candidateTargetRows,
-        Func<QueryContext, IEnumerable<object>, IEnumerable<object>>? collectionFilter,
-        JetQueryPlan plan,
+        Func<QueryContext, JetExecutionMaterializedState, IEnumerable<object>, IEnumerable<object>>? collectionFilter,
+        JetQueryPlan? plan,
         JetExecutionMaterializedState state,
+        Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>>? existingTrackedByType,
+        HashSet<(object Entity, INavigation Navigation)>? initializedCollections,
         bool isTracking)
     {
-        IEntityType targetRoot = navigation.TargetEntityType.GetRootType();
-
         object PromoteTargetIfNeeded(object targetEntity, ValueBuffer targetBuffer)
         {
-            if (!isTracking || state.AlreadyTrackedEntities.Contains(targetEntity))
+            if (!isTracking || plan is null || existingTrackedByType is null)
             {
                 return targetEntity;
             }
 
-            IEntityType concreteType = queryContext.Context.Model.FindEntityType(targetEntity.GetType()) ?? targetRoot;
-            object tracked = plan.GetTrackedMaterializer(concreteType)(queryContext, targetBuffer);
-            state.EntityBuffers[tracked] = targetBuffer;
-            _ = state.AlreadyTrackedEntities.Add(tracked);
-            return tracked;
+            return PromoteEntityInstance(targetEntity, targetBuffer, queryContext, plan, state, existingTrackedByType);
         }
 
         if (navigation.IsCollection)
@@ -859,7 +1017,12 @@ internal static class JetAsyncQueryExecutor
             IClrCollectionAccessor? collectionAccessor = navigation.GetCollectionAccessor();
             foreach ((object declaringEntity, _) in declaringRows)
             {
-                _ = collectionAccessor?.GetOrCreate(declaringEntity, forMaterialization: true);
+                object? collectionInstance = collectionAccessor?.GetOrCreate(declaringEntity, forMaterialization: true);
+                if (initializedCollections?.Add((declaringEntity, navigation)) == true)
+                {
+                    ClearCollectionInstance(collectionInstance);
+                }
+
                 if (isTracking)
                 {
                     queryContext.SetNavigationIsLoaded(declaringEntity, navigation);
@@ -976,7 +1139,7 @@ internal static class JetAsyncQueryExecutor
                     }
 
                     List<(object Entity, ValueBuffer Buffer)> filteredChildren = [];
-                    foreach (object survivingChild in collectionFilter(queryContext, rawChildren))
+                    foreach (object survivingChild in collectionFilter(queryContext, state, rawChildren))
                     {
                         if (bufByObj.TryGetValue(survivingChild, out ValueBuffer childBuf))
                         {
@@ -1018,12 +1181,28 @@ internal static class JetAsyncQueryExecutor
         return promotedTargets;
     }
 
+    private static void ClearCollectionInstance(object? collectionInstance)
+    {
+        if (collectionInstance is IList list)
+        {
+            list.Clear();
+            return;
+        }
+
+        if (collectionInstance is not null)
+        {
+            MethodInfo? clearMethod = collectionInstance.GetType().GetMethod("Clear", Type.EmptyTypes);
+            _ = clearMethod?.Invoke(collectionInstance, null);
+        }
+    }
+
     private static void FixupNavigation(
         QueryContext queryContext,
         INavigation navigation,
         List<(object Entity, ValueBuffer Buffer)> declaringRows,
         List<(object Entity, ValueBuffer Buffer)> targetRows,
-        Func<QueryContext, IEnumerable<object>, IEnumerable<object>>? collectionTransform,
+        Func<QueryContext, JetExecutionMaterializedState, IEnumerable<object>, IEnumerable<object>>? collectionTransform,
+        JetExecutionMaterializedState state,
         bool markNavigationLoaded)
         => _ = FixupNavigationAndPromoteMatchedTargets(
             queryContext,
@@ -1031,8 +1210,10 @@ internal static class JetAsyncQueryExecutor
             declaringRows,
             targetRows,
             collectionTransform,
-            plan: null!,
-            state: null!,
+            plan: null,
+            state,
+            existingTrackedByType: null,
+            initializedCollections: null,
             isTracking: markNavigationLoaded);
 
     private static void SetNavigationValue(INavigation navigation, object entity, object? value)
@@ -1274,19 +1455,35 @@ internal static class JetAsyncQueryExecutor
         public List<JetIndexSeekCondition> SeekConditions { get; } = seekConditions;
     }
 
-    private sealed class JetIncludeSpec(
+    private sealed class EntityNavigationPairComparer : IEqualityComparer<(object Entity, INavigation Navigation)>
+    {
+        public static EntityNavigationPairComparer Instance { get; } = new();
+
+        public bool Equals((object Entity, INavigation Navigation) x, (object Entity, INavigation Navigation) y)
+            => ReferenceEquals(x.Entity, y.Entity) && Equals(x.Navigation, y.Navigation);
+
+        public int GetHashCode((object Entity, INavigation Navigation) obj)
+            => HashCode.Combine(RuntimeHelpers.GetHashCode(obj.Entity), obj.Navigation);
+    }
+
+    private sealed class JetIncludeStep(
         INavigation navigation,
-        Func<QueryContext, IEnumerable<object>, IEnumerable<object>>? collectionFilter)
+        Func<QueryContext, JetExecutionMaterializedState, IEnumerable<object>, IEnumerable<object>>? collectionFilter)
     {
         public INavigation Navigation { get; } = navigation;
 
-        public Func<QueryContext, IEnumerable<object>, IEnumerable<object>>? CollectionFilter { get; set; } = collectionFilter;
+        public Func<QueryContext, JetExecutionMaterializedState, IEnumerable<object>, IEnumerable<object>>? CollectionFilter { get; } = collectionFilter;
+    }
+
+    private sealed class JetIncludeChain(IReadOnlyList<JetIncludeStep> steps)
+    {
+        public IReadOnlyList<JetIncludeStep> Steps { get; } = steps;
     }
 
     private sealed class JetQueryPlan(
         List<JetTableLoadPlan> rootTables,
         Dictionary<EntityQueryRootExpression, JetTableLoadPlan> rootPlansByExpression,
-        List<JetIncludeSpec> includeSpecs,
+        List<JetIncludeChain> includeChains,
         List<INavigation> queryReferencedNavigations,
         QueryTrackingBehavior? trackingBehaviorOverride,
         bool ignoreQueryFilters,
@@ -1301,7 +1498,7 @@ internal static class JetAsyncQueryExecutor
 
         public Dictionary<EntityQueryRootExpression, JetTableLoadPlan> RootPlansByExpression { get; } = rootPlansByExpression;
 
-        public List<JetIncludeSpec> IncludeSpecs { get; } = includeSpecs;
+        public List<JetIncludeChain> IncludeChains { get; } = includeChains;
 
         public List<INavigation> QueryReferencedNavigations { get; } = queryReferencedNavigations;
 
@@ -1363,6 +1560,8 @@ internal static class JetAsyncQueryExecutor
 
         public Dictionary<object, ValueBuffer> EntityBuffers { get; } = [with(ReferenceEqualityComparer.Instance)];
 
+        public Dictionary<object, object> PromotedEntities { get; } = [with(ReferenceEqualityComparer.Instance)];
+
         public HashSet<object> AlreadyTrackedEntities { get; } = [with(ReferenceEqualityComparer.Instance)];
     }
 
@@ -1370,10 +1569,9 @@ internal static class JetAsyncQueryExecutor
     {
         private readonly List<JetTableLoadPlan> rootTables = [];
         private readonly Dictionary<EntityQueryRootExpression, JetTableLoadPlan> rootPlansByExpression = [with(ReferenceEqualityComparer.Instance)];
-        private readonly List<JetIncludeSpec> includeSpecs = [];
-        private readonly Dictionary<INavigation, JetIncludeSpec> includeByNavigation = [];
+        private readonly List<JetIncludeChain> includeChains = [];
         private readonly List<INavigation> queryReferencedNavigations = [];
-        private readonly HashSet<INavigation> queryReferencedNavigationSet = [];
+        private readonly HashSet<(int HopDepth, INavigation Navigation)> queryReferencedNavigationSet = [];
         private bool ignoreAutoIncludes;
         private bool inIncludeArgument;
 
@@ -1395,7 +1593,7 @@ internal static class JetAsyncQueryExecutor
             {
                 foreach (JetTableLoadPlan tablePlan in extractor.rootTables)
                 {
-                    extractor.AddAutoIncludes(tablePlan.QueryEntityType, []);
+                    extractor.AddAutoIncludes(tablePlan.QueryEntityType, [], []);
                 }
             }
 
@@ -1403,7 +1601,7 @@ internal static class JetAsyncQueryExecutor
             {
                 foreach (JetTableLoadPlan tablePlan in extractor.rootTables)
                 {
-                    foreach (IQueryFilter filter in tablePlan.QueryEntityType.GetDeclaredQueryFilters())
+                    foreach (IQueryFilter filter in GetAllQueryFilters(tablePlan.QueryEntityType))
                     {
                         if (filter.Expression is LambdaExpression filterLambda)
                         {
@@ -1417,7 +1615,7 @@ internal static class JetAsyncQueryExecutor
             return new JetQueryPlan(
                 extractor.rootTables,
                 extractor.rootPlansByExpression,
-                extractor.includeSpecs,
+                extractor.includeChains,
                 extractor.queryReferencedNavigations,
                 extractor.TrackingBehaviorOverride,
                 extractor.IgnoreQueryFilters,
@@ -1464,18 +1662,7 @@ internal static class JetAsyncQueryExecutor
                 else if (node.Method.Name is nameof(EntityFrameworkQueryableExtensions.Include)
                          or nameof(EntityFrameworkQueryableExtensions.ThenInclude))
                 {
-                    _ = this.Visit(node.Arguments[0]);
-                    bool previousInInclude = this.inIncludeArgument;
-                    this.inIncludeArgument = true;
-                    try
-                    {
-                        this.ExtractIncludeNavigations(node);
-                    }
-                    finally
-                    {
-                        this.inIncludeArgument = previousInInclude;
-                    }
-
+                    this.ExtractIncludeChain(node);
                     return node;
                 }
             }
@@ -1504,17 +1691,18 @@ internal static class JetAsyncQueryExecutor
 
         protected override Expression VisitMember(MemberExpression node)
         {
+            Expression visited = base.VisitMember(node);
             if (!this.inIncludeArgument && node.Expression is not null)
             {
                 IEntityType? ownerType = model.FindEntityType(node.Expression.Type);
                 INavigation? nav = ownerType?.FindNavigation(node.Member);
-                if (nav is not null && this.queryReferencedNavigationSet.Add(nav))
+                if (nav is not null && this.queryReferencedNavigationSet.Add((this.GetNavigationHopDepth(node), nav)))
                 {
                     this.queryReferencedNavigations.Add(nav);
                 }
             }
 
-            return base.VisitMember(node);
+            return visited;
         }
 
         private static Expression StripQuotes(Expression expression)
@@ -1585,7 +1773,7 @@ internal static class JetAsyncQueryExecutor
             LambdaExpression lambda,
             IModel model,
             out MemberExpression? memberExpression,
-            out Func<QueryContext, IEnumerable<object>, IEnumerable<object>>? collectionFilter)
+            out Func<QueryContext, JetExecutionMaterializedState, IEnumerable<object>, IEnumerable<object>>? collectionFilter)
         {
             memberExpression = null;
             collectionFilter = null;
@@ -1622,6 +1810,7 @@ internal static class JetAsyncQueryExecutor
 
             Type elementType = nav.TargetEntityType.ClrType;
             ParameterExpression queryContextParam = Expression.Parameter(typeof(QueryContext), "queryContext");
+            ParameterExpression stateParam = Expression.Parameter(typeof(JetExecutionMaterializedState), "state");
             ParameterExpression rawCollectionParam = Expression.Parameter(typeof(IEnumerable<object>), "rawItems");
             MethodCallExpression castCall = Expression.Call(
                 typeof(Enumerable),
@@ -1630,10 +1819,9 @@ internal static class JetAsyncQueryExecutor
                 rawCollectionParam);
 
             Expression replacedBody = new ExpressionReplacer(member, castCall).Visit(lambda.Body)!;
-            ParameterExpression dummyStateParam = Expression.Parameter(typeof(JetExecutionMaterializedState), "state");
             Expression rewrittenBody = new JetCompiledExpressionRewriter(
                 queryContextParam,
-                dummyStateParam,
+                stateParam,
                 model,
                 new Dictionary<EntityQueryRootExpression, JetTableLoadPlan>(ReferenceEqualityComparer.Instance),
                 ignoreQueryFilters: true).Visit(replacedBody);
@@ -1643,9 +1831,10 @@ internal static class JetAsyncQueryExecutor
                 nameof(Enumerable.Cast),
                 [typeof(object)],
                 rewrittenBody);
-            collectionFilter = Expression.Lambda<Func<QueryContext, IEnumerable<object>, IEnumerable<object>>>(
+            collectionFilter = Expression.Lambda<Func<QueryContext, JetExecutionMaterializedState, IEnumerable<object>, IEnumerable<object>>>(
                 boxResult,
                 queryContextParam,
+                stateParam,
                 rawCollectionParam).Compile();
             return true;
         }
@@ -1666,75 +1855,112 @@ internal static class JetAsyncQueryExecutor
             return plan;
         }
 
-        private void ExtractIncludeNavigations(MethodCallExpression includeCall)
+        private void ExtractIncludeChain(MethodCallExpression outerIncludeCall)
         {
-            if (includeCall.Arguments.Count < 2)
+            List<MethodCallExpression> chainCalls = [];
+            Expression current = outerIncludeCall;
+            while (current is MethodCallExpression call
+                   && call.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
+                   && call.Method.Name is nameof(EntityFrameworkQueryableExtensions.Include)
+                       or nameof(EntityFrameworkQueryableExtensions.ThenInclude))
             {
-                return;
+                chainCalls.Add(call);
+                current = call.Arguments[0];
             }
 
-            Expression navArg = StripQuotes(includeCall.Arguments[1]);
-            if (navArg is LambdaExpression lambda)
+            chainCalls.Reverse();
+            _ = this.Visit(current);
+
+            bool previousInInclude = this.inIncludeArgument;
+            this.inIncludeArgument = true;
+            try
             {
-                IEntityType? sourceType = model.FindEntityType(lambda.Parameters[0].Type);
-                if (sourceType is not null
-                    && TryExtractIncludeMemberAndFilter(
-                        lambda,
-                        model,
-                        out MemberExpression? memberExpr,
-                        out Func<QueryContext, IEnumerable<object>, IEnumerable<object>>? collectionFilter))
+                List<JetIncludeStep> steps = [];
+                foreach (MethodCallExpression includeCall in chainCalls)
                 {
-                    INavigation? nav = sourceType.FindNavigation(memberExpr!.Member);
-                    if (nav is not null)
+                    if (includeCall.Arguments.Count < 2)
                     {
-                        this.AddIncludeNavigation(nav, collectionFilter);
-                    }
-                }
-            }
-            else if (navArg is ConstantExpression { Value: string path }
-                     && TryFindRootEntityTypeRecursive(includeCall.Arguments[0], out IEntityType? rootType))
-            {
-                IEntityType currentType = rootType!;
-                foreach (string segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    INavigation? nav = currentType.FindNavigation(segment);
-                    if (nav is null)
-                    {
-                        break;
+                        continue;
                     }
 
-                    this.AddIncludeNavigation(nav, collectionFilter: null);
-                    currentType = nav.TargetEntityType;
+                    Expression navArg = StripQuotes(includeCall.Arguments[1]);
+                    if (navArg is LambdaExpression lambda)
+                    {
+                        IEntityType? sourceType = model.FindEntityType(lambda.Parameters[0].Type);
+                        if (sourceType is not null
+                            && TryExtractIncludeMemberAndFilter(
+                                lambda,
+                                model,
+                                out MemberExpression? memberExpr,
+                                out Func<QueryContext, JetExecutionMaterializedState, IEnumerable<object>, IEnumerable<object>>? collectionFilter))
+                        {
+                            INavigation? nav = sourceType.FindNavigation(memberExpr!.Member);
+                            if (nav is not null)
+                            {
+                                steps.Add(new JetIncludeStep(nav, collectionFilter));
+                            }
+                        }
+                    }
+                    else if (navArg is ConstantExpression { Value: string path }
+                             && TryFindRootEntityTypeRecursive(includeCall.Arguments[0], out IEntityType? rootType))
+                    {
+                        IEntityType currentType = rootType!;
+                        foreach (string segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
+                        {
+                            INavigation? nav = currentType.FindNavigation(segment);
+                            if (nav is null)
+                            {
+                                break;
+                            }
+
+                            steps.Add(new JetIncludeStep(nav, collectionFilter: null));
+                            currentType = nav.TargetEntityType;
+                        }
+                    }
                 }
+
+                if (steps.Count > 0)
+                {
+                    this.includeChains.Add(new JetIncludeChain(steps));
+                }
+            }
+            finally
+            {
+                this.inIncludeArgument = previousInInclude;
             }
         }
 
-        private void AddAutoIncludes(IEntityType entityType, HashSet<INavigation> visited)
+        private void AddAutoIncludes(IEntityType entityType, HashSet<INavigation> visited, List<JetIncludeStep> currentPath)
         {
             foreach (INavigation nav in entityType.GetNavigations())
             {
                 if (nav.IsEagerLoaded && visited.Add(nav))
                 {
-                    this.AddIncludeNavigation(nav, collectionFilter: null);
-                    this.AddAutoIncludes(nav.TargetEntityType, visited);
+                    currentPath.Add(new JetIncludeStep(nav, collectionFilter: null));
+                    this.includeChains.Add(new JetIncludeChain([.. currentPath]));
+                    this.AddAutoIncludes(nav.TargetEntityType, visited, currentPath);
+                    currentPath.RemoveAt(currentPath.Count - 1);
                 }
             }
         }
 
-        private void AddIncludeNavigation(
-            INavigation navigation,
-            Func<QueryContext, IEnumerable<object>, IEnumerable<object>>? collectionFilter)
+        private int GetNavigationHopDepth(MemberExpression node)
         {
-            if (!this.includeByNavigation.TryGetValue(navigation, out JetIncludeSpec? spec))
+            int depth = 0;
+            Expression? current = node;
+            while (current is MemberExpression member && member.Expression is not null)
             {
-                spec = new JetIncludeSpec(navigation, collectionFilter);
-                this.includeByNavigation[navigation] = spec;
-                this.includeSpecs.Add(spec);
+                IEntityType? ownerType = model.FindEntityType(member.Expression.Type);
+                if (ownerType?.FindNavigation(member.Member) is null)
+                {
+                    break;
+                }
+
+                depth++;
+                current = StripQuotes(member.Expression);
             }
-            else if (collectionFilter is not null)
-            {
-                spec.CollectionFilter = collectionFilter;
-            }
+
+            return depth;
         }
     }
 
@@ -1767,11 +1993,21 @@ internal static class JetAsyncQueryExecutor
 
                 if (!ignoreQueryFilters)
                 {
-                    foreach (IQueryFilter filter in queryRoot.EntityType.GetDeclaredQueryFilters())
+                    foreach (IQueryFilter filter in GetAllQueryFilters(queryRoot.EntityType))
                     {
-                        if (filter.Expression is LambdaExpression filterLambda)
+                        if (filter.Expression is LambdaExpression filterLambda && filterLambda.Parameters.Count == 1)
                         {
                             var visitedFilter = (LambdaExpression)this.Visit(filterLambda);
+                            if (visitedFilter.Parameters[0].Type != queryRoot.EntityType.ClrType)
+                            {
+                                ParameterExpression derivedParam = Expression.Parameter(
+                                    queryRoot.EntityType.ClrType,
+                                    visitedFilter.Parameters[0].Name);
+                                Expression adaptedBody = new ExpressionReplacer(visitedFilter.Parameters[0], derivedParam)
+                                    .Visit(visitedFilter.Body)!;
+                                visitedFilter = Expression.Lambda(adaptedBody, derivedParam);
+                            }
+
                             current = Expression.Call(
                                 typeof(Enumerable),
                                 nameof(Enumerable.Where),
@@ -1859,6 +2095,28 @@ internal static class JetAsyncQueryExecutor
             return base.VisitMethodCall(node);
         }
 
+        protected override Expression VisitBinary(BinaryExpression node)
+        {
+            if (node.NodeType is ExpressionType.Equal
+                    or ExpressionType.NotEqual
+                    or ExpressionType.LessThan
+                    or ExpressionType.LessThanOrEqual
+                    or ExpressionType.GreaterThan
+                    or ExpressionType.GreaterThanOrEqual
+                && (this.IsNullableNavigationValueMember(node.Left) || this.IsNullableNavigationValueMember(node.Right))
+                && node.Left.Type.IsValueType
+                && Nullable.GetUnderlyingType(node.Left.Type) is null
+                && node.Left.Type == node.Right.Type)
+            {
+                Type liftedType = typeof(Nullable<>).MakeGenericType(node.Left.Type);
+                Expression liftedLeft = this.VisitAsLiftedNullable(node.Left, liftedType);
+                Expression liftedRight = this.VisitAsLiftedNullable(node.Right, liftedType);
+                return Expression.MakeBinary(node.NodeType, liftedLeft, liftedRight);
+            }
+
+            return base.VisitBinary(node);
+        }
+
         protected override Expression VisitMember(MemberExpression node)
         {
             if (node.Expression is not null)
@@ -1866,12 +2124,19 @@ internal static class JetAsyncQueryExecutor
                 Expression visitedTarget = this.Visit(node.Expression);
                 if (!visitedTarget.Type.IsValueType
                     && model.FindEntityType(visitedTarget.Type) is not null
-                    && (!node.Type.IsValueType || Nullable.GetUnderlyingType(node.Type) is not null))
+                    && visitedTarget is not ParameterExpression)
                 {
-                    return Expression.Condition(
-                        Expression.Equal(visitedTarget, Expression.Constant(null, visitedTarget.Type)),
-                        Expression.Constant(null, node.Type),
-                        node.Update(visitedTarget));
+                    ParameterExpression targetVar = Expression.Variable(visitedTarget.Type, "navTarget");
+                    Expression fallback = !node.Type.IsValueType || Nullable.GetUnderlyingType(node.Type) is not null
+                        ? Expression.Constant(null, node.Type)
+                        : Expression.Default(node.Type);
+                    return Expression.Block(
+                        [targetVar],
+                        Expression.Assign(targetVar, visitedTarget),
+                        Expression.Condition(
+                            Expression.ReferenceEqual(targetVar, Expression.Constant(null, visitedTarget.Type)),
+                            fallback,
+                            node.Update(targetVar)));
                 }
 
                 return node.Update(visitedTarget);
@@ -1944,6 +2209,51 @@ internal static class JetAsyncQueryExecutor
             }
 
             return null;
+        }
+
+        private bool IsNullableNavigationValueMember(Expression expr)
+        {
+            Expression current = expr;
+            while (current is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary
+                   && unary.Type.IsValueType
+                   && Nullable.GetUnderlyingType(unary.Type) is null)
+            {
+                current = unary.Operand;
+            }
+
+            return current is MemberExpression { Expression: not null and not ParameterExpression } member
+                && !member.Expression.Type.IsValueType
+                && model.FindEntityType(member.Expression.Type) is not null;
+        }
+
+        private Expression VisitAsLiftedNullable(Expression expr, Type liftedType)
+        {
+            if (expr is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary
+                && unary.Type.IsValueType
+                && Nullable.GetUnderlyingType(unary.Type) is null
+                && this.IsNullableNavigationValueMember(unary.Operand))
+            {
+                Type innerLifted = typeof(Nullable<>).MakeGenericType(unary.Operand.Type);
+                Expression innerVisited = this.VisitAsLiftedNullable(unary.Operand, innerLifted);
+                return innerLifted == liftedType ? innerVisited : Expression.Convert(innerVisited, liftedType);
+            }
+
+            if (expr is MemberExpression { Expression: not null and not ParameterExpression } member
+                && !member.Expression.Type.IsValueType
+                && model.FindEntityType(member.Expression.Type) is not null)
+            {
+                Expression visitedTarget = this.Visit(member.Expression);
+                ParameterExpression targetVar = Expression.Variable(visitedTarget.Type, "navTarget");
+                return Expression.Block(
+                    [targetVar],
+                    Expression.Assign(targetVar, visitedTarget),
+                    Expression.Condition(
+                        Expression.ReferenceEqual(targetVar, Expression.Constant(null, visitedTarget.Type)),
+                        Expression.Constant(null, liftedType),
+                        Expression.Convert(member.Update(targetVar), liftedType)));
+            }
+
+            return Expression.Convert(this.Visit(expr), liftedType);
         }
 
         private MethodCallExpression VisitQueryableMethodCall(MethodCallExpression node)
