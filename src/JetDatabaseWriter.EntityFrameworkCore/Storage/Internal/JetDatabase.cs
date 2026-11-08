@@ -86,7 +86,9 @@ public sealed class JetDatabase : Database
         IUpdateEntry? activeEntry = null;
         try
         {
-            if (orderedEntries.Count > 1)
+            bool canOpenBatchScope = this.connection is not JetClientConnection jetConn
+                || jetConn.ActiveTransactionNestingDepth < 5;
+            if (orderedEntries.Count > 1 && canOpenBatchScope)
             {
                 batchTransaction = await writer.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             }

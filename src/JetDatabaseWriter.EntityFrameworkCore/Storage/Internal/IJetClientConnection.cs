@@ -97,6 +97,30 @@ public interface IJetClientConnection : IAsyncDisposable, IDisposable
     public ValueTask DisposeTransactionAsync();
 
     /// <summary>
+    /// Creates a named savepoint within the currently active transaction using a nested <see cref="JetTransaction"/> scope.
+    /// </summary>
+    /// <param name="name">The savepoint name.</param>
+    /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
+    /// <returns>A task representing the asynchronous savepoint creation.</returns>
+    public ValueTask CreateSavepointAsync(string name, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Rolls back all changes made since the specified savepoint was created while keeping the savepoint active.
+    /// </summary>
+    /// <param name="name">The savepoint name.</param>
+    /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
+    /// <returns>A task representing the asynchronous savepoint rollback.</returns>
+    public ValueTask RollbackToSavepointAsync(string name, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Releases the specified savepoint by merging its nested <see cref="JetTransaction"/> scope into its parent transaction.
+    /// </summary>
+    /// <param name="name">The savepoint name.</param>
+    /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
+    /// <returns>A task representing the asynchronous savepoint release.</returns>
+    public ValueTask ReleaseSavepointAsync(string name, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Checks whether the underlying database exists and contains a valid JET header.
     /// </summary>
     /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>

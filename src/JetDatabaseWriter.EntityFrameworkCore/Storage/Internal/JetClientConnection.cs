@@ -27,6 +27,7 @@ public sealed class JetClientConnection : IJetClientConnection
     private static readonly bool DefaultWriterByteRangeLocks = new AccessWriterOptions().UseByteRangeLocks;
 
     private readonly SemaphoreSlim connectionGate = new(1, 1);
+    private readonly List<(string Name, JetTransaction Scope)> savepoints = [];
     private readonly JetOptionsExtension optionsExtension;
     private readonly string? normalizedDatabasePath;
     private Stream? resolvedStream;
@@ -62,6 +63,8 @@ public sealed class JetClientConnection : IJetClientConnection
 
     /// <inheritdoc/>
     public JetTransaction? ActiveTransaction { get; private set; }
+
+    internal int ActiveTransactionNestingDepth => this.ActiveTransaction is null ? 0 : 1 + this.savepoints.Count;
 
     /// <inheritdoc/>
     public async ValueTask<AccessReader> GetReaderAsync(CancellationToken cancellationToken = default)
@@ -196,6 +199,20 @@ public sealed class JetClientConnection : IJetClientConnection
 
         try
         {
+            for (int i = this.savepoints.Count - 1; i >= 0; i--)
+            {
+                JetTransaction scope = this.savepoints[i].Scope;
+                this.savepoints.RemoveAt(i);
+                try
+                {
+                    await scope.CommitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    await scope.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+
             await this.ActiveTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -214,6 +231,20 @@ public sealed class JetClientConnection : IJetClientConnection
 
         try
         {
+            for (int i = this.savepoints.Count - 1; i >= 0; i--)
+            {
+                JetTransaction scope = this.savepoints[i].Scope;
+                this.savepoints.RemoveAt(i);
+                try
+                {
+                    await scope.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    await scope.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+
             await this.ActiveTransaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -225,6 +256,13 @@ public sealed class JetClientConnection : IJetClientConnection
     /// <inheritdoc/>
     public async ValueTask DisposeTransactionAsync()
     {
+        for (int i = this.savepoints.Count - 1; i >= 0; i--)
+        {
+            JetTransaction scope = this.savepoints[i].Scope;
+            this.savepoints.RemoveAt(i);
+            await scope.DisposeAsync().ConfigureAwait(false);
+        }
+
         JetTransaction? transaction = this.ActiveTransaction;
         AccessWriter? writer = this.ActiveWriter;
         this.ActiveTransaction = null;
@@ -242,6 +280,88 @@ public sealed class JetClientConnection : IJetClientConnection
             if (writer is not null)
             {
                 await writer.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask CreateSavepointAsync(string name, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ObjectDisposedException.ThrowIf(this.disposed, this);
+
+        if (this.ActiveWriter is null || this.ActiveTransaction is null)
+        {
+            throw new InvalidOperationException("Cannot create a savepoint when no transaction is active.");
+        }
+
+        JetTransaction scope = await this.ActiveWriter.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        this.savepoints.Add((name, scope));
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask RollbackToSavepointAsync(string name, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ObjectDisposedException.ThrowIf(this.disposed, this);
+
+        if (this.ActiveWriter is null || this.ActiveTransaction is null)
+        {
+            throw new InvalidOperationException("Cannot roll back to a savepoint when no transaction is active.");
+        }
+
+        int targetIndex = this.FindSavepointIndex(name);
+        if (targetIndex < 0)
+        {
+            throw new InvalidOperationException($"Savepoint '{name}' does not exist in the current transaction.");
+        }
+
+        for (int i = this.savepoints.Count - 1; i >= targetIndex; i--)
+        {
+            JetTransaction scope = this.savepoints[i].Scope;
+            this.savepoints.RemoveAt(i);
+            try
+            {
+                await scope.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                await scope.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+
+        JetTransaction replacementScope = await this.ActiveWriter.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        this.savepoints.Add((name, replacementScope));
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask ReleaseSavepointAsync(string name, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ObjectDisposedException.ThrowIf(this.disposed, this);
+
+        if (this.ActiveWriter is null || this.ActiveTransaction is null)
+        {
+            throw new InvalidOperationException("Cannot release a savepoint when no transaction is active.");
+        }
+
+        int targetIndex = this.FindSavepointIndex(name);
+        if (targetIndex < 0)
+        {
+            throw new InvalidOperationException($"Savepoint '{name}' does not exist in the current transaction.");
+        }
+
+        for (int i = this.savepoints.Count - 1; i >= targetIndex; i--)
+        {
+            JetTransaction scope = this.savepoints[i].Scope;
+            this.savepoints.RemoveAt(i);
+            try
+            {
+                await scope.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                await scope.DisposeAsync().ConfigureAwait(false);
             }
         }
     }
@@ -1235,6 +1355,19 @@ public sealed class JetClientConnection : IJetClientConnection
             this.activeReader = null;
             await reader.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    private int FindSavepointIndex(string name)
+    {
+        for (int i = this.savepoints.Count - 1; i >= 0; i--)
+        {
+            if (string.Equals(this.savepoints[i].Name, name, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private readonly struct KeyTupleValue(object?[] values) : IEquatable<KeyTupleValue>

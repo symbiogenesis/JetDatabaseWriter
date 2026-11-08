@@ -30,6 +30,57 @@ public sealed class JetDbContextTransaction : IDbContextTransaction
     public Guid TransactionId { get; }
 
     /// <inheritdoc/>
+    public bool SupportsSavepoints => true;
+
+    /// <inheritdoc/>
+    public void CreateSavepoint(string name)
+        => throw new NotSupportedException(
+            "Synchronous CreateSavepoint is not supported by JetDatabaseWriter.EntityFrameworkCore. Use CreateSavepointAsync instead.");
+
+    /// <inheritdoc/>
+    public Task CreateSavepointAsync(string name, CancellationToken cancellationToken = default)
+    {
+        if (this.completed)
+        {
+            throw new InvalidOperationException("This transaction has already been completed.");
+        }
+
+        return this.manager.CreateSavepointInternalAsync(name, cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public void RollbackToSavepoint(string name)
+        => throw new NotSupportedException(
+            "Synchronous RollbackToSavepoint is not supported by JetDatabaseWriter.EntityFrameworkCore. Use RollbackToSavepointAsync instead.");
+
+    /// <inheritdoc/>
+    public Task RollbackToSavepointAsync(string name, CancellationToken cancellationToken = default)
+    {
+        if (this.completed)
+        {
+            throw new InvalidOperationException("This transaction has already been completed.");
+        }
+
+        return this.manager.RollbackToSavepointInternalAsync(name, cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public void ReleaseSavepoint(string name)
+        => throw new NotSupportedException(
+            "Synchronous ReleaseSavepoint is not supported by JetDatabaseWriter.EntityFrameworkCore. Use ReleaseSavepointAsync instead.");
+
+    /// <inheritdoc/>
+    public Task ReleaseSavepointAsync(string name, CancellationToken cancellationToken = default)
+    {
+        if (this.completed)
+        {
+            throw new InvalidOperationException("This transaction has already been completed.");
+        }
+
+        return this.manager.ReleaseSavepointInternalAsync(name, cancellationToken);
+    }
+
+    /// <inheritdoc/>
     public void Commit()
         => throw new NotSupportedException(
             "Synchronous Commit is not supported by JetDatabaseWriter.EntityFrameworkCore. Use CommitAsync instead.");

@@ -135,6 +135,15 @@ public sealed class JetTransactionManager : IDbContextTransactionManager, IDispo
         await this.connection.DisposeTransactionAsync().ConfigureAwait(false);
     }
 
+    internal Task CreateSavepointInternalAsync(string name, CancellationToken cancellationToken)
+        => this.connection.CreateSavepointAsync(name, cancellationToken).AsTask();
+
+    internal Task RollbackToSavepointInternalAsync(string name, CancellationToken cancellationToken)
+        => this.connection.RollbackToSavepointAsync(name, cancellationToken).AsTask();
+
+    internal Task ReleaseSavepointInternalAsync(string name, CancellationToken cancellationToken)
+        => this.connection.ReleaseSavepointAsync(name, cancellationToken).AsTask();
+
     internal void ClearCurrentTransaction()
         => this.currentTransaction = null;
 }

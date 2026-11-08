@@ -938,6 +938,73 @@ public sealed class JetEntityFrameworkCoreProviderTests
         Assert.True(bankRow[cardNetworkOrdinal] is null or DBNull);
     }
 
+    [Fact]
+    public async Task Transaction_Savepoints_Create_Rollback_And_Release_Correctly()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions<StoreDbContext> options = new DbContextOptionsBuilder<StoreDbContext>()
+            .UseJetDatabaseWriter(stream, DatabaseFormat.AceAccdb, leaveOpen: true)
+            .Options;
+
+        await using (StoreDbContext context = new(options))
+        {
+            Assert.True(await context.Database.EnsureCreatedAsync(ct));
+
+            await using IDbContextTransaction tx = await context.Database.BeginTransactionAsync(ct);
+            Assert.True(tx.SupportsSavepoints);
+            _ = Assert.Throws<NotSupportedException>(() => tx.CreateSavepoint("sync-sp"));
+            _ = Assert.Throws<NotSupportedException>(() => tx.RollbackToSavepoint("sync-sp"));
+            _ = Assert.Throws<NotSupportedException>(() => tx.ReleaseSavepoint("sync-sp"));
+
+            context.Customers.Add(new Customer
+            {
+                Code = "SP-BASE",
+                Name = "Before Savepoint",
+                CreditLimit = 100m,
+                RowVersion = 1,
+            });
+            _ = await context.SaveChangesAsync(ct);
+
+            await tx.CreateSavepointAsync("sp1", ct);
+
+            context.Customers.Add(new Customer
+            {
+                Code = "SP-DISCARD",
+                Name = "Discarded By RollbackToSavepoint",
+                CreditLimit = 200m,
+                RowVersion = 1,
+            });
+            _ = await context.SaveChangesAsync(ct);
+
+            await tx.RollbackToSavepointAsync("sp1", ct);
+            context.ChangeTracker.Clear();
+
+            // Savepoint sp1 remains active after RollbackToSavepointAsync, so subsequent work can be released.
+            context.Customers.Add(new Customer
+            {
+                Code = "SP-RETAIN",
+                Name = "Added After RollbackToSavepoint",
+                CreditLimit = 300m,
+                RowVersion = 1,
+            });
+            _ = await context.SaveChangesAsync(ct);
+
+            await tx.ReleaseSavepointAsync("sp1", ct);
+            await tx.CommitAsync(ct);
+        }
+
+        await using (StoreDbContext verifyContext = new(options))
+        {
+            List<string> codes = await verifyContext.Customers
+                .AsNoTracking()
+                .OrderBy(c => c.Code)
+                .Select(c => c.Code)
+                .ToListAsync(ct);
+            Assert.Equal(["SP-BASE", "SP-RETAIN"], codes);
+        }
+    }
+
     private sealed class StoreDbContext(DbContextOptions<StoreDbContext> options) : DbContext(options)
     {
         public DbSet<Customer> Customers => this.Set<Customer>();
