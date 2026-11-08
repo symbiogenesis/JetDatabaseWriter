@@ -86,7 +86,7 @@ public sealed class JetDatabase : Database
         IUpdateEntry? activeEntry = null;
         try
         {
-            if (this.connection.ActiveTransaction is null && orderedEntries.Count > 1)
+            if (orderedEntries.Count > 1)
             {
                 batchTransaction = await writer.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -219,21 +219,36 @@ public sealed class JetDatabase : Database
         }
 
         var outgoing = new List<int>[count];
+        var outgoingSets = new HashSet<int>[count];
         int[] indegree = new int[count];
         for (int i = 0; i < count; i++)
         {
             outgoing[i] = [];
+            outgoingSets[i] = [];
         }
 
         void AddEdge(int from, int to)
         {
-            if (from == to || outgoing[from].Contains(to))
+            if (from == to || !outgoingSets[from].Add(to))
             {
                 return;
             }
 
             outgoing[from].Add(to);
             indegree[to]++;
+        }
+
+        Dictionary<(IEntityType, IEntityType), bool> dependencyCache = [];
+        bool CachedDependsOn(IEntityType dependent, IEntityType principal)
+        {
+            if (dependencyCache.TryGetValue((dependent, principal), out bool cached))
+            {
+                return cached;
+            }
+
+            bool result = DependsOn(dependent, principal, []);
+            dependencyCache[(dependent, principal)] = result;
+            return result;
         }
 
         for (int i = 0; i < count; i++)
@@ -253,13 +268,24 @@ public sealed class JetDatabase : Database
 
                 if (leftRoot == rightRoot)
                 {
-                    if (left.EntityState == EntityState.Deleted && right.EntityState is EntityState.Added or EntityState.Modified)
+                    if (left.EntityState == EntityState.Deleted && right.EntityState == EntityState.Added)
                     {
                         AddEdge(i, j);
                     }
+                    else if (left.EntityState == EntityState.Deleted && right.EntityState == EntityState.Modified)
+                    {
+                        if (ReferencesSameTypeEntry(right, left, useOriginalForChild: true))
+                        {
+                            AddEdge(j, i);
+                        }
+                        else
+                        {
+                            AddEdge(i, j);
+                        }
+                    }
                     else if (left.EntityState == right.EntityState
                         && left.EntityState is EntityState.Added or EntityState.Deleted
-                        && ReferencesSameTypeEntry(left, right))
+                        && ReferencesSameTypeEntry(left, right, useOriginalForChild: left.EntityState == EntityState.Deleted))
                     {
                         if (left.EntityState == EntityState.Added)
                         {
@@ -274,7 +300,7 @@ public sealed class JetDatabase : Database
                     continue;
                 }
 
-                if (DependsOn(leftRoot, rightRoot, []))
+                if (CachedDependsOn(leftRoot, rightRoot))
                 {
                     if (right.EntityState == EntityState.Added && left.EntityState is EntityState.Added or EntityState.Modified)
                     {
@@ -353,7 +379,10 @@ public sealed class JetDatabase : Database
         return 3;
     }
 
-    private static bool ReferencesSameTypeEntry(IUpdateEntry childCandidate, IUpdateEntry parentCandidate)
+    private static bool ReferencesSameTypeEntry(
+        IUpdateEntry childCandidate,
+        IUpdateEntry parentCandidate,
+        bool useOriginalForChild)
     {
         IEntityType rootType = childCandidate.EntityType.GetRootType();
         foreach (IForeignKey fk in childCandidate.EntityType.GetForeignKeys())
@@ -368,7 +397,7 @@ public sealed class JetDatabase : Database
             bool matchesAll = true;
             for (int i = 0; i < fk.Properties.Count; i++)
             {
-                object? fkVal = childCandidate.EntityState == EntityState.Deleted
+                object? fkVal = useOriginalForChild
                     ? childCandidate.GetOriginalValue(fk.Properties[i])
                     : childCandidate.GetCurrentValue(fk.Properties[i]);
                 object? pkVal = parentCandidate.EntityState == EntityState.Deleted
@@ -418,11 +447,13 @@ public sealed class JetDatabase : Database
     {
         IEntityType entityType = entry.EntityType;
         RowValues rowValues = [];
+        HashSet<string> populatedColumns = [with(StringComparer.OrdinalIgnoreCase)];
         IProperty? autoIncrementProperty = null;
 
         foreach (IProperty property in entityType.GetProperties())
         {
             string columnName = JetEntityTypeMetadata.GetColumnName(property);
+            _ = populatedColumns.Add(columnName);
             if (JetEntityTypeMetadata.IsAutoIncrementProperty(property))
             {
                 object? currentVal = entry.GetCurrentValue(property);
@@ -463,14 +494,28 @@ public sealed class JetDatabase : Database
             rowValues[columnName] = JetEntityTypeMetadata.ConvertToProvider(property, modelValue);
         }
 
+        foreach (IProperty hierarchyProp in JetEntityTypeMetadata.GetHierarchyProperties(entityType.GetRootType()))
+        {
+            if (JetEntityTypeMetadata.IsAutoIncrementProperty(hierarchyProp))
+            {
+                continue;
+            }
+
+            string siblingColumnName = JetEntityTypeMetadata.GetColumnName(hierarchyProp);
+            if (populatedColumns.Add(siblingColumnName))
+            {
+                rowValues[siblingColumnName] = null;
+            }
+        }
+
         return (rowValues, autoIncrementProperty);
     }
 
     private static bool IsClrDefaultOrSentinel(IProperty property, object? value)
     {
-        if (property.Sentinel is not null && Equals(value, property.Sentinel))
+        if (property.Sentinel is not null)
         {
-            return true;
+            return Equals(value, property.Sentinel);
         }
 
         if (value is null)

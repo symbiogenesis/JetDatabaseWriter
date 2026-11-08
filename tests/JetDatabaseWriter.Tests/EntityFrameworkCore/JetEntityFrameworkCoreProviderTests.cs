@@ -829,6 +829,115 @@ public sealed class JetEntityFrameworkCoreProviderTests
         }
     }
 
+    [Fact]
+    public async Task SaveChangesAsync_NestedRollback_TphSiblingDefault_SentinelZero_And_SelfFkModifyBeforeDelete()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions<AdvancedCatalogDbContext> options = new DbContextOptionsBuilder<AdvancedCatalogDbContext>()
+            .UseJetDatabaseWriter(stream, DatabaseFormat.AceAccdb, leaveOpen: true)
+            .Options;
+
+        await using (AdvancedCatalogDbContext context = new(options))
+        {
+            Assert.True(await context.Database.EnsureCreatedAsync(ct));
+
+            CategoryNode parent = new()
+            {
+                Code = "PARENT-DEL",
+                Name = "Parent To Delete",
+                Priority = 0,
+            };
+            CategoryNode defaultPriorityNode = new()
+            {
+                Code = "SENTINEL-DEF",
+                Name = "Uses Default Priority",
+            };
+            context.Categories.AddRange(parent, defaultPriorityNode);
+            context.PaymentMethods.Add(new BankPaymentMethod
+            {
+                AccountNumber = "BANK-001",
+                RoutingNumber = "111000025",
+                BankName = "First National",
+            });
+            _ = await context.SaveChangesAsync(ct);
+
+            Assert.Equal(0, parent.Priority);
+            Assert.Equal(10, defaultPriorityNode.Priority);
+
+            CategoryNode child = new()
+            {
+                Code = "CHILD-SEVER",
+                Name = "Child Severing FK",
+                ParentId = parent.Id,
+                Priority = 5,
+            };
+            context.Categories.Add(child);
+            _ = await context.SaveChangesAsync(ct);
+
+            // Mark parent Deleted and modify child to sever FK in the same SaveChangesAsync batch.
+            _ = context.Categories.Remove(parent);
+            child.ParentId = null;
+            _ = await context.SaveChangesAsync(ct);
+
+            // Verify nested SaveChangesAsync rollback inside an explicit user transaction.
+            await using IDbContextTransaction tx = await context.Database.BeginTransactionAsync(ct);
+            context.Categories.Add(new CategoryNode
+            {
+                Code = "TX-KEEP",
+                Name = "Kept In Outer Transaction",
+                Priority = 1,
+            });
+            _ = await context.SaveChangesAsync(ct);
+
+            CategoryNode partialFirst = new()
+            {
+                Code = "TX-PARTIAL-1",
+                Name = "Should Roll Back With Second Entry Failure",
+                Priority = 2,
+            };
+            CategoryNode duplicateSecond = new()
+            {
+                Code = "ROOT",
+                Name = "Duplicate Alternate Key",
+                Priority = 3,
+            };
+            context.Categories.AddRange(partialFirst, duplicateSecond);
+            _ = await Assert.ThrowsAsync<DbUpdateException>(() => context.SaveChangesAsync(ct));
+
+            await tx.CommitAsync(ct);
+        }
+
+        await using (AdvancedCatalogDbContext verifyContext = new(options))
+        {
+            List<CategoryNode> categories = await verifyContext.Categories
+                .AsNoTracking()
+                .OrderBy(c => c.Code)
+                .ToListAsync(ct);
+            Assert.Equal(["CHILD-SEVER", "ROOT", "SENTINEL-DEF", "TX-KEEP"], categories.Select(static c => c.Code).ToArray());
+
+            CategoryNode severedChild = categories.Single(static c => c.Code == "CHILD-SEVER");
+            Assert.Null(severedChild.ParentId);
+            Assert.Equal(5, severedChild.Priority);
+
+            CategoryNode sentinelDefault = categories.Single(static c => c.Code == "SENTINEL-DEF");
+            Assert.Equal(10, sentinelDefault.Priority);
+        }
+
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, leaveOpen: true, cancellationToken: ct);
+        IReadOnlyList<ColumnMetadata> paymentCols = await reader.GetColumnMetadataAsync("PaymentMethods", ct);
+        int cardNetworkOrdinal = paymentCols.Single(static c => c.Name == "CardNetwork").Ordinal;
+        List<object[]> paymentRows = [];
+        await foreach (object[] row in reader.Rows("PaymentMethods", cancellationToken: ct))
+        {
+            paymentRows.Add(row);
+        }
+
+        object[] bankRow = Assert.Single(paymentRows);
+        Assert.True(bankRow[cardNetworkOrdinal] is null or DBNull);
+    }
+
     private sealed class StoreDbContext(DbContextOptions<StoreDbContext> options) : DbContext(options)
     {
         public DbSet<Customer> Customers => this.Set<Customer>();
@@ -891,6 +1000,7 @@ public sealed class JetEntityFrameworkCoreProviderTests
                 _ = entity.Property(c => c.Code).HasMaxLength(40).IsRequired();
                 _ = entity.Property(c => c.Name).HasMaxLength(100).IsRequired();
                 _ = entity.Property(c => c.Tier).HasMaxLength(40).HasDefaultValue("General");
+                _ = entity.Property(c => c.Priority).HasDefaultValue(10).HasSentinel(-1);
                 _ = entity.HasOne(c => c.Parent)
                     .WithMany(c => c.Children)
                     .HasForeignKey(c => c.ParentId)
@@ -901,6 +1011,7 @@ public sealed class JetEntityFrameworkCoreProviderTests
                     Code = "ROOT",
                     Name = "Root Category",
                     Tier = "General",
+                    Priority = 10,
                 });
             });
 
@@ -928,7 +1039,7 @@ public sealed class JetEntityFrameworkCoreProviderTests
 
             _ = modelBuilder.Entity<CardPaymentMethod>(entity =>
             {
-                _ = entity.Property(c => c.CardNetwork).HasMaxLength(30);
+                _ = entity.Property(c => c.CardNetwork).HasMaxLength(30).HasDefaultValue("VISA");
                 _ = entity.Property(c => c.LastFourDigits).HasMaxLength(4);
             });
 
@@ -1015,6 +1126,8 @@ public sealed class JetEntityFrameworkCoreProviderTests
         public string Name { get; set; } = string.Empty;
 
         public string? Tier { get; set; }
+
+        public int Priority { get; set; } = -1;
 
         public string? UnannotatedDescription { get; set; }
 
