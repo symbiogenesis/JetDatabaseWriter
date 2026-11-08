@@ -12,6 +12,7 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/JetDatabaseWriter/JetDatabaseWriter.csproj" />
+    <Project Path="src/JetDatabaseWriter.EntityFrameworkCore/JetDatabaseWriter.EntityFrameworkCore.csproj" />
     <Project Path="src/JetDatabaseWriter.Scaffold/JetDatabaseWriter.Scaffold.csproj" />
   </Folder>
   <Folder Name="/tests/">

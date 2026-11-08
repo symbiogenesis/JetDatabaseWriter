@@ -2478,7 +2478,7 @@
       "inputs": [
         {
           "path": ".github/ci-tools.slnf",
-          "sha256": "cb6d3ac0821f47819113b990350872ef5d9d4677ad3974a9a5206621540d5b32"
+          "sha256": "f507fccd823f4b9086403e9c84f807600410b2287e41624ea900adf8c178c3a5"
         },
         {
           "path": ".github/dotnet11/global.json",
@@ -2490,7 +2490,7 @@
         },
         {
           "path": ".github/workflows/ci.yml",
-          "sha256": "2145e7779386d15cc60a97ed760ed27af0a4387e45def4348a9b6a174b225410"
+          "sha256": "19c259f750da9c4c531f3b714801b22cd016ba022b25f5ea494ec3df80c0d62f"
         },
         {
           "path": ".github/workflows/fuzz.yml",
@@ -2502,7 +2502,7 @@
         },
         {
           "path": ".github/workflows/publish-nuget.yml",
-          "sha256": "31cb2c3972169261e8c733976ff54079861725ff9d43a0dd36f898c6f496261d"
+          "sha256": "5667d0d3146fd60530b7f187362d9ae326b302871f7ab43bf0811d4bd73bdd8b"
         },
         {
           "path": "AGENTS.md",
@@ -2514,7 +2514,7 @@
         },
         {
           "path": "Directory.Packages.props",
-          "sha256": "82cda27e3c289ec500e427907f381bdd17c21ad569e0a0829ae43f55b35ba258"
+          "sha256": "9d7beb5b37fd852fb3a7e540cbc12dd6656cc71b079c55f2f4d45451add96314"
         },
         {
           "path": "LICENSE",
@@ -2706,7 +2706,7 @@
         },
         {
           "path": "scripts/test-package.ps1",
-          "sha256": "b0a0e0a36d08fff3a012605f0d1114eb0be96d6616137005c0ed38dda34b33c6"
+          "sha256": "bdd50c20d17e366deb90b207ac25d8ffd2395677ecca2f4f12bfaee0bca0daa6"
         },
         {
           "path": "scripts/test-scripts.ps1",
@@ -2742,7 +2742,7 @@
         },
         {
           "path": "scripts/tests/package-content.tests.ps1",
-          "sha256": "e973dddf7fb45d8e32cfc07de257395f9087c188d0dc5549a2efbe4fccb0171e"
+          "sha256": "4fb87e3d374b86012d805721b03272438e0f60f226ca59ed3363eb8c66d6f532"
         },
         {
           "path": "scripts/tests/portability-workflow.tests.ps1",
@@ -2778,7 +2778,7 @@
         },
         {
           "path": "scripts/tests/test-package.tests.ps1",
-          "sha256": "1301237a5cc8fe75c2641e6dd0f3bc131bbe9ef17c801e38325f7c48b7d62e26"
+          "sha256": "b5c2a03086826c9e9ca1b5a9e9b3563f8eb244ec04bc3ef844ecb2a9358a7e85"
         },
         {
           "path": "scripts/tests/test-results.tests.ps1",
@@ -2882,7 +2882,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/JetDatabaseWriter.csproj",
-          "sha256": "98a05fd3923eac5e40d9ffb6e179a98270a9f389eeb00872fd8e7d178f64b547"
+          "sha256": "8c2dd4af2dc745f3f117985ee25421f9190c3d56b28558424a7a7e1fe6943bfa"
         },
         {
           "path": "src/JetDatabaseWriter/JetFormat.cs",
@@ -3038,7 +3038,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/JetDatabaseWriter.Tests.csproj",
-          "sha256": "608df85f52ab062b03bc897dea0056af1db6589533d4935c9d7012b729a7c1ee"
+          "sha256": "79860188f8f674b76e0556d52b743b58471f8e4c5b7e2ab7973a7225431f9550"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Maintenance/CompactRowRelocationMapTests.cs",

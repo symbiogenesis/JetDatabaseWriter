@@ -168,7 +168,10 @@ jobs:
 
       - name: Pack
         if: matrix.pack
-        run: dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-build -o artifacts/nupkg
+        run: |
+          dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-build -o artifacts/nupkg
+          dotnet restore src/JetDatabaseWriter.EntityFrameworkCore/JetDatabaseWriter.EntityFrameworkCore.csproj --locked-mode
+          dotnet pack src/JetDatabaseWriter.EntityFrameworkCore/JetDatabaseWriter.EntityFrameworkCore.csproj -c Release --no-restore -p:AnalyzeOnly=none -o artifacts/nupkg
 
       - name: Test packed consumers
         if: matrix.pack
@@ -287,9 +290,13 @@ jobs:
           cache: true
           cache-dependency-path: '**/packages.lock.json'
       - name: Restore
-        run: dotnet restore src/JetDatabaseWriter/JetDatabaseWriter.csproj --locked-mode
+        run: |
+          dotnet restore src/JetDatabaseWriter/JetDatabaseWriter.csproj --locked-mode
+          dotnet restore src/JetDatabaseWriter.EntityFrameworkCore/JetDatabaseWriter.EntityFrameworkCore.csproj --locked-mode
       - name: Pack
-        run: dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-restore -o artifacts/nupkg
+        run: |
+          dotnet pack src/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-restore -o artifacts/nupkg
+          dotnet pack src/JetDatabaseWriter.EntityFrameworkCore/JetDatabaseWriter.EntityFrameworkCore.csproj -c Release --no-restore -o artifacts/nupkg
 
       - name: Test packed consumers
         shell: pwsh

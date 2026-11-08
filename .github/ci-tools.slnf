@@ -2,6 +2,7 @@
   "solution": {
     "path": "../JetDatabaseWriter.slnx",
     "projects": [
+      "src/JetDatabaseWriter.EntityFrameworkCore/JetDatabaseWriter.EntityFrameworkCore.csproj",
       "src/JetDatabaseWriter.Scaffold/JetDatabaseWriter.Scaffold.csproj",
       "tests/JetDatabaseWriter.TestSupport/JetDatabaseWriter.TestSupport.csproj",
       "benchmarks/JetDatabaseWriter.Benchmarks/JetDatabaseWriter.Benchmarks.csproj",

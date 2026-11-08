@@ -8,8 +8,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repository = Split-Path -Parent $PSScriptRoot
-$packages = @(Get-ChildItem -LiteralPath $PackageDirectory -Filter 'JetDatabaseWriter.*.nupkg' -File)
+$packages = @(Get-ChildItem -LiteralPath $PackageDirectory -Filter 'JetDatabaseWriter.*.nupkg' -File | Where-Object { -not $_.Name.StartsWith('JetDatabaseWriter.EntityFrameworkCore.', [StringComparison]::OrdinalIgnoreCase) })
 if ($packages.Count -ne 1) { throw 'Expected exactly one JetDatabaseWriter NuGet package.' }
+$efPackages = @(Get-ChildItem -LiteralPath $PackageDirectory -Filter 'JetDatabaseWriter.EntityFrameworkCore.*.nupkg' -File)
+if ($efPackages.Count -ne 1) { throw 'Expected exactly one JetDatabaseWriter.EntityFrameworkCore NuGet package.' }
 $package = $packages[0]
 $archive = [IO.Compression.ZipFile]::OpenRead($package.FullName)
 try {
@@ -34,6 +36,30 @@ try {
     if ($nuspec.package.metadata.PSObject.Properties['projectUrl']?.Value -cne 'https://symbiogenesis.github.io/JetDatabaseWriter/') { throw 'Invalid shipping package project URL.' }
 }
 finally { $archive.Dispose() }
+$efPackage = $efPackages[0]
+$efArchive = [IO.Compression.ZipFile]::OpenRead($efPackage.FullName)
+try {
+    foreach ($name in 'README.md', 'LICENSE', 'LICENSE-APACHE-2.0.txt', 'THIRD-PARTY-NOTICES.md') {
+        $entry = $efArchive.GetEntry($name)
+        if ($null -eq $entry) { throw "The shipping EF Core package is missing $name." }
+        $reader = [IO.StreamReader]::new($entry.Open())
+        try { $actual = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        $expected = [IO.File]::ReadAllText((Join-Path $repository $name))
+        if ($actual -cne $expected) { throw "The shipping EF Core package has stale or incomplete $name." }
+    }
+    foreach ($target in 'net11.0', 'net10.0') {
+        if ($null -eq $efArchive.GetEntry("lib/$target/JetDatabaseWriter.EntityFrameworkCore.dll")) { throw "The shipping EF Core package is missing the $target assembly." }
+        if ($null -eq $efArchive.GetEntry("lib/$target/JetDatabaseWriter.EntityFrameworkCore.xml")) { throw "The shipping EF Core package is missing the $target API documentation." }
+    }
+    $efNuspecEntry = $efArchive.GetEntry('JetDatabaseWriter.EntityFrameworkCore.nuspec')
+    if ($null -eq $efNuspecEntry) { throw 'The shipping EF Core package has no JetDatabaseWriter.EntityFrameworkCore.nuspec.' }
+    $reader = [IO.StreamReader]::new($efNuspecEntry.Open())
+    try { $efNuspec = [xml]$reader.ReadToEnd() } finally { $reader.Dispose() }
+    $efVersion = [string]$efNuspec.package.metadata.version
+    if ($efNuspec.package.metadata.id -cne 'JetDatabaseWriter.EntityFrameworkCore' -or $efVersion -cne $version) { throw 'Invalid shipping EF Core package identity.' }
+    if ($efNuspec.package.metadata.PSObject.Properties['projectUrl']?.Value -cne 'https://symbiogenesis.github.io/JetDatabaseWriter/') { throw 'Invalid shipping EF Core package project URL.' }
+}
+finally { $efArchive.Dispose() }
 
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path ([IO.Path]::GetTempPath()) ('JetDatabaseWriter-package-' + [Guid]::NewGuid().ToString('N'))
@@ -44,6 +70,7 @@ if ((Test-Path -LiteralPath $OutputDirectory) -and @(Get-ChildItem -LiteralPath 
 $feed = Join-Path $OutputDirectory 'feed'
 [IO.Directory]::CreateDirectory($feed) | Out-Null
 Copy-Item -LiteralPath $package.FullName -Destination $feed
+Copy-Item -LiteralPath $efPackage.FullName -Destination $feed
 Copy-Item -LiteralPath (Join-Path $repository 'global.json') -Destination $OutputDirectory
 # Keep caller-selected output paths independent of enclosing repository build settings.
 foreach ($name in 'Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props') {

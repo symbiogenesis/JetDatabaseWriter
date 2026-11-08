@@ -53,10 +53,11 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           $version = $env:TAG.Substring(1)
-          $package = "nupkg/JetDatabaseWriter.$version.nupkg"
-          if (-not (Test-Path $package)) {
-            Get-ChildItem nupkg
-            throw "CI did not pack $package; the package version does not match the tag $env:TAG."
+          foreach ($package in "nupkg/JetDatabaseWriter.$version.nupkg", "nupkg/JetDatabaseWriter.EntityFrameworkCore.$version.nupkg") {
+            if (-not (Test-Path $package)) {
+              Get-ChildItem nupkg
+              throw "CI did not pack $package; the package version does not match the tag $env:TAG."
+            }
           }
 
       - name: Setup .NET

@@ -35,6 +35,23 @@ function New-Package([string] $Name, [string] $Missing = '', [string] $Stale = '
         }
     }
     finally { $archive.Dispose() }
+    $efArchive = [IO.Compression.ZipFile]::Open((Join-Path $directory 'JetDatabaseWriter.EntityFrameworkCore.1.0.0.nupkg'), [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        $efEntries = [ordered]@{
+            'JetDatabaseWriter.EntityFrameworkCore.nuspec' = '<package><metadata><id>JetDatabaseWriter.EntityFrameworkCore</id><version>1.0.0</version><projectUrl>https://symbiogenesis.github.io/JetDatabaseWriter/</projectUrl></metadata></package>'
+            'lib/net11.0/JetDatabaseWriter.EntityFrameworkCore.dll' = 'Synthetic DLL'
+            'lib/net11.0/JetDatabaseWriter.EntityFrameworkCore.xml' = 'Synthetic documentation'
+            'lib/net10.0/JetDatabaseWriter.EntityFrameworkCore.dll' = 'Synthetic DLL'
+            'lib/net10.0/JetDatabaseWriter.EntityFrameworkCore.xml' = 'Synthetic documentation'
+        }
+        foreach ($file in 'README.md', 'LICENSE', 'LICENSE-APACHE-2.0.txt', 'THIRD-PARTY-NOTICES.md') { $efEntries[$file] = [IO.File]::ReadAllText((Join-Path $repository $file)) }
+        foreach ($name in $efEntries.Keys) {
+            if ($name -eq $Missing) { continue }
+            $writer = [IO.StreamWriter]::new($efArchive.CreateEntry($name).Open())
+            try { $writer.Write($(if ($name -eq $Stale) { if ($name -eq 'JetDatabaseWriter.EntityFrameworkCore.nuspec') { '<package><metadata><id>JetDatabaseWriter.EntityFrameworkCore</id><version>1.0.0</version><projectUrl>https://github.com/symbiogenesis/JetDatabaseWriter</projectUrl></metadata></package>' } else { 'Incomplete license' } } else { $efEntries[$name] })) } finally { $writer.Dispose() }
+        }
+    }
+    finally { $efArchive.Dispose() }
     return $directory
 }
 

@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <TargetFrameworks Condition="'$(TestNetStandard)' == 'true'">net10.0</TargetFrameworks>
+    <NuGetLockFilePath Condition="'$(TestNetStandard)' == 'true'">packages.netstandard.lock.json</NuGetLockFilePath>
+    <PackageId>JetDatabaseWriter.EntityFrameworkCore</PackageId>
+    <Authors>Diego Ripera, Edward Miller</Authors>
+    <Company>Ripera</Company>
+    <Description>Pure-managed Entity Framework Core provider for Microsoft Access JET/ACE databases (.mdb/.accdb) powered by JetDatabaseWriter. No OleDB, ODBC, or ACE drivers required.</Description>
+    <PackageTags>access;jet;mdb;accdb;database;microsoft-access;entity-framework-core;efcore;orm</PackageTags>
+    <PackageProjectUrl>https://symbiogenesis.github.io/JetDatabaseWriter/</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/symbiogenesis/JetDatabaseWriter</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>https://github.com/symbiogenesis/JetDatabaseWriter/releases</PackageReleaseNotes>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- No .snupkg: DotNet.ReproducibleBuilds embeds the PDB in the DLL, so it would be empty. -->
+    <!--
+      MinVer sets the version from the latest vX.Y.Z tag reachable from HEAD: a tagged
+      commit packs as X.Y.Z and any later commit as a prerelease of the next patch.
+      The first release is 1.0.0; until it is tagged, builds are 1.0.0-alpha.0.<height>. See PUBLISH.md.
+    -->
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+    <MinVerMinimumMajorMinor>1.0</MinVerMinimumMajorMinor>
+    <!--
+      Checks on every pack that each public API of the net10.0 build also exists in
+      the net11.0 build. A PackageValidationBaselineVersion is added once a version is on
+      nuget.org (see PUBLISH.md).
+    -->
+    <EnablePackageValidation>true</EnablePackageValidation>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="JetDatabaseWriter.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" />
+    <None Include="..\..\LICENSE-APACHE-2.0.txt" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JetDatabaseWriter\JetDatabaseWriter.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="MinVer" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

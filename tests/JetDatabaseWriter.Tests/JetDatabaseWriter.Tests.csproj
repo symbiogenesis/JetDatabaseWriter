@@ -33,6 +33,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\JetDatabaseWriter\JetDatabaseWriter.csproj" />
+    <ProjectReference Include="..\..\src\JetDatabaseWriter.EntityFrameworkCore\JetDatabaseWriter.EntityFrameworkCore.csproj" />
     <ProjectReference Include="..\JetDatabaseWriter.TestSupport\JetDatabaseWriter.TestSupport.csproj" />
   </ItemGroup>
 
