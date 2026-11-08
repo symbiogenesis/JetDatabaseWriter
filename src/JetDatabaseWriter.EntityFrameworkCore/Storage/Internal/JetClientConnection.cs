@@ -24,7 +24,9 @@ public sealed class JetClientConnection : IJetClientConnection
 {
     private static readonly List<WeakReference<JetClientConnection>> LiveConnections = [];
     private static readonly Lock LiveConnectionsGate = new();
+    private static readonly bool DefaultWriterByteRangeLocks = new AccessWriterOptions().UseByteRangeLocks;
 
+    private readonly SemaphoreSlim connectionGate = new(1, 1);
     private readonly JetOptionsExtension optionsExtension;
     private readonly string? normalizedDatabasePath;
     private Stream? resolvedStream;
@@ -66,37 +68,36 @@ public sealed class JetClientConnection : IJetClientConnection
     {
         ObjectDisposedException.ThrowIf(this.disposed, this);
 
-        if (this.activeReader is not null)
+        await this.connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            return this.activeReader;
+            return await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
         }
-
-        if (this.ActiveWriter is not null)
+        finally
         {
-            throw new InvalidOperationException("Cannot open AccessReader while an AccessWriter is active.");
+            this.connectionGate.Release();
         }
-
-        AccessReaderOptions readerOptions = this.BuildReaderOptions();
-        if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
-        {
-            this.activeReader = await AccessReader.OpenAsync(this.optionsExtension.DatabasePath, readerOptions, cancellationToken).ConfigureAwait(false);
-            return this.activeReader;
-        }
-
-        Stream stream = this.GetOrCreateStream();
-        stream.Position = 0;
-        this.activeReader = await AccessReader.OpenAsync(stream, readerOptions, leaveOpen: true, cancellationToken).ConfigureAwait(false);
-        return this.activeReader;
     }
 
     /// <inheritdoc/>
     public async ValueTask CloseReaderAsync()
     {
-        if (this.activeReader is not null)
+        try
         {
-            AccessReader reader = this.activeReader;
-            this.activeReader = null;
-            await reader.DisposeAsync().ConfigureAwait(false);
+            await this.connectionGate.WaitAsync().ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
+        try
+        {
+            await this.CloseReaderCoreAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            this.connectionGate.Release();
         }
     }
 
@@ -263,7 +264,7 @@ public sealed class JetClientConnection : IJetClientConnection
             }
 
             FileInfo fileInfo = new(this.optionsExtension.DatabasePath);
-            if (fileInfo.Length < 4096)
+            if (fileInfo.Length < 2048)
             {
                 return false;
             }
@@ -271,20 +272,31 @@ public sealed class JetClientConnection : IJetClientConnection
         else
         {
             Stream stream = this.GetOrCreateStream();
-            if (stream.Length < 4096)
+            if (stream.Length < 2048)
             {
                 return false;
             }
         }
 
+        await this.connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            _ = await this.GetReaderAsync(cancellationToken).ConfigureAwait(false);
+            if (this.ActiveWriter is not null || this.activeReader is not null)
+            {
+                return true;
+            }
+
+            _ = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
+            await this.CloseReaderCoreAsync().ConfigureAwait(false);
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return false;
+        }
+        finally
+        {
+            this.connectionGate.Release();
         }
     }
 
@@ -358,17 +370,25 @@ public sealed class JetClientConnection : IJetClientConnection
                 cancellationToken).ConfigureAwait(false);
         }
 
-        AccessReader reader = await this.GetReaderAsync(cancellationToken).ConfigureAwait(false);
-        return await ReadFromReaderAsync(
-            reader,
-            tableName,
-            rootType,
-            properties,
-            bufferLength,
-            seekConditions,
-            parameters,
-            requiredProperties,
-            cancellationToken).ConfigureAwait(false);
+        await this.connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            AccessReader reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
+            return await ReadFromReaderAsync(
+                reader,
+                tableName,
+                rootType,
+                properties,
+                bufferLength,
+                seekConditions,
+                parameters,
+                requiredProperties,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            this.connectionGate.Release();
+        }
     }
 
     /// <inheritdoc/>
@@ -408,17 +428,25 @@ public sealed class JetClientConnection : IJetClientConnection
                 cancellationToken).ConfigureAwait(false);
         }
 
-        AccessReader reader = await this.GetReaderAsync(cancellationToken).ConfigureAwait(false);
-        return await ReadByKeysFromReaderAsync(
-            reader,
-            tableName,
-            rootType,
-            properties,
-            bufferLength,
-            keyProperties,
-            keyTuples,
-            requiredProperties,
-            cancellationToken).ConfigureAwait(false);
+        await this.connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            AccessReader reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
+            return await ReadByKeysFromReaderAsync(
+                reader,
+                tableName,
+                rootType,
+                properties,
+                bufferLength,
+                keyProperties,
+                keyTuples,
+                requiredProperties,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            this.connectionGate.Release();
+        }
     }
 
     /// <inheritdoc/>
@@ -429,13 +457,36 @@ public sealed class JetClientConnection : IJetClientConnection
             return;
         }
 
-        this.disposed = true;
-        await this.DisposeTransactionAsync().ConfigureAwait(false);
-        await this.CloseReaderAsync().ConfigureAwait(false);
-        if (this.resolvedStream is not null && !this.optionsExtension.LeaveStreamOpen)
+        try
         {
-            await this.resolvedStream.DisposeAsync().ConfigureAwait(false);
-            this.resolvedStream = null;
+            await this.connectionGate.WaitAsync().ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
+        try
+        {
+            if (this.disposed)
+            {
+                return;
+            }
+
+            this.disposed = true;
+            UnregisterConnection(this);
+            await this.DisposeTransactionAsync().ConfigureAwait(false);
+            await this.CloseReaderCoreAsync().ConfigureAwait(false);
+            if (this.resolvedStream is not null && !this.optionsExtension.LeaveStreamOpen)
+            {
+                await this.resolvedStream.DisposeAsync().ConfigureAwait(false);
+                this.resolvedStream = null;
+            }
+        }
+        finally
+        {
+            this.connectionGate.Release();
+            this.connectionGate.Dispose();
         }
     }
 
@@ -452,6 +503,81 @@ public sealed class JetClientConnection : IJetClientConnection
 #pragma warning restore RS0030, MA0042
     }
 
+    internal AccessReaderOptions BuildReaderOptions()
+    {
+        AccessReaderOptions? template = this.optionsExtension.ReaderOptions;
+        bool isStream = string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath);
+        ReadOnlyMemory<char> password = !string.IsNullOrEmpty(this.optionsExtension.Password)
+            ? this.optionsExtension.Password.AsMemory()
+            : (template?.Password ?? ReadOnlyMemory<char>.Empty);
+        return new AccessReaderOptions
+        {
+            Password = password,
+            MaxEncryptionSpinCount = template?.MaxEncryptionSpinCount ?? 1_000_000,
+            MaxEncryptionInfoBytes = template?.MaxEncryptionInfoBytes ?? (1024 * 1024),
+            MaxTableDefinitionBytes = template?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024),
+            MaxSchemaTraversalBytes = template?.MaxSchemaTraversalBytes ?? (64 * 1024 * 1024),
+            UseLockFile = !isStream && (template?.UseLockFile ?? true),
+            LockFileUserName = template?.LockFileUserName,
+            LockFileMachineName = template?.LockFileMachineName,
+            UseByteRangeLocks = template?.UseByteRangeLocks ?? false,
+            LockTimeoutMilliseconds = template?.LockTimeoutMilliseconds ?? 5000,
+            MaxLongValueBytes = template?.MaxLongValueBytes ?? 0xFFFFFF,
+            MaxAttachmentContentBytes = template?.MaxAttachmentContentBytes ?? (64 * 1024 * 1024),
+            MaxAttachmentContentBytesPerOperation = template?.MaxAttachmentContentBytesPerOperation ?? (256L * 1024 * 1024),
+            MaxAttachmentDecodeWorkBytesPerOperation = template?.MaxAttachmentDecodeWorkBytesPerOperation ?? (2L * 1024 * 1024 * 1024),
+            MaxComplexDiscoveryEntries = template?.MaxComplexDiscoveryEntries ?? 65536,
+            MaxComplexItemIdentityEntriesPerOperation = template?.MaxComplexItemIdentityEntriesPerOperation ?? 1_048_576,
+            MaxTotalEncryptionSpinCount = template?.MaxTotalEncryptionSpinCount ?? 10_000_000,
+            PageCacheSize = template?.PageCacheSize ?? 256,
+            MaxActivePageLeases = template?.MaxActivePageLeases ?? 4096,
+            MaxIncludeMaterializedRowsPerOperation = template?.MaxIncludeMaterializedRowsPerOperation ?? 65536,
+            MaxIncludeMaterializedPayloadBytesPerOperation = template?.MaxIncludeMaterializedPayloadBytesPerOperation ?? (256L * 1024 * 1024),
+            DiagnosticsEnabled = template?.DiagnosticsEnabled ?? false,
+            PageReadOptimizationMode = template?.PageReadOptimizationMode ?? PageReadOptimizationMode.Auto,
+            ValidateOnOpen = template?.ValidateOnOpen ?? true,
+            StrictParsing = template?.StrictParsing ?? true,
+            FileAccess = template?.FileAccess ?? FileAccess.Read,
+            FileShare = template?.FileShare ?? FileShare.Read,
+            LinkedSourceResolver = template?.LinkedSourceResolver,
+            LinkedSourceMaxDepth = template?.LinkedSourceMaxDepth ?? 32,
+            LinkedSourcePasswordResolver = template?.LinkedSourcePasswordResolver,
+            LinkedTextMaxRecordLength = template?.LinkedTextMaxRecordLength ?? 1_048_576,
+            LinkedTextMaxFieldLength = template?.LinkedTextMaxFieldLength ?? 1_048_576,
+            LinkedTextMaxColumnCount = template?.LinkedTextMaxColumnCount ?? 255,
+            LinkedTextMaxSourceFileBytes = template?.LinkedTextMaxSourceFileBytes,
+            LinkedTextMaxMaterializedRows = template?.LinkedTextMaxMaterializedRows,
+        };
+    }
+
+    internal AccessWriterOptions BuildWriterOptions()
+    {
+        AccessWriterOptions? template = this.optionsExtension.WriterOptions;
+        bool isStream = string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath);
+        ReadOnlyMemory<char> password = !string.IsNullOrEmpty(this.optionsExtension.Password)
+            ? this.optionsExtension.Password.AsMemory()
+            : (template?.Password ?? ReadOnlyMemory<char>.Empty);
+        return new AccessWriterOptions
+        {
+            Password = password,
+            MaxEncryptionSpinCount = template?.MaxEncryptionSpinCount ?? 1_000_000,
+            MaxEncryptionInfoBytes = template?.MaxEncryptionInfoBytes ?? (1024 * 1024),
+            MaxTableDefinitionBytes = template?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024),
+            MaxSchemaTraversalBytes = template?.MaxSchemaTraversalBytes ?? (64 * 1024 * 1024),
+            UseLockFile = !isStream && (template?.UseLockFile ?? true),
+            LockFileUserName = template?.LockFileUserName,
+            LockFileMachineName = template?.LockFileMachineName,
+            UseByteRangeLocks = template?.UseByteRangeLocks ?? DefaultWriterByteRangeLocks,
+            LockTimeoutMilliseconds = template?.LockTimeoutMilliseconds ?? 5000,
+            RespectExistingLockFile = template?.RespectExistingLockFile ?? true,
+            MaxTransactionPageBudget = template?.MaxTransactionPageBudget ?? 16_384,
+            PageCacheSize = template?.PageCacheSize ?? 256,
+            CalculatedExpressionCulture = template?.CalculatedExpressionCulture,
+            SecureEraseMode = template?.SecureEraseMode ?? SecureEraseMode.None,
+            UseTransactionalWrites = template?.UseTransactionalWrites ?? true,
+        };
+    }
+
     private static void RegisterConnection(JetClientConnection connection)
     {
         lock (LiveConnectionsGate)
@@ -465,6 +591,22 @@ public sealed class JetClientConnection : IJetClientConnection
             }
 
             LiveConnections.Add(new WeakReference<JetClientConnection>(connection));
+        }
+    }
+
+    private static void UnregisterConnection(JetClientConnection connection)
+    {
+        lock (LiveConnectionsGate)
+        {
+            for (int i = LiveConnections.Count - 1; i >= 0; i--)
+            {
+                if (!LiveConnections[i].TryGetTarget(out JetClientConnection? existing)
+                    || existing.disposed
+                    || ReferenceEquals(existing, connection))
+                {
+                    LiveConnections.RemoveAt(i);
+                }
+            }
         }
     }
 
@@ -1058,40 +1200,41 @@ public sealed class JetClientConnection : IJetClientConnection
         throw new InvalidOperationException("No database path or stream is configured.");
     }
 
-    private AccessReaderOptions BuildReaderOptions()
+    private async ValueTask<AccessReader> GetReaderCoreAsync(CancellationToken cancellationToken)
     {
-        AccessReaderOptions? template = this.optionsExtension.ReaderOptions;
-        bool isStream = string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath);
-        ReadOnlyMemory<char> password = !string.IsNullOrEmpty(this.optionsExtension.Password)
-            ? this.optionsExtension.Password.AsMemory()
-            : (template?.Password ?? ReadOnlyMemory<char>.Empty);
-        return new AccessReaderOptions
+        ObjectDisposedException.ThrowIf(this.disposed, this);
+
+        if (this.activeReader is not null)
         {
-            Password = password,
-            UseLockFile = !isStream && (template?.UseLockFile ?? true),
-            StrictParsing = template?.StrictParsing ?? true,
-            ValidateOnOpen = template?.ValidateOnOpen ?? true,
-            PageCacheSize = template?.PageCacheSize ?? 256,
-            PageReadOptimizationMode = template?.PageReadOptimizationMode ?? PageReadOptimizationMode.Auto,
-            DiagnosticsEnabled = template?.DiagnosticsEnabled ?? false,
-            LockTimeoutMilliseconds = template?.LockTimeoutMilliseconds ?? 5000,
-        };
+            return this.activeReader;
+        }
+
+        if (this.ActiveWriter is not null)
+        {
+            throw new InvalidOperationException("Cannot open AccessReader while an AccessWriter is active.");
+        }
+
+        AccessReaderOptions readerOptions = this.BuildReaderOptions();
+        if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+        {
+            this.activeReader = await AccessReader.OpenAsync(this.optionsExtension.DatabasePath, readerOptions, cancellationToken).ConfigureAwait(false);
+            return this.activeReader;
+        }
+
+        Stream stream = this.GetOrCreateStream();
+        stream.Position = 0;
+        this.activeReader = await AccessReader.OpenAsync(stream, readerOptions, leaveOpen: true, cancellationToken).ConfigureAwait(false);
+        return this.activeReader;
     }
 
-    private AccessWriterOptions BuildWriterOptions()
+    private async ValueTask CloseReaderCoreAsync()
     {
-        AccessWriterOptions? template = this.optionsExtension.WriterOptions;
-        bool isStream = string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath);
-        ReadOnlyMemory<char> password = !string.IsNullOrEmpty(this.optionsExtension.Password)
-            ? this.optionsExtension.Password.AsMemory()
-            : (template?.Password ?? ReadOnlyMemory<char>.Empty);
-        return new AccessWriterOptions
+        if (this.activeReader is not null)
         {
-            Password = password,
-            UseLockFile = !isStream && (template?.UseLockFile ?? true),
-            UseTransactionalWrites = template?.UseTransactionalWrites ?? true,
-            LockTimeoutMilliseconds = template?.LockTimeoutMilliseconds ?? 5000,
-        };
+            AccessReader reader = this.activeReader;
+            this.activeReader = null;
+            await reader.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     private readonly struct KeyTupleValue(object?[] values) : IEquatable<KeyTupleValue>

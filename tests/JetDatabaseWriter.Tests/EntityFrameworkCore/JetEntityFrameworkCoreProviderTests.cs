@@ -4,15 +4,18 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
+using JetDatabaseWriter.EntityFrameworkCore.Storage.Internal;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
@@ -687,6 +690,143 @@ public sealed class JetEntityFrameworkCoreProviderTests
         });
         _ = Assert.Throws<NotSupportedException>(() => _ = context.SaveChanges());
         _ = Assert.Throws<NotSupportedException>(() => _ = context.Customers.ToList());
+    }
+
+    [Fact]
+    public async Task Options_Templates_Are_Preserved_And_CanConnectAsync_Closes_Temporary_Reader()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string tempDir = Path.Combine(Path.GetTempPath(), $"jdw-efcore-opts-{Guid.NewGuid():N}");
+        string dbPath = Path.Combine(tempDir, "jet3probe.mdb");
+        string lockPath = Path.Combine(tempDir, "jet3probe.ldb");
+
+        try
+        {
+            AccessReaderOptions customReaderOptions = new()
+            {
+                MaxEncryptionSpinCount = 250_000,
+                MaxEncryptionInfoBytes = 512 * 1024,
+                MaxTableDefinitionBytes = 8 * 1024 * 1024,
+                MaxSchemaTraversalBytes = 32 * 1024 * 1024,
+                LockFileUserName = "EfReaderUser",
+                LockFileMachineName = "EfReaderBox",
+                LockTimeoutMilliseconds = 1234,
+                MaxLongValueBytes = 123_456,
+                MaxAttachmentContentBytes = 2 * 1024 * 1024,
+                MaxAttachmentContentBytesPerOperation = 8L * 1024 * 1024,
+                MaxAttachmentDecodeWorkBytesPerOperation = 16L * 1024 * 1024,
+                MaxComplexDiscoveryEntries = 4096,
+                MaxComplexItemIdentityEntriesPerOperation = 8192,
+                MaxTotalEncryptionSpinCount = 500_000,
+                PageCacheSize = 64,
+                MaxActivePageLeases = 512,
+                MaxIncludeMaterializedRowsPerOperation = 2048,
+                MaxIncludeMaterializedPayloadBytesPerOperation = 4L * 1024 * 1024,
+                DiagnosticsEnabled = true,
+                PageReadOptimizationMode = PageReadOptimizationMode.Disabled,
+                ValidateOnOpen = false,
+                StrictParsing = false,
+                LinkedSourceMaxDepth = 5,
+                LinkedTextMaxRecordLength = 10_000,
+                LinkedTextMaxFieldLength = 5_000,
+                LinkedTextMaxColumnCount = 50,
+                LinkedTextMaxSourceFileBytes = 1_000_000L,
+                LinkedTextMaxMaterializedRows = 500u,
+            };
+
+            var frenchCulture = CultureInfo.GetCultureInfo("fr-FR");
+            AccessWriterOptions customWriterOptions = new()
+            {
+                MaxEncryptionSpinCount = 300_000,
+                MaxEncryptionInfoBytes = 256 * 1024,
+                MaxTableDefinitionBytes = 4 * 1024 * 1024,
+                MaxSchemaTraversalBytes = 16 * 1024 * 1024,
+                LockFileUserName = "EfWriterUser",
+                LockFileMachineName = "EfWriterBox",
+                UseByteRangeLocks = false,
+                LockTimeoutMilliseconds = 2345,
+                RespectExistingLockFile = false,
+                MaxTransactionPageBudget = 1024,
+                PageCacheSize = 128,
+                CalculatedExpressionCulture = frenchCulture,
+                SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages,
+                UseTransactionalWrites = false,
+            };
+
+            DbContextOptions<StoreDbContext> options = new DbContextOptionsBuilder<StoreDbContext>()
+                .UseJetDatabaseWriter(
+                    dbPath,
+                    DatabaseFormat.Jet3Mdb,
+                    jet => jet
+                        .WithReaderOptions(customReaderOptions)
+                        .WithWriterOptions(customWriterOptions))
+                .Options;
+
+            await using StoreDbContext context = new(options);
+#pragma warning disable EF1001 // Testing internal JetClientConnection option construction directly.
+            JetClientConnection clientConnection = Assert.IsType<JetClientConnection>(context.GetService<IJetClientConnection>());
+
+            AccessReaderOptions builtReader = clientConnection.BuildReaderOptions();
+            AccessWriterOptions builtWriter = clientConnection.BuildWriterOptions();
+#pragma warning restore EF1001
+
+            Assert.Equal(250_000, builtReader.MaxEncryptionSpinCount);
+            Assert.Equal(512 * 1024, builtReader.MaxEncryptionInfoBytes);
+            Assert.Equal(8 * 1024 * 1024, builtReader.MaxTableDefinitionBytes);
+            Assert.Equal(32 * 1024 * 1024, builtReader.MaxSchemaTraversalBytes);
+            Assert.Equal("EfReaderUser", builtReader.LockFileUserName);
+            Assert.Equal("EfReaderBox", builtReader.LockFileMachineName);
+            Assert.Equal(1234, builtReader.LockTimeoutMilliseconds);
+            Assert.Equal(123_456, builtReader.MaxLongValueBytes);
+            Assert.Equal(2 * 1024 * 1024, builtReader.MaxAttachmentContentBytes);
+            Assert.Equal(8L * 1024 * 1024, builtReader.MaxAttachmentContentBytesPerOperation);
+            Assert.Equal(16L * 1024 * 1024, builtReader.MaxAttachmentDecodeWorkBytesPerOperation);
+            Assert.Equal(4096, builtReader.MaxComplexDiscoveryEntries);
+            Assert.Equal(8192, builtReader.MaxComplexItemIdentityEntriesPerOperation);
+            Assert.Equal(500_000, builtReader.MaxTotalEncryptionSpinCount);
+            Assert.Equal(64, builtReader.PageCacheSize);
+            Assert.Equal(512, builtReader.MaxActivePageLeases);
+            Assert.Equal(2048, builtReader.MaxIncludeMaterializedRowsPerOperation);
+            Assert.Equal(4L * 1024 * 1024, builtReader.MaxIncludeMaterializedPayloadBytesPerOperation);
+            Assert.True(builtReader.DiagnosticsEnabled);
+            Assert.Equal(PageReadOptimizationMode.Disabled, builtReader.PageReadOptimizationMode);
+            Assert.False(builtReader.ValidateOnOpen);
+            Assert.False(builtReader.StrictParsing);
+            Assert.Equal(5, builtReader.LinkedSourceMaxDepth);
+            Assert.Equal(10_000, builtReader.LinkedTextMaxRecordLength);
+            Assert.Equal(5_000, builtReader.LinkedTextMaxFieldLength);
+            Assert.Equal(50, builtReader.LinkedTextMaxColumnCount);
+            Assert.Equal(1_000_000L, builtReader.LinkedTextMaxSourceFileBytes);
+            Assert.Equal(500u, builtReader.LinkedTextMaxMaterializedRows);
+
+            Assert.Equal(300_000, builtWriter.MaxEncryptionSpinCount);
+            Assert.Equal(256 * 1024, builtWriter.MaxEncryptionInfoBytes);
+            Assert.Equal(4 * 1024 * 1024, builtWriter.MaxTableDefinitionBytes);
+            Assert.Equal(16 * 1024 * 1024, builtWriter.MaxSchemaTraversalBytes);
+            Assert.Equal("EfWriterUser", builtWriter.LockFileUserName);
+            Assert.Equal("EfWriterBox", builtWriter.LockFileMachineName);
+            Assert.False(builtWriter.UseByteRangeLocks);
+            Assert.Equal(2345, builtWriter.LockTimeoutMilliseconds);
+            Assert.False(builtWriter.RespectExistingLockFile);
+            Assert.Equal(1024, builtWriter.MaxTransactionPageBudget);
+            Assert.Equal(128, builtWriter.PageCacheSize);
+            Assert.Same(frenchCulture, builtWriter.CalculatedExpressionCulture);
+            Assert.Equal(SecureEraseMode.DeletedRowsAndFreedPages, builtWriter.SecureEraseMode);
+            Assert.False(builtWriter.UseTransactionalWrites);
+
+            Assert.True(await context.Database.EnsureCreatedAsync(ct));
+            Assert.False(File.Exists(lockPath));
+
+            Assert.True(await context.Database.CanConnectAsync(ct));
+            Assert.False(File.Exists(lockPath));
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
     }
 
     private sealed class StoreDbContext(DbContextOptions<StoreDbContext> options) : DbContext(options)
