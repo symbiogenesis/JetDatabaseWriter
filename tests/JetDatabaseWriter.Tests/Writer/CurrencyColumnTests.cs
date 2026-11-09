@@ -27,17 +27,14 @@ public sealed class CurrencyColumnTests
     private const string TableName = "Ledger";
 
     /// <summary>Gets each Access-authored fixture with a Currency column, paired with every target format.</summary>
-    public static async ValueTask<TheoryData<string, DatabaseFormat>> CurrencySourcesAndFormats()
+    public static TheoryData<string, DatabaseFormat> CurrencySourcesAndFormats()
     {
         var data = new TheoryData<string, DatabaseFormat>();
         foreach (string source in CurrencySources)
         {
-            if (await TestDatabases.IsReadableAsync(source, TestContext.Current.CancellationToken))
+            foreach (DatabaseFormat format in Formats)
             {
-                foreach (DatabaseFormat format in Formats)
-                {
-                    data.Add(Path.GetFileName(source), format);
-                }
+                data.Add(Path.GetFileName(source), format);
             }
         }
 

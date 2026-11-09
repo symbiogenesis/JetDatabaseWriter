@@ -408,7 +408,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
     public async Task Open_WhenFileNotFound_ThrowsFileNotFoundException() => await Assert.ThrowsAsync<System.IO.FileNotFoundException>(async () => await AccessReader.OpenAsync(@"C:\no\such\file.mdb", cancellationToken: TestContext.Current.CancellationToken));
 
     [Theory]
-    [MemberData(nameof(TestDatabases.AllExisting), MemberType = typeof(TestDatabases))]
+    [MemberData(nameof(TestDatabases.AllInRepo), MemberType = typeof(TestDatabases))]
     public async Task Open_WhenFileExists_IsNotPasswordProtected(string path)
     {
         Exception? ex = await Record.ExceptionAsync(async () => { await using AccessReader r = await TestDatabases.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken); });

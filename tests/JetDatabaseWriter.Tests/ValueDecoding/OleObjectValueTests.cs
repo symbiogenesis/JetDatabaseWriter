@@ -35,7 +35,6 @@ public sealed class OleObjectValueTests
     [Fact]
     public async Task Parse_TestOleV2007Values_UnwrapsEveryObject()
     {
-        Assert.SkipUnless(await TestDatabases.IsReadableAsync(TestDatabases.TestOleV2007, Ct), "testOleV2007 is not readable.");
         Dictionary<int, byte[]> values = await ReadOleValuesByLengthAsync(TestDatabases.TestOleV2007, "Table1", "ole_data");
 
         AssertEmbeddedFile(values[443], "test_data.txt", "Z:\\jackcess_test\\ole\\test_data.txt", 38);
@@ -80,7 +79,6 @@ public sealed class OleObjectValueTests
     [MemberData(nameof(Test2Fixtures))]
     public async Task Parse_Test2ProjectDocument_ReturnsNativeData(string fixture)
     {
-        Assert.SkipUnless(await TestDatabases.IsReadableAsync(fixture, Ct), $"{fixture} is not readable.");
         byte[] stored = Assert.Single((await ReadOleValuesByLengthAsync(fixture, "MSP_PROJECTS", "RESERVED_BINARY_DATA")).Values);
 
         OleObjectContent content = OleObjectValue.Parse(stored);

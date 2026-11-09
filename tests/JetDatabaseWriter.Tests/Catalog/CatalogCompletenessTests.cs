@@ -61,12 +61,11 @@ public sealed class CatalogCompletenessTests
     ];
 
     /// <summary>
-    /// Gets every readable unencrypted fixture: the in-repo databases, the Jackcess tree
+    /// Gets every required unencrypted fixture: the in-repo databases, the Jackcess tree
     /// and the mdbtools corpus.
     /// </summary>
-    public static async ValueTask<TheoryData<string>> AllFixtures()
+    public static TheoryData<string> AllFixtures()
     {
-        var data = new TheoryData<string>();
         string[] others =
         [
             TestDatabases.NorthwindTraders,
@@ -78,15 +77,7 @@ public sealed class CatalogCompletenessTests
             TestDatabases.MdbtoolsASampleDatabase,
             TestDatabases.MdbtoolsDateTestDatabase,
         ];
-        foreach (string path in others.Concat(TestDatabases.AllJackcessDatabases))
-        {
-            if (await TestDatabases.IsReadableAsync(path, TestContext.Current.CancellationToken))
-            {
-                data.Add(path);
-            }
-        }
-
-        return data;
+        return TestDatabases.ToTheoryData(others.Concat(TestDatabases.AllJackcessDatabases));
     }
 
     /// <summary>

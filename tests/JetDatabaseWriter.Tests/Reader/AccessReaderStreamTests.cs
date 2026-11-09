@@ -12,7 +12,7 @@ using Xunit;
 
 /// <summary>
 /// Tests for: StreamRows (typed object[]) and StreamRowsAsStrings (string[]).
-/// Includes a memory-efficiency smoke test on the large Matrix database.
+/// Includes bounded retained-memory smoke tests on required native fixtures.
 /// </summary>
 /// <param name="db">The database input.</param>
 public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseCache>
@@ -24,13 +24,9 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRows_YieldsAtLeastOneRow(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
-        if (stat == null)
-        {
-            return; // all tables are empty — nothing to assert
-        }
+        string table = await GetPopulatedTableAsync(reader);
 
-        Assert.True(await reader.Rows(stat.Name, cancellationToken: TestContext.Current.CancellationToken).AnyAsync(TestContext.Current.CancellationToken));
+        Assert.True(await reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).AnyAsync(TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -38,13 +34,17 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRows_EachRow_HasSameColumnCountAsMetadata(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        string table = await GetPopulatedTableAsync(reader);
         int colCount = (await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken)).Count;
 
+        int count = 0;
         await foreach (object[] row in reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).Take(50))
         {
             Assert.Equal(colCount, row.Length);
+            count++;
         }
+
+        Assert.True(count > 0, $"The populated table '{table}' must yield rows.");
     }
 
     [Theory]
@@ -52,11 +52,13 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRows_TotalCount_MatchesReadTableRowCount(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        string table = await GetPopulatedTableAsync(reader);
 
         int streamCount = await reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
-        int dtCount = (await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows.Count;
+        using System.Data.DataTable rows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        int dtCount = rows.Rows.Count;
 
+        Assert.True(streamCount > 0, $"The populated table '{table}' must yield rows.");
         Assert.Equal(dtCount, streamCount);
     }
 
@@ -65,23 +67,22 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRows_NumericAndDateColumns_AreNotStrings(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        string table = await GetPopulatedTableAsync(reader);
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
-        // Find first non-string, non-null column
         int numericColIdx = FindColumnIndex(meta, m => m.ClrType != typeof(string));
-        if (numericColIdx < 0)
+        Assert.True(numericColIdx >= 0, $"The required fixture table '{table}' must contain a non-text column.");
+        bool checkedValue = false;
+        await foreach (object[] row in reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).Take(50))
         {
-            return; // all-string table — skip assertion
+            if (row[numericColIdx] != DBNull.Value)
+            {
+                Assert.IsNotType<string>(row[numericColIdx]);
+                checkedValue = true;
+            }
         }
 
-        object[] firstRow = (await reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).FirstOrDefaultAsync(TestContext.Current.CancellationToken))!;
-        if (firstRow == null || firstRow[numericColIdx] == DBNull.Value)
-        {
-            return;
-        }
-
-        Assert.IsNotType<string>(firstRow[numericColIdx]);
+        Assert.True(checkedValue, $"The required fixture table '{table}' must exercise a non-null typed value.");
     }
 
     [Theory]
@@ -89,7 +90,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRows_WithProgress_ReportsNonNegativeValues(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        string table = await GetPopulatedTableAsync(reader);
         var reported = new List<long>();
 
         // Use synchronous IProgress<T> to avoid Progress<T>'s thread-pool dispatch,
@@ -100,6 +101,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
             _ = row;
         }
 
+        Assert.NotEmpty(reported);
         foreach (long v in reported)
         {
             Assert.True(v >= 0);
@@ -113,13 +115,9 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRowsAsStrings_YieldsAtLeastOneRow(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        TableStat? stat = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0);
-        if (stat == null)
-        {
-            return; // all tables are empty — nothing to assert
-        }
+        string table = await GetPopulatedTableAsync(reader);
 
-        Assert.True(await reader.RowsAsStrings(stat.Name, cancellationToken: TestContext.Current.CancellationToken).AnyAsync(TestContext.Current.CancellationToken));
+        Assert.True(await reader.RowsAsStrings(table, cancellationToken: TestContext.Current.CancellationToken).AnyAsync(TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -127,13 +125,17 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRowsAsStrings_CellCount_MatchesColumnMetadata(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        string table = await GetPopulatedTableAsync(reader);
         int colCount = (await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken)).Count;
 
+        int count = 0;
         await foreach (string[] row in reader.RowsAsStrings(table, cancellationToken: TestContext.Current.CancellationToken).Take(50))
         {
             Assert.Equal(colCount, row.Length);
+            count++;
         }
+
+        Assert.True(count > 0, $"The populated table '{table}' must yield rows.");
     }
 
     [Theory]
@@ -141,29 +143,25 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRowsAsStrings_TotalCount_MatchesStreamRowsCount(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        string table = await GetPopulatedTableAsync(reader);
 
         int typedCount = await reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
         int stringCount = await reader.RowsAsStrings(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
+        Assert.True(typedCount > 0, $"The populated table '{table}' must yield rows.");
         Assert.Equal(typedCount, stringCount);
     }
 
-    // ── Matrix (2 GB) — memory-efficiency smoke test ──────────────────
+    // ── Northwind — retained-memory smoke test ───────────────────────
 
     [Fact(DisableParallelization = true)] // Full collections and retained-heap measurements exclude unrelated tests.
     public async Task StreamRows_NorthwindTraders_DoesNotExceedReasonableMemory()
     {
         string path = TestDatabases.NorthwindTraders;
-        if (!await TestDatabases.IsReadableAsync(path, TestContext.Current.CancellationToken))
-        {
-            return; // skip if not present or encrypted
-        }
-
         long before = GC.GetTotalMemory(forceFullCollection: true);
 
         await using AccessReader reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 256, UseLockFile = false }, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        string table = await GetPopulatedTableAsync(reader);
         int count = 0;
 
         await foreach (object[] row in reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken))
@@ -179,7 +177,9 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
         long after = GC.GetTotalMemory(forceFullCollection: true);
         long deltaMb = (after - before) / (1024 * 1024);
 
-        // Streaming 100 K rows should not grow heap beyond 200 MB
+        Assert.True(count > 0, "The required fixture must exercise streaming before memory is measured.");
+
+        // Bound retained heap after traversing the fixture, up to 100 K rows.
         Assert.True(deltaMb < 200, $"Streaming should not load the whole file into memory (delta: {deltaMb} MB)");
     }
 
@@ -187,19 +187,8 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRows_NorthwindTraders_ReadsAllTablesWithoutException()
     {
         string path = TestDatabases.NorthwindTraders;
-        if (!await TestDatabases.IsReadableAsync(path, TestContext.Current.CancellationToken))
-        {
-            return; // skip if not present or encrypted
-        }
-
         await using AccessReader reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 512, UseLockFile = false }, TestContext.Current.CancellationToken);
-        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-
-        Assert.NotEmpty(tables);
-
-        string first = tables[0];
-        int count = await reader.Rows(first, cancellationToken: TestContext.Current.CancellationToken).Take(1000).CountAsync(TestContext.Current.CancellationToken);
-        Assert.True(count >= 0);
+        await AssertAllTablesStreamAsync(reader);
     }
 
     // ── Jackcess — memory-efficiency smoke test ─────────────────────
@@ -211,8 +200,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
         long before = GC.GetTotalMemory(forceFullCollection: true);
 
         await using AccessReader reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 256, UseLockFile = false }, TestContext.Current.CancellationToken);
-        string table = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(s => s.RowCount > 0)?.Name
-                       ?? (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        string table = await GetPopulatedTableAsync(reader);
         int count = 0;
 
         await foreach (object[] row in reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken))
@@ -228,6 +216,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
         long after = GC.GetTotalMemory(forceFullCollection: true);
         long deltaMb = (after - before) / (1024 * 1024);
 
+        Assert.True(count > 0, "The required fixture must exercise streaming before memory is measured.");
         Assert.True(deltaMb < 200, $"Streaming should not load the whole file into memory (delta: {deltaMb} MB)");
     }
 
@@ -236,13 +225,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRows_Jackcess_ReadsAllTablesWithoutException(string path)
     {
         await using AccessReader reader = await TestDatabases.OpenAsync(path, new AccessReaderOptions { PageCacheSize = 512, UseLockFile = false }, TestContext.Current.CancellationToken);
-        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-
-        Assert.NotEmpty(tables);
-
-        string first = tables[0];
-        int count = await reader.Rows(first, cancellationToken: TestContext.Current.CancellationToken).Take(1000).CountAsync(TestContext.Current.CancellationToken);
-        Assert.True(count >= 0);
+        await AssertAllTablesStreamAsync(reader);
     }
 
     // ── StreamRows<T> (generic POCO) ──────────────────────────────────
@@ -259,11 +242,12 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRowsGeneric_Count_MatchesStreamRows(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        string table = await GetPopulatedTableAsync(reader);
 
         int typedCount = await reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
         int genericCount = await reader.Rows<StreamGenericRow>(table, cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
+        Assert.True(typedCount > 0, $"The populated table '{table}' must yield rows.");
         Assert.Equal(typedCount, genericCount);
     }
 
@@ -272,12 +256,16 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRowsGeneric_YieldsNonNullInstances(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        string table = await GetPopulatedTableAsync(reader);
 
+        int count = 0;
         await foreach (StreamGenericRow? item in reader.Rows<StreamGenericRow>(table, cancellationToken: TestContext.Current.CancellationToken).Take(50))
         {
             Assert.NotNull(item);
+            count++;
         }
+
+        Assert.True(count > 0, $"The populated table '{table}' must yield rows.");
     }
 
     [Theory]
@@ -285,7 +273,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRowsGeneric_WithProgress_ReportsNonNegativeValues(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        string table = await GetPopulatedTableAsync(reader);
         var reported = new List<long>();
 
         await foreach (StreamGenericRow item in reader.Rows<StreamGenericRow>(table, new SyncProgress<long>(reported.Add), TestContext.Current.CancellationToken))
@@ -293,6 +281,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
             _ = item;
         }
 
+        Assert.NotEmpty(reported);
         foreach (long v in reported)
         {
             Assert.True(v >= 0);
@@ -304,7 +293,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
     public async Task StreamRowsGeneric_IsLazy_CanBreakEarly(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
+        string table = await GetPopulatedTableAsync(reader);
         int count = 0;
 
         await foreach (StreamGenericRow item in reader.Rows<StreamGenericRow>(table, cancellationToken: TestContext.Current.CancellationToken))
@@ -317,10 +306,36 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
             }
         }
 
-        Assert.True(count <= 3);
+        Assert.InRange(count, 1, 3);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
+
+    private static async Task<string> GetPopulatedTableAsync(AccessReader reader)
+    {
+        TableStat? table = (await reader.GetTableStatsAsync(TestContext.Current.CancellationToken)).FirstOrDefault(stat => stat.RowCount > 0);
+        Assert.NotNull(table);
+        return table.Name;
+    }
+
+    private static async Task AssertAllTablesStreamAsync(AccessReader reader)
+    {
+        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+        Assert.NotEmpty(tables);
+        int totalRows = 0;
+        foreach (string table in tables)
+        {
+            int columns = (await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken)).Count;
+            Assert.True(columns > 0, $"The fixture table '{table}' must retain its columns.");
+            await foreach (object[] row in reader.Rows(table, cancellationToken: TestContext.Current.CancellationToken).Take(1000))
+            {
+                Assert.Equal(columns, row.Length);
+                totalRows++;
+            }
+        }
+
+        Assert.True(totalRows > 0, "The required fixture must exercise at least one streamed row.");
+    }
 
     private static int FindColumnIndex(IReadOnlyList<ColumnMetadata> columns, Predicate<ColumnMetadata> match)
     {

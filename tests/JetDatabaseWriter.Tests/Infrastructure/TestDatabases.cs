@@ -1,18 +1,16 @@
 namespace JetDatabaseWriter.Tests.Infrastructure;
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Exceptions;
 using Xunit;
 
 /// <summary>
 /// Paths to the local test databases and shared MemberData helpers.
-/// Tests are skipped automatically when the file does not exist on the machine.
+/// Declared fixtures are required inputs; discovery never opens or filters them.
 /// </summary>
 internal static class TestDatabases
 {
@@ -269,71 +267,48 @@ internal static class TestDatabases
         ExtDateTestV2019,
     ];
 
-    private static readonly ConcurrentDictionary<string, bool> ReadableCache = new(StringComparer.OrdinalIgnoreCase);
-
     // ── MemberData sets (properties) ──────────────────────────────────
 
     /// <summary>
-    /// Gets the in-repo databases the reader can open (skips any that don't exist or can't be opened).
+    /// Gets the required in-repo databases.
     /// <see cref="AesEncrypted"/> is left out: it is a compacted copy of
     /// <see cref="NorthwindTraders"/>, so it would only repeat Northwind's rows.
     /// </summary>
-    public static ValueTask<TheoryData<string>> All =>
-        ToReadableTheoryDataAsync(InRepoDatabases.Where(static p => p != AesEncrypted));
+    public static TheoryData<string> All =>
+        ToTheoryData(InRepoDatabases.Where(static p => p != AesEncrypted));
 
-    /// <summary>Gets the smaller in-repo databases (skips any that can't be opened).</summary>
-    public static ValueTask<TheoryData<string>> Small => ToReadableTheoryDataAsync(
+    /// <summary>Gets the smaller required in-repo databases.</summary>
+    public static TheoryData<string> Small => ToTheoryData(
         [NorthwindTraders, AdventureWorks, Jet3Test, FixedTextTestV2007]);
 
-    /// <summary>Gets the baseline Jackcess test databases (one per Access version).</summary>
-    public static ValueTask<TheoryData<string>> Jackcess => ToReadableTheoryDataAsync(
+    /// <summary>Gets the required baseline Jackcess databases, one per Access version.</summary>
+    public static TheoryData<string> Jackcess => ToTheoryData(
         [TestV1997, TestV2000, TestV2003, TestV2007, TestV2010, ExtDateTestV2019]);
 
-    /// <summary>Gets the Jackcess complexDataTest fixtures (V2007 + V2010).</summary>
-    public static ValueTask<TheoryData<string>> ComplexData => ToReadableTheoryDataAsync(
+    /// <summary>Gets the required Jackcess complexDataTest fixtures (V2007 + V2010).</summary>
+    public static TheoryData<string> ComplexData => ToTheoryData(
         [ComplexDataTestV2007, ComplexDataTestV2010]);
 
-    /// <summary>Gets the Jackcess testPromotion fixtures (V2000–V2010).</summary>
-    public static ValueTask<TheoryData<string>> Promotion => ToReadableTheoryDataAsync(
+    /// <summary>Gets the required Jackcess testPromotion fixtures (V2000–V2010).</summary>
+    public static TheoryData<string> Promotion => ToTheoryData(
         [TestPromotionV2000, TestPromotionV2003, TestPromotionV2007, TestPromotionV2010]);
 
-    /// <summary>Gets the Jackcess delColTest fixtures (V1997–V2010).</summary>
-    public static ValueTask<TheoryData<string>> DelCol => ToReadableTheoryDataAsync(
+    /// <summary>Gets the required Jackcess delColTest fixtures (V1997–V2010).</summary>
+    public static TheoryData<string> DelCol => ToTheoryData(
         [DelColTestV1997, DelColTestV2000, DelColTestV2003, DelColTestV2007, DelColTestV2010]);
 
     /// <summary>
-    /// Gets every Jackcess fixture that exists on disk and can be opened by the reader.
-    /// Use for broad-coverage round-trip tests; expect this to skip fixtures
-    /// outside the current reader scope (encrypted, query-only, calculated fields,
-    /// etc.).
+    /// Gets every declared Jackcess database. All declared fixtures support
+    /// opening and catalog inspection; limitations of individual field or
+    /// linked-source operations are asserted by their dedicated tests.
+    /// Missing or damaged inputs remain test cases and fail when exercised.
     /// </summary>
-    public static ValueTask<TheoryData<string>> JackcessAll => ToReadableTheoryDataAsync(AllJackcessDatabases);
+    public static TheoryData<string> JackcessAll => ToTheoryData(AllJackcessDatabases);
 
-    /// <summary>
-    /// Gets every Jackcess fixture that exists on disk, regardless of whether
-    /// the reader can open it. Use this for tests that assert specific failure
-    /// modes (e.g. "calcFieldTestV2010 throws JetLimitationException").
-    /// </summary>
-    public static TheoryData<string> JackcessAllExisting => ToTheoryData(
-        AllJackcessDatabases.Where(File.Exists));
-
-    /// <summary>
-    /// Gets all known database files that exist on disk, without a readability check.
-    /// Use this when you need to assert something about files that may fail to open
-    /// (e.g., verifying they are not password-protected).
-    /// </summary>
-    public static TheoryData<string> AllExisting => ToTheoryData(
-        InRepoDatabases.Where(File.Exists));
+    /// <summary>Gets all required in-repo databases, including the compacted Northwind copy.</summary>
+    public static TheoryData<string> AllInRepo => ToTheoryData(InRepoDatabases);
 
     // ── Helpers (methods) ─────────────────────────────────────────────
-
-    /// <summary>
-    /// Returns a skip reason string when the file is missing, or null when it exists.
-    /// Use with <c>Skip = SkipIfMissing(path)</c> on [Fact].
-    /// </summary>
-    /// <param name="path">Path to the file.</param>
-    public static string? SkipIfMissing(string path) =>
-        File.Exists(path) ? null : $"Test database not found: {path}";
 
     public static ValueTask<AccessReader> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -342,50 +317,10 @@ internal static class TestDatabases
         return AccessReader.OpenAsync(path, options, cancellationToken);
     }
 
-    /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
-    /// <param name="path">Path to the file.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal static async ValueTask<bool> IsReadableAsync(string path, CancellationToken cancellationToken = default)
-    {
-        if (ReadableCache.TryGetValue(path, out bool cached))
-        {
-            return cached;
-        }
-
-        if (!File.Exists(path))
-        {
-            ReadableCache.TryAdd(path, false);
-            return false;
-        }
-
-        try
-        {
-            await using AccessReader r = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, cancellationToken);
-            ReadableCache.TryAdd(path, true);
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JetLimitationException)
-        {
-            ReadableCache.TryAdd(path, false);
-            return false;
-        }
-    }
-
-    private static async ValueTask<TheoryData<string>> ToReadableTheoryDataAsync(IEnumerable<string> paths)
-    {
-        var data = new TheoryData<string>();
-        foreach (string path in paths)
-        {
-            if (await IsReadableAsync(path, TestContext.Current.CancellationToken))
-            {
-                data.Add(path);
-            }
-        }
-
-        return data;
-    }
-
-    private static TheoryData<string> ToTheoryData(IEnumerable<string> paths)
+    /// <summary>Preserves every declared case without inspecting its input during discovery.</summary>
+    /// <param name="paths">The required fixture paths.</param>
+    /// <returns>One case for every required path, including missing or damaged files.</returns>
+    internal static TheoryData<string> ToTheoryData(IEnumerable<string> paths)
     {
         var data = new TheoryData<string>();
         foreach (string p in paths)

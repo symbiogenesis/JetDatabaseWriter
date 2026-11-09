@@ -149,23 +149,14 @@ public sealed class LvPropReadTests
         return data;
     }
 
-    /// <summary>Gets every Access-authored fixture the reader can open.</summary>
+    /// <summary>Gets every required Access-authored fixture.</summary>
     /// <returns>The fixture paths.</returns>
-    public static async ValueTask<TheoryData<string>> AccessAuthoredFixtures()
+    public static TheoryData<string> AccessAuthoredFixtures()
     {
-        var data = new TheoryData<string>();
         IEnumerable<string> paths = new[] { TestDatabases.NorthwindTraders, TestDatabases.AdventureWorks, TestDatabases.Jet3Test, TestDatabases.ComplexFields }
             .Concat(TestDatabases.AllJackcessDatabases)
             .Concat([TestDatabases.MdbtoolsNwind, TestDatabases.MdbtoolsASampleDatabase, TestDatabases.MdbtoolsDateTestDatabase]);
-        foreach (string path in paths)
-        {
-            if (await TestDatabases.IsReadableAsync(path, TestContext.Current.CancellationToken))
-            {
-                data.Add(path);
-            }
-        }
-
-        return data;
+        return TestDatabases.ToTheoryData(paths);
     }
 
     private static DatabaseFormat[] Formats => [DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb];
@@ -303,8 +294,6 @@ public sealed class LvPropReadTests
     [MemberData(nameof(CollidingTables))]
     public async Task ReadLvProp_TableIdSharesLow24BitsWithAnotherObject_ReturnsOwnBlob(string fixture, string table)
     {
-        Assert.SkipUnless(await TestDatabases.IsReadableAsync(fixture, Ct), $"Fixture not readable: {fixture}");
-
         await using MemoryStream ms = await CopyFixtureAsync(fixture);
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync(table, Ct));
@@ -386,8 +375,6 @@ public sealed class LvPropReadTests
     [Fact]
     public async Task ReadLvProp_ChainedLvalBlob_ReadsExactBytes()
     {
-        Assert.SkipUnless(await TestDatabases.IsReadableAsync(TestDatabases.TestV2003, Ct), "testV2003 is not readable.");
-
         await using MemoryStream ms = await CopyFixtureAsync(TestDatabases.TestV2003);
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("Table2", Ct));
