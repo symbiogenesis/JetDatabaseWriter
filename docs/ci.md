@@ -48,7 +48,7 @@ The workflow validates the selected task's inputs before checkout or SDK setup. 
 
 ## Manual evidence
 
-BenchmarkDotNet's generated-project builds have a ten-minute timeout because they repeat strict project analysis on the hosted runner. The measurement jobs retain their default adaptive warmup and iteration policy; a build timeout still fails the measurement and retains its diagnostics.
+BenchmarkDotNet's generated-project builds skip repeated analyzer execution in referenced projects after the required exact-revision CI has analyzed them. Compiler checks and source generators still run, and the generated builds retain a ten-minute timeout. The measurement jobs retain their default adaptive warmup and iteration policy; a build timeout still fails the measurement and retains its diagnostics.
 
 Dispatch these after successful CI for the settled main revision:
 
