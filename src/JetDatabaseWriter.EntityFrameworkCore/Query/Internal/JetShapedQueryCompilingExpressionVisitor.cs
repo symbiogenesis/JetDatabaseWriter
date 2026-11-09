@@ -3,17 +3,12 @@ namespace JetDatabaseWriter.EntityFrameworkCore.Query.Internal;
 using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
-using System.Reflection;
-using System.Runtime.CompilerServices;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 
 /// <summary>
-/// Compiles shaped query expressions and builds structural entity materializers for the <see cref="JetDatabaseWriter"/> provider.
+/// Builds structural entity materializers for the <see cref="JetDatabaseWriter"/> provider.
 /// </summary>
 /// <param name="dependencies">Parameter object containing dependencies for this service.</param>
 /// <param name="queryCompilationContext">The query compilation context.</param>
@@ -22,16 +17,6 @@ public sealed class JetShapedQueryCompilingExpressionVisitor(
     QueryCompilationContext queryCompilationContext)
     : ShapedQueryCompilingExpressionVisitor(dependencies, queryCompilationContext)
 {
-    private static readonly MethodInfo ExecuteEntityTableMethod =
-        typeof(JetShapedQueryCompilingExpressionVisitor).GetMethod(
-            nameof(ExecuteEntityTableAsync),
-            BindingFlags.NonPublic | BindingFlags.Static)!;
-
-    private static readonly MethodInfo ExecuteEntityTableSyncMethod =
-        typeof(JetShapedQueryCompilingExpressionVisitor).GetMethod(
-            nameof(ExecuteEntityTableSync),
-            BindingFlags.NonPublic | BindingFlags.Static)!;
-
     /// <summary>
     /// Creates an entity materializer delegate for <paramref name="entityType"/> honoring the current <see cref="QueryCompilationContext.QueryTrackingBehavior"/>.
     /// </summary>
@@ -83,76 +68,5 @@ public sealed class JetShapedQueryCompilingExpressionVisitor(
 
     /// <inheritdoc/>
     protected override Expression VisitShapedQuery(ShapedQueryExpression shapedQueryExpression)
-    {
-        ArgumentNullException.ThrowIfNull(shapedQueryExpression);
-
-        if (shapedQueryExpression.QueryExpression is not JetQueryExpression jetQuery)
-        {
-            throw new InvalidOperationException("Unexpected query expression type.");
-        }
-
-        IEntityType entityType = jetQuery.EntityType;
-        Func<QueryContext, ValueBuffer, object> materializer = this.CreateEntityMaterializer(entityType);
-        MethodInfo genericExecute = (this.QueryCompilationContext.IsAsync
-            ? ExecuteEntityTableMethod
-            : ExecuteEntityTableSyncMethod).MakeGenericMethod(entityType.ClrType);
-        return Expression.Call(
-            genericExecute,
-            QueryCompilationContext.QueryContextParameter,
-            Expression.Constant(entityType),
-            Expression.Constant(materializer));
-    }
-
-    private static List<TEntity> ExecuteEntityTableSync<TEntity>(
-        QueryContext queryContext,
-        IEntityType entityType,
-        Func<QueryContext, ValueBuffer, object> materializer)
-    {
-#pragma warning disable RS0030, MA0042 // Synchronous query execution is a required sync-over-async callback boundary.
-        return MaterializeAsync(queryContext, entityType, materializer)
-            .GetAwaiter()
-            .GetResult();
-#pragma warning restore RS0030, MA0042
-
-        static async Task<List<TEntity>> MaterializeAsync(
-            QueryContext qc,
-            IEntityType et,
-            Func<QueryContext, ValueBuffer, object> mat)
-        {
-            List<TEntity> results = [];
-            await foreach (TEntity item in ExecuteEntityTableAsync<TEntity>(qc, et, mat, qc.CancellationToken).ConfigureAwait(false))
-            {
-                results.Add(item);
-            }
-
-            return results;
-        }
-    }
-
-    private static async IAsyncEnumerable<TEntity> ExecuteEntityTableAsync<TEntity>(
-        QueryContext queryContext,
-        IEntityType entityType,
-        Func<QueryContext, ValueBuffer, object> materializer,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        var jetContext = (JetQueryContext)queryContext;
-        if (queryContext.Context.ChangeTracker.QueryTrackingBehavior != QueryTrackingBehavior.NoTracking)
-        {
-            queryContext.InitializeStateManager(
-                standAlone: queryContext.Context.ChangeTracker.QueryTrackingBehavior == QueryTrackingBehavior.NoTrackingWithIdentityResolution);
-        }
-
-        CancellationToken effectiveToken = cancellationToken != default ? cancellationToken : queryContext.CancellationToken;
-        IReadOnlyList<ValueBuffer> buffers = await jetContext.Connection.ReadTableValueBuffersAsync(
-            entityType,
-            seekConditions: null,
-            queryContext.Parameters,
-            effectiveToken).ConfigureAwait(false);
-
-        foreach (ValueBuffer buffer in buffers)
-        {
-            effectiveToken.ThrowIfCancellationRequested();
-            yield return (TEntity)materializer(queryContext, buffer);
-        }
-    }
+        => throw new NotSupportedException("JET queries are compiled by the provider's query executor.");
 }

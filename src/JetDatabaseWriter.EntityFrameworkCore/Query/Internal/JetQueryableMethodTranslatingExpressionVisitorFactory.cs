@@ -4,29 +4,12 @@ using System;
 using Microsoft.EntityFrameworkCore.Query;
 
 /// <summary>
-/// Creates <see cref="JetQueryableMethodTranslatingExpressionVisitor"/> instances.
+/// Satisfies EF's compilation-context service dependency while refusing the unused shaped-query translation path.
+/// Queries are compiled directly by the provider's query executor.
 /// </summary>
 public sealed class JetQueryableMethodTranslatingExpressionVisitorFactory : IQueryableMethodTranslatingExpressionVisitorFactory
 {
-    private readonly QueryableMethodTranslatingExpressionVisitorDependencies dependencies;
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="JetQueryableMethodTranslatingExpressionVisitorFactory"/> class.
-    /// </summary>
-    /// <param name="dependencies">Parameter object containing dependencies for this service.</param>
-    public JetQueryableMethodTranslatingExpressionVisitorFactory(
-        QueryableMethodTranslatingExpressionVisitorDependencies dependencies)
-    {
-        ArgumentNullException.ThrowIfNull(dependencies);
-
-        this.dependencies = dependencies;
-    }
-
     /// <inheritdoc/>
     public QueryableMethodTranslatingExpressionVisitor Create(QueryCompilationContext queryCompilationContext)
-    {
-        ArgumentNullException.ThrowIfNull(queryCompilationContext);
-
-        return new JetQueryableMethodTranslatingExpressionVisitor(this.dependencies, queryCompilationContext);
-    }
+        => throw new NotSupportedException("JET queries are compiled by the provider's query executor.");
 }

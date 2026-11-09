@@ -11,7 +11,6 @@ using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
-using JetDatabaseWriter.EntityFrameworkCore.Query.Internal;
 using JetDatabaseWriter.EntityFrameworkCore.Storage.Internal;
 using JetDatabaseWriter.EntityFrameworkCore.ValueGeneration.Internal;
 using JetDatabaseWriter.Enums;
@@ -20,7 +19,6 @@ using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
-using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
@@ -2278,7 +2276,7 @@ public sealed class JetEntityFrameworkCoreProviderTests
         }
 #pragma warning restore CA1849, CA2263
 
-        // 6. EF.CompileQuery, IQueryProvider.Execute, active transaction uncommitted reads, and JetShapedQueryCompilingExpressionVisitor (async: false)
+        // 6. EF.CompileQuery, IQueryProvider.Execute, active transaction uncommitted reads
         Func<StoreDbContext, bool, IEnumerable<Customer>> compiledVipQuery =
             EF.CompileQuery((StoreDbContext ctx, bool isVip) =>
                 ctx.Customers.AsNoTracking().Where(c => c.IsVip == isVip).OrderBy(c => c.Code));
@@ -2346,49 +2344,6 @@ public sealed class JetEntityFrameworkCoreProviderTests
 
             finalContext.ChangeTracker.Clear();
             Assert.Equal(3, finalContext.Customers.Count());
-
-            // JetShapedQueryCompilingExpressionVisitor synchronous compilation (async: false)
-#pragma warning disable EF1001 // Testing internal JetShapedQueryCompilingExpressionVisitor synchronous compilation directly.
-            IQueryCompilationContextFactory compilationContextFactory = finalContext.GetService<IQueryCompilationContextFactory>();
-            IShapedQueryCompilingExpressionVisitorFactory shaperFactory = finalContext.GetService<IShapedQueryCompilingExpressionVisitorFactory>();
-            IQueryContextFactory queryContextFactory = finalContext.GetService<IQueryContextFactory>();
-            IEntityType customerEntityType = finalContext.Model.FindEntityType(typeof(Customer))!;
-
-            foreach (ResultCardinality cardinality in new[]
-            {
-                ResultCardinality.Enumerable,
-                ResultCardinality.Single,
-                ResultCardinality.SingleOrDefault,
-            })
-            {
-                QueryCompilationContext syncCompilationContext = compilationContextFactory.Create(async: false);
-                ShapedQueryExpression shapedExpr = new ShapedQueryExpression(
-                    new JetQueryExpression(customerEntityType),
-                    new StructuralTypeShaperExpression(customerEntityType, Expression.Constant(ValueBuffer.Empty), nullable: false))
-                    .UpdateResultCardinality(cardinality);
-                Expression visitedShaped = shaperFactory.Create(syncCompilationContext).Visit(shapedExpr);
-                QueryContext qc = queryContextFactory.Create();
-                if (cardinality == ResultCardinality.Enumerable)
-                {
-                    Func<QueryContext, IEnumerable<Customer>> enumDelegate =
-                        Expression.Lambda<Func<QueryContext, IEnumerable<Customer>>>(
-                            visitedShaped,
-                            QueryCompilationContext.QueryContextParameter).Compile();
-                    Assert.Equal(4, enumDelegate(qc).Count());
-                }
-                else
-                {
-                    Func<QueryContext, Customer?> singleDelegate =
-                        Expression.Lambda<Func<QueryContext, Customer?>>(
-                            visitedShaped,
-                            QueryCompilationContext.QueryContextParameter).Compile();
-                    if (cardinality == ResultCardinality.Single)
-                    {
-                        _ = Assert.Throws<InvalidOperationException>(() => _ = singleDelegate(qc));
-                    }
-                }
-            }
-#pragma warning restore EF1001
         }
     }
 
