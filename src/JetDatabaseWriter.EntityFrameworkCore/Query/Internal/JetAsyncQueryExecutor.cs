@@ -24,7 +24,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 /// structural entity materialization, change-tracker identity resolution, and eager navigation loading.
 /// Synchronous query entry points execute as thin sync-over-async wrappers over the asynchronous query pipeline.
 /// </summary>
-internal static class JetAsyncQueryExecutor
+internal static partial class JetAsyncQueryExecutor
 {
     private static readonly MethodInfo BuildSequenceExecutorMethod =
         typeof(JetAsyncQueryExecutor).GetMethod(
@@ -129,6 +129,7 @@ internal static class JetAsyncQueryExecutor
         QueryCompilationContext compilationContext = dependencies.QueryCompilationContextFactory.Create(async);
         IModel model = compilationContext.Model;
         JetQueryPlan plan = JetQueryPlanExtractor.Analyze(query, model);
+        plan.InitializeMaterializers(dependencies.QueryCompilationContextFactory, preprocessorFactory, shaperFactory, model);
 
         Type resultType = typeof(TResult);
         if (!async)
@@ -336,6 +337,11 @@ internal static class JetAsyncQueryExecutor
         JetQueryPlan plan,
         IModel model)
     {
+        if (TryBuildBufferSequence<TElement>(query, plan, model, out var bufferExecutor))
+        {
+            return bufferExecutor!;
+        }
+
         Func<QueryContext, JetExecutionMaterializedState, IEnumerable<TElement>> compiledQuery =
             CompileSequenceDelegate<TElement>(query, plan, model);
         return queryContext => ExecuteSequenceAsync(queryContext, plan, compiledQuery);
@@ -351,9 +357,19 @@ internal static class JetAsyncQueryExecutor
             return bulkExecutor!;
         }
 
+        if (TryBuildStreamingAggregate<TScalar>(query, plan, model, out var aggregateExecutor))
+        {
+            return aggregateExecutor!;
+        }
+
         if (TryBuildEntityFreeAggregateExecutor<TScalar>(query, plan, out Func<QueryContext, Task<TScalar>>? fastExecutor))
         {
             return fastExecutor!;
+        }
+
+        if (TryBuildBufferScalar<TScalar>(query, plan, model, out var bufferExecutor))
+        {
+            return bufferExecutor!;
         }
 
         Func<QueryContext, JetExecutionMaterializedState, TScalar> compiledQuery =
@@ -412,6 +428,11 @@ internal static class JetAsyncQueryExecutor
         JetQueryPlan plan,
         IModel model)
     {
+        if (TryBuildBufferDelete(sourceExpression, plan, model, out var bufferExecutor))
+        {
+            return bufferExecutor!;
+        }
+
         IEntityType entityType = ResolveBulkTargetEntityType<TSource>(sourceExpression, model);
         IEntityType rootType = entityType.GetRootType();
         IKey primaryKey = rootType.FindPrimaryKey()
@@ -484,6 +505,11 @@ internal static class JetAsyncQueryExecutor
         JetQueryPlan plan,
         IModel model)
     {
+        if (TryBuildBufferUpdate(sourceExpression, settersExpression, plan, model, out var bufferExecutor))
+        {
+            return bufferExecutor!;
+        }
+
         IEntityType entityType = ResolveBulkTargetEntityType<TSource>(sourceExpression, model);
         IEntityType rootType = entityType.GetRootType();
         IKey primaryKey = rootType.FindPrimaryKey()
@@ -888,21 +914,19 @@ internal static class JetAsyncQueryExecutor
                 ct.ThrowIfCancellationRequested();
                 var jetContext = (JetQueryContext)queryContext;
                 int count = 0;
-                _ = await jetContext.Connection.ReadTableValueBuffersAsync(
+                await jetContext.Connection.ScanTableRowsAsync(
                     tablePlan.RootEntityType,
                     tablePlan.SeekConditions,
                     queryContext.Parameters,
                     tablePlan.RequiredProperties,
-                    maxRows: null,
-                    orderedAscendingProperties: null,
-                    rowFilter: buffer =>
+                    visitor: buffer =>
                     {
                         if (vbFilter is null || vbFilter(queryContext, buffer))
                         {
                             count++;
                         }
 
-                        return false;
+                        return true;
                     },
                     ct).ConfigureAwait(false);
                 return count;
@@ -920,21 +944,19 @@ internal static class JetAsyncQueryExecutor
                 ct.ThrowIfCancellationRequested();
                 var jetContext = (JetQueryContext)queryContext;
                 long count = 0;
-                _ = await jetContext.Connection.ReadTableValueBuffersAsync(
+                await jetContext.Connection.ScanTableRowsAsync(
                     tablePlan.RootEntityType,
                     tablePlan.SeekConditions,
                     queryContext.Parameters,
                     tablePlan.RequiredProperties,
-                    maxRows: null,
-                    orderedAscendingProperties: null,
-                    rowFilter: buffer =>
+                    visitor: buffer =>
                     {
                         if (vbFilter is null || vbFilter(queryContext, buffer))
                         {
                             count++;
                         }
 
-                        return false;
+                        return true;
                     },
                     ct).ConfigureAwait(false);
                 return count;
@@ -1920,103 +1942,9 @@ internal static class JetAsyncQueryExecutor
             return value;
         }
 
-        if (type.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false)
-            && type.Name.Contains("AnonymousType", StringComparison.Ordinal))
-        {
-            ConstructorInfo[] ctors = type.GetConstructors();
-            PropertyInfo[] props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-            if (ctors.Length == 1 && ctors[0].GetParameters().Length == props.Length)
-            {
-                object?[] args = new object?[props.Length];
-                bool anyChanged = false;
-                for (int i = 0; i < props.Length; i++)
-                {
-                    object? origVal = props[i].GetValue(value);
-                    object? promotedVal = PromoteResultGraph(
-                        origVal,
-                        queryContext,
-                        plan,
-                        state,
-                        existingTrackedByType,
-                        isTracking,
-                        rootRowsForIncludes,
-                        seenIncludeRoots);
-                    args[i] = promotedVal;
-                    if (!ReferenceEquals(origVal, promotedVal))
-                    {
-                        anyChanged = true;
-                    }
-                }
-
-                return anyChanged ? ctors[0].Invoke(args) : value;
-            }
-        }
-
-        if (type.IsValueType && type.FullName?.StartsWith("System.ValueTuple`", StringComparison.Ordinal) == true)
-        {
-            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.Instance);
-            ConstructorInfo? tupleCtor = type.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == fields.Length);
-            if (tupleCtor is not null)
-            {
-                object?[] args = new object?[fields.Length];
-                bool anyChanged = false;
-                for (int i = 0; i < fields.Length; i++)
-                {
-                    object? origVal = fields[i].GetValue(value);
-                    object? promotedVal = PromoteResultGraph(
-                        origVal,
-                        queryContext,
-                        plan,
-                        state,
-                        existingTrackedByType,
-                        isTracking,
-                        rootRowsForIncludes,
-                        seenIncludeRoots);
-                    args[i] = promotedVal;
-                    if (!ReferenceEquals(origVal, promotedVal))
-                    {
-                        anyChanged = true;
-                    }
-                }
-
-                return anyChanged ? tupleCtor.Invoke(args) : value;
-            }
-        }
-
-        if (!type.IsValueType)
-        {
-            foreach (PropertyInfo prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-            {
-                if (!prop.CanRead || prop.GetIndexParameters().Length != 0)
-                {
-                    continue;
-                }
-
-                object? origVal = prop.GetValue(value);
-                if (origVal is null)
-                {
-                    continue;
-                }
-
-                object? promotedProp = PromoteResultGraph(
-                    origVal,
-                    queryContext,
-                    plan,
-                    state,
-                    existingTrackedByType,
-                    isTracking,
-                    rootRowsForIncludes,
-                    seenIncludeRoots);
-                if (prop.CanWrite && !ReferenceEquals(origVal, promotedProp))
-                {
-                    prop.SetValue(value, promotedProp);
-                }
-            }
-        }
-
-        return value;
+        return ResultPromoters.GetValue(type, CreateResultPromoter)(value, child => PromoteResultGraph(
+            child, queryContext, plan, state, existingTrackedByType, isTracking, rootRowsForIncludes, seenIncludeRoots));
     }
-
     private static object PromoteEntityInstance(
         object candidateEntity,
         ValueBuffer buffer,
@@ -3107,36 +3035,32 @@ internal static class JetAsyncQueryExecutor
 
         public bool IgnoreQueryFilters { get; } = ignoreQueryFilters;
 
+        public void InitializeMaterializers(
+            IQueryCompilationContextFactory contextFactory,
+            IQueryTranslationPreprocessorFactory preprocessorFactory,
+            IShapedQueryCompilingExpressionVisitorFactory shaperFactory,
+            IModel model)
+        {
+            foreach (IEntityType entityType in model.GetEntityTypes())
+            {
+                this.trackedMaterializers[entityType] = CreateShaperVisitor(contextFactory, preprocessorFactory, shaperFactory, entityType, trackAll: true)
+                    .CreateEntityMaterializer(entityType);
+                this.untrackedMaterializers[entityType] = CreateShaperVisitor(contextFactory, preprocessorFactory, shaperFactory, entityType, trackAll: false)
+                    .CreateEntityMaterializer(entityType);
+            }
+        }
+
         public Func<QueryContext, ValueBuffer, object> GetTrackedMaterializer(QueryContext queryContext, IEntityType entityType)
         {
-            lock (this.trackedMaterializers)
-            {
-                if (!this.trackedMaterializers.TryGetValue(entityType, out Func<QueryContext, ValueBuffer, object>? materializer))
-                {
-                    JetShapedQueryCompilingExpressionVisitor visitor = CreateShaperVisitor(queryContext, entityType, trackAll: true);
-                    materializer = visitor.CreateEntityMaterializer(entityType);
-                    this.trackedMaterializers[entityType] = materializer;
-                }
-
-                return materializer;
-            }
+            ArgumentNullException.ThrowIfNull(queryContext);
+            return this.trackedMaterializers[entityType];
         }
 
         public Func<QueryContext, ValueBuffer, object> GetUntrackedMaterializer(QueryContext queryContext, IEntityType entityType)
         {
-            lock (this.untrackedMaterializers)
-            {
-                if (!this.untrackedMaterializers.TryGetValue(entityType, out Func<QueryContext, ValueBuffer, object>? materializer))
-                {
-                    JetShapedQueryCompilingExpressionVisitor visitor = CreateShaperVisitor(queryContext, entityType, trackAll: false);
-                    materializer = visitor.CreateEntityMaterializer(entityType);
-                    this.untrackedMaterializers[entityType] = materializer;
-                }
-
-                return materializer;
-            }
+            ArgumentNullException.ThrowIfNull(queryContext);
+            return this.untrackedMaterializers[entityType];
         }
-
         public Func<QueryContext, JetExecutionMaterializedState, object, bool>? GetCompiledQueryFilter(IModel model, IQueryFilter filter)
         {
             lock (this.compiledQueryFilters)
@@ -3174,17 +3098,12 @@ internal static class JetAsyncQueryExecutor
         }
 
         private static JetShapedQueryCompilingExpressionVisitor CreateShaperVisitor(
-            QueryContext queryContext,
+            IQueryCompilationContextFactory compilationContextFactory,
+            IQueryTranslationPreprocessorFactory preprocessorFactory,
+            IShapedQueryCompilingExpressionVisitorFactory shaperFactory,
             IEntityType entityType,
             bool trackAll)
         {
-            IQueryCompilationContextFactory compilationContextFactory =
-                queryContext.Context.GetService<IQueryCompilationContextFactory>();
-            IQueryTranslationPreprocessorFactory preprocessorFactory =
-                queryContext.Context.GetService<IQueryTranslationPreprocessorFactory>();
-            IShapedQueryCompilingExpressionVisitorFactory shaperFactory =
-                queryContext.Context.GetService<IShapedQueryCompilingExpressionVisitorFactory>();
-
             QueryCompilationContext context = compilationContextFactory.Create(async: true);
             string methodName = trackAll
                 ? nameof(EntityFrameworkQueryableExtensions.AsTracking)
