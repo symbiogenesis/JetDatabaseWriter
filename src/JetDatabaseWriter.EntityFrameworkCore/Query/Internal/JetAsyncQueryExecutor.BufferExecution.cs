@@ -410,9 +410,9 @@ internal static partial class JetAsyncQueryExecutor
                 : Expression.Call(typeof(JetAsyncQueryExecutor), nameof(BufferRoot), null, roots, Expression.Constant(table.RootId));
             if (!plan.IgnoreQueryFilters)
             {
-                foreach (IQueryFilter filter in GetAllQueryFilters(table.QueryEntityType))
+                foreach (IQueryFilter filter in GetAllQueryFilters(table.QueryEntityType, plan.IgnoredQueryFilterNames))
                 {
-                    if (filter.Expression is not LambdaExpression lambda)
+                    if (GetQueryFilterExpression(filter) is not LambdaExpression lambda)
                     {
                         throw new BufferTranslationException();
                     }

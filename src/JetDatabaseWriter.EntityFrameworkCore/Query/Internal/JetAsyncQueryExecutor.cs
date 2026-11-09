@@ -157,7 +157,11 @@ internal static partial class JetAsyncQueryExecutor
             plan.InitializeMaterializers(dependencies.QueryCompilationContextFactory, preprocessorFactory, shaperFactory, model);
         }
 
-        return executor;
+        return queryContext =>
+        {
+            queryContext.Parameters[QueryFilterContextParameterName] = queryContext.Context;
+            return executor(queryContext);
+        };
     }
 
     private static TDelegate InvokeBuilderMethod<TDelegate>(MethodInfo method, object?[] args)
@@ -792,7 +796,8 @@ internal static partial class JetAsyncQueryExecutor
             stateParam,
             model,
             plan.RootPlansByExpression,
-            plan.IgnoreQueryFilters);
+            plan.IgnoreQueryFilters,
+            plan.IgnoredQueryFilterNames);
 
         Expression valueBody;
         if (valueArg is LambdaExpression { Parameters.Count: 1 } valueLambda)
@@ -1013,7 +1018,8 @@ internal static partial class JetAsyncQueryExecutor
             stateParam,
             model,
             plan.RootPlansByExpression,
-            plan.IgnoreQueryFilters).Visit(query);
+            plan.IgnoreQueryFilters,
+            plan.IgnoredQueryFilterNames).Visit(query);
 
         if (typeof(IEnumerable<TElement>).IsAssignableFrom(rewritten.Type))
         {
@@ -1048,7 +1054,8 @@ internal static partial class JetAsyncQueryExecutor
             stateParam,
             model,
             plan.RootPlansByExpression,
-            plan.IgnoreQueryFilters).Visit(query);
+            plan.IgnoreQueryFilters,
+            plan.IgnoredQueryFilterNames).Visit(query);
 
         Expression body = rewritten.Type == typeof(TScalar)
             ? rewritten
@@ -2390,12 +2397,12 @@ internal static partial class JetAsyncQueryExecutor
         return loadedRows;
     }
 
-    private static List<IQueryFilter> GetAllQueryFilters(IEntityType entityType)
+    private static List<IQueryFilter> GetAllQueryFilters(IEntityType entityType, IReadOnlySet<string>? ignoredFilterNames = null)
     {
         List<IQueryFilter> filters = [];
         foreach (IEntityType current in entityType.GetAllBaseTypesInclusive())
         {
-            filters.AddRange(current.GetDeclaredQueryFilters());
+            filters.AddRange(current.GetDeclaredQueryFilters().Where(filter => filter.Key is null || ignoredFilterNames?.Contains(filter.Key) != true));
         }
 
         return filters;
@@ -2413,7 +2420,7 @@ internal static partial class JetAsyncQueryExecutor
             return rows;
         }
 
-        List<IQueryFilter> declaredFilters = GetAllQueryFilters(entityType);
+        List<IQueryFilter> declaredFilters = GetAllQueryFilters(entityType, plan.IgnoredQueryFilterNames);
         if (declaredFilters.Count == 0)
         {
             return rows;
@@ -3034,7 +3041,8 @@ internal static partial class JetAsyncQueryExecutor
         List<JetIncludeChain> includeChains,
         List<INavigationBase> queryReferencedNavigations,
         QueryTrackingBehavior? trackingBehaviorOverride,
-        bool ignoreQueryFilters)
+        bool ignoreQueryFilters,
+        IReadOnlySet<string> ignoredQueryFilterNames)
     {
         private readonly Dictionary<IEntityType, Func<QueryContext, ValueBuffer, object>> trackedMaterializers = [];
         private readonly Dictionary<IEntityType, Func<QueryContext, ValueBuffer, object>> untrackedMaterializers = [];
@@ -3051,6 +3059,8 @@ internal static partial class JetAsyncQueryExecutor
         public QueryTrackingBehavior? TrackingBehaviorOverride { get; } = trackingBehaviorOverride;
 
         public bool IgnoreQueryFilters { get; } = ignoreQueryFilters;
+
+        public IReadOnlySet<string> IgnoredQueryFilterNames { get; } = ignoredQueryFilterNames;
 
         public bool RequiresMaterializers { get; set; }
 
@@ -3089,7 +3099,7 @@ internal static partial class JetAsyncQueryExecutor
             {
                 if (!this.compiledQueryFilters.TryGetValue(filter, out Func<QueryContext, JetExecutionMaterializedState, object, bool>? compiled))
                 {
-                    if (filter.Expression is LambdaExpression { Parameters.Count: 1 } filterLambda)
+                    if (GetQueryFilterExpression(filter) is LambdaExpression { Parameters.Count: 1 } filterLambda)
                     {
                         ParameterExpression qcParam = Expression.Parameter(typeof(QueryContext), "queryContext");
                         ParameterExpression stateParam = Expression.Parameter(typeof(JetExecutionMaterializedState), "state");
@@ -3100,7 +3110,8 @@ internal static partial class JetAsyncQueryExecutor
                             stateParam,
                             model,
                             new Dictionary<EntityQueryRootExpression, JetTableLoadPlan>(ReferenceEqualityComparer.Instance),
-                            ignoreQueryFilters: false).Visit(filterLambda);
+                            ignoreQueryFilters: false,
+                            this.IgnoredQueryFilterNames).Visit(filterLambda);
 
                         InvocationExpression invoke = Expression.Invoke(
                             rewrittenFilter,
@@ -3186,6 +3197,8 @@ internal static partial class JetAsyncQueryExecutor
 
         public bool IgnoreQueryFilters { get; private set; }
 
+        public HashSet<string> IgnoredQueryFilterNames { get; } = [with(StringComparer.Ordinal)];
+
         public static JetQueryPlan Analyze(
             Expression query,
             IModel model)
@@ -3205,9 +3218,9 @@ internal static partial class JetAsyncQueryExecutor
             {
                 foreach (JetTableLoadPlan tablePlan in extractor.rootTables)
                 {
-                    foreach (IQueryFilter filter in GetAllQueryFilters(tablePlan.QueryEntityType))
+                    foreach (IQueryFilter filter in GetAllQueryFilters(tablePlan.QueryEntityType, extractor.IgnoredQueryFilterNames))
                     {
-                        if (filter.Expression is LambdaExpression filterLambda)
+                        if (GetQueryFilterExpression(filter) is LambdaExpression filterLambda)
                         {
                             tablePlan.SeekConditions.AddRange(
                                 JetIndexSeekPlanner.ExtractSeekConditions(tablePlan.RootEntityType, filterLambda));
@@ -3227,16 +3240,16 @@ internal static partial class JetAsyncQueryExecutor
 
                 if (extractor.rootTables.Count == 1 && extractor.queryReferencedNavigations.Count == 0)
                 {
-                    ConfigureSingleTableScanOptimizations(query, model, tablePlan, extractor.IgnoreQueryFilters);
+                    ConfigureSingleTableScanOptimizations(query, model, tablePlan, extractor.IgnoreQueryFilters, extractor.IgnoredQueryFilterNames);
                 }
                 else
                 {
                     List<LambdaExpression> predicates = [.. tablePlan.ScalarPredicates];
                     if (!extractor.IgnoreQueryFilters)
                     {
-                        foreach (IQueryFilter filter in GetAllQueryFilters(tablePlan.QueryEntityType))
+                        foreach (IQueryFilter filter in GetAllQueryFilters(tablePlan.QueryEntityType, extractor.IgnoredQueryFilterNames))
                         {
-                            if (filter.Expression is LambdaExpression filterLambda
+                            if (GetQueryFilterExpression(filter) is LambdaExpression filterLambda
                                 && TryCompileValueBufferFilter(model, tablePlan.RootEntityType, tablePlan.QueryEntityType, [filterLambda], out _))
                             {
                                 predicates.Add(filterLambda);
@@ -3266,7 +3279,8 @@ internal static partial class JetAsyncQueryExecutor
                 extractor.includeChains,
                 extractor.queryReferencedNavigations,
                 extractor.TrackingBehaviorOverride,
-                extractor.IgnoreQueryFilters)
+                extractor.IgnoreQueryFilters,
+                extractor.IgnoredQueryFilterNames)
             {
                 RequiredPropertiesByEntityType = requiredByType,
             };
@@ -3289,19 +3303,39 @@ internal static partial class JetAsyncQueryExecutor
             {
                 if (node.Method.Name == nameof(EntityFrameworkQueryableExtensions.AsNoTracking))
                 {
+                    _ = this.Visit(node.Arguments[0]);
                     this.TrackingBehaviorOverride = QueryTrackingBehavior.NoTracking;
+                    return node;
                 }
                 else if (node.Method.Name == nameof(EntityFrameworkQueryableExtensions.AsNoTrackingWithIdentityResolution))
                 {
+                    _ = this.Visit(node.Arguments[0]);
                     this.TrackingBehaviorOverride = QueryTrackingBehavior.NoTrackingWithIdentityResolution;
+                    return node;
                 }
                 else if (node.Method.Name == nameof(EntityFrameworkQueryableExtensions.AsTracking))
                 {
+                    _ = this.Visit(node.Arguments[0]);
                     this.TrackingBehaviorOverride = QueryTrackingBehavior.TrackAll;
+                    return node;
                 }
                 else if (node.Method.Name == nameof(EntityFrameworkQueryableExtensions.IgnoreQueryFilters))
                 {
-                    this.IgnoreQueryFilters = true;
+                    if (node.Arguments.Count == 1)
+                    {
+                        this.IgnoreQueryFilters = true;
+                    }
+                    else if (node.Arguments[1] is ConstantExpression { Value: IReadOnlyCollection<string> names })
+                    {
+                        this.IgnoredQueryFilterNames.UnionWith(names);
+                    }
+                    else
+                    {
+                        throw new NotSupportedException("Named query filter exclusions must be a constant collection of filter names.");
+                    }
+
+                    _ = this.Visit(node.Arguments[0]);
+                    return node;
                 }
                 else if (node.Method.Name == nameof(EntityFrameworkQueryableExtensions.IgnoreAutoIncludes))
                 {
@@ -3452,6 +3486,8 @@ internal static partial class JetAsyncQueryExecutor
         private static bool TryExtractIncludeMemberAndFilter(
             LambdaExpression lambda,
             IModel model,
+            bool ignoreQueryFilters,
+            IReadOnlySet<string> ignoredQueryFilterNames,
             out MemberExpression? memberExpression,
             out Func<QueryContext, JetExecutionMaterializedState, IEnumerable<object>, IEnumerable<object>>? collectionFilter)
         {
@@ -3504,7 +3540,8 @@ internal static partial class JetAsyncQueryExecutor
                 stateParam,
                 model,
                 new Dictionary<EntityQueryRootExpression, JetTableLoadPlan>(ReferenceEqualityComparer.Instance),
-                ignoreQueryFilters: true).Visit(replacedBody);
+                ignoreQueryFilters,
+                ignoredQueryFilterNames).Visit(replacedBody);
 
             MethodCallExpression boxResult = Expression.Call(
                 typeof(Enumerable),
@@ -3523,7 +3560,8 @@ internal static partial class JetAsyncQueryExecutor
             Expression query,
             IModel model,
             JetTableLoadPlan tablePlan,
-            bool ignoreQueryFilters)
+            bool ignoreQueryFilters,
+            IReadOnlySet<string> ignoredQueryFilterNames)
         {
             Func<IReadOnlyDictionary<string, object?>, int?>? limitEvaluator = null;
             List<LambdaExpression> rowPredicates = [];
@@ -3768,9 +3806,9 @@ internal static partial class JetAsyncQueryExecutor
 
             if (!ignoreQueryFilters)
             {
-                foreach (IQueryFilter queryFilter in GetAllQueryFilters(tablePlan.QueryEntityType))
+                foreach (IQueryFilter queryFilter in GetAllQueryFilters(tablePlan.QueryEntityType, ignoredQueryFilterNames))
                 {
-                    if (queryFilter.Expression is LambdaExpression { Parameters.Count: 1 } qfLambda)
+                    if (GetQueryFilterExpression(queryFilter) is LambdaExpression { Parameters.Count: 1 } qfLambda)
                     {
                         rowPredicates.Add(qfLambda);
                     }
@@ -3804,7 +3842,7 @@ internal static partial class JetAsyncQueryExecutor
                         return;
                     }
 
-                    tablePlan.CandidateRowFilter = CompileCombinedCandidateFilter(model, tablePlan.QueryEntityType, rowPredicates);
+                    tablePlan.CandidateRowFilter = CompileCombinedCandidateFilter(model, tablePlan.QueryEntityType, rowPredicates, ignoreQueryFilters, ignoredQueryFilterNames);
                 }
             }
         }
@@ -3890,7 +3928,9 @@ internal static partial class JetAsyncQueryExecutor
         private static Func<QueryContext, JetExecutionMaterializedState, object, bool> CompileCombinedCandidateFilter(
             IModel model,
             IEntityType queryEntityType,
-            List<LambdaExpression> predicates)
+            List<LambdaExpression> predicates,
+            bool ignoreQueryFilters,
+            IReadOnlySet<string> ignoredQueryFilterNames)
         {
             ParameterExpression qcParam = Expression.Parameter(typeof(QueryContext), "queryContext");
             ParameterExpression stateParam = Expression.Parameter(typeof(JetExecutionMaterializedState), "state");
@@ -3902,7 +3942,8 @@ internal static partial class JetAsyncQueryExecutor
                 stateParam,
                 model,
                 new Dictionary<EntityQueryRootExpression, JetTableLoadPlan>(ReferenceEqualityComparer.Instance),
-                ignoreQueryFilters: false);
+                ignoreQueryFilters,
+                ignoredQueryFilterNames);
 
             Expression combinedBody = Expression.Constant(true);
             for (int i = predicates.Count - 1; i >= 0; i--)
@@ -4076,6 +4117,8 @@ internal static partial class JetAsyncQueryExecutor
                             && TryExtractIncludeMemberAndFilter(
                                 lambda,
                                 model,
+                                this.IgnoreQueryFilters,
+                                this.IgnoredQueryFilterNames,
                                 out MemberExpression? memberExpr,
                                 out Func<QueryContext, JetExecutionMaterializedState, IEnumerable<object>, IEnumerable<object>>? collectionFilter))
                         {
@@ -4508,7 +4551,8 @@ internal static partial class JetAsyncQueryExecutor
         Expression stateExpression,
         IModel model,
         IReadOnlyDictionary<EntityQueryRootExpression, JetTableLoadPlan> rootPlansByExpression,
-        bool ignoreQueryFilters) : ExpressionVisitor
+        bool ignoreQueryFilters,
+        IReadOnlySet<string> ignoredQueryFilterNames) : ExpressionVisitor
     {
         protected override Expression VisitExtension(Expression node)
         {
@@ -4526,9 +4570,9 @@ internal static partial class JetAsyncQueryExecutor
 
                 if (!ignoreQueryFilters)
                 {
-                    foreach (IQueryFilter filter in GetAllQueryFilters(queryRoot.EntityType))
+                    foreach (IQueryFilter filter in GetAllQueryFilters(queryRoot.EntityType, ignoredQueryFilterNames))
                     {
-                        if (filter.Expression is LambdaExpression filterLambda && filterLambda.Parameters.Count == 1)
+                        if (GetQueryFilterExpression(filter) is LambdaExpression filterLambda && filterLambda.Parameters.Count == 1)
                         {
                             var visitedFilter = (LambdaExpression)this.Visit(filterLambda);
                             if (visitedFilter.Parameters[0].Type != queryRoot.EntityType.ClrType)

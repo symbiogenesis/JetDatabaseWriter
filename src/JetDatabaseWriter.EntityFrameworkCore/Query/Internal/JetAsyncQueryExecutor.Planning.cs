@@ -148,9 +148,9 @@ internal static partial class JetAsyncQueryExecutor
 
             if (!this.IgnoreQueryFilters)
             {
-                foreach (IQueryFilter filter in GetAllQueryFilters(entityType))
+                foreach (IQueryFilter filter in GetAllQueryFilters(entityType, this.IgnoredQueryFilterNames))
                 {
-                    _ = analyzer.Visit(filter.Expression);
+                    _ = analyzer.Visit(GetQueryFilterExpression(filter));
                 }
             }
 
