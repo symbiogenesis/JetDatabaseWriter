@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.EntityFrameworkCore;
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -12,6 +13,11 @@ using Xunit;
 public sealed class JetBufferExecutionTests
 {
     private static readonly AsyncLocal<Action?> OnConstruct = new();
+    private static readonly int[] SelectedAmounts = [2, 4, 6];
+    private static readonly int[] AllAmounts = [0, 2, 4, 6];
+    private static readonly int[] GroupCounts = [2, 2];
+    private static readonly int[] UpdatedAmounts = [0, 2, 14, 16];
+    private static readonly int[] RemainingIds = [1, 2, 4];
 
     [Fact]
     public async Task ScalarProjectionsGroupsAndJoinsDoNotConstructEntities()
@@ -22,10 +28,10 @@ public sealed class JetBufferExecutionTests
         OnConstruct.Value = () => throw new InvalidOperationException("Unexpected entity construction.");
         try
         {
-            Assert.Equal(new int[] { 2, 4, 6 }, await context.Items.Where(x => x.Id > 1).Select(x => x.Amount).ToArrayAsync(ct));
-            Assert.Equal(new int[] { 0, 2, 4, 6 }, await context.Items.Select(x => x.Amount).Distinct().ToArrayAsync(ct));
-            Assert.Equal(new int[] { 2, 2 }, await context.Items.GroupBy(x => x.Id % 2).Select(g => g.Count()).ToArrayAsync(ct));
-            Assert.Equal(new int[] { 0, 2, 4, 6 }, await context.Items.Join(context.Items, x => x.Id, y => y.Id, (x, y) => y.Amount).ToArrayAsync(ct));
+            Assert.Equal(SelectedAmounts, await context.Items.Where(x => x.Id > 1).Select(x => x.Amount).ToArrayAsync(ct));
+            Assert.Equal(AllAmounts, await context.Items.Select(x => x.Amount).Distinct().ToArrayAsync(ct));
+            Assert.Equal(GroupCounts, await context.Items.GroupBy(x => x.Id % 2).Select(g => g.Count()).ToArrayAsync(ct));
+            Assert.Equal(AllAmounts, await context.Items.Join(context.Items, x => x.Id, y => y.Id, (_, y) => y.Amount).ToArrayAsync(ct));
         }
         finally
         {
@@ -67,7 +73,7 @@ public sealed class JetBufferExecutionTests
         OnConstruct.Value = () => constructed++;
         try
         {
-            await using var enumerator = context.Items.AsNoTracking().AsAsyncEnumerable().GetAsyncEnumerator(ct);
+            await using IAsyncEnumerator<BufferItem> enumerator = context.Items.AsNoTracking().AsAsyncEnumerable().GetAsyncEnumerator(ct);
             Assert.True(await enumerator.MoveNextAsync());
             Assert.Equal(1, constructed);
             Assert.Equal(1, enumerator.Current.Id);
@@ -89,10 +95,10 @@ public sealed class JetBufferExecutionTests
         try
         {
             var results = await context.Items.OrderByDescending(x => x.Id).Take(1).Select(x => new { Entity = x, x.Amount }).ToArrayAsync(ct);
-            Assert.Single(results);
+            var result = Assert.Single(results);
             Assert.Equal(1, constructed);
-            Assert.Equal(4, results[0].Entity.Id);
-            Assert.Same(results[0].Entity, context.ChangeTracker.Entries<BufferItem>().Single().Entity);
+            Assert.Equal(4, result.Entity.Id);
+            Assert.Same(result.Entity, context.ChangeTracker.Entries<BufferItem>().Single().Entity);
         }
         finally
         {
@@ -110,9 +116,9 @@ public sealed class JetBufferExecutionTests
         try
         {
             Assert.Equal(2, await context.Items.Where(x => x.Id > 2).ExecuteUpdateAsync(s => s.SetProperty(x => x.Amount, x => x.Amount + 10), ct));
-            Assert.Equal(new int[] { 0, 2, 14, 16 }, await context.Items.Select(x => x.Amount).ToArrayAsync(ct));
+            Assert.Equal(UpdatedAmounts, await context.Items.Select(x => x.Amount).ToArrayAsync(ct));
             Assert.Equal(1, await context.Items.Where(x => x.Amount > 10).OrderBy(x => x.Id).Take(1).ExecuteDeleteAsync(ct));
-            Assert.Equal(new int[] { 1, 2, 4 }, await context.Items.Select(x => x.Id).ToArrayAsync(ct));
+            Assert.Equal(RemainingIds, await context.Items.Select(x => x.Id).ToArrayAsync(ct));
         }
         finally
         {
@@ -134,10 +140,7 @@ public sealed class JetBufferExecutionTests
     {
         public DbSet<BufferItem> Items => this.Set<BufferItem>();
 
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
-        {
-            modelBuilder.Entity<BufferItem>().Property(x => x.Id).ValueGeneratedNever();
-        }
+        protected override void OnModelCreating(ModelBuilder modelBuilder) => modelBuilder.Entity<BufferItem>().Property(x => x.Id).ValueGeneratedNever();
     }
 
     private sealed class BufferItem
