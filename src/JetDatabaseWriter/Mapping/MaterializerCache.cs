@@ -8,8 +8,9 @@ using JetDatabaseWriter.Infrastructure;
 /// <summary>
 /// Process-wide bounded cache for compiled row materializers and direct/hybrid decoders keyed by
 /// entity <see cref="Type"/> and <see cref="RowShape"/>. Uses an ephemeron table so collectible
-/// <c>AssemblyLoadContext</c> types can unload, paired with a weak LRU queue that bounds retained
-/// non-collectible types to <see cref="MaxTypes"/> and per-type shapes to <see cref="MaxShapesPerType"/>.
+/// <c>AssemblyLoadContext</c> types can unload, paired with a weak FIFO queue that bounds retained
+/// non-collectible types to <see cref="MaxTypes"/>. Each type's LRU shape cache retains at most
+/// <see cref="MaxShapesPerType"/> shapes.
 /// </summary>
 internal static class MaterializerCache
 {

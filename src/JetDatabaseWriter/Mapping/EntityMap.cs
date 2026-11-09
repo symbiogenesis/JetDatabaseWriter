@@ -127,7 +127,7 @@ internal sealed class EntityMap
 
         // Construct from the annotated caller's type, outside the cache lock.
         // The ephemeron releases reflected members along with collectible types, while
-        // the weak LRU list bounds non-collectible type retention.
+        // the weak FIFO list bounds non-collectible type retention without locking cache hits.
         var created = new EntityMap(type);
         lock (Cache)
         {
