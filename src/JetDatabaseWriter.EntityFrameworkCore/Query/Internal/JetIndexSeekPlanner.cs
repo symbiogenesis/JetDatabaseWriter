@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -132,29 +133,29 @@ internal static class JetIndexSeekPlanner
     }
 
     /// <summary>
-    /// Attempts to construct an ordered full-index scan on <paramref name="reader"/> when <paramref name="orderedAscendingProperties"/>
+    /// Attempts to construct an ordered full-index scan on <paramref name="reader"/> when <paramref name="orderedProperties"/>
     /// match the leading ascending columns of a B-tree index whose sort order matches CLR comparison.
     /// </summary>
     /// <param name="reader">The open <see cref="AccessReader"/>.</param>
     /// <param name="resolved">The resolved local table.</param>
-    /// <param name="orderedAscendingProperties">The required ascending sort properties.</param>
+    /// <param name="orderedProperties">The required ascending sort properties.</param>
     /// <param name="wantedColumns">Optional column projection mask.</param>
     /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
     /// <returns>An index-ordered row sequence, or <see langword="null"/> if no suitable index exists.</returns>
     internal static async ValueTask<IAsyncEnumerable<object[]>?> TryBuildOrderedIndexQueryAsync(
         AccessReader reader,
         ResolvedTable resolved,
-        IReadOnlyList<IProperty> orderedAscendingProperties,
+        IReadOnlyList<JetOrdering> orderedProperties,
         bool[]? wantedColumns,
         CancellationToken cancellationToken)
     {
-        if (orderedAscendingProperties.Count == 0 || !reader.Services.Indexes.CanSeek)
+        if (orderedProperties.Count == 0 || !reader.Services.Indexes.CanSeek)
         {
             return null;
         }
 
         IReadOnlyList<IndexMetadata> indexes = await reader.Services.Indexes.ListSeekableIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
-        IndexMetadata? chosen = SelectOrderedScanIndex(reader.Database.Format, resolved.Definition, indexes, orderedAscendingProperties);
+        (IndexMetadata Index, bool Reverse)? chosen = SelectOrderedScanIndex(reader.Database.Format, resolved.Definition, indexes, orderedProperties);
         if (chosen is null)
         {
             return null;
@@ -162,8 +163,8 @@ internal static class JetIndexSeekPlanner
 
         return reader.Services.Indexes.ReadIndexRowsAsObjectsAsync(
             resolved.Entry.Name,
-            chosen.Name,
-            IndexQueryCriteria.All,
+            chosen.Value.Index.Name,
+            chosen.Value.Reverse ? IndexQueryCriteria.AllReverse : IndexQueryCriteria.All,
             wantedColumns,
             cancellationToken);
     }
@@ -174,17 +175,17 @@ internal static class JetIndexSeekPlanner
     /// <param name="writer">The active <see cref="AccessWriter"/>.</param>
     /// <param name="resolved">The resolved table.</param>
     /// <param name="conditions">Optional extracted seek conditions.</param>
-    /// <param name="orderedAscendingProperties">Optional ascending sort properties when no seek conditions are present.</param>
+    /// <param name="orderedProperties">Optional ascending sort properties when no seek conditions are present.</param>
     /// <param name="parameters">The runtime query parameter values.</param>
     /// <param name="wantedColumns">The column projection mask.</param>
-    /// <param name="visitRow">Callback invoked for each decoded row along with whether the scan is ordered by <paramref name="orderedAscendingProperties"/>; returning <see langword="false"/> stops the scan.</param>
+    /// <param name="visitRow">Callback invoked for each decoded row along with whether the scan is ordered by <paramref name="orderedProperties"/>; returning <see langword="false"/> stops the scan.</param>
     /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
     /// <returns><see langword="true"/> if an index scan was executed; <see langword="false"/> if a full table scan is required.</returns>
     internal static async ValueTask<bool> TryReadFromActiveWriterIndexAsync(
         AccessWriter writer,
         ResolvedTable resolved,
         IReadOnlyList<JetIndexSeekCondition>? conditions,
-        IReadOnlyList<IProperty>? orderedAscendingProperties,
+        IReadOnlyList<JetOrdering>? orderedProperties,
         IReadOnlyDictionary<string, object?> parameters,
         bool[] wantedColumns,
         Func<object?[], bool, bool> visitRow,
@@ -255,16 +256,16 @@ internal static class JetIndexSeekPlanner
             }
         }
 
-        if (orderedAscendingProperties is { Count: > 0 })
+        if (orderedProperties is { Count: > 0 })
         {
-            IndexMetadata? orderedIndex = SelectOrderedScanIndex(format, tableDef, indexes, orderedAscendingProperties);
+            (IndexMetadata Index, bool Reverse)? orderedIndex = SelectOrderedScanIndex(format, tableDef, indexes, orderedProperties);
             if (orderedIndex is not null)
             {
                 await EnumerateActiveWriterIndexCriteriaAsync(
                     writer,
                     resolved,
-                    orderedIndex,
-                    IndexQueryCriteria.All,
+                    orderedIndex.Value.Index,
+                    orderedIndex.Value.Reverse ? IndexQueryCriteria.AllReverse : IndexQueryCriteria.All,
                     wantedColumns,
                     row => visitRow(row, true),
                     cancellationToken).ConfigureAwait(false);
@@ -413,6 +414,59 @@ internal static class JetIndexSeekPlanner
         return results;
     }
 
+    /// <summary>Builds a lazily decoded transaction snapshot index scan.</summary>
+    /// <param name="writer">The active writer.</param>
+    /// <param name="resolved">The resolved table.</param>
+    /// <param name="conditions">Optional necessary index predicates.</param>
+    /// <param name="orderedProperties">Optional requested scalar ordering.</param>
+    /// <param name="parameters">Runtime query parameters.</param>
+    /// <param name="wantedColumns">The decoded column mask.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The row stream and whether it satisfies the requested ordering, or null when unavailable.</returns>
+    internal static async ValueTask<(IAsyncEnumerable<object?[]> Rows, bool Ordered)?> TryBuildActiveWriterIndexQueryAsync(
+        AccessWriter writer,
+        ResolvedTable resolved,
+        IReadOnlyList<JetIndexSeekCondition>? conditions,
+        IReadOnlyList<JetOrdering>? orderedProperties,
+        IReadOnlyDictionary<string, object?> parameters,
+        bool[] wantedColumns,
+        CancellationToken cancellationToken)
+    {
+        JetFormat format = writer.Database.Format;
+        if (!format.SupportsIndexSeeks)
+        {
+            return null;
+        }
+
+        IReadOnlyList<IndexMetadata> allIndexes = await writer.Services.Snapshots.ReadIndexMetadataSnapshotAsync(resolved.Entry.Name, cancellationToken).ConfigureAwait(false);
+        List<IndexMetadata> indexes = FilterSeekableIndexes(resolved.Definition, allIndexes);
+        if (orderedProperties is { Count: > 0 }
+            && SelectOrderedScanIndex(format, resolved.Definition, indexes, orderedProperties) is { } ordered)
+        {
+            return (ReadActiveWriterIndexCriteriaAsync(
+                writer,
+                resolved,
+                ordered.Index,
+                ordered.Reverse ? IndexQueryCriteria.AllReverse : IndexQueryCriteria.All,
+                wantedColumns,
+                cancellationToken), true);
+        }
+
+        if (conditions is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        RowCriteria seekable = BuildSeekableCriteria(conditions, parameters, resolved.Definition);
+        IndexPlan? plan = seekable.Count == 0 ? null : IndexPlanner.TryPlan(indexes, seekable, candidate => CanEncodePlan(format, resolved.Definition, resolved.Entry.Name, candidate));
+        if (plan?.Index is { FirstDp: > 0, Columns.Count: > 0 })
+        {
+            return (ReadActiveWriterIndexCriteriaAsync(writer, resolved, plan.Index, plan.Criteria, wantedColumns, cancellationToken), false);
+        }
+
+        return null;
+    }
+
     private static RowCriteria BuildSeekableCriteria(
         IReadOnlyList<JetIndexSeekCondition> conditions,
         IReadOnlyDictionary<string, object?> parameters,
@@ -474,21 +528,21 @@ internal static class JetIndexSeekPlanner
         return result;
     }
 
-    private static IndexMetadata? SelectOrderedScanIndex(
+    private static (IndexMetadata Index, bool Reverse)? SelectOrderedScanIndex(
         JetFormat format,
         TableDef tableDef,
         IReadOnlyList<IndexMetadata> indexes,
-        IReadOnlyList<IProperty> orderedAscendingProperties)
+        IReadOnlyList<JetOrdering> orderedProperties)
     {
-        if (orderedAscendingProperties.Count == 0)
+        if (orderedProperties.Count == 0)
         {
             return null;
         }
 
-        string[] targetColumns = new string[orderedAscendingProperties.Count];
-        for (int i = 0; i < orderedAscendingProperties.Count; i++)
+        string[] targetColumns = new string[orderedProperties.Count];
+        for (int i = 0; i < orderedProperties.Count; i++)
         {
-            IProperty prop = orderedAscendingProperties[i];
+            IProperty prop = orderedProperties[i].Property;
             if (prop.GetValueConverter() is not null || prop.FindTypeMapping()?.Converter is not null)
             {
                 return null;
@@ -529,20 +583,19 @@ internal static class JetIndexSeekPlanner
             targetColumns[i] = colName;
         }
 
-        List<IndexMetadata> candidates = [];
+        List<(IndexMetadata Index, bool Reverse)> candidates = [];
         foreach (IndexMetadata index in indexes)
         {
-            if (index.FirstDp <= 0
-                || index.IgnoreNulls
-                || index.Columns.Count < targetColumns.Length)
+            if (index.FirstDp <= 0 || index.IgnoreNulls || index.Columns.Count < targetColumns.Length)
             {
                 continue;
             }
 
+            bool reverse = index.Columns[0].IsAscending == orderedProperties[0].Descending;
             bool matches = true;
             for (int i = 0; i < targetColumns.Length; i++)
             {
-                if (!index.Columns[i].IsAscending
+                if (index.Columns[i].IsAscending == orderedProperties[i].Descending != reverse
                     || !string.Equals(index.Columns[i].Name, targetColumns[i], StringComparison.OrdinalIgnoreCase))
                 {
                     matches = false;
@@ -552,15 +605,20 @@ internal static class JetIndexSeekPlanner
 
             if (matches)
             {
-                candidates.Add(index);
+                candidates.Add((index, reverse));
             }
         }
 
+        if (candidates.Count == 0)
+        {
+            return null;
+        }
+
         return candidates
-            .OrderByDescending(static idx => idx.Kind == IndexKind.PrimaryKey)
-            .ThenByDescending(static idx => idx.EnforcesUniqueness)
-            .ThenBy(static idx => idx.Columns.Count)
-            .FirstOrDefault();
+            .OrderByDescending(static candidate => candidate.Index.Kind == IndexKind.PrimaryKey)
+            .ThenByDescending(static candidate => candidate.Index.EnforcesUniqueness)
+            .ThenBy(static candidate => candidate.Index.Columns.Count)
+            .First();
     }
 
     private static bool TryPrepareMultiKeyTuples(
@@ -664,6 +722,25 @@ internal static class JetIndexSeekPlanner
         Func<object?[], bool> visitRow,
         CancellationToken cancellationToken)
     {
+        await foreach (object?[] row in ReadActiveWriterIndexCriteriaAsync(writer, resolved, index, criteria, wantedColumns, cancellationToken).ConfigureAwait(false))
+        {
+            if (!visitRow(row))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static async IAsyncEnumerable<object?[]> ReadActiveWriterIndexCriteriaAsync(
+        AccessWriter writer,
+        ResolvedTable resolved,
+        IndexMetadata index,
+        IndexQueryCriteria criteria,
+        bool[] wantedColumns,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
         JetFormat format = writer.Database.Format;
         TableDef td = resolved.Definition;
         string tableName = resolved.Entry.Name;
@@ -709,13 +786,8 @@ internal static class JetIndexSeekPlanner
                 continue;
             }
 
-            if (!visitRow(row))
-            {
-                return false;
-            }
+            yield return row;
         }
-
-        return true;
     }
 
     private static async ValueTask<object?[]?> MaterializeActiveWriterSeekRowAsync(

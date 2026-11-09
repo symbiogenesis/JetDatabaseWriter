@@ -154,6 +154,16 @@ internal sealed class IndexCursor : IDisposable
         IndexQueryCriteria criteria,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        if (criteria.Reverse)
+        {
+            await foreach ((long DataPage, int RowIndex) location in this.EnumerateAllReverseAsync(index.FirstDp, cancellationToken).ConfigureAwait(false))
+            {
+                yield return location;
+            }
+
+            yield break;
+        }
+
         EncodedIndexRange range;
         switch (criteria.Kind)
         {
@@ -180,6 +190,75 @@ internal sealed class IndexCursor : IDisposable
         await foreach ((long DataPage, int RowIndex) location in this.EnumerateRowLocationsInRangeAsync(index.FirstDp, range, cancellationToken).ConfigureAwait(false))
         {
             yield return location;
+        }
+    }
+
+    private async IAsyncEnumerable<(long DataPage, int RowIndex)> EnumerateAllReverseAsync(
+        long rootPageNumber,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        if (rootPageNumber <= 0 || this.pageSize <= this.layout.FirstEntryOffset)
+        {
+            yield break;
+        }
+
+        long pageNumber = rootPageNumber;
+        byte[] page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        HashSet<long> descent = [pageNumber];
+        for (int depth = 0; !IndexPageCodec.IsLeaf(page); depth++)
+        {
+            if (depth >= MaxDepth || !IndexPageCodec.IsIntermediate(page))
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The reverse index descent has an invalid page or exceeds its depth limit.");
+            }
+
+            List<DecodedIntermediateEntry> summaries = IndexPageCodec.DecodeIntermediateEntries(this.layout, page, this.pageSize);
+            long child = summaries.Count > 0 ? summaries[^1].ChildPage : IndexPageCodec.ReadTailPage(this.layout, page);
+            if (child <= 0)
+            {
+                yield break;
+            }
+
+            RegisterIntermediateTraversal(descent, child);
+            pageNumber = child;
+            page = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        }
+
+        HashSet<long> forward = [pageNumber];
+        for (long next = IndexPageCodec.ReadNextPage(this.layout, page); next > 0; next = IndexPageCodec.ReadNextPage(this.layout, page))
+        {
+            RegisterLeafTraversal(forward, next);
+            pageNumber = next;
+            page = await this.ReadPageAsync(next, cancellationToken).ConfigureAwait(false);
+            if (!IndexPageCodec.IsLeaf(page))
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The reverse index descent reached a non-leaf page.");
+            }
+        }
+
+        HashSet<long> backward = [pageNumber];
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            List<IndexEntry> entries = IndexPageCodec.DecodeLeafEntries(this.layout, page, this.pageSize);
+            for (int i = entries.Count - 1; i >= 0; i--)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return (entries[i].DataPage, entries[i].DataRow);
+            }
+
+            long previous = IndexPageCodec.ReadPrevPage(this.layout, page);
+            if (previous <= 0)
+            {
+                yield break;
+            }
+
+            RegisterLeafTraversal(backward, previous);
+            page = await this.ReadPageAsync(previous, cancellationToken).ConfigureAwait(false);
+            if (!IndexPageCodec.IsLeaf(page))
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The reverse index leaf chain contains a non-leaf page.");
+            }
         }
     }
 

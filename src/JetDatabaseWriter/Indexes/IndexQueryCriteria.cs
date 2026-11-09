@@ -9,16 +9,20 @@ internal sealed class IndexQueryCriteria
 {
     public static readonly IndexQueryCriteria All = new(IndexQueryKind.All, null, null, null);
 
+    public static readonly IndexQueryCriteria AllReverse = new(IndexQueryKind.All, null, null, null, reverse: true);
+
     private IndexQueryCriteria(
         IndexQueryKind kind,
         IReadOnlyList<object?>? values,
         IndexKeyBound? lower,
-        IndexKeyBound? upper)
+        IndexKeyBound? upper,
+        bool reverse = false)
     {
         this.Kind = kind;
         this.Values = values;
         this.Lower = lower;
         this.Upper = upper;
+        this.Reverse = reverse;
     }
 
     public IndexQueryKind Kind { get; }
@@ -30,6 +34,8 @@ internal sealed class IndexQueryCriteria
     public IndexKeyBound? Upper { get; }
 
     public bool IsFiltered => this.Kind != IndexQueryKind.All;
+
+    public bool Reverse { get; }
 
     public static IndexQueryCriteria Exact(IReadOnlyList<object?> values) =>
         new(IndexQueryKind.Exact, CopyValues(values, nameof(values)), null, null);

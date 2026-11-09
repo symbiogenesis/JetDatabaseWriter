@@ -979,7 +979,7 @@ internal static partial class JetAsyncQueryExecutor
                     queryContext.Parameters,
                     tablePlan.RequiredProperties,
                     maxRows: 1,
-                    orderedAscendingProperties: null,
+                    orderedProperties: null,
                     rowFilter: vbFilter is not null ? buffer => vbFilter(queryContext, buffer) : null,
                     ct).ConfigureAwait(false);
                 return buffers.Count > 0;
@@ -1263,7 +1263,6 @@ internal static partial class JetAsyncQueryExecutor
             List<(object Entity, ValueBuffer Buffer)>? preMaterializedRows = null;
 
             if (tablePlan.JoinLoadSpec is { } joinSpec
-                && tablePlan.SeekConditions.Count == 0
                 && state.RootRows.TryGetValue(joinSpec.OuterPlan.RootId, out List<(object Entity, ValueBuffer Buffer)>? outerRows))
             {
                 HashSet<StructuralKey> seenJoinKeys = [];
@@ -1291,7 +1290,7 @@ internal static partial class JetAsyncQueryExecutor
                 bool canShareUnindexedCache = tablePlan.SeekConditions.Count == 0
                     && tablePlan.RequiredProperties is null
                     && maxRows is null
-                    && tablePlan.OrderedAscendingProperties is null
+                    && tablePlan.OrderedProperties is null
                     && tablePlan.ValueBufferRowFilter is null
                     && tablePlan.CandidateRowFilter is null;
                 if (canShareUnindexedCache && unindexedBufferCache.TryGetValue(rootEntityType, out IReadOnlyList<ValueBuffer>? cachedBuffers))
@@ -1349,7 +1348,7 @@ internal static partial class JetAsyncQueryExecutor
                         queryContext.Parameters,
                         tablePlan.RequiredProperties,
                         maxRows,
-                        tablePlan.OrderedAscendingProperties,
+                        tablePlan.OrderedProperties,
                         bufferFilter,
                         cancellationToken).ConfigureAwait(false);
                     if (canShareUnindexedCache)
@@ -1357,6 +1356,11 @@ internal static partial class JetAsyncQueryExecutor
                         unindexedBufferCache[rootEntityType] = buffers;
                     }
                 }
+            }
+
+            if (tablePlan.JoinLoadSpec is not null && tablePlan.ValueBufferRowFilter is not null)
+            {
+                buffers = buffers.Where(buffer => tablePlan.ValueBufferRowFilter(queryContext, buffer)).ToList();
             }
 
             List<(object Entity, ValueBuffer Buffer)> rows = preMaterializedRows
@@ -1436,7 +1440,8 @@ internal static partial class JetAsyncQueryExecutor
                 jetContext,
                 navigation,
                 declaringRows,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                plan.RequiredPropertiesByEntityType.GetValueOrDefault(targetRoot)).ConfigureAwait(false);
             List<(object Entity, ValueBuffer Buffer)> loadedTargetRows = MaterializeCandidateRows(
                 queryContext,
                 targetRoot,
@@ -1826,7 +1831,8 @@ internal static partial class JetAsyncQueryExecutor
         JetQueryContext queryContext,
         INavigation navigation,
         List<(object Entity, ValueBuffer Buffer)> declaringRows,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlySet<IProperty>? requiredProperties = null)
     {
         if (declaringRows.Count == 0)
         {
@@ -1866,7 +1872,7 @@ internal static partial class JetAsyncQueryExecutor
             targetRoot,
             targetKeyProps,
             distinctKeyTuples,
-            requiredProperties: null,
+            requiredProperties,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -2975,9 +2981,11 @@ internal static partial class JetAsyncQueryExecutor
 
         public IReadOnlySet<IProperty>? RequiredProperties { get; set; }
 
+        public List<LambdaExpression> ScalarPredicates { get; } = [];
+
         public Func<IReadOnlyDictionary<string, object?>, int?>? MaxRowsEvaluator { get; set; }
 
-        public IReadOnlyList<IProperty>? OrderedAscendingProperties { get; set; }
+        public IReadOnlyList<JetOrdering>? OrderedProperties { get; set; }
 
         public Func<QueryContext, ValueBuffer, bool>? ValueBufferRowFilter { get; set; }
 
@@ -3049,6 +3057,8 @@ internal static partial class JetAsyncQueryExecutor
                     .CreateEntityMaterializer(entityType);
             }
         }
+
+        public Dictionary<IEntityType, IReadOnlySet<IProperty>?> RequiredPropertiesByEntityType { get; init; } = [];
 
         public Func<QueryContext, ValueBuffer, object> GetTrackedMaterializer(QueryContext queryContext, IEntityType entityType)
         {
@@ -3151,7 +3161,7 @@ internal static partial class JetAsyncQueryExecutor
             [with(ReferenceEqualityComparer.Instance)];
     }
 
-    private sealed class JetQueryPlanExtractor(IModel model) : ExpressionVisitor
+    private sealed partial class JetQueryPlanExtractor(IModel model) : ExpressionVisitor
     {
         private readonly List<JetTableLoadPlan> rootTables = [];
         private readonly Dictionary<EntityQueryRootExpression, JetTableLoadPlan> rootPlansByExpression = [with(ReferenceEqualityComparer.Instance)];
@@ -3195,24 +3205,48 @@ internal static partial class JetAsyncQueryExecutor
                 }
             }
 
-            if (extractor.rootTables.Count == 1
-                && extractor.queryReferencedNavigations.Count == 0)
+            Dictionary<IEntityType, IReadOnlySet<IProperty>?> requiredByType = [];
+            foreach (JetTableLoadPlan tablePlan in extractor.rootTables)
             {
-                JetTableLoadPlan singlePlan = extractor.rootTables[0];
                 if (extractor.includeChains.Count == 0)
                 {
-                    singlePlan.RequiredProperties = TryComputeRequiredProperties(
-                        query,
-                        model,
-                        singlePlan,
-                        extractor.IgnoreQueryFilters);
+                    tablePlan.RequiredProperties = extractor.ComputeRequiredProperties(query, tablePlan.RootEntityType);
+                    requiredByType[tablePlan.RootEntityType] = tablePlan.RequiredProperties;
                 }
 
-                ConfigureSingleTableScanOptimizations(
-                    query,
-                    model,
-                    singlePlan,
-                    extractor.IgnoreQueryFilters);
+                if (extractor.rootTables.Count == 1 && extractor.queryReferencedNavigations.Count == 0)
+                {
+                    ConfigureSingleTableScanOptimizations(query, model, tablePlan, extractor.IgnoreQueryFilters);
+                }
+                else
+                {
+                    List<LambdaExpression> predicates = [.. tablePlan.ScalarPredicates];
+                    if (!extractor.IgnoreQueryFilters)
+                    {
+                        foreach (IQueryFilter filter in GetAllQueryFilters(tablePlan.QueryEntityType))
+                        {
+                            if (filter.Expression is LambdaExpression filterLambda
+                                && TryCompileValueBufferFilter(model, tablePlan.RootEntityType, tablePlan.QueryEntityType, [filterLambda], out _))
+                            {
+                                predicates.Add(filterLambda);
+                            }
+                        }
+                    }
+
+                    if (predicates.Count > 0 && TryCompileValueBufferFilter(model, tablePlan.RootEntityType, tablePlan.QueryEntityType, predicates, out Func<QueryContext, ValueBuffer, bool>? bufferFilter))
+                    {
+                        tablePlan.ValueBufferRowFilter = bufferFilter;
+                    }
+                }
+            }
+
+            if (extractor.includeChains.Count == 0)
+            {
+                foreach (INavigationBase navigation in extractor.queryReferencedNavigations)
+                {
+                    IEntityType target = navigation.TargetEntityType.GetRootType();
+                    requiredByType[target] = extractor.ComputeRequiredProperties(query, target);
+                }
             }
 
             return new JetQueryPlan(
@@ -3221,7 +3255,10 @@ internal static partial class JetAsyncQueryExecutor
                 extractor.includeChains,
                 extractor.queryReferencedNavigations,
                 extractor.TrackingBehaviorOverride,
-                extractor.IgnoreQueryFilters);
+                extractor.IgnoreQueryFilters)
+            {
+                RequiredPropertiesByEntityType = requiredByType,
+            };
         }
 
         protected override Expression VisitExtension(Expression node)
@@ -3283,23 +3320,15 @@ internal static partial class JetAsyncQueryExecutor
             else if (node.Method.DeclaringType == typeof(Queryable))
             {
                 if (node.Method.Name is nameof(Queryable.Where)
-                    or nameof(Queryable.First)
-                    or nameof(Queryable.FirstOrDefault)
-                    or nameof(Queryable.Single)
-                    or nameof(Queryable.SingleOrDefault)
-                    or nameof(Queryable.Last)
-                    or nameof(Queryable.LastOrDefault)
-                    or nameof(Queryable.Count)
-                    or nameof(Queryable.LongCount)
-                    or nameof(Queryable.Any)
+                    or nameof(Queryable.First) or nameof(Queryable.FirstOrDefault)
+                    or nameof(Queryable.Single) or nameof(Queryable.SingleOrDefault)
+                    or nameof(Queryable.Last) or nameof(Queryable.LastOrDefault)
+                    or nameof(Queryable.Count) or nameof(Queryable.LongCount) or nameof(Queryable.Any)
                     && node.Arguments.Count is 2 or 3
-                    && StripQuotes(node.Arguments[1]) is LambdaExpression predicate
-                    && TryFindDirectRootExpression(node.Arguments[0], out EntityQueryRootExpression? queryRoot))
+                    && StripQuotes(node.Arguments[1]) is LambdaExpression predicate)
                 {
                     _ = this.Visit(node.Arguments[0]);
-                    JetTableLoadPlan plan = this.GetOrCreateRootPlan(queryRoot!);
-                    plan.SeekConditions.AddRange(
-                        JetIndexSeekPlanner.ExtractSeekConditions(plan.RootEntityType, predicate));
+                    this.ExtractMappedPredicates(node.Arguments[0], predicate);
                     _ = this.Visit(predicate);
                     if (node.Arguments.Count == 3)
                     {
@@ -3309,28 +3338,18 @@ internal static partial class JetAsyncQueryExecutor
                     return node;
                 }
 
-                if (node.Method.Name is nameof(Queryable.Join) or nameof(Queryable.GroupJoin)
+                if (node.Method.Name is nameof(Queryable.Join) or nameof(Queryable.GroupJoin) or nameof(Queryable.LeftJoin)
                     && node.Arguments.Count >= 5
-                    && TryFindDirectRootExpression(node.Arguments[0], out EntityQueryRootExpression? outerRoot)
-                    && TryFindDirectRootExpression(node.Arguments[1], out EntityQueryRootExpression? innerRoot)
-                    && StripQuotes(node.Arguments[2]) is LambdaExpression { Parameters.Count: 1 } outerKeyLambda
-                    && StripQuotes(node.Arguments[3]) is LambdaExpression { Parameters.Count: 1 } innerKeyLambda
-                    && TryExtractJoinKeyProperties(
-                        outerRoot!.EntityType.GetRootType(),
-                        outerKeyLambda.Parameters[0],
-                        outerKeyLambda.Body,
-                        out List<IProperty>? outerKeyProps)
-                    && TryExtractJoinKeyProperties(
-                        innerRoot!.EntityType.GetRootType(),
-                        innerKeyLambda.Parameters[0],
-                        innerKeyLambda.Body,
-                        out List<IProperty>? innerKeyProps)
+                    && StripQuotes(node.Arguments[2]) is LambdaExpression outerKeyLambda
+                    && StripQuotes(node.Arguments[3]) is LambdaExpression innerKeyLambda
+                    && this.TryExtractMappedJoinKeys(node.Arguments[0], outerKeyLambda, out EntityQueryRootExpression? outerRoot, out List<IProperty>? outerKeyProps)
+                    && this.TryExtractMappedJoinKeys(node.Arguments[1], innerKeyLambda, out EntityQueryRootExpression? innerRoot, out List<IProperty>? innerKeyProps)
                     && outerKeyProps!.Count == innerKeyProps!.Count)
                 {
                     _ = this.Visit(node.Arguments[0]);
                     _ = this.Visit(node.Arguments[1]);
-                    JetTableLoadPlan outerPlan = this.GetOrCreateRootPlan(outerRoot);
-                    JetTableLoadPlan innerPlan = this.GetOrCreateRootPlan(innerRoot);
+                    JetTableLoadPlan outerPlan = this.GetOrCreateRootPlan(outerRoot!);
+                    JetTableLoadPlan innerPlan = this.GetOrCreateRootPlan(innerRoot!);
                     innerPlan.JoinLoadSpec = new JetJoinKeyLoadSpec(outerPlan, outerKeyProps, innerKeyProps);
                     for (int i = 2; i < node.Arguments.Count; i++)
                     {
@@ -3368,41 +3387,6 @@ internal static partial class JetAsyncQueryExecutor
                     or nameof(Queryable.Average);
         }
 
-        private static bool TryExtractJoinKeyProperties(
-            IEntityType rootEntityType,
-            ParameterExpression param,
-            Expression body,
-            out List<IProperty>? properties)
-        {
-            Expression unwrapped = StripQuotes(body);
-            if (JetIndexSeekPlanner.TryExtractPropertyAccess(rootEntityType, param, unwrapped, out IProperty? singleProp))
-            {
-                properties = [singleProp!];
-                return true;
-            }
-
-            if (unwrapped is NewExpression { Arguments.Count: > 0 } newExpr)
-            {
-                List<IProperty> list = [];
-                foreach (Expression arg in newExpr.Arguments)
-                {
-                    if (!JetIndexSeekPlanner.TryExtractPropertyAccess(rootEntityType, param, arg, out IProperty? prop))
-                    {
-                        properties = null;
-                        return false;
-                    }
-
-                    list.Add(prop!);
-                }
-
-                properties = list;
-                return true;
-            }
-
-            properties = null;
-            return false;
-        }
-
         protected override Expression VisitMember(MemberExpression node)
         {
             Expression visited = base.VisitMember(node);
@@ -3434,41 +3418,6 @@ internal static partial class JetAsyncQueryExecutor
             }
 
             return current;
-        }
-
-        private static bool TryFindDirectRootExpression(Expression source, out EntityQueryRootExpression? rootExpression)
-        {
-            Expression current = source;
-            while (current is MethodCallExpression call)
-            {
-                if (call.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions))
-                {
-                    current = call.Arguments[0];
-                    continue;
-                }
-
-                if (call.Method.DeclaringType == typeof(Queryable)
-                    && call.Method.Name is nameof(Queryable.Where)
-                        or nameof(Queryable.OrderBy)
-                        or nameof(Queryable.OrderByDescending)
-                        or nameof(Queryable.ThenBy)
-                        or nameof(Queryable.ThenByDescending))
-                {
-                    current = call.Arguments[0];
-                    continue;
-                }
-
-                break;
-            }
-
-            if (current is EntityQueryRootExpression root)
-            {
-                rootExpression = root;
-                return true;
-            }
-
-            rootExpression = null;
-            return false;
         }
 
         private static bool TryFindRootEntityTypeRecursive(Expression expr, out IEntityType? entityType)
@@ -3559,58 +3508,6 @@ internal static partial class JetAsyncQueryExecutor
             return true;
         }
 
-        private static HashSet<IProperty>? TryComputeRequiredProperties(
-            Expression query,
-            IModel model,
-            JetTableLoadPlan tablePlan,
-            bool ignoreQueryFilters)
-        {
-            Type unwrappedResultType = UnwrapSequenceType(query.Type);
-            if (model.FindEntityType(unwrappedResultType) is not null)
-            {
-                return null;
-            }
-
-            RootEntityPropertyUsageAnalyzer analyzer = new(model, tablePlan.RootEntityType);
-            _ = analyzer.Visit(query);
-            if (analyzer.EntityEscapes)
-            {
-                return null;
-            }
-
-            if (!ignoreQueryFilters)
-            {
-                foreach (IQueryFilter filter in GetAllQueryFilters(tablePlan.QueryEntityType))
-                {
-                    if (filter.Expression is LambdaExpression filterLambda)
-                    {
-                        _ = analyzer.Visit(filterLambda);
-                        if (analyzer.EntityEscapes)
-                        {
-                            return null;
-                        }
-                    }
-                }
-            }
-
-            IKey? pk = tablePlan.RootEntityType.FindPrimaryKey();
-            if (pk is not null)
-            {
-                foreach (IProperty pkProp in pk.Properties)
-                {
-                    _ = analyzer.ReferencedProperties.Add(pkProp);
-                }
-            }
-
-            IProperty? discriminator = tablePlan.RootEntityType.FindDiscriminatorProperty();
-            if (discriminator is not null)
-            {
-                _ = analyzer.ReferencedProperties.Add(discriminator);
-            }
-
-            return analyzer.ReferencedProperties;
-        }
-
         private static void ConfigureSingleTableScanOptimizations(
             Expression query,
             IModel model,
@@ -3619,9 +3516,10 @@ internal static partial class JetAsyncQueryExecutor
         {
             Func<IReadOnlyDictionary<string, object?>, int?>? limitEvaluator = null;
             List<LambdaExpression> rowPredicates = [];
-            List<IProperty> ascendingOrderProps = [];
+            List<JetOrdering> ascendingOrderProps = [];
             bool sawUnsupportedForLimit = false;
             bool sawOrderOperator = false;
+            bool completedOrdering = false;
             bool orderIsPureAscendingProperties = true;
 
             Expression current = query;
@@ -3750,14 +3648,14 @@ internal static partial class JetAsyncQueryExecutor
                         && call.Arguments.Count == 2
                         && TryBuildIntEvaluator(call.Arguments[1], out Func<IReadOnlyDictionary<string, object?>, int?>? takeEval))
                     {
-                        if (rowPredicates.Count > 0)
-                        {
-                            rowPredicates.Clear();
-                        }
+                        bool filterAfterTake = rowPredicates.Count > 0;
+                        rowPredicates.Clear();
 
                         if (!sawOrderOperator && !sawUnsupportedForLimit)
                         {
-                            limitEvaluator = CombineMinLimit(limitEvaluator, takeEval!);
+                            // An outer filter can discard any prefix of the inner window.
+                            // Only the inner Take bounds the rows needed before that filter.
+                            limitEvaluator = filterAfterTake ? takeEval : CombineMinLimit(limitEvaluator, takeEval!);
                         }
                         else if (sawOrderOperator)
                         {
@@ -3768,29 +3666,34 @@ internal static partial class JetAsyncQueryExecutor
                         continue;
                     }
 
-                    if (call.Method.Name == nameof(Queryable.Skip)
-                        && call.Arguments.Count == 2
-                        && limitEvaluator is not null
-                        && !sawOrderOperator
-                        && !sawUnsupportedForLimit
-                        && TryBuildIntEvaluator(call.Arguments[1], out Func<IReadOnlyDictionary<string, object?>, int?>? skipEval))
+                    if (call.Method.Name == nameof(Queryable.Skip) && call.Arguments.Count == 2)
                     {
-                        if (rowPredicates.Count > 0)
+                        bool filterAfterSkip = rowPredicates.Count > 0;
+                        rowPredicates.Clear();
+                        if (!filterAfterSkip
+                            && limitEvaluator is not null
+                            && !sawOrderOperator
+                            && !sawUnsupportedForLimit
+                            && TryBuildIntEvaluator(call.Arguments[1], out Func<IReadOnlyDictionary<string, object?>, int?>? skipEval))
                         {
-                            rowPredicates.Clear();
+                            Func<IReadOnlyDictionary<string, object?>, int?> previousLimit = limitEvaluator;
+                            Func<IReadOnlyDictionary<string, object?>, int?> resolvedSkip = skipEval!;
+                            limitEvaluator = parameters =>
+                            {
+                                if (previousLimit(parameters) is int limit && resolvedSkip(parameters) is int skip)
+                                {
+                                    return (int)Math.Min(int.MaxValue, (long)Math.Max(0, limit) + Math.Max(0, skip));
+                                }
+
+                                return null;
+                            };
+                        }
+                        else
+                        {
+                            // A filter after Skip may require scanning arbitrarily many rows.
+                            limitEvaluator = null;
                         }
 
-                        Func<IReadOnlyDictionary<string, object?>, int?> prevLimit = limitEvaluator;
-                        Func<IReadOnlyDictionary<string, object?>, int?> resolvedSkip = skipEval!;
-                        limitEvaluator = parameters =>
-                        {
-                            if (prevLimit(parameters) is int l && resolvedSkip(parameters) is int s && l >= 0 && s >= 0)
-                            {
-                                return l + s;
-                            }
-
-                            return null;
-                        };
                         current = call.Arguments[0];
                         continue;
                     }
@@ -3805,31 +3708,31 @@ internal static partial class JetAsyncQueryExecutor
                     }
 
                     if (call.Method.Name is nameof(Queryable.OrderBy) or nameof(Queryable.ThenBy)
+                        or nameof(Queryable.OrderByDescending) or nameof(Queryable.ThenByDescending)
                         && call.Arguments.Count == 2
                         && StripQuotes(call.Arguments[1]) is LambdaExpression { Parameters.Count: 1 } orderLambda)
                     {
                         sawOrderOperator = true;
+                        if (completedOrdering)
+                        {
+                            current = call.Arguments[0];
+                            continue;
+                        }
+
+                        completedOrdering = call.Method.Name is nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending);
                         if (JetIndexSeekPlanner.TryExtractPropertyAccess(
                             tablePlan.RootEntityType,
                             orderLambda.Parameters[0],
                             orderLambda.Body,
                             out IProperty? orderProp))
                         {
-                            ascendingOrderProps.Add(orderProp!);
+                            ascendingOrderProps.Add(new JetOrdering(orderProp!, call.Method.Name is nameof(Queryable.OrderByDescending) or nameof(Queryable.ThenByDescending)));
                         }
                         else
                         {
                             orderIsPureAscendingProperties = false;
                         }
 
-                        current = call.Arguments[0];
-                        continue;
-                    }
-
-                    if (call.Method.Name is nameof(Queryable.OrderByDescending) or nameof(Queryable.ThenByDescending))
-                    {
-                        sawOrderOperator = true;
-                        orderIsPureAscendingProperties = false;
                         current = call.Arguments[0];
                         continue;
                     }
@@ -3846,11 +3749,10 @@ internal static partial class JetAsyncQueryExecutor
 
             if (sawOrderOperator
                 && orderIsPureAscendingProperties
-                && ascendingOrderProps.Count > 0
-                && tablePlan.SeekConditions.Count == 0)
+                && ascendingOrderProps.Count > 0)
             {
                 ascendingOrderProps.Reverse();
-                tablePlan.OrderedAscendingProperties = ascendingOrderProps;
+                tablePlan.OrderedProperties = ascendingOrderProps;
             }
 
             if (!ignoreQueryFilters)
@@ -3866,7 +3768,7 @@ internal static partial class JetAsyncQueryExecutor
 
             if (!sawUnsupportedForLimit
                 && limitEvaluator is not null
-                && (!sawOrderOperator || tablePlan.OrderedAscendingProperties is not null))
+                && (!sawOrderOperator || tablePlan.OrderedProperties is not null))
             {
                 tablePlan.MaxRowsEvaluator = limitEvaluator;
             }
@@ -4420,7 +4322,7 @@ internal static partial class JetAsyncQueryExecutor
         }
     }
 
-    private sealed class RootEntityPropertyUsageAnalyzer(IModel model, IEntityType rootEntityType) : ExpressionVisitor
+    private sealed class RootEntityPropertyUsageAnalyzer(IModel model, IEntityType rootEntityType, bool ignoreTransparentEntities = false) : ExpressionVisitor
     {
         public HashSet<IProperty> ReferencedProperties { get; } = [];
 
@@ -4432,8 +4334,48 @@ internal static partial class JetAsyncQueryExecutor
             return node;
         }
 
+        protected override Expression VisitNew(NewExpression node)
+        {
+            foreach (Expression argument in node.Arguments)
+            {
+                if (!ignoreTransparentEntities || argument is not ParameterExpression)
+                {
+                    _ = this.Visit(argument);
+                }
+            }
+
+            return node;
+        }
+
         protected override Expression VisitMember(MemberExpression node)
         {
+            if (!ignoreTransparentEntities && model.FindEntityType(node.Type) is IEntityType resultType
+                && resultType.GetRootType() == rootEntityType)
+            {
+                this.EntityEscapes = true;
+            }
+
+            if (node.Expression is not null
+                && model.FindEntityType(node.Expression.Type) is IEntityType ownerType
+                && ownerType.GetRootType() == rootEntityType)
+            {
+                IProperty? scalar = ownerType.FindProperty(node.Member);
+                if (scalar is not null)
+                {
+                    _ = this.ReferencedProperties.Add(scalar);
+                    return node;
+                }
+
+                INavigation? navigation = ownerType.FindNavigation(node.Member);
+                if (navigation?.TargetEntityType.IsOwned() == false)
+                {
+                    this.ReferencedProperties.UnionWith(navigation.IsOnDependent
+                        ? navigation.ForeignKey.Properties
+                        : navigation.ForeignKey.PrincipalKey.Properties);
+                    return node;
+                }
+            }
+
             if (node.Expression is not null)
             {
                 List<MemberInfo> chain = [];
