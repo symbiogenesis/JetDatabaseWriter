@@ -31,6 +31,12 @@ It adds no full-result buffer; blocking operators retain their own buffering
 requirements. Synchronous scalar terminals use the same asynchronous execution
 path and wait for their single result.
 
+Global query filters bind context references to the context executing the query,
+including cached and compiled queries. Index candidates and residual predicates
+use the same bound values. Named `IgnoreQueryFilters` exclusions disable only
+the requested filters; the parameterless call disables all filters. The last
+tracking modifier in a query chain determines tracking and identity resolution.
+
 Entity equality, user methods that consume entities, constrained generic shapes,
 inheritance, owned graphs and navigation-dependent shapes can require the general
 entity execution path. These cases preserve CLR and EF behavior rather than
@@ -70,6 +76,15 @@ stream writers are reused; switching a peer connection retires idle writer
 state. Reader peers may coexist. Explicit transactions prevent another
 connection from taking over their writer. Schema creation releases its file
 writer when finished.
+
+Creation requires an empty destination stream and initializes it from offset
+zero. `EnsureCreatedAsync` and `MigrateAsync` preserve nonempty unreadable streams
+and throw, including when the configured password cannot open the database.
+
+`DeleteBehavior.NoAction` creates an enforcing relationship without cascading
+deletes. Self-referencing save dependencies use each foreign key's actual
+principal key, including composite alternate keys. Self-referencing deletes
+execute in dependency order rather than in physical scan order.
 
 Generated-value refresh first attempts exact indexed lookup, then evaluates the
 same primary-key criteria through a row scan when the index cannot serve the
