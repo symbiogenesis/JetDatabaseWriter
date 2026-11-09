@@ -33,8 +33,12 @@ Assert-Lanes 'standalone CI helpers use script checks' @('scripts/ci-gate.ps1', 
 Assert-Lanes 'ordinary script regression uses script checks' @('scripts/tests/ci-gate.tests.ps1') $false $false
 Assert-Lanes 'unknown helper fails closed' @('scripts/future-build.ps1') $true $true
 Assert-Lanes 'copied fixture helper changes test runner' @('scripts/new-native-calculated-choose-fixtures.ps1') $true $false
-Assert-Lanes 'AOT and restore tooling' @('scripts/test-aot.ps1', 'scripts/restore-dependencies.ps1', 'scripts/tests/test-aot.tests.ps1') $true $false
-Assert-Lanes 'package consumer build input' @('scripts/test-package.ps1', 'scripts/tests/test-package.tests.ps1') $true $false
+foreach ($helper in 'test-aot', 'test-package', 'restore-dependencies') {
+    Assert-Lanes "mocked $helper regression uses unconditional script checks" @("scripts/tests/$helper.tests.ps1") $false $false
+    Assert-Lanes "$helper coordinator changes consumer validation" @("scripts/$helper.ps1") $true $false
+}
+Assert-Lanes 'mocked regression and real coordinator retain .NET coverage' @('scripts/tests/test-package.tests.ps1', 'scripts/test-package.ps1') $true $false
+Assert-Lanes 'mocked regression and proof retain formal coverage' @('scripts/tests/test-package.tests.ps1', 'verification/Pages/Paging/UndoJournal.dfy') $false $true
 Assert-Lanes 'generated consumer inputs' @('scripts/AotSmoke/Program.cs') $true $false
 Assert-Lanes 'proof-only edit' @('verification/Pages/Paging/UndoJournal.dfy', 'verification/config/proof-review.json', 'docs/design/formal-verification.md') $false $true
 Assert-Lanes 'proof outside manifest directory cannot hide under docs' @('docs/Unlisted.dfy') $false $true
@@ -319,6 +323,11 @@ try {
         @{ paths = @('README.md', 'verification/Pages/Paging/UndoJournal.dfy'); dotnet = $false; formal = $true; package = $true },
         @{ paths = @('tests/JetDatabaseWriter.Tests/Databases/Golden/README.md'); dotnet = $false; formal = $false; package = $false },
         @{ paths = @('scripts/ci-gate.ps1'); dotnet = $false; formal = $false; package = $false },
+        @{ paths = @('scripts/tests/test-aot.tests.ps1'); dotnet = $false; formal = $false; package = $false },
+        @{ paths = @('scripts/tests/test-package.tests.ps1'); dotnet = $false; formal = $false; package = $false },
+        @{ paths = @('scripts/tests/restore-dependencies.tests.ps1'); dotnet = $false; formal = $false; package = $false },
+        @{ paths = @('scripts/tests/test-package.tests.ps1', 'scripts/test-package.ps1'); dotnet = $true; formal = $false; package = $false },
+        @{ paths = @('scripts/tests/test-package.tests.ps1', 'verification/config/proof-review.json'); dotnet = $false; formal = $true; package = $false },
         @{ paths = @('docs/build.props'); dotnet = $true; formal = $true; package = $false }
     )) {
         $script:changedPaths = $case.paths

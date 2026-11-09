@@ -20,12 +20,12 @@ function Get-CiLanes([string[]] $Paths) {
         } elseif ($path -cmatch '^(?:(?:docs|src|tests|tools|benchmarks|Databases|\.github)/[^"\\]+\.md|[^/"\\]+\.md|LICENSE(?:\.txt)?)$') {
             # Recognize prose before its enclosing project/fixture directory.
             # Proof/trust documents above retain their stronger obligations.
-        } elseif ($path -cmatch '^scripts/(?:AotSmoke/|(?:test-aot|test-package|restore-dependencies|new-native-calculated-choose-fixtures)\.ps1$)' -or
-            $path -cmatch '^scripts/tests/(?:test-aot|test-package|restore-dependencies)\.tests\.ps1$') {
+        } elseif ($path -cmatch '^scripts/(?:AotSmoke/|(?:test-aot|test-package|restore-dependencies|new-native-calculated-choose-fixtures)\.ps1$)') {
             $dotnet = $true
         } elseif ($path -cmatch '^scripts/tests/[^/"\\]+\.tests\.ps1$' -or
             $path -cmatch '^scripts/(?:assert-benchmark-baseline|assert-ci-success|assert-infersharp|check-security-traceability|ci-gate|compare-benchmarks|resolve-benchmark-project|run-benchmark-comparison|run-candidate-checks|submit-candidate|update-sdk)\.ps1$') {
             # These tools and their regressions run in the unconditional checks.
+            # AOT/package/restore regressions mock their consumers; only the coordinators above affect .NET inputs.
             # Keep standalone helpers explicit; new build inputs fail closed.
         } elseif ($path -cmatch '^src/JetDatabaseWriter/') {
             # The unconditional review job checks inventory and mapped C# contracts.
