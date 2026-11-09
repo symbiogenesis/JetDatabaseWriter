@@ -429,12 +429,31 @@ internal static partial class JetAsyncQueryExecutor
         protected override Expression VisitLambda<T>(Expression<T> node)
         {
             ParameterExpression[] mapped = node.Parameters.Select(p => Expression.Parameter(this.MapType(p.Type), p.Name)).ToArray();
+            var previous = new ParameterExpression?[mapped.Length];
             for (int i = 0; i < mapped.Length; i++)
             {
+                _ = this.parameters.TryGetValue(node.Parameters[i], out previous[i]);
                 this.parameters[node.Parameters[i]] = mapped[i];
             }
 
-            return Expression.Lambda(this.Visit(node.Body), mapped);
+            try
+            {
+                return Expression.Lambda(this.Visit(node.Body), mapped);
+            }
+            finally
+            {
+                for (int i = 0; i < mapped.Length; i++)
+                {
+                    if (previous[i] is { } parent)
+                    {
+                        this.parameters[node.Parameters[i]] = parent;
+                    }
+                    else
+                    {
+                        _ = this.parameters.Remove(node.Parameters[i]);
+                    }
+                }
+            }
         }
 
         protected override Expression VisitParameter(ParameterExpression node)

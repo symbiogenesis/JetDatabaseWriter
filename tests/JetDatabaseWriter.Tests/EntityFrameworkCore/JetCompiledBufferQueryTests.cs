@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
@@ -52,6 +53,35 @@ public sealed class JetCompiledBufferQueryTests
         int[] secondValues = await ReadAsync(query(second, 4, 2), ct);
         Assert.Equal([4, 3, 2], secondValues);
         Assert.Empty(await ReadAsync(query(second, 0, 0), ct));
+    }
+
+    [Fact]
+    public async Task NestedLambda_ReusingAParameterInstance_PreservesOuterScope()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        await using ReviewContext context = await CreateContextAsync(stream);
+        IQueryable<ReviewRow> rows = context.Rows;
+        ParameterExpression parameter = Expression.Parameter(typeof(ReviewRow), "row");
+        var innerSelector = Expression.Lambda<Func<ReviewRow, int>>(
+            Expression.Property(parameter, nameof(ReviewRow.Id)), parameter);
+        MethodCallExpression innerQuery = Expression.Call(
+            typeof(Queryable),
+            nameof(Queryable.Select),
+            [typeof(ReviewRow), typeof(int)],
+            rows.Expression,
+            Expression.Quote(innerSelector));
+        MethodCallExpression innerCount = Expression.Call(typeof(Queryable), nameof(Queryable.Count), [typeof(int)], innerQuery);
+        var outerSelector = Expression.Lambda<Func<ReviewRow, int>>(
+            Expression.Add(innerCount, Expression.Property(parameter, nameof(ReviewRow.Id))), parameter);
+        MethodCallExpression outerQuery = Expression.Call(
+            typeof(Queryable),
+            nameof(Queryable.Select),
+            [typeof(ReviewRow), typeof(int)],
+            rows.Expression,
+            Expression.Quote(outerSelector));
+        int[] values = await rows.Provider.CreateQuery<int>(outerQuery).ToArrayAsync(ct);
+        Assert.Equal(Enumerable.Range(9, 8), values);
     }
 
     private static async Task<int[]> ReadAsync(IAsyncEnumerable<int> sequence, CancellationToken cancellationToken)
