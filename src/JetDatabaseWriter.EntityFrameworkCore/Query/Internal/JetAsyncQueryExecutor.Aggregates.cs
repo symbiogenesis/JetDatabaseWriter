@@ -56,7 +56,7 @@ internal static partial class JetAsyncQueryExecutor
 
         if (!plan.IgnoreQueryFilters)
         {
-            predicates.InsertRange(0, GetAllQueryFilters(plan.RootTables[0].QueryEntityType).Select(static f => f.Expression));
+            predicates.InsertRange(0, GetAllQueryFilters(plan.RootTables[0].QueryEntityType).Select(static f => f.Expression).OfType<LambdaExpression>());
         }
 
         ParameterExpression context = Expression.Parameter(typeof(QueryContext), "context");

@@ -77,6 +77,7 @@ internal static partial class JetAsyncQueryExecutor
         {
             cancellationToken.ThrowIfCancellationRequested();
             context.CancellationToken.ThrowIfCancellationRequested();
+            scope.BeginResult();
             yield return materialize(item, scope);
         }
     }
@@ -87,6 +88,7 @@ internal static partial class JetAsyncQueryExecutor
         private readonly JetQueryPlan plan;
         private readonly bool tracking;
         private readonly Dictionary<(IEntityType Type, StructuralKey Key), object>? identities;
+        private readonly Dictionary<(IEntityType Type, ValueBuffer Buffer), object> resultEntities = [];
 
         public BufferResultScope(QueryContext context, JetQueryPlan plan)
         {
@@ -104,8 +106,15 @@ internal static partial class JetAsyncQueryExecutor
             }
         }
 
+        public void BeginResult() => this.resultEntities.Clear();
+
         public object Materialize(IEntityType entityType, ValueBuffer buffer)
         {
+            if (this.resultEntities.TryGetValue((entityType, buffer), out object? existing))
+            {
+                return existing;
+            }
+
             if (this.identities is not null && entityType.FindPrimaryKey() is { } key)
             {
                 var identity = (entityType, ExtractKey(key, buffer));
@@ -115,11 +124,14 @@ internal static partial class JetAsyncQueryExecutor
                     this.identities.Add(identity, entity);
                 }
 
+                this.resultEntities[(entityType, buffer)] = entity;
                 return entity;
             }
 
-            return (this.tracking ? this.plan.GetTrackedMaterializer(this.context, entityType)
+            object materialized = (this.tracking ? this.plan.GetTrackedMaterializer(this.context, entityType)
                 : this.plan.GetUntrackedMaterializer(this.context, entityType))(this.context, buffer);
+            this.resultEntities[(entityType, buffer)] = materialized;
+            return materialized;
         }
     }
 }

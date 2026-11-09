@@ -300,7 +300,14 @@ internal static partial class JetAsyncQueryExecutor
             if (type.IsGenericType)
             {
                 Type[] args = type.GetGenericArguments().Select(this.MapType).ToArray();
-                return type.GetGenericTypeDefinition().MakeGenericType(args);
+                try
+                {
+                    return type.GetGenericTypeDefinition().MakeGenericType(args);
+                }
+                catch (ArgumentException)
+                {
+                    throw new BufferTranslationException();
+                }
             }
 
             return type;
@@ -412,6 +419,11 @@ internal static partial class JetAsyncQueryExecutor
             }
 
             Type mapped = this.MapType(node.Type);
+            if (operand.Type != node.Operand.Type && node.Type == typeof(object))
+            {
+                throw new BufferTranslationException();
+            }
+
             return Expression.MakeUnary(node.NodeType, operand, mapped, node.Method);
         }
 
@@ -437,7 +449,7 @@ internal static partial class JetAsyncQueryExecutor
 
             if (node.Method.DeclaringType == typeof(EF) && node.Method.Name == nameof(EF.Property)
                 && node.Arguments[1] is ConstantExpression { Value: string name }
-                && model.FindEntityType(node.Arguments[0].Type) is { } entityType)
+                && model.FindEntityType(StripQuotesAndObjectConvert(node.Arguments[0]).Type) is { } entityType)
             {
                 IProperty? property = entityType.FindProperty(name);
                 if (property is not null)
@@ -445,7 +457,7 @@ internal static partial class JetAsyncQueryExecutor
                     this.ReferencedProperties.Add(property);
                 }
                 return property is null ? throw new BufferTranslationException()
-                    : Expression.Call(ReadValueBufferPropertyMethod.MakeGenericMethod(node.Type), this.Visit(node.Arguments[0])!, Expression.Constant(property.GetIndex()));
+                    : Expression.Call(ReadValueBufferPropertyMethod.MakeGenericMethod(node.Type), this.Visit(StripQuotesAndObjectConvert(node.Arguments[0]))!, Expression.Constant(property.GetIndex()));
             }
 
             if (node.Method.DeclaringType == typeof(DbFunctionsExtensions) && node.Method.Name == nameof(DbFunctionsExtensions.Like))
@@ -456,6 +468,12 @@ internal static partial class JetAsyncQueryExecutor
 
             if (streaming && node.Method.DeclaringType == typeof(Queryable))
             {
+                if (node.Method.Name == nameof(Queryable.Distinct)
+                    && this.MapType(node.Method.GetGenericArguments()[0]) != node.Method.GetGenericArguments()[0])
+                {
+                    throw new BufferTranslationException();
+                }
+
                 string method = node.Method.Name switch
                 {
                     nameof(Queryable.Where) => nameof(StreamWhere),
@@ -477,15 +495,52 @@ internal static partial class JetAsyncQueryExecutor
             }
 
             Expression[] args = node.Arguments.Select(a => this.Visit(a)!).ToArray();
-            MethodInfo mappedMethod = node.Method.IsGenericMethod
-                ? node.Method.GetGenericMethodDefinition().MakeGenericMethod(node.Method.GetGenericArguments().Select(this.MapType).ToArray()) : node.Method;
+            if (node.Method.DeclaringType != typeof(Queryable) && node.Method.DeclaringType != typeof(Enumerable)
+                && node.Arguments.Where((a, i) => this.MapType(a.Type) != a.Type || args[i].Type != a.Type).Any())
+            {
+                throw new BufferTranslationException();
+            }
+
+            MethodInfo mappedMethod;
+            try
+            {
+                mappedMethod = node.Method.IsGenericMethod
+                    ? node.Method.GetGenericMethodDefinition().MakeGenericMethod(node.Method.GetGenericArguments().Select(this.MapType).ToArray()) : node.Method;
+            }
+            catch (ArgumentException)
+            {
+                throw new BufferTranslationException();
+            }
+
+            if (node.Method.DeclaringType == typeof(Queryable) || node.Method.DeclaringType == typeof(Enumerable))
+            {
+                Type[] typeArguments = node.Method.GetGenericArguments();
+                int equalityArgument = node.Method.Name switch
+                {
+                    nameof(Queryable.Distinct) or nameof(Queryable.Union) or nameof(Queryable.Intersect)
+                        or nameof(Queryable.Except) or nameof(Queryable.Contains) or nameof(Queryable.SequenceEqual) => 0,
+                    nameof(Queryable.GroupBy) => 1,
+                    nameof(Queryable.Join) or nameof(Queryable.GroupJoin) or nameof(Queryable.LeftJoin) => 2,
+                    _ => -1,
+                };
+                if (equalityArgument >= 0 && this.MapType(typeArguments[equalityArgument]) != typeArguments[equalityArgument])
+                {
+                    throw new BufferTranslationException();
+                }
+            }
             ParameterInfo[] declared = mappedMethod.GetParameters();
             if (declared.Where((p, i) => !p.ParameterType.IsAssignableFrom(args[i].Type)).Any())
             {
                 throw new BufferTranslationException();
             }
 
-            return Expression.Call(this.Visit(node.Object), mappedMethod, args);
+            Expression? receiver = this.Visit(node.Object);
+            if (receiver is not null && !mappedMethod.DeclaringType!.IsAssignableFrom(receiver.Type))
+            {
+                throw new BufferTranslationException();
+            }
+
+            return Expression.Call(receiver, mappedMethod, args);
         }
     }
 }
