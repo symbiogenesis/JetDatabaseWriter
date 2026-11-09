@@ -14,6 +14,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 
@@ -52,6 +53,11 @@ internal static class JetAsyncQueryExecutor
     private static readonly MethodInfo BuildSyncScalarExecutorMethod =
         typeof(JetAsyncQueryExecutor).GetMethod(
             nameof(BuildSyncScalarExecutor),
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly MethodInfo ReadValueBufferPropertyMethod =
+        typeof(JetAsyncQueryExecutor).GetMethod(
+            nameof(ReadValueBufferProperty),
             BindingFlags.NonPublic | BindingFlags.Static)!;
 
     private static readonly MethodInfo ReadEfPropertyMethod =
@@ -326,6 +332,45 @@ internal static class JetAsyncQueryExecutor
         return queryContext => ExecuteScalarAsync(queryContext, plan, compiledQuery);
     }
 
+    private static Expression StripQuotesAndObjectConvert(Expression expression)
+    {
+        Expression current = expression;
+        while (current is UnaryExpression unary
+               && (unary.NodeType == ExpressionType.Quote
+                   || (unary.NodeType is ExpressionType.Convert or ExpressionType.ConvertChecked
+                       && unary.Type == typeof(object))))
+        {
+            current = unary.Operand;
+        }
+
+        return current;
+    }
+
+    private static Expression UnwrapEfQueryModifiers(Expression expression)
+    {
+        Expression current = expression;
+        while (current is MethodCallExpression wrapperCall
+               && wrapperCall.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
+               && wrapperCall.Method.Name is nameof(EntityFrameworkQueryableExtensions.AsNoTracking)
+                   or nameof(EntityFrameworkQueryableExtensions.AsNoTrackingWithIdentityResolution)
+                   or nameof(EntityFrameworkQueryableExtensions.AsTracking)
+                   or nameof(EntityFrameworkQueryableExtensions.IgnoreQueryFilters)
+                   or nameof(EntityFrameworkQueryableExtensions.IgnoreAutoIncludes)
+                   or nameof(EntityFrameworkQueryableExtensions.TagWith)
+                   or nameof(EntityFrameworkQueryableExtensions.TagWithCallSite))
+        {
+            current = wrapperCall.Arguments[0];
+        }
+
+        return current;
+    }
+
+    private static TProperty ReadValueBufferProperty<TProperty>(ValueBuffer buffer, int index)
+    {
+        object? value = (uint)index < (uint)buffer.Count ? buffer[index] : null;
+        return value is TProperty typed ? typed : default!;
+    }
+
     private static bool TryBuildEntityFreeAggregateExecutor<TScalar>(
         Expression query,
         JetQueryPlan plan,
@@ -340,51 +385,42 @@ internal static class JetAsyncQueryExecutor
         }
 
         JetTableLoadPlan tablePlan = plan.RootTables[0];
-        if (tablePlan.QueryEntityType != tablePlan.RootEntityType
-            || tablePlan.CandidateRowFilter is not null
-            || (!plan.IgnoreQueryFilters && GetAllQueryFilters(tablePlan.QueryEntityType).Count > 0))
+        if (tablePlan.CandidateRowFilter is not null)
         {
             return false;
         }
 
-        Expression current = query;
-        while (current is MethodCallExpression wrapperCall
-               && wrapperCall.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
-               && wrapperCall.Method.Name is nameof(EntityFrameworkQueryableExtensions.AsNoTracking)
-                   or nameof(EntityFrameworkQueryableExtensions.AsNoTrackingWithIdentityResolution)
-                   or nameof(EntityFrameworkQueryableExtensions.AsTracking)
-                   or nameof(EntityFrameworkQueryableExtensions.IgnoreQueryFilters)
-                   or nameof(EntityFrameworkQueryableExtensions.IgnoreAutoIncludes)
-                   or nameof(EntityFrameworkQueryableExtensions.TagWith)
-                   or nameof(EntityFrameworkQueryableExtensions.TagWithCallSite))
-        {
-            current = wrapperCall.Arguments[0];
-        }
-
-        if (current is not MethodCallExpression { Arguments.Count: 1 } terminalCall
+        Expression current = UnwrapEfQueryModifiers(query);
+        if (current is not MethodCallExpression { Arguments.Count: 1 or 2 } terminalCall
             || terminalCall.Method.DeclaringType != typeof(Queryable))
         {
             return false;
         }
 
         Expression inner = terminalCall.Arguments[0];
-        while (inner is MethodCallExpression innerWrapper
-               && innerWrapper.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
-               && innerWrapper.Method.Name is nameof(EntityFrameworkQueryableExtensions.AsNoTracking)
-                   or nameof(EntityFrameworkQueryableExtensions.AsNoTrackingWithIdentityResolution)
-                   or nameof(EntityFrameworkQueryableExtensions.AsTracking)
-                   or nameof(EntityFrameworkQueryableExtensions.IgnoreQueryFilters)
-                   or nameof(EntityFrameworkQueryableExtensions.IgnoreAutoIncludes)
-                   or nameof(EntityFrameworkQueryableExtensions.TagWith)
-                   or nameof(EntityFrameworkQueryableExtensions.TagWithCallSite))
+        while (true)
         {
-            inner = innerWrapper.Arguments[0];
+            Expression unwrapped = UnwrapEfQueryModifiers(inner);
+            if (unwrapped is MethodCallExpression { Arguments.Count: 2 } whereCall
+                && whereCall.Method.DeclaringType == typeof(Queryable)
+                && whereCall.Method.Name == nameof(Queryable.Where)
+                && StripQuotesAndObjectConvert(whereCall.Arguments[1]) is LambdaExpression { Parameters.Count: 1 } wLambda
+                && wLambda.Parameters[0].Type.IsAssignableFrom(tablePlan.QueryEntityType.ClrType))
+            {
+                inner = whereCall.Arguments[0];
+                continue;
+            }
+
+            inner = unwrapped;
+            break;
         }
 
         if (inner is not EntityQueryRootExpression)
         {
             return false;
         }
+
+        Func<QueryContext, ValueBuffer, bool>? vbFilter = tablePlan.ValueBufferRowFilter;
 
         if (terminalCall.Method.Name == nameof(Queryable.Count) && typeof(TScalar) == typeof(int))
         {
@@ -393,16 +429,25 @@ internal static class JetAsyncQueryExecutor
                 CancellationToken ct = queryContext.CancellationToken;
                 ct.ThrowIfCancellationRequested();
                 var jetContext = (JetQueryContext)queryContext;
-                IReadOnlyList<ValueBuffer> buffers = await jetContext.Connection.ReadTableValueBuffersAsync(
+                int count = 0;
+                _ = await jetContext.Connection.ReadTableValueBuffersAsync(
                     tablePlan.RootEntityType,
                     tablePlan.SeekConditions,
                     queryContext.Parameters,
                     tablePlan.RequiredProperties,
                     maxRows: null,
                     orderedAscendingProperties: null,
-                    rowFilter: null,
+                    rowFilter: buffer =>
+                    {
+                        if (vbFilter is null || vbFilter(queryContext, buffer))
+                        {
+                            count++;
+                        }
+
+                        return false;
+                    },
                     ct).ConfigureAwait(false);
-                return buffers.Count;
+                return count;
             }
 
             executor = (Func<QueryContext, Task<TScalar>>)(object)(Func<QueryContext, Task<int>>)ExecuteCountAsync;
@@ -416,16 +461,25 @@ internal static class JetAsyncQueryExecutor
                 CancellationToken ct = queryContext.CancellationToken;
                 ct.ThrowIfCancellationRequested();
                 var jetContext = (JetQueryContext)queryContext;
-                IReadOnlyList<ValueBuffer> buffers = await jetContext.Connection.ReadTableValueBuffersAsync(
+                long count = 0;
+                _ = await jetContext.Connection.ReadTableValueBuffersAsync(
                     tablePlan.RootEntityType,
                     tablePlan.SeekConditions,
                     queryContext.Parameters,
                     tablePlan.RequiredProperties,
                     maxRows: null,
                     orderedAscendingProperties: null,
-                    rowFilter: null,
+                    rowFilter: buffer =>
+                    {
+                        if (vbFilter is null || vbFilter(queryContext, buffer))
+                        {
+                            count++;
+                        }
+
+                        return false;
+                    },
                     ct).ConfigureAwait(false);
-                return buffers.Count;
+                return count;
             }
 
             executor = (Func<QueryContext, Task<TScalar>>)(object)(Func<QueryContext, Task<long>>)ExecuteLongCountAsync;
@@ -446,7 +500,7 @@ internal static class JetAsyncQueryExecutor
                     tablePlan.RequiredProperties,
                     maxRows: 1,
                     orderedAscendingProperties: null,
-                    rowFilter: null,
+                    rowFilter: vbFilter is not null ? buffer => vbFilter(queryContext, buffer) : null,
                     ct).ConfigureAwait(false);
                 return buffers.Count > 0;
             }
@@ -557,6 +611,42 @@ internal static class JetAsyncQueryExecutor
             isTracking,
             resolveIdentityUntracked,
             effectiveToken).ConfigureAwait(false);
+
+        if (plan.IncludeChains.Count == 0)
+        {
+            Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>>? existingTrackedByType =
+                isTracking ? [] : null;
+            List<(object Entity, ValueBuffer Buffer)>? unusedIncludeRoots = null;
+            HashSet<object>? unusedSeenRoots = null;
+
+            foreach (TElement rawElement in compiledQuery(queryContext, state))
+            {
+                effectiveToken.ThrowIfCancellationRequested();
+                TElement current = rawElement;
+                if (isTracking && current is object elementObj)
+                {
+                    unusedIncludeRoots ??= [];
+                    unusedSeenRoots ??= [with(ReferenceEqualityComparer.Instance)];
+                    object? promoted = PromoteResultGraph(
+                        elementObj,
+                        queryContext,
+                        plan,
+                        state,
+                        existingTrackedByType!,
+                        isTracking: true,
+                        unusedIncludeRoots,
+                        unusedSeenRoots);
+                    if (promoted is TElement typedPromoted)
+                    {
+                        current = typedPromoted;
+                    }
+                }
+
+                yield return current;
+            }
+
+            yield break;
+        }
 
         List<TElement> results = [.. compiledQuery(queryContext, state)];
 
@@ -722,6 +812,7 @@ internal static class JetAsyncQueryExecutor
                     && tablePlan.RequiredProperties is null
                     && maxRows is null
                     && tablePlan.OrderedAscendingProperties is null
+                    && tablePlan.ValueBufferRowFilter is null
                     && tablePlan.CandidateRowFilter is null;
                 if (canShareUnindexedCache && unindexedBufferCache.TryGetValue(rootEntityType, out IReadOnlyList<ValueBuffer>? cachedBuffers))
                 {
@@ -730,11 +821,18 @@ internal static class JetAsyncQueryExecutor
                 else
                 {
                     Func<ValueBuffer, bool>? bufferFilter = null;
-                    if (maxRows is not null && tablePlan.CandidateRowFilter is not null)
+                    if (tablePlan.CandidateRowFilter is not null)
                     {
                         preMaterializedRows = [];
+                        HashSet<object> retainedEntities = [with(ReferenceEqualityComparer.Instance)];
                         bufferFilter = buffer =>
                         {
+                            if (tablePlan.ValueBufferRowFilter is not null
+                                && !tablePlan.ValueBufferRowFilter(queryContext, buffer))
+                            {
+                                return false;
+                            }
+
                             object entity = MaterializeSingleCandidateRow(
                                 queryContext,
                                 rootEntityType,
@@ -743,19 +841,26 @@ internal static class JetAsyncQueryExecutor
                                 state,
                                 deduplicateCandidates,
                                 untrackedIdentityMaps);
-                            if (!tablePlan.QueryEntityType.ClrType.IsInstanceOfType(entity))
+                            if (!tablePlan.QueryEntityType.ClrType.IsInstanceOfType(entity)
+                                || !tablePlan.CandidateRowFilter(queryContext, state, entity))
                             {
+                                if (!retainedEntities.Contains(entity))
+                                {
+                                    _ = state.EntityBuffers.Remove(entity);
+                                    _ = state.EntityTypesByInstance.Remove(entity);
+                                }
+
                                 return false;
                             }
 
-                            if (!tablePlan.CandidateRowFilter(queryContext, state, entity))
-                            {
-                                return false;
-                            }
-
+                            _ = retainedEntities.Add(entity);
                             preMaterializedRows.Add((entity, buffer));
                             return true;
                         };
+                    }
+                    else if (tablePlan.ValueBufferRowFilter is not null)
+                    {
+                        bufferFilter = buffer => tablePlan.ValueBufferRowFilter(queryContext, buffer);
                     }
 
                     buffers = await jetContext.Connection.ReadTableValueBuffersAsync(
@@ -1544,7 +1649,54 @@ internal static class JetAsyncQueryExecutor
             }
         }
 
-        object tracked = plan.GetTrackedMaterializer(queryContext, concreteType)(queryContext, buffer);
+#pragma warning disable EF1001 // QueryContext.StartTracking attaches the already-materialized entity instance in-place without allocating a second CLR object.
+        object tracked;
+        if (!concreteType.IsOwned() && !HasComplexShadowProperties(concreteType))
+        {
+            foreach (INavigation nav in concreteType.GetNavigations())
+            {
+                if (!nav.IsCollection
+                    && nav.TargetEntityType.IsOwned()
+                    && GetNavigationValue(nav, candidateEntity) is object defaultOwned
+                    && !state.EntityBuffers.ContainsKey(defaultOwned))
+                {
+                    SetNavigationValue(nav, candidateEntity, null);
+                }
+            }
+
+            var runtimeType = (IRuntimeTypeBase)concreteType;
+            ISnapshot shadowSnapshot;
+            if (runtimeType.ShadowPropertyCount == 0)
+            {
+                shadowSnapshot = Snapshot.Empty;
+            }
+            else
+            {
+                Dictionary<string, object?> shadowValues = [with(StringComparer.Ordinal)];
+                foreach (IProperty prop in concreteType.GetProperties())
+                {
+                    if (prop.IsShadowProperty())
+                    {
+                        int idx = prop.GetIndex();
+                        object? val = (uint)idx < (uint)buffer.Count ? buffer[idx] : null;
+                        if (val is not null)
+                        {
+                            shadowValues[prop.Name] = val;
+                        }
+                    }
+                }
+
+                shadowSnapshot = runtimeType.ShadowValuesFactory(shadowValues);
+            }
+
+            _ = queryContext.StartTracking(concreteType, candidateEntity, in shadowSnapshot);
+            tracked = candidateEntity;
+        }
+        else
+        {
+            tracked = plan.GetTrackedMaterializer(queryContext, concreteType)(queryContext, buffer);
+        }
+#pragma warning restore EF1001
         state.PromotedEntities[candidateEntity] = tracked;
         state.EntityBuffers[tracked] = buffer;
         state.EntityTypesByInstance[tracked] = concreteType;
@@ -1571,6 +1723,22 @@ internal static class JetAsyncQueryExecutor
         return tracked;
     }
 
+    private static bool HasComplexShadowProperties(IEntityType entityType)
+    {
+        foreach (IComplexProperty complexProperty in entityType.GetComplexProperties())
+        {
+            foreach (IProperty prop in complexProperty.ComplexType.GetFlattenedProperties())
+            {
+                if (prop.IsShadowProperty())
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private static void TransferPopulatedNavigations(
         IEntityType concreteType,
         object sourceEntity,
@@ -1580,10 +1748,12 @@ internal static class JetAsyncQueryExecutor
         JetExecutionMaterializedState state,
         Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType)
     {
-        if (plan.QueryReferencedNavigations.Count == 0 || ReferenceEquals(sourceEntity, targetEntity))
+        if (plan.QueryReferencedNavigations.Count == 0)
         {
             return;
         }
+
+        bool sameInstance = ReferenceEquals(sourceEntity, targetEntity);
 
         if (state.SkipJoinEntitiesByTarget.TryGetValue(sourceEntity, out List<(object JoinEntity, ValueBuffer JoinBuffer)>? skipJoins))
         {
@@ -1622,6 +1792,11 @@ internal static class JetAsyncQueryExecutor
                 object promotedItem = state.EntityBuffers.TryGetValue(item, out ValueBuffer itemBuf)
                     ? PromoteEntityInstance(item, itemBuf, queryContext, plan, state, existingTrackedByType)
                     : item;
+                if (sameInstance && !ReferenceEquals(item, promotedItem))
+                {
+                    _ = collectionAccessor?.Remove(targetEntity, item);
+                }
+
                 if (collectionAccessor?.Contains(targetEntity, promotedItem) == false)
                 {
                     collectionAccessor.Add(targetEntity, promotedItem, forMaterialization: true);
@@ -1629,7 +1804,11 @@ internal static class JetAsyncQueryExecutor
 
                 if (inverseAccessor is not null)
                 {
-                    _ = inverseAccessor.Remove(promotedItem, sourceEntity);
+                    if (!sameInstance)
+                    {
+                        _ = inverseAccessor.Remove(promotedItem, sourceEntity);
+                    }
+
                     if (!inverseAccessor.Contains(promotedItem, targetEntity))
                     {
                         inverseAccessor.Add(promotedItem, targetEntity, forMaterialization: true);
@@ -1662,6 +1841,11 @@ internal static class JetAsyncQueryExecutor
                     object promotedItem = state.EntityBuffers.TryGetValue(item, out ValueBuffer itemBuf)
                         ? PromoteEntityInstance(item, itemBuf, queryContext, plan, state, existingTrackedByType)
                         : item;
+                    if (sameInstance && !ReferenceEquals(item, promotedItem))
+                    {
+                        _ = collectionAccessor?.Remove(targetEntity, item);
+                    }
+
                     if (collectionAccessor?.Contains(targetEntity, promotedItem) == false)
                     {
                         collectionAccessor.Add(targetEntity, promotedItem, forMaterialization: true);
@@ -1684,7 +1868,7 @@ internal static class JetAsyncQueryExecutor
                 object promotedRelated = state.EntityBuffers.TryGetValue(related, out ValueBuffer relBuf)
                     ? PromoteEntityInstance(related, relBuf, queryContext, plan, state, existingTrackedByType)
                     : related;
-                if (GetNavigationValue(nav, targetEntity) is null)
+                if (GetNavigationValue(nav, targetEntity) is null || !ReferenceEquals(related, promotedRelated))
                 {
                     SetNavigationValue(nav, targetEntity, promotedRelated);
                 }
@@ -1695,7 +1879,11 @@ internal static class JetAsyncQueryExecutor
                     IClrCollectionAccessor? invCol = inverse.GetCollectionAccessor();
                     if (invCol is not null)
                     {
-                        _ = invCol.Remove(promotedRelated, sourceEntity);
+                        if (!sameInstance)
+                        {
+                            _ = invCol.Remove(promotedRelated, sourceEntity);
+                        }
+
                         if (!invCol.Contains(promotedRelated, targetEntity))
                         {
                             invCol.Add(promotedRelated, targetEntity, forMaterialization: true);
@@ -2405,6 +2593,8 @@ internal static class JetAsyncQueryExecutor
 
         public IReadOnlyList<IProperty>? OrderedAscendingProperties { get; set; }
 
+        public Func<QueryContext, ValueBuffer, bool>? ValueBufferRowFilter { get; set; }
+
         public Func<QueryContext, JetExecutionMaterializedState, object, bool>? CandidateRowFilter { get; set; }
 
         public JetJoinKeyLoadSpec? JoinLoadSpec { get; set; }
@@ -2604,7 +2794,7 @@ internal static class JetAsyncQueryExecutor
             JetQueryPlanExtractor extractor = new(model);
             _ = extractor.Visit(query);
 
-            if (!extractor.ignoreAutoIncludes)
+            if (!extractor.ignoreAutoIncludes && !IsNonEntityTerminalQuery(query))
             {
                 foreach (JetTableLoadPlan tablePlan in extractor.rootTables)
                 {
@@ -2628,15 +2818,18 @@ internal static class JetAsyncQueryExecutor
             }
 
             if (extractor.rootTables.Count == 1
-                && extractor.includeChains.Count == 0
                 && extractor.queryReferencedNavigations.Count == 0)
             {
                 JetTableLoadPlan singlePlan = extractor.rootTables[0];
-                singlePlan.RequiredProperties = TryComputeRequiredProperties(
-                    query,
-                    model,
-                    singlePlan,
-                    extractor.IgnoreQueryFilters);
+                if (extractor.includeChains.Count == 0)
+                {
+                    singlePlan.RequiredProperties = TryComputeRequiredProperties(
+                        query,
+                        model,
+                        singlePlan,
+                        extractor.IgnoreQueryFilters);
+                }
+
                 ConfigureSingleTableScanOptimizations(
                     query,
                     model,
@@ -2741,24 +2934,26 @@ internal static class JetAsyncQueryExecutor
                 if (node.Method.Name is nameof(Queryable.Join) or nameof(Queryable.GroupJoin)
                     && node.Arguments.Count >= 5
                     && TryFindDirectRootExpression(node.Arguments[0], out EntityQueryRootExpression? outerRoot)
-                    && node.Arguments[1] is EntityQueryRootExpression innerRoot
+                    && TryFindDirectRootExpression(node.Arguments[1], out EntityQueryRootExpression? innerRoot)
                     && StripQuotes(node.Arguments[2]) is LambdaExpression { Parameters.Count: 1 } outerKeyLambda
                     && StripQuotes(node.Arguments[3]) is LambdaExpression { Parameters.Count: 1 } innerKeyLambda
-                    && JetIndexSeekPlanner.TryExtractPropertyAccess(
+                    && TryExtractJoinKeyProperties(
                         outerRoot!.EntityType.GetRootType(),
                         outerKeyLambda.Parameters[0],
                         outerKeyLambda.Body,
-                        out IProperty? outerKeyProp)
-                    && JetIndexSeekPlanner.TryExtractPropertyAccess(
-                        innerRoot.EntityType.GetRootType(),
+                        out List<IProperty>? outerKeyProps)
+                    && TryExtractJoinKeyProperties(
+                        innerRoot!.EntityType.GetRootType(),
                         innerKeyLambda.Parameters[0],
                         innerKeyLambda.Body,
-                        out IProperty? innerKeyProp))
+                        out List<IProperty>? innerKeyProps)
+                    && outerKeyProps!.Count == innerKeyProps!.Count)
                 {
                     _ = this.Visit(node.Arguments[0]);
+                    _ = this.Visit(node.Arguments[1]);
                     JetTableLoadPlan outerPlan = this.GetOrCreateRootPlan(outerRoot);
                     JetTableLoadPlan innerPlan = this.GetOrCreateRootPlan(innerRoot);
-                    innerPlan.JoinLoadSpec = new JetJoinKeyLoadSpec(outerPlan, [outerKeyProp!], [innerKeyProp!]);
+                    innerPlan.JoinLoadSpec = new JetJoinKeyLoadSpec(outerPlan, outerKeyProps, innerKeyProps);
                     for (int i = 2; i < node.Arguments.Count; i++)
                     {
                         _ = this.Visit(node.Arguments[i]);
@@ -2769,6 +2964,65 @@ internal static class JetAsyncQueryExecutor
             }
 
             return base.VisitMethodCall(node);
+        }
+
+        private static bool IsNonEntityTerminalQuery(Expression query)
+        {
+            Expression current = UnwrapEfQueryModifiers(query);
+            if (current is not MethodCallExpression call)
+            {
+                return false;
+            }
+
+            if (call.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
+                && call.Method.Name is nameof(EntityFrameworkQueryableExtensions.ExecuteDelete)
+                    or nameof(EntityFrameworkQueryableExtensions.ExecuteUpdate))
+            {
+                return true;
+            }
+
+            return call.Method.DeclaringType == typeof(Queryable)
+                && call.Method.Name is nameof(Queryable.Count)
+                    or nameof(Queryable.LongCount)
+                    or nameof(Queryable.Any)
+                    or nameof(Queryable.All)
+                    or nameof(Queryable.Sum)
+                    or nameof(Queryable.Average);
+        }
+
+        private static bool TryExtractJoinKeyProperties(
+            IEntityType rootEntityType,
+            ParameterExpression param,
+            Expression body,
+            out List<IProperty>? properties)
+        {
+            Expression unwrapped = StripQuotes(body);
+            if (JetIndexSeekPlanner.TryExtractPropertyAccess(rootEntityType, param, unwrapped, out IProperty? singleProp))
+            {
+                properties = [singleProp!];
+                return true;
+            }
+
+            if (unwrapped is NewExpression { Arguments.Count: > 0 } newExpr)
+            {
+                List<IProperty> list = [];
+                foreach (Expression arg in newExpr.Arguments)
+                {
+                    if (!JetIndexSeekPlanner.TryExtractPropertyAccess(rootEntityType, param, arg, out IProperty? prop))
+                    {
+                        properties = null;
+                        return false;
+                    }
+
+                    list.Add(prop!);
+                }
+
+                properties = list;
+                return true;
+            }
+
+            properties = null;
+            return false;
         }
 
         protected override Expression VisitMember(MemberExpression node)
@@ -2995,17 +3249,27 @@ internal static class JetAsyncQueryExecutor
             Expression current = query;
             while (current is MethodCallExpression call)
             {
-                if (call.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
-                    && call.Method.Name is nameof(EntityFrameworkQueryableExtensions.AsNoTracking)
+                if (call.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions))
+                {
+                    if (call.Method.Name is nameof(EntityFrameworkQueryableExtensions.AsNoTracking)
                         or nameof(EntityFrameworkQueryableExtensions.AsNoTrackingWithIdentityResolution)
                         or nameof(EntityFrameworkQueryableExtensions.AsTracking)
                         or nameof(EntityFrameworkQueryableExtensions.IgnoreQueryFilters)
                         or nameof(EntityFrameworkQueryableExtensions.IgnoreAutoIncludes)
                         or nameof(EntityFrameworkQueryableExtensions.TagWith)
                         or nameof(EntityFrameworkQueryableExtensions.TagWithCallSite))
-                {
-                    current = call.Arguments[0];
-                    continue;
+                    {
+                        current = call.Arguments[0];
+                        continue;
+                    }
+
+                    if (call.Method.Name is nameof(EntityFrameworkQueryableExtensions.ExecuteDelete)
+                        or nameof(EntityFrameworkQueryableExtensions.ExecuteUpdate))
+                    {
+                        sawUnsupportedForLimit = true;
+                        current = call.Arguments[0];
+                        continue;
+                    }
                 }
 
                 if (call.Method.DeclaringType == typeof(Queryable))
@@ -3016,10 +3280,50 @@ internal static class JetAsyncQueryExecutor
                         continue;
                     }
 
+                    if (call.Method.Name is nameof(Queryable.Count) or nameof(Queryable.LongCount))
+                    {
+                        if (call.Arguments.Count >= 2 && StripQuotes(call.Arguments[1]) is LambdaExpression countPred)
+                        {
+                            rowPredicates.Add(countPred);
+                        }
+
+                        sawUnsupportedForLimit = true;
+                        current = call.Arguments[0];
+                        continue;
+                    }
+
+                    if (call.Method.Name is nameof(Queryable.All)
+                        or nameof(Queryable.Sum)
+                        or nameof(Queryable.Average)
+                        or nameof(Queryable.Min)
+                        or nameof(Queryable.Max)
+                        or nameof(Queryable.MinBy)
+                        or nameof(Queryable.MaxBy)
+                        or nameof(Queryable.Distinct)
+                        or nameof(Queryable.Last)
+                        or nameof(Queryable.LastOrDefault)
+                        or nameof(Queryable.ElementAt)
+                        or nameof(Queryable.ElementAtOrDefault))
+                    {
+                        sawUnsupportedForLimit = true;
+                        if (sawOrderOperator)
+                        {
+                            orderIsPureAscendingProperties = false;
+                        }
+
+                        current = call.Arguments[0];
+                        continue;
+                    }
+
                     if (call.Method.Name is nameof(Queryable.Any)
                         or nameof(Queryable.First)
                         or nameof(Queryable.FirstOrDefault))
                     {
+                        if (rowPredicates.Count > 0)
+                        {
+                            rowPredicates.Clear();
+                        }
+
                         if (call.Arguments.Count >= 2 && StripQuotes(call.Arguments[1]) is LambdaExpression termPred)
                         {
                             rowPredicates.Add(termPred);
@@ -3029,6 +3333,10 @@ internal static class JetAsyncQueryExecutor
                         {
                             limitEvaluator = CombineMinLimit(limitEvaluator, static _ => 1);
                         }
+                        else if (sawOrderOperator)
+                        {
+                            orderIsPureAscendingProperties = false;
+                        }
 
                         current = call.Arguments[0];
                         continue;
@@ -3037,6 +3345,11 @@ internal static class JetAsyncQueryExecutor
                     if (call.Method.Name is nameof(Queryable.Single)
                         or nameof(Queryable.SingleOrDefault))
                     {
+                        if (rowPredicates.Count > 0)
+                        {
+                            rowPredicates.Clear();
+                        }
+
                         if (call.Arguments.Count >= 2 && StripQuotes(call.Arguments[1]) is LambdaExpression termPred)
                         {
                             rowPredicates.Add(termPred);
@@ -3045,6 +3358,10 @@ internal static class JetAsyncQueryExecutor
                         if (!sawOrderOperator && !sawUnsupportedForLimit)
                         {
                             limitEvaluator = CombineMinLimit(limitEvaluator, static _ => 2);
+                        }
+                        else if (sawOrderOperator)
+                        {
+                            orderIsPureAscendingProperties = false;
                         }
 
                         current = call.Arguments[0];
@@ -3055,9 +3372,18 @@ internal static class JetAsyncQueryExecutor
                         && call.Arguments.Count == 2
                         && TryBuildIntEvaluator(call.Arguments[1], out Func<IReadOnlyDictionary<string, object?>, int?>? takeEval))
                     {
+                        if (rowPredicates.Count > 0)
+                        {
+                            rowPredicates.Clear();
+                        }
+
                         if (!sawOrderOperator && !sawUnsupportedForLimit)
                         {
                             limitEvaluator = CombineMinLimit(limitEvaluator, takeEval!);
+                        }
+                        else if (sawOrderOperator)
+                        {
+                            orderIsPureAscendingProperties = false;
                         }
 
                         current = call.Arguments[0];
@@ -3071,6 +3397,11 @@ internal static class JetAsyncQueryExecutor
                         && !sawUnsupportedForLimit
                         && TryBuildIntEvaluator(call.Arguments[1], out Func<IReadOnlyDictionary<string, object?>, int?>? skipEval))
                     {
+                        if (rowPredicates.Count > 0)
+                        {
+                            rowPredicates.Clear();
+                        }
+
                         Func<IReadOnlyDictionary<string, object?>, int?> prevLimit = limitEvaluator;
                         Func<IReadOnlyDictionary<string, object?>, int?> resolvedSkip = skipEval!;
                         limitEvaluator = parameters =>
@@ -3144,11 +3475,6 @@ internal static class JetAsyncQueryExecutor
                 tablePlan.OrderedAscendingProperties = ascendingOrderProps;
             }
 
-            if (sawUnsupportedForLimit || sawOrderOperator || limitEvaluator is null)
-            {
-                return;
-            }
-
             if (!ignoreQueryFilters)
             {
                 foreach (IQueryFilter queryFilter in GetAllQueryFilters(tablePlan.QueryEntityType))
@@ -3160,11 +3486,107 @@ internal static class JetAsyncQueryExecutor
                 }
             }
 
-            tablePlan.MaxRowsEvaluator = limitEvaluator;
+            if (!sawUnsupportedForLimit
+                && limitEvaluator is not null
+                && (!sawOrderOperator || tablePlan.OrderedAscendingProperties is not null))
+            {
+                tablePlan.MaxRowsEvaluator = limitEvaluator;
+            }
+
             if (rowPredicates.Count > 0 || tablePlan.QueryEntityType != tablePlan.RootEntityType)
             {
-                tablePlan.CandidateRowFilter = CompileCombinedCandidateFilter(model, tablePlan.QueryEntityType, rowPredicates);
+                if (TryCompileValueBufferFilter(
+                    model,
+                    tablePlan.RootEntityType,
+                    tablePlan.QueryEntityType,
+                    rowPredicates,
+                    out Func<QueryContext, ValueBuffer, bool>? vbFilter))
+                {
+                    tablePlan.ValueBufferRowFilter = vbFilter;
+                }
+                else
+                {
+                    tablePlan.CandidateRowFilter = CompileCombinedCandidateFilter(model, tablePlan.QueryEntityType, rowPredicates);
+                }
             }
+        }
+
+        private static bool TryCompileValueBufferFilter(
+            IModel model,
+            IEntityType rootEntityType,
+            IEntityType queryEntityType,
+            List<LambdaExpression> predicates,
+            out Func<QueryContext, ValueBuffer, bool>? filter)
+        {
+            filter = null;
+            ParameterExpression qcParam = Expression.Parameter(typeof(QueryContext), "queryContext");
+            ParameterExpression bufParam = Expression.Parameter(typeof(ValueBuffer), "buffer");
+            Expression combinedBody = Expression.Constant(true);
+
+            if (queryEntityType != rootEntityType)
+            {
+                IProperty? discProp = rootEntityType.FindDiscriminatorProperty();
+                if (discProp is null)
+                {
+                    return false;
+                }
+
+                HashSet<object> allowedDiscriminators = [];
+                foreach (IEntityType concreteType in queryEntityType.GetConcreteDerivedTypesInclusive())
+                {
+                    object? discVal = concreteType.GetDiscriminatorValue();
+                    if (discVal is not null)
+                    {
+                        _ = allowedDiscriminators.Add(discVal);
+                    }
+                }
+
+                MethodInfo isDiscAllowedMethod = typeof(JetQueryPlanExtractor).GetMethod(
+                    nameof(IsDiscriminatorAllowed),
+                    BindingFlags.NonPublic | BindingFlags.Static)!;
+                combinedBody = Expression.Call(
+                    isDiscAllowedMethod,
+                    Expression.Constant(allowedDiscriminators),
+                    bufParam,
+                    Expression.Constant(discProp.GetIndex()));
+            }
+
+            for (int i = predicates.Count - 1; i >= 0; i--)
+            {
+                LambdaExpression lambda = predicates[i];
+                if (lambda.Parameters.Count != 1)
+                {
+                    return false;
+                }
+
+                ValueBufferPredicateRewriter rewriter = new(
+                    lambda.Parameters[0],
+                    rootEntityType,
+                    model,
+                    qcParam,
+                    bufParam);
+                Expression rewrittenBody = rewriter.Visit(lambda.Body)!;
+                if (!rewriter.CanUseValueBuffer)
+                {
+                    return false;
+                }
+
+                combinedBody = ReferenceEquals(combinedBody, Expression.Constant(true))
+                    ? rewrittenBody
+                    : Expression.AndAlso(combinedBody, rewrittenBody);
+            }
+
+            filter = Expression.Lambda<Func<QueryContext, ValueBuffer, bool>>(
+                combinedBody,
+                qcParam,
+                bufParam).Compile();
+            return true;
+        }
+
+        private static bool IsDiscriminatorAllowed(HashSet<object> allowed, ValueBuffer buffer, int index)
+        {
+            object? value = (uint)index < (uint)buffer.Count ? buffer[index] : null;
+            return value is not null && allowed.Contains(value);
         }
 
         private static Func<QueryContext, JetExecutionMaterializedState, object, bool> CompileCombinedCandidateFilter(
@@ -3445,6 +3867,179 @@ internal static class JetAsyncQueryExecutor
     {
         public override Expression? Visit(Expression? node)
             => ReferenceEquals(node, target) ? replacement : base.Visit(node);
+    }
+
+    private sealed class ValueBufferPredicateRewriter(
+        ParameterExpression entityParam,
+        IEntityType rootEntityType,
+        IModel model,
+        ParameterExpression queryContextExpression,
+        ParameterExpression bufferExpression) : ExpressionVisitor
+    {
+        public bool CanUseValueBuffer { get; private set; } = true;
+
+        public override Expression? Visit(Expression? node)
+        {
+            if (!this.CanUseValueBuffer || node is null)
+            {
+                return node;
+            }
+
+            return base.Visit(node);
+        }
+
+        protected override Expression VisitExtension(Expression node)
+        {
+            if (node is QueryParameterExpression queryParam)
+            {
+                MethodInfo getParamMethod = GetParameterValueMethod.MakeGenericMethod(queryParam.Type);
+                return Expression.Call(
+                    getParamMethod,
+                    queryContextExpression,
+                    Expression.Constant(queryParam.Name));
+            }
+
+            this.CanUseValueBuffer = false;
+            return node;
+        }
+
+        protected override Expression VisitMember(MemberExpression node)
+        {
+            if (node.Expression is not null)
+            {
+                List<MemberInfo> chain = [];
+                Expression? cursor = node;
+                while (cursor is MemberExpression step)
+                {
+                    chain.Add(step.Member);
+                    cursor = step.Expression is not null ? UnwrapParamExpression(step.Expression) : null;
+                }
+
+                if (ReferenceEquals(cursor, entityParam) && chain.Count > 0)
+                {
+                    chain.Reverse();
+                    ITypeBase currentType = model.FindEntityType(entityParam.Type) ?? rootEntityType;
+                    for (int i = 0; i < chain.Count - 1; i++)
+                    {
+                        IComplexProperty? complexProp = currentType.FindComplexProperty(chain[i]);
+                        if (complexProp?.IsNullable != false)
+                        {
+                            this.CanUseValueBuffer = false;
+                            return node;
+                        }
+
+                        currentType = complexProp.ComplexType;
+                    }
+
+                    IProperty? prop = currentType.FindProperty(chain[^1]);
+                    if (prop?.DeclaringType.ContainingEntityType.IsOwned() == false)
+                    {
+                        MethodInfo readMethod = ReadValueBufferPropertyMethod.MakeGenericMethod(node.Type);
+                        return Expression.Call(
+                            readMethod,
+                            bufferExpression,
+                            Expression.Constant(prop.GetIndex()));
+                    }
+
+                    this.CanUseValueBuffer = false;
+                    return node;
+                }
+            }
+
+            return base.VisitMember(node);
+        }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.DeclaringType == typeof(EF)
+                && node.Method.Name == nameof(EF.Property)
+                && node.Arguments.Count == 2
+                && ReferenceEquals(UnwrapParamExpression(node.Arguments[0]), entityParam)
+                && UnwrapParamExpression(node.Arguments[1]) is ConstantExpression { Value: string propName })
+            {
+                IEntityType paramType = model.FindEntityType(entityParam.Type) ?? rootEntityType;
+                IProperty? prop = paramType.FindProperty(propName) ?? rootEntityType.FindProperty(propName);
+                if (prop?.DeclaringType.ContainingEntityType.IsOwned() == false)
+                {
+                    MethodInfo readMethod = ReadValueBufferPropertyMethod.MakeGenericMethod(node.Type);
+                    return Expression.Call(
+                        readMethod,
+                        bufferExpression,
+                        Expression.Constant(prop.GetIndex()));
+                }
+
+                this.CanUseValueBuffer = false;
+                return node;
+            }
+
+            if (node.Method.DeclaringType == typeof(DbFunctionsExtensions)
+                && node.Method.Name == nameof(DbFunctionsExtensions.Like))
+            {
+                if (node.Arguments.Count == 3)
+                {
+                    return Expression.Call(
+                        EvaluateLikeMethod,
+                        this.Visit(node.Arguments[1])!,
+                        this.Visit(node.Arguments[2])!,
+                        Expression.Constant(null, typeof(string)));
+                }
+
+                if (node.Arguments.Count == 4)
+                {
+                    return Expression.Call(
+                        EvaluateLikeMethod,
+                        this.Visit(node.Arguments[1])!,
+                        this.Visit(node.Arguments[2])!,
+                        this.Visit(node.Arguments[3])!);
+                }
+            }
+
+            if (node.Method.DeclaringType == typeof(Queryable))
+            {
+                if (node.Method.Name == nameof(Queryable.Contains)
+                    && node.Arguments.Count == 2
+                    && node.Method.IsGenericMethod)
+                {
+                    Expression arg0 = this.Visit(node.Arguments[0])!;
+                    Expression arg1 = this.Visit(node.Arguments[1])!;
+                    Type elemType = node.Method.GetGenericArguments()[0];
+                    if (model.FindEntityType(elemType) is null)
+                    {
+                        MethodInfo enumerableContains = EnumerableStaticMethods.Single(
+                            static m => m.Name == nameof(Enumerable.Contains) && m.GetParameters().Length == 2)
+                            .MakeGenericMethod(elemType);
+                        return Expression.Call(enumerableContains, arg0, arg1);
+                    }
+                }
+
+                this.CanUseValueBuffer = false;
+                return node;
+            }
+
+            return base.VisitMethodCall(node);
+        }
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (ReferenceEquals(node, entityParam))
+            {
+                this.CanUseValueBuffer = false;
+            }
+
+            return base.VisitParameter(node);
+        }
+
+        private static Expression UnwrapParamExpression(Expression expression)
+        {
+            Expression current = expression;
+            while (current is UnaryExpression unary
+                   && unary.NodeType is ExpressionType.Quote or ExpressionType.Convert or ExpressionType.ConvertChecked)
+            {
+                current = unary.Operand;
+            }
+
+            return current;
+        }
     }
 
     private sealed class RootEntityPropertyUsageAnalyzer(IModel model, IEntityType rootEntityType) : ExpressionVisitor

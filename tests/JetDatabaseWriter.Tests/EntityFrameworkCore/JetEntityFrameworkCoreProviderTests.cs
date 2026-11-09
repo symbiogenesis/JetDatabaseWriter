@@ -2465,6 +2465,89 @@ public sealed class JetEntityFrameworkCoreProviderTests
         }
     }
 
+    [Theory]
+    [MemberData(nameof(SupportedFormats))]
+    public async Task QueryOptimizations_OrderedIndexLimitPushdown_PredicatedAggregates_CompositeJoin_Streaming_AndSingleAllocationTracking_Work(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions<StoreDbContext> options = new DbContextOptionsBuilder<StoreDbContext>()
+            .UseJetDatabaseWriter(stream, format, leaveOpen: true)
+            .Options;
+
+        await using (StoreDbContext seed = new(options))
+        {
+            _ = await seed.Database.EnsureCreatedAsync(ct);
+
+            Customer c1 = new() { Code = "C-030", Name = "Gamma", IsVip = true, CreditLimit = 3000m, RowVersion = 1 };
+            Customer c2 = new() { Code = "C-010", Name = "Alpha", IsVip = false, CreditLimit = 1000m, RowVersion = 1 };
+            Customer c3 = new() { Code = "C-020", Name = "Beta", IsVip = true, CreditLimit = 2000m, RowVersion = 1 };
+            Customer c4 = new() { Code = "C-040", Name = "Deleted", IsVip = true, CreditLimit = 9000m, RowVersion = 1, IsDeleted = true };
+            seed.Customers.AddRange(c1, c2, c3, c4);
+            _ = await seed.SaveChangesAsync(ct);
+
+            seed.Orders.AddRange(
+                new Order { CustomerId = c2.Id, OrderDate = new DateTime(2026, 1, 1), TotalAmount = 100m, Status = OrderStatus.Shipped, TrackingId = Guid.NewGuid() },
+                new Order { CustomerId = c3.Id, OrderDate = new DateTime(2026, 1, 2), TotalAmount = 250m, Status = OrderStatus.Pending, TrackingId = Guid.NewGuid() },
+                new Order { CustomerId = c1.Id, OrderDate = new DateTime(2026, 1, 3), TotalAmount = 500m, Status = OrderStatus.Shipped, TrackingId = Guid.NewGuid() });
+            _ = await seed.SaveChangesAsync(ct);
+        }
+
+        await using (StoreDbContext queryContext = new(options))
+        {
+            // 1. OrderBy + parameterized Skip/Take B-tree index scan limit pushdown
+            int[] bounds = [1, 2];
+            int skipCount = bounds[0];
+            int takeCount = bounds[1];
+            List<Customer> orderedSlice = await queryContext.Customers
+                .AsNoTracking()
+                .OrderBy(c => c.Code)
+                .Skip(skipCount)
+                .Take(takeCount)
+                .ToListAsync(ct);
+            Assert.Equal(["C-020", "C-030"], orderedSlice.Select(static c => c.Code).ToArray());
+
+            // 2. Entity-free predicated CountAsync, LongCountAsync, and AnyAsync (respecting global query filters)
+            Assert.Equal(3, await queryContext.Customers.CountAsync(ct));
+            Assert.Equal(2, await queryContext.Customers.CountAsync(c => c.IsVip, ct));
+            Assert.Equal(2L, await queryContext.Customers.Where(c => c.CreditLimit >= 2000m).LongCountAsync(ct));
+            Assert.True(await queryContext.Customers.AnyAsync(c => c.Code == "C-020", ct));
+            Assert.False(await queryContext.Customers.AnyAsync(c => c.Code == "C-040", ct));
+            Assert.True(await queryContext.Customers.IgnoreQueryFilters().AnyAsync(c => c.Code == "C-040", ct));
+
+            // 3. Composite anonymous-type Join and wrapped inner DbSet Join
+            var compositeJoined = await queryContext.Customers
+                .AsNoTracking()
+                .Join(
+                    queryContext.Orders.Where(o => o.TotalAmount >= 200m),
+                    c => new { CustomerId = c.Id, Active = true },
+                    o => new { o.CustomerId, Active = o.TotalAmount > 0m },
+                    (c, o) => new { c.Code, o.TotalAmount })
+                .OrderBy(x => x.Code)
+                .ToListAsync(ct);
+            Assert.Equal(2, compositeJoined.Count);
+            Assert.Equal("C-020", compositeJoined[0].Code);
+            Assert.Equal(250m, compositeJoined[0].TotalAmount);
+            Assert.Equal("C-030", compositeJoined[1].Code);
+            Assert.Equal(500m, compositeJoined[1].TotalAmount);
+
+            // 4. Streaming AsAsyncEnumerable with early break and single-instance tracked promotion
+            List<Customer> streamed = [];
+            await foreach (Customer customer in queryContext.Customers.OrderBy(c => c.Code).AsAsyncEnumerable().WithCancellation(ct))
+            {
+                streamed.Add(customer);
+                if (streamed.Count == 2)
+                {
+                    break;
+                }
+            }
+
+            Assert.Equal(2, streamed.Count);
+            Assert.Equal(2, queryContext.ChangeTracker.Entries<Customer>().Count());
+            Assert.All(streamed, c => Assert.Same(c, queryContext.Entry(c).Entity));
+        }
+    }
+
     private sealed class RichModelingDbContext(DbContextOptions<RichModelingDbContext> options) : DbContext(options)
     {
         public DbSet<Supplier> Suppliers => this.Set<Supplier>();

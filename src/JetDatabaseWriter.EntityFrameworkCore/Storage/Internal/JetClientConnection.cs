@@ -34,6 +34,7 @@ public sealed class JetClientConnection : IJetClientConnection
     private readonly string? normalizedDatabasePath;
     private Stream? resolvedStream;
     private AccessReader? activeReader;
+    private AccessWriter? cachedWriter;
     private bool disposed;
 
     /// <summary>
@@ -116,8 +117,19 @@ public sealed class JetClientConnection : IJetClientConnection
             return (this.ActiveWriter, false);
         }
 
+        if (this.cachedWriter is not null)
+        {
+            return (this.cachedWriter, false);
+        }
+
         await this.CloseAllReadersForSameTargetAsync().ConfigureAwait(false);
         AccessWriter writer = await this.OpenWriterCoreAsync(cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+        {
+            this.cachedWriter = writer;
+            return (writer, false);
+        }
+
         return (writer, true);
     }
 
@@ -126,7 +138,7 @@ public sealed class JetClientConnection : IJetClientConnection
     {
         ArgumentNullException.ThrowIfNull(writer);
 
-        if (ownedByCaller)
+        if (ownedByCaller || (!ReferenceEquals(writer, this.ActiveWriter) && !ReferenceEquals(writer, this.cachedWriter)))
         {
             await writer.DisposeAsync().ConfigureAwait(false);
         }
@@ -157,12 +169,14 @@ public sealed class JetClientConnection : IJetClientConnection
         Stream stream = this.GetOrCreateStream();
         stream.SetLength(0);
         stream.Position = 0;
-        return await AccessWriter.CreateDatabaseAsync(
+        AccessWriter created = await AccessWriter.CreateDatabaseAsync(
             stream,
             this.optionsExtension.Format,
             writerOptions,
             leaveOpen: true,
             cancellationToken).ConfigureAwait(false);
+        this.cachedWriter = created;
+        return created;
     }
 
     /// <inheritdoc/>
@@ -175,8 +189,21 @@ public sealed class JetClientConnection : IJetClientConnection
             throw new InvalidOperationException("A transaction is already active on this connection.");
         }
 
-        await this.CloseAllReadersForSameTargetAsync().ConfigureAwait(false);
-        AccessWriter writer = await this.OpenWriterCoreAsync(cancellationToken).ConfigureAwait(false);
+        AccessWriter writer;
+        if (this.cachedWriter is not null)
+        {
+            writer = this.cachedWriter;
+        }
+        else
+        {
+            await this.CloseAllReadersForSameTargetAsync().ConfigureAwait(false);
+            writer = await this.OpenWriterCoreAsync(cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+            {
+                this.cachedWriter = writer;
+            }
+        }
+
         try
         {
             JetTransaction transaction = await writer.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
@@ -186,6 +213,11 @@ public sealed class JetClientConnection : IJetClientConnection
         }
         catch
         {
+            if (ReferenceEquals(this.cachedWriter, writer))
+            {
+                this.cachedWriter = null;
+            }
+
             await writer.DisposeAsync().ConfigureAwait(false);
             throw;
         }
@@ -279,7 +311,7 @@ public sealed class JetClientConnection : IJetClientConnection
         }
         finally
         {
-            if (writer is not null)
+            if (writer is not null && !ReferenceEquals(writer, this.cachedWriter))
             {
                 await writer.DisposeAsync().ConfigureAwait(false);
             }
@@ -373,7 +405,7 @@ public sealed class JetClientConnection : IJetClientConnection
     {
         ObjectDisposedException.ThrowIf(this.disposed, this);
 
-        if (this.ActiveWriter is not null || this.activeReader is not null)
+        if (this.ActiveWriter is not null || this.cachedWriter is not null || this.activeReader is not null)
         {
             return true;
         }
@@ -403,7 +435,7 @@ public sealed class JetClientConnection : IJetClientConnection
         await this.connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (this.ActiveWriter is not null || this.activeReader is not null)
+            if (this.ActiveWriter is not null || this.cachedWriter is not null || this.activeReader is not null)
             {
                 return true;
             }
@@ -529,10 +561,11 @@ public sealed class JetClientConnection : IJetClientConnection
         List<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(rootType);
         int bufferLength = ComputeValueBufferLength(properties);
 
-        if (this.ActiveWriter is not null)
+        AccessWriter? activeOrCachedWriter = this.ActiveWriter ?? this.cachedWriter;
+        if (activeOrCachedWriter is not null)
         {
             return await ReadFromActiveWriterAsync(
-                this.ActiveWriter,
+                activeOrCachedWriter,
                 tableName,
                 rootType,
                 properties,
@@ -593,10 +626,11 @@ public sealed class JetClientConnection : IJetClientConnection
         List<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(rootType);
         int bufferLength = ComputeValueBufferLength(properties);
 
-        if (this.ActiveWriter is not null)
+        AccessWriter? activeOrCachedWriter = this.ActiveWriter ?? this.cachedWriter;
+        if (activeOrCachedWriter is not null)
         {
             return await ReadByKeysFromActiveWriterAsync(
-                this.ActiveWriter,
+                activeOrCachedWriter,
                 tableName,
                 rootType,
                 properties,
@@ -900,6 +934,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 requiredProperties);
 
             IAsyncEnumerable<object[]>? rowSource = null;
+            bool isOrderedScan = false;
             if (seekConditions is { Count: > 0 })
             {
                 rowSource = await JetIndexSeekPlanner.TryBuildIndexQueryAsync(
@@ -910,7 +945,8 @@ public sealed class JetClientConnection : IJetClientConnection
                     wantedColumns,
                     cancellationToken).ConfigureAwait(false);
             }
-            else if (orderedAscendingProperties is { Count: > 0 })
+
+            if (rowSource is null && orderedAscendingProperties is { Count: > 0 })
             {
                 rowSource = await JetIndexSeekPlanner.TryBuildOrderedIndexQueryAsync(
                     reader,
@@ -918,8 +954,10 @@ public sealed class JetClientConnection : IJetClientConnection
                     orderedAscendingProperties,
                     wantedColumns,
                     cancellationToken).ConfigureAwait(false);
+                isOrderedScan = rowSource is not null;
             }
 
+            int? effectiveLimit = orderedAscendingProperties is null or { Count: 0 } || isOrderedScan ? maxRows : null;
             rowSource ??= reader.Services.Tables.Rows(tableName, wantedColumns, progress: null, cancellationToken);
 
             List<ValueBuffer> localResults = [];
@@ -936,7 +974,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 }
 
                 localResults.Add(buffer);
-                if (maxRows is int limit && localResults.Count >= limit)
+                if (effectiveLimit is int limit && localResults.Count >= limit)
                 {
                     break;
                 }
@@ -945,6 +983,7 @@ public sealed class JetClientConnection : IJetClientConnection
             return localResults;
         }
 
+        int? fallbackLimit = orderedAscendingProperties is null or { Count: 0 } ? maxRows : null;
         IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
         int?[] fallbackColumnMap = BuildPropertyColumnMap(properties, columns);
         List<ValueBuffer> results = [];
@@ -961,7 +1000,7 @@ public sealed class JetClientConnection : IJetClientConnection
             }
 
             results.Add(buffer);
-            if (maxRows is int limit && results.Count >= limit)
+            if (fallbackLimit is int limit && results.Count >= limit)
             {
                 break;
             }
@@ -1237,7 +1276,7 @@ public sealed class JetClientConnection : IJetClientConnection
             requiredProperties);
 
         List<ValueBuffer> results = [];
-        bool AcceptDecodedRow(object?[] values)
+        bool AcceptDecodedRow(object?[] values, bool isOrderedScan)
         {
             if (!TryCreateValueBuffer(rootType, properties, bufferLength, propertyToColumnOrdinal, values, out ValueBuffer buffer))
             {
@@ -1250,7 +1289,8 @@ public sealed class JetClientConnection : IJetClientConnection
             }
 
             results.Add(buffer);
-            return maxRows is not int limit || results.Count < limit;
+            int? effectiveLimit = orderedAscendingProperties is null or { Count: 0 } || isOrderedScan ? maxRows : null;
+            return effectiveLimit is not int limit || results.Count < limit;
         }
 
         if ((seekConditions is { Count: > 0 } || orderedAscendingProperties is { Count: > 0 })
@@ -1280,7 +1320,7 @@ public sealed class JetClientConnection : IJetClientConnection
                     TableReader.WrapHyperlinkColumns(values, resolved.Definition.ClrTypes);
                 }
 
-                return new ValueTask<bool>(AcceptDecodedRow(values));
+                return new ValueTask<bool>(AcceptDecodedRow(values, isOrderedScan: false));
             },
             cancellationToken).ConfigureAwait(false);
 
@@ -1410,7 +1450,8 @@ public sealed class JetClientConnection : IJetClientConnection
                     continue;
                 }
 
-                if (ReferenceEquals(peer, this) || peer.activeReader is null)
+                if (ReferenceEquals(peer, this)
+                    || (peer.activeReader is null && (peer.cachedWriter is null || peer.ActiveWriter is not null)))
                 {
                     continue;
                 }
@@ -1483,6 +1524,13 @@ public sealed class JetClientConnection : IJetClientConnection
             throw new InvalidOperationException("Cannot open AccessReader while an AccessWriter is active.");
         }
 
+        if (this.cachedWriter is not null)
+        {
+            AccessWriter writer = this.cachedWriter;
+            this.cachedWriter = null;
+            await writer.DisposeAsync().ConfigureAwait(false);
+        }
+
         AccessReaderOptions readerOptions = this.BuildReaderOptions();
         if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
         {
@@ -1503,6 +1551,13 @@ public sealed class JetClientConnection : IJetClientConnection
             AccessReader reader = this.activeReader;
             this.activeReader = null;
             await reader.DisposeAsync().ConfigureAwait(false);
+        }
+
+        if (this.cachedWriter is not null && this.ActiveWriter is null)
+        {
+            AccessWriter writer = this.cachedWriter;
+            this.cachedWriter = null;
+            await writer.DisposeAsync().ConfigureAwait(false);
         }
     }
 

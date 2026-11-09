@@ -177,7 +177,7 @@ internal static class JetIndexSeekPlanner
     /// <param name="orderedAscendingProperties">Optional ascending sort properties when no seek conditions are present.</param>
     /// <param name="parameters">The runtime query parameter values.</param>
     /// <param name="wantedColumns">The column projection mask.</param>
-    /// <param name="visitRow">Callback invoked for each decoded row; returning <see langword="false"/> stops the scan.</param>
+    /// <param name="visitRow">Callback invoked for each decoded row along with whether the scan is ordered by <paramref name="orderedAscendingProperties"/>; returning <see langword="false"/> stops the scan.</param>
     /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
     /// <returns><see langword="true"/> if an index scan was executed; <see langword="false"/> if a full table scan is required.</returns>
     internal static async ValueTask<bool> TryReadFromActiveWriterIndexAsync(
@@ -187,7 +187,7 @@ internal static class JetIndexSeekPlanner
         IReadOnlyList<IProperty>? orderedAscendingProperties,
         IReadOnlyDictionary<string, object?> parameters,
         bool[] wantedColumns,
-        Func<object?[], bool> visitRow,
+        Func<object?[], bool, bool> visitRow,
         CancellationToken cancellationToken)
     {
         JetFormat format = writer.Database.Format;
@@ -222,7 +222,7 @@ internal static class JetIndexSeekPlanner
                         plan.Index,
                         plan.Criteria,
                         wantedColumns,
-                        visitRow,
+                        row => visitRow(row, false),
                         cancellationToken).ConfigureAwait(false);
                     return true;
                 }
@@ -238,19 +238,21 @@ internal static class JetIndexSeekPlanner
                         return true;
                     }
 
-                    return await TryReadMultiKeyFromActiveWriterIndexAsync(
+                    bool multiKeyUsed = await TryReadMultiKeyFromActiveWriterIndexAsync(
                         writer,
                         resolved,
                         indexes,
                         [condition.Property],
                         inKeyTuples,
                         wantedColumns,
-                        visitRow,
+                        row => visitRow(row, false),
                         cancellationToken).ConfigureAwait(false);
+                    if (multiKeyUsed)
+                    {
+                        return true;
+                    }
                 }
             }
-
-            return false;
         }
 
         if (orderedAscendingProperties is { Count: > 0 })
@@ -264,7 +266,7 @@ internal static class JetIndexSeekPlanner
                     orderedIndex,
                     IndexQueryCriteria.All,
                     wantedColumns,
-                    visitRow,
+                    row => visitRow(row, true),
                     cancellationToken).ConfigureAwait(false);
                 return true;
             }
