@@ -86,7 +86,7 @@ public sealed class JetClientConnection : IJetClientConnection
         await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
+            await this.ClosePeerConnectionsAsync(closeReaders: false, cancellationToken).ConfigureAwait(false);
             return await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -352,7 +352,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 return false;
             }
 
-            await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
+            await this.ClosePeerConnectionsAsync(closeReaders: false, cancellationToken).ConfigureAwait(false);
             _ = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
             await this.CloseReaderCoreAsync().ConfigureAwait(false);
             return true;
@@ -508,9 +508,9 @@ public sealed class JetClientConnection : IJetClientConnection
                     lifecycleHeld = false;
                 }
 
-                bool Visit(object?[] row, bool _) => !factory.TryCreate(row, out ValueBuffer buffer) || visitor(buffer);
+                bool Visit(object?[] row) => !factory.TryCreate(row, out ValueBuffer buffer) || visitor(buffer);
                 if (seekConditions is { Count: > 0 }
-                    && await JetIndexSeekPlanner.TryReadFromActiveWriterIndexAsync(writer, resolved, seekConditions, orderedProperties: null, parameters, wanted, Visit, cancellationToken).ConfigureAwait(false))
+                    && await JetIndexSeekPlanner.TryReadFromActiveWriterIndexAsync(writer, resolved, seekConditions, orderedProperties: null, parameters, wanted, (row, _) => Visit(row), cancellationToken).ConfigureAwait(false))
                 {
                     return;
                 }
@@ -527,13 +527,13 @@ public sealed class JetClientConnection : IJetClientConnection
                             TableReader.WrapHyperlinkColumns(row, resolved.Definition.ClrTypes);
                         }
 
-                        return new ValueTask<bool>(Visit(row, false));
+                        return new ValueTask<bool>(Visit(row));
                     },
                     cancellationToken).ConfigureAwait(false);
             }
             else
             {
-                await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
+                await this.ClosePeerConnectionsAsync(closeReaders: false, cancellationToken).ConfigureAwait(false);
                 AccessReader reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
                 ResolvedTable? resolved = await reader.Services.Tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
                 int?[] columnMap;
@@ -616,7 +616,7 @@ public sealed class JetClientConnection : IJetClientConnection
             AccessReader? reader = null;
             if (writer is null)
             {
-                await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
+                await this.ClosePeerConnectionsAsync(closeReaders: false, cancellationToken).ConfigureAwait(false);
                 reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
             }
 
@@ -1285,7 +1285,7 @@ public sealed class JetClientConnection : IJetClientConnection
             }
             else
             {
-                await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
+                await this.ClosePeerConnectionsAsync(closeReaders: false, cancellationToken).ConfigureAwait(false);
                 AccessReader reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
                 resolved = await reader.Services.Tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
                 if (resolved is not null)
@@ -1624,10 +1624,10 @@ public sealed class JetClientConnection : IJetClientConnection
     private async ValueTask CloseAllReadersForSameTargetAsync(CancellationToken cancellationToken = default)
     {
         await this.CloseReaderCoreAsync().ConfigureAwait(false);
-        await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        await this.ClosePeerConnectionsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask ClosePeerConnectionsAsync(CancellationToken cancellationToken = default)
+    private async ValueTask ClosePeerConnectionsAsync(bool closeReaders = true, CancellationToken cancellationToken = default)
     {
         List<JetClientConnection> peers = [];
         Stream? myStream = this.optionsExtension.DatabaseStream ?? this.resolvedStream;
@@ -1658,6 +1658,11 @@ public sealed class JetClientConnection : IJetClientConnection
 
         foreach (JetClientConnection peer in peers)
         {
+            if (!closeReaders && peer.cachedWriter is null && peer.ActiveWriter is null)
+            {
+                continue;
+            }
+
             await peer.connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
@@ -1666,7 +1671,14 @@ public sealed class JetClientConnection : IJetClientConnection
                     throw new InvalidOperationException("Another connection has an active transaction on this database.");
                 }
 
-                await peer.CloseReaderCoreAsync().ConfigureAwait(false);
+                if (closeReaders)
+                {
+                    await peer.CloseReaderCoreAsync().ConfigureAwait(false);
+                }
+                else
+                {
+                    await peer.CloseCachedWriterCoreAsync().ConfigureAwait(false);
+                }
             }
             finally
             {
@@ -1752,6 +1764,11 @@ public sealed class JetClientConnection : IJetClientConnection
             await reader.DisposeAsync().ConfigureAwait(false);
         }
 
+        await this.CloseCachedWriterCoreAsync().ConfigureAwait(false);
+    }
+
+    private async ValueTask CloseCachedWriterCoreAsync()
+    {
         if (this.cachedWriter is not null && this.ActiveWriter is null)
         {
             AccessWriter writer = this.cachedWriter;

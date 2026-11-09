@@ -11,6 +11,7 @@ using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
+#pragma warning disable EF1001 // These regressions exercise the provider connection lease and cache lifecycle directly.
 public sealed class JetConnectionLifecycleTests
 {
     [Fact]
@@ -26,9 +27,11 @@ public sealed class JetConnectionLifecycleTests
         await using JetClientConnection connection = new(options);
         (AccessWriter writer, bool owned) = await connection.RentWriterAsync(ct);
         Task close = connection.CloseReaderAsync().AsTask();
+        Task dispose = connection.DisposeAsync().AsTask();
         try
         {
             Assert.False(close.IsCompleted);
+            Assert.False(dispose.IsCompleted);
             await writer.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], ct);
         }
         finally
@@ -37,6 +40,44 @@ public sealed class JetConnectionLifecycleTests
         }
 
         await close;
+        await dispose;
+    }
+
+    [Fact]
+    public async Task Canceled_Peer_Writer_Acquisition_Preserves_The_Active_Lease()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        await using (AccessWriter created = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: ct))
+        {
+        }
+
+        DbContextOptions options = new DbContextOptionsBuilder().UseJetDatabaseWriter(stream, leaveOpen: true).Options;
+        await using JetClientConnection first = new(options);
+        await using JetClientConnection second = new(options);
+        (AccessWriter writer, bool owned) = await first.RentWriterAsync(ct);
+        using var canceled = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        try
+        {
+            Task<(AccessWriter Writer, bool OwnedByCaller)> waiting = second.RentWriterAsync(canceled.Token).AsTask();
+            await canceled.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => _ = await waiting);
+            await writer.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], ct);
+        }
+        finally
+        {
+            await first.ReleaseWriterAsync(writer, owned);
+        }
+
+        (AccessWriter next, bool nextOwned) = await second.RentWriterAsync(ct);
+        try
+        {
+            await next.InsertRowAsync("Items", [9], ct);
+        }
+        finally
+        {
+            await second.ReleaseWriterAsync(next, nextOwned);
+        }
     }
 
     [Fact]
@@ -95,3 +136,4 @@ public sealed class JetConnectionLifecycleTests
         }
     }
 }
+#pragma warning restore EF1001
