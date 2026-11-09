@@ -453,6 +453,24 @@ jobs:
           JetDatabaseWriter.Tests.Relationships.LinkedSourceSecurityTests
           JetDatabaseWriter.Tests.Relationships.SystemLinkedExecutionTests
           --filter-not-trait Platform=Windows
+          --minimum-expected-tests 48
+          --long-running 60 --xunit-diagnostics on --no-ansi --output Detailed --timeout 15m
+          --report-xunit-xml --report-xunit-xml-filename tests.xml
+          --results-directory artifacts/test-results/encryption-${{ matrix.os }}-${{ matrix.tf }}
+
+      - name: Validate test outcomes
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./scripts/assert-test-results.ps1 -ResultsDirectory artifacts/test-results/encryption-${{ matrix.os }}-${{ matrix.tf }} -RequireNoSkips
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: encryption-results-${{ matrix.os }}-${{ matrix.tf }}
+          path: artifacts/test-results/encryption-${{ matrix.os }}-${{ matrix.tf }}/
+          if-no-files-found: warn
+          retention-days: 7
 
   gate:
     name: CI gate
