@@ -22,6 +22,47 @@ public sealed class ScaffoldNamesTests
         Assert.Equal(expected, Allocate(table)[table]);
 
     [Theory]
+    [InlineData("CON", "CONEntity")]
+    [InlineData("con", "ConEntity")]
+    [InlineData("PRN", "PRNEntity")]
+    [InlineData("AUX", "AUXEntity")]
+    [InlineData("NUL", "NULEntity")]
+    [InlineData("nul", "NulEntity")]
+    [InlineData("COM1", "COM1Entity")]
+    [InlineData("COM2", "COM2Entity")]
+    [InlineData("COM3", "COM3Entity")]
+    [InlineData("COM4", "COM4Entity")]
+    [InlineData("COM5", "COM5Entity")]
+    [InlineData("COM6", "COM6Entity")]
+    [InlineData("COM7", "COM7Entity")]
+    [InlineData("COM8", "COM8Entity")]
+    [InlineData("COM9", "COM9Entity")]
+    [InlineData("com1", "Com1Entity")]
+    [InlineData("LPT1", "LPT1Entity")]
+    [InlineData("LPT2", "LPT2Entity")]
+    [InlineData("LPT3", "LPT3Entity")]
+    [InlineData("LPT4", "LPT4Entity")]
+    [InlineData("LPT5", "LPT5Entity")]
+    [InlineData("LPT6", "LPT6Entity")]
+    [InlineData("LPT7", "LPT7Entity")]
+    [InlineData("LPT8", "LPT8Entity")]
+    [InlineData("LPT9", "LPT9Entity")]
+    [InlineData("lpt9", "Lpt9Entity")]
+    public void AllocateClassNames_DeviceNames_GetEntitySuffix(string table, string expected) =>
+        Assert.Equal(expected, Allocate(table)[table]);
+
+    [Fact]
+    public void AllocateClassNames_DeviceSuffixAlreadyTaken_GetsNumericSuffix()
+    {
+        Dictionary<string, string> names = Allocate("con", "ConEntity", "ConEntity2", "c_on");
+
+        Assert.Equal("ConEntity3", names["con"]);
+        Assert.Equal("ConEntity", names["ConEntity"]);
+        Assert.Equal("ConEntity2", names["ConEntity2"]);
+        Assert.Equal("COnEntity4", names["c_on"]);
+    }
+
+    [Theory]
     [InlineData("Column")]
     [InlineData("Table")]
     [InlineData("Orders")]
@@ -31,6 +72,11 @@ public sealed class ScaffoldNamesTests
     [InlineData("System")]
     [InlineData("Hyperlink")]
     [InlineData("datetime")]
+    [InlineData("CONEntity")]
+    [InlineData("COM0")]
+    [InlineData("COM10")]
+    [InlineData("LPT0")]
+    [InlineData("LPT10")]
     public void AllocateClassNames_UnreservedNames_AreKept(string table) =>
         Assert.Equal(NameCleaner.ToClassName(table), Allocate(table)[table]);
 

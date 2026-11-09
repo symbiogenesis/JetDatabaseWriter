@@ -405,6 +405,9 @@ public sealed class ScaffoldRunnerTests : IDisposable
             ["Table"] = [Col("Id", typeof(int))],
             ["System"] = [Col("Id", typeof(int)), Col("Stamp", typeof(TimeSpan))],
             ["ToString"] = [Col("Id", typeof(int))],
+            ["con"] = [Col("Id", typeof(int))],
+            ["ConEntity"] = [Col("Id", typeof(int))],
+            ["COM1"] = [Col("Id", typeof(int))],
             ["###"] = [Col("Id", typeof(int))],
             ["$$$"] = [Col("Id", typeof(int))],
         };
@@ -426,7 +429,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
         string[] files = Directory.GetFiles(this.outputDir, "*.cs");
         Assert.Equal(columnsByTable.Count, files.Length);
         Assert.Equal(
-            ["AB2.cs", "Ab.cs", "Column.cs", "ColumnAttribute.cs", "DateTime.cs", "OrderDetails.cs", "OrderDetails2.cs", "Orders.cs", "System.cs", "Table.cs", "ToStringEntity.cs", "Unknown.cs", "Unknown2.cs"],
+            ["AB2.cs", "Ab.cs", "COM1Entity.cs", "Column.cs", "ColumnAttribute.cs", "ConEntity.cs", "ConEntity2.cs", "DateTime.cs", "OrderDetails.cs", "OrderDetails2.cs", "Orders.cs", "System.cs", "Table.cs", "ToStringEntity.cs", "Unknown.cs", "Unknown2.cs"],
             files.Select(Path.GetFileName).Order(StringComparer.Ordinal));
 
         List<string> sources = [];
