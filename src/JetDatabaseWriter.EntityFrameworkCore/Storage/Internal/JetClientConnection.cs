@@ -1164,12 +1164,16 @@ public sealed class JetClientConnection : IJetClientConnection
             AllowSynchronousContinuations = false,
         });
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        // Decode another row only when the consumer advances beyond the current yield.
+        using SemaphoreSlim advance = new(0, 1);
         Task producer = ProduceAsync();
         try
         {
             await foreach (object?[] row in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
                 yield return row;
+                advance.Release();
             }
         }
         finally
@@ -1201,6 +1205,7 @@ public sealed class JetClientConnection : IJetClientConnection
                         }
 
                         await channel.Writer.WriteAsync(values, token).ConfigureAwait(false);
+                        await advance.WaitAsync(token).ConfigureAwait(false);
                         return true;
                     },
                     stop.Token).ConfigureAwait(false);
