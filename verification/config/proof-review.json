@@ -1725,7 +1725,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Infrastructure/StatementFaultDiagnostics.cs",
-          "sha256": "0b1e761018c54e5260c4fdb2db68ad863e3d98583fe07e6cf05597fec52807f8"
+          "sha256": "36c66bae9f1e95c76e0d9c5ae253d81a43e6e13a0b1680b432acf2f09c0ac20c"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Infrastructure/StatementFaultDiagnosticsTests.cs",
@@ -3146,7 +3146,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Infrastructure/StatementFaultDiagnostics.cs",
-          "sha256": "0b1e761018c54e5260c4fdb2db68ad863e3d98583fe07e6cf05597fec52807f8"
+          "sha256": "36c66bae9f1e95c76e0d9c5ae253d81a43e6e13a0b1680b432acf2f09c0ac20c"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Infrastructure/StatementFaultDiagnosticsTests.cs",

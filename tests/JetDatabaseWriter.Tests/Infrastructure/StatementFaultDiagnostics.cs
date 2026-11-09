@@ -11,6 +11,11 @@ internal static class StatementFaultDiagnostics
 {
     internal static void AssertEqual(ReadOnlySpan<byte> expected, ReadOnlySpan<byte> actual, StatementFaultContext context, string? outputDirectory = null, string phase = "")
     {
+        if (expected.SequenceEqual(actual))
+        {
+            return;
+        }
+
         try
         {
             Assert.Equal(expected, actual);
