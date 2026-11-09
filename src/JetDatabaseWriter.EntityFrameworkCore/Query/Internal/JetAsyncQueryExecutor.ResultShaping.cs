@@ -9,7 +9,7 @@ using System.Runtime.CompilerServices;
 
 internal static partial class JetAsyncQueryExecutor
 {
-    private static readonly ConditionalWeakTable<Type, Func<object, Func<object?, object?>, object>> ResultPromoters = new();
+    private static readonly ConditionalWeakTable<Type, Func<object, Func<object?, object?>, object>> ResultPromoters = [];
 
     private static Func<object, Func<object?, object?>, object> CreateResultPromoter(Type type)
     {
@@ -22,7 +22,7 @@ internal static partial class JetAsyncQueryExecutor
         MemberInfo[] members = type.IsValueType
             ? type.GetFields(BindingFlags.Public | BindingFlags.Instance).Cast<MemberInfo>().ToArray()
             : type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(static p => p.GetMethod?.IsPublic == true && p.GetIndexParameters().Length == 0)
+                .Where(static p => p.CanRead && p.GetIndexParameters().Length == 0)
                 .Cast<MemberInfo>().ToArray();
         ConstructorInfo? constructor = immutable ? type.GetConstructors().SingleOrDefault(c => c.GetParameters().Length == members.Length) : null;
         if (immutable && constructor is null)
@@ -46,7 +46,7 @@ internal static partial class JetAsyncQueryExecutor
             Expression differs = Expression.Not(Expression.ReferenceEqual(original, replacement));
             changed = Expression.OrElse(changed, differs);
             arguments.Add(Expression.Convert(replacement, access.Type));
-            if (!immutable && member is PropertyInfo { SetMethod.IsPublic: true })
+            if (!immutable && member is PropertyInfo { SetMethod: not null })
             {
                 expressions.Add(Expression.IfThen(differs, Expression.Assign(access, Expression.Convert(replacement, access.Type))));
             }

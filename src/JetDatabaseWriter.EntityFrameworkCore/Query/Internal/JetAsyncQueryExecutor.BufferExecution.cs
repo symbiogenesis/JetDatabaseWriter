@@ -8,8 +8,6 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
-using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -19,12 +17,13 @@ internal static partial class JetAsyncQueryExecutor
 {
     private static bool CanExecuteBuffers(JetQueryPlan plan)
         => plan.IncludeChains.Count == 0 && plan.QueryReferencedNavigations.Count == 0
-            && plan.RootTables.All(static p => p.RootEntityType.GetDerivedTypes().Any() == false
-                && p.QueryEntityType == p.RootEntityType
+            && plan.RootTables.All(static p => !p.RootEntityType.GetDerivedTypes().Any() && p.QueryEntityType == p.RootEntityType
                 && !p.RootEntityType.GetNavigations().Any(static n => n.TargetEntityType.IsOwned()));
 
     private static bool TryBuildBufferSequence<TElement>(
-        Expression query, JetQueryPlan plan, IModel model,
+        Expression query,
+        JetQueryPlan plan,
+        IModel model,
         out Func<QueryContext, IAsyncEnumerable<TElement>>? executor)
     {
         executor = null;
@@ -48,7 +47,7 @@ internal static partial class JetAsyncQueryExecutor
 
                 if (streamed.Type == typeof(IAsyncEnumerable<ValueBuffer>) && model.FindEntityType(typeof(TElement)) is { } entityType)
                 {
-                    var source = Expression.Lambda<Func<QueryContext, IAsyncEnumerable<ValueBuffer>>>(streamed, context).Compile();
+                    Func<QueryContext, IAsyncEnumerable<ValueBuffer>> source = Expression.Lambda<Func<QueryContext, IAsyncEnumerable<ValueBuffer>>>(streamed, context).Compile();
                     executor = qc => MaterializeStream<TElement>(source(qc), qc, plan, entityType);
                     return true;
                 }
@@ -77,7 +76,7 @@ internal static partial class JetAsyncQueryExecutor
                 return true;
             }
 
-            var evaluate = Expression.Lambda<Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TElement>>>(
+            Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TElement>> evaluate = Expression.Lambda<Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TElement>>>(
                 rewritten, context, roots).Compile();
             executor = qc => ExecuteBufferSequence(qc, plan, evaluate);
             return true;
@@ -89,7 +88,9 @@ internal static partial class JetAsyncQueryExecutor
     }
 
     private static bool TryBuildBufferScalar<TScalar>(
-        Expression query, JetQueryPlan plan, IModel model,
+        Expression query,
+        JetQueryPlan plan,
+        IModel model,
         out Func<QueryContext, Task<TScalar>>? executor)
     {
         executor = null;
@@ -102,13 +103,13 @@ internal static partial class JetAsyncQueryExecutor
         ParameterExpression roots = Expression.Parameter(typeof(Dictionary<int, IReadOnlyList<ValueBuffer>>), "roots");
         try
         {
-            Expression rewritten = new BufferQueryRewriter(context, roots, plan, model, streaming: false).Visit(query)!;
+            Expression rewritten = new BufferQueryRewriter(context, roots, plan, model, streaming: false).Visit(query);
             if (rewritten.Type != typeof(TScalar))
             {
                 return false;
             }
 
-            var evaluate = Expression.Lambda<Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, TScalar>>(
+            Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, TScalar> evaluate = Expression.Lambda<Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, TScalar>>(
                 rewritten, context, roots).Compile();
             executor = async qc => evaluate(qc, await LoadBufferRootsAsync(qc, plan).ConfigureAwait(false));
             return true;
@@ -120,7 +121,8 @@ internal static partial class JetAsyncQueryExecutor
     }
 
     private static async IAsyncEnumerable<TElement> ExecuteBufferSequence<TElement>(
-        QueryContext context, JetQueryPlan plan,
+        QueryContext context,
+        JetQueryPlan plan,
         Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TElement>> evaluate,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -138,7 +140,7 @@ internal static partial class JetAsyncQueryExecutor
         Dictionary<int, IReadOnlyList<ValueBuffer>> roots = [];
         foreach (JetTableLoadPlan table in plan.RootTables)
         {
-            if (table.JoinLoadSpec is { } join && roots.TryGetValue(join.OuterPlan.RootId, out var outer))
+            if (table.JoinLoadSpec is { } join && roots.TryGetValue(join.OuterPlan.RootId, out IReadOnlyList<ValueBuffer>? outer))
             {
                 HashSet<StructuralKey> keys = [];
                 foreach (ValueBuffer row in outer)
@@ -150,16 +152,22 @@ internal static partial class JetAsyncQueryExecutor
                 }
 
                 IReadOnlyList<ValueBuffer> matches = await ((JetQueryContext)context).Connection.ReadTableValueBuffersByKeysAsync(
-                    table.RootEntityType, join.InnerKeyProperties, keys.Select(static k => k.Values).ToArray(),
-                    table.RequiredProperties, context.CancellationToken).ConfigureAwait(false);
-                roots[table.RootId] = table.ValueBufferRowFilter is { } predicate
-                    ? matches.Where(row => predicate(context, row)).ToArray() : matches;
+                    table.RootEntityType,
+                    join.InnerKeyProperties,
+                    keys.Select(static k => k.Values).ToArray(),
+                    table.RequiredProperties,
+                    context.CancellationToken).ConfigureAwait(false);
+                roots[table.RootId] = table.ValueBufferRowFilter is { } predicate ? matches.Where(row => predicate(context, row)).ToArray() : matches;
             }
             else
             {
                 roots[table.RootId] = await ((JetQueryContext)context).Connection.ReadTableValueBuffersAsync(
-                    table.RootEntityType, table.SeekConditions, context.Parameters, table.RequiredProperties,
-                    table.MaxRowsEvaluator?.Invoke(context.Parameters), table.OrderedProperties,
+                    table.RootEntityType,
+                    table.SeekConditions,
+                    context.Parameters,
+                    table.RequiredProperties,
+                    table.MaxRowsEvaluator?.Invoke(context.Parameters),
+                    table.OrderedProperties,
                     table.ValueBufferRowFilter is { } filter ? row => filter(context, row) : null,
                     context.CancellationToken).ConfigureAwait(false);
             }
@@ -173,11 +181,20 @@ internal static partial class JetAsyncQueryExecutor
 
     private static IAsyncEnumerable<ValueBuffer> StreamBufferRoot(QueryContext context, JetTableLoadPlan table)
         => ((JetQueryContext)context).Connection.StreamTableValueBuffersAsync(
-            table.RootEntityType, table.SeekConditions, context.Parameters, table.RequiredProperties,
-            maxRows: null, orderedProperties: null, rowFilter: null, context.CancellationToken);
+            table.RootEntityType,
+            table.SeekConditions,
+            context.Parameters,
+            table.RequiredProperties,
+            maxRows: null,
+            orderedProperties: null,
+            rowFilter: null,
+            context.CancellationToken);
 
     private static async IAsyncEnumerable<TElement> MaterializeStream<TElement>(
-        IAsyncEnumerable<ValueBuffer> source, QueryContext context, JetQueryPlan plan, IEntityType entityType,
+        IAsyncEnumerable<ValueBuffer> source,
+        QueryContext context,
+        JetQueryPlan plan,
+        IEntityType entityType,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         QueryTrackingBehavior behavior = plan.TrackingBehaviorOverride ?? context.Context.ChangeTracker.QueryTrackingBehavior;
@@ -187,8 +204,7 @@ internal static partial class JetAsyncQueryExecutor
             context.InitializeStateManager(standAlone: false);
         }
 
-        Func<QueryContext, ValueBuffer, object> materializer = tracking
-            ? plan.GetTrackedMaterializer(context, entityType) : plan.GetUntrackedMaterializer(context, entityType);
+        Func<QueryContext, ValueBuffer, object> materializer = tracking ? plan.GetTrackedMaterializer(context, entityType) : plan.GetUntrackedMaterializer(context, entityType);
         Dictionary<StructuralKey, object>? identities = behavior == QueryTrackingBehavior.NoTrackingWithIdentityResolution ? [] : null;
         IKey? key = entityType.FindPrimaryKey();
         await foreach (ValueBuffer buffer in source.WithCancellation(cancellationToken).ConfigureAwait(false))
@@ -213,7 +229,9 @@ internal static partial class JetAsyncQueryExecutor
         }
     }
 
-    private static async IAsyncEnumerable<T> StreamWhere<T>(IAsyncEnumerable<T> source, Func<T, bool> predicate,
+    private static async IAsyncEnumerable<T> StreamWhere<T>(
+        IAsyncEnumerable<T> source,
+        Func<T, bool> predicate,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await foreach (T item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
@@ -225,7 +243,9 @@ internal static partial class JetAsyncQueryExecutor
         }
     }
 
-    private static async IAsyncEnumerable<TResult> StreamSelect<T, TResult>(IAsyncEnumerable<T> source, Func<T, TResult> selector,
+    private static async IAsyncEnumerable<TResult> StreamSelect<T, TResult>(
+        IAsyncEnumerable<T> source,
+        Func<T, TResult> selector,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await foreach (T item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
@@ -234,7 +254,9 @@ internal static partial class JetAsyncQueryExecutor
         }
     }
 
-    private static async IAsyncEnumerable<T> StreamSkip<T>(IAsyncEnumerable<T> source, int count,
+    private static async IAsyncEnumerable<T> StreamSkip<T>(
+        IAsyncEnumerable<T> source,
+        int count,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await foreach (T item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
@@ -250,7 +272,9 @@ internal static partial class JetAsyncQueryExecutor
         }
     }
 
-    private static async IAsyncEnumerable<T> StreamTake<T>(IAsyncEnumerable<T> source, int count,
+    private static async IAsyncEnumerable<T> StreamTake<T>(
+        IAsyncEnumerable<T> source,
+        int count,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (count <= 0)
@@ -268,7 +292,8 @@ internal static partial class JetAsyncQueryExecutor
         }
     }
 
-    private static async IAsyncEnumerable<T> StreamDistinct<T>(IAsyncEnumerable<T> source,
+    private static async IAsyncEnumerable<T> StreamDistinct<T>(
+        IAsyncEnumerable<T> source,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         HashSet<T> seen = [];
@@ -281,7 +306,24 @@ internal static partial class JetAsyncQueryExecutor
         }
     }
 
-    private sealed class BufferTranslationException : Exception;
+#pragma warning disable CA1064 // This private compiler fallback signal is caught inside query translation and never exposed to callers.
+    private sealed class BufferTranslationException : Exception
+    {
+        public BufferTranslationException()
+        {
+        }
+
+        public BufferTranslationException(string message)
+            : base(message)
+        {
+        }
+
+        public BufferTranslationException(string message, Exception innerException)
+            : base(message, innerException)
+        {
+        }
+    }
+#pragma warning restore CA1064
 
     private sealed class BufferQueryRewriter(
         ParameterExpression context, ParameterExpression roots, JetQueryPlan plan, IModel model, bool streaming) : ExpressionVisitor
@@ -337,7 +379,7 @@ internal static partial class JetAsyncQueryExecutor
                         throw new BufferTranslationException();
                     }
 
-                    LambdaExpression predicate = (LambdaExpression)this.Visit(lambda);
+                    var predicate = (LambdaExpression)this.Visit(lambda);
                     result = streaming
                         ? Expression.Call(typeof(JetAsyncQueryExecutor), nameof(StreamWhere), [typeof(ValueBuffer)], result, predicate, Expression.Default(typeof(CancellationToken)))
                         : Expression.Call(typeof(Queryable), nameof(Queryable.Where), [typeof(ValueBuffer)], result, Expression.Quote(predicate));
@@ -355,7 +397,7 @@ internal static partial class JetAsyncQueryExecutor
                 this.parameters[node.Parameters[i]] = mapped[i];
             }
 
-            return Expression.Lambda(this.Visit(node.Body)!, mapped);
+            return Expression.Lambda(this.Visit(node.Body), mapped);
         }
 
         protected override Expression VisitParameter(ParameterExpression node)
@@ -365,11 +407,7 @@ internal static partial class JetAsyncQueryExecutor
         {
             if (node.Expression is not null && model.FindEntityType(node.Expression.Type) is { } entityType)
             {
-                IProperty? property = entityType.FindProperty(node.Member);
-                if (property is null)
-                {
-                    throw new BufferTranslationException();
-                }
+                IProperty? property = entityType.FindProperty(node.Member) ?? throw new BufferTranslationException();
 
                 this.ReferencedProperties.Add(property);
 
@@ -388,7 +426,7 @@ internal static partial class JetAsyncQueryExecutor
 
         protected override Expression VisitNew(NewExpression node)
         {
-            Expression[] args = node.Arguments.Select(a => this.Visit(a)!).ToArray();
+            Expression[] args = node.Arguments.Select(a => this.Visit(a)).ToArray();
             Type mapped = this.MapType(node.Type);
             if (mapped == node.Type)
             {
@@ -400,19 +438,14 @@ internal static partial class JetAsyncQueryExecutor
                 return node.Update(args);
             }
 
-            ConstructorInfo? constructor = mapped.GetConstructor(args.Select(static a => a.Type).ToArray());
-            if (constructor is null)
-            {
-                throw new BufferTranslationException();
-            }
+            ConstructorInfo? constructor = mapped.GetConstructor(args.Select(static a => a.Type).ToArray()) ?? throw new BufferTranslationException();
 
-            return node.Members is null ? Expression.New(constructor, args)
-                : Expression.New(constructor, args, node.Members.Select(m => mapped.GetMember(m.Name)[0]));
+            return node.Members is null ? Expression.New(constructor, args) : Expression.New(constructor, args, node.Members.Select(m => mapped.GetMember(m.Name)[0]));
         }
 
         protected override Expression VisitUnary(UnaryExpression node)
         {
-            Expression operand = this.Visit(node.Operand)!;
+            Expression operand = this.Visit(node.Operand);
             if (node.NodeType == ExpressionType.Quote)
             {
                 return Expression.Quote((LambdaExpression)operand);
@@ -429,8 +462,8 @@ internal static partial class JetAsyncQueryExecutor
 
         protected override Expression VisitBinary(BinaryExpression node)
         {
-            Expression left = this.Visit(node.Left)!;
-            Expression right = this.Visit(node.Right)!;
+            Expression left = this.Visit(node.Left);
+            Expression right = this.Visit(node.Right);
             if (left.Type != node.Left.Type || right.Type != node.Right.Type)
             {
                 throw new BufferTranslationException();
@@ -456,13 +489,16 @@ internal static partial class JetAsyncQueryExecutor
                 {
                     this.ReferencedProperties.Add(property);
                 }
-                return property is null ? throw new BufferTranslationException()
-                    : Expression.Call(ReadValueBufferPropertyMethod.MakeGenericMethod(node.Type), this.Visit(StripQuotesAndObjectConvert(node.Arguments[0]))!, Expression.Constant(property.GetIndex()));
+
+                return property is null ? throw new BufferTranslationException() : Expression.Call(ReadValueBufferPropertyMethod.MakeGenericMethod(node.Type), this.Visit(StripQuotesAndObjectConvert(node.Arguments[0]))!, Expression.Constant(property.GetIndex()));
             }
 
             if (node.Method.DeclaringType == typeof(DbFunctionsExtensions) && node.Method.Name == nameof(DbFunctionsExtensions.Like))
             {
-                return Expression.Call(EvaluateLikeMethod, this.Visit(node.Arguments[1])!, this.Visit(node.Arguments[2])!,
+                return Expression.Call(
+                    EvaluateLikeMethod,
+                    this.Visit(node.Arguments[1])!,
+                    this.Visit(node.Arguments[2])!,
                     node.Arguments.Count == 4 ? this.Visit(node.Arguments[3])! : Expression.Constant(null, typeof(string)));
             }
 
@@ -483,8 +519,7 @@ internal static partial class JetAsyncQueryExecutor
                     nameof(Queryable.Distinct) when node.Arguments.Count == 1 => nameof(StreamDistinct),
                     _ => throw new BufferTranslationException(),
                 };
-                List<Expression> arguments = node.Arguments.Select(a => a.NodeType == ExpressionType.Quote
-                    ? this.Visit(((UnaryExpression)a).Operand)! : this.Visit(a)!).ToList();
+                var arguments = node.Arguments.Select(a => a.NodeType == ExpressionType.Quote ? this.Visit(((UnaryExpression)a).Operand)! : this.Visit(a)!).ToList();
                 if (arguments.Any(static a => a is LambdaExpression { Parameters.Count: > 1 }))
                 {
                     throw new BufferTranslationException();
@@ -504,8 +539,7 @@ internal static partial class JetAsyncQueryExecutor
             MethodInfo mappedMethod;
             try
             {
-                mappedMethod = node.Method.IsGenericMethod
-                    ? node.Method.GetGenericMethodDefinition().MakeGenericMethod(node.Method.GetGenericArguments().Select(this.MapType).ToArray()) : node.Method;
+                mappedMethod = node.Method.IsGenericMethod ? node.Method.GetGenericMethodDefinition().MakeGenericMethod(node.Method.GetGenericArguments().Select(this.MapType).ToArray()) : node.Method;
             }
             catch (ArgumentException)
             {
@@ -528,6 +562,7 @@ internal static partial class JetAsyncQueryExecutor
                     throw new BufferTranslationException();
                 }
             }
+
             ParameterInfo[] declared = mappedMethod.GetParameters();
             if (declared.Where((p, i) => !p.ParameterType.IsAssignableFrom(args[i].Type)).Any())
             {

@@ -20,8 +20,8 @@ internal static partial class JetAsyncQueryExecutor
         ParameterExpression input = Expression.Parameter(typeof(TBuffer), "input");
         ParameterExpression scope = Expression.Parameter(typeof(BufferResultScope), "scope");
         Expression shape = ShapeBufferResult(input, typeof(TResult), scope, model);
-        var materialize = Expression.Lambda<Func<TBuffer, BufferResultScope, TResult>>(shape, input, scope).Compile();
-        var evaluate = Expression.Lambda<Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TBuffer>>>(
+        Func<TBuffer, BufferResultScope, TResult> materialize = Expression.Lambda<Func<TBuffer, BufferResultScope, TResult>>(shape, input, scope).Compile();
+        Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TBuffer>> evaluate = Expression.Lambda<Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TBuffer>>>(
             query, context, roots).Compile();
         return qc => ExecuteShapedBufferSequence(qc, plan, evaluate, materialize);
     }
@@ -35,8 +35,14 @@ internal static partial class JetAsyncQueryExecutor
 
         if (value.Type == typeof(ValueBuffer) && model.FindEntityType(result) is { } entityType)
         {
-            return Expression.Convert(Expression.Call(scope, nameof(BufferResultScope.Materialize), null,
-                Expression.Constant(entityType, typeof(IEntityType)), value), result);
+            return Expression.Convert(
+                Expression.Call(
+                    scope,
+                    nameof(BufferResultScope.Materialize),
+                    null,
+                    Expression.Constant(entityType, typeof(IEntityType)),
+                    value),
+                result);
         }
 
         if (value.Type.IsGenericType && result.IsGenericType
@@ -44,11 +50,7 @@ internal static partial class JetAsyncQueryExecutor
             && (result.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false)
                 || result.FullName?.StartsWith("System.ValueTuple`", StringComparison.Ordinal) == true))
         {
-            ConstructorInfo? constructor = result.GetConstructors().SingleOrDefault();
-            if (constructor is null)
-            {
-                throw new BufferTranslationException();
-            }
+            ConstructorInfo? constructor = result.GetConstructors().SingleOrDefault() ?? throw new BufferTranslationException();
 
             MemberInfo[] members = result.IsValueType
                 ? result.GetFields(BindingFlags.Public | BindingFlags.Instance).Cast<MemberInfo>().ToArray()
@@ -66,7 +68,8 @@ internal static partial class JetAsyncQueryExecutor
     }
 
     private static async IAsyncEnumerable<TResult> ExecuteShapedBufferSequence<TBuffer, TResult>(
-        QueryContext context, JetQueryPlan plan,
+        QueryContext context,
+        JetQueryPlan plan,
         Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TBuffer>> evaluate,
         Func<TBuffer, BufferResultScope, TResult> materialize,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -108,8 +111,13 @@ internal static partial class JetAsyncQueryExecutor
 
         public void BeginResult() => this.resultEntities.Clear();
 
-        public object Materialize(IEntityType entityType, ValueBuffer buffer)
+        public object? Materialize(IEntityType entityType, ValueBuffer buffer)
         {
+            if (buffer.IsEmpty)
+            {
+                return null;
+            }
+
             if (this.resultEntities.TryGetValue((entityType, buffer), out object? existing))
             {
                 return existing;
@@ -117,7 +125,7 @@ internal static partial class JetAsyncQueryExecutor
 
             if (this.identities is not null && entityType.FindPrimaryKey() is { } key)
             {
-                var identity = (entityType, ExtractKey(key, buffer));
+                (IEntityType Type, StructuralKey Key) identity = (entityType, ExtractKey(key, buffer));
                 if (!this.identities.TryGetValue(identity, out object? entity))
                 {
                     entity = this.plan.GetUntrackedMaterializer(this.context, entityType)(this.context, buffer);
@@ -128,8 +136,7 @@ internal static partial class JetAsyncQueryExecutor
                 return entity;
             }
 
-            object materialized = (this.tracking ? this.plan.GetTrackedMaterializer(this.context, entityType)
-                : this.plan.GetUntrackedMaterializer(this.context, entityType))(this.context, buffer);
+            object materialized = (this.tracking ? this.plan.GetTrackedMaterializer(this.context, entityType) : this.plan.GetUntrackedMaterializer(this.context, entityType))(this.context, buffer);
             this.resultEntities[(entityType, buffer)] = materialized;
             return materialized;
         }

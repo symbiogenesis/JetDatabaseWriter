@@ -12,7 +12,10 @@ using Microsoft.EntityFrameworkCore.Storage;
 
 internal static partial class JetAsyncQueryExecutor
 {
-    private static bool TryBuildStreamingAggregate<TResult>(Expression query, JetQueryPlan plan, IModel model,
+    private static bool TryBuildStreamingAggregate<TResult>(
+        Expression query,
+        JetQueryPlan plan,
+        IModel model,
         out Func<QueryContext, Task<TResult>>? executor)
     {
         executor = null;
@@ -26,8 +29,7 @@ internal static partial class JetAsyncQueryExecutor
         }
 
         Expression source = UnwrapEfQueryModifiers(terminal.Arguments[0]);
-        LambdaExpression? selector = terminal.Arguments.Count == 2
-            ? StripQuotesAndObjectConvert(terminal.Arguments[1]) as LambdaExpression : null;
+        LambdaExpression? selector = terminal.Arguments.Count == 2 ? StripQuotesAndObjectConvert(terminal.Arguments[1]) as LambdaExpression : null;
         if (source is MethodCallExpression projection && projection.Method.DeclaringType == typeof(Queryable)
             && projection.Method.Name == nameof(Queryable.Select) && selector is null)
         {
@@ -81,7 +83,7 @@ internal static partial class JetAsyncQueryExecutor
                 keep = Expression.AndAlso(keep, new ExpressionReplacer(rewritten.Parameters[0], buffer).Visit(rewritten.Body)!);
             }
 
-            var filter = Expression.Lambda<Func<QueryContext, ValueBuffer, bool>>(keep, context, buffer).Compile();
+            Func<QueryContext, ValueBuffer, bool> filter = Expression.Lambda<Func<QueryContext, ValueBuffer, bool>>(keep, context, buffer).Compile();
             MethodInfo build = typeof(JetAsyncQueryExecutor).GetMethod(nameof(BuildStreamingAggregate), BindingFlags.NonPublic | BindingFlags.Static)!
                 .MakeGenericMethod(value.Type, typeof(TResult));
             executor = InvokeBuilderMethod<Func<QueryContext, Task<TResult>>>(build, [plan.RootTables[0], terminal.Method.Name, evaluate.Compile(), filter]);
@@ -94,14 +96,20 @@ internal static partial class JetAsyncQueryExecutor
     }
 
     private static Func<QueryContext, Task<TResult>> BuildStreamingAggregate<TValue, TResult>(
-        JetTableLoadPlan table, string operation, Func<QueryContext, ValueBuffer, TValue> select,
+        JetTableLoadPlan table,
+        string operation,
+        Func<QueryContext, ValueBuffer, TValue> select,
         Func<QueryContext, ValueBuffer, bool> keep)
         => async context =>
         {
             AggregateAccumulator<TValue> accumulator = new(operation);
             await ((JetQueryContext)context).Connection.ScanTableRowsAsync(
-                table.RootEntityType, table.SeekConditions, context.Parameters, table.RequiredProperties,
-                buffer => !keep(context, buffer) || accumulator.Add(select(context, buffer)), context.CancellationToken).ConfigureAwait(false);
+                table.RootEntityType,
+                table.SeekConditions,
+                context.Parameters,
+                table.RequiredProperties,
+                buffer => !keep(context, buffer) || accumulator.Add(select(context, buffer)),
+                context.CancellationToken).ConfigureAwait(false);
             return (TResult)accumulator.GetResult()!;
         };
 
@@ -139,8 +147,7 @@ internal static partial class JetAsyncQueryExecutor
             else if (this.valueType == typeof(int))
             {
                 int number = (int)(object)value;
-                this.integerSum = operation == nameof(Queryable.Sum)
-                    ? checked((int)this.integerSum + number) : checked(this.integerSum + number);
+                this.integerSum = operation == nameof(Queryable.Sum) ? checked((int)this.integerSum + number) : checked(this.integerSum + number);
             }
             else if (this.valueType == typeof(long))
             {

@@ -6,8 +6,8 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
+using JetDatabaseWriter.EntityFrameworkCore.Storage.Internal;
 using JetDatabaseWriter.Models;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -15,9 +15,13 @@ using Microsoft.EntityFrameworkCore.Storage;
 internal static partial class JetAsyncQueryExecutor
 {
     private static bool TryCompileMutationSource(
-        Expression source, JetQueryPlan plan, IModel model,
+        Expression source,
+        JetQueryPlan plan,
+        IModel model,
         out Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<ValueBuffer>>? evaluate,
-        out BufferQueryRewriter? rewriter, out ParameterExpression context, out ParameterExpression roots)
+        out BufferQueryRewriter? rewriter,
+        out ParameterExpression context,
+        out ParameterExpression roots)
     {
         evaluate = null;
         rewriter = null;
@@ -31,7 +35,7 @@ internal static partial class JetAsyncQueryExecutor
         rewriter = new(context, roots, plan, model, streaming: false);
         try
         {
-            Expression rewritten = rewriter.Visit(source)!;
+            Expression rewritten = rewriter.Visit(source);
             if (!typeof(IEnumerable<ValueBuffer>).IsAssignableFrom(rewritten.Type))
             {
                 return false;
@@ -47,11 +51,14 @@ internal static partial class JetAsyncQueryExecutor
         }
     }
 
-    private static bool TryBuildBufferDelete(Expression source, JetQueryPlan plan, IModel model,
+    private static bool TryBuildBufferDelete(
+        Expression source,
+        JetQueryPlan plan,
+        IModel model,
         out Func<QueryContext, Task<int>>? executor)
     {
         executor = null;
-        if (!TryCompileMutationSource(source, plan, model, out var evaluate, out var rewriter, out _, out _))
+        if (!TryCompileMutationSource(source, plan, model, out Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<ValueBuffer>>? evaluate, out BufferQueryRewriter? rewriter, out _, out _))
         {
             return false;
         }
@@ -62,7 +69,7 @@ internal static partial class JetAsyncQueryExecutor
         table.RequiredProperties = new HashSet<IProperty>(rewriter!.ReferencedProperties.Concat(key.Properties));
         executor = async context =>
         {
-            var connection = ((JetQueryContext)context).Connection;
+            IJetClientConnection connection = ((JetQueryContext)context).Connection;
             (AccessWriter writer, bool owned) = await connection.RentWriterAsync(context.CancellationToken).ConfigureAwait(false);
             try
             {
@@ -78,8 +85,7 @@ internal static partial class JetAsyncQueryExecutor
                     }
                 }
 
-                return criteria.Count == 0 ? 0 : await writer.DeleteRowsAsync(
-                    JetEntityTypeMetadata.GetTableName(table.RootEntityType), criteria, context.CancellationToken).ConfigureAwait(false);
+                return criteria.Count == 0 ? 0 : await writer.DeleteRowsAsync(JetEntityTypeMetadata.GetTableName(table.RootEntityType), criteria, context.CancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -89,11 +95,15 @@ internal static partial class JetAsyncQueryExecutor
         return true;
     }
 
-    private static bool TryBuildBufferUpdate(Expression source, Expression setters, JetQueryPlan plan, IModel model,
+    private static bool TryBuildBufferUpdate(
+        Expression source,
+        Expression setters,
+        JetQueryPlan plan,
+        IModel model,
         out Func<QueryContext, Task<int>>? executor)
     {
         executor = null;
-        if (!TryCompileMutationSource(source, plan, model, out var evaluate, out var rewriter, out var context, out _))
+        if (!TryCompileMutationSource(source, plan, model, out Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<ValueBuffer>>? evaluate, out BufferQueryRewriter? rewriter, out ParameterExpression? context, out _))
         {
             return false;
         }
@@ -148,7 +158,7 @@ internal static partial class JetAsyncQueryExecutor
         table.RequiredProperties = new HashSet<IProperty>(rewriter!.ReferencedProperties.Concat(key.Properties));
         executor = async qc =>
         {
-            var connection = ((JetQueryContext)qc).Connection;
+            IJetClientConnection connection = ((JetQueryContext)qc).Connection;
             (AccessWriter writer, bool owned) = await connection.RentWriterAsync(qc.CancellationToken).ConfigureAwait(false);
             try
             {
@@ -164,17 +174,16 @@ internal static partial class JetAsyncQueryExecutor
                     }
 
                     RowValues changes = [];
-                    foreach (var setter in compiled)
+                    foreach ((IProperty property, Func<QueryContext, ValueBuffer, object?> evaluateSetter) in compiled)
                     {
-                        changes[JetEntityTypeMetadata.GetColumnName(setter.Property)] =
-                            JetEntityTypeMetadata.ConvertToProvider(setter.Property, setter.Evaluate(qc, buffer));
+                        changes[JetEntityTypeMetadata.GetColumnName(property)] =
+                            JetEntityTypeMetadata.ConvertToProvider(property, evaluateSetter(qc, buffer));
                     }
 
                     updates.Add(new RowUpdate(BufferKeyCriteria(key, buffer), changes));
                 }
 
-                return updates.Count == 0 ? 0 : await writer.UpdateRowsAsync(
-                    JetEntityTypeMetadata.GetTableName(table.RootEntityType), updates, qc.CancellationToken).ConfigureAwait(false);
+                return updates.Count == 0 ? 0 : await writer.UpdateRowsAsync(JetEntityTypeMetadata.GetTableName(table.RootEntityType), updates, qc.CancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -189,7 +198,8 @@ internal static partial class JetAsyncQueryExecutor
         RowCriteria criteria = [];
         foreach (IProperty property in key.Properties)
         {
-            criteria.Add(ColumnPredicate.EqualTo(JetEntityTypeMetadata.GetColumnName(property),
+            criteria.Add(ColumnPredicate.EqualTo(
+                JetEntityTypeMetadata.GetColumnName(property),
                 JetEntityTypeMetadata.ConvertToProvider(property, buffer[property.GetIndex()])));
         }
 
