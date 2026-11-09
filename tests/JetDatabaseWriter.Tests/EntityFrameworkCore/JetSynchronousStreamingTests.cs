@@ -23,8 +23,13 @@ public sealed class JetSynchronousStreamingTests
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using AsyncReadStream stream = new();
-        await using StreamingContext context = new(CreateOptions(stream, format));
-        await SeedAsync(context, ct);
+        DbContextOptions<StreamingContext> options = CreateOptions(stream, format);
+        await using (StreamingContext seed = new(options))
+        {
+            await SeedAsync(seed, ct);
+        }
+
+        await using StreamingContext context = new(options);
         int constructed = 0;
         OnConstruct.Value = () => constructed++;
         try
