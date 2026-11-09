@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 #pragma warning disable EF1001 // These regressions exercise the provider's file identity and peer coordination directly.
-public sealed class JetConnectionFileIdentityTests
+public sealed class JetConnectionFileIdentityTests(ITestOutputHelper output)
 {
     [Fact(DisableParallelization = true)]
     public async Task Relative_Path_Opens_Updates_And_Deletes_The_Construction_Directory_File()
@@ -31,6 +31,8 @@ public sealed class JetConnectionFileIdentityTests
             await CreateDatabaseAsync(boundPath, 11, ct);
             await CreateDatabaseAsync(laterPath, 22, ct);
             Environment.CurrentDirectory = boundDirectory;
+            boundPath = Path.Combine(Environment.CurrentDirectory, "data.accdb");
+            output.WriteLine($"Requested directory: {boundDirectory}; bound path: {boundPath}");
             await using JetClientConnection connection = new(CreateOptions("data.accdb"));
             Environment.CurrentDirectory = laterDirectory;
 
@@ -81,10 +83,11 @@ public sealed class JetConnectionFileIdentityTests
         _ = Directory.CreateDirectory(boundDirectory);
         _ = Directory.CreateDirectory(laterDirectory);
         string relativePath = Path.Combine("nested", "new.accdb");
-        string boundPath = Path.Combine(boundDirectory, relativePath);
         try
         {
             Environment.CurrentDirectory = boundDirectory;
+            string boundPath = Path.Combine(Environment.CurrentDirectory, relativePath);
+            output.WriteLine($"Requested directory: {boundDirectory}; bound path: {boundPath}");
             await using JetClientConnection connection = new(CreateOptions(relativePath));
             Environment.CurrentDirectory = laterDirectory;
 
@@ -118,6 +121,7 @@ public sealed class JetConnectionFileIdentityTests
         {
             await CreateDatabaseAsync(firstPath, 11, ct);
             bool distinctFiles = !File.Exists(secondPath);
+            output.WriteLine($"First path: {firstPath}; second path: {secondPath}; distinct files: {distinctFiles}");
             if (distinctFiles)
             {
                 await CreateDatabaseAsync(secondPath, 22, ct);
