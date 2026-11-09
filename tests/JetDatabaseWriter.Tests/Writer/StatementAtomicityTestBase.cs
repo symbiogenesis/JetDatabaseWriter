@@ -10,12 +10,14 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Tests.Relationships;
 using Xunit;
+using Xunit.Sdk;
 
 /// <summary>Shares complete statement fault sweeps and isolated database seeds across format partitions.</summary>
 /// <param name="db">Caches Access-authored fixtures with relationship catalogs.</param>
 /// <param name="generated">Caches generated statement fault seeds.</param>
+/// <param name="baselines">Caches successful statement images and their complete fault inventories.</param>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Public xUnit test classes require a public base type.")]
-public abstract class StatementAtomicityTestBase(DatabaseCache db, GeneratedDatabaseCache generated) : IClassFixture<DatabaseCache>, IClassFixture<GeneratedDatabaseCache>
+public abstract class StatementAtomicityTestBase(DatabaseCache db, GeneratedDatabaseCache generated, StatementAtomicityBaselineCache baselines) : IClassFixture<DatabaseCache>, IClassFixture<GeneratedDatabaseCache>, IClassFixture<StatementAtomicityBaselineCache>
 {
     /// <summary>Bounds each theory row while retaining every fault position across the shards.</summary>
     private const int FaultShardCount = 8;
@@ -44,43 +46,18 @@ public abstract class StatementAtomicityTestBase(DatabaseCache db, GeneratedData
         }
     }
 
-    private protected static async Task AssertFaultAsync(WriteFaultStream stream, byte[] original, byte[] completed, string statement, Action<WriteFaultStream> arm, string? password = null)
+    private protected static async Task AssertFaultAsync(WriteFaultStream stream, ReadOnlyMemory<byte> original, ReadOnlyMemory<byte> completed, string statement, Action<WriteFaultStream> arm, StatementFaultContext context, string? password = null)
     {
-        // Reuse the expandable buffer, but restore every byte and reopen the writer for each fault.
-        stream.Position = 0;
-        stream.SetLength(0);
-        await stream.WriteAsync(original, Ct);
-        stream.Position = 0;
-        await using AccessWriter writer = await OpenAsync(stream, password);
-        arm(stream);
-        bool failed = false;
         try
         {
-            await MutateAsync(writer, statement);
+            await AssertFaultCoreAsync(stream, original, completed, statement, arm, context, password);
         }
-        catch (Exception exception) when (stream.Faulted && exception is IOException or InvalidDataException)
+#pragma warning disable CA1031 // Preserve the exact injected fault identity for assertion, retry and writer failures.
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            failed = true;
+            throw new XunitException(context.ToString(), exception);
         }
-
-        Assert.True(stream.Faulted);
-        if (failed)
-        {
-            Assert.Equal<byte>(original.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
-
-            // Retry exercises restored catalog entries, allocation hints, index roots and constraints.
-            await MutateAsync(writer, statement);
-        }
-
-        if (statement is "AddColumn" or "CreateTable")
-        {
-            await AssertCompletedAsync(stream, statement, password);
-        }
-        else
-        {
-            // Byte equality implies the reader assertions already checked on the baseline.
-            Assert.Equal<byte>(completed.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
-        }
+#pragma warning restore CA1031
     }
 
     private protected static ValueTask<AccessWriter> OpenAsync(WriteFaultStream stream, string? password = null)
@@ -93,10 +70,10 @@ public abstract class StatementAtomicityTestBase(DatabaseCache db, GeneratedData
             cancellationToken: Ct);
     }
 
-    private protected static WriteFaultStream Copy(byte[] image)
+    private protected static WriteFaultStream Copy(ReadOnlyMemory<byte> image)
     {
         var stream = new WriteFaultStream();
-        stream.Write(image, 0, image.Length);
+        stream.Write(image.Span);
         stream.Position = 0;
         return stream;
     }
@@ -158,6 +135,72 @@ public abstract class StatementAtomicityTestBase(DatabaseCache db, GeneratedData
     /// <returns>The test completion.</returns>
     private protected async Task AssertEveryFaultAsync(DatabaseFormat format, string statement, int shard)
     {
+        StatementAtomicityBaseline baseline = await baselines.GetAsync(format, statement, () => this.CreateBaselineAsync(format, statement));
+        await using var faultStream = new WriteFaultStream();
+        for (int point = shard + 1; point <= baseline.Writes; point += FaultShardCount)
+        {
+            await AssertFaultAsync(faultStream, baseline.Original, baseline.Completed, statement, stream => stream.FailOnWrite(point), FaultContext(format, statement, shard, "write", point));
+            await AssertFaultAsync(faultStream, baseline.Original, baseline.Completed, statement, stream => stream.FailDuringWrite(point), FaultContext(format, statement, shard, "partial-write", point));
+        }
+
+        if (shard == 0)
+        {
+            await AssertFaultAsync(faultStream, baseline.Original, baseline.Completed, statement, stream => stream.FailOnFlush(1), FaultContext(format, statement, shard, "flush", 1));
+        }
+
+        for (int point = shard + 1; point <= baseline.Reads; point += FaultShardCount)
+        {
+            await AssertFaultAsync(faultStream, baseline.Original, baseline.Completed, statement, stream => stream.FailOnRead(point), FaultContext(format, statement, shard, "read", point));
+        }
+    }
+
+    private protected async Task<byte[]> CreateSourceAsync(DatabaseFormat format) =>
+        await generated.CopyToArrayAsync(format.ToString(), () => this.CreateSeedAsync(format));
+
+    private static StatementFaultContext FaultContext(DatabaseFormat format, string statement, int shard, string mode, int point)
+        => new(format, statement, shard, mode, point);
+
+    private static async Task AssertFaultCoreAsync(WriteFaultStream stream, ReadOnlyMemory<byte> original, ReadOnlyMemory<byte> completed, string statement, Action<WriteFaultStream> arm, StatementFaultContext context, string? password)
+    {
+        // Reuse the expandable buffer, but restore every byte and reopen the writer for each fault.
+        stream.Position = 0;
+        stream.SetLength(0);
+        await stream.WriteAsync(original, Ct);
+        stream.Position = 0;
+        await using AccessWriter writer = await OpenAsync(stream, password);
+        arm(stream);
+        bool failed = false;
+        try
+        {
+            await MutateAsync(writer, statement);
+        }
+        catch (Exception exception) when (stream.Faulted && exception is IOException or InvalidDataException)
+        {
+            failed = true;
+        }
+
+        Assert.True(stream.Faulted);
+        if (failed)
+        {
+            StatementFaultDiagnostics.AssertEqual(original.Span, stream.GetBuffer().AsSpan(0, checked((int)stream.Length)), context, phase: "rollback");
+
+            // Retry exercises restored catalog entries, allocation hints, index roots and constraints.
+            await MutateAsync(writer, statement);
+        }
+
+        if (statement is "AddColumn" or "CreateTable")
+        {
+            await AssertCompletedAsync(stream, statement, password);
+        }
+        else
+        {
+            // Byte equality implies the reader assertions already checked on the baseline.
+            StatementFaultDiagnostics.AssertEqual(completed.Span, stream.GetBuffer().AsSpan(0, checked((int)stream.Length)), context, phase: "completed");
+        }
+    }
+
+    private async Task<StatementAtomicityBaseline> CreateBaselineAsync(DatabaseFormat format, string statement)
+    {
         byte[] original = await this.CreateSourceAsync(format);
         await using WriteFaultStream baseline = Copy(original);
         int writes;
@@ -174,26 +217,8 @@ public abstract class StatementAtomicityTestBase(DatabaseCache db, GeneratedData
         Assert.True(writes > 0);
         byte[] completed = baseline.ToArray();
         await AssertCompletedAsync(baseline, statement, password: null);
-        await using var faultStream = new WriteFaultStream();
-        for (int point = shard + 1; point <= writes; point += FaultShardCount)
-        {
-            await AssertFaultAsync(faultStream, original, completed, statement, stream => stream.FailOnWrite(point));
-            await AssertFaultAsync(faultStream, original, completed, statement, stream => stream.FailDuringWrite(point));
-        }
-
-        if (shard == 0)
-        {
-            await AssertFaultAsync(faultStream, original, completed, statement, stream => stream.FailOnFlush(1));
-        }
-
-        for (int point = shard + 1; point <= reads; point += FaultShardCount)
-        {
-            await AssertFaultAsync(faultStream, original, completed, statement, stream => stream.FailOnRead(point));
-        }
+        return new StatementAtomicityBaseline(original, completed, writes, reads);
     }
-
-    private protected async Task<byte[]> CreateSourceAsync(DatabaseFormat format) =>
-        await generated.CopyToArrayAsync(format.ToString(), () => this.CreateSeedAsync(format));
 
     private async Task<byte[]> CreateSeedAsync(DatabaseFormat format)
     {

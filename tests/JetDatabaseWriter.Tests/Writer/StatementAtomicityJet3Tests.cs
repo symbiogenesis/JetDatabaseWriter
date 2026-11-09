@@ -8,7 +8,8 @@ using Xunit;
 /// <summary>Checks every Jet3 statement fault position in an independently runnable partition.</summary>
 /// <param name="db">Caches Access-authored fixtures with relationship catalogs.</param>
 /// <param name="generated">Caches generated statement fault seeds.</param>
-public sealed class StatementAtomicityJet3Tests(DatabaseCache db, GeneratedDatabaseCache generated) : StatementAtomicityTestBase(db, generated)
+/// <param name="baselines">Caches successful statement images and their complete fault inventories.</param>
+public sealed class StatementAtomicityJet3Tests(DatabaseCache db, GeneratedDatabaseCache generated, StatementAtomicityBaselineCache baselines) : StatementAtomicityTestBase(db, generated, baselines)
 {
     /// <summary>Every physical write, partial write, flush and read either completes or restores the statement.</summary>
     /// <param name="statement">The mutation.</param>

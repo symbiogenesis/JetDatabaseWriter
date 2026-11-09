@@ -10,11 +10,13 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
+using Xunit.Sdk;
 
 /// <summary>Checks statement budgets, encrypted undo and failed cancellation recovery.</summary>
 /// <param name="db">Caches Access-authored fixtures with relationship catalogs.</param>
 /// <param name="generated">Caches generated statement fault seeds.</param>
-public sealed class StatementAtomicityTests(DatabaseCache db, GeneratedDatabaseCache generated) : StatementAtomicityTestBase(db, generated)
+/// <param name="baselines">Caches successful statement images and their complete fault inventories.</param>
+public sealed class StatementAtomicityTests(DatabaseCache db, GeneratedDatabaseCache generated, StatementAtomicityBaselineCache baselines) : StatementAtomicityTestBase(db, generated, baselines)
 {
     /// <summary>A default statement does not inherit the explicit transaction page budget.</summary>
     /// <param name="format">The database format.</param>
@@ -58,8 +60,20 @@ public sealed class StatementAtomicityTests(DatabaseCache db, GeneratedDatabaseC
         byte[] completed = baseline.ToArray();
         await AssertCompletedAsync(baseline, "Update", "Native123");
         await using var faultStream = new WriteFaultStream();
-        await AssertFaultAsync(faultStream, original, completed, "Update", stream => stream.FailDuringWrite(1), "Native123");
-        await AssertFaultAsync(faultStream, original, completed, "Update", stream => stream.FailOnFlush(1), "Native123");
+        await AssertFaultAsync(faultStream, original, completed, "Update", stream => stream.FailDuringWrite(1), new StatementFaultContext(DatabaseFormat.Jet4Mdb, "Update", 0, "partial-write", 1), "Native123");
+        await AssertFaultAsync(faultStream, original, completed, "Update", stream => stream.FailOnFlush(1), new StatementFaultContext(DatabaseFormat.Jet4Mdb, "Update", 0, "flush", 1), "Native123");
+    }
+
+    /// <summary>A missing injected fault reports its complete identity while preserving the assertion.</summary>
+    [Fact]
+    public async Task MissingFault_ReportsExactInjectionIdentity()
+    {
+        byte[] original = await this.CreateSourceAsync(DatabaseFormat.AceAccdb);
+        await using var stream = new WriteFaultStream();
+        var context = new StatementFaultContext(DatabaseFormat.AceAccdb, "Delete", 2, "read", 17);
+        XunitException failure = await Assert.ThrowsAsync<XunitException>(() => AssertFaultAsync(stream, original, original, "Delete", static _ => { }, context));
+        Assert.Equal(context.ToString(), failure.Message);
+        Assert.IsAssignableFrom<XunitException>(failure.InnerException);
     }
 
     /// <summary>Cancellation before final replay cannot leave a detached transaction active when early undo fails.</summary>
