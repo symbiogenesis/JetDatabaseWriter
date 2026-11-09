@@ -714,6 +714,95 @@ public sealed class SchemaEvolutionTests
         }
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task SchemaRewrite_RowAndPayloadBudgets_EnforceLimitsAndSkipDroppedLongValuePayloads(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string tableName = "BudgetItems";
+        string largeMemo = new('M', 2000);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                tableName,
+                [
+                    new("Id", typeof(int)) { IsPrimaryKey = true },
+                    new("Code", typeof(string), 20),
+                    new("HeavyMemo", typeof(string)),
+                ],
+                TestContext.Current.CancellationToken);
+            _ = await writer.InsertRowsAsync(
+                tableName,
+                [
+                    [1, "alpha", largeMemo],
+                    [2, "beta", largeMemo],
+                    [3, "gamma", largeMemo],
+                ],
+                TestContext.Current.CancellationToken);
+        }
+
+        byte[] baseline = stream.ToArray();
+
+        // 1. Row budget refusal leaves database bytes untouched.
+        stream.Position = 0;
+        await using (AccessWriter rowLimited = await AccessWriter.OpenAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false, MaxSchemaRewriteRows = 2 },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken))
+        {
+            JetLimitationException ex = await Assert.ThrowsAsync<JetLimitationException>(
+                async () => await rowLimited.RenameColumnAsync(tableName, "Code", "CodeRenamed", TestContext.Current.CancellationToken));
+            Assert.Equal(JetErrorCode.SchemaRewriteBudgetExceeded, ex.ErrorCode);
+            Assert.Equal(tableName, ex.ErrorInfo.TableName);
+        }
+
+        Assert.Equal(baseline, stream.ToArray());
+
+        // 2. Payload byte budget refuses RenameColumnAsync when HeavyMemo survives,
+        //    but permits DropColumnAsync("HeavyMemo") because dropped external LVALs are neither read nor buffered.
+        stream.Position = 0;
+        await using (AccessWriter byteLimited = await AccessWriter.OpenAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false, MaxSchemaRewriteBytes = 512 },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken))
+        {
+            JetLimitationException ex = await Assert.ThrowsAsync<JetLimitationException>(
+                async () => await byteLimited.RenameColumnAsync(tableName, "Code", "CodeRenamed", TestContext.Current.CancellationToken));
+            Assert.Equal(JetErrorCode.SchemaRewriteBudgetExceeded, ex.ErrorCode);
+            Assert.Equal(baseline, stream.ToArray());
+
+            await byteLimited.DropColumnAsync(tableName, "HeavyMemo", TestContext.Current.CancellationToken);
+            byte[] afterDrop = stream.ToArray();
+
+            if (format == DatabaseFormat.AceAccdb)
+            {
+                // Adding a calculated column whose evaluated values exceed the remaining budget also refuses cleanly.
+                JetLimitationException calcEx = await Assert.ThrowsAsync<JetLimitationException>(
+                    async () => await byteLimited.AddColumnAsync(
+                        tableName,
+                        new ColumnDefinition("CalcText", typeof(string), 200)
+                        {
+                            IsCalculated = true,
+                            CalculationExpression = "[Code] & '" + new string('X', 120) + "'",
+                        },
+                        TestContext.Current.CancellationToken));
+                Assert.Equal(JetErrorCode.SchemaRewriteBudgetExceeded, calcEx.ErrorCode);
+                Assert.Equal(afterDrop, stream.ToArray());
+            }
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<ColumnMetadata> survivingColumns = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
+        Assert.Equal(["Id", "Code"], survivingColumns.Select(c => c.Name));
+        using DataTable table = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(3, table.Rows.Count);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────
 
     private static bool MentionsTable(DataRow row, string tableName)

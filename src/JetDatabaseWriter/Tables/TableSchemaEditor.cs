@@ -14,7 +14,6 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
@@ -100,10 +99,22 @@ internal sealed class TableSchemaEditor(
         {
             Guard.NotNullOrEmpty(rule.Expression, nameof(rule));
             var candidate = new TableValidationConstraint(rule.Expression, rule.ValidationText) { Plan = CalculatedExpressionParser.Parse(rule.Expression, isCalculatedColumn: false) };
-            foreach (LocatedRow row in await snapshots.ReadRowsAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false))
+            bool[] resolveLongValues = new bool[table.Definition.Columns.Count];
+            for (int colIndex = 0; colIndex < table.Definition.Columns.Count; colIndex++)
             {
-                await constraints.ValidateTableRuleAsync(tableName, table.Definition, row.Values, candidate, cancellationToken).ConfigureAwait(false);
+                resolveLongValues[colIndex] = ExpressionFieldReferences.References(rule.Expression, table.Definition.Columns[colIndex].Name, tableName);
             }
+
+            await snapshots.ForEachDecodedRowAsync(
+                table.Entry.TDefPage,
+                async (row, token) =>
+                {
+                    await constraints.ValidateTableRuleAsync(tableName, table.Definition, row.Values, candidate, token).ConfigureAwait(false);
+                    return true;
+                },
+                cancellationToken,
+                resolveLongValueColumns: resolveLongValues,
+                captureRawSlots: false).ConfigureAwait(false);
         }
 
         ColumnType ruleType = ColumnType.MemoType;

@@ -193,6 +193,23 @@ internal sealed class IndexMaintainer(
         return false;
     }
 
+    private static bool[] BuildIndexedColumnMask(TableDef tableDef, IndexCatalogReader.ResolvedIndexCatalog catalog)
+    {
+        bool[] mask = new bool[tableDef.Columns.Count];
+        foreach ((_, List<KeyColumnInfo> columns) in catalog.KeyColumnInfosByRealIdx)
+        {
+            foreach (KeyColumnInfo key in columns)
+            {
+                if (key.SnapIdx >= 0 && key.SnapIdx < mask.Length)
+                {
+                    mask[key.SnapIdx] = true;
+                }
+            }
+        }
+
+        return mask;
+    }
+
     private static void WriteIndexUsageMapPointer(byte[] tdefBuffer, int usedPagesOffset, int rowIndex, long usageMapPage)
         => UsageMap.WritePointer(tdefBuffer, usedPagesOffset, rowIndex, usageMapPage);
 
@@ -525,6 +542,28 @@ internal sealed class IndexMaintainer(
     public ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
         => this.RebuildIndexesAsync(tdefPage, tableDef, tableName, writtenRows: null, cancellationToken);
 
+    /// <summary>Returns a column mask for all key columns referenced by real indexes on <paramref name="tdefPage"/>, or <see langword="null"/> when no real indexes exist.</summary>
+    /// <param name="tdefPage">The table definition page.</param>
+    /// <param name="tableDef">The hydrated table definition.</param>
+    /// <param name="tableName">The table name for error messages.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A mask indexed by column position in <paramref name="tableDef"/>, or <see langword="null"/> when no real indexes exist.</returns>
+    internal async ValueTask<bool[]?> GetIndexedColumnMaskAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string tableName,
+        CancellationToken cancellationToken)
+    {
+        (_, IndexCatalogReader.ResolvedIndexCatalog? catalog) =
+            await this.ResolveMaintainableIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        if (catalog is null || catalog.RealIdxByNum.Count == 0)
+        {
+            return null;
+        }
+
+        return BuildIndexedColumnMask(tableDef, catalog);
+    }
+
     /// <summary>
     /// The bulk rebuild behind <see cref="MaintainIndexesAsync"/>. When
     /// <paramref name="writtenRows"/> is supplied, the indexes are built from
@@ -588,7 +627,11 @@ internal sealed class IndexMaintainer(
         // Every live row, decoded from the location its index entry points at,
         // unless the caller supplied the rows it wrote with their locations.
         IReadOnlyList<LocatedRow> rows = writtenRows
-            ?? await snapshots.ReadRowsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+            ?? await snapshots.ReadRowsAsync(
+                tdefPage,
+                cancellationToken,
+                resolveLongValueColumns: BuildIndexedColumnMask(tableDef, catalog),
+                captureRawSlots: false).ConfigureAwait(false);
 
         bool tdefDirty = false;
         bool jet3 = format.IsJet3;

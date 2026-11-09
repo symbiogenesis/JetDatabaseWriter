@@ -249,6 +249,9 @@ public enum JetErrorCode
     /// <summary>The related-entity materialization allowance for one Include execution is exhausted.</summary>
     IncludeMaterializationBudgetExceeded = 815,
 
+    /// <summary>The buffered row or payload allowance for one schema rewrite is exhausted.</summary>
+    SchemaRewriteBudgetExceeded = 816,
+
     /// <summary>Identifies FeatureNotSupported.</summary>
     FeatureNotSupported = 901,
 

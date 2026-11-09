@@ -11,12 +11,12 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding.Models;
+using JetDatabaseWriter.Verification;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -29,6 +29,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="relationships">The relationships service.</param>
 /// <param name="snapshots">The snapshots service.</param>
 /// <param name="autoNumbers">The autoNumbers service.</param>
+/// <param name="options">The writer options governing schema-rewrite row and byte budgets.</param>
 internal sealed class TableRewritePlanner(
     JetFormat format,
     TableCatalog catalog,
@@ -37,7 +38,8 @@ internal sealed class TableRewritePlanner(
     ConstraintRegistry constraints,
     RelationshipManager relationships,
     TableSnapshotReader snapshots,
-    AutoNumberMaintainer autoNumbers)
+    AutoNumberMaintainer autoNumbers,
+    AccessWriterOptions options)
 {
     /// <summary>Captures and validates the complete rewrite projection before creating its replacement table.</summary>
     /// <param name="tableName">The original table.</param>
@@ -164,10 +166,9 @@ internal sealed class TableRewritePlanner(
         // or never see it, so the rewrite would lose it without a word.
         await indexMaintainer.ThrowIfIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
 
-        // Snapshot existing rows AND existing indexes BEFORE we mutate the catalog,
-        // so the snapshot reader sees the original schema and we can forward
-        // surviving index definitions to the rebuilt table.
-        List<LocatedRow> snapshot = await snapshots.ReadRowsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        // Snapshot existing indexes and validate index changes BEFORE we read
+        // and buffer rows, so invalid index arguments fail immediately and
+        // surviving index definitions can be forwarded to the rebuilt table.
         IReadOnlyList<IndexMetadata> existingIndexes = await snapshots.ReadIndexMetadataSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
 
         // Forward every Normal / PrimaryKey index whose key columns all survive,
@@ -215,9 +216,15 @@ internal sealed class TableRewritePlanner(
 
         // Project every row before creating the temp table, so a MEMO / OLE value
         // the snapshot could not read refuses the rewrite before anything changes.
-        // A dropped column's unreadable value is projected away and does not block.
-        var projectedRows = new List<object[]>(snapshot.Count);
-        var projectedFixedText = new List<IReadOnlyDictionary<int, byte[]>?>(snapshot.Count);
+        // A dropped column's external long value is not read from disk and does not block.
+        bool[] resolveLongValues = new bool[tableDef.Columns.Count];
+        for (int colIndex = 0; colIndex < tableDef.Columns.Count; colIndex++)
+        {
+            resolveLongValues[colIndex] = mapColumnName(tableDef.Columns[colIndex].Name) is not null;
+        }
+
+        var projectedRows = new List<object[]>();
+        var projectedFixedText = new List<IReadOnlyDictionary<int, byte[]>?>();
         IndexDefinition? requiredIndex = addedIndex is { IsPrimaryKey: true } or { IsRequired: true }
             ? addedIndex
             : shortcutPrimaryKey;
@@ -231,44 +238,64 @@ internal sealed class TableRewritePlanner(
         }
 
         Dictionary<string, int>? targetIndexes = null;
-        foreach (LocatedRow row in snapshot)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            object[] projected = projectRow(row.Values, tableDef);
-            UnreadableLongValue.ThrowIfAny(projected, tableName);
-            projectedRows.Add(projected);
-            Dictionary<int, byte[]>? textBytes = null;
-            if (row.TextBytes is not null)
+        uint rewrittenRowCount = 0;
+        ulong rewrittenPayloadBytes = 0;
+        uint maxRewriteRows = checked((uint)options.MaxSchemaRewriteRows);
+        ulong maxRewriteBytes = checked((ulong)options.MaxSchemaRewriteBytes);
+        await snapshots.ForEachDecodedRowAsync(
+            entry.TDefPage,
+            (row, token) =>
             {
-                if (targetIndexes is null)
+                token.ThrowIfCancellationRequested();
+                object[] projected = projectRow(row.Values, tableDef);
+                UnreadableLongValue.ThrowIfAny(projected, tableName);
+
+                Dictionary<int, byte[]>? textBytes = null;
+                if (row.TextBytes is not null)
                 {
-                    targetIndexes = new Dictionary<string, int>(newDefs.Count, StringComparer.OrdinalIgnoreCase);
-                    for (int index = 0; index < newDefs.Count; index++)
+                    if (targetIndexes is null)
                     {
-                        targetIndexes.TryAdd(newDefs[index].Name, index);
+                        targetIndexes = new Dictionary<string, int>(newDefs.Count, StringComparer.OrdinalIgnoreCase);
+                        for (int index = 0; index < newDefs.Count; index++)
+                        {
+                            targetIndexes.TryAdd(newDefs[index].Name, index);
+                        }
+                    }
+
+                    foreach ((int sourceIndex, byte[] bytes) in row.TextBytes)
+                    {
+                        if (tableDef.Columns[sourceIndex].Type != ColumnType.TextType)
+                        {
+                            continue;
+                        }
+
+                        string? targetName = mapColumnName(tableDef.Columns[sourceIndex].Name);
+                        if (targetName is not null && targetIndexes.TryGetValue(targetName, out int targetIndex))
+                        {
+                            textBytes ??= [];
+                            textBytes.Add(targetIndex, bytes);
+                        }
                     }
                 }
 
-                foreach ((int sourceIndex, byte[] bytes) in row.TextBytes)
-                {
-                    if (tableDef.Columns[sourceIndex].Type != ColumnType.TextType)
-                    {
-                        continue;
-                    }
-
-                    string? targetName = mapColumnName(tableDef.Columns[sourceIndex].Name);
-                    if (targetName is not null && targetIndexes.TryGetValue(targetName, out int targetIndex))
-                    {
-                        textBytes ??= [];
-                        textBytes.Add(targetIndex, bytes);
-                    }
-                }
-            }
-
-            projectedFixedText.Add(textBytes);
-        }
+                ReserveRewriteRowAndBytes(
+                    tableName,
+                    entry.TDefPage,
+                    projected,
+                    textBytes,
+                    maxRewriteRows,
+                    maxRewriteBytes,
+                    ref rewrittenRowCount,
+                    ref rewrittenPayloadBytes);
+                projectedRows.Add(projected);
+                projectedFixedText.Add(textBytes);
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken,
+            resolveLongValueColumns: resolveLongValues).ConfigureAwait(false);
 
         await constraints.PopulateAddedCalculatedColumnsAsync(tableName, newDefs, format, projectedRows, cancellationToken).ConfigureAwait(false);
+        ReserveAddedCalculatedPayloadBytes(tableName, entry.TDefPage, newDefs, projectedRows, maxRewriteBytes, ref rewrittenPayloadBytes);
         foreach (object[] projected in projectedRows)
         {
             foreach (int position in requiredKeyPositions)
@@ -652,6 +679,108 @@ internal sealed class TableRewritePlanner(
             }
         }
     }
+
+    private static void ReserveRewriteRowAndBytes(
+        string tableName,
+        long tdefPage,
+        object[] projected,
+        IReadOnlyDictionary<int, byte[]>? textBytes,
+        uint maxRows,
+        ulong maxBytes,
+        ref uint currentRows,
+        ref ulong currentBytes)
+    {
+        DataPageKernel.TryReserveCount(currentRows, maxRows, out bool rowAdmitted, out uint nextRows);
+        if (!rowAdmitted)
+        {
+            throw new JetLimitationException(
+                JetErrorCode.SchemaRewriteBudgetExceeded,
+                $"Schema rewrite of table '{tableName}' exceeds the configured row budget of {maxRows} rows.",
+                new JetErrorInfo { TableName = tableName, PageNumber = tdefPage });
+        }
+
+        ulong rowBytes = MeasureProjectedRowBytes(projected, textBytes);
+        RecoveryKernel.TryReserveBytes(currentBytes, rowBytes, maxBytes, out bool bytesAdmitted, out ulong nextBytes);
+        if (!bytesAdmitted)
+        {
+            throw new JetLimitationException(
+                JetErrorCode.SchemaRewriteBudgetExceeded,
+                $"Schema rewrite of table '{tableName}' exceeds the configured payload budget of {maxBytes} bytes.",
+                new JetErrorInfo { TableName = tableName, PageNumber = tdefPage });
+        }
+
+        currentRows = nextRows;
+        currentBytes = nextBytes;
+    }
+
+    private static void ReserveAddedCalculatedPayloadBytes(
+        string tableName,
+        long tdefPage,
+        List<ColumnDefinition> columns,
+        List<object[]> projectedRows,
+        ulong maxBytes,
+        ref ulong currentBytes)
+    {
+        for (int colIndex = 0; colIndex < columns.Count; colIndex++)
+        {
+            ColumnDefinition column = columns[colIndex];
+            if (!column.IsCalculated || column.SourceColumn is not null)
+            {
+                continue;
+            }
+
+            for (int rowIndex = 0; rowIndex < projectedRows.Count; rowIndex++)
+            {
+                ulong valueBytes = MeasureRewriteValueBytes(projectedRows[rowIndex][colIndex]);
+                RecoveryKernel.TryReserveBytes(currentBytes, valueBytes, maxBytes, out bool admitted, out ulong nextBytes);
+                if (!admitted)
+                {
+                    throw new JetLimitationException(
+                        JetErrorCode.SchemaRewriteBudgetExceeded,
+                        $"Schema rewrite of table '{tableName}' exceeds the configured payload budget of {maxBytes} bytes.",
+                        new JetErrorInfo { TableName = tableName, PageNumber = tdefPage });
+                }
+
+                currentBytes = nextBytes;
+            }
+        }
+    }
+
+    private static ulong MeasureProjectedRowBytes(object[] projected, IReadOnlyDictionary<int, byte[]>? textBytes)
+    {
+        ulong total = 0;
+        for (int i = 0; i < projected.Length; i++)
+        {
+            total += MeasureRewriteValueBytes(projected[i]);
+        }
+
+        if (textBytes is not null)
+        {
+            foreach ((_, byte[] bytes) in textBytes)
+            {
+                total += (ulong)bytes.Length;
+            }
+        }
+
+        return total;
+    }
+
+    private static ulong MeasureRewriteValueBytes(object? value) => value switch
+    {
+        null or DBNull => 0UL,
+        string s => (ulong)s.Length * sizeof(char),
+        byte[] bytes => (ulong)bytes.Length,
+        Hyperlink h => (ulong)((h.DisplayText?.Length ?? 0)
+            + (h.Address?.Length ?? 0)
+            + (h.SubAddress?.Length ?? 0)
+            + (h.ScreenTip?.Length ?? 0)) * sizeof(char),
+        bool or byte or sbyte => 1UL,
+        short or ushort or char => 2UL,
+        int or uint or float or ComplexIdRef => 4UL,
+        long or ulong or double or DateTime or TimeSpan or NativeDate => 8UL,
+        decimal or Guid or DateTimeOffset => 16UL,
+        _ => 8UL,
+    };
 
     /// <summary>Preserves a table rule's field dependencies through a schema rewrite.</summary>
     /// <param name="tableName">The table name.</param>

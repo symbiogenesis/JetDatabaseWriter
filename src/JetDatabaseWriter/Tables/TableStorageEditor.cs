@@ -127,18 +127,36 @@ internal sealed class TableStorageEditor(
         // out again once the temp table takes the original's place.
         long autoNumberHighWater = plan.AutoNumberHighWater;
         long complexHighWater = plan.ComplexHighWater;
-        var writtenRows = new List<LocatedRow>(projectedRows.Count);
+        bool[]? indexedColumns = await indexMaintainer.GetIndexedColumnMaskAsync(tempEntry.TDefPage, tempDef, tempName, cancellationToken).ConfigureAwait(false);
+        var writtenRows = new List<LocatedRow>(indexedColumns is not null ? projectedRows.Count : 0);
         var storagePages = new SortedSet<long>();
         for (int rowIndex = 0; rowIndex < projectedRows.Count; rowIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             object[] projected = projectedRows[rowIndex];
-            RowLocation location = await tableRows.InsertRowDataLocAsync(tempEntry.TDefPage, tempDef, projected, textBytes: plan.TextBytes[rowIndex], cancellationToken: cancellationToken).ConfigureAwait(false);
-            writtenRows.Add(new LocatedRow(location, projected));
+            IReadOnlyDictionary<int, byte[]>? rowTextBytes = plan.TextBytes[rowIndex];
+            RowLocation location = await tableRows.InsertRowDataLocAsync(tempEntry.TDefPage, tempDef, projected, textBytes: rowTextBytes, cancellationToken: cancellationToken).ConfigureAwait(false);
             storagePages.Add(location.PageNumber);
             storagePages.Add(location.DataPageNumber);
             autoNumberHighWater = Math.Max(autoNumberHighWater, AutoNumberMaintainer.MaxAutoNumberValue(tempDef, projected));
             complexHighWater = Math.Max(complexHighWater, AutoNumberMaintainer.MaxComplexReference(tempDef, projected));
+
+            // Release buffered row and raw-slot payloads immediately after writing the row;
+            // retain only key-column values needed by the post-copy index rebuild.
+            projectedRows[rowIndex] = [];
+            plan.TextBytes[rowIndex] = null;
+            if (indexedColumns is not null)
+            {
+                for (int colIndex = 0; colIndex < projected.Length; colIndex++)
+                {
+                    if (colIndex >= indexedColumns.Length || !indexedColumns[colIndex])
+                    {
+                        projected[colIndex] = DBNull.Value;
+                    }
+                }
+
+                writtenRows.Add(new LocatedRow(location, projected));
+            }
         }
 
         await autoNumbers.RaiseHighWaterAsync(tempEntry.TDefPage, autoNumberHighWater, cancellationToken).ConfigureAwait(false);
@@ -155,6 +173,8 @@ internal sealed class TableStorageEditor(
         {
             await indexMaintainer.RebuildIndexesAsync(tempEntry.TDefPage, tempDef, tempName, writtenRows, cancellationToken).ConfigureAwait(false);
         }
+
+        writtenRows.Clear();
 
         storagePages.UnionWith(await indexMaintainer.CollectRewriteIndexPagesAsync(tempEntry.TDefPage, cancellationToken).ConfigureAwait(false));
 

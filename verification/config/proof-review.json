@@ -521,7 +521,7 @@
         },
         {
           "path": "docs/design/data-page-row-format-notes.md",
-          "sha256": "50f3025a77a11fbce941a021a2291c281e7c7459b7d3e463457e554bcc9ac645"
+          "sha256": "999e0bb76619e3d3bd675863418506fdf4b526f20d7cefe1a18c8adc1e64c147"
         },
         {
           "path": "docs/design/formal-verification.md",
@@ -649,7 +649,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/AccessWriterOptions.cs",
-          "sha256": "d854eb31a053c9f13928bfa613493cb7915478cf9e0db43ea04609c574ed9d8e"
+          "sha256": "a2cda78fa6bbe7b92b484f91a9818abff842d27723dcf4289b1960e4025c22d3"
         },
         {
           "path": "src/JetDatabaseWriter/Catalog/CatalogWriter.LinkedDeletion.cs",
@@ -749,7 +749,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexMaintainer.cs",
-          "sha256": "ed2ac46e7a34308798330c19d418f92ac7503bf8b44b7505503994b9704b2ab4"
+          "sha256": "6f7d544dd2461afd3cfa577b742cc880c1070d063ce2053b17bfcafc9d4149c4"
         },
         {
           "path": "src/JetDatabaseWriter/Indexes/IndexPageCodec.cs",
@@ -1321,7 +1321,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableRewritePlanner.cs",
-          "sha256": "f6699cd00b0c7916ce72f8f413a3177955add7a51f8339eacbe0bb2dc3b5bdf6"
+          "sha256": "dc2a9072775b77ce72ea4c9b6aace244e679926ea06587c58cfcfca040a48aef"
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableRowStore.cs",
@@ -1329,11 +1329,11 @@
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableSchemaEditor.cs",
-          "sha256": "ebbabba3737383a4a26e1205874c52624534815567c7bbdf9bb14ac02d0f01d1"
+          "sha256": "139c4116105bbdd6be64e3a336e866fb18ef23f1a8ed827a9fe66bf74a857e98"
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableSnapshotReader.cs",
-          "sha256": "cd46abf0af4eb9610f01d59a76d78930852b9ab0c190c85555bb05c27dbd0f5a"
+          "sha256": "a9a849d53399a13c503b6570d035da9ae491c5f7c73ca86b225c7c5db6b26688"
         },
         {
           "path": "src/JetDatabaseWriter/Transactions/LockFileCoordinator.cs",
@@ -1417,7 +1417,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/WriterServices.cs",
-          "sha256": "2a26c9e395250e7046f79d5c31088c60ade0ee182c07135c14985ff5c718b87c"
+          "sha256": "b4ad9ec1427f612abbc6a06fe75682b457a73bf487b0d9984d0e338381a28ec7"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Architecture/ServiceGraphTests.cs",
@@ -2325,7 +2325,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Writer/StreamDatabaseCreationTests.cs",
-          "sha256": "31f80a27755ce125f635df05a369fb75ce712209abdbc46be6555babaa735ee4"
+          "sha256": "13ca4490c37e93ef4ddd66924abeb608ff06f9888d61df7b1bd93a3b45d96737"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Writer/TableSnapshotDiagnosticsTests.cs",
@@ -2985,7 +2985,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableSnapshotReader.cs",
-          "sha256": "cd46abf0af4eb9610f01d59a76d78930852b9ab0c190c85555bb05c27dbd0f5a"
+          "sha256": "a9a849d53399a13c503b6570d035da9ae491c5f7c73ca86b225c7c5db6b26688"
         },
         {
           "path": "src/JetDatabaseWriter/Transactions/RecoverableWriterLock.cs",

@@ -59,6 +59,30 @@ public sealed class AccessWriterOptions : AccessOptions
     public int PageCacheSize { get; init; } = 256;
 
     /// <summary>
+    /// Gets the maximum number of live rows a schema rewrite (<see cref="AccessWriter.AddColumnAsync"/>,
+    /// <see cref="AccessWriter.DropColumnAsync"/>, <see cref="AccessWriter.RenameColumnAsync"/>,
+    /// <see cref="AccessWriter.CreateIndexAsync"/>, or <see cref="AccessWriter.DropIndexAsync"/>)
+    /// may buffer in memory while preparing a replacement table.
+    /// Default: <c>1048576</c>. Must be positive. Exceeding this limit throws
+    /// <see cref="Exceptions.JetLimitationException"/> with
+    /// <see cref="Exceptions.JetErrorCode.SchemaRewriteBudgetExceeded"/> before any
+    /// replacement storage is created.
+    /// </summary>
+    public int MaxSchemaRewriteRows { get; init; } = 1_048_576;
+
+    /// <summary>
+    /// Gets the maximum aggregate projected row payload bytes (including preserved raw
+    /// fixed-text slots and added calculated column values) a schema rewrite may buffer
+    /// in memory while preparing a replacement table. Dropped long-value columns are not
+    /// read or buffered.
+    /// Default: <c>268435456</c> (256&#8239;MiB). Must be positive. Exceeding this limit
+    /// throws <see cref="Exceptions.JetLimitationException"/> with
+    /// <see cref="Exceptions.JetErrorCode.SchemaRewriteBudgetExceeded"/> before any
+    /// replacement storage is created.
+    /// </summary>
+    public long MaxSchemaRewriteBytes { get; init; } = 256L * 1024 * 1024;
+
+    /// <summary>
     /// Gets the regional settings used for calculated-column date and number conversions
     /// and month/weekday names. Null uses the current culture, including user overrides,
     /// when the writer opens. Settings are copied for the writer's lifetime.
@@ -159,6 +183,20 @@ public sealed class AccessWriterOptions : AccessOptions
         {
 #pragma warning disable CA2208 // The public options parameter carries this value.
             throw new ArgumentOutOfRangeException("options", this.LockTimeoutMilliseconds, "AccessWriterOptions.LockTimeoutMilliseconds must be nonnegative.");
+#pragma warning restore CA2208
+        }
+
+        if (this.MaxSchemaRewriteRows <= 0)
+        {
+#pragma warning disable CA2208 // The public options parameter carries this value.
+            throw new ArgumentOutOfRangeException("options", this.MaxSchemaRewriteRows, "AccessWriterOptions.MaxSchemaRewriteRows must be positive.");
+#pragma warning restore CA2208
+        }
+
+        if (this.MaxSchemaRewriteBytes <= 0)
+        {
+#pragma warning disable CA2208 // The public options parameter carries this value.
+            throw new ArgumentOutOfRangeException("options", this.MaxSchemaRewriteBytes, "AccessWriterOptions.MaxSchemaRewriteBytes must be positive.");
 #pragma warning restore CA2208
         }
     }

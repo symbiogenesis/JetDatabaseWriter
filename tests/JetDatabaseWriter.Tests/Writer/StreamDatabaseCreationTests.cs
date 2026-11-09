@@ -200,7 +200,7 @@ public sealed class StreamDatabaseCreationTests
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions(encrypted ? "StreamCreate123" : null) { UseLockFile = false }, leaveOpen: true, ct);
         string[] rows = [.. (await reader.Rows("Items", cancellationToken: ct).ToArrayAsync(ct)).Select(r => $"{r[0]}|{r[1]}|{r[2]}")];
-        Assert.Equal(["3|gamma|", "2|beta-updated|", "4|delta|9"], rows);
+        Assert.Equal(["2|beta-updated|", "3|gamma|", "4|delta|9"], rows);
     }
 
     [Theory]
@@ -240,6 +240,10 @@ public sealed class StreamDatabaseCreationTests
     [InlineData(nameof(AccessOptions.MaxEncryptionInfoBytes), -1, false)]
     [InlineData(nameof(AccessOptions.LockTimeoutMilliseconds), -1, false)]
     [InlineData(nameof(AccessOptions.LockTimeoutMilliseconds), -1, true)]
+    [InlineData(nameof(AccessWriterOptions.MaxSchemaRewriteRows), 0, false)]
+    [InlineData(nameof(AccessWriterOptions.MaxSchemaRewriteRows), -1, false)]
+    [InlineData(nameof(AccessWriterOptions.MaxSchemaRewriteBytes), 0, false)]
+    [InlineData(nameof(AccessWriterOptions.MaxSchemaRewriteBytes), -1, false)]
     public async Task InvalidOptionDomains_RefuseBeforeStreamAccess(string optionName, int value, bool useByteRangeLocks)
     {
         AccessWriterOptions options = optionName switch
@@ -248,6 +252,8 @@ public sealed class StreamDatabaseCreationTests
             nameof(AccessOptions.MaxEncryptionSpinCount) => new() { MaxEncryptionSpinCount = value },
             nameof(AccessOptions.MaxEncryptionInfoBytes) => new() { MaxEncryptionInfoBytes = value },
             nameof(AccessOptions.LockTimeoutMilliseconds) => new() { LockTimeoutMilliseconds = value, UseByteRangeLocks = useByteRangeLocks },
+            nameof(AccessWriterOptions.MaxSchemaRewriteRows) => new() { MaxSchemaRewriteRows = value },
+            nameof(AccessWriterOptions.MaxSchemaRewriteBytes) => new() { MaxSchemaRewriteBytes = value },
             _ => throw new ArgumentOutOfRangeException(nameof(optionName)),
         };
 
@@ -273,7 +279,8 @@ public sealed class StreamDatabaseCreationTests
                 });
 
                 Assert.Equal("options", exception.ParamName);
-                Assert.Equal(value, exception.ActualValue);
+                object expectedActual = optionName == nameof(AccessWriterOptions.MaxSchemaRewriteBytes) ? (object)(long)value : value;
+                Assert.Equal(expectedActual, exception.ActualValue);
                 Assert.Contains(optionName, exception.Message, StringComparison.Ordinal);
                 Assert.Equal(37, stream.Position);
                 Assert.Equal(0, stream.Length);

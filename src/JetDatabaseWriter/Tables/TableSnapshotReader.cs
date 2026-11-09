@@ -52,15 +52,59 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
     /// </summary>
     /// <param name="tdefPage">The table's TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="resolveLongValueColumns">Columns whose external long values must be resolved, or null for all columns.</param>
+    /// <param name="captureRawSlots">Whether to copy raw fixed-text and long-value descriptor slots onto each row.</param>
     /// <exception cref="JetCorruptDataException">A live row cannot be decoded for write-back.</exception>
-    internal async ValueTask<List<LocatedRow>> ReadRowsAsync(long tdefPage, CancellationToken cancellationToken)
+    internal async ValueTask<List<LocatedRow>> ReadRowsAsync(
+        long tdefPage,
+        CancellationToken cancellationToken,
+        bool[]? resolveLongValueColumns = null,
+        bool captureRawSlots = true)
     {
         pages.ThrowIfDisposedOrCancelled(cancellationToken);
 
         TableDef? tableDef = await catalog.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         return tableDef is null
             ? []
-            : await this.DecodeRowsAsync(tdefPage, tableDef, tableName: null, cancellationToken).ConfigureAwait(false);
+            : await this.DecodeRowsAsync(tdefPage, tableDef, tableName: null, cancellationToken, resolveLongValueColumns: resolveLongValueColumns, captureRawSlots: captureRawSlots).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Decodes every live row of the table rooted at <paramref name="tdefPage"/> in
+    /// traversal order and invokes <paramref name="visit"/> without retaining all rows
+    /// in memory. When <paramref name="resolveLongValueColumns"/> is supplied, external
+    /// long-value chains for columns marked <see langword="false"/> are not read from
+    /// disk and their decoded slots are set to <see cref="DBNull.Value"/>.
+    /// </summary>
+    /// <param name="tdefPage">The table's TDEF page.</param>
+    /// <param name="visit">The row visitor; returning <see langword="false"/> stops the walk.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="resolveLongValueColumns">Columns whose external long values must be resolved, or null for all columns.</param>
+    /// <param name="captureRawSlots">Whether to copy raw fixed-text and long-value descriptor slots onto each visited row.</param>
+    /// <exception cref="JetCorruptDataException">A live row cannot be decoded for write-back.</exception>
+    internal async ValueTask ForEachDecodedRowAsync(
+        long tdefPage,
+        Func<LocatedRow, CancellationToken, ValueTask<bool>> visit,
+        CancellationToken cancellationToken,
+        bool[]? resolveLongValueColumns = null,
+        bool captureRawSlots = true)
+    {
+        pages.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        TableDef? tableDef = await catalog.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (tableDef is null)
+        {
+            return;
+        }
+
+        await this.DecodeRowsCoreAsync(
+            tdefPage,
+            tableDef,
+            tableName: null,
+            visit,
+            cancellationToken,
+            resolveLongValueColumns: resolveLongValueColumns,
+            captureRawSlots: captureRawSlots).ConfigureAwait(false);
     }
 
     /// <summary>Decodes every live row, evaluates its predicate once, and retains only matching snapshots.</summary>
@@ -346,11 +390,48 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="selected">Validated index bookmarks, or null for complete table traversal.</param>
     /// <param name="predicate">An optional filter evaluated after complete row decoding and before snapshot retention.</param>
+    /// <param name="resolveLongValueColumns">Optional physical column-id mask controlling which external long-value columns are resolved.</param>
+    /// <param name="captureRawSlots">Whether to retain raw fixed-width text slots on the decoded row.</param>
     /// <exception cref="JetCorruptDataException">A live row cannot be decoded for write-back.</exception>
-    private async ValueTask<List<LocatedRow>> DecodeRowsAsync(long tdefPage, TableDef tableDef, string? tableName, CancellationToken cancellationToken, IReadOnlyList<(long DataPage, int RowIndex)>? selected = null, RowCriteriaEvaluator? predicate = null)
+    private async ValueTask<List<LocatedRow>> DecodeRowsAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string? tableName,
+        CancellationToken cancellationToken,
+        IReadOnlyList<(long DataPage, int RowIndex)>? selected = null,
+        RowCriteriaEvaluator? predicate = null,
+        bool[]? resolveLongValueColumns = null,
+        bool captureRawSlots = true)
     {
         var result = new List<LocatedRow>();
+        await this.DecodeRowsCoreAsync(
+            tdefPage,
+            tableDef,
+            tableName,
+            (row, _) =>
+            {
+                result.Add(row);
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken,
+            selected,
+            predicate,
+            resolveLongValueColumns,
+            captureRawSlots).ConfigureAwait(false);
+        return result;
+    }
 
+    private async ValueTask DecodeRowsCoreAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string? tableName,
+        Func<LocatedRow, CancellationToken, ValueTask<bool>> visit,
+        CancellationToken cancellationToken,
+        IReadOnlyList<(long DataPage, int RowIndex)>? selected = null,
+        RowCriteriaEvaluator? predicate = null,
+        bool[]? resolveLongValueColumns = null,
+        bool captureRawSlots = true)
+    {
         // Updates, cascades and schema rewrites insert these values again, so
         // OLE cells keep their stored bytes exactly and an unreadable MEMO /
         // OLE value becomes an UnreadableLongValue rather than a placeholder.
@@ -367,7 +448,7 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                     throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "The row is shorter than its column-count field", token).ConfigureAwait(false);
                 }
 
-                (object?[]? values, bool matched) = await this.DecodeSnapshotRowValuesAsync(row, decodePlan, tableDef, predicate, token).ConfigureAwait(false);
+                (object?[]? values, bool matched) = await this.DecodeSnapshotRowValuesAsync(row, decodePlan, tableDef, predicate, token, resolveLongValueColumns).ConfigureAwait(false);
                 if (values is null)
                 {
                     throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "The stored row layout cannot be decoded", token).ConfigureAwait(false);
@@ -380,7 +461,7 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
 
                 Dictionary<int, byte[]>? textBytes = null;
                 Dictionary<int, byte[]>? longValues = null;
-                if (RowDecodePlan.TryParseRowLayout(format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, tableDef.HasVarColumns, out RowLayout layout))
+                if (captureRawSlots && RowDecodePlan.TryParseRowLayout(format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, tableDef.HasVarColumns, out RowLayout layout))
                 {
                     for (int index = 0; index < tableDef.Columns.Count; index++)
                     {
@@ -412,12 +493,9 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                     }
                 }
 
-                result.Add(new LocatedRow(row.Location, (object[])values) { TextBytes = textBytes, LongValues = longValues });
-                return true;
+                return await visit(new LocatedRow(row.Location, (object[])values) { TextBytes = textBytes, LongValues = longValues }, token).ConfigureAwait(false);
             },
             cancellationToken).ConfigureAwait(false);
-
-        return result;
     }
 
     private async ValueTask ForEachSnapshotRowAsync(long tdefPage, string? tableName, IReadOnlyList<(long DataPage, int RowIndex)>? selected, RowDecodePlan plan, OwnedDataPages.TableRowVisitor visit, CancellationToken cancellationToken)
@@ -489,6 +567,7 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
     /// <param name="tableDef">The table definition.</param>
     /// <param name="predicate">An optional filter evaluated before non-referenced external long values are read.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="resolveLongValueColumns">Optional physical column-id mask controlling which external long-value columns are resolved.</param>
     /// <returns>The decoded values (or <see langword="null"/> when the row layout cannot be decoded) and whether the row matched <paramref name="predicate"/>.</returns>
     /// <exception cref="JetCorruptDataException">A selected scalar value cannot be decoded.</exception>
     private async ValueTask<(object?[]? Values, bool Matched)> DecodeSnapshotRowValuesAsync(
@@ -496,7 +575,8 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
         RowDecodePlan plan,
         TableDef tableDef,
         RowCriteriaEvaluator? predicate,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool[]? resolveLongValueColumns = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         object?[]? values;
@@ -564,6 +644,12 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
         {
             if (values[i] is LongValueRef or CalculatedLongValueRef)
             {
+                if (resolveLongValueColumns is not null && (i >= resolveLongValueColumns.Length || !resolveLongValueColumns[i]))
+                {
+                    values[i] = DBNull.Value;
+                    continue;
+                }
+
                 await this.ResolveSnapshotLongValueSlotAsync(values, i, row, plan, tableDef, cancellationToken).ConfigureAwait(false);
             }
         }

@@ -132,7 +132,7 @@ internal sealed class WriterServices : IDisposable
             this.ComplexColumns,
             history,
             snapshots);
-        this.RewritePlanner = new TableRewritePlanner(db.Format, catalog, this.Indexes, this.CatalogArtifacts, constraints, this.Relationships, snapshots, autoNumbers);
+        this.RewritePlanner = new TableRewritePlanner(db.Format, catalog, this.Indexes, this.CatalogArtifacts, constraints, this.Relationships, snapshots, autoNumbers, options);
         var tableStorage = new TableStorageEditor(
             db.Format,
             db.TableDefs,

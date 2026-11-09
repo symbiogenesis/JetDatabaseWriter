@@ -613,7 +613,17 @@ reclaimed while shared roots and interior tails survive. Multi-index incremental
 updates skip unchanged index trees (including `IgnoreNulls` Null-key cancels),
 filter unchanged index slots out of post-edit ownership and non-relationship
 usage-map walks, and rewrite the TDEF chain only when root or usage-map pointers
-change. Ordinary public table reads retain their own decode-fault policy.
+change. Schema rewrites (TableRewritePlanner.PrepareAsync and
+TableStorageEditor.CopyRowsAndIndexesAsync) validate index additions and drops
+before reading rows, stream table rows via TableSnapshotReader.ForEachDecodedRowAsync`nwhile skipping external LVAL chain reads for dropped columns, enforce
+AccessWriterOptions.MaxSchemaRewriteRows and AccessWriterOptions.MaxSchemaRewriteBytes`nacross projected row values, preserved fixed-text slots and added calculated
+column payloads (JetErrorCode.SchemaRewriteBudgetExceeded), release buffered
+row and fixed-text payloads as each row is inserted into the replacement table,
+and retain only indexed key-column slots for post-copy index rebuilds.
+TableSchemaEditor.SetTableValidationRuleAsync likewise streams rows without
+retaining raw fixed-text slot maps and resolves only external LVAL columns
+referenced by the validation rule expression. Ordinary public table reads retain
+their own decode-fault policy.
 Catalog identity scans require complete `MSysObjects` row directories and
 resolved overflow chains regardless of `StrictParsing`; traversal failures
 become `CorruptCatalog` with table, page and reason context before any table
