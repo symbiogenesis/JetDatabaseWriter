@@ -77,6 +77,11 @@ function Assert-Workflow([string] $Workflow) {
     Assert-Contract ($results.Contains('if: ${{ !cancelled() }}') -and $results.Contains('name: portability-results-${{ matrix.os }}-${{ matrix.tf }}') -and $results.Contains('path: artifacts/test-results/portability-${{ matrix.os }}-${{ matrix.tf }}/')) 'Portability must retain unique test artifacts after failed tests.'
     $golden = [regex]::Match($test, '(?ms)^      - name: Upload golden diagnostics\n.*?(?=^      - |\z)').Value
     Assert-Contract ($test.Contains('JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/portability-${{ matrix.os }}-${{ matrix.tf }}') -and $golden.Contains('if: ${{ !cancelled() }}') -and $golden.Contains('name: portability-golden-${{ matrix.os }}-${{ matrix.tf }}') -and $golden.Contains('path: artifacts/golden/portability-${{ matrix.os }}-${{ matrix.tf }}/')) 'Portability must retain unique golden byte diagnostics after failed tests.'
+    Assert-Contract ($test.Contains('--output Normal') -and $test.Contains('-RunnerDirectory tests/JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}')) 'Portability must print concise failures with reruns against the selected runner.'
+    $validation = [regex]::Match($test, '(?ms)^      - name: Validate test outcomes\n.*?(?=^      - |\z)').Value
+    Assert-Contract ($validation.Contains('if: ${{ !cancelled() }}')) 'Portability must validate and summarize results after failed execution.'
+    $faults = [regex]::Match($test, '(?ms)^      - name: Upload fault diagnostics\n.*?(?=^      - |\z)').Value
+    Assert-Contract ($test.Contains('JDW_FAULT_DIAGNOSTICS_DIRECTORY: ${{ github.workspace }}/artifacts/faults/portability-${{ matrix.os }}-${{ matrix.tf }}') -and $faults.Contains('if: ${{ !cancelled() }}') -and $faults.Contains('name: portability-faults-${{ matrix.os }}-${{ matrix.tf }}') -and $faults.Contains('path: artifacts/faults/portability-${{ matrix.os }}-${{ matrix.tf }}/')) 'Portability must retain unique complete fault images after failed tests.'
     Assert-Contract ($Workflow -notmatch 'continue-on-error:') 'Portability failures must remain failures.'
 }
 
@@ -138,3 +143,6 @@ Assert-Scenario 'missing xUnit results' ($workflow.Replace('--report-xunit-xml -
 Assert-Scenario 'results collide across hosts' ($workflow.Replace('name: portability-results-${{ matrix.os }}-${{ matrix.tf }}', 'name: portability-results')) 'retain unique test artifacts'
 Assert-Scenario 'failed test evidence dropped' ($workflow.Replace('if: ${{ !cancelled() }}', 'if: success()')) 'retain unique test artifacts after failed tests'
 Assert-Scenario 'missing golden diagnostics' ($workflow.Replace('JDW_GOLDEN_OUTPUT_DIRECTORY:', 'REMOVED_GOLDEN:')) 'retain unique golden byte diagnostics'
+Assert-Scenario 'verbose passing output' ($workflow.Replace('--output Normal', '--output Detailed')) 'print concise failures'
+Assert-Scenario 'failed portability outcomes not summarized' ($workflow.Replace("      - name: Validate test outcomes`n        if: `${{ !cancelled() }}", "      - name: Validate test outcomes`n        if: success()")) 'validate and summarize results after failed execution'
+Assert-Scenario 'missing fault images' ($workflow.Replace('JDW_FAULT_DIAGNOSTICS_DIRECTORY:', 'REMOVED_FAULTS:')) 'retain unique complete fault images'

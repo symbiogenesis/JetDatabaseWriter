@@ -115,11 +115,14 @@ $runnerDirectory = Join-Path $root 'runner'
 $capturedArguments = @()
 function dotnet { $script:capturedArguments = @($args); $global:LASTEXITCODE = 0 }
 function Assert-NativeAccessAvailable { }
-function Assert-NativeResults { param($ResultsDirectory, $Methods); if ($Methods.Count -ne $methods.Count) { throw 'Runner did not retain its complete inventory.' } }
+function Assert-NativeResults { param($ResultsDirectory, $Methods, $RunnerDirectory); $calls.Add('validate-results'); if (($Methods -join ';') -cne ($script:methods -join ';') -or $RunnerDirectory -ne $script:runnerDirectory) { throw 'Runner did not retain its complete inventory and artifact path.' } }
 Invoke-NativeCompatibility -RunnerDirectory $runnerDirectory -ResultsDirectory (Join-Path $root 'results')
 $command = $capturedArguments -join ' '
 if ($command -notmatch '^test --test-modules JetDatabaseWriter.Tests.dll --root-directory ' -or $command -notmatch '--filter-method ' -or $command -match '\b(build|restore|publish)\b') { throw "Native lane must execute exact analyzed binaries: $command" }
 foreach ($method in $methods) { if ($method -cnotin $capturedArguments) { throw "Native runner dropped required method $method" } }
+if ($command -notmatch '--output Normal') { throw 'Native console output must retain failures without printing every passing case.' }
+$calls.Clear()
 function dotnet { $global:LASTEXITCODE = 7 }
 Assert-Throws { Invoke-NativeCompatibility -RunnerDirectory $runnerDirectory -ResultsDirectory (Join-Path $root 'failed') } 'Native compatibility tests failed'
+if ('validate-results' -notin $calls) { throw 'Failed native execution must still report its retained XML outcomes.' }
 'PASS: native provisioning integrity, host refusal, inventory and analyzed-binary execution'

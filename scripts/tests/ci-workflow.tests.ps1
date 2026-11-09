@@ -37,8 +37,8 @@ function Assert-WindowsProcessCoverage([string] $SkipPolicy) {
         'JetDatabaseWriter.Tests.Infrastructure.PowerShellProcessRunnerTests.DenyTerminateOnceStartedAsync_ProcessExitsBeforeHandleOpens_ReturnsNull'
     )
     $calls = [Collections.Generic.List[object]]::new()
-    function Assert-CapturedResults([string] $ResultsDirectory, [string[]] $RequiredMethods) {
-        $calls.Add(@{ Directory = $ResultsDirectory; Methods = [string[]]$RequiredMethods })
+    function Assert-CapturedResults([string] $ResultsDirectory, [string[]] $RequiredMethods, [string] $RunnerDirectory) {
+        $calls.Add(@{ Directory = $ResultsDirectory; Methods = [string[]]$RequiredMethods; Runner = $RunnerDirectory })
     }
     $savedPartition = $env:JDW_TEST_PARTITION
     try {
@@ -50,6 +50,7 @@ function Assert-WindowsProcessCoverage([string] $SkipPolicy) {
                 & ([scriptblock]::Create($command))
                 $required = if ($partition -eq 'ordinary') { $expected } else { @() }
                 Assert-Contract ($calls.Count -eq 1 -and $calls[0].Directory -ceq "artifacts/test-results/$framework-$partition" -and ((@($calls[0].Methods | Sort-Object -CaseSensitive) -join ';') -ceq (@($required | Sort-Object -CaseSensitive) -join ';'))) 'Windows ordinary partitions must require all three process-DACL methods, and other partitions must retain their ordinary validation.'
+                Assert-Contract ($calls[0].Runner -ceq 'artifacts/test-runner') 'Failure reruns must use the same analyzed runner artifact.'
             }
         }
     } finally { $env:JDW_TEST_PARTITION = $savedPartition }
@@ -163,6 +164,7 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-Contract ($testCommand.Contains('--test-modules JetDatabaseWriter.Tests.dll') -and $testCommand.Contains('--root-directory artifacts/test-runner') -and $testCommand -match '(?:^| )--minimum-expected-tests 48(?: |$)') 'Every partition must launch the validated module and require at least all 48 fault theory rows.'
     Assert-Contract ($testCommand.Contains('${{ matrix.test-options }}') -and $testCommand -notmatch '(?:^| )--(?:filter|list-tests|explicit|project|solution)\b') 'Test partitions must use only their reviewed exhaustive matrix filters.'
     Assert-Contract ($testCommand.Contains('--results-directory artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}')) 'Test result directories must distinguish every framework and partition.'
+    Assert-Contract ($testCommand.Contains('--output Normal') -and $testCommand.Contains('--long-running 60')) 'Partition output must retain failures and long-running diagnostics without listing passing cases.'
     Assert-Contract ($testStep.Contains('JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}-${{ matrix.partition }}')) 'Ordinary tests must retain normalized golden specimens in their framework partition.'
     $results = [regex]::Match($test, '(?ms)^      - name: Upload test results\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($results.Contains('if: ${{ !cancelled() }}') -and $results.Contains('name: test-results-${{ matrix.tf }}-${{ matrix.partition }}') -and $results.Contains('path: artifacts/test-results/${{ matrix.tf }}-${{ matrix.partition }}/')) 'Every partition must retain uniquely named test results after failures as well as successes.'
@@ -171,6 +173,8 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     Assert-WindowsProcessCoverage $skipPolicy
     $golden = [regex]::Match($test, '(?ms)^      - name: Upload golden diagnostics\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($golden.Contains('if: ${{ !cancelled() }}') -and $golden.Contains('name: golden-bytes-${{ matrix.tf }}-${{ matrix.partition }}') -and $golden.Contains('path: artifacts/golden/${{ matrix.tf }}-${{ matrix.partition }}/')) 'Every partition must retain uniquely named golden diagnostics after failures as well as successes.'
+    $faults = [regex]::Match($test, '(?ms)^      - name: Upload fault diagnostics\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    Assert-Contract ($testStep.Contains('JDW_FAULT_DIAGNOSTICS_DIRECTORY: ${{ github.workspace }}/artifacts/faults/${{ matrix.tf }}-${{ matrix.partition }}') -and $faults.Contains('if: ${{ !cancelled() }}') -and $faults.Contains('name: fault-diagnostics-${{ matrix.tf }}-${{ matrix.partition }}') -and $faults.Contains('path: artifacts/faults/${{ matrix.tf }}-${{ matrix.partition }}/')) 'Every partition must retain uniquely named complete fault images after failures.'
     Assert-Contract ($Workflow -notmatch '(?i)infersharp') 'InferSharp must remain in its independent workflow.'
 
     $changes = Get-CiJob $Workflow 'changes'
@@ -200,10 +204,12 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     $focusedFilters = @([regex]::Matches($portableStep, '(?<!\S)--filter[\w-]*') | ForEach-Object Value | Sort-Object -CaseSensitive)
     Assert-Contract ($portableStep.Contains('JetDatabaseWriter.Tests.Infrastructure.PowerShellProcessRunnerTests') -and ($focusedFilters -join ';') -ceq '--filter-class;--filter-not-trait' -and $portableStep -match '(?m)^          --filter-not-trait Platform=Windows$' -and $portableStep -notmatch '(?m)^        if:') 'Focused non-Windows CI must execute the portable process cases and exclude only the reviewed Windows platform trait.'
     Assert-Contract ($portableStep.Contains('--minimum-expected-tests 48') -and $portableStep.Contains('--timeout 15m') -and $portableStep.Contains('--report-xunit-xml --report-xunit-xml-filename tests.xml') -and $portableStep.Contains('--results-directory artifacts/test-results/encryption-${{ matrix.os }}-${{ matrix.tf }}')) 'Focused non-Windows CI must bound test execution and produce nonempty, uniquely named xUnit results.'
+    Assert-Contract ($portableStep.Contains('--output Normal')) 'Focused platform output must retain failures without listing passing cases.'
     $portableValidation = [regex]::Match($portableProcess, '(?ms)^      - name: Validate test outcomes\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($portableValidation.Contains('if: ${{ !cancelled() }}') -and $portableValidation.Contains('shell: pwsh') -and $portableValidation.Contains('run: ./scripts/assert-test-results.ps1 -ResultsDirectory artifacts/test-results/encryption-${{ matrix.os }}-${{ matrix.tf }} -RequireNoSkips')) 'Focused non-Windows CI must reject every skipped, missing or failed test result.'
     $portableResults = [regex]::Match($portableProcess, '(?ms)^      - name: Upload test results\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($portableResults.Contains('if: ${{ !cancelled() }}') -and $portableResults -match 'uses: actions/upload-artifact@[0-9a-f]{40}(?:\s|$)' -and $portableResults.Contains('name: encryption-results-${{ matrix.os }}-${{ matrix.tf }}') -and $portableResults.Contains('path: artifacts/test-results/encryption-${{ matrix.os }}-${{ matrix.tf }}/')) 'Focused non-Windows CI must retain each operating system and runtime result after failures as well as successes.'
+    Assert-Contract ($portableValidation.Contains('-RunnerDirectory tests/JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}')) 'Focused platform failure reruns must use the selected runner.'
     $native = Get-CiJob $Workflow 'native-access'
     Assert-Contract ($native.Contains('name: Native Access compatibility (${{ matrix.tf }})') -and $native.Contains('needs: [changes, analyze]') -and $native.Contains('if: ${{ !cancelled() && needs.changes.outputs.dotnet == ''true'' }}') -and $native.Contains('runs-on: windows-latest') -and $native.Contains('timeout-minutes: 90') -and $native -notmatch 'continue-on-error:') 'Native compatibility must gate every selected .NET revision after its analyzed artifacts are available, including independent evidence after self-test failures.'
     Assert-Contract ($native.Contains('tf: [net11.0, net10.0-netstandard, net11.0-netstandard]') -and $native.Contains('global-json-file: global.json') -and $native.Contains('global-json-file: .github/dotnet11/global.json')) 'Native compatibility must cover all three runtime/library combinations.'
@@ -308,6 +314,8 @@ Assert-Scenario 'golden evidence disabled' ($workflow.Replace('JDW_GOLDEN_OUTPUT
 Assert-Scenario 'test result evidence only on success' ($workflow.Replace("      - name: Upload test results`n        if: `${{ !cancelled() }}", "      - name: Upload test results`n        if: success()")) 'Every partition must retain uniquely named test results'
 Assert-Scenario 'golden evidence only on success' ($workflow.Replace("      - name: Upload golden diagnostics`n        if: `${{ !cancelled() }}", "      - name: Upload golden diagnostics`n        if: success()")) 'Every partition must retain uniquely named golden diagnostics'
 Assert-Scenario 'partition golden artifacts collide' ($workflow.Replace('name: golden-bytes-${{ matrix.tf }}-${{ matrix.partition }}', 'name: golden-bytes-${{ matrix.tf }}')) 'Every partition must retain uniquely named golden diagnostics'
+Assert-Scenario 'passing cases flood output' ($workflow.Replace('--output Normal', '--output Detailed')) 'Partition output must retain failures'
+Assert-Scenario 'fault images omitted' ($workflow.Replace('JDW_FAULT_DIAGNOSTICS_DIRECTORY:', 'REMOVED_FAULT_DIAGNOSTICS_DIRECTORY:')) 'Every partition must retain uniquely named complete fault images'
 
 $weakenedProps = [xml]$buildProps.OuterXml
 $weakenedProps.SelectSingleNode('/Project/PropertyGroup/TreatWarningsAsErrors').InnerText = 'false'

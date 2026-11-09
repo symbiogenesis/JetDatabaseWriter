@@ -126,6 +126,7 @@ function Write-RunReport($run) {
         $isBuild = $false
         $isTest = $false
         $after = 0
+        $inFailure = $false
         $skip = $null
         foreach ($rawLine in [IO.File]::ReadLines($file.FullName)) {
             $line = $decoration.Replace($rawLine, '')
@@ -138,16 +139,21 @@ function Write-RunReport($run) {
             if ($line -match '^##\[group\]Run (.+)$') {
                 $step = $Matches[1]
                 $isBuild = $step -match 'dotnet (restore|build|pack)'
-                $isTest = $step -match 'dotnet test'
-                if ($step -match 'dotnet ') { Write-Host "---- $step" }
+                $isTest = $step -match 'dotnet test|scripts[/\\]run-native-compatibility\.ps1'
+                if ($isBuild -or $isTest) { Write-Host "---- $step" }
                 $after = 0
+                $inFailure = $false
                 continue
+            }
+            if ($inFailure) {
+                if ($line -match '^(?:passed |failed |skipped |Test run summary|##\[endgroup\]|\[.*\] Testing)') { $inFailure = $false }
+                else { Write-Host "    $line"; continue }
             }
             if ($isTest -and $line -match '^skipped ') { $skip = $line }
             if ($after -gt 0) { Write-Host "    $line"; $after--; continue }
             if ($line -match '##\[error\]') { Write-Host "  $line"; continue }
             if ($isBuild -and $line -match '(?i)^\s*\d+ (Warning|Error)\(s\)|: (error|warning) [A-Z]{2,}\d+|Build (succeeded|FAILED)') { Write-Host "  $line"; continue }
-            if ($isTest -and $line -match '^failed ') { Write-Host "  $line"; $after = 12; continue }
+            if ($isTest -and $line -match '^failed ') { Write-Host "  $line"; $inFailure = $true; continue }
             if ($isTest -and $line -match '^Test run summary') { Write-Host "  $line"; $after = 5 }
         }
         if ($skip) { Write-Host "  NON-DAO SKIP: $skip / missing skip reason" }

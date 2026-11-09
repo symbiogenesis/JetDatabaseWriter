@@ -103,17 +103,19 @@ jobs:
           DOTNET_ROLL_FORWARD: ${{ matrix.tf == 'net11.0' && 'LatestMajor' || 'LatestPatch' }}
           DOTNET_ROLL_FORWARD_TO_PRERELEASE: ${{ matrix.tf == 'net11.0' && '1' || '0' }}
           JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/portability-${{ matrix.os }}-${{ matrix.tf }}
+          JDW_FAULT_DIAGNOSTICS_DIRECTORY: ${{ github.workspace }}/artifacts/faults/portability-${{ matrix.os }}-${{ matrix.tf }}
         run: >-
           dotnet test --test-modules JetDatabaseWriter.Tests.dll
           --root-directory tests/JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}
           --minimum-expected-tests 48
           --filter-not-trait Platform=Windows
-          --long-running 60 --xunit-diagnostics on --no-ansi --output Detailed --timeout 80m
+          --long-running 60 --xunit-diagnostics on --no-ansi --output Normal --timeout 80m
           --report-xunit-xml --report-xunit-xml-filename tests.xml
           --results-directory artifacts/test-results/portability-${{ matrix.os }}-${{ matrix.tf }}
       - name: Validate test outcomes
+        if: ${{ !cancelled() }}
         shell: pwsh
-        run: ./scripts/assert-test-results.ps1 -ResultsDirectory artifacts/test-results/portability-${{ matrix.os }}-${{ matrix.tf }}
+        run: ./scripts/assert-test-results.ps1 -ResultsDirectory artifacts/test-results/portability-${{ matrix.os }}-${{ matrix.tf }} -RunnerDirectory tests/JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}
       - name: Upload test results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -129,6 +131,15 @@ jobs:
           name: portability-golden-${{ matrix.os }}-${{ matrix.tf }}
           path: artifacts/golden/portability-${{ matrix.os }}-${{ matrix.tf }}/
           if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload fault diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: portability-faults-${{ matrix.os }}-${{ matrix.tf }}
+          path: artifacts/faults/portability-${{ matrix.os }}-${{ matrix.tf }}/
+          if-no-files-found: ignore
           retention-days: 7
 
   release-evidence:

@@ -88,8 +88,8 @@ function Get-NativeCompatibilityMethods {
     )
 }
 
-function Assert-NativeResults([string] $ResultsDirectory, [string[]] $Methods) {
-    & "$PSScriptRoot/assert-test-results.ps1" -ResultsDirectory $ResultsDirectory -RequireNoSkips -RequiredMethods $Methods
+function Assert-NativeResults([string] $ResultsDirectory, [string[]] $Methods, [string] $RunnerDirectory = '') {
+    & "$PSScriptRoot/assert-test-results.ps1" -ResultsDirectory $ResultsDirectory -RequireNoSkips -RequiredMethods $Methods -RunnerDirectory $RunnerDirectory
 }
 
 function Invoke-NativeCompatibility([string] $RunnerDirectory, [string] $ResultsDirectory) {
@@ -99,11 +99,12 @@ function Invoke-NativeCompatibility([string] $RunnerDirectory, [string] $Results
     $methods = @(Get-NativeCompatibilityMethods)
     $arguments = @('test', '--test-modules', 'JetDatabaseWriter.Tests.dll', '--root-directory', $runner,
         '--minimum-expected-tests', [string]$methods.Count, '--filter-method') + $methods + @(
-        '--long-running', '60', '--xunit-diagnostics', 'on', '--no-ansi', '--output', 'Detailed', '--timeout', '50m',
+        '--long-running', '60', '--xunit-diagnostics', 'on', '--no-ansi', '--output', 'Normal', '--timeout', '50m',
         '--report-xunit-xml', '--report-xunit-xml-filename', 'tests.xml', '--results-directory', $ResultsDirectory)
     & dotnet @arguments
-    if ($LASTEXITCODE -ne 0) { throw "Native compatibility tests failed with exit code $LASTEXITCODE." }
-    Assert-NativeResults $ResultsDirectory $methods
+    $testExitCode = $LASTEXITCODE
+    Assert-NativeResults $ResultsDirectory $methods $runner
+    if ($testExitCode -ne 0) { throw "Native compatibility tests failed with exit code $testExitCode." }
 }
 
 if ($MyInvocation.InvocationName -ne '.') { Invoke-NativeCompatibility $RunnerDirectory $ResultsDirectory }

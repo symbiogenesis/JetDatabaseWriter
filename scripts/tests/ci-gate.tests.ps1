@@ -112,6 +112,32 @@ function Invoke-WebRequest {
 2026-10-07T00:00:00.000Z   succeeded: 1
 2026-10-07T00:00:00.000Z   skipped: 1
 2026-10-07T00:00:00.000Z   duration: 1s
+2026-10-07T00:00:00.000Z ##[endgroup]
+2026-10-07T00:00:00.000Z ##[group]Run ./scripts/run-native-compatibility.ps1 -RunnerDirectory artifacts/native-runner
+2026-10-07T00:00:00.000Z failed NativeCase
+2026-10-07T00:00:00.000Z   assertion: native mismatch
+2026-10-07T00:00:00.000Z   stack 01
+2026-10-07T00:00:00.000Z   stack 02
+2026-10-07T00:00:00.000Z   stack 03
+2026-10-07T00:00:00.000Z   stack 04
+2026-10-07T00:00:00.000Z   stack 05
+2026-10-07T00:00:00.000Z   stack 06
+2026-10-07T00:00:00.000Z   stack 07
+2026-10-07T00:00:00.000Z   stack 08
+2026-10-07T00:00:00.000Z   stack 09
+2026-10-07T00:00:00.000Z   stack 10
+2026-10-07T00:00:00.000Z   stack 11
+2026-10-07T00:00:00.000Z   stack 12
+2026-10-07T00:00:00.000Z   stack 13
+2026-10-07T00:00:00.000Z   stack 14
+2026-10-07T00:00:00.000Z   CompleteNativeStackTail
+2026-10-07T00:00:00.000Z passed NativePassingCase
+2026-10-07T00:00:00.000Z Test run summary: Failed!
+2026-10-07T00:00:00.000Z   total: 171
+2026-10-07T00:00:00.000Z   failed: 1
+2026-10-07T00:00:00.000Z   succeeded: 170
+2026-10-07T00:00:00.000Z   skipped: 0
+2026-10-07T00:00:00.000Z   duration: 3m 10s
 '@)
     Compress-Archive -LiteralPath (Join-Path $archiveSource 'Test.txt') -DestinationPath $OutFile -Force
 }
@@ -135,6 +161,7 @@ Invoke-Helper @{ RunId = 42 }
 Assert ($exitCode -eq 0) 'Successful report should return 0.'
 Assert ($output -match 'Build succeeded' -and $output -match 'Test run summary') 'Build and test summaries must survive streaming.'
 Assert ($output -match 'NON-DAO SKIP: skipped OtherCase' -and $output -notmatch 'NON-DAO SKIP: skipped DAOCase') 'Skip lookahead should flag only unexpected reasons.'
+Assert ($output -match 'total: 171' -and $output -match 'CompleteNativeStackTail' -and $output -notmatch 'passed NativePassingCase') 'Script-wrapped native results and complete failure blocks must be reported without passing-case noise.'
 Invoke-Helper @{ RunId = 42 }
 Assert (@($fixture.calls -match 'DOWNLOAD').Count -eq 1) 'Completed logs should be downloaded once.'
 Assert (@($fixture.calls -match '/jobs').Count -eq 1) 'Completed job metadata should be fetched once per attempt.'
