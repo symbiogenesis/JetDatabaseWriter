@@ -61,7 +61,7 @@ function dotnet {
     $stage = $arguments[0]
     Assert-Check ($stage -in '--list-runtimes', 'restore', 'build', 'exec') "Unexpected dotnet operation: $stage"
     $global:LASTEXITCODE = if ($packageTestContext.Failure -eq $stage) { 17 } else { 0 }
-    if ($stage -eq 'exec' -and $packageTestContext.FailureConsumer -and ($arguments -join '/') -like ('*' + $packageTestContext.FailureConsumer + '*')) {
+    if ($stage -eq 'exec' -and $packageTestContext.FailureConsumer -and $arguments[5].Replace('\', '/').Contains('/' + $packageTestContext.FailureConsumer + '/bin/')) {
         $global:LASTEXITCODE = 17
     }
     if ($stage -eq '--list-runtimes') {
@@ -146,6 +146,7 @@ foreach ($consumer in 'ef-net11.0', 'ef-net10.0') {
     $packageTestContext.FailureConsumer = $consumer
     $scenario = Invoke-Scenario ('failed-' + $consumer) $valid
     Assert-Check ($scenario.Error.Contains('failed with exit code 17')) 'An EF consumer failure must fail package validation.'
+    Assert-Check ($packageTestContext.Calls.Count -eq $(if ($consumer -eq 'ef-net11.0') { 10 } else { 13 })) 'The failure must occur at the selected EF consumer, after the preceding consumers pass.'
     Assert-Check (($packageTestContext.Calls[-1] -join '/') -like ('*' + $consumer + '*')) 'An EF consumer failure did not stop subsequent work.'
 }
 Write-Host "All package coordinator and malformed archive checks passed. Artifacts: $testRoot"
