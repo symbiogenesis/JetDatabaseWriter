@@ -42,6 +42,7 @@ public sealed class JetClientConnection : IJetClientConnection
     private AccessWriter? cachedWriter;
     private bool writerRented;
     private bool disposed;
+    private bool disposalCompleted;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="JetClientConnection"/> class.
@@ -664,13 +665,20 @@ public sealed class JetClientConnection : IJetClientConnection
                 }
 
                 this.disposed = true;
-                UnregisterConnection(this);
-                await this.DisposeTransactionCoreAsync().ConfigureAwait(false);
-                await this.CloseReaderCoreAsync().ConfigureAwait(false);
-                if (this.resolvedStream is not null && !this.optionsExtension.LeaveStreamOpen)
+                try
                 {
-                    await this.resolvedStream.DisposeAsync().ConfigureAwait(false);
-                    this.resolvedStream = null;
+                    await this.DisposeTransactionCoreAsync().ConfigureAwait(false);
+                    await this.CloseReaderCoreAsync().ConfigureAwait(false);
+                    if (this.resolvedStream is not null && !this.optionsExtension.LeaveStreamOpen)
+                    {
+                        await this.resolvedStream.DisposeAsync().ConfigureAwait(false);
+                        this.resolvedStream = null;
+                    }
+                }
+                finally
+                {
+                    this.disposalCompleted = true;
+                    UnregisterConnection(this);
                 }
             }
             finally
@@ -784,7 +792,7 @@ public sealed class JetClientConnection : IJetClientConnection
             Stream? stream = connection.optionsExtension.DatabaseStream ?? connection.resolvedStream;
             for (int i = LiveConnections.Count - 1; i >= 0; i--)
             {
-                if (!LiveConnections[i].Connection.TryGetTarget(out JetClientConnection? existing) || existing.disposed)
+                if (!LiveConnections[i].Connection.TryGetTarget(out JetClientConnection? existing) || existing.disposalCompleted)
                 {
                     LiveConnections.RemoveAt(i);
                     continue;
@@ -812,7 +820,7 @@ public sealed class JetClientConnection : IJetClientConnection
             for (int i = LiveConnections.Count - 1; i >= 0; i--)
             {
                 if (!LiveConnections[i].Connection.TryGetTarget(out JetClientConnection? existing)
-                    || existing.disposed
+                    || existing.disposalCompleted
                     || ReferenceEquals(existing, connection))
                 {
                     LiveConnections.RemoveAt(i);
@@ -1635,7 +1643,7 @@ public sealed class JetClientConnection : IJetClientConnection
         {
             for (int i = LiveConnections.Count - 1; i >= 0; i--)
             {
-                if (!LiveConnections[i].Connection.TryGetTarget(out JetClientConnection? peer) || peer.disposed)
+                if (!LiveConnections[i].Connection.TryGetTarget(out JetClientConnection? peer) || peer.disposalCompleted)
                 {
                     LiveConnections.RemoveAt(i);
                     continue;

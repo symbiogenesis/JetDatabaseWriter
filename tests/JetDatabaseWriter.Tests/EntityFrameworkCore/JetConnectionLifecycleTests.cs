@@ -15,6 +15,49 @@ using Xunit;
 public sealed class JetConnectionLifecycleTests
 {
     [Fact]
+    public async Task New_Connection_Waits_For_The_Previous_Connections_Disposal()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        TaskCompletionSource started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource resume = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using DisposalPausingStream stream = new(started, resume);
+        await using (AccessWriter created = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: ct))
+        {
+        }
+
+        DbContextOptions firstOptions = new DbContextOptionsBuilder().UseJetDatabaseWriter(() => stream).Options;
+        await using JetClientConnection first = new(firstOptions);
+        (AccessWriter writer, bool owned) = await first.RentWriterAsync(ct);
+        await first.ReleaseWriterAsync(writer, owned);
+        stream.PauseDisposal = true;
+        Task disposing = first.DisposeAsync().AsTask();
+        await started.Task.WaitAsync(ct);
+
+        DbContextOptions nextOptions = new DbContextOptionsBuilder().UseJetDatabaseWriter(stream, leaveOpen: true).Options;
+        await using JetClientConnection next = new(nextOptions);
+        using var canceled = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        Task<(AccessWriter Writer, bool OwnedByCaller)> acquisition = next.RentWriterAsync(canceled.Token).AsTask();
+        try
+        {
+            Assert.False(acquisition.IsCompleted);
+        }
+        finally
+        {
+            await canceled.CancelAsync();
+            resume.TrySetResult();
+            await disposing;
+            try
+            {
+                (AccessWriter acquired, bool acquiredOwned) = await acquisition;
+                await next.ReleaseWriterAsync(acquired, acquiredOwned);
+            }
+            catch (OperationCanceledException) when (canceled.IsCancellationRequested)
+            {
+            }
+        }
+    }
+
+    [Fact]
     public async Task CloseReader_Waits_For_An_Outstanding_Writer_Rental()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -133,6 +176,22 @@ public sealed class JetConnectionLifecycleTests
         finally
         {
             File.Delete(path);
+        }
+    }
+
+    private sealed class DisposalPausingStream(TaskCompletionSource started, TaskCompletionSource resume) : MemoryStream
+    {
+        public bool PauseDisposal { get; set; }
+
+        public override async ValueTask DisposeAsync()
+        {
+            if (this.PauseDisposal)
+            {
+                started.TrySetResult();
+                await resume.Task;
+            }
+
+            await base.DisposeAsync();
         }
     }
 }
