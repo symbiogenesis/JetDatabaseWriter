@@ -222,6 +222,14 @@ public sealed class JetDatabase : Database
                 }
                 else if (entry.EntityState == EntityState.Deleted)
                 {
+                    if (HasSelfReferencingForeignKey(entry.EntityType))
+                    {
+                        // A set-based delete does not preserve the sorted dependency order.
+                        totalAffected += await ExecuteDeleteAsync(writer, entry, cancellationToken).ConfigureAwait(false);
+                        index++;
+                        continue;
+                    }
+
                     string tableName = JetEntityTypeMetadata.GetTableName(entry.EntityType);
                     int nextIdx = index + 1;
                     while (nextIdx < primaryEntries.Count
@@ -404,7 +412,7 @@ public sealed class JetDatabase : Database
             {
                 if (group.Deleted.Count > 0 && group.Modified.Count > 0)
                 {
-                    HashSet<StructuralKey> deletedKeys = BuildPrincipalKeySet(rootType, group.Deleted, useOriginalValues: true);
+                    Dictionary<IKey, HashSet<StructuralKey>> deletedKeys = BuildPrincipalKeySets(rootType, group.Deleted, useOriginalValues: true);
                     regularModified = [];
                     foreach (IUpdateEntry modEntry in group.Modified)
                     {
@@ -584,27 +592,8 @@ public sealed class JetDatabase : Database
         bool parentBeforeChild)
     {
         int n = items.Count;
-        IKey? primaryKey = rootType.FindPrimaryKey();
-        if (primaryKey is null || primaryKey.Properties.Count == 0)
-        {
-            return items;
-        }
-
         bool useOriginal = !parentBeforeChild;
-        Dictionary<StructuralKey, List<int>> indexByPk = [];
-        for (int i = 0; i < n; i++)
-        {
-            if (TryExtractEntryKey(items[i], primaryKey.Properties, useOriginal, out StructuralKey pk))
-            {
-                if (!indexByPk.TryGetValue(pk, out List<int>? list))
-                {
-                    list = [];
-                    indexByPk[pk] = list;
-                }
-
-                list.Add(i);
-            }
-        }
+        Dictionary<IKey, Dictionary<StructuralKey, List<int>>> indicesByPrincipalKey = [];
 
         var outgoing = new List<int>[n];
         int[] indegree = new int[n];
@@ -619,9 +608,18 @@ public sealed class JetDatabase : Database
             foreach (IForeignKey fk in child.EntityType.GetForeignKeys())
             {
                 if (fk.PrincipalEntityType.GetRootType() != rootType
-                    || fk.Properties.Count != primaryKey.Properties.Count
-                    || !TryExtractEntryKey(child, fk.Properties, useOriginal, out StructuralKey fkKey)
-                    || !indexByPk.TryGetValue(fkKey, out List<int>? parentIndices))
+                    || !TryExtractEntryKey(child, fk.Properties, useOriginal, out StructuralKey fkKey))
+                {
+                    continue;
+                }
+
+                if (!indicesByPrincipalKey.TryGetValue(fk.PrincipalKey, out Dictionary<StructuralKey, List<int>>? principalIndex))
+                {
+                    principalIndex = BuildPrincipalKeyIndex(items, fk.PrincipalKey, useOriginal);
+                    indicesByPrincipalKey[fk.PrincipalKey] = principalIndex;
+                }
+
+                if (!principalIndex.TryGetValue(fkKey, out List<int>? parentIndices))
                 {
                     continue;
                 }
@@ -683,47 +681,77 @@ public sealed class JetDatabase : Database
         return result;
     }
 
-    private static HashSet<StructuralKey> BuildPrincipalKeySet(
+    private static Dictionary<StructuralKey, List<int>> BuildPrincipalKeyIndex(
+        List<IUpdateEntry> entries,
+        IKey principalKey,
+        bool useOriginalValues)
+    {
+        Dictionary<StructuralKey, List<int>> result = [];
+        for (int i = 0; i < entries.Count; i++)
+        {
+            IUpdateEntry entry = entries[i];
+            if (!principalKey.DeclaringEntityType.IsAssignableFrom(entry.EntityType)
+                || !TryExtractEntryKey(entry, principalKey.Properties, useOriginalValues, out StructuralKey key))
+            {
+                continue;
+            }
+
+            if (!result.TryGetValue(key, out List<int>? indices))
+            {
+                indices = [];
+                result[key] = indices;
+            }
+
+            indices.Add(i);
+        }
+
+        return result;
+    }
+
+    private static Dictionary<IKey, HashSet<StructuralKey>> BuildPrincipalKeySets(
         IEntityType rootType,
         List<IUpdateEntry> entries,
         bool useOriginalValues)
     {
-        HashSet<StructuralKey> keys = [];
-        IKey? pk = rootType.FindPrimaryKey();
-        if (pk is null || pk.Properties.Count == 0)
+        Dictionary<IKey, HashSet<StructuralKey>> result = [];
+        foreach (IEntityType entityType in rootType.GetDerivedTypesInclusive())
         {
-            return keys;
-        }
-
-        foreach (IUpdateEntry entry in entries)
-        {
-            if (TryExtractEntryKey(entry, pk.Properties, useOriginalValues, out StructuralKey key))
+            foreach (IKey principalKey in entityType.GetKeys())
             {
-                _ = keys.Add(key);
+                if (result.ContainsKey(principalKey))
+                {
+                    continue;
+                }
+
+                HashSet<StructuralKey> keys = [];
+                foreach (IUpdateEntry entry in entries)
+                {
+                    if (principalKey.DeclaringEntityType.IsAssignableFrom(entry.EntityType)
+                        && TryExtractEntryKey(entry, principalKey.Properties, useOriginalValues, out StructuralKey key))
+                    {
+                        _ = keys.Add(key);
+                    }
+                }
+
+                result[principalKey] = keys;
             }
         }
 
-        return keys;
+        return result;
     }
 
     private static bool ReferencesAnyKeyInSameType(
         IUpdateEntry childCandidate,
         IEntityType rootType,
-        HashSet<StructuralKey> parentKeys,
+        Dictionary<IKey, HashSet<StructuralKey>> parentKeys,
         bool useOriginalForChild)
     {
-        IKey? pk = rootType.FindPrimaryKey();
-        if (pk is null)
-        {
-            return false;
-        }
-
         foreach (IForeignKey fk in childCandidate.EntityType.GetForeignKeys())
         {
             if (fk.PrincipalEntityType.GetRootType() == rootType
-                && fk.Properties.Count == pk.Properties.Count
+                && parentKeys.TryGetValue(fk.PrincipalKey, out HashSet<StructuralKey>? keys)
                 && TryExtractEntryKey(childCandidate, fk.Properties, useOriginalForChild, out StructuralKey fkKey)
-                && parentKeys.Contains(fkKey))
+                && keys.Contains(fkKey))
             {
                 return true;
             }
@@ -1120,11 +1148,14 @@ public sealed class JetDatabase : Database
     private static bool HasSelfReferencingForeignKey(IEntityType entityType)
     {
         IEntityType rootType = entityType.GetRootType();
-        foreach (IForeignKey fk in entityType.GetForeignKeys())
+        foreach (IEntityType hierarchyType in rootType.GetDerivedTypesInclusive())
         {
-            if (fk.PrincipalEntityType.GetRootType() == rootType)
+            foreach (IForeignKey fk in hierarchyType.GetForeignKeys())
             {
-                return true;
+                if (fk.PrincipalEntityType.GetRootType() == rootType)
+                {
+                    return true;
+                }
             }
         }
 
