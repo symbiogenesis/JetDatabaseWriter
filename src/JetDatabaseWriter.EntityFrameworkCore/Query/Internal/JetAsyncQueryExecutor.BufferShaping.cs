@@ -35,6 +35,11 @@ internal static partial class JetAsyncQueryExecutor
 
         if (value.Type == typeof(ValueBuffer) && model.FindEntityType(result) is { } entityType)
         {
+            if (entityType.FindPrimaryKey() is null)
+            {
+                throw new BufferTranslationException();
+            }
+
             return Expression.Convert(
                 Expression.Call(
                     scope,

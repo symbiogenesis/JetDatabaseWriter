@@ -38,9 +38,11 @@ internal static partial class JetAsyncQueryExecutor
         {
             try
             {
-                Expression streamed = new BufferQueryRewriter(context, roots, plan, model, streaming: true).Visit(query)!;
+                BufferQueryRewriter streamingRewriter = new(context, roots, plan, model, streaming: true);
+                Expression streamed = streamingRewriter.Visit(query)!;
                 if (typeof(IAsyncEnumerable<TElement>).IsAssignableFrom(streamed.Type))
                 {
+                    NarrowBufferProperties(plan, streamingRewriter.ReferencedProperties);
                     executor = Expression.Lambda<Func<QueryContext, IAsyncEnumerable<TElement>>>(streamed, context).Compile();
                     return true;
                 }
@@ -60,7 +62,8 @@ internal static partial class JetAsyncQueryExecutor
 
         try
         {
-            Expression rewritten = new BufferQueryRewriter(context, roots, plan, model, streaming: false).Visit(query)!;
+            BufferQueryRewriter rewriter = new(context, roots, plan, model, streaming: false);
+            Expression rewritten = rewriter.Visit(query)!;
             if (!typeof(IEnumerable<TElement>).IsAssignableFrom(rewritten.Type))
             {
                 Type? sequence = rewritten.Type.GetInterfaces().Append(rewritten.Type)
@@ -78,6 +81,7 @@ internal static partial class JetAsyncQueryExecutor
 
             Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TElement>> evaluate = Expression.Lambda<Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TElement>>>(
                 rewritten, context, roots).Compile();
+            NarrowBufferProperties(plan, rewriter.ReferencedProperties);
             executor = qc => ExecuteBufferSequence(qc, plan, evaluate);
             return true;
         }
@@ -103,7 +107,8 @@ internal static partial class JetAsyncQueryExecutor
         ParameterExpression roots = Expression.Parameter(typeof(Dictionary<int, IReadOnlyList<ValueBuffer>>), "roots");
         try
         {
-            Expression rewritten = new BufferQueryRewriter(context, roots, plan, model, streaming: false).Visit(query);
+            BufferQueryRewriter rewriter = new(context, roots, plan, model, streaming: false);
+            Expression rewritten = rewriter.Visit(query);
             if (rewritten.Type != typeof(TScalar))
             {
                 return false;
@@ -111,12 +116,35 @@ internal static partial class JetAsyncQueryExecutor
 
             Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, TScalar> evaluate = Expression.Lambda<Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, TScalar>>(
                 rewritten, context, roots).Compile();
+            NarrowBufferProperties(plan, rewriter.ReferencedProperties);
             executor = async qc => evaluate(qc, await LoadBufferRootsAsync(qc, plan).ConfigureAwait(false));
             return true;
         }
         catch (BufferTranslationException)
         {
             return false;
+        }
+    }
+
+    private static void NarrowBufferProperties(JetQueryPlan plan, IReadOnlySet<IProperty> properties)
+    {
+        foreach (JetTableLoadPlan table in plan.RootTables)
+        {
+            var required = properties.Where(p => p.DeclaringType.ContainingEntityType.GetRootType() == table.RootEntityType).ToHashSet();
+            if (table.JoinLoadSpec is { } join)
+            {
+                required.UnionWith(join.InnerKeyProperties);
+            }
+
+            foreach (JetTableLoadPlan dependent in plan.RootTables)
+            {
+                if (dependent.JoinLoadSpec is { } childJoin && childJoin.OuterPlan == table)
+                {
+                    required.UnionWith(childJoin.OuterKeyProperties);
+                }
+            }
+
+            table.RequiredProperties = required;
         }
     }
 
@@ -166,7 +194,7 @@ internal static partial class JetAsyncQueryExecutor
                     table.SeekConditions,
                     context.Parameters,
                     table.RequiredProperties,
-                    table.MaxRowsEvaluator?.Invoke(context.Parameters),
+                    table.CandidateRowFilter is null ? table.MaxRowsEvaluator?.Invoke(context.Parameters) : null,
                     table.OrderedProperties,
                     table.ValueBufferRowFilter is { } filter ? row => filter(context, row) : null,
                     context.CancellationToken).ConfigureAwait(false);
@@ -470,6 +498,41 @@ internal static partial class JetAsyncQueryExecutor
             }
 
             return node.Update(left, (LambdaExpression?)this.Visit(node.Conversion), right);
+        }
+
+        protected override Expression VisitTypeBinary(TypeBinaryExpression node)
+        {
+            Expression expression = this.Visit(node.Expression);
+            if (expression.Type != node.Expression.Type)
+            {
+                throw new BufferTranslationException();
+            }
+
+            return node.Update(expression);
+        }
+
+        protected override Expression VisitConditional(ConditionalExpression node)
+        {
+            Expression test = this.Visit(node.Test);
+            Expression ifTrue = this.Visit(node.IfTrue);
+            Expression ifFalse = this.Visit(node.IfFalse);
+            if (ifTrue.Type != node.IfTrue.Type || ifFalse.Type != node.IfFalse.Type)
+            {
+                throw new BufferTranslationException();
+            }
+
+            return node.Update(test, ifTrue, ifFalse);
+        }
+
+        protected override Expression VisitNewArray(NewArrayExpression node)
+        {
+            Expression[] values = node.Expressions.Select(e => this.Visit(e)).ToArray();
+            if (node.Expressions.Where((e, i) => values[i].Type != e.Type).Any())
+            {
+                throw new BufferTranslationException();
+            }
+
+            return node.Update(values);
         }
 
         protected override Expression VisitMethodCall(MethodCallExpression node)
