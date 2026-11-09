@@ -9,7 +9,7 @@ if (-not $OutputDirectory) { $OutputDirectory = Join-Path ([IO.Path]::GetTempPat
 $testRoot = [IO.Path]::GetFullPath($OutputDirectory)
 [IO.Directory]::CreateDirectory($testRoot) | Out-Null
 $subject = Join-Path $PSScriptRoot '../test-package.ps1'
-$packageTestContext = [pscustomobject]@{ Calls = [Collections.Generic.List[object]]::new(); Failure = ''; MissingRuntime = '' }
+$packageTestContext = [pscustomobject]@{ Calls = [Collections.Generic.List[object]]::new(); Failure = ''; MissingRuntime = ''; FailureConsumer = '' }
 
 function Assert-Check([bool] $Condition, [string] $Message) {
     if (-not $Condition) { throw $Message }
@@ -61,6 +61,9 @@ function dotnet {
     $stage = $arguments[0]
     Assert-Check ($stage -in '--list-runtimes', 'restore', 'build', 'exec') "Unexpected dotnet operation: $stage"
     $global:LASTEXITCODE = if ($packageTestContext.Failure -eq $stage) { 17 } else { 0 }
+    if ($stage -eq 'exec' -and $packageTestContext.FailureConsumer -and ($arguments -join '/') -like ('*' + $packageTestContext.FailureConsumer + '*')) {
+        $global:LASTEXITCODE = 17
+    }
     if ($stage -eq '--list-runtimes') {
         if ($packageTestContext.MissingRuntime -ne '10') { 'Microsoft.NETCore.App 10.0.14 [synthetic/runtimes]' }
         if ($packageTestContext.MissingRuntime -ne '11') { 'Microsoft.NETCore.App 11.0.0-rc.3.26522.148 [synthetic/runtimes]' }
@@ -82,22 +85,36 @@ function Invoke-Scenario([string] $Name, [string] $PackageDirectory, [string] $F
 $valid = New-Package 'valid'
 $pass = Invoke-Scenario 'pass' $valid
 Assert-Check (-not $pass.Error) "Valid package failed: $($pass.Error)"
-Assert-Check ($packageTestContext.Calls.Count -eq 7) 'Runtime discovery and both consumers must complete.'
-Assert-Check (($packageTestContext.Calls | ForEach-Object { $_[0] }) -join ',' -eq '--list-runtimes,restore,build,exec,restore,build,exec') 'Consumer validation changed its operation sequence.'
-foreach ($target in 'net11.0', 'net8.0') {
-    $project = [xml][IO.File]::ReadAllText((Join-Path $pass.Output "$target/PackageConsumer.csproj"))
+Assert-Check ($packageTestContext.Calls.Count -eq 13) 'Runtime discovery and all four consumers must complete.'
+Assert-Check (($packageTestContext.Calls | ForEach-Object { $_[0] }) -join ',' -eq '--list-runtimes,restore,build,exec,restore,build,exec,restore,build,exec,restore,build,exec') 'Consumer validation changed its operation sequence.'
+foreach ($consumer in 'net11.0', 'net8.0', 'ef-net11.0', 'ef-net10.0') {
+    $target = $consumer.Replace('ef-', '')
+    $project = [xml][IO.File]::ReadAllText((Join-Path $pass.Output "$consumer/PackageConsumer.csproj"))
     Assert-Check ($project.Project.PropertyGroup.TargetFramework -eq $target) 'The consumer framework was lost.'
     Assert-Check ($project.Project.ItemGroup.PackageReference.Version -eq '[1.0.0]') 'The consumer must restore the exact artifact version.'
+    $references = @($project.SelectNodes('//PackageReference'))
+    $packageId = if ($consumer.StartsWith('ef-')) { 'JetDatabaseWriter.EntityFrameworkCore' } else { 'JetDatabaseWriter' }
+    Assert-Check ($references.Count -eq 1 -and $references[0].Include -ceq $packageId) 'Each consumer must reference only its shipping package, exercising transitive dependencies.'
     Assert-Check ($project.SelectNodes('//ProjectReference').Count -eq 0) 'The package consumer must not compile a repository project.'
+    $dll = Join-Path $pass.Output "$consumer/bin/Release/$target/PackageConsumer.dll"
+    $execution = @($packageTestContext.Calls | Where-Object { $_[0] -eq 'exec' -and $_ -contains $dll })
+    $major = if ($target -eq 'net11.0') { '11' } else { '10' }
+    $coreTarget = if ($major -eq '11') { '.NETCoreApp,Version=v11.0' } else { '.NETStandard,Version=v2.1' }
+    Assert-Check ($execution.Count -eq 1 -and $execution[0] -contains $coreTarget -and $execution[0] -contains $major) 'Each consumer must verify its loaded core asset and runtime.'
+    if ($consumer.StartsWith('ef-')) {
+        Assert-Check ($execution[0][-1] -ceq ".NETCoreApp,Version=v$major.0") 'Each EF consumer must verify its provider asset.'
+    }
 }
 $config = [xml][IO.File]::ReadAllText((Join-Path $pass.Output 'NuGet.Config'))
-Assert-Check ($config.SelectSingleNode('/configuration/packageSourceMapping/packageSource[@key="artifact"]/package').pattern -ceq 'JetDatabaseWriter') 'The shipping package must come from the isolated artifact source.'
+foreach ($packageId in 'JetDatabaseWriter', 'JetDatabaseWriter.EntityFrameworkCore') {
+    Assert-Check ($null -ne $config.SelectSingleNode("/configuration/packageSourceMapping/packageSource[@key='artifact']/package[@pattern='$packageId']")) 'Both shipping packages must come from the isolated artifact source.'
+}
 foreach ($name in 'Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props') { Assert-Check ([IO.File]::ReadAllText((Join-Path $pass.Output $name)) -eq '<Project />') 'The consumer inherited enclosing repository build configuration.' }
 Assert-Check ([IO.File]::ReadAllText((Join-Path $pass.Output '.editorconfig')) -eq 'root = true') 'The consumer inherited repository analyzer configuration.'
-Assert-Check (@($packageTestContext.Calls | Where-Object { $_[0] -eq 'restore' -and $_ -contains '--no-http-cache' -and $_ -contains '--packages' }).Count -eq 2) 'Both consumers require isolated restores.'
+Assert-Check (@($packageTestContext.Calls | Where-Object { $_[0] -eq 'restore' -and $_ -contains '--no-http-cache' -and $_ -contains (Join-Path $pass.Output 'packages') }).Count -eq 4) 'All four consumers require isolated restores.'
 Assert-Check ($packageTestContext.Calls[3][-2] -eq '.NETCoreApp,Version=v11.0' -and $packageTestContext.Calls[6][-2] -eq '.NETStandard,Version=v2.1') 'Each consumer must verify its loaded library asset.'
 Assert-Check ($packageTestContext.Calls[3][-1] -eq '11' -and $packageTestContext.Calls[6][-1] -eq '10') 'Each consumer must verify its actual runtime major.'
-foreach ($case in @(@{ Index = 3; Runtime = '11.0.0-rc.3.26522.148' }, @{ Index = 6; Runtime = '10.0.14' })) {
+foreach ($case in @(@{ Index = 3; Runtime = '11.0.0-rc.3.26522.148' }, @{ Index = 6; Runtime = '10.0.14' }, @{ Index = 9; Runtime = '11.0.0-rc.3.26522.148' }, @{ Index = 12; Runtime = '10.0.14' })) {
     $arguments = $packageTestContext.Calls[$case.Index]
     $option = [Array]::IndexOf($arguments, '--fx-version')
     Assert-Check ($option -ge 0 -and $arguments[$option + 1] -ceq $case.Runtime) 'Package consumers must pin the intended installed runtime, including prereleases.'
@@ -123,5 +140,12 @@ foreach ($major in '10', '11') {
     $packageTestContext.MissingRuntime = $major
     $scenario = Invoke-Scenario ('missing-runtime-' + $major) $valid
     Assert-Check ($scenario.Error.Contains("requires an installed .NET $major runtime")) 'A missing runtime was silently replaced by another major.'
+}
+$packageTestContext.MissingRuntime = ''
+foreach ($consumer in 'ef-net11.0', 'ef-net10.0') {
+    $packageTestContext.FailureConsumer = $consumer
+    $scenario = Invoke-Scenario ('failed-' + $consumer) $valid
+    Assert-Check ($scenario.Error.Contains('failed with exit code 17')) 'An EF consumer failure must fail package validation.'
+    Assert-Check (($packageTestContext.Calls[-1] -join '/') -like ('*' + $consumer + '*')) 'An EF consumer failure did not stop subsequent work.'
 }
 Write-Host "All package coordinator and malformed archive checks passed. Artifacts: $testRoot"
