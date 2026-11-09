@@ -2392,6 +2392,79 @@ public sealed class JetEntityFrameworkCoreProviderTests
         }
     }
 
+    [Theory]
+    [MemberData(nameof(SupportedFormats))]
+    public async Task MigrateAsync_CreatesMissingDatabase_AndIncrementallyMigratesExistingSchema_AcrossFormats(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+
+        DbContextOptions<MigrationV1DbContext> v1Options = new DbContextOptionsBuilder<MigrationV1DbContext>()
+            .UseJetDatabaseWriter(stream, format, leaveOpen: true)
+            .Options;
+
+        await using (MigrationV1DbContext v1Context = new(v1Options))
+        {
+            _ = Assert.Throws<NotSupportedException>(v1Context.Database.Migrate);
+
+            await v1Context.Database.MigrateAsync(ct);
+
+            List<MigrationCustomerV1> initialCustomers = await v1Context.Customers.OrderBy(c => c.Id).ToListAsync(ct);
+            MigrationCustomerV1 seededV1 = Assert.Single(initialCustomers);
+            Assert.Equal("SEED-V1", seededV1.Code);
+
+            v1Context.Customers.Add(new MigrationCustomerV1
+            {
+                Code = "USER-1",
+                Name = "Existing V1 Customer",
+            });
+            _ = await v1Context.SaveChangesAsync(ct);
+        }
+
+        DbContextOptions<MigrationV2DbContext> v2Options = new DbContextOptionsBuilder<MigrationV2DbContext>()
+            .UseJetDatabaseWriter(stream, format, leaveOpen: true)
+            .Options;
+
+        await using (MigrationV2DbContext v2Context = new(v2Options))
+        {
+            await v2Context.Database.MigrateAsync(ct);
+
+            // Calling MigrateAsync again is idempotent
+            await v2Context.Database.MigrateAsync(ct);
+
+            List<MigrationCustomerV2> migratedCustomers = await v2Context.Customers
+                .OrderBy(c => c.Code)
+                .ToListAsync(ct);
+            Assert.Equal(3, migratedCustomers.Count);
+
+            MigrationCustomerV2 seed1 = migratedCustomers.Single(c => c.Code == "SEED-V1");
+            Assert.Equal("US-EAST", seed1.RegionCode);
+            Assert.Equal(100, seed1.LoyaltyPoints);
+            Assert.Null(seed1.Notes);
+
+            MigrationCustomerV2 seed2 = migratedCustomers.Single(c => c.Code == "SEED-V2");
+            Assert.Equal("US-WEST", seed2.RegionCode);
+            Assert.Equal(250, seed2.LoyaltyPoints);
+
+            MigrationCustomerV2 existingUser = migratedCustomers.Single(c => c.Code == "USER-1");
+            Assert.Equal("US-EAST", existingUser.RegionCode);
+            Assert.Equal(100, existingUser.LoyaltyPoints);
+
+            v2Context.AuditLogs.Add(new MigrationAuditLog
+            {
+                CustomerId = existingUser.Id,
+                Action = "MigratedToV2",
+            });
+            _ = await v2Context.SaveChangesAsync(ct);
+
+            MigrationCustomerV2 withLogs = await v2Context.Customers
+                .Include(c => c.AuditLogs)
+                .SingleAsync(c => c.Id == existingUser.Id, ct);
+            MigrationAuditLog log = Assert.Single(withLogs.AuditLogs);
+            Assert.Equal("MigratedToV2", log.Action);
+        }
+    }
+
     private sealed class RichModelingDbContext(DbContextOptions<RichModelingDbContext> options) : DbContext(options)
     {
         public DbSet<Supplier> Suppliers => this.Set<Supplier>();
@@ -2870,5 +2943,112 @@ public sealed class JetEntityFrameworkCoreProviderTests
         public decimal LineTotal { get; set; }
 
         public DateTime RecordedAt { get; set; }
+    }
+
+    private sealed class MigrationV1DbContext(DbContextOptions<MigrationV1DbContext> options) : DbContext(options)
+    {
+        public DbSet<MigrationCustomerV1> Customers => this.Set<MigrationCustomerV1>();
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+            _ = modelBuilder.Entity<MigrationCustomerV1>(entity =>
+            {
+                _ = entity.ToTable("MigrationCustomers");
+                _ = entity.HasKey(c => c.Id);
+                _ = entity.Property(c => c.Code).HasMaxLength(32).IsRequired();
+                _ = entity.Property(c => c.Name).HasMaxLength(100).IsRequired();
+                _ = entity.HasData(new MigrationCustomerV1
+                {
+                    Id = 1,
+                    Code = "SEED-V1",
+                    Name = "Seed Customer V1",
+                });
+            });
+    }
+
+    private sealed class MigrationV2DbContext(DbContextOptions<MigrationV2DbContext> options) : DbContext(options)
+    {
+        public DbSet<MigrationCustomerV2> Customers => this.Set<MigrationCustomerV2>();
+
+        public DbSet<MigrationAuditLog> AuditLogs => this.Set<MigrationAuditLog>();
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            _ = modelBuilder.Entity<MigrationCustomerV2>(entity =>
+            {
+                _ = entity.ToTable("MigrationCustomers");
+                _ = entity.HasKey(c => c.Id);
+                _ = entity.Property(c => c.Code).HasMaxLength(32).IsRequired();
+                _ = entity.Property(c => c.Name).HasMaxLength(100).IsRequired();
+                _ = entity.Property(c => c.RegionCode).HasMaxLength(32).IsRequired().HasDefaultValue("US-EAST");
+                _ = entity.Property(c => c.LoyaltyPoints).HasDefaultValue(100);
+                _ = entity.Property(c => c.Notes).HasMaxLength(200);
+                _ = entity.HasIndex(c => c.RegionCode);
+                _ = entity.HasData(
+                    new MigrationCustomerV2
+                    {
+                        Id = 1,
+                        Code = "SEED-V1",
+                        Name = "Seed Customer V1",
+                        RegionCode = "US-EAST",
+                        LoyaltyPoints = 100,
+                    },
+                    new MigrationCustomerV2
+                    {
+                        Id = 10,
+                        Code = "SEED-V2",
+                        Name = "Seed Customer V2",
+                        RegionCode = "US-WEST",
+                        LoyaltyPoints = 250,
+                    });
+            });
+
+            _ = modelBuilder.Entity<MigrationAuditLog>(entity =>
+            {
+                _ = entity.ToTable("MigrationAuditLogs");
+                _ = entity.HasKey(a => a.Id);
+                _ = entity.Property(a => a.Action).HasMaxLength(80).IsRequired();
+                _ = entity.HasOne(a => a.Customer)
+                    .WithMany(c => c.AuditLogs)
+                    .HasForeignKey(a => a.CustomerId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+        }
+    }
+
+    private sealed class MigrationCustomerV1
+    {
+        public int Id { get; set; }
+
+        public string Code { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
+    }
+
+    private sealed class MigrationCustomerV2
+    {
+        public int Id { get; set; }
+
+        public string Code { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
+
+        public string RegionCode { get; set; } = string.Empty;
+
+        public int LoyaltyPoints { get; set; }
+
+        public string? Notes { get; set; }
+
+        public List<MigrationAuditLog> AuditLogs { get; set; } = [];
+    }
+
+    private sealed class MigrationAuditLog
+    {
+        public int Id { get; set; }
+
+        public int CustomerId { get; set; }
+
+        public string Action { get; set; } = string.Empty;
+
+        public MigrationCustomerV2? Customer { get; set; }
     }
 }
