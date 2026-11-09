@@ -208,8 +208,6 @@ public sealed class JetClientConnection : IJetClientConnection
             else
             {
                 Stream stream = this.GetOrCreateStream();
-                stream.SetLength(0);
-                stream.Position = 0;
                 this.cachedWriter = await AccessWriter.CreateDatabaseAsync(
                     stream,
                     this.optionsExtension.Format,
