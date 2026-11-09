@@ -27,7 +27,7 @@ public sealed class StatementFaultDiagnosticsTests
             XunitException failure = Assert.Throws<XunitException>(() => StatementFaultDiagnostics.AssertEqual([1, 2, 3], [1, 9], context, directory, "rollback"));
             Assert.Contains("format=Jet3Mdb, statement=Insert, shard=2, mode=partial-write, point=17", failure.Message, StringComparison.Ordinal);
             Assert.Contains("phase=rollback", failure.Message, StringComparison.Ordinal);
-            Assert.IsAssignableFrom<XunitException>(failure.InnerException);
+            Assert.IsType<XunitException>(failure.InnerException, exactMatch: false);
             Assert.Equal(new byte[] { 1, 2, 3 }, File.ReadAllBytes(Assert.Single(Directory.GetFiles(directory, "*.expected.bin"))));
             Assert.Equal(new byte[] { 1, 9 }, File.ReadAllBytes(Assert.Single(Directory.GetFiles(directory, "*.actual.bin"))));
             Assert.Contains(context.ToString(), File.ReadAllText(Assert.Single(Directory.GetFiles(directory, "*.txt"))), StringComparison.Ordinal);
@@ -54,7 +54,7 @@ public sealed class StatementFaultDiagnosticsTests
             var context = new StatementFaultContext(DatabaseFormat.AceAccdb, "Delete", 1, "read", 2);
             XunitException failure = Assert.Throws<XunitException>(() => StatementFaultDiagnostics.AssertEqual([1], [2], context, file));
             Assert.Contains("Unable to retain complete fault images", failure.Message, StringComparison.Ordinal);
-            Assert.IsAssignableFrom<XunitException>(failure.InnerException);
+            Assert.IsType<XunitException>(failure.InnerException, exactMatch: false);
             Assert.Contains(context.ToString(), failure.Message, StringComparison.Ordinal);
         }
         finally

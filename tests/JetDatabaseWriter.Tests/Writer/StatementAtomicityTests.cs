@@ -73,7 +73,7 @@ public sealed class StatementAtomicityTests(DatabaseCache db, GeneratedDatabaseC
         var context = new StatementFaultContext(DatabaseFormat.AceAccdb, "Delete", 2, "read", 17);
         XunitException failure = await Assert.ThrowsAsync<XunitException>(() => AssertFaultAsync(stream, original, original, "Delete", static _ => { }, context));
         Assert.Equal(context.ToString(), failure.Message);
-        Assert.IsAssignableFrom<XunitException>(failure.InnerException);
+        Assert.IsType<XunitException>(failure.InnerException, exactMatch: false);
     }
 
     /// <summary>Cancellation before final replay cannot leave a detached transaction active when early undo fails.</summary>
