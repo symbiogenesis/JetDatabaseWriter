@@ -18,7 +18,8 @@ using JetDatabaseWriter.TestSupport;
 using Xunit;
 
 /// <summary>Jet3 schema rewrites retain native catalog ownership and table permissions.</summary>
-public sealed class NativeJet3SchemaRewriteTests
+/// <param name="seeds">The independently native-authored seeds shared by this class.</param>
+public sealed class NativeJet3SchemaRewriteTests(NativeJet3SchemaSeedCache seeds) : IClassFixture<NativeJet3SchemaSeedCache>
 {
     [Theory]
     [InlineData("add", "NativeFixedTextJet3Cp1252.mdb")]
@@ -74,23 +75,8 @@ public sealed class NativeJet3SchemaRewriteTests
         string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
         string compacted = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.CompactedPath);
         int originalRows = wide ? 300 : 1;
-        string extraColumns = wide ? string.Concat(Enumerable.Range(0, 100).Select(index => $", [C{index}] LONG")) : string.Empty;
-        PowerShellRunResult created = Jet3RoundTripEnvironment.RunEngineScript(
-            $$"""
-            $db = $engine.CreateDatabase({{source}}, ';LANGID=0x0409;CP=1252;COUNTRY=0', 32)
-            try {
-                $db.Execute('CREATE TABLE [Longs] ([Id] LONG, [Spare] LONG{{extraColumns}})', 128)
-                for ($id = 1; $id -le {{originalRows}}; $id++) { $db.Execute(('INSERT INTO [Longs] ([Id],[Spare]) VALUES (' + $id + ',7)'), 128) }
-                if ({{(wide ? "$true" : "$false")}}) {
-                    for ($i = 0; $i -lt 16; $i++) { $db.Execute(('CREATE INDEX [I' + $i + '] ON [Longs] ([C' + $i + '])'), 128) }
-                }
-                Write-Output ('OWNER=' + $db.Containers('Tables').Documents('Longs').Owner)
-            } finally { $db.Close() }
-            """,
-            session.WorkDir,
-            TimeSpan.FromMinutes(2));
-        Assert.True(created.ExitCode == 0, $"DAO36 create failed: {created.StandardOutput}\n{created.StandardError}");
-        byte[] originalImage = await File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken);
+        (byte[] originalImage, string originalOwner) = await seeds.CopyLongsAsync(wide);
+        await File.WriteAllBytesAsync(session.SourcePath, originalImage, TestContext.Current.CancellationToken);
         await using (AccessWriter refused = await session.OpenWriterAsync(TestContext.Current.CancellationToken))
         {
             await Assert.ThrowsAsync<JetObjectExistsException>(async () => await refused.RenameColumnAsync("Longs", "Spare", "Id", TestContext.Current.CancellationToken));
@@ -163,7 +149,7 @@ public sealed class NativeJet3SchemaRewriteTests
             session.WorkDir,
             TimeSpan.FromMinutes(2));
         Assert.True(verified.ExitCode == 0, $"DAO36 failed: {verified.StandardOutput}\n{verified.StandardError}");
-        Assert.Contains(created.StandardOutput.Trim(), verified.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains(originalOwner, verified.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("NATIVE_READ_WRITE_COMPACT_OK", verified.StandardOutput, StringComparison.Ordinal);
         await using AccessReader reader = await AccessReader.OpenAsync(session.CompactedPath, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
         using DataTable rows = await reader.ReadTableAsync("Longs", cancellationToken: TestContext.Current.CancellationToken);
