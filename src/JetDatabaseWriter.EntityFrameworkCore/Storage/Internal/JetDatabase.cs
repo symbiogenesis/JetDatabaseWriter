@@ -14,6 +14,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.ValueDecoding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -1238,6 +1239,10 @@ public sealed class JetDatabase : Database
         }
 
         List<LocatedRow>? matched = await writer.Services.Snapshots.TryReadIndexedRowsAsync(resolved, pkCriteria, cancellationToken).ConfigureAwait(false);
+        matched ??= await writer.Services.Snapshots.ReadMatchingRowsAsync(
+            resolved,
+            RowCriteriaEvaluator.Compile(pkCriteria, resolved.Definition, tableName, nameof(pkCriteria)),
+            cancellationToken).ConfigureAwait(false);
         if (matched is not { Count: > 0 })
         {
             return;

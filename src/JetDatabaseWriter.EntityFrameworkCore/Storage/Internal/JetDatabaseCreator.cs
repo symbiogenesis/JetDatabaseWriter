@@ -10,6 +10,7 @@ using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.ValueDecoding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -225,7 +226,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             };
         }
 
-        return new ColumnDefinition(columnName, storageType)
+        return new ColumnDefinition(columnName, storageType, storageType == typeof(byte[]) ? property.GetMaxLength() ?? 0 : 0)
         {
             IsNullable = isNullable,
             IsAutoIncrement = isAutoIncrement,
@@ -603,7 +604,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                 continue;
             }
 
-            List<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(entityType);
+            IReadOnlyList<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(entityType);
             Dictionary<string, IProperty> propertyByName = [with(StringComparer.Ordinal)];
             foreach (IProperty prop in properties)
             {
@@ -748,6 +749,36 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         }
 
         return result;
+    }
+
+    private static async ValueTask<bool> SeedExistsAsync(
+        AccessWriter writer,
+        ResolvedTable table,
+        RowCriteria criteria,
+        bool[] keyColumns,
+        CancellationToken cancellationToken)
+    {
+        var predicate = RowCriteriaEvaluator.Compile(criteria, table.Definition, table.Entry.Name, nameof(criteria));
+        List<LocatedRow>? indexedRows = await writer.Services.Snapshots.TryReadIndexedRowsAsync(table, criteria, cancellationToken).ConfigureAwait(false);
+        if (indexedRows is not null)
+        {
+            return indexedRows.Exists(row => predicate.Matches(row.Values));
+        }
+
+        bool exists = false;
+        await writer.Services.Snapshots.ForEachDecodedRowAsync(
+            table.Entry.TDefPage,
+            table.Definition,
+            table.Entry.Name,
+            (row, _) =>
+            {
+                exists = predicate.Matches(row.Values);
+                return new ValueTask<bool>(!exists);
+            },
+            cancellationToken,
+            resolveLongValueColumns: keyColumns,
+            captureRawSlots: false).ConfigureAwait(false);
+        return exists;
     }
 
     private async ValueTask ExecuteInSchemaTransactionAsync(
@@ -906,7 +937,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             }
 
             string[] pkColNames = new string[primaryKey.Properties.Count];
-            int[] pkOrdinals = new int[primaryKey.Properties.Count];
+            bool[] keyColumns = new bool[resolved.Definition.Columns.Count];
             bool allPkFound = true;
             for (int i = 0; i < primaryKey.Properties.Count; i++)
             {
@@ -919,7 +950,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                     break;
                 }
 
-                pkOrdinals[i] = ord;
+                keyColumns[ord] = true;
             }
 
             if (!allPkFound)
@@ -927,43 +958,17 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                 continue;
             }
 
-            List<LocatedRow> existingRows = await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
             List<RowValues> missingSeedRows = [];
             foreach (RowValues seedRow in seedRows)
             {
-                bool exists = false;
-                foreach (LocatedRow existingRow in existingRows)
+                RowCriteria criteria = [];
+                foreach (string keyColumn in pkColNames)
                 {
-                    bool matchesAllKeys = true;
-                    for (int k = 0; k < pkColNames.Length; k++)
-                    {
-                        if (!seedRow.TryGetValue(pkColNames[k], out object? seedKeyVal))
-                        {
-                            matchesAllKeys = false;
-                            break;
-                        }
-
-                        object? existingVal = pkOrdinals[k] < existingRow.Values.Length ? existingRow.Values[pkOrdinals[k]] : null;
-                        if (existingVal is DBNull)
-                        {
-                            existingVal = null;
-                        }
-
-                        if (!Equals(existingVal, seedKeyVal))
-                        {
-                            matchesAllKeys = false;
-                            break;
-                        }
-                    }
-
-                    if (matchesAllKeys)
-                    {
-                        exists = true;
-                        break;
-                    }
+                    _ = seedRow.TryGetValue(keyColumn, out object? seedKeyValue);
+                    criteria.Add(ColumnPredicate.EqualTo(keyColumn, seedKeyValue));
                 }
 
-                if (!exists)
+                if (!await SeedExistsAsync(writer, resolved, criteria, keyColumns, cancellationToken).ConfigureAwait(false))
                 {
                     missingSeedRows.Add(seedRow);
                 }
