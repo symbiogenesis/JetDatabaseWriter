@@ -1,4 +1,4 @@
-# Inspect the actual shipping archive and exercise fresh NuGet consumers of both assets.
+# Inspect the shipping archives and exercise fresh NuGet consumers of core and EF assets.
 [CmdletBinding()]
 param(
     [string] $PackageDirectory = 'artifacts/nupkg',
@@ -82,7 +82,7 @@ $escapedFeed = [Security.SecurityElement]::Escape($feed)
 [IO.File]::WriteAllText($config, @"
 <configuration>
   <packageSources><clear /><add key="artifact" value="$escapedFeed" /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources>
-  <packageSourceMapping><clear /><packageSource key="artifact"><package pattern="JetDatabaseWriter" /></packageSource><packageSource key="nuget.org"><package pattern="*" /></packageSource></packageSourceMapping>
+  <packageSourceMapping><clear /><packageSource key="artifact"><package pattern="JetDatabaseWriter" /><package pattern="JetDatabaseWriter.EntityFrameworkCore" /></packageSource><packageSource key="nuget.org"><package pattern="*" /></packageSource></packageSourceMapping>
 </configuration>
 "@)
 $source = @'
@@ -151,6 +151,72 @@ public sealed class Person
 }
 '@
 
+$efSource = @'
+namespace PackageConsumer;
+
+using System;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Runtime.Versioning;
+using System.Threading.Tasks;
+using JetDatabaseWriter;
+using JetDatabaseWriter.EntityFrameworkCore.Extensions;
+using JetDatabaseWriter.Enums;
+using Microsoft.EntityFrameworkCore;
+
+internal static class Program
+{
+    private static async Task Main(string[] args)
+    {
+        string? coreTarget = typeof(AccessReader).Assembly.GetCustomAttribute<TargetFrameworkAttribute>()?.FrameworkName;
+        string? providerTarget = typeof(JetDbContextOptionsBuilderExtensions).Assembly.GetCustomAttribute<TargetFrameworkAttribute>()?.FrameworkName;
+        if (coreTarget != args[0]) { throw new InvalidDataException("Wrong transitive core NuGet asset loaded: " + coreTarget); }
+        if (providerTarget != args[2]) { throw new InvalidDataException("Wrong EF provider NuGet asset loaded: " + providerTarget); }
+        int expectedRuntime = int.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture);
+        if (Environment.Version.Major != expectedRuntime) { throw new InvalidDataException("Wrong runtime loaded: " + Environment.Version); }
+
+        await using var stream = new MemoryStream();
+        DbContextOptions<PeopleContext> options = new DbContextOptionsBuilder<PeopleContext>()
+            .UseJetDatabaseWriter(stream, DatabaseFormat.AceAccdb, leaveOpen: true)
+            .Options;
+        await using (var context = new PeopleContext(options))
+        {
+            if (!await context.Database.EnsureCreatedAsync()) { throw new InvalidDataException("EF package did not create a database."); }
+            context.People.Add(new Person { Id = 1, Name = "Andr\u00e9" });
+            if (await context.SaveChangesAsync() != 1) { throw new InvalidDataException("EF package did not save the inserted row."); }
+            Person person = await context.People.AsNoTracking().Where(person => person.Id == 1).SingleAsync();
+            if (person.Name != "Andr\u00e9") { throw new InvalidDataException("EF package query returned the wrong value."); }
+        }
+
+        stream.Position = 0;
+        await using (var reopened = new PeopleContext(options))
+        {
+            Person person = await reopened.People.AsNoTracking().SingleAsync();
+            if (person.Id != 1 || person.Name != "Andr\u00e9") { throw new InvalidDataException("EF package did not persist its row across contexts."); }
+        }
+        Console.WriteLine("EF package consumer passed: " + providerTarget + " / " + coreTarget);
+    }
+}
+
+internal sealed class PeopleContext(DbContextOptions<PeopleContext> options) : DbContext(options)
+{
+    public DbSet<Person> People => this.Set<Person>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Person>().Property(person => person.Id).ValueGeneratedNever();
+        modelBuilder.Entity<Person>().Property(person => person.Name).HasMaxLength(50);
+    }
+}
+
+public sealed class Person
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+}
+'@
+
 function Invoke-PackageDotNet([string[]] $Arguments) {
     & dotnet @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Package consumer command failed with exit code ${LASTEXITCODE}: dotnet $($Arguments -join ' ')" }
@@ -158,7 +224,7 @@ function Invoke-PackageDotNet([string[]] $Arguments) {
 
 Push-Location $OutputDirectory
 try {
-    # Verify the native asset on .NET 11 and the .NET 8 consumer's Standard asset on .NET 10.
+    # Verify core native/Standard assets and each EF provider target on its intended runtime.
     # An empty shared package cache and exact source mapping force use of this archive.
     $installedRuntimes = @(Invoke-PackageDotNet @('--list-runtimes'))
     $runtimeVersions = @{}
@@ -169,23 +235,28 @@ try {
         if ($candidates.Count -eq 0) { throw "Package validation requires an installed .NET $major runtime." }
         $runtimeVersions[$major] = $candidates | Sort-Object { [version]($_.Split('-')[0]) }, { -not $_.Contains('-') }, { $_ } -Descending | Select-Object -First 1
     }
-    foreach ($target in 'net11.0', 'net8.0') {
-        $consumer = Join-Path $OutputDirectory $target
+    foreach ($consumerName in 'net11.0', 'net8.0', 'ef-net11.0', 'ef-net10.0') {
+        $isEfConsumer = $consumerName.StartsWith('ef-', [StringComparison]::Ordinal)
+        $target = $consumerName.Replace('ef-', '')
+        $packageId = if ($isEfConsumer) { 'JetDatabaseWriter.EntityFrameworkCore' } else { 'JetDatabaseWriter' }
+        $consumer = Join-Path $OutputDirectory $consumerName
         [IO.Directory]::CreateDirectory($consumer) | Out-Null
         $project = Join-Path $consumer 'PackageConsumer.csproj'
         [IO.File]::WriteAllText($project, @"
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>$target</TargetFramework><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors><CheckForOverflowUnderflow>true</CheckForOverflowUnderflow><NuGetAuditMode>all</NuGetAuditMode></PropertyGroup>
-  <ItemGroup><PackageReference Include="JetDatabaseWriter" Version="[$version]" /></ItemGroup>
+  <ItemGroup><PackageReference Include="$packageId" Version="[$version]" /></ItemGroup>
 </Project>
 "@)
-        [IO.File]::WriteAllText((Join-Path $consumer 'Program.cs'), $source)
+        [IO.File]::WriteAllText((Join-Path $consumer 'Program.cs'), $(if ($isEfConsumer) { $efSource } else { $source }))
         Invoke-PackageDotNet @('restore', $project, '--configfile', $config, '--packages', (Join-Path $OutputDirectory 'packages'), '--no-http-cache')
         Invoke-PackageDotNet @('build', $project, '-c', 'Release', '--no-restore')
         $expectedTarget = if ($target -eq 'net11.0') { '.NETCoreApp,Version=v11.0' } else { '.NETStandard,Version=v2.1' }
         $runtimeMajor = if ($target -eq 'net11.0') { '11' } else { '10' }
-        Invoke-PackageDotNet @('exec', '--roll-forward', 'Disable', '--fx-version', $runtimeVersions[$runtimeMajor], (Join-Path $consumer "bin/Release/$target/PackageConsumer.dll"), $expectedTarget, $runtimeMajor)
+        $executionArguments = @('exec', '--roll-forward', 'Disable', '--fx-version', $runtimeVersions[$runtimeMajor], (Join-Path $consumer "bin/Release/$target/PackageConsumer.dll"), $expectedTarget, $runtimeMajor)
+        if ($isEfConsumer) { $executionArguments += ".NETCoreApp,Version=v$runtimeMajor.0" }
+        Invoke-PackageDotNet $executionArguments
     }
 }
 finally { Pop-Location }
-Write-Host "Shipping package and both consumer assets passed. Outputs: $OutputDirectory"
+Write-Host "Shipping packages, both core assets and both EF provider consumers passed. Outputs: $OutputDirectory"
