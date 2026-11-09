@@ -16,8 +16,10 @@ internal static class ScaffoldNames
     /// <summary>Names that conflict with compiler-generated record members.</summary>
     internal static readonly FrozenSet<string> ReservedTypeNames = EntityEmitter.ReservedMemberNames;
 
-    // Windows treats these basenames as devices even when a .cs extension is present.
-    // Reserve them on every OS so generated class and file names stay portable.
+    /// <summary>
+    /// Windows device basenames, which remain reserved with a .cs extension.
+    /// They are reserved on every OS so generated class and file names stay portable.
+    /// </summary>
     private static readonly FrozenSet<string> ReservedFileNames = new[]
     {
         "CON", "PRN", "AUX", "NUL",
