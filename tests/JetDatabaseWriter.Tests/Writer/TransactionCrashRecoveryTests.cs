@@ -20,26 +20,25 @@ public sealed class TransactionCrashRecoveryTests
     private const string ChildExplicit = "JDW_CRASH_TEST_EXPLICIT";
     private const string Method = "JetDatabaseWriter.Tests.Writer.TransactionCrashRecoveryTests.InterruptedWrites_RecoverExactOriginalBytes";
 
-    [Fact]
-    public async Task InterruptedWrites_RecoverExactOriginalBytes()
-    {
-        if (Environment.GetEnvironmentVariable(ChildPath) is { } childPath)
-        {
-            CrashRecoveryProcess.MarkReady(childPath);
-            await CrashAsync(childPath);
-            Assert.Fail("The requested physical write was never reached.");
-            return;
-        }
+    /// <summary>Gets every independent format and encryption specimen.</summary>
+    public static TheoryData<DatabaseFormat, bool> Specimens =>
+    [
+        (DatabaseFormat.Jet3Mdb, false),
+        (DatabaseFormat.Jet4Mdb, false),
+        (DatabaseFormat.AceAccdb, false),
+        (DatabaseFormat.Jet3Mdb, true),
+        (DatabaseFormat.Jet4Mdb, true),
+        (DatabaseFormat.AceAccdb, true),
+    ];
 
-        foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
-        {
-            await CheckAsync(format, encrypted: false);
-        }
-
-        await CheckAsync(DatabaseFormat.Jet3Mdb, encrypted: true);
-        await CheckAsync(DatabaseFormat.Jet4Mdb, encrypted: true);
-        await CheckAsync(DatabaseFormat.AceAccdb, encrypted: true);
-    }
+    /// <summary>Recovers each format and encryption specimen after all original transaction interruptions.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="encrypted">Whether to use a native encrypted specimen.</param>
+    /// <returns>The test completion.</returns>
+    [Theory]
+    [MemberData(nameof(Specimens))]
+    public Task InterruptedWrites_RecoverExactOriginalBytes(DatabaseFormat format, bool encrypted)
+        => CheckAsync(format, encrypted);
 
     [Fact]
     public async Task ExistingReader_PreventsWriterFromStartingPhysicalMutation()
@@ -66,6 +65,14 @@ public sealed class TransactionCrashRecoveryTests
         {
             File.Delete(path);
         }
+    }
+
+    internal static async Task RunCrashChildAsync()
+    {
+        string path = Environment.GetEnvironmentVariable(ChildPath)!;
+        CrashRecoveryProcess.MarkReady(path);
+        await CrashAsync(path);
+        Assert.Fail("The requested physical write was never reached.");
     }
 
     private static async Task CheckAsync(DatabaseFormat format, bool encrypted)

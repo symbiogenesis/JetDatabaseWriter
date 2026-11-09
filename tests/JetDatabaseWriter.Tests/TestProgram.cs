@@ -9,7 +9,6 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Tests.Writer;
 using Xunit.MicrosoftTestingPlatform;
 using Xunit.Runner.InProc.SystemConsole;
-using Xunit.v3;
 
 /// <summary>Runs ordinary xUnit tests or one isolated process-termination scenario.</summary>
 internal static class TestProgram
@@ -51,11 +50,11 @@ internal static class TestProgram
                 "JetDatabaseWriter.Tests.Writer.CreationCrashRecoveryTests.Publish_ProcessKilled_PreservesCompleteDestination" =>
                     ("JDW_CREATION_CRASH_PATH", static () => new CreationCrashRecoveryTests().Publish_ProcessKilled_PreservesCompleteDestination()),
                 "JetDatabaseWriter.Tests.Writer.TransactionCrashRecoveryTests.InterruptedWrites_RecoverExactOriginalBytes" =>
-                    ("JDW_CRASH_TEST_PATH", static () => new TransactionCrashRecoveryTests().InterruptedWrites_RecoverExactOriginalBytes()),
+                    ("JDW_CRASH_TEST_PATH", TransactionCrashRecoveryTests.RunCrashChildAsync),
                 "JetDatabaseWriter.Tests.Writer.ShrinkCrashRecoveryTests.InterruptedShrink_RecoversExactOriginalOrCommittedImage" =>
                     ("JDW_SHRINK_CRASH_PATH", static () => new ShrinkCrashRecoveryTests().InterruptedShrink_RecoversExactOriginalOrCommittedImage()),
                 "JetDatabaseWriter.Tests.Writer.RecoveryReplayCrashTests.ProcessInterruptedReplay_RestoresOriginalOrKeepsCommittedRawImage" =>
-                    ("JDW_REPLAY_CRASH_PATH", static () => new RecoveryReplayCrashTests(new TestOutputHelper()).ProcessInterruptedReplay_RestoresOriginalOrKeepsCommittedRawImage()),
+                    ("JDW_REPLAY_CRASH_PATH", RecoveryReplayCrashTests.RunCrashChildAsync),
                 "JetDatabaseWriter.Tests.Encryption.ReplacementCrashRecoveryTests.Commit_ProcessKilled_RetainsCompleteImages" =>
                     ("JDW_REPLACEMENT_CRASH_PATH", static () => new ReplacementCrashRecoveryTests().Commit_ProcessKilled_RetainsCompleteImages()),
                 "JetDatabaseWriter.Tests.Encryption.ReplacementCrashRecoveryTests.Recovery_ProcessKilledTwice_CompletesRecordedDecision" =>

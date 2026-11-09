@@ -33,101 +33,94 @@ public sealed class RecoveryReplayCrashTests(ITestOutputHelper output)
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    [Fact]
-    public async Task ProcessInterruptedReplay_RestoresOriginalOrKeepsCommittedRawImage()
-    {
-        if (Environment.GetEnvironmentVariable(ChildPath) is { } childPath)
-        {
-            CrashRecoveryProcess.MarkReady(childPath);
-            await RunChildAsync(childPath);
-            Assert.Fail("The requested recovery boundary was not interrupted.");
-            return;
-        }
+    /// <summary>Gets every independent format and native encryption-provider specimen.</summary>
+    public static TheoryData<DatabaseFormat, string> Specimens =>
+    [
+        (DatabaseFormat.Jet3Mdb, string.Empty),
+        (DatabaseFormat.Jet4Mdb, string.Empty),
+        (DatabaseFormat.AceAccdb, string.Empty),
+        (DatabaseFormat.Jet3Mdb, "UpstreamJet3Rc4.mdb"),
+        (DatabaseFormat.Jet4Mdb, "NativeJet4Rc4.mdb"),
+        (DatabaseFormat.AceAccdb, "NativeAceStandard.accdb"),
+        (DatabaseFormat.AceAccdb, "NativeAceAgile.accdb"),
+    ];
 
-        await this.WithDirectoryAsync(async directory =>
+    /// <summary>Replays all original process interruptions within one independent specimen.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="fixture">The native encrypted fixture, or an empty string for an unencrypted image.</param>
+    /// <returns>The test completion.</returns>
+    [Theory]
+    [MemberData(nameof(Specimens))]
+    public Task ProcessInterruptedReplay_RestoresOriginalOrKeepsCommittedRawImage(DatabaseFormat format, string fixture)
+        => this.WithDirectoryAsync(async directory =>
         {
-            (DatabaseFormat Format, string Fixture)[] images =
-            [
-                (DatabaseFormat.Jet3Mdb, string.Empty),
-                (DatabaseFormat.Jet4Mdb, string.Empty),
-                (DatabaseFormat.AceAccdb, string.Empty),
-                (DatabaseFormat.Jet3Mdb, "UpstreamJet3Rc4.mdb"),
-                (DatabaseFormat.Jet4Mdb, "NativeJet4Rc4.mdb"),
-                (DatabaseFormat.AceAccdb, "NativeAceStandard.accdb"),
-                (DatabaseFormat.AceAccdb, "NativeAceAgile.accdb"),
-            ];
-            for (int index = 0; index < images.Length; index++)
+            string password = Password(format, fixture);
+            string extension = format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb";
+            string baselinePath = Path.Combine(directory, $"baseline{extension}");
+            byte[] original = await CreateImageAsync(baselinePath, format, fixture, password);
+            int pageSize = format == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
+            foreach (string boundary in RollbackBoundaries)
             {
-                (DatabaseFormat format, string fixture) = images[index];
-                string password = Password(format, fixture);
-                string extension = format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb";
-                string baselinePath = Path.Combine(directory, $"baseline-{index}{extension}");
-                byte[] original = await CreateImageAsync(baselinePath, format, fixture, password);
-                int pageSize = format == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
-                foreach (string boundary in RollbackBoundaries)
+                string path = Path.Combine(directory, $"rollback-{boundary}{extension}");
+                File.WriteAllBytes(path, original);
+                PrepareInterruptedImage(path, pageSize);
+                AssertChild(path, password, boundary);
+                if (boundary == "partial-tail")
                 {
-                    string path = Path.Combine(directory, $"rollback-{index}-{boundary}{extension}");
-                    File.WriteAllBytes(path, original);
-                    PrepareInterruptedImage(path, pageSize);
+                    Assert.InRange(new FileInfo(path).Length, original.Length - (2L * pageSize) + 1, original.Length - 1L);
+                }
+
+                if (boundary == "replay-marker")
+                {
+                    byte[] pending = await File.ReadAllBytesAsync(PersistentRollbackJournal.JournalPath(path), Ct);
+                    Assert.Equal(-3, BinaryPrimitives.ReadInt64LittleEndian(pending.AsSpan(pending.Length - pageSize - 40)));
+                }
+
+                bool cleaned = boundary == "after-journal-delete";
+                Assert.Equal(!cleaned, File.Exists(PersistentRollbackJournal.JournalPath(path)));
+                if (!cleaned)
+                {
+                    await RejectReaderAsync(path, password);
+                }
+
+                if (boundary is "partial-page" or "partial-tail" or "decision")
+                {
+                    // Kill a second recovering process against the same evidence.
                     AssertChild(path, password, boundary);
-                    if (boundary == "partial-tail")
-                    {
-                        Assert.InRange(new FileInfo(path).Length, original.Length - (2L * pageSize) + 1, original.Length - 1L);
-                    }
-
-                    if (boundary == "replay-marker")
-                    {
-                        byte[] pending = await File.ReadAllBytesAsync(PersistentRollbackJournal.JournalPath(path), Ct);
-                        Assert.Equal(-3, BinaryPrimitives.ReadInt64LittleEndian(pending.AsSpan(pending.Length - pageSize - 40)));
-                    }
-
-                    bool cleaned = boundary == "after-journal-delete";
-                    Assert.Equal(!cleaned, File.Exists(PersistentRollbackJournal.JournalPath(path)));
-                    if (!cleaned)
-                    {
-                        await RejectReaderAsync(path, password);
-                    }
-
-                    if (boundary is "partial-page" or "partial-tail" or "decision")
-                    {
-                        // Kill a second recovering process against the same evidence.
-                        AssertChild(path, password, boundary);
-                        Assert.True(File.Exists(PersistentRollbackJournal.JournalPath(path)));
-                    }
-
-                    if (boundary is "database-flush" or "decision" or "before-journal-delete" or "after-journal-delete")
-                    {
-                        Assert.Equal(original, await File.ReadAllBytesAsync(path, Ct));
-                    }
-
-                    Assert.Equal(boundary is not "before-journal-delete" and not "after-journal-delete", File.Exists(LockFileSlotWriter.GetLockFilePath(path)));
-                    await AssertReopensAsync(path, password, original, expectedRows: 1);
+                    Assert.True(File.Exists(PersistentRollbackJournal.JournalPath(path)));
                 }
 
-                string committedPath = Path.Combine(directory, $"expected-{index}{extension}");
-                File.WriteAllBytes(committedPath, original);
-                await using (AccessWriter writer = await AccessWriter.OpenAsync(committedPath, Options(password), Ct))
+                if (boundary is "database-flush" or "decision" or "before-journal-delete" or "after-journal-delete")
                 {
-                    await writer.InsertRowAsync("ReplayRows", [2, "committed"], Ct);
+                    Assert.Equal(original, await File.ReadAllBytesAsync(path, Ct));
                 }
 
-                byte[] committed = await File.ReadAllBytesAsync(committedPath, Ct);
-                Assert.NotEqual(original, committed);
-                foreach (string boundary in CleanupBoundaries)
-                {
-                    string path = Path.Combine(directory, $"committed-{index}-{boundary}{extension}");
-                    PrepareCommittedImage(path, original, committed, pageSize);
-                    AssertChild(path, password, boundary);
-                    Assert.Equal(committed, await File.ReadAllBytesAsync(path, Ct));
-                    Assert.Equal(boundary != "after-journal-delete", File.Exists(PersistentRollbackJournal.JournalPath(path)));
-                    await AssertReopensAsync(path, password, committed, expectedRows: 2);
-                }
-
-                Assert.Equal(original, await File.ReadAllBytesAsync(baselinePath, Ct));
-                output.WriteLine($"Completed rollback/committed replay process boundaries for {format}, provider specimen {fixture switch { "" => "unencrypted", _ => fixture }}.");
+                Assert.Equal(boundary is not "before-journal-delete" and not "after-journal-delete", File.Exists(LockFileSlotWriter.GetLockFilePath(path)));
+                await AssertReopensAsync(path, password, original, expectedRows: 1);
             }
+
+            string committedPath = Path.Combine(directory, $"expected{extension}");
+            File.WriteAllBytes(committedPath, original);
+            await using (AccessWriter writer = await AccessWriter.OpenAsync(committedPath, Options(password), Ct))
+            {
+                await writer.InsertRowAsync("ReplayRows", [2, "committed"], Ct);
+            }
+
+            byte[] committed = await File.ReadAllBytesAsync(committedPath, Ct);
+            Assert.NotEqual(original, committed);
+            foreach (string boundary in CleanupBoundaries)
+            {
+                string path = Path.Combine(directory, $"committed-{boundary}{extension}");
+                PrepareCommittedImage(path, original, committed, pageSize);
+                AssertChild(path, password, boundary);
+                Assert.Equal(committed, await File.ReadAllBytesAsync(path, Ct));
+                Assert.Equal(boundary != "after-journal-delete", File.Exists(PersistentRollbackJournal.JournalPath(path)));
+                await AssertReopensAsync(path, password, committed, expectedRows: 2);
+            }
+
+            Assert.Equal(original, await File.ReadAllBytesAsync(baselinePath, Ct));
+            output.WriteLine($"Completed rollback/committed replay process boundaries for {format}, provider specimen {fixture switch { "" => "unencrypted", _ => fixture }}.");
         });
-    }
 
     [Fact]
     public Task InterruptedReplay_ConflictingBytesPreserveDatabaseJournalAndLock()
@@ -223,6 +216,14 @@ public sealed class RecoveryReplayCrashTests(ITestOutputHelper output)
 
             await AssertReopensAsync(path, string.Empty, original, expectedRows: 1);
         });
+
+    internal static async Task RunCrashChildAsync()
+    {
+        string path = Environment.GetEnvironmentVariable(ChildPath)!;
+        CrashRecoveryProcess.MarkReady(path);
+        await RunChildAsync(path);
+        Assert.Fail("The requested recovery boundary was not interrupted.");
+    }
 
     private static string Password(DatabaseFormat format, string fixture)
         => (format, fixture) switch
