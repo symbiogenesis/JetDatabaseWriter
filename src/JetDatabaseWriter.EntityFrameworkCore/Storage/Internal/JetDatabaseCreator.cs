@@ -74,6 +74,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             if (!canConnect)
             {
                 writer = await this.connection.CreateDatabaseWriterAsync(cancellationToken).ConfigureAwait(false);
+                rentedOwned = !string.IsNullOrWhiteSpace(this.connection.DatabasePath);
             }
             else
             {
@@ -118,6 +119,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             if (!canConnect)
             {
                 writer = await this.connection.CreateDatabaseWriterAsync(cancellationToken).ConfigureAwait(false);
+                rentedOwned = !string.IsNullOrWhiteSpace(this.connection.DatabasePath);
                 await this.ExecuteInSchemaTransactionAsync(writer, this.BuildSchemaCoreAsync, cancellationToken).ConfigureAwait(false);
                 return;
             }

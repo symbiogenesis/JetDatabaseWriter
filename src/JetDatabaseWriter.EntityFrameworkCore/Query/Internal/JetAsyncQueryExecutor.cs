@@ -13,7 +13,6 @@ using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
 using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore.Query;
@@ -337,7 +336,7 @@ internal static partial class JetAsyncQueryExecutor
         JetQueryPlan plan,
         IModel model)
     {
-        if (TryBuildBufferSequence<TElement>(query, plan, model, out var bufferExecutor))
+        if (TryBuildBufferSequence<TElement>(query, plan, model, out Func<QueryContext, IAsyncEnumerable<TElement>>? bufferExecutor))
         {
             return bufferExecutor!;
         }
@@ -357,7 +356,7 @@ internal static partial class JetAsyncQueryExecutor
             return bulkExecutor!;
         }
 
-        if (TryBuildStreamingAggregate<TScalar>(query, plan, model, out var aggregateExecutor))
+        if (TryBuildStreamingAggregate<TScalar>(query, plan, model, out Func<QueryContext, Task<TScalar>>? aggregateExecutor))
         {
             return aggregateExecutor!;
         }
@@ -367,7 +366,7 @@ internal static partial class JetAsyncQueryExecutor
             return fastExecutor!;
         }
 
-        if (TryBuildBufferScalar<TScalar>(query, plan, model, out var bufferExecutor))
+        if (TryBuildBufferScalar<TScalar>(query, plan, model, out Func<QueryContext, Task<TScalar>>? bufferExecutor))
         {
             return bufferExecutor!;
         }
@@ -428,7 +427,7 @@ internal static partial class JetAsyncQueryExecutor
         JetQueryPlan plan,
         IModel model)
     {
-        if (TryBuildBufferDelete(sourceExpression, plan, model, out var bufferExecutor))
+        if (TryBuildBufferDelete(sourceExpression, plan, model, out Func<QueryContext, Task<int>>? bufferExecutor))
         {
             return bufferExecutor!;
         }
@@ -505,7 +504,7 @@ internal static partial class JetAsyncQueryExecutor
         JetQueryPlan plan,
         IModel model)
     {
-        if (TryBuildBufferUpdate(sourceExpression, settersExpression, plan, model, out var bufferExecutor))
+        if (TryBuildBufferUpdate(sourceExpression, settersExpression, plan, model, out Func<QueryContext, Task<int>>? bufferExecutor))
         {
             return bufferExecutor!;
         }
@@ -1951,6 +1950,7 @@ internal static partial class JetAsyncQueryExecutor
         return ResultPromoters.GetValue(type, CreateResultPromoter)(value, child => PromoteResultGraph(
             child, queryContext, plan, state, existingTrackedByType, isTracking, rootRowsForIncludes, seenIncludeRoots));
     }
+
     private static object PromoteEntityInstance(
         object candidateEntity,
         ValueBuffer buffer,
