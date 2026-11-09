@@ -1,0 +1,76 @@
+# EF Core query execution
+
+The provider compiles the original query through `JetAsyncQueryExecutor`.
+Its plan records table aliases, required columns, safe scan predicates, join-key
+lookups, ordering and row limits. EF materializers are built during query
+compilation using the registered dependencies. The EF-required translating
+visitor factory rejects shaped-query translation; it does not pretend to
+translate operators that the provider's executor owns.
+
+## Buffer execution and materialization
+
+Scalar property projections, scalar grouping and supported joins operate on
+value buffers without constructing intermediate entities. Unordered single-table
+`Where`, `Select`, `Skip`, `Take` and scalar `Distinct` pipelines stream through
+the connection. Plain entity enumeration constructs a returned entity when its
+row is requested. Blocking operators retain buffers; compiled result shapes
+materialize surviving entity references and honor tracking and identity
+resolution. Scalar grouping retains only columns actually referenced by its
+keys, aggregates, predicates and joins.
+
+`Count` and `LongCount` visit rows with one reusable value buffer. Supported
+single-table `Sum`, `Min`, `Max`, `Average` and `All` use the same visitor contract,
+including nullable and empty-source behavior, checked integral accumulation and
+early termination for `All`. A visitor cannot retain its buffer after returning.
+Streaming consumers receive independent buffers and own a read lease until their
+enumerator is disposed, including cancellation and early exit.
+
+Entity equality, user methods that consume entities, constrained generic shapes,
+inheritance, owned graphs and navigation-dependent shapes can require the general
+entity execution path. These cases preserve CLR and EF behavior rather than
+substituting buffer equality or incomplete entities. Complete entities include
+all mapped properties, including at `First`, `Single` and `Last` terminals and
+inside projected graphs. Result-graph promotion uses weakly cached compiled
+accessors and constructors, including private DTO setters; it does not perform
+member reflection for every result.
+
+Supported single-table bulk mutations rent the writer before selecting buffers.
+They read the key, filter and setter columns, evaluate every assignment against
+the original buffer, deduplicate selected keys and apply atomic writer batches.
+The general path remains available for richer entity graphs and setter shapes.
+
+## Pushdown boundaries
+
+A predicate outside `Skip` or `Take` cannot narrow the scan before that operator.
+An outer match limit cannot become an unfiltered inner limit after a predicate
+boundary. Unknown operators retain full evaluation when the planner cannot prove
+a safe bound. Join provenance permits scalar predicates after inner joins and
+key lookups for later joins in a chain. Inner predicates remain residuals after
+join-key lookup. Outer joins retain null-extension behavior.
+
+Projected root and navigation reads retain key and relationship columns and skip
+unreferenced long values when the result does not require a complete entity.
+Ordered index reads support matching mixed directions and reverse traversal.
+Residual scalar filters run before a matching-row limit. Native text/GUID order,
+value converters, calculated ordering and legacy Numeric key order retain a sort
+fallback where equivalence to the requested CLR order is unqualified.
+
+## Connection and persistence ownership
+
+Connections to the same file or stream coordinate lifecycle transitions and
+acquire per-connection operation leases. A writer rental holds its lease through
+release, so peer invalidation and disposal wait for the operation. Idle file and
+stream writers are reused; switching a peer connection retires idle writer
+state. Reader peers may coexist. Explicit transactions prevent another
+connection from taking over their writer. Schema creation releases its file
+writer when finished.
+
+Generated-value refresh first attempts exact indexed lookup, then evaluates the
+same primary-key criteria through a row scan when the index cannot serve the
+key type or is unavailable. Migration seeding converts model keys to provider
+values, compares binary values structurally, and uses indexed or stop-first
+streamed existence checks. Finalized metadata and CLR mapping attributes are
+weakly cached; mutable model construction continues to observe edits.
+
+The reverse cursor and EF adapters remain reviewed and tested C# components.
+Their tests do not extend the generated recovery or index-kernel proof boundary.
