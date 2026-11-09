@@ -16,6 +16,7 @@ JetDatabaseWriter reads and writes Microsoft Access databases in pure .NET: Jet3
 | Project path | Targets | Role |
 |---|---|---|
 | `src/JetDatabaseWriter` | netstandard2.1, net11.0 | The library and NuGet package |
+| `src/JetDatabaseWriter.EntityFrameworkCore` | net10.0, net11.0 | The Entity Framework Core provider and its NuGet package |
 | `tests/JetDatabaseWriter.Tests` | net11.0; net10.0 with TestNetStandard | xUnit v3 on Microsoft Testing Platform. CI runs the native library on .NET 11 and netstandard2.1 on .NET 10 and .NET 11 |
 | `tests/JetDatabaseWriter.TestSupport` | net10.0, net11.0 | Non-packable helpers that the tests and FormatProbe share |
 | `benchmarks/JetDatabaseWriter.Benchmarks` | net11.0 | BenchmarkDotNet |
