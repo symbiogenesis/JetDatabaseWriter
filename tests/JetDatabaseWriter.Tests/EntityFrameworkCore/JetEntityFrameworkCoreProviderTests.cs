@@ -2548,6 +2548,99 @@ public sealed class JetEntityFrameworkCoreProviderTests
         }
     }
 
+    [Theory]
+    [MemberData(nameof(SupportedFormats))]
+    public async Task ExecuteDeleteAsync_And_ExecuteUpdateAsync_PerformSetBasedBulkMutations_AcrossFormats(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+
+        DbContextOptions<RichModelingDbContext> options = new DbContextOptionsBuilder<RichModelingDbContext>()
+            .UseJetDatabaseWriter(stream, format, leaveOpen: true)
+            .Options;
+
+        await using (RichModelingDbContext setup = new(options))
+        {
+            _ = await setup.Database.EnsureCreatedAsync(ct);
+
+            setup.Suppliers.AddRange(
+                new Supplier
+                {
+                    Name = "Alpha Supply",
+                    Headquarters = new StreetAddress { Street = "100 Main St", City = "Seattle" },
+                    TaxProfile = new SupplierTaxProfile { RegistrationCode = "TAX-100", TaxRate = 0.08m },
+                },
+                new Supplier
+                {
+                    Name = "Beta Supply",
+                    Headquarters = new StreetAddress { Street = "200 Oak Ave", City = "Portland" },
+                    TaxProfile = new SupplierTaxProfile { RegistrationCode = "TAX-200", TaxRate = 0.09m },
+                },
+                new Supplier
+                {
+                    Name = "Gamma Supply",
+                    Headquarters = new StreetAddress { Street = "300 Pine Rd", City = "Seattle" },
+                    TaxProfile = new SupplierTaxProfile { RegistrationCode = "TAX-300", TaxRate = 0.10m },
+                });
+            _ = await setup.SaveChangesAsync(ct);
+        }
+
+        // 1. ExecuteUpdateAsync with scalar expression, EF.Property, ComplexProperty, and table-split OwnsOne
+        await using (RichModelingDbContext mutateContext = new(options))
+        {
+            int updated = await mutateContext.Suppliers
+                .Where(s => s.Headquarters.City == "Seattle")
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(s => EF.Property<string>(s, nameof(Supplier.Name)), s => s.Name + " (PNW)")
+                        .SetProperty(s => s.TaxProfile.TaxRate, s => s.TaxProfile.TaxRate + 0.02m)
+                        .SetProperty(s => s.Headquarters.City, "Bellevue"),
+                    ct);
+            Assert.Equal(2, updated);
+
+            // Modifying primary key in ExecuteUpdateAsync is rejected
+            _ = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await mutateContext.Suppliers.ExecuteUpdateAsync(
+                    setters => setters.SetProperty(s => s.Id, 999),
+                    ct));
+        }
+
+        await using (RichModelingDbContext verifyUpdate = new(options))
+        {
+            List<Supplier> suppliers = await verifyUpdate.Suppliers
+                .AsNoTracking()
+                .OrderBy(s => s.Id)
+                .ToListAsync(ct);
+            Assert.Equal(3, suppliers.Count);
+            Assert.Equal("Alpha Supply (PNW)", suppliers[0].Name);
+            Assert.Equal("Bellevue", suppliers[0].Headquarters.City);
+            Assert.Equal(0.10m, suppliers[0].TaxProfile.TaxRate);
+            Assert.Equal("Beta Supply", suppliers[1].Name);
+            Assert.Equal("Portland", suppliers[1].Headquarters.City);
+            Assert.Equal(0.09m, suppliers[1].TaxProfile.TaxRate);
+            Assert.Equal("Gamma Supply (PNW)", suppliers[2].Name);
+            Assert.Equal("Bellevue", suppliers[2].Headquarters.City);
+            Assert.Equal(0.12m, suppliers[2].TaxProfile.TaxRate);
+        }
+
+        // 2. ExecuteDeleteAsync with predicate and unpredicated bulk delete
+        await using (RichModelingDbContext deleteContext = new(options))
+        {
+            int deletedBellevue = await deleteContext.Suppliers
+                .Where(s => s.Headquarters.City == "Bellevue")
+                .ExecuteDeleteAsync(ct);
+            Assert.Equal(2, deletedBellevue);
+
+            List<Supplier> remaining = await deleteContext.Suppliers.AsNoTracking().ToListAsync(ct);
+            Supplier singleRemaining = Assert.Single(remaining);
+            Assert.Equal("Beta Supply", singleRemaining.Name);
+
+            int deletedAll = await deleteContext.Suppliers.ExecuteDeleteAsync(ct);
+            Assert.Equal(1, deletedAll);
+            Assert.Equal(0, await deleteContext.Suppliers.CountAsync(ct));
+        }
+    }
+
     private sealed class RichModelingDbContext(DbContextOptions<RichModelingDbContext> options) : DbContext(options)
     {
         public DbSet<Supplier> Suppliers => this.Set<Supplier>();

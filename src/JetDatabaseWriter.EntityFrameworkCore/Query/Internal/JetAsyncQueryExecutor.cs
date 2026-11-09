@@ -10,6 +10,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
+using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -53,6 +54,16 @@ internal static class JetAsyncQueryExecutor
     private static readonly MethodInfo BuildSyncScalarExecutorMethod =
         typeof(JetAsyncQueryExecutor).GetMethod(
             nameof(BuildSyncScalarExecutor),
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly MethodInfo BuildExecuteDeleteExecutorMethod =
+        typeof(JetAsyncQueryExecutor).GetMethod(
+            nameof(BuildExecuteDeleteExecutor),
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly MethodInfo BuildExecuteUpdateExecutorMethod =
+        typeof(JetAsyncQueryExecutor).GetMethod(
+            nameof(BuildExecuteUpdateExecutor),
             BindingFlags.NonPublic | BindingFlags.Static)!;
 
     private static readonly MethodInfo ReadValueBufferPropertyMethod =
@@ -129,17 +140,30 @@ internal static class JetAsyncQueryExecutor
         {
             Type elementType = resultType.GetGenericArguments()[0];
             MethodInfo genericMethod = BuildSequenceExecutorMethod.MakeGenericMethod(elementType);
-            return (Func<QueryContext, TResult>)genericMethod.Invoke(null, [query, plan, model])!;
+            return InvokeBuilderMethod<Func<QueryContext, TResult>>(genericMethod, [query, plan, model]);
         }
 
         if (resultType.IsGenericType && resultType.GetGenericTypeDefinition() == typeof(Task<>))
         {
             Type scalarType = resultType.GetGenericArguments()[0];
             MethodInfo genericMethod = BuildScalarExecutorMethod.MakeGenericMethod(scalarType);
-            return (Func<QueryContext, TResult>)genericMethod.Invoke(null, [query, plan, model])!;
+            return InvokeBuilderMethod<Func<QueryContext, TResult>>(genericMethod, [query, plan, model]);
         }
 
         throw new NotSupportedException($"Unsupported asynchronous query result type '{resultType}'.");
+    }
+
+    private static TDelegate InvokeBuilderMethod<TDelegate>(MethodInfo method, object?[] args)
+    {
+        try
+        {
+            return (TDelegate)method.Invoke(null, args)!;
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+            throw;
+        }
     }
 
     private static Func<QueryContext, TResult> CompileSync<TResult>(
@@ -322,6 +346,11 @@ internal static class JetAsyncQueryExecutor
         JetQueryPlan plan,
         IModel model)
     {
+        if (TryBuildExecuteDeleteOrUpdateExecutor<TScalar>(query, plan, model, out Func<QueryContext, Task<TScalar>>? bulkExecutor))
+        {
+            return bulkExecutor!;
+        }
+
         if (TryBuildEntityFreeAggregateExecutor<TScalar>(query, plan, out Func<QueryContext, Task<TScalar>>? fastExecutor))
         {
             return fastExecutor!;
@@ -330,6 +359,435 @@ internal static class JetAsyncQueryExecutor
         Func<QueryContext, JetExecutionMaterializedState, TScalar> compiledQuery =
             CompileScalarDelegate<TScalar>(query, plan, model);
         return queryContext => ExecuteScalarAsync(queryContext, plan, compiledQuery);
+    }
+
+    private static bool TryBuildExecuteDeleteOrUpdateExecutor<TScalar>(
+        Expression query,
+        JetQueryPlan plan,
+        IModel model,
+        out Func<QueryContext, Task<TScalar>>? executor)
+    {
+        executor = null;
+        if (typeof(TScalar) != typeof(int))
+        {
+            return false;
+        }
+
+        Expression current = UnwrapEfQueryModifiers(query);
+        if (current is not MethodCallExpression bulkCall
+            || bulkCall.Method.DeclaringType != typeof(EntityFrameworkQueryableExtensions))
+        {
+            return false;
+        }
+
+        if (bulkCall.Method.Name == nameof(EntityFrameworkQueryableExtensions.ExecuteDelete)
+            && bulkCall.Arguments.Count == 1
+            && bulkCall.Method.IsGenericMethod)
+        {
+            Type sourceType = bulkCall.Method.GetGenericArguments()[0];
+            MethodInfo genericMethod = BuildExecuteDeleteExecutorMethod.MakeGenericMethod(sourceType);
+            Func<QueryContext, Task<int>> deleteDelegate =
+                InvokeBuilderMethod<Func<QueryContext, Task<int>>>(genericMethod, [bulkCall.Arguments[0], plan, model]);
+            executor = (Func<QueryContext, Task<TScalar>>)(object)deleteDelegate;
+            return true;
+        }
+
+        if (bulkCall.Method.Name == nameof(EntityFrameworkQueryableExtensions.ExecuteUpdate)
+            && bulkCall.Arguments.Count == 2
+            && bulkCall.Method.IsGenericMethod)
+        {
+            Type sourceType = bulkCall.Method.GetGenericArguments()[0];
+            MethodInfo genericMethod = BuildExecuteUpdateExecutorMethod.MakeGenericMethod(sourceType);
+            Func<QueryContext, Task<int>> updateDelegate =
+                InvokeBuilderMethod<Func<QueryContext, Task<int>>>(genericMethod, [bulkCall.Arguments[0], bulkCall.Arguments[1], plan, model]);
+            executor = (Func<QueryContext, Task<TScalar>>)(object)updateDelegate;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static Func<QueryContext, Task<int>> BuildExecuteDeleteExecutor<TSource>(
+        Expression sourceExpression,
+        JetQueryPlan plan,
+        IModel model)
+    {
+        IEntityType entityType = ResolveBulkTargetEntityType<TSource>(sourceExpression, model);
+        IEntityType rootType = entityType.GetRootType();
+        IKey primaryKey = rootType.FindPrimaryKey()
+            ?? throw new InvalidOperationException(
+                $"Entity type '{rootType.DisplayName()}' does not define a primary key required for ExecuteDeleteAsync.");
+        string tableName = JetEntityTypeMetadata.GetTableName(rootType);
+        Func<QueryContext, JetExecutionMaterializedState, IEnumerable<TSource>> compiledSource =
+            CompileSequenceDelegate<TSource>(sourceExpression, plan, model);
+
+        return async queryContext =>
+        {
+            CancellationToken ct = queryContext.CancellationToken;
+            ct.ThrowIfCancellationRequested();
+
+            var jetContext = (JetQueryContext)queryContext;
+            JetExecutionMaterializedState state = await LoadRootTablesAndQueryNavigationsAsync(
+                queryContext,
+                plan,
+                isTracking: false,
+                resolveIdentityUntracked: false,
+                ct).ConfigureAwait(false);
+
+            List<RowCriteria> criteriaList = [];
+            HashSet<StructuralKey> seenKeys = [];
+            foreach (TSource item in compiledSource(queryContext, state))
+            {
+                if (item is not object entityObj
+                    || !state.EntityBuffers.TryGetValue(entityObj, out ValueBuffer buffer))
+                {
+                    continue;
+                }
+
+                StructuralKey key = ExtractKey(primaryKey, buffer);
+                if (!seenKeys.Add(key))
+                {
+                    continue;
+                }
+
+                RowCriteria keyCriteria = [];
+                for (int i = 0; i < primaryKey.Properties.Count; i++)
+                {
+                    IProperty pkProp = primaryKey.Properties[i];
+                    string colName = JetEntityTypeMetadata.GetColumnName(pkProp);
+                    keyCriteria.Add(ColumnPredicate.EqualTo(colName, JetEntityTypeMetadata.ConvertToProvider(pkProp, key.Values[i])));
+                }
+
+                criteriaList.Add(keyCriteria);
+            }
+
+            if (criteriaList.Count == 0)
+            {
+                return 0;
+            }
+
+            (AccessWriter writer, bool ownedByCaller) = await jetContext.Connection.RentWriterAsync(ct).ConfigureAwait(false);
+            try
+            {
+                return await writer.DeleteRowsAsync(tableName, criteriaList, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                await jetContext.Connection.ReleaseWriterAsync(writer, ownedByCaller).ConfigureAwait(false);
+            }
+        };
+    }
+
+    private static Func<QueryContext, Task<int>> BuildExecuteUpdateExecutor<TSource>(
+        Expression sourceExpression,
+        Expression settersExpression,
+        JetQueryPlan plan,
+        IModel model)
+    {
+        IEntityType entityType = ResolveBulkTargetEntityType<TSource>(sourceExpression, model);
+        IEntityType rootType = entityType.GetRootType();
+        IKey primaryKey = rootType.FindPrimaryKey()
+            ?? throw new InvalidOperationException(
+                $"Entity type '{rootType.DisplayName()}' does not define a primary key required for ExecuteUpdateAsync.");
+        string rootTableName = JetEntityTypeMetadata.GetTableName(rootType);
+
+        Expression unwrappedSetters = StripQuotesAndObjectConvert(settersExpression);
+        if (unwrappedSetters is not NewArrayExpression newArrayExpr || newArrayExpr.Expressions.Count == 0)
+        {
+            throw new InvalidOperationException("At least one SetProperty call is required for ExecuteUpdate.");
+        }
+
+        List<(IProperty Property, Func<QueryContext, JetExecutionMaterializedState, TSource, object?> ValueEvaluator)> compiledSetters = [];
+        foreach (Expression elementExpr in newArrayExpr.Expressions)
+        {
+            Expression unwrappedElement = StripQuotesAndObjectConvert(elementExpr);
+            if (unwrappedElement is not NewExpression { Arguments.Count: 2 } tupleNew)
+            {
+                throw new NotSupportedException($"Unsupported ExecuteUpdate setter expression '{elementExpr}'.");
+            }
+
+            Expression propSelectorArg = StripQuotesAndObjectConvert(tupleNew.Arguments[0]);
+            Expression valueArg = StripQuotesAndObjectConvert(tupleNew.Arguments[1]);
+            if (propSelectorArg is not LambdaExpression { Parameters.Count: 1 } propLambda)
+            {
+                throw new NotSupportedException($"Unsupported ExecuteUpdate property selector '{propSelectorArg}'.");
+            }
+
+            IProperty targetProp = ResolveTargetPropertyForUpdate(rootType, model, propLambda);
+            if (targetProp.IsPrimaryKey())
+            {
+                throw new InvalidOperationException(
+                    $"The property '{targetProp.DeclaringType.DisplayName()}.{targetProp.Name}' is part of a primary key and cannot be modified by ExecuteUpdate.");
+            }
+
+            if (JetEntityTypeMetadata.GetCalculatedExpression(targetProp) is not null)
+            {
+                throw new InvalidOperationException(
+                    $"The calculated property '{targetProp.DeclaringType.DisplayName()}.{targetProp.Name}' cannot be modified by ExecuteUpdate.");
+            }
+
+            Func<QueryContext, JetExecutionMaterializedState, TSource, object?> valueEvaluator =
+                CompileUpdateValueEvaluator<TSource>(valueArg, targetProp.ClrType, model, plan);
+            compiledSetters.Add((targetProp, valueEvaluator));
+        }
+
+        Func<QueryContext, JetExecutionMaterializedState, IEnumerable<TSource>> compiledSource =
+            CompileSequenceDelegate<TSource>(sourceExpression, plan, model);
+
+        return async queryContext =>
+        {
+            CancellationToken ct = queryContext.CancellationToken;
+            ct.ThrowIfCancellationRequested();
+
+            var jetContext = (JetQueryContext)queryContext;
+            JetExecutionMaterializedState state = await LoadRootTablesAndQueryNavigationsAsync(
+                queryContext,
+                plan,
+                isTracking: false,
+                resolveIdentityUntracked: false,
+                ct).ConfigureAwait(false);
+
+            Dictionary<string, List<RowUpdate>> updatesByTable = [with(StringComparer.OrdinalIgnoreCase)];
+            HashSet<StructuralKey> seenKeys = [];
+            int matchedCount = 0;
+
+            foreach (TSource item in compiledSource(queryContext, state))
+            {
+                if (item is not object entityObj
+                    || !state.EntityBuffers.TryGetValue(entityObj, out ValueBuffer buffer))
+                {
+                    continue;
+                }
+
+                StructuralKey key = ExtractKey(primaryKey, buffer);
+                if (!seenKeys.Add(key))
+                {
+                    continue;
+                }
+
+                matchedCount++;
+                Dictionary<string, (IKey TableKey, RowValues ColumnChanges)> rowChangesByTable =
+                    [with(StringComparer.OrdinalIgnoreCase)];
+
+                foreach ((IProperty targetProp, Func<QueryContext, JetExecutionMaterializedState, TSource, object?> evaluator) in compiledSetters)
+                {
+                    IEntityType declaringEntity = targetProp.DeclaringType.ContainingEntityType;
+                    IEntityType tableOwner = JetEntityTypeMetadata.GetTableOwnerEntityType(declaringEntity);
+                    string targetTableName = JetEntityTypeMetadata.GetTableName(tableOwner);
+                    IKey targetTableKey = tableOwner.FindPrimaryKey() ?? primaryKey;
+
+                    if (!rowChangesByTable.TryGetValue(
+                        targetTableName,
+                        out (IKey TableKey, RowValues ColumnChanges) tableEntry))
+                    {
+                        tableEntry = (targetTableKey, []);
+                        rowChangesByTable[targetTableName] = tableEntry;
+                    }
+
+                    object? evaluatedValue = evaluator(queryContext, state, item);
+                    string colName = JetEntityTypeMetadata.GetColumnName(targetProp);
+                    tableEntry.ColumnChanges[colName] = JetEntityTypeMetadata.ConvertToProvider(targetProp, evaluatedValue);
+                }
+
+                foreach (KeyValuePair<string, (IKey TableKey, RowValues ColumnChanges)> kvp in rowChangesByTable)
+                {
+                    IKey tableKey = kvp.Value.TableKey;
+                    RowCriteria keyCriteria = [];
+                    int keyCount = Math.Min(tableKey.Properties.Count, key.Values.Length);
+                    for (int i = 0; i < keyCount; i++)
+                    {
+                        IProperty pkProp = tableKey.Properties[i];
+                        string pkColName = JetEntityTypeMetadata.GetColumnName(pkProp);
+                        keyCriteria.Add(ColumnPredicate.EqualTo(pkColName, JetEntityTypeMetadata.ConvertToProvider(pkProp, key.Values[i])));
+                    }
+
+                    if (!updatesByTable.TryGetValue(kvp.Key, out List<RowUpdate>? list))
+                    {
+                        list = [];
+                        updatesByTable[kvp.Key] = list;
+                    }
+
+                    list.Add(new RowUpdate(keyCriteria, kvp.Value.ColumnChanges));
+                }
+            }
+
+            if (matchedCount == 0)
+            {
+                return 0;
+            }
+
+            (AccessWriter writer, bool ownedByCaller) = await jetContext.Connection.RentWriterAsync(ct).ConfigureAwait(false);
+            try
+            {
+                int primaryUpdated = 0;
+                foreach (KeyValuePair<string, List<RowUpdate>> kvp in updatesByTable)
+                {
+                    int updated = await writer.UpdateRowsAsync(kvp.Key, kvp.Value, ct).ConfigureAwait(false);
+                    if (string.Equals(kvp.Key, rootTableName, StringComparison.OrdinalIgnoreCase) || primaryUpdated == 0)
+                    {
+                        primaryUpdated = updated;
+                    }
+                }
+
+                return primaryUpdated;
+            }
+            finally
+            {
+                await jetContext.Connection.ReleaseWriterAsync(writer, ownedByCaller).ConfigureAwait(false);
+            }
+        };
+    }
+
+    private static IEntityType ResolveBulkTargetEntityType<TSource>(Expression sourceExpression, IModel model)
+    {
+        IEntityType? byClrType = model.FindEntityType(typeof(TSource));
+        if (byClrType is not null)
+        {
+            return byClrType;
+        }
+
+        Expression current = sourceExpression;
+        while (current is MethodCallExpression call && call.Arguments.Count > 0)
+        {
+            current = call.Arguments[0];
+        }
+
+        if (current is EntityQueryRootExpression root)
+        {
+            return root.EntityType;
+        }
+
+        throw new InvalidOperationException(
+            $"The query target '{typeof(TSource).Name}' is not a mapped entity type in the current model.");
+    }
+
+    private static IProperty ResolveTargetPropertyForUpdate(
+        IEntityType rootType,
+        IModel model,
+        LambdaExpression propLambda)
+    {
+        ParameterExpression rootParam = propLambda.Parameters[0];
+        Expression body = StripQuotesAndObjectConvert(propLambda.Body);
+
+        if (body is MethodCallExpression efPropCall
+            && efPropCall.Method.DeclaringType == typeof(EF)
+            && efPropCall.Method.Name == nameof(EF.Property)
+            && efPropCall.Arguments.Count == 2
+            && StripQuotesAndObjectConvert(efPropCall.Arguments[1]) is ConstantExpression { Value: string efPropName })
+        {
+            ITypeBase? receiverType = ResolveStructuralTypeChain(rootType, model, rootParam, efPropCall.Arguments[0]);
+            IProperty? efProp = receiverType?.FindProperty(efPropName);
+            if (efProp is not null)
+            {
+                return efProp;
+            }
+        }
+
+        if (body is MemberExpression leafMember && leafMember.Expression is not null)
+        {
+            ITypeBase? receiverType = ResolveStructuralTypeChain(rootType, model, rootParam, leafMember.Expression);
+            IProperty? resolvedProp = receiverType?.FindProperty(leafMember.Member);
+            if (resolvedProp is not null)
+            {
+                return resolvedProp;
+            }
+        }
+
+        throw new NotSupportedException(
+            $"The property selector '{propLambda}' in ExecuteUpdate could not be resolved to a mapped scalar property.");
+    }
+
+    private static ITypeBase? ResolveStructuralTypeChain(
+        IEntityType rootType,
+        IModel model,
+        ParameterExpression rootParam,
+        Expression receiverExpression)
+    {
+        List<MemberInfo> members = [];
+        Expression? current = StripQuotesAndObjectConvert(receiverExpression);
+        while (current is MemberExpression memberExpr && memberExpr.Expression is not null)
+        {
+            members.Add(memberExpr.Member);
+            current = StripQuotesAndObjectConvert(memberExpr.Expression);
+        }
+
+        if (!ReferenceEquals(current, rootParam))
+        {
+            return null;
+        }
+
+        ITypeBase currentType = model.FindEntityType(rootParam.Type) ?? rootType;
+        for (int i = members.Count - 1; i >= 0; i--)
+        {
+            MemberInfo step = members[i];
+            IComplexProperty? complexProp = currentType.FindComplexProperty(step);
+            if (complexProp is not null)
+            {
+                currentType = complexProp.ComplexType;
+                continue;
+            }
+
+            if (currentType is IEntityType entityStep)
+            {
+                INavigation? nav = entityStep.FindNavigation(step);
+                if (nav is { TargetEntityType: { } targetEntity } && targetEntity.IsOwned())
+                {
+                    currentType = targetEntity;
+                    continue;
+                }
+            }
+
+            return null;
+        }
+
+        return currentType;
+    }
+
+    private static Func<QueryContext, JetExecutionMaterializedState, TSource, object?> CompileUpdateValueEvaluator<TSource>(
+        Expression valueArg,
+        Type propertyClrType,
+        IModel model,
+        JetQueryPlan plan)
+    {
+        ParameterExpression qcParam = Expression.Parameter(typeof(QueryContext), "queryContext");
+        ParameterExpression stateParam = Expression.Parameter(typeof(JetExecutionMaterializedState), "state");
+        ParameterExpression entityParam = Expression.Parameter(typeof(TSource), "entity");
+
+        JetCompiledExpressionRewriter rewriter = new(
+            qcParam,
+            stateParam,
+            model,
+            plan.RootPlansByExpression,
+            plan.IgnoreQueryFilters);
+
+        Expression valueBody;
+        if (valueArg is LambdaExpression { Parameters.Count: 1 } valueLambda)
+        {
+            var rewrittenLambda = (LambdaExpression)rewriter.Visit(valueLambda);
+            Expression paramReplacement = rewrittenLambda.Parameters[0].Type == typeof(TSource)
+                ? entityParam
+                : Expression.Convert(entityParam, rewrittenLambda.Parameters[0].Type);
+            valueBody = new ExpressionReplacer(rewrittenLambda.Parameters[0], paramReplacement)
+                .Visit(rewrittenLambda.Body)!;
+        }
+        else
+        {
+            valueBody = rewriter.Visit(valueArg);
+        }
+
+        if (valueBody.Type != propertyClrType && propertyClrType.IsAssignableFrom(valueBody.Type))
+        {
+            valueBody = Expression.Convert(valueBody, propertyClrType);
+        }
+
+        Expression boxed = valueBody.Type.IsValueType
+            ? Expression.Convert(valueBody, typeof(object))
+            : valueBody;
+        return Expression.Lambda<Func<QueryContext, JetExecutionMaterializedState, TSource, object?>>(
+            boxed,
+            qcParam,
+            stateParam,
+            entityParam).Compile();
     }
 
     private static Expression StripQuotesAndObjectConvert(Expression expression)
