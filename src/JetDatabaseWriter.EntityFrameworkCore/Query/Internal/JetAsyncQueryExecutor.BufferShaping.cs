@@ -79,7 +79,7 @@ internal static partial class JetAsyncQueryExecutor
         Func<TBuffer, BufferResultScope, TResult> materialize,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        Dictionary<int, IReadOnlyList<ValueBuffer>> roots = await LoadBufferRootsAsync(context, plan).ConfigureAwait(false);
+        Dictionary<int, IReadOnlyList<ValueBuffer>> roots = await LoadBufferRootsAsync(context, plan, cancellationToken).ConfigureAwait(false);
         BufferResultScope scope = new(context, plan);
         foreach (TBuffer item in evaluate(context, roots))
         {

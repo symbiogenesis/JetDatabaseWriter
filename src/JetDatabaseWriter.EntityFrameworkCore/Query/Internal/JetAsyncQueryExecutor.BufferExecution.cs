@@ -154,7 +154,7 @@ internal static partial class JetAsyncQueryExecutor
         Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TElement>> evaluate,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        Dictionary<int, IReadOnlyList<ValueBuffer>> roots = await LoadBufferRootsAsync(context, plan).ConfigureAwait(false);
+        Dictionary<int, IReadOnlyList<ValueBuffer>> roots = await LoadBufferRootsAsync(context, plan, cancellationToken).ConfigureAwait(false);
         foreach (TElement element in evaluate(context, roots))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -163,8 +163,17 @@ internal static partial class JetAsyncQueryExecutor
         }
     }
 
-    private static async Task<Dictionary<int, IReadOnlyList<ValueBuffer>>> LoadBufferRootsAsync(QueryContext context, JetQueryPlan plan)
+    private static async Task<Dictionary<int, IReadOnlyList<ValueBuffer>>> LoadBufferRootsAsync(
+        QueryContext context,
+        JetQueryPlan plan,
+        CancellationToken cancellationToken = default)
     {
+        CancellationToken contextToken = context.CancellationToken;
+        using CancellationTokenSource? linkedCancellation = cancellationToken.CanBeCanceled && contextToken.CanBeCanceled && cancellationToken != contextToken
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, contextToken)
+            : null;
+        CancellationToken effectiveToken = linkedCancellation?.Token ?? (cancellationToken.CanBeCanceled ? cancellationToken : contextToken);
+        effectiveToken.ThrowIfCancellationRequested();
         Dictionary<int, IReadOnlyList<ValueBuffer>> roots = [];
         foreach (JetTableLoadPlan table in plan.RootTables)
         {
@@ -184,7 +193,7 @@ internal static partial class JetAsyncQueryExecutor
                     join.InnerKeyProperties,
                     keys.Select(static k => k.Values).ToArray(),
                     table.RequiredProperties,
-                    context.CancellationToken).ConfigureAwait(false);
+                    effectiveToken).ConfigureAwait(false);
                 roots[table.RootId] = table.ValueBufferRowFilter is { } predicate ? matches.Where(row => predicate(context, row)).ToArray() : matches;
             }
             else
@@ -197,7 +206,7 @@ internal static partial class JetAsyncQueryExecutor
                     table.CandidateRowFilter is null ? table.MaxRowsEvaluator?.Invoke(context.Parameters) : null,
                     table.OrderedProperties,
                     table.ValueBufferRowFilter is { } filter ? row => filter(context, row) : null,
-                    context.CancellationToken).ConfigureAwait(false);
+                    effectiveToken).ConfigureAwait(false);
             }
         }
 
