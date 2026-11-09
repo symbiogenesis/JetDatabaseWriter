@@ -184,14 +184,14 @@ public interface IJetClientConnection : IAsyncDisposable, IDisposable
 
     /// <summary>
     /// Reads up to <paramref name="maxRows"/> matching rows for <paramref name="entityType"/> as <see cref="ValueBuffer"/> instances,
-    /// optionally using an index-ordered scan for <paramref name="orderedAscendingProperties"/> and evaluating <paramref name="rowFilter"/> before counting toward <paramref name="maxRows"/>.
+    /// optionally using an index-ordered scan for <paramref name="orderedProperties"/> and evaluating <paramref name="rowFilter"/> before counting toward <paramref name="maxRows"/>.
     /// </summary>
     /// <param name="entityType">The EF Core entity type to read.</param>
     /// <param name="seekConditions">Optional index seek conditions extracted from the query.</param>
     /// <param name="parameters">The current query parameter values.</param>
     /// <param name="requiredProperties">Optional set of properties required by the query projection.</param>
     /// <param name="maxRows">Optional maximum number of matching rows to read before short-circuiting the scan.</param>
-    /// <param name="orderedAscendingProperties">Optional leading ascending sort properties that may be satisfied by an index scan.</param>
+    /// <param name="orderedProperties">Optional leading ascending sort properties that may be satisfied by an index scan.</param>
     /// <param name="rowFilter">Optional row filter evaluated on each decoded <see cref="ValueBuffer"/> before counting toward <paramref name="maxRows"/>.</param>
     /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
     /// <returns>The loaded <see cref="ValueBuffer"/> rows.</returns>
@@ -201,8 +201,50 @@ public interface IJetClientConnection : IAsyncDisposable, IDisposable
         IReadOnlyDictionary<string, object?> parameters,
         IReadOnlySet<IProperty>? requiredProperties,
         int? maxRows,
-        IReadOnlyList<IProperty>? orderedAscendingProperties,
+        IReadOnlyList<JetOrdering>? orderedProperties,
         Func<ValueBuffer, bool>? rowFilter,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Streams matching rows without retaining the table before the first result is yielded.
+    /// The enumerator owns its read lease until disposal.
+    /// </summary>
+    /// <param name="entityType">The EF entity type.</param>
+    /// <param name="seekConditions">Optional index seek conditions.</param>
+    /// <param name="parameters">The runtime query parameters.</param>
+    /// <param name="requiredProperties">The properties required by the query.</param>
+    /// <param name="maxRows">The maximum matching rows when the requested order can be supplied.</param>
+    /// <param name="orderedProperties">Optional leading sort properties and directions.</param>
+    /// <param name="rowFilter">The residual filter evaluated before counting matching rows.</param>
+    /// <param name="cancellationToken">Cancels scan acquisition and enumeration.</param>
+    /// <returns>The lazy row sequence.</returns>
+    public IAsyncEnumerable<ValueBuffer> StreamTableValueBuffersAsync(
+        IEntityType entityType,
+        IReadOnlyList<JetIndexSeekCondition>? seekConditions,
+        IReadOnlyDictionary<string, object?> parameters,
+        IReadOnlySet<IProperty>? requiredProperties,
+        int? maxRows,
+        IReadOnlyList<JetOrdering>? orderedProperties,
+        Func<ValueBuffer, bool>? rowFilter,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Visits matching table rows using a reusable value buffer. The visitor must not retain
+    /// the buffer or its backing array after returning; returning false stops the scan.
+    /// </summary>
+    /// <param name="entityType">The EF entity type.</param>
+    /// <param name="seekConditions">Optional index seek conditions.</param>
+    /// <param name="parameters">The runtime query parameters.</param>
+    /// <param name="requiredProperties">The properties required by the query.</param>
+    /// <param name="visitor">The synchronous visitor, whose buffer is valid only during its call.</param>
+    /// <param name="cancellationToken">Cancels scan acquisition and enumeration.</param>
+    /// <returns>A task representing the scan.</returns>
+    public ValueTask ScanTableRowsAsync(
+        IEntityType entityType,
+        IReadOnlyList<JetIndexSeekCondition>? seekConditions,
+        IReadOnlyDictionary<string, object?> parameters,
+        IReadOnlySet<IProperty>? requiredProperties,
+        Func<ValueBuffer, bool> visitor,
         CancellationToken cancellationToken = default);
 
     /// <summary>

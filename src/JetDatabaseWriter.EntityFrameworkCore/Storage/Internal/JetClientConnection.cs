@@ -5,8 +5,10 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq.Expressions;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Threading.Channels;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.EntityFrameworkCore.Infrastructure.Internal;
 using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
@@ -29,12 +31,16 @@ public sealed class JetClientConnection : IJetClientConnection
     private static readonly ConcurrentDictionary<Type, object> BoxedDefaultValues = [];
 
     private readonly SemaphoreSlim connectionGate = new(1, 1);
+#pragma warning disable CA2213 // Shared by every live connection to this target; disposing one connection must preserve peers and pending acquisitions.
+    private readonly SemaphoreSlim lifecycleGate;
+#pragma warning restore CA2213
     private readonly List<(string Name, JetTransaction Scope)> savepoints = [];
     private readonly JetOptionsExtension optionsExtension;
     private readonly string? normalizedDatabasePath;
     private Stream? resolvedStream;
     private AccessReader? activeReader;
     private AccessWriter? cachedWriter;
+    private bool writerRented;
     private bool disposed;
 
     /// <summary>
@@ -52,7 +58,12 @@ public sealed class JetClientConnection : IJetClientConnection
             this.normalizedDatabasePath = Path.GetFullPath(this.optionsExtension.DatabasePath);
         }
 
-        RegisterConnection(this);
+        if (this.normalizedDatabasePath is null)
+        {
+            _ = this.GetOrCreateStream();
+        }
+
+        this.lifecycleGate = RegisterConnection(this);
     }
 
     /// <inheritdoc/>
@@ -72,367 +83,256 @@ public sealed class JetClientConnection : IJetClientConnection
     /// <inheritdoc/>
     public async ValueTask<AccessReader> GetReaderAsync(CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(this.disposed, this);
-
-        await this.connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
             return await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            this.connectionGate.Release();
+            this.ExitLifecycle();
         }
     }
 
     /// <inheritdoc/>
     public async ValueTask CloseReaderAsync()
     {
-        try
-        {
-            await this.connectionGate.WaitAsync().ConfigureAwait(false);
-        }
-        catch (ObjectDisposedException)
+        if (this.disposed)
         {
             return;
         }
 
+        await this.lifecycleGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            await this.CloseReaderCoreAsync().ConfigureAwait(false);
+            if (this.disposed)
+            {
+                return;
+            }
+
+            await this.connectionGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                await this.CloseReaderCoreAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                this.connectionGate.Release();
+            }
         }
         finally
         {
-            this.connectionGate.Release();
+            this.lifecycleGate.Release();
         }
     }
 
     /// <inheritdoc/>
     public async ValueTask<(AccessWriter Writer, bool OwnedByCaller)> RentWriterAsync(CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(this.disposed, this);
-
-        if (this.ActiveWriter is not null)
+        await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            return (this.ActiveWriter, false);
-        }
+            if (this.ActiveWriter is null && this.cachedWriter is null)
+            {
+                await this.CloseAllReadersForSameTargetAsync(cancellationToken).ConfigureAwait(false);
+                this.cachedWriter = await this.OpenWriterCoreAsync(cancellationToken).ConfigureAwait(false);
+            }
 
-        if (this.cachedWriter is not null)
+            this.writerRented = true;
+            return (this.ActiveWriter ?? this.cachedWriter!, false);
+        }
+        catch
         {
-            return (this.cachedWriter, false);
+            this.connectionGate.Release();
+            throw;
         }
-
-        await this.CloseAllReadersForSameTargetAsync().ConfigureAwait(false);
-        AccessWriter writer = await this.OpenWriterCoreAsync(cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+        finally
         {
-            this.cachedWriter = writer;
-            return (writer, false);
+            this.lifecycleGate.Release();
         }
-
-        return (writer, true);
     }
 
     /// <inheritdoc/>
     public async ValueTask ReleaseWriterAsync(AccessWriter writer, bool ownedByCaller)
     {
         ArgumentNullException.ThrowIfNull(writer);
-
-        if (ownedByCaller || (!ReferenceEquals(writer, this.ActiveWriter) && !ReferenceEquals(writer, this.cachedWriter)))
+        if (!this.writerRented || (!ReferenceEquals(writer, this.ActiveWriter) && !ReferenceEquals(writer, this.cachedWriter)))
         {
-            await writer.DisposeAsync().ConfigureAwait(false);
+            throw new InvalidOperationException("The writer does not have an outstanding rental on this connection.");
+        }
+
+        try
+        {
+            if (ownedByCaller)
+            {
+                this.cachedWriter = null;
+                await writer.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            this.writerRented = false;
+            this.connectionGate.Release();
         }
     }
 
     /// <inheritdoc/>
     public async ValueTask<AccessWriter> CreateDatabaseWriterAsync(CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(this.disposed, this);
-
-        await this.CloseAllReadersForSameTargetAsync().ConfigureAwait(false);
-        AccessWriterOptions writerOptions = this.BuildWriterOptions();
-        if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+        await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            string? directory = Path.GetDirectoryName(this.optionsExtension.DatabasePath);
-            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            if (this.ActiveTransaction is not null)
             {
-                _ = Directory.CreateDirectory(directory);
+                throw new InvalidOperationException("Cannot recreate a database while a transaction is active.");
             }
 
-            return await AccessWriter.CreateDatabaseAsync(
-                this.optionsExtension.DatabasePath,
-                this.optionsExtension.Format,
-                writerOptions,
-                cancellationToken).ConfigureAwait(false);
-        }
+            await this.CloseAllReadersForSameTargetAsync(cancellationToken).ConfigureAwait(false);
+            AccessWriterOptions writerOptions = this.BuildWriterOptions();
+            if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+            {
+                string? directory = Path.GetDirectoryName(this.optionsExtension.DatabasePath);
+                if (!string.IsNullOrEmpty(directory))
+                {
+                    _ = Directory.CreateDirectory(directory);
+                }
 
-        Stream stream = this.GetOrCreateStream();
-        stream.SetLength(0);
-        stream.Position = 0;
-        AccessWriter created = await AccessWriter.CreateDatabaseAsync(
-            stream,
-            this.optionsExtension.Format,
-            writerOptions,
-            leaveOpen: true,
-            cancellationToken).ConfigureAwait(false);
-        this.cachedWriter = created;
-        return created;
+                this.cachedWriter = await AccessWriter.CreateDatabaseAsync(
+                    this.optionsExtension.DatabasePath,
+                    this.optionsExtension.Format,
+                    writerOptions,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                Stream stream = this.GetOrCreateStream();
+                stream.SetLength(0);
+                stream.Position = 0;
+                this.cachedWriter = await AccessWriter.CreateDatabaseAsync(
+                    stream,
+                    this.optionsExtension.Format,
+                    writerOptions,
+                    leaveOpen: true,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            this.writerRented = true;
+            return this.cachedWriter;
+        }
+        catch
+        {
+            this.connectionGate.Release();
+            throw;
+        }
+        finally
+        {
+            this.lifecycleGate.Release();
+        }
     }
 
     /// <inheritdoc/>
     public async ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(this.disposed, this);
-
-        if (this.ActiveTransaction is not null)
-        {
-            throw new InvalidOperationException("A transaction is already active on this connection.");
-        }
-
-        AccessWriter writer;
-        if (this.cachedWriter is not null)
-        {
-            writer = this.cachedWriter;
-        }
-        else
-        {
-            await this.CloseAllReadersForSameTargetAsync().ConfigureAwait(false);
-            writer = await this.OpenWriterCoreAsync(cancellationToken).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
-            {
-                this.cachedWriter = writer;
-            }
-        }
-
+        await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            JetTransaction transaction = await writer.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-            this.ActiveWriter = writer;
-            this.ActiveTransaction = transaction;
-            return transaction;
+            return await this.BeginTransactionCoreAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch
+        finally
         {
-            if (ReferenceEquals(this.cachedWriter, writer))
-            {
-                this.cachedWriter = null;
-            }
-
-            await writer.DisposeAsync().ConfigureAwait(false);
-            throw;
+            this.ExitLifecycle();
         }
     }
 
     /// <inheritdoc/>
     public async ValueTask CommitTransactionAsync(CancellationToken cancellationToken = default)
     {
-        if (this.ActiveTransaction is null)
-        {
-            throw new InvalidOperationException("No transaction is currently active on this connection.");
-        }
-
+        await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            for (int i = this.savepoints.Count - 1; i >= 0; i--)
-            {
-                JetTransaction scope = this.savepoints[i].Scope;
-                this.savepoints.RemoveAt(i);
-                try
-                {
-                    await scope.CommitAsync(cancellationToken).ConfigureAwait(false);
-                }
-                finally
-                {
-                    await scope.DisposeAsync().ConfigureAwait(false);
-                }
-            }
-
-            await this.ActiveTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            await this.CommitTransactionCoreAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            await this.DisposeTransactionAsync().ConfigureAwait(false);
+            this.ExitLifecycle();
         }
     }
 
     /// <inheritdoc/>
     public async ValueTask RollbackTransactionAsync(CancellationToken cancellationToken = default)
     {
-        if (this.ActiveTransaction is null)
-        {
-            throw new InvalidOperationException("No transaction is currently active on this connection.");
-        }
-
+        await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            for (int i = this.savepoints.Count - 1; i >= 0; i--)
-            {
-                JetTransaction scope = this.savepoints[i].Scope;
-                this.savepoints.RemoveAt(i);
-                try
-                {
-                    await scope.RollbackAsync(cancellationToken).ConfigureAwait(false);
-                }
-                finally
-                {
-                    await scope.DisposeAsync().ConfigureAwait(false);
-                }
-            }
-
-            await this.ActiveTransaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            await this.RollbackTransactionCoreAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            await this.DisposeTransactionAsync().ConfigureAwait(false);
+            this.ExitLifecycle();
         }
     }
 
     /// <inheritdoc/>
     public async ValueTask DisposeTransactionAsync()
     {
-        for (int i = this.savepoints.Count - 1; i >= 0; i--)
-        {
-            JetTransaction scope = this.savepoints[i].Scope;
-            this.savepoints.RemoveAt(i);
-            await scope.DisposeAsync().ConfigureAwait(false);
-        }
-
-        JetTransaction? transaction = this.ActiveTransaction;
-        AccessWriter? writer = this.ActiveWriter;
-        this.ActiveTransaction = null;
-        this.ActiveWriter = null;
-
+        await this.EnterLifecycleAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
-            if (transaction is not null)
-            {
-                await transaction.DisposeAsync().ConfigureAwait(false);
-            }
+            await this.DisposeTransactionCoreAsync().ConfigureAwait(false);
         }
         finally
         {
-            if (writer is not null && !ReferenceEquals(writer, this.cachedWriter))
-            {
-                await writer.DisposeAsync().ConfigureAwait(false);
-            }
+            this.ExitLifecycle();
         }
     }
 
     /// <inheritdoc/>
     public async ValueTask CreateSavepointAsync(string name, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ObjectDisposedException.ThrowIf(this.disposed, this);
-
-        if (this.ActiveWriter is null || this.ActiveTransaction is null)
+        await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            throw new InvalidOperationException("Cannot create a savepoint when no transaction is active.");
+            await this.CreateSavepointCoreAsync(name, cancellationToken).ConfigureAwait(false);
         }
-
-        JetTransaction scope = await this.ActiveWriter.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        this.savepoints.Add((name, scope));
+        finally
+        {
+            this.ExitLifecycle();
+        }
     }
 
     /// <inheritdoc/>
     public async ValueTask RollbackToSavepointAsync(string name, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ObjectDisposedException.ThrowIf(this.disposed, this);
-
-        if (this.ActiveWriter is null || this.ActiveTransaction is null)
+        await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            throw new InvalidOperationException("Cannot roll back to a savepoint when no transaction is active.");
+            await this.RollbackToSavepointCoreAsync(name, cancellationToken).ConfigureAwait(false);
         }
-
-        int targetIndex = this.FindSavepointIndex(name);
-        if (targetIndex < 0)
+        finally
         {
-            throw new InvalidOperationException($"Savepoint '{name}' does not exist in the current transaction.");
+            this.ExitLifecycle();
         }
-
-        for (int i = this.savepoints.Count - 1; i >= targetIndex; i--)
-        {
-            JetTransaction scope = this.savepoints[i].Scope;
-            this.savepoints.RemoveAt(i);
-            try
-            {
-                await scope.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            }
-            finally
-            {
-                await scope.DisposeAsync().ConfigureAwait(false);
-            }
-        }
-
-        JetTransaction replacementScope = await this.ActiveWriter.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        this.savepoints.Add((name, replacementScope));
     }
 
     /// <inheritdoc/>
     public async ValueTask ReleaseSavepointAsync(string name, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ObjectDisposedException.ThrowIf(this.disposed, this);
-
-        if (this.ActiveWriter is null || this.ActiveTransaction is null)
+        await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            throw new InvalidOperationException("Cannot release a savepoint when no transaction is active.");
+            await this.ReleaseSavepointCoreAsync(name, cancellationToken).ConfigureAwait(false);
         }
-
-        int targetIndex = this.FindSavepointIndex(name);
-        if (targetIndex < 0)
+        finally
         {
-            throw new InvalidOperationException($"Savepoint '{name}' does not exist in the current transaction.");
-        }
-
-        for (int i = this.savepoints.Count - 1; i >= targetIndex; i--)
-        {
-            JetTransaction scope = this.savepoints[i].Scope;
-            this.savepoints.RemoveAt(i);
-            try
-            {
-                await scope.CommitAsync(cancellationToken).ConfigureAwait(false);
-            }
-            finally
-            {
-                await scope.DisposeAsync().ConfigureAwait(false);
-            }
+            this.ExitLifecycle();
         }
     }
 
     /// <inheritdoc/>
     public async ValueTask<bool> CanConnectAsync(CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(this.disposed, this);
-
-        if (this.ActiveWriter is not null || this.cachedWriter is not null || this.activeReader is not null)
-        {
-            return true;
-        }
-
-        if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
-        {
-            if (!File.Exists(this.optionsExtension.DatabasePath))
-            {
-                return false;
-            }
-
-            FileInfo fileInfo = new(this.optionsExtension.DatabasePath);
-            if (fileInfo.Length < 2048)
-            {
-                return false;
-            }
-        }
-        else
-        {
-            Stream stream = this.GetOrCreateStream();
-            if (stream.Length < 2048)
-            {
-                return false;
-            }
-        }
-
-        await this.connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (this.ActiveWriter is not null || this.cachedWriter is not null || this.activeReader is not null)
@@ -440,50 +340,47 @@ public sealed class JetClientConnection : IJetClientConnection
                 return true;
             }
 
+            if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+            {
+                if (!File.Exists(this.optionsExtension.DatabasePath) || new FileInfo(this.optionsExtension.DatabasePath).Length < 2048)
+                {
+                    return false;
+                }
+            }
+            else if (this.GetOrCreateStream().Length < 2048)
+            {
+                return false;
+            }
+
+            await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
             _ = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
             await this.CloseReaderCoreAsync().ConfigureAwait(false);
             return true;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
             return false;
         }
         finally
         {
-            this.connectionGate.Release();
+            this.ExitLifecycle();
         }
     }
 
     /// <inheritdoc/>
     public async ValueTask<bool> DeleteDatabaseAsync(CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(this.disposed, this);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        await this.DisposeTransactionAsync().ConfigureAwait(false);
-        await this.CloseAllReadersForSameTargetAsync().ConfigureAwait(false);
-
-        if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+        await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            if (!File.Exists(this.optionsExtension.DatabasePath))
-            {
-                return false;
-            }
-
-            File.Delete(this.optionsExtension.DatabasePath);
-            return true;
+            return await this.DeleteDatabaseCoreAsync(cancellationToken).ConfigureAwait(false);
         }
-
-        Stream stream = this.GetOrCreateStream();
-        if (stream.Length == 0)
+        finally
         {
-            return false;
+            this.ExitLifecycle();
         }
-
-        stream.SetLength(0);
-        stream.Position = 0;
-        return true;
     }
+
 
     /// <inheritdoc/>
     public ValueTask<IReadOnlyList<ValueBuffer>> ReadTableValueBuffersAsync(
@@ -497,7 +394,7 @@ public sealed class JetClientConnection : IJetClientConnection
             parameters,
             requiredProperties: null,
             maxRows: null,
-            orderedAscendingProperties: null,
+            orderedProperties: null,
             rowFilter: null,
             cancellationToken);
 
@@ -514,7 +411,7 @@ public sealed class JetClientConnection : IJetClientConnection
             parameters,
             requiredProperties,
             maxRows: null,
-            orderedAscendingProperties: null,
+            orderedProperties: null,
             rowFilter: null,
             cancellationToken);
 
@@ -532,7 +429,7 @@ public sealed class JetClientConnection : IJetClientConnection
             parameters,
             requiredProperties,
             maxRows,
-            orderedAscendingProperties: null,
+            orderedProperties: null,
             rowFilter: null,
             cancellationToken);
 
@@ -543,63 +440,244 @@ public sealed class JetClientConnection : IJetClientConnection
         IReadOnlyDictionary<string, object?> parameters,
         IReadOnlySet<IProperty>? requiredProperties,
         int? maxRows,
-        IReadOnlyList<IProperty>? orderedAscendingProperties,
+        IReadOnlyList<JetOrdering>? orderedProperties,
         Func<ValueBuffer, bool>? rowFilter,
         CancellationToken cancellationToken = default)
+    {
+        List<ValueBuffer> rows = [];
+        await foreach (ValueBuffer row in this.StreamTableValueBuffersAsync(
+            entityType, seekConditions, parameters, requiredProperties, maxRows, orderedProperties, rowFilter, cancellationToken).ConfigureAwait(false))
+        {
+            rows.Add(row);
+        }
+
+        return rows;
+    }
+
+    /// <inheritdoc/>
+    public async IAsyncEnumerable<ValueBuffer> StreamTableValueBuffersAsync(
+        IEntityType entityType,
+        IReadOnlyList<JetIndexSeekCondition>? seekConditions,
+        IReadOnlyDictionary<string, object?> parameters,
+        IReadOnlySet<IProperty>? requiredProperties,
+        int? maxRows,
+        IReadOnlyList<JetOrdering>? orderedProperties,
+        Func<ValueBuffer, bool>? rowFilter,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(entityType);
         ArgumentNullException.ThrowIfNull(parameters);
         ObjectDisposedException.ThrowIf(this.disposed, this);
-
         if (maxRows is <= 0)
         {
-            return [];
+            yield break;
         }
 
-        IEntityType rootType = entityType.GetRootType();
-        string tableName = JetEntityTypeMetadata.GetTableName(rootType);
-        List<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(rootType);
-        int bufferLength = ComputeValueBufferLength(properties);
-
-        AccessWriter? activeOrCachedWriter = this.ActiveWriter ?? this.cachedWriter;
-        if (activeOrCachedWriter is not null)
+        bool ownsGate = !this.writerRented;
+        if (ownsGate)
         {
-            return await ReadFromActiveWriterAsync(
-                activeOrCachedWriter,
-                tableName,
-                rootType,
-                properties,
-                bufferLength,
-                seekConditions,
-                orderedAscendingProperties,
-                parameters,
-                requiredProperties,
-                maxRows,
-                rowFilter,
-                cancellationToken).ConfigureAwait(false);
+            await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        await this.connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        bool lifecycleHeld = ownsGate;
         try
         {
-            AccessReader reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
-            return await ReadFromReaderAsync(
-                reader,
-                tableName,
-                rootType,
-                properties,
-                bufferLength,
-                seekConditions,
-                orderedAscendingProperties,
-                parameters,
-                requiredProperties,
-                maxRows,
-                rowFilter,
-                cancellationToken).ConfigureAwait(false);
+            IEntityType rootType = entityType.GetRootType();
+            string tableName = JetEntityTypeMetadata.GetTableName(rootType);
+            IReadOnlyList<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(rootType);
+            AccessWriter? writer = this.ActiveWriter ?? this.cachedWriter;
+            ResolvedTable? resolved;
+            IAsyncEnumerable<object?[]> rows;
+            bool ordered = false;
+            int?[] columnMap;
+            bool[]? wanted = null;
+            if (writer is not null)
+            {
+                resolved = await writer.Services.Catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+                columnMap = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
+                wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties);
+                (IAsyncEnumerable<object?[]> Rows, bool Ordered)? indexQuery = await JetIndexSeekPlanner.TryBuildActiveWriterIndexQueryAsync(
+                    writer, resolved, seekConditions, orderedProperties, parameters, wanted, cancellationToken).ConfigureAwait(false);
+                rows = indexQuery?.Rows ?? StreamWriterRowsAsync(writer, resolved, wanted, cancellationToken);
+                ordered = indexQuery?.Ordered ?? false;
+            }
+            else
+            {
+                await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
+                AccessReader reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
+                resolved = await reader.Services.Tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+                if (resolved is not null)
+                {
+                    columnMap = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
+                    wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties);
+                    IAsyncEnumerable<object[]>? indexRows = null;
+                    if (orderedProperties is { Count: > 0 })
+                    {
+                        indexRows = await JetIndexSeekPlanner.TryBuildOrderedIndexQueryAsync(reader, resolved, orderedProperties, wanted, cancellationToken).ConfigureAwait(false);
+                        ordered = indexRows is not null;
+                    }
+                    else if (seekConditions is { Count: > 0 })
+                    {
+                        indexRows = await JetIndexSeekPlanner.TryBuildIndexQueryAsync(reader, resolved, seekConditions, parameters, wanted, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    rows = indexRows ?? reader.Services.Tables.Rows(tableName, wanted, progress: null, cancellationToken);
+                }
+                else
+                {
+                    columnMap = BuildPropertyColumnMap(properties, await reader.GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false));
+                    rows = reader.Rows(tableName, progress: null, cancellationToken);
+                }
+            }
+
+            if (lifecycleHeld)
+            {
+                this.lifecycleGate.Release();
+                lifecycleHeld = false;
+            }
+
+            ValueBufferFactory factory = new(rootType, properties, columnMap, wanted, reuseBuffer: false);
+            int? limit = orderedProperties is null or { Count: 0 } || ordered ? maxRows : null;
+            int emitted = 0;
+            await foreach (object?[] row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
+            {
+                if (!factory.TryCreate(row, out ValueBuffer buffer) || (rowFilter is not null && !rowFilter(buffer)))
+                {
+                    continue;
+                }
+
+                yield return buffer;
+                emitted++;
+                if (limit is int maximum && emitted >= maximum)
+                {
+                    yield break;
+                }
+            }
         }
         finally
         {
-            this.connectionGate.Release();
+            if (lifecycleHeld)
+            {
+                this.lifecycleGate.Release();
+            }
+
+            if (ownsGate)
+            {
+                this.connectionGate.Release();
+            }
+        }
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask ScanTableRowsAsync(
+        IEntityType entityType,
+        IReadOnlyList<JetIndexSeekCondition>? seekConditions,
+        IReadOnlyDictionary<string, object?> parameters,
+        IReadOnlySet<IProperty>? requiredProperties,
+        Func<ValueBuffer, bool> visitor,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entityType);
+        ArgumentNullException.ThrowIfNull(parameters);
+        ArgumentNullException.ThrowIfNull(visitor);
+        ObjectDisposedException.ThrowIf(this.disposed, this);
+        bool ownsGate = !this.writerRented;
+        if (ownsGate)
+        {
+            await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        bool lifecycleHeld = ownsGate;
+        try
+        {
+            IEntityType rootType = entityType.GetRootType();
+            string tableName = JetEntityTypeMetadata.GetTableName(rootType);
+            IReadOnlyList<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(rootType);
+            AccessWriter? writer = this.ActiveWriter ?? this.cachedWriter;
+            if (writer is not null)
+            {
+                ResolvedTable resolved = await writer.Services.Catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+                int?[] columnMap = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
+                bool[] wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties);
+                ValueBufferFactory factory = new(rootType, properties, columnMap, wanted, reuseBuffer: true);
+                if (lifecycleHeld)
+                {
+                    this.lifecycleGate.Release();
+                    lifecycleHeld = false;
+                }
+
+                bool Visit(object?[] row, bool ordered) => !factory.TryCreate(row, out ValueBuffer buffer) || visitor(buffer);
+                if (seekConditions is { Count: > 0 }
+                    && await JetIndexSeekPlanner.TryReadFromActiveWriterIndexAsync(writer, resolved, seekConditions, orderedProperties: null, parameters, wanted, Visit, cancellationToken).ConfigureAwait(false))
+                {
+                    return;
+                }
+
+                bool wrapHyperlinks = resolved.Definition.HasHyperlinkColumns && TableReader.HasWantedHyperlinkColumn(resolved.Definition.ClrTypes, wanted);
+                await writer.Services.Snapshots.ForEachTypedRowAsync(
+                    resolved.Entry.TDefPage,
+                    resolved.Definition,
+                    wanted,
+                    (_, row, _) =>
+                    {
+                        if (wrapHyperlinks)
+                        {
+                            TableReader.WrapHyperlinkColumns(row, resolved.Definition.ClrTypes);
+                        }
+
+                        return new ValueTask<bool>(Visit(row, false));
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
+                AccessReader reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
+                ResolvedTable? resolved = await reader.Services.Tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+                int?[] columnMap;
+                bool[]? wanted = null;
+                IAsyncEnumerable<object?[]> rows;
+                if (resolved is not null)
+                {
+                    columnMap = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
+                    wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties);
+                    rows = (seekConditions is { Count: > 0 }
+                        ? await JetIndexSeekPlanner.TryBuildIndexQueryAsync(reader, resolved, seekConditions, parameters, wanted, cancellationToken).ConfigureAwait(false)
+                        : null) ?? reader.Services.Tables.Rows(tableName, wanted, progress: null, cancellationToken);
+                }
+                else
+                {
+                    columnMap = BuildPropertyColumnMap(properties, await reader.GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false));
+                    rows = reader.Rows(tableName, progress: null, cancellationToken);
+                }
+
+                if (lifecycleHeld)
+                {
+                    this.lifecycleGate.Release();
+                    lifecycleHeld = false;
+                }
+
+                ValueBufferFactory factory = new(rootType, properties, columnMap, wanted, reuseBuffer: true);
+                await foreach (object?[] row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
+                {
+                    if (factory.TryCreate(row, out ValueBuffer buffer) && !visitor(buffer))
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            if (lifecycleHeld)
+            {
+                this.lifecycleGate.Release();
+            }
+
+            if (ownsGate)
+            {
+                this.connectionGate.Release();
+            }
         }
     }
 
@@ -615,70 +693,59 @@ public sealed class JetClientConnection : IJetClientConnection
         ArgumentNullException.ThrowIfNull(keyProperties);
         ArgumentNullException.ThrowIfNull(keyTuples);
         ObjectDisposedException.ThrowIf(this.disposed, this);
-
         if (keyProperties.Count == 0 || keyTuples.Count == 0)
         {
             return [];
         }
 
-        IEntityType rootType = entityType.GetRootType();
-        string tableName = JetEntityTypeMetadata.GetTableName(rootType);
-        List<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(rootType);
-        int bufferLength = ComputeValueBufferLength(properties);
-
-        AccessWriter? activeOrCachedWriter = this.ActiveWriter ?? this.cachedWriter;
-        if (activeOrCachedWriter is not null)
+        bool ownsGate = !this.writerRented;
+        if (ownsGate)
         {
-            return await ReadByKeysFromActiveWriterAsync(
-                activeOrCachedWriter,
-                tableName,
-                rootType,
-                properties,
-                bufferLength,
-                keyProperties,
-                keyTuples,
-                requiredProperties,
-                cancellationToken).ConfigureAwait(false);
+            await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        await this.connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        bool lifecycleHeld = ownsGate;
         try
         {
-            AccessReader reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
-            return await ReadByKeysFromReaderAsync(
-                reader,
-                tableName,
-                rootType,
-                properties,
-                bufferLength,
-                keyProperties,
-                keyTuples,
-                requiredProperties,
-                cancellationToken).ConfigureAwait(false);
+            IEntityType rootType = entityType.GetRootType();
+            string tableName = JetEntityTypeMetadata.GetTableName(rootType);
+            IReadOnlyList<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(rootType);
+            AccessWriter? writer = this.ActiveWriter ?? this.cachedWriter;
+            AccessReader? reader = null;
+            if (writer is null)
+            {
+                await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
+                reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            if (lifecycleHeld)
+            {
+                this.lifecycleGate.Release();
+                lifecycleHeld = false;
+            }
+
+            return writer is not null
+                ? await ReadByKeysFromActiveWriterAsync(writer, tableName, rootType, properties, keyProperties, keyTuples, requiredProperties, cancellationToken).ConfigureAwait(false)
+                : await ReadByKeysFromReaderAsync(reader!, tableName, rootType, properties, keyProperties, keyTuples, requiredProperties, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            this.connectionGate.Release();
+            if (lifecycleHeld)
+            {
+                this.lifecycleGate.Release();
+            }
+
+            if (ownsGate)
+            {
+                this.connectionGate.Release();
+            }
         }
     }
 
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()
     {
-        if (this.disposed)
-        {
-            return;
-        }
-
-        try
-        {
-            await this.connectionGate.WaitAsync().ConfigureAwait(false);
-        }
-        catch (ObjectDisposedException)
-        {
-            return;
-        }
-
+        await this.lifecycleGate.WaitAsync().ConfigureAwait(false);
         try
         {
             if (this.disposed)
@@ -686,20 +753,33 @@ public sealed class JetClientConnection : IJetClientConnection
                 return;
             }
 
-            this.disposed = true;
-            UnregisterConnection(this);
-            await this.DisposeTransactionAsync().ConfigureAwait(false);
-            await this.CloseReaderCoreAsync().ConfigureAwait(false);
-            if (this.resolvedStream is not null && !this.optionsExtension.LeaveStreamOpen)
+            await this.connectionGate.WaitAsync().ConfigureAwait(false);
+            try
             {
-                await this.resolvedStream.DisposeAsync().ConfigureAwait(false);
-                this.resolvedStream = null;
+                if (this.disposed)
+                {
+                    return;
+                }
+
+                this.disposed = true;
+                UnregisterConnection(this);
+                await this.DisposeTransactionCoreAsync().ConfigureAwait(false);
+                await this.CloseReaderCoreAsync().ConfigureAwait(false);
+                if (this.resolvedStream is not null && !this.optionsExtension.LeaveStreamOpen)
+                {
+                    await this.resolvedStream.DisposeAsync().ConfigureAwait(false);
+                    this.resolvedStream = null;
+                }
+            }
+            finally
+            {
+                this.connectionGate.Release();
+                this.connectionGate.Dispose();
             }
         }
         finally
         {
-            this.connectionGate.Release();
-            this.connectionGate.Dispose();
+            this.lifecycleGate.Release();
         }
     }
 
@@ -794,19 +874,31 @@ public sealed class JetClientConnection : IJetClientConnection
         };
     }
 
-    private static void RegisterConnection(JetClientConnection connection)
+    private static SemaphoreSlim RegisterConnection(JetClientConnection connection)
     {
         lock (LiveConnectionsGate)
         {
+            SemaphoreSlim? lifecycleGate = null;
+            Stream? stream = connection.optionsExtension.DatabaseStream ?? connection.resolvedStream;
             for (int i = LiveConnections.Count - 1; i >= 0; i--)
             {
                 if (!LiveConnections[i].TryGetTarget(out JetClientConnection? existing) || existing.disposed)
                 {
                     LiveConnections.RemoveAt(i);
+                    continue;
+                }
+
+                if ((connection.normalizedDatabasePath is not null
+                    && existing.normalizedDatabasePath is not null
+                    && string.Equals(connection.normalizedDatabasePath, existing.normalizedDatabasePath, StringComparison.OrdinalIgnoreCase))
+                    || (stream is not null && ReferenceEquals(stream, existing.optionsExtension.DatabaseStream ?? existing.resolvedStream)))
+                {
+                    lifecycleGate = existing.lifecycleGate;
                 }
             }
 
             LiveConnections.Add(new WeakReference<JetClientConnection>(connection));
+            return lifecycleGate ?? new SemaphoreSlim(1, 1);
         }
     }
 
@@ -826,7 +918,7 @@ public sealed class JetClientConnection : IJetClientConnection
         }
     }
 
-    private static int ComputeValueBufferLength(List<IProperty> properties)
+    private static int ComputeValueBufferLength(IReadOnlyList<IProperty> properties)
     {
         int length = properties.Count;
         for (int i = 0; i < properties.Count; i++)
@@ -843,7 +935,7 @@ public sealed class JetClientConnection : IJetClientConnection
 
     private static bool[] BuildWantedColumnsMask(
         IEntityType rootType,
-        List<IProperty> properties,
+        IReadOnlyList<IProperty> properties,
         int?[] propertyToColumnOrdinal,
         int columnCount,
         IReadOnlySet<IProperty>? requiredProperties,
@@ -908,113 +1000,11 @@ public sealed class JetClientConnection : IJetClientConnection
         return false;
     }
 
-    private static async ValueTask<IReadOnlyList<ValueBuffer>> ReadFromReaderAsync(
-        AccessReader reader,
-        string tableName,
-        IEntityType rootType,
-        List<IProperty> properties,
-        int bufferLength,
-        IReadOnlyList<JetIndexSeekCondition>? seekConditions,
-        IReadOnlyList<IProperty>? orderedAscendingProperties,
-        IReadOnlyDictionary<string, object?> parameters,
-        IReadOnlySet<IProperty>? requiredProperties,
-        int? maxRows,
-        Func<ValueBuffer, bool>? rowFilter,
-        CancellationToken cancellationToken)
-    {
-        ResolvedTable? resolved = await reader.Services.Tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        if (resolved is not null)
-        {
-            int?[] propertyToColumnOrdinal = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
-            bool[] wantedColumns = BuildWantedColumnsMask(
-                rootType,
-                properties,
-                propertyToColumnOrdinal,
-                resolved.Definition.Columns.Count,
-                requiredProperties);
-
-            IAsyncEnumerable<object[]>? rowSource = null;
-            bool isOrderedScan = false;
-            if (seekConditions is { Count: > 0 })
-            {
-                rowSource = await JetIndexSeekPlanner.TryBuildIndexQueryAsync(
-                    reader,
-                    resolved,
-                    seekConditions,
-                    parameters,
-                    wantedColumns,
-                    cancellationToken).ConfigureAwait(false);
-            }
-
-            if (rowSource is null && orderedAscendingProperties is { Count: > 0 })
-            {
-                rowSource = await JetIndexSeekPlanner.TryBuildOrderedIndexQueryAsync(
-                    reader,
-                    resolved,
-                    orderedAscendingProperties,
-                    wantedColumns,
-                    cancellationToken).ConfigureAwait(false);
-                isOrderedScan = rowSource is not null;
-            }
-
-            int? effectiveLimit = orderedAscendingProperties is null or { Count: 0 } || isOrderedScan ? maxRows : null;
-            rowSource ??= reader.Services.Tables.Rows(tableName, wantedColumns, progress: null, cancellationToken);
-
-            List<ValueBuffer> localResults = [];
-            await foreach (object[] row in rowSource.WithCancellation(cancellationToken).ConfigureAwait(false))
-            {
-                if (!TryCreateValueBuffer(rootType, properties, bufferLength, propertyToColumnOrdinal, row, out ValueBuffer buffer))
-                {
-                    continue;
-                }
-
-                if (rowFilter is not null && !rowFilter(buffer))
-                {
-                    continue;
-                }
-
-                localResults.Add(buffer);
-                if (effectiveLimit is int limit && localResults.Count >= limit)
-                {
-                    break;
-                }
-            }
-
-            return localResults;
-        }
-
-        int? fallbackLimit = orderedAscendingProperties is null or { Count: 0 } ? maxRows : null;
-        IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
-        int?[] fallbackColumnMap = BuildPropertyColumnMap(properties, columns);
-        List<ValueBuffer> results = [];
-        await foreach (object[] row in reader.Rows(tableName, progress: null, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            if (!TryCreateValueBuffer(rootType, properties, bufferLength, fallbackColumnMap, row, out ValueBuffer buffer))
-            {
-                continue;
-            }
-
-            if (rowFilter is not null && !rowFilter(buffer))
-            {
-                continue;
-            }
-
-            results.Add(buffer);
-            if (fallbackLimit is int limit && results.Count >= limit)
-            {
-                break;
-            }
-        }
-
-        return results;
-    }
-
     private static async ValueTask<IReadOnlyList<ValueBuffer>> ReadByKeysFromReaderAsync(
         AccessReader reader,
         string tableName,
         IEntityType rootType,
-        List<IProperty> properties,
-        int bufferLength,
+        IReadOnlyList<IProperty> properties,
         IReadOnlyList<IProperty> keyProperties,
         IReadOnlyList<object?[]> keyTuples,
         IReadOnlySet<IProperty>? requiredProperties,
@@ -1031,6 +1021,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 resolved.Definition.Columns.Count,
                 requiredProperties,
                 keyProperties);
+            ValueBufferFactory factory = new(rootType, properties, propertyToColumnOrdinal, wantedColumns, reuseBuffer: false);
 
             List<object[]>? indexedRows = await JetIndexSeekPlanner.TryReadMultiKeyIndexRowsAsync(
                 reader,
@@ -1044,7 +1035,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 List<ValueBuffer> indexedBuffers = [];
                 foreach (object[] row in indexedRows)
                 {
-                    if (TryCreateValueBuffer(rootType, properties, bufferLength, propertyToColumnOrdinal, row, out ValueBuffer buffer))
+                    if (factory.TryCreate(row, out ValueBuffer buffer))
                     {
                         indexedBuffers.Add(buffer);
                     }
@@ -1057,7 +1048,7 @@ public sealed class JetClientConnection : IJetClientConnection
             List<ValueBuffer> scanResults = [];
             await foreach (object[] row in reader.Services.Tables.Rows(tableName, wantedColumns, progress: null, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
             {
-                if (TryCreateValueBuffer(rootType, properties, bufferLength, propertyToColumnOrdinal, row, out ValueBuffer buffer)
+                if (factory.TryCreate(row, out ValueBuffer buffer)
                     && TryExtractBufferKeyTuple(keyProperties, buffer, out KeyTupleValue candidateKey)
                     && targetSet.Contains(candidateKey))
                 {
@@ -1070,11 +1061,12 @@ public sealed class JetClientConnection : IJetClientConnection
 
         IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
         int?[] fallbackColumnMap = BuildPropertyColumnMap(properties, columns);
+        ValueBufferFactory fallbackFactory = new(rootType, properties, fallbackColumnMap, wantedColumns: null, reuseBuffer: false);
         HashSet<KeyTupleValue> fallbackTargetSet = BuildKeyTupleSet(keyTuples);
         List<ValueBuffer> fallbackResults = [];
         await foreach (object[] row in reader.Rows(tableName, progress: null, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            if (TryCreateValueBuffer(rootType, properties, bufferLength, fallbackColumnMap, row, out ValueBuffer buffer)
+            if (fallbackFactory.TryCreate(row, out ValueBuffer buffer)
                 && TryExtractBufferKeyTuple(keyProperties, buffer, out KeyTupleValue candidateKey)
                 && fallbackTargetSet.Contains(candidateKey))
             {
@@ -1086,7 +1078,7 @@ public sealed class JetClientConnection : IJetClientConnection
     }
 
     private static int?[] BuildPropertyColumnMap(
-        List<IProperty> properties,
+        IReadOnlyList<IProperty> properties,
         IReadOnlyList<ColumnMetadata> columns)
     {
         Dictionary<string, int> columnIndexByName = [with(StringComparer.OrdinalIgnoreCase)];
@@ -1109,7 +1101,7 @@ public sealed class JetClientConnection : IJetClientConnection
     }
 
     private static int?[] BuildPropertyColumnMapFromTableDef(
-        List<IProperty> properties,
+        IReadOnlyList<IProperty> properties,
         TableDef tableDef)
     {
         int?[] map = new int?[properties.Count];
@@ -1126,85 +1118,8 @@ public sealed class JetClientConnection : IJetClientConnection
         return map;
     }
 
-    private static bool TryCreateValueBuffer(
-        IEntityType rootType,
-        List<IProperty> properties,
-        int bufferLength,
-        int?[] propertyToColumnOrdinal,
-        object?[] row,
-        out ValueBuffer valueBuffer)
-    {
-        if (JetEntityTypeMetadata.IsTableSplitOwned(rootType)
-            && rootType.FindOwnership() is { IsRequiredDependent: false }
-            && IsAllNullTableSplitOwnedRow(properties, propertyToColumnOrdinal, row))
-        {
-            valueBuffer = default;
-            return false;
-        }
-
-        object?[] buffer = new object?[bufferLength];
-        IProperty? discriminatorProperty = rootType.FindDiscriminatorProperty();
-        IReadOnlyEntityType? concreteType = null;
-        if (discriminatorProperty is not null)
-        {
-            for (int i = 0; i < properties.Count; i++)
-            {
-                if (ReferenceEquals(properties[i], discriminatorProperty)
-                    && propertyToColumnOrdinal[i] is int discColIdx
-                    && (uint)discColIdx < (uint)row.Length)
-                {
-                    object? discValue = JetEntityTypeMetadata.ConvertFromProvider(discriminatorProperty, row[discColIdx]);
-                    int discTargetIdx = discriminatorProperty.GetIndex();
-                    if ((uint)discTargetIdx < (uint)buffer.Length)
-                    {
-                        buffer[discTargetIdx] = discValue;
-                    }
-
-                    concreteType = FindMatchingEntityType(rootType, discValue);
-                    break;
-                }
-            }
-        }
-
-        for (int i = 0; i < properties.Count; i++)
-        {
-            IProperty property = properties[i];
-            if (concreteType is not null && !property.DeclaringType.ContainingEntityType.IsAssignableFrom(concreteType))
-            {
-                continue;
-            }
-
-            int targetIndex = property.GetIndex();
-            if ((uint)targetIndex >= (uint)buffer.Length)
-            {
-                targetIndex = i;
-            }
-
-            if (propertyToColumnOrdinal[i] is int colIdx && (uint)colIdx < (uint)row.Length)
-            {
-                object? converted = JetEntityTypeMetadata.ConvertFromProvider(property, row[colIdx]);
-                if (converted is null
-                    && property.ClrType.IsValueType
-                    && Nullable.GetUnderlyingType(property.ClrType) is null)
-                {
-                    converted = BoxedDefaultValues.GetOrAdd(
-                        property.ClrType,
-                        static t => Expression.Lambda<Func<object>>(Expression.Convert(Expression.Default(t), typeof(object))).Compile()());
-                }
-
-                if (converted is not null || buffer[targetIndex] is null)
-                {
-                    buffer[targetIndex] = converted;
-                }
-            }
-        }
-
-        valueBuffer = new ValueBuffer(buffer);
-        return true;
-    }
-
     private static bool IsAllNullTableSplitOwnedRow(
-        List<IProperty> properties,
+        IReadOnlyList<IProperty> properties,
         int?[] propertyToColumnOrdinal,
         object?[] row)
     {
@@ -1252,87 +1167,11 @@ public sealed class JetClientConnection : IJetClientConnection
         return null;
     }
 
-    private static async ValueTask<IReadOnlyList<ValueBuffer>> ReadFromActiveWriterAsync(
-        AccessWriter writer,
-        string tableName,
-        IEntityType rootType,
-        List<IProperty> properties,
-        int bufferLength,
-        IReadOnlyList<JetIndexSeekCondition>? seekConditions,
-        IReadOnlyList<IProperty>? orderedAscendingProperties,
-        IReadOnlyDictionary<string, object?> parameters,
-        IReadOnlySet<IProperty>? requiredProperties,
-        int? maxRows,
-        Func<ValueBuffer, bool>? rowFilter,
-        CancellationToken cancellationToken)
-    {
-        ResolvedTable resolved = await writer.Services.Catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        int?[] propertyToColumnOrdinal = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
-        bool[] wantedColumns = BuildWantedColumnsMask(
-            rootType,
-            properties,
-            propertyToColumnOrdinal,
-            resolved.Definition.Columns.Count,
-            requiredProperties);
-
-        List<ValueBuffer> results = [];
-        bool AcceptDecodedRow(object?[] values, bool isOrderedScan)
-        {
-            if (!TryCreateValueBuffer(rootType, properties, bufferLength, propertyToColumnOrdinal, values, out ValueBuffer buffer))
-            {
-                return true;
-            }
-
-            if (rowFilter is not null && !rowFilter(buffer))
-            {
-                return true;
-            }
-
-            results.Add(buffer);
-            int? effectiveLimit = orderedAscendingProperties is null or { Count: 0 } || isOrderedScan ? maxRows : null;
-            return effectiveLimit is not int limit || results.Count < limit;
-        }
-
-        if ((seekConditions is { Count: > 0 } || orderedAscendingProperties is { Count: > 0 })
-            && await JetIndexSeekPlanner.TryReadFromActiveWriterIndexAsync(
-                writer,
-                resolved,
-                seekConditions,
-                orderedAscendingProperties,
-                parameters,
-                wantedColumns,
-                AcceptDecodedRow,
-                cancellationToken).ConfigureAwait(false))
-        {
-            return results;
-        }
-
-        bool wrapScannedHyperlinks = resolved.Definition.HasHyperlinkColumns
-            && TableReader.HasWantedHyperlinkColumn(resolved.Definition.ClrTypes, wantedColumns);
-        await writer.Services.Snapshots.ForEachTypedRowAsync(
-            resolved.Entry.TDefPage,
-            resolved.Definition,
-            wantedColumns,
-            (_, values, _) =>
-            {
-                if (wrapScannedHyperlinks)
-                {
-                    TableReader.WrapHyperlinkColumns(values, resolved.Definition.ClrTypes);
-                }
-
-                return new ValueTask<bool>(AcceptDecodedRow(values, isOrderedScan: false));
-            },
-            cancellationToken).ConfigureAwait(false);
-
-        return results;
-    }
-
     private static async ValueTask<IReadOnlyList<ValueBuffer>> ReadByKeysFromActiveWriterAsync(
         AccessWriter writer,
         string tableName,
         IEntityType rootType,
-        List<IProperty> properties,
-        int bufferLength,
+        IReadOnlyList<IProperty> properties,
         IReadOnlyList<IProperty> keyProperties,
         IReadOnlyList<object?[]> keyTuples,
         IReadOnlySet<IProperty>? requiredProperties,
@@ -1347,6 +1186,7 @@ public sealed class JetClientConnection : IJetClientConnection
             resolved.Definition.Columns.Count,
             requiredProperties,
             keyProperties);
+        ValueBufferFactory factory = new(rootType, properties, propertyToColumnOrdinal, wantedColumns, reuseBuffer: false);
 
         List<ValueBuffer> indexedBuffers = [];
         bool indexedUsed = await JetIndexSeekPlanner.TryReadMultiKeyFromActiveWriterIndexAsync(
@@ -1358,7 +1198,7 @@ public sealed class JetClientConnection : IJetClientConnection
             wantedColumns,
             values =>
             {
-                if (TryCreateValueBuffer(rootType, properties, bufferLength, propertyToColumnOrdinal, values, out ValueBuffer buffer))
+                if (factory.TryCreate(values, out ValueBuffer buffer))
                 {
                     indexedBuffers.Add(buffer);
                 }
@@ -1386,7 +1226,7 @@ public sealed class JetClientConnection : IJetClientConnection
                     TableReader.WrapHyperlinkColumns(values, resolved.Definition.ClrTypes);
                 }
 
-                if (TryCreateValueBuffer(rootType, properties, bufferLength, propertyToColumnOrdinal, values, out ValueBuffer buffer)
+                if (factory.TryCreate(values, out ValueBuffer buffer)
                     && TryExtractBufferKeyTuple(keyProperties, buffer, out KeyTupleValue candidateKey)
                     && targetSet.Contains(candidateKey))
                 {
@@ -1398,6 +1238,62 @@ public sealed class JetClientConnection : IJetClientConnection
             cancellationToken).ConfigureAwait(false);
 
         return scanResults;
+    }
+
+    private static async IAsyncEnumerable<object?[]> StreamWriterRowsAsync(
+        AccessWriter writer,
+        ResolvedTable table,
+        bool[] wantedColumns,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        Channel<object?[]> channel = Channel.CreateBounded<object?[]>(new BoundedChannelOptions(1)
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            AllowSynchronousContinuations = false,
+        });
+        using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task producer = ProduceAsync();
+        try
+        {
+            await foreach (object?[] row in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            {
+                yield return row;
+            }
+        }
+        finally
+        {
+            await stop.CancelAsync().ConfigureAwait(false);
+            await producer.ConfigureAwait(false);
+        }
+
+        async Task ProduceAsync()
+        {
+            try
+            {
+                bool wrapHyperlinks = table.Definition.HasHyperlinkColumns && TableReader.HasWantedHyperlinkColumn(table.Definition.ClrTypes, wantedColumns);
+                await writer.Services.Snapshots.ForEachTypedRowAsync(
+                    table.Entry.TDefPage,
+                    table.Definition,
+                    wantedColumns,
+                    async (_, values, token) =>
+                    {
+                        if (wrapHyperlinks)
+                        {
+                            TableReader.WrapHyperlinkColumns(values, table.Definition.ClrTypes);
+                        }
+
+                        await channel.Writer.WriteAsync(values, token).ConfigureAwait(false);
+                        return true;
+                    },
+                    stop.Token).ConfigureAwait(false);
+                channel.Writer.TryComplete();
+            }
+            catch (Exception exception)
+            {
+                channel.Writer.TryComplete(exception);
+            }
+        }
     }
 
     private static HashSet<KeyTupleValue> BuildKeyTupleSet(IReadOnlyList<object?[]> keyTuples)
@@ -1434,10 +1330,285 @@ public sealed class JetClientConnection : IJetClientConnection
         return true;
     }
 
-    private async ValueTask CloseAllReadersForSameTargetAsync()
+    private async ValueTask<JetTransaction> BeginTransactionCoreAsync(CancellationToken cancellationToken = default)
     {
-        await this.CloseReaderAsync().ConfigureAwait(false);
+        ObjectDisposedException.ThrowIf(this.disposed, this);
 
+        if (this.ActiveTransaction is not null)
+        {
+            throw new InvalidOperationException("A transaction is already active on this connection.");
+        }
+
+        AccessWriter writer;
+        if (this.cachedWriter is not null)
+        {
+            writer = this.cachedWriter;
+        }
+        else
+        {
+            await this.CloseAllReadersForSameTargetAsync(cancellationToken).ConfigureAwait(false);
+            writer = await this.OpenWriterCoreAsync(cancellationToken).ConfigureAwait(false);
+            this.cachedWriter = writer;
+        }
+
+        try
+        {
+            JetTransaction transaction = await writer.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            this.ActiveWriter = writer;
+            this.ActiveTransaction = transaction;
+            return transaction;
+        }
+        catch
+        {
+            if (ReferenceEquals(this.cachedWriter, writer))
+            {
+                this.cachedWriter = null;
+            }
+
+            await writer.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async ValueTask CommitTransactionCoreAsync(CancellationToken cancellationToken = default)
+    {
+        if (this.ActiveTransaction is null)
+        {
+            throw new InvalidOperationException("No transaction is currently active on this connection.");
+        }
+
+        try
+        {
+            for (int i = this.savepoints.Count - 1; i >= 0; i--)
+            {
+                JetTransaction scope = this.savepoints[i].Scope;
+                this.savepoints.RemoveAt(i);
+                try
+                {
+                    await scope.CommitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    await scope.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+
+            await this.ActiveTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await this.DisposeTransactionCoreAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask RollbackTransactionCoreAsync(CancellationToken cancellationToken = default)
+    {
+        if (this.ActiveTransaction is null)
+        {
+            throw new InvalidOperationException("No transaction is currently active on this connection.");
+        }
+
+        try
+        {
+            for (int i = this.savepoints.Count - 1; i >= 0; i--)
+            {
+                JetTransaction scope = this.savepoints[i].Scope;
+                this.savepoints.RemoveAt(i);
+                try
+                {
+                    await scope.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    await scope.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+
+            await this.ActiveTransaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await this.DisposeTransactionCoreAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask DisposeTransactionCoreAsync()
+    {
+        for (int i = this.savepoints.Count - 1; i >= 0; i--)
+        {
+            JetTransaction scope = this.savepoints[i].Scope;
+            this.savepoints.RemoveAt(i);
+            await scope.DisposeAsync().ConfigureAwait(false);
+        }
+
+        JetTransaction? transaction = this.ActiveTransaction;
+        AccessWriter? writer = this.ActiveWriter;
+        this.ActiveTransaction = null;
+        this.ActiveWriter = null;
+
+        try
+        {
+            if (transaction is not null)
+            {
+                await transaction.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            if (writer is not null && !ReferenceEquals(writer, this.cachedWriter))
+            {
+                await writer.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async ValueTask CreateSavepointCoreAsync(string name, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ObjectDisposedException.ThrowIf(this.disposed, this);
+
+        if (this.ActiveWriter is null || this.ActiveTransaction is null)
+        {
+            throw new InvalidOperationException("Cannot create a savepoint when no transaction is active.");
+        }
+
+        JetTransaction scope = await this.ActiveWriter.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        this.savepoints.Add((name, scope));
+    }
+
+    private async ValueTask RollbackToSavepointCoreAsync(string name, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ObjectDisposedException.ThrowIf(this.disposed, this);
+
+        if (this.ActiveWriter is null || this.ActiveTransaction is null)
+        {
+            throw new InvalidOperationException("Cannot roll back to a savepoint when no transaction is active.");
+        }
+
+        int targetIndex = this.FindSavepointIndex(name);
+        if (targetIndex < 0)
+        {
+            throw new InvalidOperationException($"Savepoint '{name}' does not exist in the current transaction.");
+        }
+
+        for (int i = this.savepoints.Count - 1; i >= targetIndex; i--)
+        {
+            JetTransaction scope = this.savepoints[i].Scope;
+            this.savepoints.RemoveAt(i);
+            try
+            {
+                await scope.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                await scope.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+
+        JetTransaction replacementScope = await this.ActiveWriter.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        this.savepoints.Add((name, replacementScope));
+    }
+
+    private async ValueTask ReleaseSavepointCoreAsync(string name, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ObjectDisposedException.ThrowIf(this.disposed, this);
+
+        if (this.ActiveWriter is null || this.ActiveTransaction is null)
+        {
+            throw new InvalidOperationException("Cannot release a savepoint when no transaction is active.");
+        }
+
+        int targetIndex = this.FindSavepointIndex(name);
+        if (targetIndex < 0)
+        {
+            throw new InvalidOperationException($"Savepoint '{name}' does not exist in the current transaction.");
+        }
+
+        for (int i = this.savepoints.Count - 1; i >= targetIndex; i--)
+        {
+            JetTransaction scope = this.savepoints[i].Scope;
+            this.savepoints.RemoveAt(i);
+            try
+            {
+                await scope.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                await scope.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async ValueTask<bool> DeleteDatabaseCoreAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(this.disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        await this.DisposeTransactionCoreAsync().ConfigureAwait(false);
+        await this.CloseAllReadersForSameTargetAsync(cancellationToken).ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+        {
+            if (!File.Exists(this.optionsExtension.DatabasePath))
+            {
+                return false;
+            }
+
+            File.Delete(this.optionsExtension.DatabasePath);
+            return true;
+        }
+
+        Stream stream = this.GetOrCreateStream();
+        if (stream.Length == 0)
+        {
+            return false;
+        }
+
+        stream.SetLength(0);
+        stream.Position = 0;
+        return true;
+    }
+
+    private async ValueTask EnterLifecycleAsync(CancellationToken cancellationToken)
+    {
+        await this.lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(this.disposed, this);
+            await this.connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ObjectDisposedException.ThrowIf(this.disposed, this);
+            }
+            catch
+            {
+                this.connectionGate.Release();
+                throw;
+            }
+        }
+        catch
+        {
+            this.lifecycleGate.Release();
+            throw;
+        }
+    }
+
+    private void ExitLifecycle()
+    {
+        this.connectionGate.Release();
+        this.lifecycleGate.Release();
+    }
+
+    private async ValueTask CloseAllReadersForSameTargetAsync(CancellationToken cancellationToken = default)
+    {
+        await this.CloseReaderCoreAsync().ConfigureAwait(false);
+        await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask ClosePeerConnectionsAsync(CancellationToken cancellationToken = default)
+    {
         List<JetClientConnection> peers = [];
         Stream? myStream = this.optionsExtension.DatabaseStream ?? this.resolvedStream;
         lock (LiveConnectionsGate)
@@ -1450,20 +1621,15 @@ public sealed class JetClientConnection : IJetClientConnection
                     continue;
                 }
 
-                if (ReferenceEquals(peer, this)
-                    || (peer.activeReader is null && (peer.cachedWriter is null || peer.ActiveWriter is not null)))
+                if (ReferenceEquals(peer, this))
                 {
                     continue;
                 }
 
-                if (this.normalizedDatabasePath is not null
+                if ((this.normalizedDatabasePath is not null
                     && peer.normalizedDatabasePath is not null
                     && string.Equals(this.normalizedDatabasePath, peer.normalizedDatabasePath, StringComparison.OrdinalIgnoreCase))
-                {
-                    peers.Add(peer);
-                }
-                else if (myStream is not null
-                    && ReferenceEquals(myStream, peer.optionsExtension.DatabaseStream ?? peer.resolvedStream))
+                    || (myStream is not null && ReferenceEquals(myStream, peer.optionsExtension.DatabaseStream ?? peer.resolvedStream)))
                 {
                     peers.Add(peer);
                 }
@@ -1472,7 +1638,20 @@ public sealed class JetClientConnection : IJetClientConnection
 
         foreach (JetClientConnection peer in peers)
         {
-            await peer.CloseReaderAsync().ConfigureAwait(false);
+            await peer.connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (peer.ActiveTransaction is not null)
+                {
+                    throw new InvalidOperationException("Another connection has an active transaction on this database.");
+                }
+
+                await peer.CloseReaderCoreAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                peer.connectionGate.Release();
+            }
         }
     }
 
@@ -1572,6 +1751,133 @@ public sealed class JetClientConnection : IJetClientConnection
         }
 
         return -1;
+    }
+
+    private sealed class ValueBufferFactory
+    {
+        private readonly IEntityType rootType;
+        private readonly IReadOnlyList<IProperty> properties;
+        private readonly int?[] columnMap;
+        private readonly (IProperty Property, int Source, int Target)[] projectedProperties;
+        private readonly Dictionary<IReadOnlyEntityType, object?[]> concreteDefaults = [];
+        private readonly object?[] defaults;
+        private readonly object?[]? reusedBuffer;
+        private readonly IProperty? discriminator;
+        private readonly int? discriminatorColumn;
+
+        internal ValueBufferFactory(
+            IEntityType rootType,
+            IReadOnlyList<IProperty> properties,
+            int?[] columnMap,
+            bool[]? wantedColumns,
+            bool reuseBuffer)
+        {
+            this.rootType = rootType;
+            this.properties = properties;
+            this.columnMap = columnMap;
+            this.discriminator = rootType.FindDiscriminatorProperty();
+            int length = ComputeValueBufferLength(properties);
+            this.defaults = this.BuildDefaults(length, concreteType: null);
+            this.reusedBuffer = reuseBuffer ? new object?[length] : null;
+            List<(IProperty Property, int Source, int Target)> projected = [];
+            for (int i = 0; i < properties.Count; i++)
+            {
+                if (columnMap[i] is int source && (wantedColumns is null || wantedColumns[source]))
+                {
+                    IProperty property = properties[i];
+                    int target = property.GetIndex();
+                    projected.Add((property, source, (uint)target < (uint)length ? target : i));
+                    if (ReferenceEquals(property, this.discriminator))
+                    {
+                        this.discriminatorColumn = source;
+                    }
+                }
+            }
+
+            this.projectedProperties = [.. projected];
+            if (this.discriminator is not null)
+            {
+                this.concreteDefaults[rootType] = this.BuildDefaults(length, rootType);
+                foreach (IEntityType derived in rootType.GetDerivedTypes())
+                {
+                    this.concreteDefaults[derived] = this.BuildDefaults(length, derived);
+                }
+            }
+        }
+
+        internal bool TryCreate(object?[] row, out ValueBuffer valueBuffer)
+        {
+            if (JetEntityTypeMetadata.IsTableSplitOwned(this.rootType)
+                && this.rootType.FindOwnership() is { IsRequiredDependent: false }
+                && IsAllNullTableSplitOwnedRow(this.properties, this.columnMap, row))
+            {
+                valueBuffer = default;
+                return false;
+            }
+
+            IReadOnlyEntityType? concreteType = null;
+            if (this.discriminator is not null && this.discriminatorColumn is int source && (uint)source < (uint)row.Length)
+            {
+                concreteType = FindMatchingEntityType(this.rootType, JetEntityTypeMetadata.ConvertFromProvider(this.discriminator, row[source]));
+            }
+
+            object?[] template = concreteType is not null && this.concreteDefaults.TryGetValue(concreteType, out object?[]? defaultsForType)
+                ? defaultsForType
+                : this.defaults;
+            object?[] buffer = this.reusedBuffer ?? new object?[template.Length];
+            Array.Copy(template, buffer, template.Length);
+            foreach ((IProperty property, int source, int target) in this.projectedProperties)
+            {
+                if ((uint)source >= (uint)row.Length
+                    || row[source] is null or DBNull
+                    || (concreteType is not null && !property.DeclaringType.ContainingEntityType.IsAssignableFrom(concreteType)))
+                {
+                    continue;
+                }
+
+                object? converted = JetEntityTypeMetadata.ConvertFromProvider(property, row[source]);
+                if (converted is not null || buffer[target] is null)
+                {
+                    buffer[target] = converted;
+                }
+            }
+
+            valueBuffer = new ValueBuffer(buffer);
+            return true;
+        }
+
+        private object?[] BuildDefaults(int length, IReadOnlyEntityType? concreteType)
+        {
+            object?[] template = new object?[length];
+            for (int i = 0; i < this.properties.Count; i++)
+            {
+                IProperty property = this.properties[i];
+                if (concreteType is not null && !property.DeclaringType.ContainingEntityType.IsAssignableFrom(concreteType))
+                {
+                    continue;
+                }
+
+                int target = property.GetIndex();
+                if ((uint)target >= (uint)length)
+                {
+                    target = i;
+                }
+
+                object? value = JetEntityTypeMetadata.ConvertFromProvider(property, null);
+                if (value is null && property.ClrType.IsValueType && Nullable.GetUnderlyingType(property.ClrType) is null)
+                {
+                    value = BoxedDefaultValues.GetOrAdd(property.ClrType, static type =>
+                        Expression.Lambda<Func<object>>(Expression.Convert(Expression.Default(type), typeof(object))).Compile()());
+                }
+
+                if (value is not null || template[target] is null)
+                {
+                    template[target] = value;
+                }
+            }
+
+            return template;
+        }
     }
 
     private readonly struct KeyTupleValue(object?[] values) : IEquatable<KeyTupleValue>
