@@ -291,7 +291,8 @@ public sealed class CompactReclaimingDatabaseTests
             string copyPath = Path.Combine(tempDir, "copy" + ext);
             const string password = "SecretPassword123";
 
-            await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(sourcePath, kind, cancellationToken: Ct))
+            await using var sourceStream = new MemoryStream();
+            await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(sourceStream, kind, leaveOpen: true, cancellationToken: Ct))
             {
                 await writer.CreateTableAsync(
                     "Items",
@@ -319,6 +320,7 @@ public sealed class CompactReclaimingDatabaseTests
                 await writer.DropTableAsync("DroppedTemp", Ct);
             }
 
+            await File.WriteAllBytesAsync(sourcePath, sourceStream.ToArray(), Ct);
             await AccessDatabaseEncryption.EncryptAsync(sourcePath, password.AsMemory(), cancellationToken: Ct);
             long encryptedSizeBefore = new FileInfo(sourcePath).Length;
 
@@ -578,17 +580,19 @@ public sealed class CompactReclaimingDatabaseTests
             "JetDatabaseWriter.Tests.CompactReclaim",
             databaseExtension: kind == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb");
 
+        await using var sourceStream = new MemoryStream();
         if (kind == DatabaseFormat.Jet3Mdb)
         {
             byte[] template = await File.ReadAllBytesAsync(
                 Path.Combine(AppContext.BaseDirectory, "Databases", "Jet3", "NativeDescriptorMetadata.mdb"),
                 Ct);
-            await File.WriteAllBytesAsync(native.SourcePath, template, Ct);
+            await sourceStream.WriteAsync(template, Ct);
+            sourceStream.Position = 0;
         }
 
         await using (AccessWriter writer = kind == DatabaseFormat.Jet3Mdb
-            ? await AccessWriter.OpenAsync(native.SourcePath, new AccessWriterOptions { UseLockFile = false }, Ct)
-            : await AccessWriter.CreateDatabaseAsync(native.SourcePath, kind, new AccessWriterOptions { UseLockFile = false }, Ct))
+            ? await AccessWriter.OpenAsync(sourceStream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct)
+            : await AccessWriter.CreateDatabaseAsync(sourceStream, kind, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct))
         {
             await writer.CreateTableAsync(
                 "Items",
@@ -616,6 +620,7 @@ public sealed class CompactReclaimingDatabaseTests
             await writer.DropTableAsync("DroppedTemp", Ct);
         }
 
+        await File.WriteAllBytesAsync(native.SourcePath, sourceStream.ToArray(), Ct);
         AccessCompactReport report = await AccessDatabaseCompact.CompactInPlaceAsync(native.SourcePath, cancellationToken: Ct);
         Assert.True(report.IsComplete);
         Assert.True(report.DatabaseValidated);

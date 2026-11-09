@@ -127,10 +127,12 @@ public sealed class CompactOptimalCapabilitiesTests
             string sourcePath = Path.Combine(tempDir, "source" + ext);
             string salvagePath = Path.Combine(tempDir, "salvage" + ext);
 
+            await using var sourceStream = new MemoryStream();
             await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-                sourcePath,
+                sourceStream,
                 kind,
                 new AccessWriterOptions { UseLockFile = false },
+                leaveOpen: true,
                 Ct))
             {
                 await writer.CreateTableAsync(
@@ -153,7 +155,7 @@ public sealed class CompactOptimalCapabilitiesTests
                 }
             }
 
-            byte[] bytes = await File.ReadAllBytesAsync(sourcePath, Ct);
+            byte[] bytes = sourceStream.ToArray();
             int pageSize = kind == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
             long customersTDef = FindUserTableTDefPage(bytes, pageSize);
             var indexLeafPages = new List<long>();
@@ -297,10 +299,12 @@ public sealed class CompactOptimalCapabilitiesTests
             string sourcePath = Path.Combine(tempDir, "source" + ext);
             string salvagePath = Path.Combine(tempDir, "salvage" + ext);
 
+            await using var sourceStream = new MemoryStream();
             await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-                sourcePath,
+                sourceStream,
                 kind,
                 new AccessWriterOptions { UseLockFile = false },
+                leaveOpen: true,
                 Ct))
             {
                 await writer.CreateTableAsync(
@@ -318,7 +322,7 @@ public sealed class CompactOptimalCapabilitiesTests
                 }
             }
 
-            byte[] bytes = await File.ReadAllBytesAsync(sourcePath, Ct);
+            byte[] bytes = sourceStream.ToArray();
             int pageSize = kind == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
             long customersTDef = FindUserTableTDefPage(bytes, pageSize);
             long damagedDataPage = -1;
@@ -396,10 +400,12 @@ public sealed class CompactOptimalCapabilitiesTests
             string salvagePath = Path.Combine(tempDir, "salvage.accdb");
             string quarantinePath = Path.Combine(tempDir, "quarantine.ndjson");
 
+            await using var sourceStream = new MemoryStream();
             await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-                sourcePath,
+                sourceStream,
                 DatabaseFormat.AceAccdb,
                 new AccessWriterOptions { UseLockFile = false },
+                leaveOpen: true,
                 Ct))
             {
                 await writer.CreateTableAsync(
@@ -416,7 +422,7 @@ public sealed class CompactOptimalCapabilitiesTests
                 }
             }
 
-            byte[] bytes = await File.ReadAllBytesAsync(sourcePath, Ct);
+            byte[] bytes = sourceStream.ToArray();
             const int pageSize = 4096;
             long eventsTDef = FindUserTableTDefPage(bytes, pageSize);
             var dataPages = new List<long>();

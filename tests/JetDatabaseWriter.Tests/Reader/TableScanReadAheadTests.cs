@@ -581,22 +581,33 @@ public sealed class TableScanReadAheadTests(GeneratedDatabaseCache seeds) : IDis
         this.paths.Add(path);
         this.paths.Add(Path.ChangeExtension(path, format == DatabaseFormat.AceAccdb ? ".laccdb" : ".ldb"));
 
-        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-            path,
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            stream,
             format,
             new AccessWriterOptions { UseLockFile = false },
-            TestContext.Current.CancellationToken);
-        await writer.CreateTableAsync(
-            LargeMemoTable,
-            [
-                new ColumnDefinition("Id", typeof(int)),
-                new ColumnDefinition("Body", typeof(string)),
-            ],
-            TestContext.Current.CancellationToken);
-        _ = await writer.InsertRowsAsync(
-            LargeMemoTable,
-            Enumerable.Range(1, LargeMemoRowCount).Select(id => new object?[] { id, LargeMemoBody(id) }),
-            TestContext.Current.CancellationToken);
+            leaveOpen: true,
+            TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                LargeMemoTable,
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Body", typeof(string)),
+                ],
+                TestContext.Current.CancellationToken);
+            _ = await writer.InsertRowsAsync(
+                LargeMemoTable,
+                Enumerable.Range(1, LargeMemoRowCount).Select(id => new object?[] { id, LargeMemoBody(id) }),
+                TestContext.Current.CancellationToken);
+        }
+
+        stream.Position = 0;
+        await using (FileStream file = File.Create(path))
+        {
+            await stream.CopyToAsync(file, TestContext.Current.CancellationToken);
+        }
+
         return path;
     }
 
