@@ -583,7 +583,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                     foreignTable,
                     foreignColumns)
                 {
-                    EnforceReferentialIntegrity = foreignKey.DeleteBehavior != DeleteBehavior.NoAction,
+                    EnforceReferentialIntegrity = true,
                     CascadeDeletes = foreignKey.DeleteBehavior == DeleteBehavior.Cascade,
                     CascadeUpdates = JetEntityTypeMetadata.GetCascadeUpdates(foreignKey),
                 });
