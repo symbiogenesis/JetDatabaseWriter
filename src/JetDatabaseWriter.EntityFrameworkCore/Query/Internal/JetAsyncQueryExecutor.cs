@@ -128,29 +128,36 @@ internal static partial class JetAsyncQueryExecutor
         QueryCompilationContext compilationContext = dependencies.QueryCompilationContextFactory.Create(async);
         IModel model = compilationContext.Model;
         JetQueryPlan plan = JetQueryPlanExtractor.Analyze(query, model);
-        plan.InitializeMaterializers(dependencies.QueryCompilationContextFactory, preprocessorFactory, shaperFactory, model);
 
         Type resultType = typeof(TResult);
+        Func<QueryContext, TResult> executor;
         if (!async)
         {
-            return CompileSync<TResult>(query, plan, model, resultType);
+            executor = CompileSync<TResult>(query, plan, model, resultType);
         }
-
-        if (resultType.IsGenericType && resultType.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>))
+        else if (resultType.IsGenericType && resultType.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>))
         {
             Type elementType = resultType.GetGenericArguments()[0];
             MethodInfo genericMethod = BuildSequenceExecutorMethod.MakeGenericMethod(elementType);
-            return InvokeBuilderMethod<Func<QueryContext, TResult>>(genericMethod, [query, plan, model]);
+            executor = InvokeBuilderMethod<Func<QueryContext, TResult>>(genericMethod, [query, plan, model]);
         }
-
-        if (resultType.IsGenericType && resultType.GetGenericTypeDefinition() == typeof(Task<>))
+        else if (resultType.IsGenericType && resultType.GetGenericTypeDefinition() == typeof(Task<>))
         {
             Type scalarType = resultType.GetGenericArguments()[0];
             MethodInfo genericMethod = BuildScalarExecutorMethod.MakeGenericMethod(scalarType);
-            return InvokeBuilderMethod<Func<QueryContext, TResult>>(genericMethod, [query, plan, model]);
+            executor = InvokeBuilderMethod<Func<QueryContext, TResult>>(genericMethod, [query, plan, model]);
+        }
+        else
+        {
+            throw new NotSupportedException($"Unsupported asynchronous query result type '{resultType}'.");
         }
 
-        throw new NotSupportedException($"Unsupported asynchronous query result type '{resultType}'.");
+        if (plan.RequiresMaterializers)
+        {
+            plan.InitializeMaterializers(dependencies.QueryCompilationContextFactory, preprocessorFactory, shaperFactory, model);
+        }
+
+        return executor;
     }
 
     private static TDelegate InvokeBuilderMethod<TDelegate>(MethodInfo method, object?[] args)
@@ -343,6 +350,7 @@ internal static partial class JetAsyncQueryExecutor
 
         Func<QueryContext, JetExecutionMaterializedState, IEnumerable<TElement>> compiledQuery =
             CompileSequenceDelegate<TElement>(query, plan, model);
+        plan.RequiresMaterializers = true;
         return queryContext => ExecuteSequenceAsync(queryContext, plan, compiledQuery);
     }
 
@@ -373,6 +381,7 @@ internal static partial class JetAsyncQueryExecutor
 
         Func<QueryContext, JetExecutionMaterializedState, TScalar> compiledQuery =
             CompileScalarDelegate<TScalar>(query, plan, model);
+        plan.RequiresMaterializers = true;
         return queryContext => ExecuteScalarAsync(queryContext, plan, compiledQuery);
     }
 
@@ -432,6 +441,7 @@ internal static partial class JetAsyncQueryExecutor
             return bufferExecutor!;
         }
 
+        plan.RequiresMaterializers = true;
         IEntityType entityType = ResolveBulkTargetEntityType<TSource>(sourceExpression, model);
         IEntityType rootType = entityType.GetRootType();
         IKey primaryKey = rootType.FindPrimaryKey()
@@ -509,6 +519,7 @@ internal static partial class JetAsyncQueryExecutor
             return bufferExecutor!;
         }
 
+        plan.RequiresMaterializers = true;
         IEntityType entityType = ResolveBulkTargetEntityType<TSource>(sourceExpression, model);
         IEntityType rootType = entityType.GetRootType();
         IKey primaryKey = rootType.FindPrimaryKey()
@@ -3042,6 +3053,8 @@ internal static partial class JetAsyncQueryExecutor
         public QueryTrackingBehavior? TrackingBehaviorOverride { get; } = trackingBehaviorOverride;
 
         public bool IgnoreQueryFilters { get; } = ignoreQueryFilters;
+
+        public bool RequiresMaterializers { get; set; }
 
         public void InitializeMaterializers(
             IQueryCompilationContextFactory contextFactory,

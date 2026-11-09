@@ -23,6 +23,7 @@ internal static partial class JetAsyncQueryExecutor
         Func<TBuffer, BufferResultScope, TResult> materialize = Expression.Lambda<Func<TBuffer, BufferResultScope, TResult>>(shape, input, scope).Compile();
         Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TBuffer>> evaluate = Expression.Lambda<Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TBuffer>>>(
             query, context, roots).Compile();
+        plan.RequiresMaterializers = true;
         return qc => ExecuteShapedBufferSequence(qc, plan, evaluate, materialize);
     }
 

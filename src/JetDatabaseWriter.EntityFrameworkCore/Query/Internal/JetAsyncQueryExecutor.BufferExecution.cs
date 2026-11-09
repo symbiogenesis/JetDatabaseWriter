@@ -50,6 +50,7 @@ internal static partial class JetAsyncQueryExecutor
                 if (streamed.Type == typeof(IAsyncEnumerable<ValueBuffer>) && model.FindEntityType(typeof(TElement)) is { } entityType)
                 {
                     Func<QueryContext, IAsyncEnumerable<ValueBuffer>> source = Expression.Lambda<Func<QueryContext, IAsyncEnumerable<ValueBuffer>>>(streamed, context).Compile();
+                    plan.RequiresMaterializers = true;
                     executor = qc => MaterializeStream<TElement>(source(qc), qc, plan, entityType);
                     return true;
                 }
