@@ -398,15 +398,21 @@ internal static partial class JetAsyncQueryExecutor
                 if (node.Method.DeclaringType == typeof(Queryable)
                     && node.Method.Name is nameof(Queryable.Distinct) or nameof(Queryable.Union)
                         or nameof(Queryable.Intersect) or nameof(Queryable.Except)
+                        or nameof(Queryable.DistinctBy) or nameof(Queryable.UnionBy)
+                        or nameof(Queryable.IntersectBy) or nameof(Queryable.ExceptBy)
                         or nameof(Queryable.Contains) or nameof(Queryable.SequenceEqual)
                     && node.Arguments.Count > 0
-                    && model.FindEntityType(UnwrapSequenceType(node.Arguments[0].Type)) is not null)
+                    && this.ContainsMappedType(UnwrapSequenceType(node.Arguments[0].Type)))
                 {
                     this.ContainsEntityEquality = true;
                 }
 
                 return base.VisitMethodCall(node);
             }
+
+            private bool ContainsMappedType(System.Type type)
+                => model.FindEntityType(type) is not null
+                    || (type.IsGenericType && type.GetGenericArguments().Any(this.ContainsMappedType));
         }
 
         private sealed class ParameterUseFinder(IEnumerable<ParameterExpression> candidates) : ExpressionVisitor

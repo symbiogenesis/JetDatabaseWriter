@@ -134,11 +134,11 @@ internal static class JetIndexSeekPlanner
 
     /// <summary>
     /// Attempts to construct an ordered full-index scan on <paramref name="reader"/> when <paramref name="orderedProperties"/>
-    /// match the leading ascending columns of a B-tree index whose sort order matches CLR comparison.
+    /// match the leading columns of a B-tree index whose forward or reverse order matches CLR comparison.
     /// </summary>
     /// <param name="reader">The open <see cref="AccessReader"/>.</param>
     /// <param name="resolved">The resolved local table.</param>
-    /// <param name="orderedProperties">The required ascending sort properties.</param>
+    /// <param name="orderedProperties">The required scalar sort properties and directions.</param>
     /// <param name="wantedColumns">Optional column projection mask.</param>
     /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
     /// <returns>An index-ordered row sequence, or <see langword="null"/> if no suitable index exists.</returns>
@@ -175,7 +175,7 @@ internal static class JetIndexSeekPlanner
     /// <param name="writer">The active <see cref="AccessWriter"/>.</param>
     /// <param name="resolved">The resolved table.</param>
     /// <param name="conditions">Optional extracted seek conditions.</param>
-    /// <param name="orderedProperties">Optional ascending sort properties when no seek conditions are present.</param>
+    /// <param name="orderedProperties">Optional scalar sort properties and directions.</param>
     /// <param name="parameters">The runtime query parameter values.</param>
     /// <param name="wantedColumns">The column projection mask.</param>
     /// <param name="visitRow">Callback invoked for each decoded row along with whether the scan is ordered by <paramref name="orderedProperties"/>; returning <see langword="false"/> stops the scan.</param>

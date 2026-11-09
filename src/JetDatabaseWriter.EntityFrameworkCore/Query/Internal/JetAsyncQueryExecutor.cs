@@ -4345,7 +4345,7 @@ internal static partial class JetAsyncQueryExecutor
         {
             foreach (Expression argument in node.Arguments)
             {
-                if (!ignoreTransparentEntities || argument is not ParameterExpression)
+                if (!ignoreTransparentEntities || node.Members is null || argument is not ParameterExpression)
                 {
                     _ = this.Visit(argument);
                 }
