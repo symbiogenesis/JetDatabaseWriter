@@ -79,6 +79,28 @@ public sealed class JetBufferExecutionTests
     }
 
     [Fact]
+    public async Task EntityProjectionMaterializesOnlySurvivingRowsAndTracksReturnedInstances()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        await using BufferContext context = await CreateContextAsync(stream);
+        int constructed = 0;
+        OnConstruct.Value = () => constructed++;
+        try
+        {
+            var results = await context.Items.OrderByDescending(x => x.Id).Take(1).Select(x => new { Entity = x, x.Amount }).ToArrayAsync(ct);
+            Assert.Single(results);
+            Assert.Equal(1, constructed);
+            Assert.Equal(4, results[0].Entity.Id);
+            Assert.Same(results[0].Entity, context.ChangeTracker.Entries<BufferItem>().Single().Entity);
+        }
+        finally
+        {
+            OnConstruct.Value = null;
+        }
+    }
+
+    [Fact]
     public async Task BulkMutationsReadBuffersWithoutConstructingEntities()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;

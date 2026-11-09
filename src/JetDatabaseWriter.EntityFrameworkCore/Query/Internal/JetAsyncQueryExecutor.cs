@@ -3061,6 +3061,7 @@ internal static partial class JetAsyncQueryExecutor
             ArgumentNullException.ThrowIfNull(queryContext);
             return this.untrackedMaterializers[entityType];
         }
+
         public Func<QueryContext, JetExecutionMaterializedState, object, bool>? GetCompiledQueryFilter(IModel model, IQueryFilter filter)
         {
             lock (this.compiledQueryFilters)
