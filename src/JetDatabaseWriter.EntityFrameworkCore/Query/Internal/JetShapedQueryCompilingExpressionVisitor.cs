@@ -36,7 +36,37 @@ public sealed class JetShapedQueryCompilingExpressionVisitor(
 
         ParameterExpression valueBufferParam = Expression.Parameter(typeof(ValueBuffer), "valueBuffer");
         StructuralTypeShaperExpression shaper = new(entityType, valueBufferParam, nullable: false);
-        Expression injected = this.InjectStructuralTypeMaterializers(shaper);
+        Expression toInject = shaper;
+        if (entityType.IsOwned())
+        {
+            List<IEntityType> owners = [];
+            IEntityType? current = entityType;
+            while (current?.IsOwned() == true && current.FindOwnership() is { } ownership)
+            {
+                current = ownership.PrincipalEntityType;
+                owners.Add(current);
+            }
+
+            if (owners.Count > 0)
+            {
+                owners.Reverse();
+                List<Expression> blockExpressions = [];
+                foreach (IEntityType ownerType in owners)
+                {
+                    blockExpressions.Add(new StructuralTypeShaperExpression(ownerType, valueBufferParam, nullable: false));
+                }
+
+                blockExpressions.Add(shaper);
+                toInject = Expression.Block(blockExpressions);
+            }
+        }
+
+        Expression injected = this.InjectStructuralTypeMaterializers(toInject);
+        if (toInject is BlockExpression && injected is BlockExpression injectedBlock && injectedBlock.Expressions.Count > 0)
+        {
+            injected = injectedBlock.Expressions[^1];
+        }
+
         Expression boxed = Expression.Convert(injected, typeof(object));
         return Expression.Lambda<Func<QueryContext, ValueBuffer, object>>(
             boxed,

@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
 using JetDatabaseWriter.EntityFrameworkCore.Storage.Internal;
+using JetDatabaseWriter.EntityFrameworkCore.ValueGeneration.Internal;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
@@ -1396,6 +1397,647 @@ public sealed class JetEntityFrameworkCoreProviderTests
 
         ColumnMetadata recordedCol = cols.Single(static c => c.Name == "RecordedAt");
         Assert.Equal("Date/Time Extended", recordedCol.TypeName);
+    }
+
+    [Theory]
+    [MemberData(nameof(SupportedFormats))]
+    public async Task TrackedNavigationWithoutInclude_AndNestedProjection_RetainFixupAndTrackEntities(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions<StoreDbContext> options = new DbContextOptionsBuilder<StoreDbContext>()
+            .UseJetDatabaseWriter(stream, format, leaveOpen: true)
+            .Options;
+
+        await using (StoreDbContext seed = new(options))
+        {
+            _ = await seed.Database.EnsureCreatedAsync(ct);
+            Customer c1 = new()
+            {
+                Code = "C-NAV-1",
+                Name = "Nav Customer One",
+                IsVip = true,
+                CreditLimit = 1000m,
+                RowVersion = 1,
+                Orders =
+                [
+                    new Order
+                    {
+                        OrderDate = new DateTime(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc),
+                        TotalAmount = 250m,
+                        Status = OrderStatus.Shipped,
+                        TrackingId = Guid.NewGuid(),
+                    },
+                    new Order
+                    {
+                        OrderDate = new DateTime(2026, 3, 2, 0, 0, 0, DateTimeKind.Utc),
+                        TotalAmount = 50m,
+                        Status = OrderStatus.Pending,
+                        TrackingId = Guid.NewGuid(),
+                    },
+                ],
+            };
+            seed.Customers.Add(c1);
+            _ = await seed.SaveChangesAsync(ct);
+        }
+
+        // 1. Tracked query referencing a navigation in Where without .Include() retains populated navigation and tracks related entities.
+        await using (StoreDbContext context = new(options))
+        {
+            Customer matched = await context.Customers
+                .Where(c => c.Orders.Any(o => o.TotalAmount >= 200m))
+                .SingleAsync(ct);
+
+            Assert.Equal("C-NAV-1", matched.Code);
+            Assert.Equal(EntityState.Unchanged, context.Entry(matched).State);
+            Assert.Equal(2, matched.Orders.Count);
+            foreach (Order order in matched.Orders)
+            {
+                Assert.Same(matched, order.Customer);
+                Assert.Equal(EntityState.Unchanged, context.Entry(order).State);
+            }
+        }
+
+        // 2. Tracked query projecting a multi-level nested anonymous/DTO graph promotes inner entities to tracked instances.
+        await using (StoreDbContext context = new(options))
+        {
+            var projected = await context.Customers
+                .Where(c => c.Code == "C-NAV-1")
+                .Select(c => new
+                {
+                    Outer = new
+                    {
+                        Entity = c,
+                        TopOrder = c.Orders.OrderByDescending(o => o.TotalAmount).FirstOrDefault(),
+                    },
+                })
+                .SingleAsync(ct);
+
+            Assert.NotNull(projected.Outer.Entity);
+            Assert.NotNull(projected.Outer.TopOrder);
+            Assert.Equal(EntityState.Unchanged, context.Entry(projected.Outer.Entity).State);
+            Assert.Equal(EntityState.Unchanged, context.Entry(projected.Outer.TopOrder!).State);
+
+            projected.Outer.Entity.Name = "Updated Via Nested Projection";
+            _ = await context.SaveChangesAsync(ct);
+        }
+
+        await using (StoreDbContext verify = new(options))
+        {
+            Customer reloaded = await verify.Customers.AsNoTracking().SingleAsync(c => c.Code == "C-NAV-1", ct);
+            Assert.Equal("Updated Via Nested Projection", reloaded.Name);
+        }
+    }
+
+    [Fact]
+    public async Task TemporaryValueGenerators_ShortAndByte_StayBoundedAcrossWraparound()
+    {
+        await using MemoryStream stream = new();
+        DbContextOptions<StoreDbContext> options = new DbContextOptionsBuilder<StoreDbContext>()
+            .UseJetDatabaseWriter(stream, DatabaseFormat.AceAccdb, leaveOpen: true)
+            .Options;
+
+        await using StoreDbContext context = new(options);
+        Customer customer = new() { Code = "TMP", Name = "Temp" };
+        Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<Customer> entry = context.Entry(customer);
+
+        CancellationToken ct = TestContext.Current.CancellationToken;
+#pragma warning disable EF1001 // Testing internal temporary integer value generator wraparound bounds.
+        JetTemporaryIntegerValueGenerator<short> shortGen = new();
+        for (int i = 0; i < 40_000; i++)
+        {
+            short val = await shortGen.NextAsync(entry, ct);
+            Assert.True(val < 0, $"Expected negative short temporary value, got {val} at iteration {i}.");
+        }
+
+        JetTemporaryIntegerValueGenerator<byte> byteGen = new();
+        for (int i = 0; i < 600; i++)
+        {
+            byte val = await byteGen.NextAsync(entry, ct);
+            Assert.True(val is >= 1 and <= 250, $"Expected byte temporary value in [1, 250], got {val} at iteration {i}.");
+        }
+#pragma warning restore EF1001
+    }
+
+    [Theory]
+    [MemberData(nameof(SupportedFormats))]
+    public async Task ActiveTransaction_RangeDisjunctionAndBooleanIndexSeek_ReadsUncommittedMutations(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions<StoreDbContext> options = new DbContextOptionsBuilder<StoreDbContext>()
+            .UseJetDatabaseWriter(stream, format, leaveOpen: true)
+            .Options;
+
+        await using StoreDbContext context = new(options);
+        _ = await context.Database.EnsureCreatedAsync(ct);
+
+        Customer c1 = new() { Code = "C1", Name = "One", IsVip = true, CreditLimit = 100m, RowVersion = 1 };
+        Customer c2Init = new() { Code = "C2", Name = "Two", IsVip = false, CreditLimit = 200m, RowVersion = 1 };
+        Customer c3 = new() { Code = "C3", Name = "Three", IsVip = true, CreditLimit = 300m, RowVersion = 1 };
+        context.Customers.AddRange(c1, c2Init, c3);
+        _ = await context.SaveChangesAsync(ct);
+
+        await using IDbContextTransaction tx = await context.Database.BeginTransactionAsync(ct);
+
+        // Mutate and insert inside the uncommitted transaction
+        Customer c2 = await context.Customers.SingleAsync(c => c.Code == "C2", ct);
+        c2.CreditLimit = 250m;
+        c2.IsVip = true;
+        Customer c4 = new() { Code = "C4", Name = "Four", IsVip = false, CreditLimit = 400m, RowVersion = 1 };
+        context.Customers.Add(c4);
+        _ = await context.SaveChangesAsync(ct);
+
+        // Range seek on indexed Code + boolean member access + OrElse equality disjunction inside active transaction
+        List<string> disjunctionCodes = await context.Customers
+            .AsNoTracking()
+            .Where(c => c.IsVip && (c.Code == "C1" || c.Code == "C2" || c.Code == "C4"))
+            .OrderBy(c => c.Code)
+            .Select(c => c.Code)
+            .ToListAsync(ct);
+        Assert.Equal(["C1", "C2"], disjunctionCodes);
+
+        // Range seek on indexed primary key Id (>= c2.Id && <= c3.Id) inside active transaction
+        int minId = c2.Id;
+        int maxId = c3.Id;
+        List<string> rangeCodes = await context.Customers
+            .AsNoTracking()
+            .Where(c => c.Id >= minId && c.Id <= maxId)
+            .OrderBy(c => c.Code)
+            .Select(c => c.Code)
+            .ToListAsync(ct);
+        Assert.Equal(["C2", "C3"], rangeCodes);
+
+        // Negated boolean member filter
+        List<string> nonVipCodes = await context.Customers
+            .AsNoTracking()
+            .Where(c => !c.IsVip)
+            .Select(c => c.Code)
+            .ToListAsync(ct);
+        Assert.Equal(["C4"], nonVipCodes);
+
+        await tx.CommitAsync(ct);
+    }
+
+    [Theory]
+    [MemberData(nameof(SupportedFormats))]
+    public async Task OwnedEntities_ComplexProperties_AndManyToManySkipNavigations_RoundTrip(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions<RichModelingDbContext> options = new DbContextOptionsBuilder<RichModelingDbContext>()
+            .UseJetDatabaseWriter(stream, format, leaveOpen: true)
+            .Options;
+
+        await using (RichModelingDbContext context = new(options))
+        {
+            _ = await context.Database.EnsureCreatedAsync(ct);
+
+            SupplyTag hardware = new() { Name = "Hardware" };
+            SupplyTag cloud = new() { Name = "Cloud" };
+            context.Tags.AddRange(hardware, cloud);
+
+            Supplier s1 = new()
+            {
+                Name = "Acme Industrial",
+                TaxProfile = new SupplierTaxProfile
+                {
+                    RegistrationCode = "TX-100",
+                    TaxRate = 0.0825m,
+                },
+                Headquarters = new StreetAddress
+                {
+                    Street = "100 Main St",
+                    City = "Austin",
+                },
+                SecondaryOffice = null,
+                Contacts =
+                [
+                    new SupplierContact { ContactName = "Alice", Email = "alice@acme.test" },
+                    new SupplierContact { ContactName = "Bob", Email = "bob@acme.test" },
+                ],
+                Tags = [hardware, cloud],
+            };
+
+            Supplier s2 = new()
+            {
+                Name = "Globex Corp",
+                TaxProfile = new SupplierTaxProfile
+                {
+                    RegistrationCode = "TX-200",
+                    TaxRate = 0.065m,
+                },
+                Headquarters = new StreetAddress
+                {
+                    Street = "200 Oak Ave",
+                    City = "Dallas",
+                },
+                SecondaryOffice = new StreetAddress
+                {
+                    Street = "500 Annex Blvd",
+                    City = "Houston",
+                },
+                Contacts =
+                [
+                    new SupplierContact { ContactName = "Charlie", Email = "charlie@globex.test" },
+                ],
+                Tags = [hardware],
+            };
+
+            context.Suppliers.AddRange(s1, s2);
+            _ = await context.SaveChangesAsync(ct);
+        }
+
+        // Verify query auto-includes owned navigations, materializes ComplexProperty, leaves null optional OwnsOne as null,
+        // and loads many-to-many skip navigations via .Include().
+        await using (RichModelingDbContext context = new(options))
+        {
+            List<Supplier> suppliers = await context.Suppliers
+                .Include(s => s.Tags)
+                .OrderBy(s => s.Name)
+                .ToListAsync(ct);
+
+            Assert.Equal(2, suppliers.Count);
+
+            Supplier acme = suppliers[0];
+            Assert.Equal("Acme Industrial", acme.Name);
+            Assert.Equal("TX-100", acme.TaxProfile.RegistrationCode);
+            Assert.Equal(0.0825m, acme.TaxProfile.TaxRate);
+            Assert.Equal("100 Main St", acme.Headquarters.Street);
+            Assert.Equal("Austin", acme.Headquarters.City);
+            Assert.Null(acme.SecondaryOffice);
+            Assert.Equal(2, acme.Contacts.Count);
+            Assert.Equal(["Cloud", "Hardware"], acme.Tags.OrderBy(t => t.Name).Select(t => t.Name).ToArray());
+
+            Supplier globex = suppliers[1];
+            Assert.NotNull(globex.SecondaryOffice);
+            Assert.Equal("Houston", globex.SecondaryOffice!.City);
+            SupplyTag globexTag = Assert.Single(globex.Tags);
+            Assert.Equal("Hardware", globexTag.Name);
+
+            // Standalone update of table-split OwnsOne while owner entry remains Unchanged
+            acme.Headquarters.City = "Round Rock";
+            acme.SecondaryOffice = new StreetAddress
+            {
+                Street = "900 Branch Rd",
+                City = "San Antonio",
+            };
+            _ = await context.SaveChangesAsync(ct);
+        }
+
+        // Verify ComplexProperty predicate pushdown and updated table-split OwnsOne values
+        await using (RichModelingDbContext verify = new(options))
+        {
+            Supplier acme = await verify.Suppliers
+                .AsNoTracking()
+                .Include(s => s.Tags)
+                .SingleAsync(s => s.TaxProfile.RegistrationCode == "TX-100", ct);
+
+            Assert.Equal("Round Rock", acme.Headquarters.City);
+            Assert.NotNull(acme.SecondaryOffice);
+            Assert.Equal("San Antonio", acme.SecondaryOffice!.City);
+            Assert.Equal(2, acme.Tags.Count);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(SupportedFormats))]
+    public async Task SelfReferencingForeignKey_AndCascadeUpdates_PersistInDatabaseRelationships(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions<CascadeRelationshipDbContext> options = new DbContextOptionsBuilder<CascadeRelationshipDbContext>()
+            .UseJetDatabaseWriter(stream, format, leaveOpen: true)
+            .Options;
+
+        await using (CascadeRelationshipDbContext context = new(options))
+        {
+            _ = await context.Database.EnsureCreatedAsync(ct);
+            EmployeeNode manager = new()
+            {
+                EmployeeCode = "EMP-01",
+                FullName = "Jane Manager",
+            };
+            EmployeeNode report = new()
+            {
+                EmployeeCode = "EMP-02",
+                FullName = "John Report",
+                Manager = manager,
+            };
+            EmployeeAssignment assignment = new()
+            {
+                EmployeeCode = "EMP-02",
+                ProjectName = "Apollo",
+                Employee = report,
+            };
+            context.Employees.AddRange(manager, report);
+            context.Assignments.Add(assignment);
+            _ = await context.SaveChangesAsync(ct);
+        }
+
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, leaveOpen: true, cancellationToken: ct);
+        IReadOnlyList<RelationshipMetadata> relationships = await reader.ListRelationshipsAsync(ct);
+
+        // 1. Self-referencing relationship on Employees (ManagerId -> Id)
+        RelationshipMetadata? selfRel = relationships.FirstOrDefault(
+            static r => string.Equals(r.PrimaryTable, "Employees", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(r.ForeignTable, "Employees", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(selfRel);
+        Assert.True(selfRel!.EnforcesReferentialIntegrity);
+
+        // 2. Cascade Updates + Cascade Deletes on Assignments -> Employees
+        RelationshipMetadata? cascadeRel = relationships.FirstOrDefault(
+            static r => string.Equals(r.PrimaryTable, "Employees", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(r.ForeignTable, "Assignments", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(cascadeRel);
+        Assert.True(cascadeRel!.CascadeUpdates);
+        Assert.True(cascadeRel.CascadeDeletes);
+    }
+
+    [Theory]
+    [MemberData(nameof(SupportedFormats))]
+    public async Task QueryPushdown_ParameterizedTake_FilteredLimit_OrderedScan_Aggregates_AndJoinKeySeek(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions<StoreDbContext> options = new DbContextOptionsBuilder<StoreDbContext>()
+            .UseJetDatabaseWriter(stream, format, leaveOpen: true)
+            .Options;
+
+        await using StoreDbContext context = new(options);
+        _ = await context.Database.EnsureCreatedAsync(ct);
+
+        Customer c1 = new() { Code = "C-01", Name = "Alpha", IsVip = false, CreditLimit = 100m, RowVersion = 1 };
+        Customer c2 = new() { Code = "C-02", Name = "Beta", IsVip = true, CreditLimit = 200m, RowVersion = 1 };
+        Customer c3 = new() { Code = "C-03", Name = "Gamma", IsVip = true, CreditLimit = 300m, RowVersion = 1 };
+        Customer c4 = new() { Code = "C-04", Name = "Delta", IsVip = false, CreditLimit = 400m, RowVersion = 1 };
+        context.Customers.AddRange(c1, c2, c3, c4);
+        _ = await context.SaveChangesAsync(ct);
+
+        context.Orders.AddRange(
+            new Order
+            {
+                CustomerId = c2.Id,
+                OrderDate = new DateTime(2026, 4, 1, 0, 0, 0, DateTimeKind.Utc),
+                TotalAmount = 50m,
+                Status = OrderStatus.Pending,
+                TrackingId = Guid.NewGuid(),
+            },
+            new Order
+            {
+                CustomerId = c3.Id,
+                OrderDate = new DateTime(2026, 4, 2, 0, 0, 0, DateTimeKind.Utc),
+                TotalAmount = 150m,
+                Status = OrderStatus.Shipped,
+                TrackingId = Guid.NewGuid(),
+            });
+        _ = await context.SaveChangesAsync(ct);
+
+        // 1. Parameterized Take(p) with different parameter values reuses plan accurately
+        int[] rowLimits = [1, 3];
+        int takeOne = rowLimits[0];
+        int takeThree = rowLimits[1];
+        List<Customer> firstBatch = await context.Customers.AsNoTracking().Take(takeOne).ToListAsync(ct);
+        List<Customer> secondBatch = await context.Customers.AsNoTracking().Take(takeThree).ToListAsync(ct);
+        _ = Assert.Single(firstBatch);
+        Assert.Equal(3, secondBatch.Count);
+
+        // 2. Filtered Where(predicate).Take(p) short-circuits after matching rows
+        List<Customer> vipSingle = await context.Customers
+            .AsNoTracking()
+            .Where(c => c.IsVip)
+            .Take(takeOne)
+            .ToListAsync(ct);
+        Customer singleVip = Assert.Single(vipSingle);
+        Assert.True(singleVip.IsVip);
+
+        // 3. Ascending OrderBy(indexed).Take(2) index scan pushdown
+        List<string> orderedCodes = await context.Customers
+            .AsNoTracking()
+            .OrderBy(c => c.Code)
+            .Take(2)
+            .Select(c => c.Code)
+            .ToListAsync(ct);
+        Assert.Equal(["C-01", "C-02"], orderedCodes);
+
+        // 4. Entity-free CountAsync / LongCountAsync / AnyAsync fast paths
+        Assert.Equal(4, await context.Customers.CountAsync(ct));
+        Assert.Equal(4L, await context.Customers.LongCountAsync(ct));
+        Assert.True(await context.Customers.AnyAsync(ct));
+
+        // 5. Inner Join & GroupJoin key-seek pushdown
+        var joined = await context.Customers
+            .AsNoTracking()
+            .Where(c => c.IsVip)
+            .Join(
+                context.Orders.AsNoTracking(),
+                c => c.Id,
+                o => o.CustomerId,
+                (c, o) => new { c.Code, o.TotalAmount })
+            .OrderBy(x => x.Code)
+            .ToListAsync(ct);
+        Assert.Equal(2, joined.Count);
+        Assert.Equal("C-02", joined[0].Code);
+        Assert.Equal(50m, joined[0].TotalAmount);
+        Assert.Equal("C-03", joined[1].Code);
+        Assert.Equal(150m, joined[1].TotalAmount);
+
+        var groupJoined = await context.Customers
+            .AsNoTracking()
+            .Where(c => c.Code == "C-02")
+            .GroupJoin(
+                context.Orders.AsNoTracking(),
+                c => c.Id,
+                o => o.CustomerId,
+                (c, orders) => new { c.Code, OrderCount = orders.Count() })
+            .SingleAsync(ct);
+        Assert.Equal("C-02", groupJoined.Code);
+        Assert.Equal(1, groupJoined.OrderCount);
+    }
+
+    private sealed class RichModelingDbContext(DbContextOptions<RichModelingDbContext> options) : DbContext(options)
+    {
+        public DbSet<Supplier> Suppliers => this.Set<Supplier>();
+
+        public DbSet<SupplyTag> Tags => this.Set<SupplyTag>();
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            _ = modelBuilder.Entity<SupplyTag>(entity =>
+            {
+                _ = entity.ToTable("SupplyTags");
+                _ = entity.HasKey(t => t.Id);
+                _ = entity.Property(t => t.Name).HasMaxLength(60).IsRequired();
+            });
+
+            _ = modelBuilder.Entity<Supplier>(entity =>
+            {
+                _ = entity.ToTable("Suppliers");
+                _ = entity.HasKey(s => s.Id);
+                _ = entity.Property(s => s.Name).HasMaxLength(100).IsRequired();
+
+                _ = entity.ComplexProperty(
+                    s => s.TaxProfile,
+                    complex =>
+                    {
+                        _ = complex.Property(p => p.RegistrationCode)
+                            .HasColumnName("TaxRegCode")
+                            .HasMaxLength(40)
+                            .IsRequired();
+                        _ = complex.Property(p => p.TaxRate)
+                            .HasColumnName("TaxRate")
+                            .HasPrecision(18, 4);
+                    });
+
+                _ = entity.OwnsOne(
+                    s => s.Headquarters,
+                    owned =>
+                    {
+                        _ = owned.Property(a => a.Street).HasMaxLength(120).IsRequired();
+                        _ = owned.Property(a => a.City).HasMaxLength(80).IsRequired();
+                    });
+                _ = entity.Navigation(s => s.Headquarters).IsRequired();
+
+                _ = entity.OwnsOne(
+                    s => s.SecondaryOffice,
+                    owned =>
+                    {
+                        _ = owned.Property(a => a.Street).HasMaxLength(120);
+                        _ = owned.Property(a => a.City).HasMaxLength(80);
+                    });
+
+                _ = entity.OwnsMany(
+                    s => s.Contacts,
+                    owned =>
+                    {
+                        _ = owned.ToTable("SupplierContacts");
+                        _ = owned.WithOwner().HasForeignKey(c => c.SupplierId);
+                        _ = owned.HasKey(c => c.Id);
+                        _ = owned.Property(c => c.ContactName).HasMaxLength(80).IsRequired();
+                        _ = owned.Property(c => c.Email).HasMaxLength(120).IsRequired();
+                    });
+
+                _ = entity.HasMany(s => s.Tags)
+                    .WithMany(t => t.Suppliers);
+            });
+        }
+    }
+
+    private sealed class Supplier
+    {
+        public int Id { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+
+        public SupplierTaxProfile TaxProfile { get; set; } = new();
+
+        public StreetAddress Headquarters { get; set; } = new();
+
+        public StreetAddress? SecondaryOffice { get; set; }
+
+        public List<SupplierContact> Contacts { get; set; } = [];
+
+        public List<SupplyTag> Tags { get; set; } = [];
+    }
+
+    private sealed class SupplierTaxProfile
+    {
+        public string RegistrationCode { get; set; } = string.Empty;
+
+        public decimal TaxRate { get; set; }
+    }
+
+    private sealed class StreetAddress
+    {
+        public string Street { get; set; } = string.Empty;
+
+        public string City { get; set; } = string.Empty;
+    }
+
+    private sealed class SupplierContact
+    {
+        public int Id { get; set; }
+
+        public int SupplierId { get; set; }
+
+        public string ContactName { get; set; } = string.Empty;
+
+        public string Email { get; set; } = string.Empty;
+    }
+
+    private sealed class SupplyTag
+    {
+        public int Id { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+
+        public List<Supplier> Suppliers { get; set; } = [];
+    }
+
+    private sealed class CascadeRelationshipDbContext(DbContextOptions<CascadeRelationshipDbContext> options) : DbContext(options)
+    {
+        public DbSet<EmployeeNode> Employees => this.Set<EmployeeNode>();
+
+        public DbSet<EmployeeAssignment> Assignments => this.Set<EmployeeAssignment>();
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            _ = modelBuilder.Entity<EmployeeNode>(entity =>
+            {
+                _ = entity.ToTable("Employees");
+                _ = entity.HasKey(e => e.Id);
+                _ = entity.HasAlternateKey(e => e.EmployeeCode);
+                _ = entity.Property(e => e.EmployeeCode).HasMaxLength(32).IsRequired();
+                _ = entity.Property(e => e.FullName).HasMaxLength(100).IsRequired();
+                _ = entity.HasOne(e => e.Manager)
+                    .WithMany(e => e.DirectReports)
+                    .HasForeignKey(e => e.ManagerId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            _ = modelBuilder.Entity<EmployeeAssignment>(entity =>
+            {
+                _ = entity.ToTable("Assignments");
+                _ = entity.HasKey(a => a.Id);
+                _ = entity.Property(a => a.EmployeeCode).HasMaxLength(32).IsRequired();
+                _ = entity.Property(a => a.ProjectName).HasMaxLength(100).IsRequired();
+                _ = entity.HasOne(a => a.Employee)
+                    .WithMany(e => e.Assignments)
+                    .HasForeignKey(a => a.EmployeeCode)
+                    .HasPrincipalKey(e => e.EmployeeCode)
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .OnUpdateCascade();
+            });
+        }
+    }
+
+    private sealed class EmployeeNode
+    {
+        public int Id { get; set; }
+
+        public string EmployeeCode { get; set; } = string.Empty;
+
+        public string FullName { get; set; } = string.Empty;
+
+        public int? ManagerId { get; set; }
+
+        public EmployeeNode? Manager { get; set; }
+
+        public List<EmployeeNode> DirectReports { get; set; } = [];
+
+        public List<EmployeeAssignment> Assignments { get; set; } = [];
+    }
+
+    private sealed class EmployeeAssignment
+    {
+        public int Id { get; set; }
+
+        public string EmployeeCode { get; set; } = string.Empty;
+
+        public string ProjectName { get; set; } = string.Empty;
+
+        public EmployeeNode? Employee { get; set; }
     }
 
     private sealed class StoreDbContext(DbContextOptions<StoreDbContext> options) : DbContext(options)

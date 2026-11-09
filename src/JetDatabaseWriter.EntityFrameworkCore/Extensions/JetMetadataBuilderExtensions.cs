@@ -455,4 +455,35 @@ public static class JetMetadataBuilderExtensions
         propertyBuilder.Metadata.SetAnnotation(IsDateTimeExtendedAnnotation, isDateTimeExtended);
         return propertyBuilder;
     }
+
+    /// <summary>
+    /// Configures the Access column that the complex-type property maps to.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the complex-type property being configured.</param>
+    /// <param name="name">The name of the column.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static ComplexTypePropertyBuilder HasColumnName(this ComplexTypePropertyBuilder propertyBuilder, string name)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        propertyBuilder.Metadata.SetAnnotation(ColumnNameAnnotation, name);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the Access column that the complex-type property maps to.
+    /// </summary>
+    /// <typeparam name="TProperty">The type of the property being configured.</typeparam>
+    /// <param name="propertyBuilder">The builder for the complex-type property being configured.</param>
+    /// <param name="name">The name of the column.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static ComplexTypePropertyBuilder<TProperty> HasColumnName<TProperty>(this ComplexTypePropertyBuilder<TProperty> propertyBuilder, string name)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        propertyBuilder.Metadata.SetAnnotation(ColumnNameAnnotation, name);
+        return propertyBuilder;
+    }
 }

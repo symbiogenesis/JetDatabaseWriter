@@ -12,13 +12,20 @@ using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.Tables;
+using JetDatabaseWriter.ValueDecoding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
+using static JetDatabaseWriter.Enums.ColumnType;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
-/// Extracts seekable predicates from LINQ expressions and selects optimal B-tree index queries on <see cref="AccessReader"/>.
+/// Extracts seekable predicates from LINQ expressions and selects optimal B-tree index queries on <see cref="AccessReader"/> and <see cref="AccessWriter"/>.
 /// </summary>
 internal static class JetIndexSeekPlanner
 {
@@ -67,35 +74,7 @@ internal static class JetIndexSeekPlanner
             return null;
         }
 
-        RowCriteria seekable = [];
-        TableDef tableDef = resolved.Definition;
-        foreach (JetIndexSeekCondition condition in conditions)
-        {
-            if (condition.Operator == JetIndexSeekOperator.In)
-            {
-                continue;
-            }
-
-            object? evaluated = condition.ValueEvaluator(parameters);
-            if (evaluated is null or DBNull)
-            {
-                continue;
-            }
-
-            ColumnInfo? column = tableDef.FindColumn(condition.ColumnName);
-            if (column is null)
-            {
-                continue;
-            }
-
-            ColumnPredicateOperator rawOp = MapToColumnPredicateOperator(condition.Operator);
-            Type storageType = JetEntityTypeMetadata.GetStorageClrType(condition.Property);
-            if (IndexSeekFilter.TryRewriteSeekOperator(column, storageType, rawOp, evaluated, out ColumnPredicateOperator rewrittenOp))
-            {
-                seekable.Add(CreateColumnPredicate(condition.ColumnName, rewrittenOp, evaluated));
-            }
-        }
-
+        RowCriteria seekable = BuildSeekableCriteria(conditions, parameters, resolved.Definition);
         if (seekable.Count > 0)
         {
             IReadOnlyList<IndexMetadata> indexes = await reader.Services.Indexes.ListSeekableIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
@@ -106,7 +85,7 @@ internal static class JetIndexSeekPlanner
                 IndexPlan? plan = IndexPlanner.TryPlan(
                     indexes,
                     seekable,
-                    candidate => CanEncodePlan(format, tableDef, tableName, candidate));
+                    candidate => CanEncodePlan(format, resolved.Definition, tableName, candidate));
                 if (plan is not null)
                 {
                     return reader.Services.Indexes.ReadIndexRowsAsObjectsAsync(
@@ -153,6 +132,223 @@ internal static class JetIndexSeekPlanner
     }
 
     /// <summary>
+    /// Attempts to construct an ordered full-index scan on <paramref name="reader"/> when <paramref name="orderedAscendingProperties"/>
+    /// match the leading ascending columns of a B-tree index whose sort order matches CLR comparison.
+    /// </summary>
+    /// <param name="reader">The open <see cref="AccessReader"/>.</param>
+    /// <param name="resolved">The resolved local table.</param>
+    /// <param name="orderedAscendingProperties">The required ascending sort properties.</param>
+    /// <param name="wantedColumns">Optional column projection mask.</param>
+    /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
+    /// <returns>An index-ordered row sequence, or <see langword="null"/> if no suitable index exists.</returns>
+    internal static async ValueTask<IAsyncEnumerable<object[]>?> TryBuildOrderedIndexQueryAsync(
+        AccessReader reader,
+        ResolvedTable resolved,
+        IReadOnlyList<IProperty> orderedAscendingProperties,
+        bool[]? wantedColumns,
+        CancellationToken cancellationToken)
+    {
+        if (orderedAscendingProperties.Count == 0 || !reader.Services.Indexes.CanSeek)
+        {
+            return null;
+        }
+
+        IReadOnlyList<IndexMetadata> indexes = await reader.Services.Indexes.ListSeekableIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
+        IndexMetadata? chosen = SelectOrderedScanIndex(reader.Database.Format, resolved.Definition, indexes, orderedAscendingProperties);
+        if (chosen is null)
+        {
+            return null;
+        }
+
+        return reader.Services.Indexes.ReadIndexRowsAsObjectsAsync(
+            resolved.Entry.Name,
+            chosen.Name,
+            IndexQueryCriteria.All,
+            wantedColumns,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Attempts to execute a B-tree index seek or ordered scan against <paramref name="writer"/>'s transaction-aware snapshot pages.
+    /// </summary>
+    /// <param name="writer">The active <see cref="AccessWriter"/>.</param>
+    /// <param name="resolved">The resolved table.</param>
+    /// <param name="conditions">Optional extracted seek conditions.</param>
+    /// <param name="orderedAscendingProperties">Optional ascending sort properties when no seek conditions are present.</param>
+    /// <param name="parameters">The runtime query parameter values.</param>
+    /// <param name="wantedColumns">The column projection mask.</param>
+    /// <param name="visitRow">Callback invoked for each decoded row; returning <see langword="false"/> stops the scan.</param>
+    /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
+    /// <returns><see langword="true"/> if an index scan was executed; <see langword="false"/> if a full table scan is required.</returns>
+    internal static async ValueTask<bool> TryReadFromActiveWriterIndexAsync(
+        AccessWriter writer,
+        ResolvedTable resolved,
+        IReadOnlyList<JetIndexSeekCondition>? conditions,
+        IReadOnlyList<IProperty>? orderedAscendingProperties,
+        IReadOnlyDictionary<string, object?> parameters,
+        bool[] wantedColumns,
+        Func<object?[], bool> visitRow,
+        CancellationToken cancellationToken)
+    {
+        JetFormat format = writer.Database.Format;
+        if (!format.SupportsIndexSeeks)
+        {
+            return false;
+        }
+
+        TableDef tableDef = resolved.Definition;
+        string tableName = resolved.Entry.Name;
+        IReadOnlyList<IndexMetadata> allIndexes = await writer.Services.Snapshots.ReadIndexMetadataSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+        List<IndexMetadata> indexes = FilterSeekableIndexes(tableDef, allIndexes);
+        if (indexes.Count == 0)
+        {
+            return false;
+        }
+
+        if (conditions is { Count: > 0 })
+        {
+            RowCriteria seekable = BuildSeekableCriteria(conditions, parameters, tableDef);
+            if (seekable.Count > 0)
+            {
+                IndexPlan? plan = IndexPlanner.TryPlan(
+                    indexes,
+                    seekable,
+                    candidate => CanEncodePlan(format, tableDef, tableName, candidate));
+                if (plan?.Index is { FirstDp: > 0, Columns.Count: > 0 })
+                {
+                    await EnumerateActiveWriterIndexCriteriaAsync(
+                        writer,
+                        resolved,
+                        plan.Index,
+                        plan.Criteria,
+                        wantedColumns,
+                        visitRow,
+                        cancellationToken).ConfigureAwait(false);
+                    return true;
+                }
+            }
+
+            foreach (JetIndexSeekCondition condition in conditions)
+            {
+                if (condition.Operator == JetIndexSeekOperator.In
+                    && condition.ValueEvaluator(parameters) is IReadOnlyList<object?[]> inKeyTuples)
+                {
+                    if (inKeyTuples.Count == 0)
+                    {
+                        return true;
+                    }
+
+                    return await TryReadMultiKeyFromActiveWriterIndexAsync(
+                        writer,
+                        resolved,
+                        indexes,
+                        [condition.Property],
+                        inKeyTuples,
+                        wantedColumns,
+                        visitRow,
+                        cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            return false;
+        }
+
+        if (orderedAscendingProperties is { Count: > 0 })
+        {
+            IndexMetadata? orderedIndex = SelectOrderedScanIndex(format, tableDef, indexes, orderedAscendingProperties);
+            if (orderedIndex is not null)
+            {
+                await EnumerateActiveWriterIndexCriteriaAsync(
+                    writer,
+                    resolved,
+                    orderedIndex,
+                    IndexQueryCriteria.All,
+                    wantedColumns,
+                    visitRow,
+                    cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Attempts to read rows matching any of <paramref name="keyTuples"/> from <paramref name="writer"/> using a B-tree index on <paramref name="resolved"/>.
+    /// </summary>
+    /// <param name="writer">The active <see cref="AccessWriter"/>.</param>
+    /// <param name="resolved">The resolved table.</param>
+    /// <param name="indexes">Optional preloaded seekable indexes.</param>
+    /// <param name="keyProperties">The key properties corresponding to each tuple element.</param>
+    /// <param name="keyTuples">The distinct model key tuples to seek.</param>
+    /// <param name="wantedColumns">The column projection mask.</param>
+    /// <param name="visitRow">Callback invoked for each decoded row; returning <see langword="false"/> stops the scan.</param>
+    /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
+    /// <returns><see langword="true"/> if a covering seekable index was used; otherwise, <see langword="false"/>.</returns>
+    internal static async ValueTask<bool> TryReadMultiKeyFromActiveWriterIndexAsync(
+        AccessWriter writer,
+        ResolvedTable resolved,
+        IReadOnlyList<IndexMetadata>? indexes,
+        IReadOnlyList<IProperty> keyProperties,
+        IReadOnlyList<object?[]> keyTuples,
+        bool[] wantedColumns,
+        Func<object?[], bool> visitRow,
+        CancellationToken cancellationToken)
+    {
+        JetFormat format = writer.Database.Format;
+        if (keyProperties.Count == 0 || keyTuples.Count == 0 || !format.SupportsIndexSeeks)
+        {
+            return false;
+        }
+
+        TableDef tableDef = resolved.Definition;
+        if (!TryPrepareMultiKeyTuples(tableDef, keyProperties, keyTuples, out string[]? keyColumnNames, out List<object?[]>? providerTuples))
+        {
+            return false;
+        }
+
+        string tableName = resolved.Entry.Name;
+        if (indexes is null)
+        {
+            IReadOnlyList<IndexMetadata> allIndexes = await writer.Services.Snapshots.ReadIndexMetadataSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+            indexes = FilterSeekableIndexes(tableDef, allIndexes);
+        }
+
+        IndexMetadata? chosenIndex = SelectPrefixMatchingIndex(indexes, keyColumnNames!);
+        if (chosenIndex is null)
+        {
+            return false;
+        }
+
+        if (!CanEncodeMultiKeyTuples(format, tableDef, tableName, chosenIndex, providerTuples!))
+        {
+            return false;
+        }
+
+        bool isExact = chosenIndex.Columns.Count == keyColumnNames!.Length;
+        foreach (object?[] tuple in providerTuples!)
+        {
+            IndexQueryCriteria criteria = isExact
+                ? IndexQueryCriteria.Exact(tuple)
+                : IndexQueryCriteria.KeyPrefix(tuple);
+            bool keepGoing = await EnumerateActiveWriterIndexCriteriaAsync(
+                writer,
+                resolved,
+                chosenIndex,
+                criteria,
+                wantedColumns,
+                visitRow,
+                cancellationToken).ConfigureAwait(false);
+            if (!keepGoing)
+            {
+                break;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Attempts to read rows matching any of <paramref name="keyTuples"/> using a B-tree index on <paramref name="resolved"/>.
     /// </summary>
     /// <param name="reader">The open <see cref="AccessReader"/>.</param>
@@ -176,64 +372,27 @@ internal static class JetIndexSeekPlanner
         }
 
         TableDef tableDef = resolved.Definition;
-        string[] keyColumnNames = new string[keyProperties.Count];
-        var keyColumns = new ColumnInfo[keyProperties.Count];
-        var keyStorageTypes = new Type[keyProperties.Count];
-
-        for (int i = 0; i < keyProperties.Count; i++)
+        if (!TryPrepareMultiKeyTuples(tableDef, keyProperties, keyTuples, out string[]? keyColumnNames, out List<object?[]>? providerTuples))
         {
-            string colName = JetEntityTypeMetadata.GetColumnName(keyProperties[i]);
-            ColumnInfo? col = tableDef.FindColumn(colName);
-            if (col is null)
-            {
-                return null;
-            }
-
-            keyColumnNames[i] = colName;
-            keyColumns[i] = col;
-            keyStorageTypes[i] = JetEntityTypeMetadata.GetStorageClrType(keyProperties[i]);
-        }
-
-        List<object?[]> providerTuples = [];
-        foreach (object?[] rawTuple in keyTuples)
-        {
-            if (rawTuple.Length != keyProperties.Count)
-            {
-                return null;
-            }
-
-            object?[] convertedTuple = new object?[keyProperties.Count];
-            for (int i = 0; i < keyProperties.Count; i++)
-            {
-                object? providerVal = JetEntityTypeMetadata.ConvertToProvider(keyProperties[i], rawTuple[i]);
-                if (providerVal is null or DBNull
-                    || !IndexSeekFilter.IsSeekable(keyColumns[i], keyStorageTypes[i], ColumnPredicateOperator.Equal, providerVal))
-                {
-                    return null;
-                }
-
-                convertedTuple[i] = providerVal;
-            }
-
-            providerTuples.Add(convertedTuple);
+            return null;
         }
 
         IReadOnlyList<IndexMetadata> indexes = await reader.Services.Indexes.ListSeekableIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
-        IndexMetadata? chosenIndex = SelectPrefixMatchingIndex(indexes, keyColumnNames);
+        IndexMetadata? chosenIndex = SelectPrefixMatchingIndex(indexes, keyColumnNames!);
         if (chosenIndex is null)
         {
             return null;
         }
 
         string tableName = resolved.Entry.Name;
-        if (!await reader.Services.Indexes.CanSeekJoinKeysAsync(tableName, chosenIndex, providerTuples, cancellationToken).ConfigureAwait(false))
+        if (!await reader.Services.Indexes.CanSeekJoinKeysAsync(tableName, chosenIndex, providerTuples!, cancellationToken).ConfigureAwait(false))
         {
             return null;
         }
 
-        bool isExact = chosenIndex.Columns.Count == keyColumnNames.Length;
+        bool isExact = chosenIndex.Columns.Count == keyColumnNames!.Length;
         List<object[]> results = [];
-        foreach (object?[] tuple in providerTuples)
+        foreach (object?[] tuple in providerTuples!)
         {
             IndexQueryCriteria criteria = isExact
                 ? IndexQueryCriteria.Exact(tuple)
@@ -252,22 +411,15 @@ internal static class JetIndexSeekPlanner
         return results;
     }
 
-    /// <summary>
-    /// Builds a <see cref="RowCriteria"/> from exact equality conditions for snapshot index seeks inside an active transaction.
-    /// </summary>
-    /// <param name="conditions">The extracted seek conditions.</param>
-    /// <param name="parameters">The runtime query parameter values.</param>
-    /// <param name="tableDef">The resolved table definition.</param>
-    /// <returns>A <see cref="RowCriteria"/> if at least one seekable equality condition exists; otherwise, <see langword="null"/>.</returns>
-    internal static RowCriteria? TryBuildExactRowCriteria(
+    private static RowCriteria BuildSeekableCriteria(
         IReadOnlyList<JetIndexSeekCondition> conditions,
         IReadOnlyDictionary<string, object?> parameters,
         TableDef tableDef)
     {
-        RowCriteria criteria = [];
+        RowCriteria seekable = [];
         foreach (JetIndexSeekCondition condition in conditions)
         {
-            if (condition.Operator != JetIndexSeekOperator.Equal)
+            if (condition.Operator == JetIndexSeekOperator.In)
             {
                 continue;
             }
@@ -284,14 +436,360 @@ internal static class JetIndexSeekPlanner
                 continue;
             }
 
+            ColumnPredicateOperator rawOp = MapToColumnPredicateOperator(condition.Operator);
             Type storageType = JetEntityTypeMetadata.GetStorageClrType(condition.Property);
-            if (IndexSeekFilter.IsSeekable(column, storageType, ColumnPredicateOperator.Equal, evaluated))
+            if (IndexSeekFilter.TryRewriteSeekOperator(column, storageType, rawOp, evaluated, out ColumnPredicateOperator rewrittenOp))
             {
-                criteria.Add(ColumnPredicate.EqualTo(condition.ColumnName, evaluated));
+                seekable.Add(CreateColumnPredicate(condition.ColumnName, rewrittenOp, evaluated));
             }
         }
 
-        return criteria.Predicates.Count > 0 ? criteria : null;
+        return seekable;
+    }
+
+    private static List<IndexMetadata> FilterSeekableIndexes(TableDef tableDef, IReadOnlyList<IndexMetadata> indexes)
+    {
+        List<IndexMetadata> result = [];
+        foreach (IndexMetadata index in indexes)
+        {
+            bool supported = true;
+            foreach (IndexColumnReference key in index.Columns)
+            {
+                ColumnInfo? column = tableDef.Columns.FirstOrDefault(c => c.ColNum == key.ColumnNumber);
+                if (column is null || (column.Type is TextType or MemoType && !column.TextSortOrder.IsSupported))
+                {
+                    supported = false;
+                    break;
+                }
+            }
+
+            if (supported)
+            {
+                result.Add(index);
+            }
+        }
+
+        return result;
+    }
+
+    private static IndexMetadata? SelectOrderedScanIndex(
+        JetFormat format,
+        TableDef tableDef,
+        IReadOnlyList<IndexMetadata> indexes,
+        IReadOnlyList<IProperty> orderedAscendingProperties)
+    {
+        if (orderedAscendingProperties.Count == 0)
+        {
+            return null;
+        }
+
+        string[] targetColumns = new string[orderedAscendingProperties.Count];
+        for (int i = 0; i < orderedAscendingProperties.Count; i++)
+        {
+            IProperty prop = orderedAscendingProperties[i];
+            if (prop.GetValueConverter() is not null || prop.FindTypeMapping()?.Converter is not null)
+            {
+                return null;
+            }
+
+            Type unwrapped = Nullable.GetUnderlyingType(prop.ClrType) ?? prop.ClrType;
+            if (unwrapped.IsEnum)
+            {
+                unwrapped = Enum.GetUnderlyingType(unwrapped);
+            }
+
+            if (unwrapped != typeof(byte)
+                && unwrapped != typeof(short)
+                && unwrapped != typeof(int)
+                && unwrapped != typeof(long)
+                && unwrapped != typeof(float)
+                && unwrapped != typeof(double)
+                && unwrapped != typeof(decimal)
+                && unwrapped != typeof(DateTime)
+                && unwrapped != typeof(DateOnly)
+                && unwrapped != typeof(TimeOnly))
+            {
+                return null;
+            }
+
+            string colName = JetEntityTypeMetadata.GetColumnName(prop);
+            ColumnInfo? colInfo = tableDef.FindColumn(colName);
+            if (colInfo?.IsCalculated != false)
+            {
+                return null;
+            }
+
+            if (format.LegacyNumericIndexKeys && colInfo.Type == NumericType)
+            {
+                return null;
+            }
+
+            targetColumns[i] = colName;
+        }
+
+        List<IndexMetadata> candidates = [];
+        foreach (IndexMetadata index in indexes)
+        {
+            if (index.FirstDp <= 0
+                || index.IgnoreNulls
+                || index.Columns.Count < targetColumns.Length)
+            {
+                continue;
+            }
+
+            bool matches = true;
+            for (int i = 0; i < targetColumns.Length; i++)
+            {
+                if (!index.Columns[i].IsAscending
+                    || !string.Equals(index.Columns[i].Name, targetColumns[i], StringComparison.OrdinalIgnoreCase))
+                {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches)
+            {
+                candidates.Add(index);
+            }
+        }
+
+        return candidates
+            .OrderByDescending(static idx => idx.Kind == IndexKind.PrimaryKey)
+            .ThenByDescending(static idx => idx.EnforcesUniqueness)
+            .ThenBy(static idx => idx.Columns.Count)
+            .FirstOrDefault();
+    }
+
+    private static bool TryPrepareMultiKeyTuples(
+        TableDef tableDef,
+        IReadOnlyList<IProperty> keyProperties,
+        IReadOnlyList<object?[]> keyTuples,
+        out string[]? keyColumnNames,
+        out List<object?[]>? providerTuples)
+    {
+        keyColumnNames = new string[keyProperties.Count];
+        var keyColumns = new ColumnInfo[keyProperties.Count];
+        var keyStorageTypes = new Type[keyProperties.Count];
+
+        for (int i = 0; i < keyProperties.Count; i++)
+        {
+            string colName = JetEntityTypeMetadata.GetColumnName(keyProperties[i]);
+            ColumnInfo? col = tableDef.FindColumn(colName);
+            if (col is null)
+            {
+                providerTuples = null;
+                return false;
+            }
+
+            keyColumnNames[i] = colName;
+            keyColumns[i] = col;
+            keyStorageTypes[i] = JetEntityTypeMetadata.GetStorageClrType(keyProperties[i]);
+        }
+
+        providerTuples = [];
+        providerTuples.Capacity = keyTuples.Count;
+        foreach (object?[] rawTuple in keyTuples)
+        {
+            if (rawTuple.Length != keyProperties.Count)
+            {
+                return false;
+            }
+
+            object?[] convertedTuple = new object?[keyProperties.Count];
+            for (int i = 0; i < keyProperties.Count; i++)
+            {
+                object? providerVal = JetEntityTypeMetadata.ConvertToProvider(keyProperties[i], rawTuple[i]);
+                if (providerVal is null or DBNull
+                    || !IndexSeekFilter.IsSeekable(keyColumns[i], keyStorageTypes[i], ColumnPredicateOperator.Equal, providerVal))
+                {
+                    return false;
+                }
+
+                convertedTuple[i] = providerVal;
+            }
+
+            providerTuples.Add(convertedTuple);
+        }
+
+        return true;
+    }
+
+    private static bool CanEncodeMultiKeyTuples(
+        JetFormat format,
+        TableDef tableDef,
+        string tableName,
+        IndexMetadata index,
+        List<object?[]> providerTuples)
+    {
+        foreach (object?[] key in providerTuples)
+        {
+            for (int ordinal = 0; ordinal < key.Length && ordinal < index.Columns.Count; ordinal++)
+            {
+                ColumnInfo? column = tableDef.Columns.FirstOrDefault(value => string.Equals(value.Name, index.Columns[ordinal].Name, StringComparison.OrdinalIgnoreCase));
+                if (column?.Type is TextType or MemoType
+                    && TextCollationFamily(column.TextSortOrder) != TextCollationFamily(format.DefaultTextSortOrder))
+                {
+                    return false;
+                }
+            }
+
+            if (!CanEncodePlan(format, tableDef, tableName, new IndexPlan(index, IndexQueryCriteria.KeyPrefix(key), key.Length)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static int TextCollationFamily(JetDatabaseWriter.Indexes.Collation.TextSortOrder order)
+    {
+        if (order.Value == 0 || (order.HasVersion && order.Version == 0))
+        {
+            return 0;
+        }
+
+        return order.HasVersion ? 1 : 2;
+    }
+
+    private static async ValueTask<bool> EnumerateActiveWriterIndexCriteriaAsync(
+        AccessWriter writer,
+        ResolvedTable resolved,
+        IndexMetadata index,
+        IndexQueryCriteria criteria,
+        bool[] wantedColumns,
+        Func<object?[], bool> visitRow,
+        CancellationToken cancellationToken)
+    {
+        JetFormat format = writer.Database.Format;
+        TableDef td = resolved.Definition;
+        string tableName = resolved.Entry.Name;
+        ReaderPageCache snapshotPages = writer.Services.SnapshotPages;
+
+        using var cursor = new IndexCursor(
+            format.IndexPage,
+            snapshotPages.ReadPageAsync,
+            format.PageSize);
+        var rowDecoder = new RowDecoder(
+            format,
+            writer.Database.OwnedPages,
+            snapshotPages,
+            new LongValueDecoder(format, snapshotPages, 0xFFFFFF),
+            strictParsing: true,
+            new RowReadAccounting());
+        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, strictParsing: true);
+        bool needsHyperlinkPass = td.HasHyperlinkColumns
+            && TableReader.HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns);
+
+        await foreach ((long dataPage, int rowIndex) in cursor.EnumerateRowLocationsForCriteriaAsync(
+            format,
+            tableName,
+            index,
+            td,
+            criteria,
+            cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            object?[]? row = await MaterializeActiveWriterSeekRowAsync(
+                format,
+                snapshotPages,
+                rowDecoder,
+                resolved.Entry.TDefPage,
+                td,
+                dataPage,
+                rowIndex,
+                decodePlan,
+                needsHyperlinkPass,
+                cancellationToken).ConfigureAwait(false);
+            if (row is null)
+            {
+                continue;
+            }
+
+            if (!visitRow(row))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static async ValueTask<object?[]?> MaterializeActiveWriterSeekRowAsync(
+        JetFormat format,
+        ReaderPageCache pages,
+        RowDecoder rows,
+        long expectedTDefPage,
+        TableDef td,
+        long dataPage,
+        int rowIndex,
+        RowDecodePlan decodePlan,
+        bool needsHyperlinkPass,
+        CancellationToken cancellationToken)
+    {
+        using PageLease lease = await pages.ReadPageAsync(dataPage, cancellationToken).ConfigureAwait(false);
+        byte[] page = lease.Buffer;
+        if (page[0] != Constants.PageTypes.Data || Ri32(page, format.DataPage.TDefOff) != expectedTDefPage)
+        {
+            _ = rows.AdmitRow(readable: false, dataPage, new RowBound(rowIndex, 0, 0));
+            return null;
+        }
+
+        if (!TryFindRowEntry(format, lease, rowIndex, out RowBound rowBound))
+        {
+            _ = rows.AdmitRow(readable: false, dataPage, new RowBound(rowIndex, 0, 0));
+            return null;
+        }
+
+        using OverflowRowTarget? resolved = rowBound.IsOverflowPointer
+            ? await rows.ResolveOverflowAsync(page, rowBound, cancellationToken).ConfigureAwait(false)
+            : null;
+        if (rowBound.IsOverflowPointer)
+        {
+            if (resolved is not { } target)
+            {
+                _ = rows.AdmitRow(readable: false, dataPage, rowBound);
+                return null;
+            }
+
+            (page, rowBound) = (target.Page, target.Bound);
+        }
+
+        if (rowBound.RowSize < format.RowFields.NumCols)
+        {
+            _ = rows.AdmitRow(readable: false, dataPage, rowBound);
+            return null;
+        }
+
+        object?[]? row = await rows.CrackRowTypedAsync(page, rowBound.RowStart, rowBound.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
+        if (row is null)
+        {
+            _ = rows.AdmitRow(readable: false, dataPage, rowBound);
+            return null;
+        }
+
+        if (needsHyperlinkPass)
+        {
+            TableReader.WrapHyperlinkColumns(row, td.ClrTypes);
+        }
+
+        return row;
+    }
+
+    private static bool TryFindRowEntry(JetFormat format, PageLease lease, int rowIndex, out RowBound rowBound)
+    {
+        foreach (RowBound candidate in lease.GetRowDirectory(format))
+        {
+            if (candidate.RowIndex == rowIndex)
+            {
+                rowBound = candidate;
+                return true;
+            }
+        }
+
+        rowBound = default;
+        return false;
     }
 
     private static ColumnPredicate CreateColumnPredicate(string columnName, ColumnPredicateOperator op, object value)
@@ -384,10 +882,42 @@ internal static class JetIndexSeekPlanner
             return;
         }
 
+        if (unwrapped is BinaryExpression { NodeType: ExpressionType.OrElse } orElse
+            && TryExtractOrElseInCondition(entityType, entityParam, orElse, out JetIndexSeekCondition? orInCondition))
+        {
+            conditions.Add(orInCondition!);
+            return;
+        }
+
         if (unwrapped is MethodCallExpression methodCall
             && TryExtractContainsCondition(entityType, entityParam, methodCall, out JetIndexSeekCondition? inCondition))
         {
             conditions.Add(inCondition!);
+            return;
+        }
+
+        if (unwrapped is UnaryExpression { NodeType: ExpressionType.Not } notUnary
+            && TryExtractPropertyAccess(entityType, entityParam, notUnary.Operand, out IProperty? negatedBoolProp)
+            && (negatedBoolProp!.ClrType == typeof(bool) || negatedBoolProp.ClrType == typeof(bool?)))
+        {
+            object? convertedFalse = JetEntityTypeMetadata.ConvertToProvider(negatedBoolProp, false);
+            conditions.Add(new JetIndexSeekCondition(
+                negatedBoolProp,
+                JetEntityTypeMetadata.GetColumnName(negatedBoolProp),
+                JetIndexSeekOperator.Equal,
+                _ => convertedFalse));
+            return;
+        }
+
+        if (TryExtractPropertyAccess(entityType, entityParam, unwrapped, out IProperty? bareBoolProp)
+            && (bareBoolProp!.ClrType == typeof(bool) || bareBoolProp.ClrType == typeof(bool?)))
+        {
+            object? convertedTrue = JetEntityTypeMetadata.ConvertToProvider(bareBoolProp, true);
+            conditions.Add(new JetIndexSeekCondition(
+                bareBoolProp,
+                JetEntityTypeMetadata.GetColumnName(bareBoolProp),
+                JetIndexSeekOperator.Equal,
+                _ => convertedTrue));
             return;
         }
 
@@ -422,6 +952,139 @@ internal static class JetIndexSeekPlanner
                 reversedOp,
                 leftEval!));
         }
+    }
+
+    private static bool TryExtractOrElseInCondition(
+        IEntityType entityType,
+        ParameterExpression entityParam,
+        BinaryExpression orElse,
+        out JetIndexSeekCondition? condition)
+    {
+        condition = null;
+        List<Expression> leaves = [];
+        CollectOrElseLeaves(orElse, leaves);
+        if (leaves.Count < 2)
+        {
+            return false;
+        }
+
+        IProperty? commonProperty = null;
+        List<Func<IReadOnlyDictionary<string, object?>, object?>> valueEvaluators = [];
+        valueEvaluators.Capacity = leaves.Count;
+
+        foreach (Expression leaf in leaves)
+        {
+            if (leaf is not BinaryExpression { NodeType: ExpressionType.Equal } eq)
+            {
+                return false;
+            }
+
+            Expression valueExpr;
+            if (TryExtractPropertyAccess(entityType, entityParam, eq.Left, out IProperty? prop)
+                && !ReferencesParameter(eq.Right, entityParam))
+            {
+                valueExpr = eq.Right;
+            }
+            else if (TryExtractPropertyAccess(entityType, entityParam, eq.Right, out prop)
+                && !ReferencesParameter(eq.Left, entityParam))
+            {
+                valueExpr = eq.Left;
+            }
+            else
+            {
+                return false;
+            }
+
+            if (commonProperty is null)
+            {
+                commonProperty = prop;
+            }
+            else if (!ReferenceEquals(commonProperty, prop))
+            {
+                return false;
+            }
+
+            if (!TryBuildRawModelValueEvaluator(valueExpr, out Func<IReadOnlyDictionary<string, object?>, object?>? eval))
+            {
+                return false;
+            }
+
+            valueEvaluators.Add(eval!);
+        }
+
+        if (commonProperty is null)
+        {
+            return false;
+        }
+
+        Func<IReadOnlyDictionary<string, object?>, object?>[] evalArray = [.. valueEvaluators];
+        condition = new JetIndexSeekCondition(
+            commonProperty,
+            JetEntityTypeMetadata.GetColumnName(commonProperty),
+            JetIndexSeekOperator.In,
+            parameters =>
+            {
+                List<object?[]> tuples = [];
+                tuples.Capacity = evalArray.Length;
+                HashSet<object> seen = [];
+                for (int i = 0; i < evalArray.Length; i++)
+                {
+                    object? val = evalArray[i](parameters);
+                    if (val is not (null or DBNull) && seen.Add(val))
+                    {
+                        tuples.Add([val]);
+                    }
+                }
+
+                return tuples;
+            });
+        return true;
+    }
+
+    private static void CollectOrElseLeaves(Expression expression, List<Expression> leaves)
+    {
+        Expression unwrapped = StripQuotesAndConverts(expression);
+        if (unwrapped is BinaryExpression { NodeType: ExpressionType.OrElse } orElse)
+        {
+            CollectOrElseLeaves(orElse.Left, leaves);
+            CollectOrElseLeaves(orElse.Right, leaves);
+            return;
+        }
+
+        leaves.Add(unwrapped);
+    }
+
+    private static bool TryBuildRawModelValueEvaluator(
+        Expression valueExpression,
+        out Func<IReadOnlyDictionary<string, object?>, object?>? evaluator)
+    {
+        Expression unwrapped = StripQuotesAndConverts(valueExpression);
+        if (unwrapped is ConstantExpression constantExpr)
+        {
+            object? val = constantExpr.Value;
+            evaluator = _ => val;
+            return true;
+        }
+
+        if (unwrapped is QueryParameterExpression queryParam)
+        {
+            string paramName = queryParam.Name;
+            evaluator = parameters => parameters.GetValueOrDefault(paramName);
+            return true;
+        }
+
+        ParameterExpression dictParam = Expression.Parameter(typeof(IReadOnlyDictionary<string, object?>), "parameters");
+        ParameterRewritingVisitor rewriter = new(dictParam);
+        Expression rewritten = rewriter.Visit(valueExpression);
+        if (!rewriter.IsSupported || rewritten.Type.IsByRefLike)
+        {
+            evaluator = null;
+            return false;
+        }
+
+        Expression boxed = Expression.Convert(rewritten, typeof(object));
+        evaluator = Expression.Lambda<Func<IReadOnlyDictionary<string, object?>, object?>>(boxed, dictParam).Compile();
+        return true;
     }
 
     private static bool IsOperatorSupportedForProperty(IProperty property, JetIndexSeekOperator seekOperator)
@@ -470,18 +1133,42 @@ internal static class JetIndexSeekPlanner
         return false;
     }
 
-    private static bool TryExtractPropertyAccess(
+    internal static bool TryExtractPropertyAccess(
         IEntityType entityType,
         ParameterExpression entityParam,
         Expression candidate,
         out IProperty? property)
     {
         Expression current = StripQuotesAndConverts(candidate);
-        if (current is MemberExpression memberExpr
-            && StripQuotesAndConverts(memberExpr.Expression!) == entityParam)
+        if (current is MemberExpression memberExpr)
         {
-            property = entityType.FindProperty(memberExpr.Member);
-            return property is not null;
+            List<MemberInfo> chain = [];
+            Expression? cursor = memberExpr;
+            while (cursor is MemberExpression step)
+            {
+                chain.Add(step.Member);
+                cursor = step.Expression is not null ? StripQuotesAndConverts(step.Expression) : null;
+            }
+
+            if (cursor == entityParam && chain.Count > 0)
+            {
+                chain.Reverse();
+                ITypeBase currentType = entityType;
+                for (int i = 0; i < chain.Count - 1; i++)
+                {
+                    IComplexProperty? complexProp = currentType.FindComplexProperty(chain[i]);
+                    if (complexProp is null)
+                    {
+                        property = null;
+                        return false;
+                    }
+
+                    currentType = complexProp.ComplexType;
+                }
+
+                property = currentType.FindProperty(chain[^1]);
+                return property is not null;
+            }
         }
 
         if (current is MethodCallExpression { Method.Name: nameof(EF.Property) } callExpr
