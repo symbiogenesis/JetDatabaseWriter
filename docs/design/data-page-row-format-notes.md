@@ -587,7 +587,24 @@ layout and validate every stored LVAL descriptor length synchronously, resolve
 external `LongValueRef` and `CalculatedLongValueRef` chains on demand in
 left-to-right short-circuit predicate order (`RowCriteriaEvaluator.MatchesAsync`),
 and resolve remaining external LVAL chains and raw slot byte dictionaries only
-for matching rows. Relocated row replacements preserve unchanged long-value
+for matching rows. When an update modifies variable-width columns without
+changing long-value columns or encountering dropped-column descriptor gaps and
+the replacement fits within the current DATA page's free capacity,
+`TableRowStore.TryUpdateRowInPlaceAsync` compacts the page in place: lower rows
+in `[first .. start)` shift by the size delta, affected slot directory offsets
+update while retaining their flags, the page's free-space header and usage-map
+state stay synchronized, and vacated bytes are zeroed under
+`SecureEraseMode.DeletedRowsAndFreedPages`. Overflow rows whose `0x4000` header
+and any intermediate pointer hop resolve to an unshared `0x8000` target payload
+slot (`TableRowStore.TryResolveExclusiveOverflowUpdateTargetAsync`) likewise
+apply both same-width column patches and changed-width compaction directly on
+the target payload page while preserving the `0x4000` header slot and its index
+bookmarks; replacements that exceed the target page's capacity fall back to
+relocation. Multi-row batch updates (`AccessWriter.UpdateRowsAsync(string, IEnumerable<RowUpdate>, CancellationToken)`
+and EF Core `JetDatabase.ExecuteBatchUpdateAsync`) compose matching `RowUpdate`
+clauses per row before foreign-key, cascade-update, unique-index and history
+validation and execute in a single `MutationPlan`, allowing unique and primary
+keys to be swapped atomically across rows. Relocated row replacements preserve unchanged long-value
 descriptors per column (`LocatedRow.GetPreservedLongValues`) even when another
 long-value column on the row is modified; `TableRowStore.MarkRowDeletedAsync`
 collects protected chain pointers across preserved descriptors and surviving

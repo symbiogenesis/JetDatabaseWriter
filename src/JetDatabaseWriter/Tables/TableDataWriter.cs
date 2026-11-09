@@ -222,7 +222,7 @@ internal sealed class TableDataWriter(
             cancellationToken).ConfigureAwait(false);
     }
 
-    internal async ValueTask<int> UpdateRowsAsync(string tableName, RowCriteria criteria, RowValues updatedValues, CancellationToken cancellationToken)
+    internal ValueTask<int> UpdateRowsAsync(string tableName, RowCriteria criteria, RowValues updatedValues, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(criteria, nameof(criteria));
@@ -231,47 +231,93 @@ internal sealed class TableDataWriter(
 
         if (updatedValues.Count == 0)
         {
-            return 0;
+            return new ValueTask<int>(0);
         }
 
+        return this.UpdateRowsCoreAsync(tableName, [new RowUpdate(criteria, updatedValues)], nameof(criteria), nameof(updatedValues), cancellationToken);
+    }
+
+    internal ValueTask<int> UpdateRowsAsync(string tableName, IEnumerable<RowUpdate> updates, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(updates, nameof(updates));
+        pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        var updateList = new List<RowUpdate>();
+        foreach (RowUpdate? item in updates)
+        {
+            if (item is null)
+            {
+                throw new ArgumentException("RowUpdate collection cannot contain null elements.", nameof(updates));
+            }
+
+            if (item.UpdatedValues.Count > 0)
+            {
+                updateList.Add(item);
+            }
+        }
+
+        if (updateList.Count == 0)
+        {
+            return new ValueTask<int>(0);
+        }
+
+        return this.UpdateRowsCoreAsync(tableName, updateList, nameof(updates), nameof(updates), cancellationToken);
+    }
+
+    private async ValueTask<int> UpdateRowsCoreAsync(
+        string tableName,
+        List<RowUpdate> updates,
+        string criteriaParamName,
+        string valuesParamName,
+        CancellationToken cancellationToken)
+    {
         ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         CatalogEntry entry = table.Entry;
         TableDef tableDef = table.Definition;
-        var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
 
-        var updateIndexes = new Dictionary<int, object>(updatedValues.Count);
-        foreach (KeyValuePair<string, object?> kvp in updatedValues)
+        var compiledUpdates = new List<(RowCriteria Criteria, RowCriteriaEvaluator Predicate, Dictionary<int, object> Assignments)>(updates.Count);
+        var unionAssignedColumns = new HashSet<int>();
+        foreach (RowUpdate item in updates)
         {
-            int columnIndex = tableDef.FindColumnIndex(kvp.Key);
-            if (columnIndex < 0)
+            var predicate = RowCriteriaEvaluator.Compile(item.Criteria, tableDef, tableName, criteriaParamName);
+            var updateIndexes = new Dictionary<int, object>(item.UpdatedValues.Count);
+            foreach (KeyValuePair<string, object?> kvp in item.UpdatedValues)
             {
-                throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{kvp.Key}' was not found in table '{tableName}'.", nameof(updatedValues), new JetErrorInfo { TableName = tableName, ColumnName = kvp.Key });
+                int columnIndex = tableDef.FindColumnIndex(kvp.Key);
+                if (columnIndex < 0)
+                {
+                    throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{kvp.Key}' was not found in table '{tableName}'.", valuesParamName, new JetErrorInfo { TableName = tableName, ColumnName = kvp.Key });
+                }
+
+                if (kvp.Value is DbDefault)
+                {
+                    throw new ArgumentException(
+                        $"Column '{kvp.Key}': DbDefault.Value is accepted only by inserts; an update never applies a default.",
+                        valuesParamName);
+                }
+
+                // A complex column's slot holds the row's per-row complex
+                // reference, which joins it to its items in every complex column.
+                // An update cannot assign it: clearing or changing it would orphan
+                // the row's items or join the row to another row's.
+                ColumnInfo column = tableDef.Columns[columnIndex];
+                if (column.Type is ColumnType.ComplexType)
+                {
+                    throw new ArgumentException(
+                        $"Column '{column.Name}' on table '{tableName}' is an Attachment or multi-value column, which an update cannot assign; the row keeps its items. Add items with AddAttachmentAsync or AddMultiValueItemAsync.",
+                        valuesParamName);
+                }
+
+                updateIndexes[columnIndex] = kvp.Value ?? DBNull.Value;
+                _ = unionAssignedColumns.Add(columnIndex);
             }
 
-            if (kvp.Value is DbDefault)
-            {
-                throw new ArgumentException(
-                    $"Column '{kvp.Key}': DbDefault.Value is accepted only by inserts; an update never applies a default.",
-                    nameof(updatedValues));
-            }
-
-            // A complex column's slot holds the row's per-row complex
-            // reference, which joins it to its items in every complex column.
-            // An update cannot assign it: clearing or changing it would orphan
-            // the row's items or join the row to another row's.
-            ColumnInfo column = tableDef.Columns[columnIndex];
-            if (column.Type is ColumnType.ComplexType)
-            {
-                throw new ArgumentException(
-                    $"Column '{column.Name}' on table '{tableName}' is an Attachment or multi-value column, which an update cannot assign; the row keeps its items. Add items with AddAttachmentAsync or AddMultiValueItemAsync.",
-                    nameof(updatedValues));
-            }
-
-            updateIndexes[columnIndex] = kvp.Value ?? DBNull.Value;
+            compiledUpdates.Add((item.Criteria, predicate, updateIndexes));
         }
 
         IReadOnlyList<FkRelationship> rels = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        bool canSeek = await indexes.CanSeekUpdateTargetsAsync(entry.TDefPage, tableDef, tableName, updateIndexes.Keys, cancellationToken).ConfigureAwait(false);
+        bool canSeek = await indexes.CanSeekUpdateTargetsAsync(entry.TDefPage, tableDef, tableName, unionAssignedColumns, cancellationToken).ConfigureAwait(false);
         foreach (FkRelationship relationship in rels)
         {
             if (string.Equals(relationship.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase))
@@ -279,7 +325,7 @@ internal sealed class TableDataWriter(
                 foreach (string column in relationship.PrimaryColumns)
                 {
                     int colIdx = tableDef.FindColumnIndex(column);
-                    canSeek &= !updateIndexes.ContainsKey(colIdx) && (colIdx < 0 || !tableDef.Columns[colIdx].IsCalculated);
+                    canSeek &= !unionAssignedColumns.Contains(colIdx) && (colIdx < 0 || !tableDef.Columns[colIdx].IsCalculated);
                 }
             }
 
@@ -288,32 +334,96 @@ internal sealed class TableDataWriter(
                 foreach (string column in relationship.ForeignColumns)
                 {
                     int colIdx = tableDef.FindColumnIndex(column);
-                    canSeek &= !updateIndexes.ContainsKey(colIdx) && (colIdx < 0 || !tableDef.Columns[colIdx].IsCalculated);
+                    canSeek &= !unionAssignedColumns.Contains(colIdx) && (colIdx < 0 || !tableDef.Columns[colIdx].IsCalculated);
                 }
             }
         }
 
-        List<LocatedRow>? selected = canSeek ? await snapshots.TryReadIndexedRowsAsync(table, criteria, cancellationToken).ConfigureAwait(false) : null;
-        bool predicatesEvaluated = selected is null && canSeek;
-        List<LocatedRow> rows = selected ?? (predicatesEvaluated
-            ? await snapshots.ReadMatchingRowsAsync(table, predicate, cancellationToken).ConfigureAwait(false)
+        List<LocatedRow>? selected = null;
+        if (canSeek)
+        {
+            if (compiledUpdates.Count == 1)
+            {
+                selected = await snapshots.TryReadIndexedRowsAsync(table, compiledUpdates[0].Criteria, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                var merged = new List<LocatedRow>();
+                var seenLocations = new HashSet<(long PageNumber, int RowIndex)>();
+                bool allSought = true;
+                foreach ((RowCriteria itemCriteria, _, _) in compiledUpdates)
+                {
+                    List<LocatedRow>? itemRows = await snapshots.TryReadIndexedRowsAsync(table, itemCriteria, cancellationToken).ConfigureAwait(false);
+                    if (itemRows is null)
+                    {
+                        allSought = false;
+                        break;
+                    }
+
+                    foreach (LocatedRow located in itemRows)
+                    {
+                        if (seenLocations.Add((located.Location.PageNumber, located.Location.RowIndex)))
+                        {
+                            merged.Add(located);
+                        }
+                    }
+                }
+
+                if (allSought)
+                {
+                    selected = merged;
+                }
+            }
+        }
+
+        bool singlePredicateEvaluated = compiledUpdates.Count == 1 && selected is null && canSeek;
+        List<LocatedRow> rows = selected ?? (singlePredicateEvaluated
+            ? await snapshots.ReadMatchingRowsAsync(table, compiledUpdates[0].Predicate, cancellationToken).ConfigureAwait(false)
             : await snapshots.ReadRowsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false));
 
         // Stage every matching row so FK / unique-index checks complete before
         // any disk page is mutated.
         var pendingUpdates = new List<(int Index, object[] OldRow, object[] NewRow)>();
+        var pendingAssignedByIndex = new Dictionary<int, ICollection<int>>();
         for (int i = 0; i < rows.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             object[] oldRow = rows[i].Values;
-            if (!predicatesEvaluated && !predicate.Matches(oldRow))
+            Dictionary<int, object>? rowAssignments = null;
+            if (compiledUpdates.Count == 1)
             {
-                continue;
+                if (!singlePredicateEvaluated && !compiledUpdates[0].Predicate.Matches(oldRow))
+                {
+                    continue;
+                }
+
+                rowAssignments = compiledUpdates[0].Assignments;
+            }
+            else
+            {
+                foreach ((_, RowCriteriaEvaluator itemPredicate, Dictionary<int, object> itemAssignments) in compiledUpdates)
+                {
+                    if (!itemPredicate.Matches(oldRow))
+                    {
+                        continue;
+                    }
+
+                    rowAssignments ??= [];
+                    foreach (KeyValuePair<int, object> kvp in itemAssignments)
+                    {
+                        rowAssignments[kvp.Key] = kvp.Value;
+                    }
+                }
+
+                if (rowAssignments is null)
+                {
+                    continue;
+                }
             }
 
             object[] newRow = (object[])oldRow.Clone();
-            foreach (KeyValuePair<int, object> update in updateIndexes)
+            foreach (KeyValuePair<int, object> update in rowAssignments)
             {
                 newRow[update.Key] = update.Value;
             }
@@ -321,7 +431,7 @@ internal sealed class TableDataWriter(
             // Recalculation must not replace unreadable cached values that the
             // caller did not assign; their loss needs an explicit repair decision.
             UnreadableLongValue.ThrowIfAny(newRow, tableName);
-            await constraints.ApplyUpdateAsync(tableName, tableDef, newRow, updateIndexes.Keys, cancellationToken).ConfigureAwait(false);
+            await constraints.ApplyUpdateAsync(tableName, tableDef, newRow, rowAssignments.Keys, cancellationToken).ConfigureAwait(false);
 
             // Unsupported in-place layouts retain the replacement fallback,
             // so every carried MEMO / OLE value must have been read;
@@ -329,9 +439,10 @@ internal sealed class TableDataWriter(
             // The new version is encoded and measured once it is final, after
             // the cascade plan.
             UnreadableLongValue.ThrowIfAny(newRow, tableName);
-            this.ThrowIfTextNotStorable(tableName, tableDef, newRow, rows[i].GetPreservedText(newRow, updateIndexes.Keys));
+            this.ThrowIfTextNotStorable(tableName, tableDef, newRow, rows[i].GetPreservedText(newRow, rowAssignments.Keys));
 
             pendingUpdates.Add((i, oldRow, newRow));
+            pendingAssignedByIndex[i] = rowAssignments.Keys;
         }
 
         // An index the writer cannot maintain would fail the index rebuild
@@ -367,7 +478,7 @@ internal sealed class TableDataWriter(
             // relationship whose referenced key this update changes. Nothing
             // is written yet. Through a self-relationship, a matching row's
             // own cascaded key goes into its new row in pendingUpdates.
-            cascades = await enforcer.PlanCascadeUpdatesAsync(tableName, tableDef, updateIndexes.Keys, rowChanges, fkCtx, cancellationToken).ConfigureAwait(false);
+            cascades = await enforcer.PlanCascadeUpdatesAsync(tableName, tableDef, unionAssignedColumns, rowChanges, fkCtx, cancellationToken).ConfigureAwait(false);
 
             // Changed foreign keys see every composed parent replacement, so
             // stable cycles can establish their parents within this statement.
@@ -385,13 +496,25 @@ internal sealed class TableDataWriter(
             await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, rows, pendingUpdates, cancellationToken).ConfigureAwait(false);
         }
 
-        var historyRows = new List<object[]>(pendingUpdates.Count);
-        foreach ((_, _, object[] newRow) in pendingUpdates)
+        var historyBatches = new List<AppendOnlyHistoryWriter.HistoryBatch>();
+        if (compiledUpdates.Count == 1)
         {
-            historyRows.Add(newRow);
+            var historyRows = new List<object[]>(pendingUpdates.Count);
+            foreach ((_, _, object[] newRow) in pendingUpdates)
+            {
+                historyRows.Add(newRow);
+            }
+
+            historyBatches.AddRange(await history.PrepareAsync(tableName, tableDef, historyRows, compiledUpdates[0].Assignments.Keys, insertAssignments: null, cancellationToken).ConfigureAwait(false));
+        }
+        else
+        {
+            foreach ((int i, _, object[] newRow) in pendingUpdates)
+            {
+                historyBatches.AddRange(await history.PrepareAsync(tableName, tableDef, [newRow], pendingAssignedByIndex[i], insertAssignments: null, cancellationToken).ConfigureAwait(false));
+            }
         }
 
-        List<AppendOnlyHistoryWriter.HistoryBatch> historyBatches = await history.PrepareAsync(tableName, tableDef, historyRows, updateIndexes.Keys, insertAssignments: null, cancellationToken).ConfigureAwait(false);
         foreach (CascadeUpdate cascade in cascades)
         {
             foreach ((_, object[] oldRow, object[] newRow) in cascade.Rows)
@@ -416,10 +539,11 @@ internal sealed class TableDataWriter(
         MutationPlan.TableChanges changes = plan.ForTable(entry.TDefPage, tableDef, tableName);
         foreach ((int i, object[] oldRow, object[] newRow) in pendingUpdates)
         {
-            changes.Update(rows[i].Location, oldRow, newRow, rows[i].GetPreservedText(newRow, updateIndexes.Keys), longValues: rows[i].GetPreservedLongValues(newRow, updateIndexes.Keys), assignedColumns: updateIndexes.Keys);
+            ICollection<int> rowAssigned = pendingAssignedByIndex[i];
+            changes.Update(rows[i].Location, oldRow, newRow, rows[i].GetPreservedText(newRow, rowAssigned), longValues: rows[i].GetPreservedLongValues(newRow, rowAssigned), assignedColumns: (IReadOnlyCollection<int>)rowAssigned);
         }
 
-        bool raiseAutoNumbers = AssignsAutoNumberColumn(tableDef, updateIndexes.Keys);
+        bool raiseAutoNumbers = AssignsAutoNumberColumn(tableDef, unionAssignedColumns);
         if (!raiseAutoNumbers)
         {
             for (int columnIndex = 0; columnIndex < tableDef.Columns.Count; columnIndex++)

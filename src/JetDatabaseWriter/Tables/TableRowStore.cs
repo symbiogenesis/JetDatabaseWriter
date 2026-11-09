@@ -60,7 +60,7 @@ internal sealed class TableRowStore(
     /// <returns>Whether the row retains its original physical location.</returns>
     internal async ValueTask<bool> TryUpdateRowInPlaceAsync(long tdefPage, TableDef tableDef, RowLocation location, object[] original, object[] replacement, object[] storedValues, IReadOnlyDictionary<int, byte[]>? textBytes, IReadOnlyCollection<int>? assignedColumns, CancellationToken cancellationToken)
     {
-        if (location.IsOverflow || location.RowIndex < 0 || assignedColumns is null)
+        if (location.RowIndex < 0 || location.DataRowIndex < 0 || assignedColumns is null)
         {
             return false;
         }
@@ -74,8 +74,25 @@ internal sealed class TableRowStore(
             }
         }
 
-        byte[] encoded = this.EncodeRow(tableDef, storedValues, textBytes).RowBytes;
-        byte[] page = await pager.ReadPageAsync(location.PageNumber, cancellationToken).ConfigureAwait(false);
+        (object[] prepared, byte[] encoded) = this.EncodeRow(tableDef, storedValues, textBytes);
+        if (!ReferenceEquals(prepared, storedValues))
+        {
+            return false;
+        }
+
+        long targetPageNumber = location.DataPageNumber;
+        int targetRowIndex = location.DataRowIndex;
+        int expectedSlotFlags = location.IsOverflow ? Constants.DataPage.DeletedRowFlag : 0;
+        byte[]? page = location.IsOverflow
+            ? await this.TryResolveExclusiveOverflowUpdateTargetAsync(tdefPage, location, cancellationToken).ConfigureAwait(false)
+            : await pager.ReadPageAsync(targetPageNumber, cancellationToken).ConfigureAwait(false);
+        if (page is null)
+        {
+            return false;
+        }
+
+        bool updateFreeState = false;
+        bool hasRoom = false;
         try
         {
             if (page[0] != Constants.PageTypes.Data || Ri32(page, format.DataPage.TDefOff) != tdefPage)
@@ -83,10 +100,19 @@ internal sealed class TableRowStore(
                 return false;
             }
 
-            DataPageKernel.PrepareReclaim(page, checked((uint)format.PageSize), checked((uint)format.DataPage.NumRows), checked((uint)format.DataPage.RowsStart), checked((uint)location.RowIndex), out uint count, out _, out uint start, out uint end);
-            if (count == 0 || Ru16(page, format.DataPage.RowsStart + (location.RowIndex * 2)) != start)
+            DataPageKernel.PrepareReclaim(page, checked((uint)format.PageSize), checked((uint)format.DataPage.NumRows), checked((uint)format.DataPage.RowsStart), checked((uint)targetRowIndex), out uint count, out uint first, out uint start, out uint end);
+            int slotRaw = Ru16(page, format.DataPage.RowsStart + (targetRowIndex * 2));
+            if (count == 0 || slotRaw != (expectedSlotFlags | (int)start))
             {
                 return false;
+            }
+
+            for (int i = 0; i < (int)count; i++)
+            {
+                if (i != targetRowIndex && (Ru16(page, format.DataPage.RowsStart + (i * 2)) & Constants.DataPage.RowOffsetMask) == (int)start)
+                {
+                    return false;
+                }
             }
 
             int rowStart = checked((int)start);
@@ -104,6 +130,7 @@ internal sealed class TableRowStore(
             int sourceDataEnd = updated.VarTableStart < updated.NullMaskPos
                 ? Math.Min(updated.Eod, updated.VarTableStart - format.RowFields.Eod)
                 : updated.NullMaskPos;
+            bool sameWidth = true;
             for (int index = 0; index < tableDef.Columns.Count; index++)
             {
                 if (!assigned.Contains(index) && Equals(original[index], replacement[index]))
@@ -114,7 +141,8 @@ internal sealed class TableRowStore(
                 ColumnInfo column = tableDef.Columns[index];
                 if (column.ColNum >= current.NumCols || column.ColNum >= updated.NumCols)
                 {
-                    return false;
+                    sameWidth = false;
+                    break;
                 }
 
                 int targetOffset = 0;
@@ -138,7 +166,8 @@ internal sealed class TableRowStore(
                             || after.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var)
                             || before.DataLen != after.DataLen))
                     {
-                        return false;
+                        sameWidth = false;
+                        break;
                     }
 
                     targetOffset = zeroWidthNullTransition ? 0 : before.DataStart;
@@ -149,21 +178,239 @@ internal sealed class TableRowStore(
                 int maskByte = column.ColNum >> 3;
                 if (!DataPageKernel.PatchColumn(rowBytes, encoded, checked((uint)targetOffset), checked((uint)sourceOffset), checked((uint)width), checked((uint)targetDataEnd), checked((uint)sourceDataEnd), checked((uint)(current.NullMaskPos + maskByte)), checked((uint)(updated.NullMaskPos + maskByte)), checked((uint)(column.ColNum & 7))))
                 {
-                    return false;
+                    sameWidth = false;
+                    break;
                 }
             }
 
-            if (!DataPageKernel.ReplaceRow(page, checked((uint)format.PageSize), checked((uint)format.DataPage.NumRows), checked((uint)format.DataPage.RowsStart), checked((uint)location.RowIndex), start, rowBytes))
+            if (sameWidth)
+            {
+                if (!location.IsOverflow)
+                {
+                    if (!DataPageKernel.ReplaceRow(page, checked((uint)format.PageSize), checked((uint)format.DataPage.NumRows), checked((uint)format.DataPage.RowsStart), checked((uint)targetRowIndex), start, rowBytes))
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    if (rowBytes.Length != rowSize)
+                    {
+                        return false;
+                    }
+
+                    rowBytes.AsSpan().CopyTo(page.AsSpan(rowStart, rowSize));
+                }
+
+                await pager.WritePageAsync(targetPageNumber, page, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+
+            if (current.NumCols > updated.NumCols || current.VarLen > updated.VarLen || tableDef.Columns.Count != updated.NumCols)
             {
                 return false;
             }
 
-            await pager.WritePageAsync(location.PageNumber, page, cancellationToken).ConfigureAwait(false);
-            return true;
+            int newSize = encoded.Length;
+            int delta = rowSize - newSize;
+            int directoryEnd = format.DataPage.RowsStart + (checked((int)count) * 2);
+            int newFirst = checked((int)first + delta);
+            int newStart = checked((int)end - newSize);
+            if (newSize <= 0 || newFirst < directoryEnd || newStart < directoryEnd)
+            {
+                return false;
+            }
+
+            if (start > first && newFirst != (int)first)
+            {
+                Buffer.BlockCopy(page, (int)first, page, newFirst, checked((int)(start - first)));
+            }
+
+            if (newFirst > (int)first && options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
+            {
+                Array.Clear(page, (int)first, newFirst - (int)first);
+            }
+
+            Buffer.BlockCopy(encoded, 0, page, newStart, newSize);
+            for (int i = 0; i < (int)count; i++)
+            {
+                int offsetPos = format.DataPage.RowsStart + (i * 2);
+                int raw = Ru16(page, offsetPos);
+                int offset = raw & Constants.DataPage.RowOffsetMask;
+                int flags = raw & ~Constants.DataPage.RowOffsetMask;
+                if (i == targetRowIndex)
+                {
+                    Wu16(page, offsetPos, flags | newStart);
+                }
+                else if (offset >= (int)first && offset < (int)start)
+                {
+                    Wu16(page, offsetPos, flags | (offset + delta));
+                }
+            }
+
+            Wu16(page, 2, newFirst - directoryEnd);
+            await pager.WritePageAsync(targetPageNumber, page, cancellationToken).ConfigureAwait(false);
+            hasRoom = delta != 0 && dataPages.CanInsertRow(page, rowLength: 1);
+            updateFreeState = delta != 0;
         }
         finally
         {
             PageBuffers.Return(page);
+        }
+
+        if (updateFreeState)
+        {
+            await dataPages.SetFreePageStateAsync(tdefPage, targetPageNumber, hasRoom, cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    private async ValueTask<byte[]?> TryResolveExclusiveOverflowUpdateTargetAsync(long tdefPage, RowLocation location, CancellationToken cancellationToken)
+    {
+        byte[] headerPage = await pager.ReadPageAsync(location.PageNumber, cancellationToken).ConfigureAwait(false);
+        OverflowRowTarget? resolvedTarget = null;
+        bool transferTargetOwnership = false;
+        try
+        {
+            if (headerPage[0] != Constants.PageTypes.Data || Ri32(headerPage, format.DataPage.TDefOff) != tdefPage)
+            {
+                return null;
+            }
+
+            int raw = Ru16(headerPage, format.DataPage.RowsStart + (location.RowIndex * 2));
+            if ((raw & Constants.DataPage.NonLiveRowFlags) != Constants.DataPage.OverflowRowFlag
+                || !DataPageRows.TryGetSlotBound(format, headerPage, location.RowIndex, out RowBound header))
+            {
+                return null;
+            }
+
+            var intermediateSlots = new List<(long PageNumber, RowBound Bound)>();
+            resolvedTarget = await ownedPages.TryResolveOverflowRowAsync(headerPage, header, pager.ReadPageAsync, PageBuffers.Return, cancellationToken, intermediateSlots).ConfigureAwait(false);
+            if (resolvedTarget is not { } target
+                || target.PageNumber != location.DataPageNumber
+                || target.RowIndex != location.DataRowIndex)
+            {
+                return null;
+            }
+
+            var spans = new Dictionary<long, List<RowBound>>();
+            if (!TryAddSpan(target.PageNumber, target.Bound) || !TryAddSpan(location.PageNumber, header))
+            {
+                return null;
+            }
+
+            foreach ((long number, RowBound bound) in intermediateSlots)
+            {
+                if (!TryAddSpan(number, bound))
+                {
+                    return null;
+                }
+            }
+
+            bool exclusive = true;
+            await ownedPages.ForEachLiveTableRowAsync(
+                tdefPage,
+                async (row, token) =>
+                {
+                    if (row.Location.PageNumber == location.PageNumber && row.Location.RowIndex == location.RowIndex)
+                    {
+                        return true;
+                    }
+
+                    if (Overlaps(row.Location.DataPageNumber, row.Location.RowStart, row.Location.RowSize))
+                    {
+                        exclusive = false;
+                        return false;
+                    }
+
+                    if (row.Location.IsOverflow)
+                    {
+                        byte[] otherHeader = await pager.ReadPageAsync(row.Location.PageNumber, token).ConfigureAwait(false);
+                        try
+                        {
+                            if (!DataPageRows.TryGetSlotBound(format, otherHeader, row.Location.RowIndex, out RowBound bound)
+                                || Overlaps(row.Location.PageNumber, bound.RowStart, bound.RowSize))
+                            {
+                                exclusive = false;
+                                return false;
+                            }
+
+                            var otherSlots = new List<(long PageNumber, RowBound Bound)>();
+                            OverflowRowTarget? otherTarget = await ownedPages.TryResolveOverflowRowAsync(otherHeader, bound, pager.ReadPageAsync, PageBuffers.Return, token, otherSlots).ConfigureAwait(false);
+                            if (otherTarget is { } resolved)
+                            {
+                                PageBuffers.Return(resolved.Page);
+                            }
+
+                            foreach ((long number, RowBound pointer) in otherSlots)
+                            {
+                                if (Overlaps(number, pointer.RowStart, pointer.RowSize))
+                                {
+                                    exclusive = false;
+                                    return false;
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            PageBuffers.Return(otherHeader);
+                        }
+                    }
+
+                    return true;
+                },
+                cancellationToken,
+                requireCompleteRows: true).ConfigureAwait(false);
+
+            if (!exclusive)
+            {
+                return null;
+            }
+
+            transferTargetOwnership = true;
+            return target.Page;
+
+            bool TryAddSpan(long number, RowBound bound)
+            {
+                if (Overlaps(number, bound.RowStart, bound.RowSize))
+                {
+                    return false;
+                }
+
+                if (!spans.TryGetValue(number, out List<RowBound>? ranges))
+                {
+                    ranges = [];
+                    spans.Add(number, ranges);
+                }
+
+                ranges.Add(bound);
+                return true;
+            }
+
+            bool Overlaps(long number, int start, int length)
+            {
+                if (spans.TryGetValue(number, out List<RowBound>? ranges))
+                {
+                    foreach (RowBound bound in ranges)
+                    {
+                        if (start < bound.RowStart + bound.RowSize && bound.RowStart < start + length)
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            }
+        }
+        finally
+        {
+            PageBuffers.Return(headerPage);
+            if (!transferTargetOwnership && resolvedTarget is { } unusedTarget)
+            {
+                PageBuffers.Return(unusedTarget.Page);
+            }
         }
     }
 

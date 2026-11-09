@@ -183,7 +183,31 @@ public sealed class JetDatabase : Database
                 }
                 else if (entry.EntityState == EntityState.Modified)
                 {
-                    totalAffected += await ExecuteUpdateAsync(writer, entry, cancellationToken).ConfigureAwait(false);
+                    string tableName = JetEntityTypeMetadata.GetTableName(entry.EntityType);
+                    int nextIdx = index + 1;
+                    while (nextIdx < orderedEntries.Count
+                        && orderedEntries[nextIdx].EntityState == EntityState.Modified
+                        && string.Equals(JetEntityTypeMetadata.GetTableName(orderedEntries[nextIdx].EntityType), tableName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        nextIdx++;
+                    }
+
+                    if (nextIdx == index + 1)
+                    {
+                        totalAffected += await ExecuteUpdateAsync(writer, entry, cancellationToken).ConfigureAwait(false);
+                        index++;
+                        continue;
+                    }
+
+                    var batchModifiedEntries = new List<IUpdateEntry>(nextIdx - index);
+                    for (int i = index; i < nextIdx; i++)
+                    {
+                        batchModifiedEntries.Add(orderedEntries[i]);
+                    }
+
+                    totalAffected += await ExecuteBatchUpdateAsync(writer, tableName, batchModifiedEntries, cancellationToken).ConfigureAwait(false);
+                    index = nextIdx;
+                    continue;
                 }
                 else if (entry.EntityState == EntityState.Deleted)
                 {
@@ -775,6 +799,78 @@ public sealed class JetDatabase : Database
         }
 
         return affected;
+    }
+
+    private static async ValueTask<int> ExecuteBatchUpdateAsync(
+        AccessWriter writer,
+        string tableName,
+        List<IUpdateEntry> entries,
+        CancellationToken cancellationToken)
+    {
+        var updates = new List<RowUpdate>(entries.Count);
+        var updateEntries = new List<IUpdateEntry>(entries.Count);
+        var calculatedByEntry = new List<(IUpdateEntry Entry, List<IProperty> Properties)>();
+        int noOpCount = 0;
+
+        foreach (IUpdateEntry entry in entries)
+        {
+            IEntityType entityType = entry.EntityType;
+            RowCriteria criteria = BuildIdentityAndConcurrencyCriteria(entry);
+            RowValues updatedValues = [];
+            List<IProperty>? calculatedProperties = null;
+
+            foreach (IProperty property in entityType.GetProperties())
+            {
+                if (!string.IsNullOrWhiteSpace(JetEntityTypeMetadata.GetCalculatedExpression(property)))
+                {
+                    calculatedProperties ??= [];
+                    calculatedProperties.Add(property);
+                    continue;
+                }
+
+                if (property.IsPrimaryKey() || !entry.IsModified(property))
+                {
+                    continue;
+                }
+
+                string columnName = JetEntityTypeMetadata.GetColumnName(property);
+                object? currentValue = entry.GetCurrentValue(property);
+                updatedValues[columnName] = JetEntityTypeMetadata.ConvertToProvider(property, currentValue);
+            }
+
+            if (updatedValues.Count == 0)
+            {
+                noOpCount++;
+                continue;
+            }
+
+            updates.Add(new RowUpdate(criteria, updatedValues));
+            updateEntries.Add(entry);
+            if (calculatedProperties is { Count: > 0 })
+            {
+                calculatedByEntry.Add((entry, calculatedProperties));
+            }
+        }
+
+        if (updates.Count == 0)
+        {
+            return noOpCount;
+        }
+
+        int affected = await writer.UpdateRowsAsync(tableName, updates, cancellationToken).ConfigureAwait(false);
+        if (affected < updates.Count)
+        {
+            throw new DbUpdateConcurrencyException(
+                $"The database operation was expected to affect {updates.Count} row(s), but actually affected {affected} row(s); data may have been modified or deleted since entities were loaded.",
+                updateEntries);
+        }
+
+        foreach ((IUpdateEntry itemEntry, List<IProperty> calcProps) in calculatedByEntry)
+        {
+            await PopulateStoreGeneratedColumnsAsync(writer, tableName, itemEntry, calcProps, cancellationToken).ConfigureAwait(false);
+        }
+
+        return affected + noOpCount;
     }
 
     private static async ValueTask<int> ExecuteDeleteAsync(

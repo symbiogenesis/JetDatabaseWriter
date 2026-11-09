@@ -493,9 +493,10 @@ internal sealed class RelationshipEnforcer(
                 // foreign-key check rather than be replaced by its own cascade.
                 if (self && (!rel.CascadeUpdates || !callerAssignedForeignKey))
                 {
-                    foreach ((_, _, object[] newRow) in rows)
+                    foreach ((_, object[] oldRow, object[] newRow) in rows)
                     {
-                        string? newKey = RelationshipKeyBuilder.BuildKey(newRow, fkIdx, change.ChildTable.Definition);
+                        object[] sourceRow = rel.CascadeUpdates && !callerAssignedForeignKey ? oldRow : newRow;
+                        string? newKey = RelationshipKeyBuilder.BuildKey(sourceRow, fkIdx, change.ChildTable.Definition);
                         if (newKey != null && change.Changes.TryGetValue(newKey, out (object?[] OldPkSubset, object[] NewPkSubset) moved))
                         {
                             ownDependents.Add((newRow, moved.NewPkSubset));

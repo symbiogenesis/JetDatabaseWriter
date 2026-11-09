@@ -199,11 +199,12 @@ public sealed class OverflowRowWriteTests
             await RunAsync(writer, mode, rollback, async () => updated = await writer.UpdateRowsAsync(table, RowCriteria.All(), RowValues.Create().Set(column, "updated"), Ct));
         }
 
-        // An update rewrites each row in a new slot and deletes the old one, so
-        // every overflow header ends up flagged deleted.
+        // An overflow row that updates in place keeps its 0x4000 header; one that
+        // relocates to a new slot marks its old header deleted (0xC000).
         byte[] after = ms.ToArray();
         (int pageSize, int rowsStart) = await PageLayoutAsync(after);
-        Assert.All(headers, h => Assert.Equal(rollback ? OverflowHeader : OverflowFlags, SyntheticOverflowRows.ReadSlot(after, pageSize, rowsStart, h.Page, h.Row) & OverflowFlags));
+        int expectedHeaderFlags = rollback || source == "SyntheticJet3" ? OverflowHeader : OverflowFlags;
+        Assert.All(headers, h => Assert.Equal(expectedHeaderFlags, SyntheticOverflowRows.ReadSlot(after, pageSize, rowsStart, h.Page, h.Row) & OverflowFlags));
         Assert.Equal(rowCount, updated);
         await using AccessReader reader = await OpenReaderAsync(after);
         using DataTable data = await reader.ReadTableAsync(table, cancellationToken: Ct);
@@ -409,7 +410,7 @@ public sealed class OverflowRowWriteTests
         Assert.DoesNotContain(MovedChildParentId, parentIds);
         Assert.Equal(before.Count(id => id == MovedChildParentId), parentIds.Count(id => id == newParentId));
         Assert.Equal(before.Length, parentIds.Length);
-        Assert.Equal(OverflowFlags, await ReadSlotFlagsAsync(after, moved.HeaderPage, moved.HeaderRow));
+        Assert.Equal(OverflowHeader, await ReadSlotFlagsAsync(after, moved.HeaderPage, moved.HeaderRow));
     }
 
     /// <summary>

@@ -342,6 +342,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => this.RunAutoCommitAsync(_ => this.Services.Data.UpdateRowsAsync(tableName, criteria, updatedValues, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
+    public ValueTask<int> UpdateRowsAsync(string tableName, IEnumerable<RowUpdate> updates, CancellationToken cancellationToken = default)
+        => this.RunAutoCommitAsync(_ => this.Services.Data.UpdateRowsAsync(tableName, updates, cancellationToken), cancellationToken);
+
+    /// <inheritdoc/>
     public ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object?> updatedValues, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));

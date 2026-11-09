@@ -140,6 +140,21 @@ public interface IAccessWriter : IAccessBase
     public ValueTask<int> UpdateRowsAsync(string tableName, RowCriteria criteria, RowValues updatedValues, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Asynchronously applies multiple <see cref="RowUpdate"/> specifications to the same table
+    /// as one atomic statement. Each table row is matched against the updates in sequence and
+    /// composed into a single post-update row before unique-index, foreign-key, and cascade
+    /// checks run, allowing multi-row updates such as swapping unique or primary keys across rows.
+    /// </summary>
+    /// <param name="tableName">Target table name (case-insensitive).</param>
+    /// <param name="updates">The sequence of row filters and column assignments to compose and apply atomically.</param>
+    /// <param name="cancellationToken">Cancels work and preparation between physical write batches. Started physical batches and recovery complete without cancellation. A cancelled call restores its prior state; an explicit transaction retains earlier successful calls.</param>
+    /// <returns>A task that yields the number of distinct table rows updated.</returns>
+    /// <exception cref="System.ArgumentException">Thrown when any criteria or updated values name a column that does not exist on the table, when an updated value is <see cref="DbDefault.Value"/>, when the updated values name an Attachment or multi-value column, or when a column's validation rule rejects an assigned value.</exception>
+    /// <exception cref="System.InvalidOperationException">Thrown when an assigned NOT NULL or integer AutoNumber column is set to null, when the composed post-update key set would duplicate a key in a unique index of the table, when the update changes a foreign key of an enforced relationship to a value no row of the related table has after all updates in the batch, or when it changes a key that other rows reference and the relationship does not cascade updates.</exception>
+    /// <exception cref="JetDatabaseWriter.Exceptions.JetCorruptDataException">Thrown, before any row changes, when a matching row holds a MEMO or OLE value in a column not being assigned whose stored data cannot be read.</exception>
+    public ValueTask<int> UpdateRowsAsync(string tableName, IEnumerable<RowUpdate> updates, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Asynchronously updates rows in the specified table where the predicate column matches the given value.
     /// </summary>
     /// <remarks>

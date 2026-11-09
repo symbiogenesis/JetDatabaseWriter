@@ -847,4 +847,248 @@ public sealed class InPlaceRowUpdateTests
         byte[] oldMemoAPage = await writer.Database.Pages.ReadPageCopyAsync(oldMemoADescriptor.FirstDp >> 8, ct);
         Assert.Equal(Constants.PageTypes.Freed, oldMemoAPage[0]);
     }
+
+    /// <summary>Changed-width variable-length updates compact the DATA page in place, preserve slot indexes and shifted rows' hidden bytes, scrub vacated space under secure erase, and roll back byte-for-byte.</summary>
+    /// <param name="format">The native file generation.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task ChangedWidthInPlaceUpdate_CompactsDataPagePreservesSlotIndexAndScrubsVacatedBytes(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var seed = new MemoryStream();
+        int hiddenRelative;
+        int row1HiddenOffset;
+        await using (AccessWriter creator = await AccessWriter.CreateDatabaseAsync(seed, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await creator.CreateTableAsync(
+                "Items",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("Label", typeof(string), maxLength: 120),
+                    new ColumnDefinition("Spare", typeof(int)),
+                    new ColumnDefinition("Note", typeof(string)),
+                ],
+                ct);
+            await creator.InsertRowsAsync(
+                "Items",
+                [
+                    [1, "medium-initial-text", DBNull.Value, new string('m', 8_000)],
+                    [2, "second-row-text", DBNull.Value, new string('n', 8_000)],
+                ],
+                ct);
+            ResolvedTable? table = await creator.Services.Snapshots.ResolveTableAsync("Items", ct);
+            Assert.NotNull(table);
+            LocatedRow[] initialRows = [.. await creator.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, ct)];
+            Assert.Equal(initialRows[0].Location.PageNumber, initialRows[1].Location.PageNumber);
+            hiddenRelative = creator.Database.Format.RowFields.NumCols + table.Definition.Columns[2].FixedOff;
+            row1HiddenOffset = checked((int)(initialRows[1].Location.PageNumber * creator.PageSize)) + initialRows[1].Location.RowStart + hiddenRelative;
+        }
+
+        byte[] seededBytes = seed.ToArray();
+        seededBytes.AsSpan(row1HiddenOffset, sizeof(int)).Fill(0x5B);
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(seededBytes, ct);
+        stream.Position = 0;
+
+        var options = new AccessWriterOptions
+        {
+            UseLockFile = false,
+            SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages,
+        };
+        await using AccessWriter writer = await AccessWriter.OpenAsync(stream, options, leaveOpen: true, ct);
+        ResolvedTable? resolved = await writer.Services.Snapshots.ResolveTableAsync("Items", ct);
+        Assert.NotNull(resolved);
+        LocatedRow[] before = [.. await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct)];
+
+        await using (JetTransaction tx = await writer.BeginTransactionAsync(ct))
+        {
+            Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 1), new RowValues { ["Label"] = new string('w', 90) }, ct));
+            LocatedRow[] grown = [.. await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct)];
+            Assert.Equal(before[0].Location.PageNumber, grown[0].Location.PageNumber);
+            Assert.Equal(before[0].Location.RowIndex, grown[0].Location.RowIndex);
+            Assert.True(grown[0].Location.RowSize > before[0].Location.RowSize);
+            Assert.Equal(before[1].Location.PageNumber, grown[1].Location.PageNumber);
+            Assert.Equal(before[1].Location.RowIndex, grown[1].Location.RowIndex);
+            Assert.True(grown[1].Location.RowStart < before[1].Location.RowStart);
+            await tx.RollbackAsync(ct);
+        }
+
+        Assert.Equal(seededBytes, stream.ToArray());
+
+        Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 1), new RowValues { ["Label"] = "z" }, ct));
+        LocatedRow[] shrunk = [.. await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct)];
+        Assert.Equal(before[0].Location.PageNumber, shrunk[0].Location.PageNumber);
+        Assert.Equal(before[0].Location.RowIndex, shrunk[0].Location.RowIndex);
+        Assert.True(shrunk[0].Location.RowSize < before[0].Location.RowSize);
+        Assert.Equal(before[1].Location.PageNumber, shrunk[1].Location.PageNumber);
+        Assert.Equal(before[1].Location.RowIndex, shrunk[1].Location.RowIndex);
+        Assert.True(shrunk[1].Location.RowStart > before[1].Location.RowStart);
+
+        byte[] page = await writer.Database.Pages.ReadPageAsync(shrunk[1].Location.PageNumber, ct);
+        try
+        {
+            Assert.Equal(2, BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(writer.Database.Format.DataPage.NumRows, sizeof(ushort))));
+            Assert.True(page.AsSpan(shrunk[1].Location.RowStart + hiddenRelative, sizeof(int)).SequenceEqual(seededBytes.AsSpan(row1HiddenOffset, sizeof(int))));
+            int vacatedLength = shrunk[1].Location.RowStart - before[1].Location.RowStart;
+            Assert.True(vacatedLength > 0);
+            Assert.False(page.AsSpan(before[1].Location.RowStart, vacatedLength).ContainsAnyExcept((byte)0));
+        }
+        finally
+        {
+            PageBuffers.Return(page);
+        }
+    }
+
+    /// <summary>Overflow rows support both same-width and changed-width in-place updates on their target payload page while preserving their 0x4000 header.</summary>
+    /// <param name="format">The native file generation.</param>
+    /// <param name="layout">The overflow pointer layout.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, OverflowRowLayout.CrossPage)]
+    [InlineData(DatabaseFormat.Jet3Mdb, OverflowRowLayout.SamePage)]
+    [InlineData(DatabaseFormat.Jet3Mdb, OverflowRowLayout.TwoHop)]
+    [InlineData(DatabaseFormat.Jet4Mdb, OverflowRowLayout.CrossPage)]
+    [InlineData(DatabaseFormat.Jet4Mdb, OverflowRowLayout.SamePage)]
+    [InlineData(DatabaseFormat.Jet4Mdb, OverflowRowLayout.TwoHop)]
+    [InlineData(DatabaseFormat.AceAccdb, OverflowRowLayout.CrossPage)]
+    [InlineData(DatabaseFormat.AceAccdb, OverflowRowLayout.SamePage)]
+    [InlineData(DatabaseFormat.AceAccdb, OverflowRowLayout.TwoHop)]
+    public async Task OverflowRow_SameWidthAndChangedWidthUpdates_PatchTargetSlotInPlaceAndPreserveHeader(DatabaseFormat format, OverflowRowLayout layout)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(format, "Items", 300, primaryKey: true, ct);
+        SyntheticOverflowRow moved = await SyntheticOverflowRows.MoveRowAsync(bytes, "Items", layout, ct);
+
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(bytes, ct);
+        stream.Position = 0;
+        await using AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+        ResolvedTable? resolved = await writer.Services.Snapshots.ResolveTableAsync("Items", ct);
+        Assert.NotNull(resolved);
+        LocatedRow overflowBefore = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct), r => r.Location.IsOverflow);
+        int movedId = Assert.IsType<int>(overflowBefore.Values[0]);
+        string originalName = Assert.IsType<string>(overflowBefore.Values[1]);
+
+        await using (JetTransaction tx = await writer.BeginTransactionAsync(ct))
+        {
+            string sameLengthName = new('s', originalName.Length);
+            Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", movedId), new RowValues { ["Name"] = sameLengthName }, ct));
+            LocatedRow afterSameWidth = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct), r => Equals(r.Values[0], movedId));
+            Assert.True(afterSameWidth.Location.IsOverflow);
+            Assert.Equal(moved.HeaderPage, afterSameWidth.Location.PageNumber);
+            Assert.Equal(moved.HeaderRow, afterSameWidth.Location.RowIndex);
+            Assert.Equal(moved.DataPage, afterSameWidth.Location.DataPageNumber);
+            Assert.Equal(moved.DataRow, afterSameWidth.Location.DataRowIndex);
+            Assert.Equal(sameLengthName, afterSameWidth.Values[1]);
+
+            Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", movedId), new RowValues { ["Name"] = "compact-overflow-name" }, ct));
+            LocatedRow afterChangedWidth = Assert.Single(await writer.Services.Snapshots.ReadRowsAsync(resolved.Entry.TDefPage, ct), r => Equals(r.Values[0], movedId));
+            Assert.True(afterChangedWidth.Location.IsOverflow);
+            Assert.Equal(moved.HeaderPage, afterChangedWidth.Location.PageNumber);
+            Assert.Equal(moved.HeaderRow, afterChangedWidth.Location.RowIndex);
+            Assert.Equal(moved.DataPage, afterChangedWidth.Location.DataPageNumber);
+            Assert.Equal(moved.DataRow, afterChangedWidth.Location.DataRowIndex);
+            Assert.Equal("compact-overflow-name", afterChangedWidth.Values[1]);
+
+            await tx.RollbackAsync(ct);
+        }
+
+        Assert.Equal(bytes, stream.ToArray());
+    }
+
+    /// <summary>Multi-row batch UpdateRowsAsync atomically swaps unique keys, primary keys with child cascades, and self-referencing keys, and refuses post-update duplicates cleanly.</summary>
+    /// <param name="format">The native file generation.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task BatchUpdateRows_SwapsUniqueAndCascadedPrimaryKeysAtomicallyAndRefusesDuplicates(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var stream = new MemoryStream();
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+        await writer.CreateTableAsync(
+            "Nodes",
+            [
+                new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                new ColumnDefinition("Code", typeof(string), maxLength: 20),
+                new ColumnDefinition("ParentId", typeof(int)),
+            ],
+            [new IndexDefinition("UX_Nodes_Code", ["Code"]) { IsUnique = true }],
+            ct);
+        await writer.CreateTableAsync(
+            "Leaves",
+            [
+                new ColumnDefinition("LeafId", typeof(int)) { IsPrimaryKey = true },
+                new ColumnDefinition("NodeId", typeof(int)),
+            ],
+            ct);
+        await writer.CreateRelationshipAsync(
+            new RelationshipDefinition("FK_Nodes_Self", "Nodes", ["Id"], "Nodes", ["ParentId"]) { EnforceReferentialIntegrity = true, CascadeUpdates = true },
+            ct);
+        await writer.CreateRelationshipAsync(
+            new RelationshipDefinition("FK_Leaves_Nodes", "Nodes", ["Id"], "Leaves", ["NodeId"]) { EnforceReferentialIntegrity = true, CascadeUpdates = true },
+            ct);
+
+        await writer.InsertRowsAsync("Nodes", [[1, "ALPHA", DBNull.Value], [2, "BETA", 1], [3, "GAMMA", 1]], ct);
+        Assert.Equal(1, await writer.UpdateRowsAsync("Nodes", RowCriteria.Where("Id", 1), new RowValues { ["ParentId"] = 2 }, ct));
+        await writer.InsertRowsAsync("Leaves", [[100, 1], [200, 2]], ct);
+
+        ResolvedTable? nodesTable = await writer.Services.Snapshots.ResolveTableAsync("Nodes", ct);
+        Assert.NotNull(nodesTable);
+        LocatedRow[] beforeLocations = [.. await writer.Services.Snapshots.ReadRowsAsync(nodesTable.Entry.TDefPage, ct)];
+
+        int updated = await writer.UpdateRowsAsync(
+            "Nodes",
+            [
+                new RowUpdate(RowCriteria.Where("Id", 1), new RowValues { ["Code"] = "BETA" }),
+                new RowUpdate(RowCriteria.Where("Id", 2), new RowValues { ["Code"] = "GAMMA" }),
+                new RowUpdate(RowCriteria.Where("Id", 3), new RowValues { ["Code"] = "ALPHA" }),
+            ],
+            ct);
+        Assert.Equal(3, updated);
+
+        LocatedRow[] afterCodeSwap = [.. await writer.Services.Snapshots.ReadRowsAsync(nodesTable.Entry.TDefPage, ct)];
+        Assert.Equal(beforeLocations.Select(r => r.Location.PageNumber), afterCodeSwap.Select(r => r.Location.PageNumber));
+        Assert.Equal(beforeLocations.Select(r => r.Location.RowIndex), afterCodeSwap.Select(r => r.Location.RowIndex));
+        Assert.Equal("BETA", afterCodeSwap.Single(r => Equals(r.Values[0], 1)).Values[1]);
+        Assert.Equal("GAMMA", afterCodeSwap.Single(r => Equals(r.Values[0], 2)).Values[1]);
+        Assert.Equal("ALPHA", afterCodeSwap.Single(r => Equals(r.Values[0], 3)).Values[1]);
+
+        byte[] snapshotBeforeDuplicate = stream.ToArray();
+        _ = await Assert.ThrowsAsync<JetConstraintException>(() => writer.UpdateRowsAsync(
+            "Nodes",
+            [
+                new RowUpdate(RowCriteria.Where("Id", 1), new RowValues { ["Code"] = "DUPLICATE" }),
+                new RowUpdate(RowCriteria.Where("Id", 2), new RowValues { ["Code"] = "DUPLICATE" }),
+            ],
+            ct).AsTask());
+        Assert.Equal(snapshotBeforeDuplicate, stream.ToArray());
+
+        int pkSwapped = await writer.UpdateRowsAsync(
+            "Nodes",
+            [
+                new RowUpdate(RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 2 }),
+                new RowUpdate(RowCriteria.Where("Id", 2), new RowValues { ["Id"] = 1 }),
+            ],
+            ct);
+        Assert.Equal(2, pkSwapped);
+
+        LocatedRow[] afterPkSwap = [.. await writer.Services.Snapshots.ReadRowsAsync(nodesTable.Entry.TDefPage, ct)];
+        LocatedRow node1 = afterPkSwap.Single(r => Equals(r.Values[0], 1));
+        LocatedRow node2 = afterPkSwap.Single(r => Equals(r.Values[0], 2));
+        LocatedRow node3 = afterPkSwap.Single(r => Equals(r.Values[0], 3));
+        Assert.Equal("GAMMA", node1.Values[1]);
+        Assert.Equal(2, node1.Values[2]);
+        Assert.Equal("BETA", node2.Values[1]);
+        Assert.Equal(1, node2.Values[2]);
+        Assert.Equal(2, node3.Values[2]);
+
+        ResolvedTable? leavesTable = await writer.Services.Snapshots.ResolveTableAsync("Leaves", ct);
+        Assert.NotNull(leavesTable);
+        LocatedRow[] leaves = [.. await writer.Services.Snapshots.ReadRowsAsync(leavesTable.Entry.TDefPage, ct)];
+        Assert.Equal(2, leaves.Single(r => Equals(r.Values[0], 100)).Values[1]);
+        Assert.Equal(1, leaves.Single(r => Equals(r.Values[0], 200)).Values[1]);
+    }
 }
