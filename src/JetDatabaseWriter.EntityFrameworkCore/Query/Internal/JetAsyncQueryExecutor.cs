@@ -18,8 +18,9 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 
 /// <summary>
-/// Compiles and asynchronously executes EF Core LINQ queries over <see cref="JetDatabaseWriter"/> with B-tree index seek pushdown,
+/// Compiles and executes EF Core LINQ queries over <see cref="JetDatabaseWriter"/> with B-tree index seek pushdown,
 /// structural entity materialization, change-tracker identity resolution, and eager navigation loading.
+/// Synchronous query entry points execute as thin sync-over-async wrappers over the asynchronous query pipeline.
 /// </summary>
 internal static class JetAsyncQueryExecutor
 {
@@ -33,6 +34,26 @@ internal static class JetAsyncQueryExecutor
             nameof(BuildScalarExecutor),
             BindingFlags.NonPublic | BindingFlags.Static)!;
 
+    private static readonly MethodInfo BuildSyncSequenceExecutorMethod =
+        typeof(JetAsyncQueryExecutor).GetMethod(
+            nameof(BuildSyncSequenceExecutor),
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly MethodInfo BuildSyncQueryableExecutorMethod =
+        typeof(JetAsyncQueryExecutor).GetMethod(
+            nameof(BuildSyncQueryableExecutor),
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly MethodInfo BuildSyncIncludableQueryableExecutorMethod =
+        typeof(JetAsyncQueryExecutor).GetMethod(
+            nameof(BuildSyncIncludableQueryableExecutor),
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly MethodInfo BuildSyncScalarExecutorMethod =
+        typeof(JetAsyncQueryExecutor).GetMethod(
+            nameof(BuildSyncScalarExecutor),
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+
     private static readonly MethodInfo ReadEfPropertyMethod =
         typeof(JetAsyncQueryExecutor).GetMethod(
             nameof(ReadEfProperty),
@@ -41,6 +62,11 @@ internal static class JetAsyncQueryExecutor
     private static readonly MethodInfo EvaluateLikeMethod =
         typeof(JetAsyncQueryExecutor).GetMethod(
             nameof(EvaluateLike),
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly MethodInfo EvaluateContainsMethod =
+        typeof(JetAsyncQueryExecutor).GetMethod(
+            nameof(EvaluateContains),
             BindingFlags.NonPublic | BindingFlags.Static)!;
 
     private static readonly MethodInfo GetParameterValueMethod =
@@ -63,7 +89,7 @@ internal static class JetAsyncQueryExecutor
     /// <summary>
     /// Compiles an EF Core query expression into an executable delegate.
     /// </summary>
-    /// <typeparam name="TResult">The query result type (<see cref="IAsyncEnumerable{T}"/> or <see cref="Task{TResult}"/>).</typeparam>
+    /// <typeparam name="TResult">The query result type.</typeparam>
     /// <param name="query">The LINQ query expression.</param>
     /// <param name="async">Whether the query is executed asynchronously.</param>
     /// <param name="dependencies">The database dependencies.</param>
@@ -83,17 +109,16 @@ internal static class JetAsyncQueryExecutor
         ArgumentNullException.ThrowIfNull(preprocessorFactory);
         ArgumentNullException.ThrowIfNull(shaperFactory);
 
-        if (!async)
-        {
-            return static _ => throw new NotSupportedException(
-                "Synchronous query execution is not supported by JetDatabaseWriter.EntityFrameworkCore. Use asynchronous EF Core query methods such as ToListAsync, FirstOrDefaultAsync, SingleOrDefaultAsync, CountAsync, or AnyAsync.");
-        }
-
-        QueryCompilationContext compilationContext = dependencies.QueryCompilationContextFactory.Create(async: true);
+        QueryCompilationContext compilationContext = dependencies.QueryCompilationContextFactory.Create(async);
         IModel model = compilationContext.Model;
         JetQueryPlan plan = JetQueryPlanExtractor.Analyze(query, model);
 
         Type resultType = typeof(TResult);
+        if (!async)
+        {
+            return CompileSync<TResult>(query, plan, model, resultType);
+        }
+
         if (resultType.IsGenericType && resultType.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>))
         {
             Type elementType = resultType.GetGenericArguments()[0];
@@ -111,6 +136,171 @@ internal static class JetAsyncQueryExecutor
         throw new NotSupportedException($"Unsupported asynchronous query result type '{resultType}'.");
     }
 
+    private static Func<QueryContext, TResult> CompileSync<TResult>(
+        Expression query,
+        JetQueryPlan plan,
+        IModel model,
+        Type resultType)
+    {
+        if (resultType.IsGenericType)
+        {
+            Type genericDef = resultType.GetGenericTypeDefinition();
+            if (genericDef == typeof(IEnumerable<>) && !IsSingleValueSequenceResult(query, resultType))
+            {
+                Type elementType = resultType.GetGenericArguments()[0];
+                MethodInfo genericMethod = BuildSyncSequenceExecutorMethod.MakeGenericMethod(elementType);
+                return (Func<QueryContext, TResult>)genericMethod.Invoke(null, [query, plan, model])!;
+            }
+
+            if (genericDef == typeof(IQueryable<>) || genericDef == typeof(IOrderedQueryable<>))
+            {
+                Type elementType = resultType.GetGenericArguments()[0];
+                MethodInfo genericMethod = BuildSyncQueryableExecutorMethod.MakeGenericMethod(elementType);
+                return (Func<QueryContext, TResult>)genericMethod.Invoke(null, [query, plan, model])!;
+            }
+
+            if (genericDef == typeof(IIncludableQueryable<,>))
+            {
+                Type[] genericArgs = resultType.GetGenericArguments();
+                MethodInfo genericMethod = BuildSyncIncludableQueryableExecutorMethod.MakeGenericMethod(genericArgs[0], genericArgs[1]);
+                return (Func<QueryContext, TResult>)genericMethod.Invoke(null, [query, plan, model])!;
+            }
+        }
+
+        if ((resultType == typeof(object)
+             || resultType == typeof(IEnumerable)
+             || resultType == typeof(IQueryable)
+             || resultType == typeof(IOrderedQueryable))
+            && TryGetUntypedSequenceElementType(query.Type, out Type? untypedElementType))
+        {
+            MethodInfo genericMethod = BuildSyncQueryableExecutorMethod.MakeGenericMethod(untypedElementType!);
+            return (Func<QueryContext, TResult>)genericMethod.Invoke(null, [query, plan, model])!;
+        }
+
+        MethodInfo scalarMethod = BuildSyncScalarExecutorMethod.MakeGenericMethod(resultType);
+        return (Func<QueryContext, TResult>)scalarMethod.Invoke(null, [query, plan, model])!;
+    }
+
+    private static bool IsSingleValueSequenceResult(Expression query, Type resultType)
+        => query is MethodCallExpression { Arguments.Count: >= 1 } call
+            && call.Method.DeclaringType == typeof(Queryable)
+            && call.Method.Name is nameof(Queryable.First)
+                or nameof(Queryable.FirstOrDefault)
+                or nameof(Queryable.Single)
+                or nameof(Queryable.SingleOrDefault)
+                or nameof(Queryable.Last)
+                or nameof(Queryable.LastOrDefault)
+                or nameof(Queryable.ElementAt)
+                or nameof(Queryable.ElementAtOrDefault)
+                or nameof(Queryable.Min)
+                or nameof(Queryable.Max)
+                or nameof(Queryable.MinBy)
+                or nameof(Queryable.MaxBy)
+                or nameof(Queryable.Aggregate)
+            && call.Type == resultType
+            && typeof(IQueryable<>).MakeGenericType(resultType).IsAssignableFrom(call.Arguments[0].Type);
+
+    private static bool TryGetUntypedSequenceElementType(Type queryType, out Type? elementType)
+    {
+        if (queryType != typeof(string) && queryType != typeof(byte[]))
+        {
+            if (queryType.IsGenericType)
+            {
+                Type def = queryType.GetGenericTypeDefinition();
+                if (def == typeof(IQueryable<>)
+                    || def == typeof(IOrderedQueryable<>)
+                    || def == typeof(IIncludableQueryable<,>)
+                    || def == typeof(IEnumerable<>))
+                {
+                    elementType = queryType.GetGenericArguments()[0];
+                    return true;
+                }
+            }
+
+            foreach (Type iface in queryType.GetInterfaces())
+            {
+                if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IQueryable<>))
+                {
+                    elementType = iface.GetGenericArguments()[0];
+                    return true;
+                }
+            }
+        }
+
+        elementType = null;
+        return false;
+    }
+
+    private static Func<QueryContext, IEnumerable<TElement>> BuildSyncSequenceExecutor<TElement>(
+        Expression query,
+        JetQueryPlan plan,
+        IModel model)
+    {
+        Func<QueryContext, IAsyncEnumerable<TElement>> asyncExecutor = BuildSequenceExecutor<TElement>(query, plan, model);
+        return queryContext => ExecuteSequenceSync(asyncExecutor, queryContext);
+    }
+
+    private static Func<QueryContext, IOrderedQueryable<TElement>> BuildSyncQueryableExecutor<TElement>(
+        Expression query,
+        JetQueryPlan plan,
+        IModel model)
+    {
+        Func<QueryContext, IAsyncEnumerable<TElement>> asyncExecutor = BuildSequenceExecutor<TElement>(query, plan, model);
+        return queryContext => (IOrderedQueryable<TElement>)ExecuteSequenceSync(asyncExecutor, queryContext).AsQueryable();
+    }
+
+    private static Func<QueryContext, IIncludableQueryable<TElement, TProperty>> BuildSyncIncludableQueryableExecutor<TElement, TProperty>(
+        Expression query,
+        JetQueryPlan plan,
+        IModel model)
+    {
+        Func<QueryContext, IAsyncEnumerable<TElement>> asyncExecutor = BuildSequenceExecutor<TElement>(query, plan, model);
+        return queryContext => new MaterializedIncludableQueryable<TElement, TProperty>(
+            (IOrderedQueryable<TElement>)ExecuteSequenceSync(asyncExecutor, queryContext).AsQueryable());
+    }
+
+    private static Func<QueryContext, TScalar> BuildSyncScalarExecutor<TScalar>(
+        Expression query,
+        JetQueryPlan plan,
+        IModel model)
+    {
+        Func<QueryContext, Task<TScalar>> asyncExecutor = BuildScalarExecutor<TScalar>(query, plan, model);
+        return queryContext => ExecuteScalarSync(asyncExecutor, queryContext);
+    }
+
+    private static List<TElement> ExecuteSequenceSync<TElement>(
+        Func<QueryContext, IAsyncEnumerable<TElement>> asyncExecutor,
+        QueryContext queryContext)
+    {
+#pragma warning disable RS0030, MA0042 // Synchronous query execution is a required sync-over-async callback boundary.
+        return MaterializeAsync(asyncExecutor, queryContext)
+            .GetAwaiter()
+            .GetResult();
+#pragma warning restore RS0030, MA0042
+
+        static async Task<List<TElement>> MaterializeAsync(
+            Func<QueryContext, IAsyncEnumerable<TElement>> executor,
+            QueryContext qc)
+        {
+            List<TElement> results = [];
+            await foreach (TElement item in executor(qc).WithCancellation(qc.CancellationToken).ConfigureAwait(false))
+            {
+                results.Add(item);
+            }
+
+            return results;
+        }
+    }
+
+    private static TScalar ExecuteScalarSync<TScalar>(
+        Func<QueryContext, Task<TScalar>> asyncExecutor,
+        QueryContext queryContext) =>
+#pragma warning disable RS0030, MA0042 // Synchronous query execution is a required sync-over-async callback boundary.
+        asyncExecutor(queryContext)
+            .GetAwaiter()
+            .GetResult();
+#pragma warning restore RS0030, MA0042
+
     private static Func<QueryContext, IAsyncEnumerable<TElement>> BuildSequenceExecutor<TElement>(
         Expression query,
         JetQueryPlan plan,
@@ -118,8 +308,7 @@ internal static class JetAsyncQueryExecutor
     {
         Func<QueryContext, JetExecutionMaterializedState, IEnumerable<TElement>> compiledQuery =
             CompileSequenceDelegate<TElement>(query, plan, model);
-        IEntityType? resultEntityType = model.FindEntityType(typeof(TElement));
-        return queryContext => ExecuteSequenceAsync(queryContext, plan, compiledQuery, resultEntityType);
+        return queryContext => ExecuteSequenceAsync(queryContext, plan, compiledQuery);
     }
 
     private static Func<QueryContext, Task<TScalar>> BuildScalarExecutor<TScalar>(
@@ -134,8 +323,7 @@ internal static class JetAsyncQueryExecutor
 
         Func<QueryContext, JetExecutionMaterializedState, TScalar> compiledQuery =
             CompileScalarDelegate<TScalar>(query, plan, model);
-        IEntityType? resultEntityType = model.FindEntityType(typeof(TScalar));
-        return queryContext => ExecuteScalarAsync(queryContext, plan, compiledQuery, resultEntityType);
+        return queryContext => ExecuteScalarAsync(queryContext, plan, compiledQuery);
     }
 
     private static bool TryBuildEntityFreeAggregateExecutor<TScalar>(
@@ -348,7 +536,6 @@ internal static class JetAsyncQueryExecutor
         QueryContext queryContext,
         JetQueryPlan plan,
         Func<QueryContext, JetExecutionMaterializedState, IEnumerable<TElement>> compiledQuery,
-        IEntityType? resultEntityType,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         CancellationToken effectiveToken = cancellationToken != default ? cancellationToken : queryContext.CancellationToken;
@@ -400,7 +587,7 @@ internal static class JetAsyncQueryExecutor
                 }
             }
 
-            if (resultEntityType is not null && plan.IncludeChains.Count > 0 && rootRowsForIncludes.Count > 0)
+            if (plan.IncludeChains.Count > 0 && rootRowsForIncludes.Count > 0)
             {
                 await LoadIncludesForResultEntitiesAsync(
                     (JetQueryContext)queryContext,
@@ -424,8 +611,7 @@ internal static class JetAsyncQueryExecutor
     private static async Task<TScalar> ExecuteScalarAsync<TScalar>(
         QueryContext queryContext,
         JetQueryPlan plan,
-        Func<QueryContext, JetExecutionMaterializedState, TScalar> compiledQuery,
-        IEntityType? resultEntityType)
+        Func<QueryContext, JetExecutionMaterializedState, TScalar> compiledQuery)
     {
         CancellationToken effectiveToken = queryContext.CancellationToken;
         effectiveToken.ThrowIfCancellationRequested();
@@ -468,7 +654,7 @@ internal static class JetAsyncQueryExecutor
                 result = typedPromoted;
             }
 
-            if (resultEntityType is not null && plan.IncludeChains.Count > 0 && rootRowsForIncludes.Count > 0)
+            if (plan.IncludeChains.Count > 0 && rootRowsForIncludes.Count > 0)
             {
                 await LoadIncludesForResultEntitiesAsync(
                     (JetQueryContext)queryContext,
@@ -733,7 +919,14 @@ internal static class JetAsyncQueryExecutor
 
         foreach (JetIncludeChain chain in plan.IncludeChains)
         {
-            List<(object Entity, ValueBuffer Buffer)> currentDeclaringRows = resultRows;
+            if (chain.Steps.Count == 0)
+            {
+                continue;
+            }
+
+            Type firstDeclaringClrType = chain.Steps[0].Navigation.DeclaringEntityType.ClrType;
+            List<(object Entity, ValueBuffer Buffer)> currentDeclaringRows =
+                [.. resultRows.Where(r => firstDeclaringClrType.IsInstanceOfType(r.Entity))];
             foreach (JetIncludeStep step in chain.Steps)
             {
                 if (currentDeclaringRows.Count == 0)
@@ -1010,6 +1203,16 @@ internal static class JetAsyncQueryExecutor
                 {
                     _ = PromoteEntityInstance(rawJoin, joinBuffer, queryContext, plan, state, existingTrackedByType);
                 }
+                else
+                {
+                    if (!state.SkipJoinEntitiesByTarget.TryGetValue(rawTarget, out List<(object JoinEntity, ValueBuffer JoinBuffer)>? joinList))
+                    {
+                        joinList = [];
+                        state.SkipJoinEntitiesByTarget[rawTarget] = joinList;
+                    }
+
+                    joinList.Add((rawJoin, joinBuffer));
+                }
 
                 object targetEntity = isTracking && existingTrackedByType is not null
                     ? PromoteEntityInstance(rawTarget, targetBuffer, queryContext, plan, state, existingTrackedByType)
@@ -1110,7 +1313,7 @@ internal static class JetAsyncQueryExecutor
             return effectiveEntity;
         }
 
-        if (!isTracking)
+        if (!isTracking && plan.IncludeChains.Count == 0)
         {
             return value;
         }
@@ -1380,6 +1583,59 @@ internal static class JetAsyncQueryExecutor
         if (plan.QueryReferencedNavigations.Count == 0 || ReferenceEquals(sourceEntity, targetEntity))
         {
             return;
+        }
+
+        if (state.SkipJoinEntitiesByTarget.TryGetValue(sourceEntity, out List<(object JoinEntity, ValueBuffer JoinBuffer)>? skipJoins))
+        {
+            foreach ((object rawJoin, ValueBuffer joinBuffer) in skipJoins)
+            {
+                _ = PromoteEntityInstance(rawJoin, joinBuffer, queryContext, plan, state, existingTrackedByType);
+            }
+        }
+
+        foreach (ISkipNavigation skipNav in concreteType.GetSkipNavigations())
+        {
+            if (!skipNav.IsCollection)
+            {
+                continue;
+            }
+
+            object? sourceCollection = GetNavigationValue(skipNav, sourceEntity);
+            if (sourceCollection is not IEnumerable enumerable)
+            {
+                continue;
+            }
+
+            List<object> items = [.. enumerable.Cast<object>()];
+            if (items.Count == 0)
+            {
+                continue;
+            }
+
+            IClrCollectionAccessor? collectionAccessor = skipNav.GetCollectionAccessor();
+            _ = collectionAccessor?.GetOrCreate(targetEntity, forMaterialization: true);
+            IClrCollectionAccessor? inverseAccessor = skipNav.Inverse is { IsCollection: true } invSkip
+                ? invSkip.GetCollectionAccessor()
+                : null;
+            foreach (object item in items)
+            {
+                object promotedItem = state.EntityBuffers.TryGetValue(item, out ValueBuffer itemBuf)
+                    ? PromoteEntityInstance(item, itemBuf, queryContext, plan, state, existingTrackedByType)
+                    : item;
+                if (collectionAccessor?.Contains(targetEntity, promotedItem) == false)
+                {
+                    collectionAccessor.Add(targetEntity, promotedItem, forMaterialization: true);
+                }
+
+                if (inverseAccessor is not null)
+                {
+                    _ = inverseAccessor.Remove(promotedItem, sourceEntity);
+                    if (!inverseAccessor.Contains(promotedItem, targetEntity))
+                    {
+                        inverseAccessor.Add(promotedItem, targetEntity, forMaterialization: true);
+                    }
+                }
+            }
         }
 
         foreach (INavigation nav in concreteType.GetNavigations())
@@ -1877,6 +2133,40 @@ internal static class JetAsyncQueryExecutor
         return new StructuralKey(values);
     }
 
+    private static StructuralKey ExtractKeyFromEntity(IKey key, object entity)
+    {
+        object?[] values = new object?[key.Properties.Count];
+        for (int i = 0; i < key.Properties.Count; i++)
+        {
+            values[i] = key.Properties[i].GetGetter().GetClrValueUsingContainingEntity(entity);
+        }
+
+        return new StructuralKey(values);
+    }
+
+    private static bool EvaluateContains<TSource>(
+        QueryContext queryContext,
+        IEnumerable<TSource> source,
+        TSource item)
+    {
+        if (item is not null
+            && queryContext.Context.Model.FindEntityType(typeof(TSource))?.FindPrimaryKey() is IKey primaryKey)
+        {
+            StructuralKey itemKey = ExtractKeyFromEntity(primaryKey, item);
+            foreach (TSource candidate in source)
+            {
+                if (candidate is not null && ExtractKeyFromEntity(primaryKey, candidate).Equals(itemKey))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return source.Contains(item);
+    }
+
     private static bool TryExtractNonNullKey(IReadOnlyList<IProperty> properties, ValueBuffer buffer, out StructuralKey key)
     {
         object?[] values = new object?[properties.Count];
@@ -2035,6 +2325,12 @@ internal static class JetAsyncQueryExecutor
 
             object? trackedVal = queryContext.Context.Entry(entity).Property(propertyName).CurrentValue;
             return trackedVal is TProperty typedTracked ? typedTracked : default!;
+        }
+
+        INavigationBase? navigation = entityType?.FindNavigation(propertyName) ?? (INavigationBase?)entityType?.FindSkipNavigation(propertyName);
+        if (navigation is not null && GetNavigationValue(navigation, entity) is TProperty navVal)
+        {
+            return navVal;
         }
 
         if (entity is IDictionary<string, object?> dict && dict.TryGetValue(propertyName, out object? dictVal))
@@ -2255,6 +2551,20 @@ internal static class JetAsyncQueryExecutor
         }
     }
 
+    private sealed class MaterializedIncludableQueryable<TElement, TProperty>(IOrderedQueryable<TElement> inner)
+        : IIncludableQueryable<TElement, TProperty>, IOrderedQueryable<TElement>
+    {
+        public Type ElementType => inner.ElementType;
+
+        public Expression Expression => inner.Expression;
+
+        public IQueryProvider Provider => inner.Provider;
+
+        public IEnumerator<TElement> GetEnumerator() => inner.GetEnumerator();
+
+        IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable)inner).GetEnumerator();
+    }
+
     private sealed class JetExecutionMaterializedState
     {
         public Dictionary<int, List<(object Entity, ValueBuffer Buffer)>> RootRows { get; } = [];
@@ -2268,6 +2578,9 @@ internal static class JetAsyncQueryExecutor
         public Dictionary<object, object> PromotedEntities { get; } = [with(ReferenceEqualityComparer.Instance)];
 
         public HashSet<object> AlreadyTrackedEntities { get; } = [with(ReferenceEqualityComparer.Instance)];
+
+        public Dictionary<object, List<(object JoinEntity, ValueBuffer JoinBuffer)>> SkipJoinEntitiesByTarget { get; } =
+            [with(ReferenceEqualityComparer.Instance)];
     }
 
     private sealed class JetQueryPlanExtractor(IModel model) : ExpressionVisitor
@@ -2376,10 +2689,24 @@ internal static class JetAsyncQueryExecutor
                     this.ignoreAutoIncludes = true;
                 }
                 else if (node.Method.Name is nameof(EntityFrameworkQueryableExtensions.Include)
-                         or nameof(EntityFrameworkQueryableExtensions.ThenInclude))
+                         or nameof(EntityFrameworkQueryableExtensions.ThenInclude)
+                         or "NotQuiteInclude")
                 {
                     this.ExtractIncludeChain(node);
                     return node;
+                }
+            }
+            else if (node.Method.DeclaringType == typeof(EF)
+                     && node.Method.Name == nameof(EF.Property)
+                     && node.Arguments.Count == 2
+                     && !this.inIncludeArgument
+                     && StripQuotes(node.Arguments[1]) is ConstantExpression { Value: string efPropName })
+            {
+                IEntityType? ownerType = model.FindEntityType(node.Arguments[0].Type);
+                INavigationBase? nav = FindNavigationBase(ownerType, efPropName);
+                if (nav is not null && this.queryReferencedNavigationSet.Add((0, nav)))
+                {
+                    this.queryReferencedNavigations.Add(nav);
                 }
             }
             else if (node.Method.DeclaringType == typeof(Queryable))
@@ -2394,7 +2721,7 @@ internal static class JetAsyncQueryExecutor
                     or nameof(Queryable.Count)
                     or nameof(Queryable.LongCount)
                     or nameof(Queryable.Any)
-                    && node.Arguments.Count == 2
+                    && node.Arguments.Count is 2 or 3
                     && StripQuotes(node.Arguments[1]) is LambdaExpression predicate
                     && TryFindDirectRootExpression(node.Arguments[0], out EntityQueryRootExpression? queryRoot))
                 {
@@ -2403,6 +2730,11 @@ internal static class JetAsyncQueryExecutor
                     plan.SeekConditions.AddRange(
                         JetIndexSeekPlanner.ExtractSeekConditions(plan.RootEntityType, predicate));
                     _ = this.Visit(predicate);
+                    if (node.Arguments.Count == 3)
+                    {
+                        _ = this.Visit(node.Arguments[2]);
+                    }
+
                     return node;
                 }
 
@@ -2688,7 +3020,7 @@ internal static class JetAsyncQueryExecutor
                         or nameof(Queryable.First)
                         or nameof(Queryable.FirstOrDefault))
                     {
-                        if (call.Arguments.Count == 2 && StripQuotes(call.Arguments[1]) is LambdaExpression termPred)
+                        if (call.Arguments.Count >= 2 && StripQuotes(call.Arguments[1]) is LambdaExpression termPred)
                         {
                             rowPredicates.Add(termPred);
                         }
@@ -2705,7 +3037,7 @@ internal static class JetAsyncQueryExecutor
                     if (call.Method.Name is nameof(Queryable.Single)
                         or nameof(Queryable.SingleOrDefault))
                     {
-                        if (call.Arguments.Count == 2 && StripQuotes(call.Arguments[1]) is LambdaExpression termPred)
+                        if (call.Arguments.Count >= 2 && StripQuotes(call.Arguments[1]) is LambdaExpression termPred)
                         {
                             rowPredicates.Add(termPred);
                         }
@@ -2930,16 +3262,39 @@ internal static class JetAsyncQueryExecutor
 
         private static Type UnwrapSequenceType(Type type)
         {
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Task<>))
+            {
+                type = type.GetGenericArguments()[0];
+            }
+
+            if (type == typeof(string) || type == typeof(byte[]))
+            {
+                return type;
+            }
+
+            if (type.IsArray)
+            {
+                return type.GetElementType()!;
+            }
+
             if (type.IsGenericType)
             {
                 Type genericDef = type.GetGenericTypeDefinition();
                 if (genericDef == typeof(IQueryable<>)
                     || genericDef == typeof(IOrderedQueryable<>)
+                    || genericDef == typeof(IIncludableQueryable<,>)
                     || genericDef == typeof(IEnumerable<>)
-                    || genericDef == typeof(IAsyncEnumerable<>)
-                    || genericDef == typeof(Task<>))
+                    || genericDef == typeof(IAsyncEnumerable<>))
                 {
                     return type.GetGenericArguments()[0];
+                }
+            }
+
+            foreach (Type iface in type.GetInterfaces())
+            {
+                if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                {
+                    return iface.GetGenericArguments()[0];
                 }
             }
 
@@ -2969,7 +3324,8 @@ internal static class JetAsyncQueryExecutor
             while (current is MethodCallExpression call
                    && call.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
                    && call.Method.Name is nameof(EntityFrameworkQueryableExtensions.Include)
-                       or nameof(EntityFrameworkQueryableExtensions.ThenInclude))
+                       or nameof(EntityFrameworkQueryableExtensions.ThenInclude)
+                       or "NotQuiteInclude")
             {
                 chainCalls.Add(call);
                 current = call.Arguments[0];
@@ -3180,8 +3536,9 @@ internal static class JetAsyncQueryExecutor
             }
 
             if (node.Method.DeclaringType == typeof(Queryable)
-                && node.Method.Name == nameof(Queryable.GroupBy)
-                && node.Arguments.Count < 3)
+                && node.Method.Name is nameof(Queryable.GroupBy)
+                    or nameof(Queryable.Contains)
+                    or nameof(Queryable.SequenceEqual))
             {
                 this.EntityEscapes = true;
             }
@@ -3281,6 +3638,7 @@ internal static class JetAsyncQueryExecutor
             if (node.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
                 && node.Method.Name is nameof(EntityFrameworkQueryableExtensions.Include)
                     or nameof(EntityFrameworkQueryableExtensions.ThenInclude)
+                    or "NotQuiteInclude"
                     or nameof(EntityFrameworkQueryableExtensions.AsNoTracking)
                     or nameof(EntityFrameworkQueryableExtensions.AsNoTrackingWithIdentityResolution)
                     or nameof(EntityFrameworkQueryableExtensions.AsTracking)
@@ -3543,6 +3901,18 @@ internal static class JetAsyncQueryExecutor
             }
 
             Type[] typeArgs = node.Method.IsGenericMethod ? node.Method.GetGenericArguments() : [];
+            if (node.Method.Name == nameof(Queryable.Contains)
+                && enumerableArgs.Length == 2
+                && typeArgs.Length == 1
+                && model.FindEntityType(typeArgs[0]) is not null)
+            {
+                return Expression.Call(
+                    EvaluateContainsMethod.MakeGenericMethod(typeArgs[0]),
+                    queryContextExpression,
+                    enumerableArgs[0],
+                    enumerableArgs[1]);
+            }
+
             MethodInfo? enumerableMethod = TryFindEnumerableMethod(node.Method.Name, typeArgs, enumerableArgs);
             if (enumerableMethod is not null)
             {

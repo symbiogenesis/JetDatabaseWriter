@@ -7,9 +7,11 @@ using System.ComponentModel.DataAnnotations.Schema;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
+using JetDatabaseWriter.EntityFrameworkCore.Query.Internal;
 using JetDatabaseWriter.EntityFrameworkCore.Storage.Internal;
 using JetDatabaseWriter.EntityFrameworkCore.ValueGeneration.Internal;
 using JetDatabaseWriter.Enums;
@@ -17,6 +19,8 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
@@ -690,7 +694,7 @@ public sealed class JetEntityFrameworkCoreProviderTests
             RowVersion = 1,
         });
         _ = Assert.Throws<NotSupportedException>(() => _ = context.SaveChanges());
-        _ = Assert.Throws<NotSupportedException>(() => _ = context.Customers.ToList());
+        Assert.Empty(context.Customers.ToList());
     }
 
     [Fact]
@@ -1854,6 +1858,538 @@ public sealed class JetEntityFrameworkCoreProviderTests
             .SingleAsync(ct);
         Assert.Equal("C-02", groupJoined.Code);
         Assert.Equal(1, groupJoined.OrderCount);
+    }
+
+    [Theory]
+    [MemberData(nameof(SupportedFormats))]
+    public async Task Synchronous_Query_Apis_Work_Via_SyncOverAsync_Across_Formats(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions<StoreDbContext> options = new DbContextOptionsBuilder<StoreDbContext>()
+            .UseJetDatabaseWriter(stream, format, leaveOpen: true)
+            .Options;
+
+        int c1Id;
+        int c2Id;
+        int c3Id;
+        int o1Id;
+
+        await using (StoreDbContext seed = new(options))
+        {
+            _ = await seed.Database.EnsureCreatedAsync(ct);
+
+            Customer c1 = new()
+            {
+                Code = "C-100",
+                Name = "Alpha Corp",
+                IsVip = true,
+                CreditLimit = 1000m,
+                RowVersion = 1,
+                IsDeleted = false,
+            };
+            Customer c2 = new()
+            {
+                Code = "C-200",
+                Name = "Beta LLC",
+                IsVip = false,
+                CreditLimit = 2000m,
+                RowVersion = 1,
+                IsDeleted = false,
+            };
+            Customer c3 = new()
+            {
+                Code = "C-300",
+                Name = "Gamma Inc",
+                IsVip = true,
+                CreditLimit = 3000m,
+                RowVersion = 1,
+                IsDeleted = false,
+            };
+            Customer deletedCustomer = new()
+            {
+                Code = "C-999",
+                Name = "Deleted Co",
+                IsVip = false,
+                CreditLimit = 50m,
+                RowVersion = 1,
+                IsDeleted = true,
+            };
+
+            Order o1 = new()
+            {
+                Customer = c1,
+                OrderDate = new DateTime(2026, 4, 1, 0, 0, 0, DateTimeKind.Utc),
+                TotalAmount = 125m,
+                Status = OrderStatus.Pending,
+                TrackingId = Guid.NewGuid(),
+            };
+            Order o2 = new()
+            {
+                Customer = c1,
+                OrderDate = new DateTime(2026, 4, 2, 0, 0, 0, DateTimeKind.Utc),
+                TotalAmount = 275m,
+                Status = OrderStatus.Shipped,
+                TrackingId = Guid.NewGuid(),
+            };
+            Order o3 = new()
+            {
+                Customer = c2,
+                OrderDate = new DateTime(2026, 4, 3, 0, 0, 0, DateTimeKind.Utc),
+                TotalAmount = 600m,
+                Status = OrderStatus.Processing,
+                TrackingId = Guid.NewGuid(),
+            };
+
+            seed.Customers.AddRange(c1, c2, c3, deletedCustomer);
+            seed.Orders.AddRange(o1, o2, o3);
+            _ = await seed.SaveChangesAsync(ct);
+
+            c1Id = c1.Id;
+            c2Id = c2.Id;
+            c3Id = c3.Id;
+            o1Id = o1.Id;
+        }
+
+        // 1. Sequence enumeration: foreach, ToList, ToArray, ToDictionary, ToHashSet, ToLookup, AsEnumerable
+        await using (StoreDbContext queryContext = new(options))
+        {
+            List<string> iteratedCodes = [];
+            foreach (Customer customer in queryContext.Customers.OrderBy(c => c.Code))
+            {
+                iteratedCodes.Add(customer.Code);
+            }
+
+            Assert.Equal(["C-100", "C-200", "C-300"], iteratedCodes);
+            Assert.Equal(3, queryContext.ChangeTracker.Entries<Customer>().Count());
+
+            var listResult = queryContext.Customers.AsNoTracking().OrderBy(c => c.Code).ToList();
+            Assert.Equal(3, listResult.Count);
+
+            Customer[] arrayResult = queryContext.Customers.AsNoTracking().Where(c => c.IsVip).OrderBy(c => c.Code).ToArray();
+            Assert.Equal(2, arrayResult.Length);
+
+            var dictResult = queryContext.Customers
+                .AsNoTracking()
+                .ToDictionary(c => c.Code, c => c.CreditLimit, StringComparer.Ordinal);
+            Assert.Equal(3, dictResult.Count);
+            Assert.Equal(2000m, dictResult["C-200"]);
+
+            var hashSetResult = queryContext.Customers
+                .AsNoTracking()
+                .Select(c => c.Code)
+                .ToHashSet(StringComparer.Ordinal);
+            Assert.Equal(3, hashSetResult.Count);
+
+            ILookup<int, Order> lookupResult = queryContext.Orders.AsNoTracking().ToLookup(o => o.CustomerId);
+            Assert.Equal(2, lookupResult[c1Id].Count());
+            _ = Assert.Single(lookupResult[c2Id]);
+
+            var asEnumerableNames = queryContext.Customers
+                .AsNoTracking()
+                .OrderBy(c => c.Code)
+                .AsEnumerable()
+                .Select(static c => c.Name)
+                .ToList();
+            Assert.Equal(["Alpha Corp", "Beta LLC", "Gamma Inc"], asEnumerableNames);
+
+            var withDeleted = queryContext.Customers
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .OrderBy(c => c.Code)
+                .ToList();
+            Assert.Equal(4, withDeleted.Count);
+        }
+
+        // 2. Single-element terminals (including defaultValue overloads) and ElementAt / ElementAtOrDefault
+        await using (StoreDbContext singleContext = new(options))
+        {
+            Customer fallbackCustomer = new() { Code = "FALLBACK", Name = "Fallback" };
+
+            Customer first = singleContext.Customers.AsNoTracking().OrderBy(c => c.Code).First();
+            Assert.Equal("C-100", first.Code);
+
+            Customer firstMatch = singleContext.Customers.AsNoTracking().OrderBy(c => c.Code).First(c => !c.IsVip);
+            Assert.Equal("C-200", firstMatch.Code);
+
+            Customer? firstOrDefaultNone = singleContext.Customers.AsNoTracking().FirstOrDefault(c => c.Code == "NONE");
+            Assert.Null(firstOrDefaultNone);
+
+            Customer firstOrDefaultValue = singleContext.Customers
+                .AsNoTracking()
+                .Where(c => c.Code == "NONE")
+                .FirstOrDefault(fallbackCustomer);
+            Assert.Same(fallbackCustomer, firstOrDefaultValue);
+
+            Customer firstOrDefaultPredValue = singleContext.Customers
+                .AsNoTracking()
+                .FirstOrDefault(c => c.Code == "NONE", fallbackCustomer);
+            Assert.Same(fallbackCustomer, firstOrDefaultPredValue);
+
+            Customer firstOrDefaultPredHit = singleContext.Customers
+                .AsNoTracking()
+                .FirstOrDefault(c => c.Code == "C-200", fallbackCustomer);
+            Assert.Equal("Beta LLC", firstOrDefaultPredHit.Name);
+
+            Customer single = singleContext.Customers.AsNoTracking().Where(c => c.Code == "C-300").Single();
+            Assert.Equal("Gamma Inc", single.Name);
+
+            Customer singlePred = singleContext.Customers.AsNoTracking().Single(c => c.Code == "C-100");
+            Assert.Equal("Alpha Corp", singlePred.Name);
+
+            Customer? singleOrDefaultNone = singleContext.Customers.AsNoTracking().SingleOrDefault(c => c.Code == "NONE");
+            Assert.Null(singleOrDefaultNone);
+
+            Customer singleOrDefaultValue = singleContext.Customers
+                .AsNoTracking()
+                .Where(c => c.Code == "NONE")
+                .SingleOrDefault(fallbackCustomer);
+            Assert.Same(fallbackCustomer, singleOrDefaultValue);
+
+            Customer singleOrDefaultPredValue = singleContext.Customers
+                .AsNoTracking()
+                .SingleOrDefault(c => c.Code == "NONE", fallbackCustomer);
+            Assert.Same(fallbackCustomer, singleOrDefaultPredValue);
+
+            Customer last = singleContext.Customers.AsNoTracking().OrderBy(c => c.Code).Last();
+            Assert.Equal("C-300", last.Code);
+
+            Customer lastPred = singleContext.Customers.AsNoTracking().OrderBy(c => c.Code).Last(c => c.IsVip);
+            Assert.Equal("C-300", lastPred.Code);
+
+            Customer? lastOrDefaultNone = singleContext.Customers.AsNoTracking().OrderBy(c => c.Code).LastOrDefault(c => c.Code == "NONE");
+            Assert.Null(lastOrDefaultNone);
+
+            Customer lastOrDefaultValue = singleContext.Customers
+                .AsNoTracking()
+                .Where(c => c.Code == "NONE")
+                .OrderBy(c => c.Code)
+                .LastOrDefault(fallbackCustomer);
+            Assert.Same(fallbackCustomer, lastOrDefaultValue);
+
+            Customer lastOrDefaultPredValue = singleContext.Customers
+                .AsNoTracking()
+                .OrderBy(c => c.Code)
+                .LastOrDefault(c => c.Code == "NONE", fallbackCustomer);
+            Assert.Same(fallbackCustomer, lastOrDefaultPredValue);
+
+            Customer elementAtOne = singleContext.Customers.AsNoTracking().OrderBy(c => c.Code).ElementAt(1);
+            Assert.Equal("C-200", elementAtOne.Code);
+
+            Customer elementAtFromEnd = singleContext.Customers.AsNoTracking().OrderBy(c => c.Code).ElementAt(^1);
+            Assert.Equal("C-300", elementAtFromEnd.Code);
+
+            Customer? elementAtOrDefaultOut = singleContext.Customers.AsNoTracking().OrderBy(c => c.Code).ElementAtOrDefault(99);
+            Assert.Null(elementAtOrDefaultOut);
+
+            Customer? elementAtOrDefaultIndexOut = singleContext.Customers.AsNoTracking().OrderBy(c => c.Code).ElementAtOrDefault(^99);
+            Assert.Null(elementAtOrDefaultIndexOut);
+        }
+
+        // 3. Aggregates, quantifiers, set operations, GroupBy (2-arg and 3-arg), Join, GroupJoin, EF.Property, and EF.Functions.Like
+        await using (StoreDbContext aggContext = new(options))
+        {
+            Assert.Equal(3, aggContext.Customers.Count());
+            Assert.Equal(2, aggContext.Customers.Count(c => c.IsVip));
+            Assert.Equal(3L, aggContext.Orders.LongCount());
+            Assert.Equal(2L, aggContext.Orders.LongCount(o => o.CustomerId == c1Id));
+            Assert.True(aggContext.Customers.Any());
+            Assert.True(aggContext.Customers.Any(c => c.Code == "C-200"));
+            Assert.False(aggContext.Customers.Any(c => c.Code == "C-404"));
+            Assert.True(aggContext.Customers.All(c => c.CreditLimit >= 1000m));
+            Assert.False(aggContext.Customers.All(c => c.IsVip));
+
+            Assert.Equal(125m, aggContext.Orders.Min(o => o.TotalAmount));
+            Assert.Equal(600m, aggContext.Orders.Max(o => o.TotalAmount));
+            Assert.Equal(1000m, aggContext.Orders.Sum(o => o.TotalAmount));
+            Assert.Equal(2000m, aggContext.Customers.Average(c => c.CreditLimit));
+
+            Customer? minByCredit = aggContext.Customers.AsNoTracking().MinBy(c => c.CreditLimit);
+            Assert.NotNull(minByCredit);
+            Assert.Equal("C-100", minByCredit.Code);
+
+            Customer? maxByCredit = aggContext.Customers.AsNoTracking().MaxBy(c => c.CreditLimit);
+            Assert.NotNull(maxByCredit);
+            Assert.Equal("C-300", maxByCredit.Code);
+
+            decimal aggregatedTotal = aggContext.Orders
+                .Select(o => o.TotalAmount)
+                .Aggregate(50m, static (acc, x) => acc + x, static total => total * 2m);
+            Assert.Equal(2100m, aggregatedTotal);
+
+            Customer trackedC1 = aggContext.Customers.Single(c => c.Id == c1Id);
+            Assert.True(aggContext.Customers.Contains(trackedC1));
+            Assert.True(aggContext.Customers.OrderBy(c => c.Id).SequenceEqual(aggContext.Customers.OrderBy(c => c.Id)));
+
+            var grouped2Arg = aggContext.Customers
+                .AsNoTracking()
+                .GroupBy(c => c.IsVip)
+                .Select(g => new { IsVip = g.Key, TotalCredit = g.Sum(x => x.CreditLimit) })
+                .OrderBy(g => g.IsVip)
+                .ToList();
+            Assert.Equal(2, grouped2Arg.Count);
+            Assert.Equal(2000m, grouped2Arg[0].TotalCredit);
+            Assert.Equal(4000m, grouped2Arg[1].TotalCredit);
+
+            var grouped3Arg = aggContext.Customers
+                .AsNoTracking()
+                .GroupBy(
+                    c => c.IsVip,
+                    (isVip, customers) => new { IsVip = isVip, Names = customers.OrderBy(c => c.Name).Select(c => c.Name).ToList() })
+                .OrderBy(g => g.IsVip)
+                .ToList();
+            Assert.Equal(["Beta LLC"], grouped3Arg[0].Names);
+            Assert.Equal(["Alpha Corp", "Gamma Inc"], grouped3Arg[1].Names);
+
+            Customer efPropMatch = aggContext.Customers
+                .AsNoTracking()
+                .Single(c => EF.Property<string>(c, nameof(Customer.Code)) == "C-200");
+            Assert.Equal("Beta LLC", efPropMatch.Name);
+
+            Customer likeMatch = aggContext.Customers
+                .AsNoTracking()
+                .Single(c => EF.Functions.Like(c.Name, "gamma%"));
+            Assert.Equal("C-300", likeMatch.Code);
+
+            var joined = aggContext.Customers
+                .AsNoTracking()
+                .Join(
+                    aggContext.Orders.AsNoTracking(),
+                    c => c.Id,
+                    o => o.CustomerId,
+                    (c, o) => new { c.Code, o.TotalAmount })
+                .OrderBy(x => x.TotalAmount)
+                .ToList();
+            Assert.Equal(3, joined.Count);
+            Assert.Equal(125m, joined[0].TotalAmount);
+
+            var groupJoined = aggContext.Customers
+                .AsNoTracking()
+                .Where(c => c.Id == c1Id)
+                .GroupJoin(
+                    aggContext.Orders.AsNoTracking(),
+                    c => c.Id,
+                    o => o.CustomerId,
+                    (c, orders) => new { c.Code, Count = orders.Count() })
+                .Single();
+            Assert.Equal(2, groupJoined.Count);
+        }
+
+        // 4. Find, Include, Load, Entry(...).Collection/Reference/Navigation.Load() and Query()
+#pragma warning disable CA1849, CA2263 // Deliberately testing synchronous EF Core Find and Load APIs.
+        await using (StoreDbContext navContext = new(options))
+        {
+            Customer? foundOnDisk = navContext.Customers.Find(c1Id);
+            Assert.NotNull(foundOnDisk);
+            Assert.Equal("C-100", foundOnDisk.Code);
+
+            Customer? foundAgainFromTracker = navContext.Find<Customer>(c1Id);
+            Assert.Same(foundOnDisk, foundAgainFromTracker);
+
+            object? foundUntyped = navContext.Find(typeof(Customer), c2Id);
+            Customer typedC2 = Assert.IsType<Customer>(foundUntyped);
+            Assert.Equal("C-200", typedC2.Code);
+
+            Assert.Null(navContext.Customers.Find(99999));
+
+            navContext.ChangeTracker.Clear();
+
+            Customer withIncludedOrders = navContext.Customers
+                .Include(c => c.Orders.Where(o => o.Status == OrderStatus.Shipped))
+                .Single(c => c.Id == c1Id);
+            Order singleShipped = Assert.Single(withIncludedOrders.Orders);
+            Assert.Equal(275m, singleShipped.TotalAmount);
+
+            navContext.ChangeTracker.Clear();
+
+            navContext.Customers.Where(c => c.IsVip).Load();
+            Assert.Equal(2, navContext.Customers.Local.Count);
+
+            navContext.ChangeTracker.Clear();
+
+            Customer unloadedC1 = navContext.Customers.Single(c => c.Id == c1Id);
+            Assert.Empty(unloadedC1.Orders);
+            navContext.Entry(unloadedC1).Collection(c => c.Orders).Load();
+            Assert.Equal(2, unloadedC1.Orders.Count);
+
+            var queriedOrders = navContext.Entry(unloadedC1)
+                .Collection(c => c.Orders)
+                .Query()
+                .Where(o => o.TotalAmount > 200m)
+                .ToList();
+            _ = Assert.Single(queriedOrders);
+
+            navContext.ChangeTracker.Clear();
+
+            Order standaloneOrder = navContext.Orders.Single(o => o.Id == o1Id);
+            Assert.Null(standaloneOrder.Customer);
+            navContext.Entry(standaloneOrder).Reference(o => o.Customer).Load();
+            Assert.NotNull(standaloneOrder.Customer);
+            Assert.Equal("C-100", standaloneOrder.Customer.Code);
+
+            Customer queriedCustomer = navContext.Entry(standaloneOrder)
+                .Reference(o => o.Customer)
+                .Query()
+                .Single();
+            Assert.Same(standaloneOrder.Customer, queriedCustomer);
+
+            navContext.ChangeTracker.Clear();
+
+            Customer navLoadCustomer = navContext.Customers.Single(c => c.Id == c2Id);
+            navContext.Entry(navLoadCustomer).Navigation(nameof(Customer.Orders)).Load();
+            _ = Assert.Single(navLoadCustomer.Orders);
+        }
+
+        // 5. Many-to-many skip navigation synchronous Include and explicit Collection(...).Load()
+        await using MemoryStream richStream = new();
+        DbContextOptions<RichModelingDbContext> richOptions = new DbContextOptionsBuilder<RichModelingDbContext>()
+            .UseJetDatabaseWriter(richStream, format, leaveOpen: true)
+            .Options;
+
+        int supplierId;
+        await using (RichModelingDbContext richSeed = new(richOptions))
+        {
+            _ = await richSeed.Database.EnsureCreatedAsync(ct);
+            SupplyTag tagA = new() { Name = "TagA" };
+            SupplyTag tagB = new() { Name = "TagB" };
+            Supplier supplier = new()
+            {
+                Name = "SyncSupplier",
+                TaxProfile = new SupplierTaxProfile { RegistrationCode = "REG-1", TaxRate = 0.05m },
+                Headquarters = new StreetAddress { Street = "1 Way", City = "Austin" },
+                Tags = [tagA, tagB],
+            };
+            richSeed.Suppliers.Add(supplier);
+            _ = await richSeed.SaveChangesAsync(ct);
+            supplierId = supplier.Id;
+        }
+
+        await using (RichModelingDbContext richQuery = new(richOptions))
+        {
+            Supplier withTags = richQuery.Suppliers.Include(s => s.Tags).Single(s => s.Id == supplierId);
+            Assert.Equal(2, withTags.Tags.Count);
+
+            richQuery.ChangeTracker.Clear();
+
+            Supplier withoutTags = richQuery.Suppliers.Single(s => s.Id == supplierId);
+            Assert.Empty(withoutTags.Tags);
+            richQuery.Entry(withoutTags).Collection(s => s.Tags).Load();
+            Assert.Equal(["TagA", "TagB"], withoutTags.Tags.OrderBy(static t => t.Name).Select(static t => t.Name).ToArray());
+        }
+#pragma warning restore CA1849, CA2263
+
+        // 6. EF.CompileQuery, IQueryProvider.Execute, active transaction uncommitted reads, and JetShapedQueryCompilingExpressionVisitor (async: false)
+        Func<StoreDbContext, bool, IEnumerable<Customer>> compiledVipQuery =
+            EF.CompileQuery((StoreDbContext ctx, bool isVip) =>
+                ctx.Customers.AsNoTracking().Where(c => c.IsVip == isVip).OrderBy(c => c.Code));
+        Func<StoreDbContext, string, Customer?> compiledByCodeQuery =
+            EF.CompileQuery((StoreDbContext ctx, string code) =>
+                ctx.Customers.FirstOrDefault(c => c.Code == code));
+        Func<StoreDbContext, int> compiledCountQuery =
+            EF.CompileQuery((StoreDbContext ctx) => ctx.Customers.Count());
+        Func<StoreDbContext, List<Customer>> compiledListWithIncludesQuery =
+            EF.CompileQuery((StoreDbContext ctx) =>
+                ctx.Customers.Include(c => c.Orders).OrderBy(c => c.Code).ToList());
+
+        await using (StoreDbContext finalContext = new(options))
+        {
+            var compiledVips = compiledVipQuery(finalContext, true).ToList();
+            Assert.Equal(2, compiledVips.Count);
+
+            Customer? compiledBeta = compiledByCodeQuery(finalContext, "C-200");
+            Assert.NotNull(compiledBeta);
+            Assert.Equal("Beta LLC", compiledBeta.Name);
+
+            Assert.Equal(3, compiledCountQuery(finalContext));
+
+            finalContext.ChangeTracker.Clear();
+            List<Customer> compiledWithOrders = compiledListWithIncludesQuery(finalContext);
+            Assert.Equal(3, compiledWithOrders.Count);
+            Assert.Equal(2, compiledWithOrders[0].Orders.Count);
+
+            // Direct IQueryProvider.Execute<TResult> and untyped IQueryProvider.Execute
+            IQueryable<Customer> orderedQueryable = finalContext.Customers.AsNoTracking().OrderBy(c => c.Code);
+            IEnumerable<Customer> providerSequence = orderedQueryable.Provider.Execute<IEnumerable<Customer>>(orderedQueryable.Expression);
+            Assert.Equal(3, providerSequence.Count());
+
+            object? untypedSequence = orderedQueryable.Provider.Execute(orderedQueryable.Expression);
+            IEnumerable<Customer> typedUntypedSequence = Assert.IsType<IEnumerable<Customer>>(untypedSequence, exactMatch: false);
+            Assert.Equal(3, typedUntypedSequence.Count());
+
+            Expression countExpr = Expression.Call(
+                typeof(Queryable),
+                nameof(Queryable.Count),
+                [typeof(Customer)],
+                orderedQueryable.Expression);
+            Assert.Equal(3, orderedQueryable.Provider.Execute<int>(countExpr));
+            Assert.Equal(3, orderedQueryable.Provider.Execute(countExpr));
+
+            // Synchronous query inside an active transaction sees uncommitted writes
+            await using (IDbContextTransaction tx = await finalContext.Database.BeginTransactionAsync(ct))
+            {
+                finalContext.Customers.Add(new Customer
+                {
+                    Code = "C-TX-SYNC",
+                    Name = "Uncommitted Sync Customer",
+                    IsVip = true,
+                    CreditLimit = 500m,
+                    RowVersion = 1,
+                });
+                _ = await finalContext.SaveChangesAsync(ct);
+
+                Assert.Equal(4, finalContext.Customers.Count());
+                Customer txCustomer = finalContext.Customers.AsNoTracking().Single(c => c.Code == "C-TX-SYNC");
+                Assert.Equal("Uncommitted Sync Customer", txCustomer.Name);
+
+                await tx.RollbackAsync(ct);
+            }
+
+            finalContext.ChangeTracker.Clear();
+            Assert.Equal(3, finalContext.Customers.Count());
+
+            // JetShapedQueryCompilingExpressionVisitor synchronous compilation (async: false)
+#pragma warning disable EF1001 // Testing internal JetShapedQueryCompilingExpressionVisitor synchronous compilation directly.
+            IQueryCompilationContextFactory compilationContextFactory = finalContext.GetService<IQueryCompilationContextFactory>();
+            IShapedQueryCompilingExpressionVisitorFactory shaperFactory = finalContext.GetService<IShapedQueryCompilingExpressionVisitorFactory>();
+            IQueryContextFactory queryContextFactory = finalContext.GetService<IQueryContextFactory>();
+            IEntityType customerEntityType = finalContext.Model.FindEntityType(typeof(Customer))!;
+
+            foreach (ResultCardinality cardinality in new[]
+            {
+                ResultCardinality.Enumerable,
+                ResultCardinality.Single,
+                ResultCardinality.SingleOrDefault,
+            })
+            {
+                QueryCompilationContext syncCompilationContext = compilationContextFactory.Create(async: false);
+                ShapedQueryExpression shapedExpr = new ShapedQueryExpression(
+                    new JetQueryExpression(customerEntityType),
+                    new StructuralTypeShaperExpression(customerEntityType, Expression.Constant(ValueBuffer.Empty), nullable: false))
+                    .UpdateResultCardinality(cardinality);
+                Expression visitedShaped = shaperFactory.Create(syncCompilationContext).Visit(shapedExpr);
+                QueryContext qc = queryContextFactory.Create();
+                if (cardinality == ResultCardinality.Enumerable)
+                {
+                    Func<QueryContext, IEnumerable<Customer>> enumDelegate =
+                        Expression.Lambda<Func<QueryContext, IEnumerable<Customer>>>(
+                            visitedShaped,
+                            QueryCompilationContext.QueryContextParameter).Compile();
+                    Assert.Equal(4, enumDelegate(qc).Count());
+                }
+                else
+                {
+                    Func<QueryContext, Customer?> singleDelegate =
+                        Expression.Lambda<Func<QueryContext, Customer?>>(
+                            visitedShaped,
+                            QueryCompilationContext.QueryContextParameter).Compile();
+                    if (cardinality == ResultCardinality.Single)
+                    {
+                        _ = Assert.Throws<InvalidOperationException>(() => _ = singleDelegate(qc));
+                    }
+                }
+            }
+#pragma warning restore EF1001
+        }
     }
 
     private sealed class RichModelingDbContext(DbContextOptions<RichModelingDbContext> options) : DbContext(options)

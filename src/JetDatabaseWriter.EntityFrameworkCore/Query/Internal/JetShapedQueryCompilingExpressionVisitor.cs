@@ -6,6 +6,8 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -23,6 +25,11 @@ public sealed class JetShapedQueryCompilingExpressionVisitor(
     private static readonly MethodInfo ExecuteEntityTableMethod =
         typeof(JetShapedQueryCompilingExpressionVisitor).GetMethod(
             nameof(ExecuteEntityTableAsync),
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly MethodInfo ExecuteEntityTableSyncMethod =
+        typeof(JetShapedQueryCompilingExpressionVisitor).GetMethod(
+            nameof(ExecuteEntityTableSync),
             BindingFlags.NonPublic | BindingFlags.Static)!;
 
     /// <summary>
@@ -79,12 +86,6 @@ public sealed class JetShapedQueryCompilingExpressionVisitor(
     {
         ArgumentNullException.ThrowIfNull(shapedQueryExpression);
 
-        if (!this.QueryCompilationContext.IsAsync)
-        {
-            throw new NotSupportedException(
-                "Synchronous query execution is not supported by JetDatabaseWriter.EntityFrameworkCore. Use asynchronous EF Core query methods such as ToListAsync, FirstOrDefaultAsync, SingleOrDefaultAsync, CountAsync, or AnyAsync.");
-        }
-
         if (shapedQueryExpression.QueryExpression is not JetQueryExpression jetQuery)
         {
             throw new InvalidOperationException("Unexpected query expression type.");
@@ -92,12 +93,40 @@ public sealed class JetShapedQueryCompilingExpressionVisitor(
 
         IEntityType entityType = jetQuery.EntityType;
         Func<QueryContext, ValueBuffer, object> materializer = this.CreateEntityMaterializer(entityType);
-        MethodInfo genericExecute = ExecuteEntityTableMethod.MakeGenericMethod(entityType.ClrType);
+        MethodInfo genericExecute = (this.QueryCompilationContext.IsAsync
+            ? ExecuteEntityTableMethod
+            : ExecuteEntityTableSyncMethod).MakeGenericMethod(entityType.ClrType);
         return Expression.Call(
             genericExecute,
             QueryCompilationContext.QueryContextParameter,
             Expression.Constant(entityType),
             Expression.Constant(materializer));
+    }
+
+    private static List<TEntity> ExecuteEntityTableSync<TEntity>(
+        QueryContext queryContext,
+        IEntityType entityType,
+        Func<QueryContext, ValueBuffer, object> materializer)
+    {
+#pragma warning disable RS0030, MA0042 // Synchronous query execution is a required sync-over-async callback boundary.
+        return MaterializeAsync(queryContext, entityType, materializer)
+            .GetAwaiter()
+            .GetResult();
+#pragma warning restore RS0030, MA0042
+
+        static async Task<List<TEntity>> MaterializeAsync(
+            QueryContext qc,
+            IEntityType et,
+            Func<QueryContext, ValueBuffer, object> mat)
+        {
+            List<TEntity> results = [];
+            await foreach (TEntity item in ExecuteEntityTableAsync<TEntity>(qc, et, mat, qc.CancellationToken).ConfigureAwait(false))
+            {
+                results.Add(item);
+            }
+
+            return results;
+        }
     }
 
     private static async IAsyncEnumerable<TEntity> ExecuteEntityTableAsync<TEntity>(
@@ -107,6 +136,12 @@ public sealed class JetShapedQueryCompilingExpressionVisitor(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var jetContext = (JetQueryContext)queryContext;
+        if (queryContext.Context.ChangeTracker.QueryTrackingBehavior != QueryTrackingBehavior.NoTracking)
+        {
+            queryContext.InitializeStateManager(
+                standAlone: queryContext.Context.ChangeTracker.QueryTrackingBehavior == QueryTrackingBehavior.NoTrackingWithIdentityResolution);
+        }
+
         CancellationToken effectiveToken = cancellationToken != default ? cancellationToken : queryContext.CancellationToken;
         IReadOnlyList<ValueBuffer> buffers = await jetContext.Connection.ReadTableValueBuffersAsync(
             entityType,

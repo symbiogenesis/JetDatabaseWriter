@@ -23,7 +23,7 @@ using Microsoft.EntityFrameworkCore.Update;
 /// <summary>
 /// The main <see cref="Database"/> implementation for the <see cref="JetDatabaseWriter"/> Entity Framework Core provider,
 /// translating change-tracker <see cref="IUpdateEntry"/> operations directly to <see cref="AccessWriter"/> calls
-/// and compiling LINQ expression trees to asynchronous <see cref="JetDatabaseWriter"/> table and index queries.
+/// and compiling LINQ expression trees to <see cref="JetDatabaseWriter"/> table and index queries.
 /// </summary>
 public sealed class JetDatabase : Database
 {
