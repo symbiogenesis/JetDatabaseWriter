@@ -21,6 +21,16 @@ public sealed class JetModelValidator(ModelValidatorDependencies dependencies) :
 
         foreach (IEntityType entityType in model.GetEntityTypes())
         {
+            foreach (IComplexProperty complexProperty in entityType.GetFlattenedComplexProperties())
+            {
+                if (complexProperty.IsCollection)
+                {
+                    throw new InvalidOperationException(
+                        $"Complex collection property '{entityType.DisplayName()}.{complexProperty.Name}' is not supported by JetDatabaseWriter.EntityFrameworkCore. " +
+                        "Configure an owned entity collection via OwnsMany instead.");
+                }
+            }
+
             if (entityType.IsOwned())
             {
                 continue;

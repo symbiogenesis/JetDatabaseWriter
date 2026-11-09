@@ -14,7 +14,7 @@ using Microsoft.EntityFrameworkCore.ValueGeneration;
 public sealed class JetTemporaryIntegerValueGenerator<TValue> : ValueGenerator<TValue>
     where TValue : struct
 {
-    private long current = int.MinValue + 1000;
+    private long step;
 
     /// <inheritdoc/>
     public override bool GeneratesTemporaryValues => true;
@@ -24,29 +24,32 @@ public sealed class JetTemporaryIntegerValueGenerator<TValue> : ValueGenerator<T
     {
         ArgumentNullException.ThrowIfNull(entry);
 
-        long nextValue = Interlocked.Increment(ref this.current);
+        ulong index = unchecked((ulong)Interlocked.Increment(ref this.step) - 1UL);
         if (typeof(TValue) == typeof(int))
         {
-            return (TValue)(object)unchecked((int)nextValue);
+            int intValue = int.MinValue + 1000 + (int)(index % 2_147_482_648UL);
+            return (TValue)(object)intValue;
         }
 
         if (typeof(TValue) == typeof(long))
         {
-            return (TValue)(object)nextValue;
+            long longValue = int.MinValue + 1000L + (long)(index % 2_147_482_648UL);
+            return (TValue)(object)longValue;
         }
 
         if (typeof(TValue) == typeof(short))
         {
-            short shortValue = unchecked((short)((nextValue % 30000) - 30000));
+            short shortValue = (short)(short.MinValue + 100 + (int)(index % 32_668UL));
             return (TValue)(object)shortValue;
         }
 
         if (typeof(TValue) == typeof(byte))
         {
-            byte byteValue = unchecked((byte)((Math.Abs(nextValue) % 250) + 1));
+            byte byteValue = (byte)((index % 250UL) + 1UL);
             return (TValue)(object)byteValue;
         }
 
-        return (TValue)Convert.ChangeType(nextValue, typeof(TValue), CultureInfo.InvariantCulture);
+        long fallbackValue = -1L - (long)(index % 30_000UL);
+        return (TValue)Convert.ChangeType(fallbackValue, typeof(TValue), CultureInfo.InvariantCulture);
     }
 }

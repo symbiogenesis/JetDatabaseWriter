@@ -19,6 +19,7 @@ public static class JetMetadataBuilderExtensions
     private const string AllowZeroLengthAnnotation = "Jet:AllowZeroLength";
     private const string IsCurrencyAnnotation = "Jet:IsCurrency";
     private const string IsDateTimeExtendedAnnotation = "Jet:IsDateTimeExtended";
+    private const string CascadeUpdatesAnnotation = "Jet:CascadeUpdates";
 
     /// <summary>
     /// Configures the Access table that the entity type maps to.
@@ -50,6 +51,114 @@ public static class JetMetadataBuilderExtensions
 
         entityTypeBuilder.Metadata.SetAnnotation(TableNameAnnotation, name);
         return entityTypeBuilder;
+    }
+
+    /// <summary>
+    /// Configures the Access table that the owned entity type maps to.
+    /// </summary>
+    /// <param name="ownedNavigationBuilder">The builder for the owned navigation being configured.</param>
+    /// <param name="name">The name of the table.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static OwnedNavigationBuilder ToTable(this OwnedNavigationBuilder ownedNavigationBuilder, string name)
+    {
+        ArgumentNullException.ThrowIfNull(ownedNavigationBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        ownedNavigationBuilder.OwnedEntityType.SetAnnotation(TableNameAnnotation, name);
+        return ownedNavigationBuilder;
+    }
+
+    /// <summary>
+    /// Configures the Access table that the owned entity type maps to.
+    /// </summary>
+    /// <typeparam name="TOwnerEntity">The owner entity type.</typeparam>
+    /// <typeparam name="TDependentEntity">The owned dependent entity type.</typeparam>
+    /// <param name="ownedNavigationBuilder">The builder for the owned navigation being configured.</param>
+    /// <param name="name">The name of the table.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static OwnedNavigationBuilder<TOwnerEntity, TDependentEntity> ToTable<TOwnerEntity, TDependentEntity>(
+        this OwnedNavigationBuilder<TOwnerEntity, TDependentEntity> ownedNavigationBuilder,
+        string name)
+        where TOwnerEntity : class
+        where TDependentEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(ownedNavigationBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        ownedNavigationBuilder.OwnedEntityType.SetAnnotation(TableNameAnnotation, name);
+        return ownedNavigationBuilder;
+    }
+
+    /// <summary>
+    /// Configures whether the Access foreign-key relationship cascades primary-key updates to dependent rows.
+    /// </summary>
+    /// <param name="referenceCollectionBuilder">The relationship builder.</param>
+    /// <param name="cascadeUpdates"><see langword="true"/> to enable cascade updates; <see langword="false"/> to disable them.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static ReferenceCollectionBuilder OnUpdateCascade(
+        this ReferenceCollectionBuilder referenceCollectionBuilder,
+        bool cascadeUpdates = true)
+    {
+        ArgumentNullException.ThrowIfNull(referenceCollectionBuilder);
+
+        referenceCollectionBuilder.Metadata.SetAnnotation(CascadeUpdatesAnnotation, cascadeUpdates);
+        return referenceCollectionBuilder;
+    }
+
+    /// <summary>
+    /// Configures whether the Access foreign-key relationship cascades primary-key updates to dependent rows.
+    /// </summary>
+    /// <typeparam name="TPrincipalEntity">The principal entity type.</typeparam>
+    /// <typeparam name="TDependentEntity">The dependent entity type.</typeparam>
+    /// <param name="referenceCollectionBuilder">The relationship builder.</param>
+    /// <param name="cascadeUpdates"><see langword="true"/> to enable cascade updates; <see langword="false"/> to disable them.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static ReferenceCollectionBuilder<TPrincipalEntity, TDependentEntity> OnUpdateCascade<TPrincipalEntity, TDependentEntity>(
+        this ReferenceCollectionBuilder<TPrincipalEntity, TDependentEntity> referenceCollectionBuilder,
+        bool cascadeUpdates = true)
+        where TPrincipalEntity : class
+        where TDependentEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(referenceCollectionBuilder);
+
+        referenceCollectionBuilder.Metadata.SetAnnotation(CascadeUpdatesAnnotation, cascadeUpdates);
+        return referenceCollectionBuilder;
+    }
+
+    /// <summary>
+    /// Configures whether the Access foreign-key relationship cascades primary-key updates to dependent rows.
+    /// </summary>
+    /// <param name="referenceReferenceBuilder">The relationship builder.</param>
+    /// <param name="cascadeUpdates"><see langword="true"/> to enable cascade updates; <see langword="false"/> to disable them.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static ReferenceReferenceBuilder OnUpdateCascade(
+        this ReferenceReferenceBuilder referenceReferenceBuilder,
+        bool cascadeUpdates = true)
+    {
+        ArgumentNullException.ThrowIfNull(referenceReferenceBuilder);
+
+        referenceReferenceBuilder.Metadata.SetAnnotation(CascadeUpdatesAnnotation, cascadeUpdates);
+        return referenceReferenceBuilder;
+    }
+
+    /// <summary>
+    /// Configures whether the Access foreign-key relationship cascades primary-key updates to dependent rows.
+    /// </summary>
+    /// <typeparam name="TEntity">One entity type in the relationship.</typeparam>
+    /// <typeparam name="TRelatedEntity">The related entity type in the relationship.</typeparam>
+    /// <param name="referenceReferenceBuilder">The relationship builder.</param>
+    /// <param name="cascadeUpdates"><see langword="true"/> to enable cascade updates; <see langword="false"/> to disable them.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static ReferenceReferenceBuilder<TEntity, TRelatedEntity> OnUpdateCascade<TEntity, TRelatedEntity>(
+        this ReferenceReferenceBuilder<TEntity, TRelatedEntity> referenceReferenceBuilder,
+        bool cascadeUpdates = true)
+        where TEntity : class
+        where TRelatedEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(referenceReferenceBuilder);
+
+        referenceReferenceBuilder.Metadata.SetAnnotation(CascadeUpdatesAnnotation, cascadeUpdates);
+        return referenceReferenceBuilder;
     }
 
     /// <summary>

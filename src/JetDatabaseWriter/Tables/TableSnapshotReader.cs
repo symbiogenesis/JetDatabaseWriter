@@ -388,19 +388,23 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
     /// <param name="wantedColumns">The selected columns.</param>
     /// <param name="visit">The row callback; false stops the walk.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="selected">Optional validated index bookmarks, or null for complete table traversal.</param>
     /// <exception cref="JetCorruptDataException">A live row cannot be decoded.</exception>
     internal async ValueTask ForEachTypedRowAsync(
         long tdefPage,
         TableDef tableDef,
         bool[] wantedColumns,
         Func<RowLocation, object?[], CancellationToken, ValueTask<bool>> visit,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<(long DataPage, int RowIndex)>? selected = null)
     {
         pages.ThrowIfDisposedOrCancelled(cancellationToken);
         var plan = RowDecodePlan.CreateTypedForWriteBack(tableDef, strictParsing: true, wantedColumns);
-        await this.ForEachLiveRowForWriteBackAsync(
+        await this.ForEachSnapshotRowAsync(
             tdefPage,
             tableName: null,
+            selected,
+            plan,
             async (row, token) =>
             {
                 object?[] values = await this.CrackTypedRowWithContextAsync(row, plan, token).ConfigureAwait(false)
@@ -665,6 +669,7 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                 }
 
                 bool found = false;
+                bool continueWalk = true;
                 await ownedPages.ForEachRowOnPageAsync(
                     pageNumber,
                     page,
@@ -680,7 +685,8 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                         if (row.Location.RowIndex == rowIndex)
                         {
                             found = true;
-                            return await visit(row, token).ConfigureAwait(false);
+                            continueWalk = await visit(row, token).ConfigureAwait(false);
+                            return continueWalk;
                         }
 
                         return true;
@@ -690,6 +696,11 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                 if (!found)
                 {
                     throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "A mutation index bookmark names an absent or deleted row.", new JetErrorInfo { TableName = tableName, PageNumber = pageNumber });
+                }
+
+                if (!continueWalk)
+                {
+                    break;
                 }
             }
             finally

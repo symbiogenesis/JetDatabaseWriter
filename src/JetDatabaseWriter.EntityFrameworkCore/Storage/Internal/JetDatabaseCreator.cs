@@ -109,8 +109,13 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         bool isAutoIncrement = JetEntityTypeMetadata.IsAutoIncrementProperty(property);
         string? calculatedExpression = JetEntityTypeMetadata.GetCalculatedExpression(property);
         bool isCalculated = !string.IsNullOrWhiteSpace(calculatedExpression);
-        bool isDerivedProperty = !ReferenceEquals(property.DeclaringType, property.DeclaringType.ContainingEntityType.GetRootType());
-        bool isNullable = !isAutoIncrement && !property.IsPrimaryKey() && (property.IsNullable || isDerivedProperty);
+        IReadOnlyEntityType containingEntity = property.DeclaringType.ContainingEntityType;
+        bool isDerivedProperty = !ReferenceEquals(containingEntity, containingEntity.GetRootType());
+        bool isInOptionalOwnerOrComplex = JetEntityTypeMetadata.IsInOptionalComplexOrTableSplitOwned(property);
+        bool isTableSplitOwned = JetEntityTypeMetadata.IsTableSplitOwned(containingEntity);
+        bool isNullable = !isAutoIncrement
+            && (!property.IsPrimaryKey() || isTableSplitOwned)
+            && (property.IsNullable || isDerivedProperty || isInOptionalOwnerOrComplex);
         object? defaultValue = isCalculated ? null : TryResolveSupportedDefaultValue(property, isAutoIncrement);
         string? defaultValueExpression = isAutoIncrement || isCalculated
             ? null
@@ -227,7 +232,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
 
             foreach (IForeignKey fk in current.GetForeignKeys())
             {
-                IEntityType principal = fk.PrincipalEntityType;
+                IEntityType principal = JetEntityTypeMetadata.GetTableOwnerEntityType(fk.PrincipalEntityType);
                 if (principal != current && candidateSet.Contains(principal))
                 {
                     Visit(principal);
@@ -307,9 +312,9 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
     private async ValueTask BuildSchemaCoreAsync(AccessWriter writer, CancellationToken cancellationToken)
     {
         DatabaseFormat format = this.connection.Format;
-        List<IEntityType> entityTypes = [.. this.model.GetEntityTypes().Where(static et => !et.IsOwned())];
+        List<IEntityType> allEntityTypes = [.. this.model.GetEntityTypes()];
         Dictionary<string, List<IEntityType>> tableGroups = [with(StringComparer.OrdinalIgnoreCase)];
-        foreach (IEntityType entityType in entityTypes)
+        foreach (IEntityType entityType in allEntityTypes)
         {
             string tableName = JetEntityTypeMetadata.GetTableName(entityType);
             if (!tableGroups.TryGetValue(tableName, out List<IEntityType>? group))
@@ -325,12 +330,15 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         {
             string tableName = tableEntry.Key;
             List<IEntityType> mappedTypes = tableEntry.Value;
+            mappedTypes.Sort(static (a, b) =>
+                JetEntityTypeMetadata.IsTableSplitOwned(a).CompareTo(JetEntityTypeMetadata.IsTableSplitOwned(b)));
+
             List<ColumnDefinition> columns = [];
             HashSet<string> addedColumns = [with(StringComparer.OrdinalIgnoreCase)];
 
             foreach (IEntityType entityType in mappedTypes)
             {
-                foreach (IProperty property in entityType.GetProperties())
+                foreach (IProperty property in entityType.GetFlattenedProperties())
                 {
                     string columnName = JetEntityTypeMetadata.GetColumnName(property);
                     if (addedColumns.Add(columnName))
@@ -340,14 +348,14 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                 }
             }
 
-            IEntityType rootType = mappedTypes[0].GetRootType();
+            IEntityType rootType = JetEntityTypeMetadata.GetTableOwnerEntityType(mappedTypes[0]);
             List<IndexDefinition> tableIndexes = [];
             HashSet<string> createdIndexNames = [with(StringComparer.OrdinalIgnoreCase)];
 
             IKey? primaryKey = rootType.FindPrimaryKey();
+            List<string> pkCols = [];
             if (primaryKey is { Properties.Count: > 0 })
             {
-                List<string> pkCols = [];
                 foreach (IProperty pkProp in primaryKey.Properties)
                 {
                     pkCols.Add(JetEntityTypeMetadata.GetColumnName(pkProp));
@@ -365,41 +373,38 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
 
             foreach (IEntityType entityType in mappedTypes)
             {
-                foreach (IKey key in entityType.GetDeclaredKeys())
+                bool isTableSplit = JetEntityTypeMetadata.IsTableSplitOwned(entityType);
+                if (!isTableSplit)
                 {
-                    if (key.IsPrimaryKey() || key.Properties.Count == 0)
+                    foreach (IKey key in entityType.GetDeclaredKeys())
                     {
-                        continue;
-                    }
-
-                    List<string> akCols = [];
-                    foreach (IProperty akProp in key.Properties)
-                    {
-                        akCols.Add(JetEntityTypeMetadata.GetColumnName(akProp));
-                    }
-
-                    string akName = TruncateObjectName($"AK_{tableName}_{string.Join("_", akCols)}");
-                    if (createdIndexNames.Add(akName))
-                    {
-                        tableIndexes.Add(new IndexDefinition(akName, akCols)
+                        if (key.IsPrimaryKey() || key.Properties.Count == 0)
                         {
-                            IsPrimaryKey = false,
-                            IsUnique = true,
-                            IgnoreNulls = false,
-                        });
+                            continue;
+                        }
+
+                        List<string> akCols = [];
+                        foreach (IProperty akProp in key.Properties)
+                        {
+                            akCols.Add(JetEntityTypeMetadata.GetColumnName(akProp));
+                        }
+
+                        string akName = TruncateObjectName($"AK_{tableName}_{string.Join("_", akCols)}");
+                        if (createdIndexNames.Add(akName))
+                        {
+                            tableIndexes.Add(new IndexDefinition(akName, akCols)
+                            {
+                                IsPrimaryKey = false,
+                                IsUnique = true,
+                                IgnoreNulls = false,
+                            });
+                        }
                     }
                 }
 
                 foreach (IIndex index in entityType.GetDeclaredIndexes())
                 {
                     if (index.Properties.Count == 0)
-                    {
-                        continue;
-                    }
-
-                    if (primaryKey is not null
-                        && index.Properties.Count == primaryKey.Properties.Count
-                        && index.Properties.SequenceEqual(primaryKey.Properties))
                     {
                         continue;
                     }
@@ -419,18 +424,25 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                         }
                     }
 
+                    if (pkCols.Count > 0 && idxCols.SequenceEqual(pkCols, StringComparer.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
                     string indexName = BuildIndexName(tableName, idxCols, index.Name);
                     if (!createdIndexNames.Add(indexName))
                     {
                         continue;
                     }
 
+                    bool anyNullable = index.Properties.Any(static p =>
+                        p.IsNullable || JetEntityTypeMetadata.IsInOptionalComplexOrTableSplitOwned(p));
                     IndexDefinition indexDef = new(indexName, idxCols)
                     {
                         IsPrimaryKey = false,
                         IsUnique = index.IsUnique,
                         DescendingColumns = descendingCols,
-                        IgnoreNulls = !index.IsUnique && index.Properties.Any(static p => p.IsNullable),
+                        IgnoreNulls = !index.IsUnique && anyNullable,
                     };
                     tableIndexes.Add(indexDef);
                 }
@@ -440,18 +452,18 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         }
 
         HashSet<string> createdRelationships = [with(StringComparer.OrdinalIgnoreCase)];
-        foreach (IEntityType entityType in entityTypes)
+        foreach (IEntityType entityType in allEntityTypes)
         {
             string foreignTable = JetEntityTypeMetadata.GetTableName(entityType);
             foreach (IForeignKey foreignKey in entityType.GetDeclaredForeignKeys())
             {
-                IEntityType principalType = foreignKey.PrincipalEntityType;
-                string primaryTable = JetEntityTypeMetadata.GetTableName(principalType);
-                if (string.Equals(primaryTable, foreignTable, StringComparison.OrdinalIgnoreCase))
+                if (foreignKey.IsOwnership && JetEntityTypeMetadata.IsTableSplitOwned(entityType))
                 {
                     continue;
                 }
 
+                IEntityType principalType = foreignKey.PrincipalEntityType;
+                string primaryTable = JetEntityTypeMetadata.GetTableName(principalType);
                 if (foreignKey.PrincipalKey.Properties.Count != foreignKey.Properties.Count
                     || foreignKey.Properties.Count == 0)
                 {
@@ -480,6 +492,12 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                     continue;
                 }
 
+                if (string.Equals(primaryTable, foreignTable, StringComparison.OrdinalIgnoreCase)
+                    && primaryColumns.SequenceEqual(foreignColumns, StringComparer.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 string relName = BuildRelationshipName(foreignTable, primaryTable, foreignColumns);
                 if (!createdRelationships.Add(relName))
                 {
@@ -493,14 +511,16 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                     foreignTable,
                     foreignColumns)
                 {
-                    EnforceReferentialIntegrity = true,
+                    EnforceReferentialIntegrity = foreignKey.DeleteBehavior != DeleteBehavior.NoAction,
                     CascadeDeletes = foreignKey.DeleteBehavior == DeleteBehavior.Cascade,
+                    CascadeUpdates = JetEntityTypeMetadata.GetCascadeUpdates(foreignKey),
                 };
                 await writer.CreateRelationshipAsync(relDef, cancellationToken).ConfigureAwait(false);
             }
         }
 
-        foreach (IEntityType entityType in SortEntityTypesTopologically(entityTypes))
+        List<IEntityType> tableOwnerTypes = [.. allEntityTypes.Where(static et => !JetEntityTypeMetadata.IsTableSplitOwned(et))];
+        foreach (IEntityType entityType in SortEntityTypesTopologically(tableOwnerTypes))
         {
             List<IDictionary<string, object?>> rawSeeds = [.. entityType.GetSeedData()];
             if (rawSeeds.Count == 0)

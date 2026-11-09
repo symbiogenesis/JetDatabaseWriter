@@ -89,10 +89,10 @@ internal sealed class ReaderPageCache : IPageFrameOwner, IDisposable
     }
 
     /// <summary>Gets the cache-hit count.</summary>
-    internal long Hits => this.pages is Pager pager ? pager.Statistics.CacheHits : (this.cache?.Hits ?? 0);
+    internal long Hits => this.cache?.Hits ?? 0;
 
     /// <summary>Gets the cache-miss count.</summary>
-    internal long Misses => this.pages is Pager pager ? pager.Statistics.StoreReads : (this.cache?.Misses ?? 0);
+    internal long Misses => this.cache?.Misses ?? 0;
 
     /// <summary>Gets the readable page count, including pending appended pages.</summary>
     internal long PageCount => this.pages.PageCount;

@@ -10,6 +10,7 @@ using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using Microsoft.EntityFrameworkCore.Update;
 
 /// <summary>
 /// Resolves JET/ACE table names, column names, storage types, and value conversions for EF Core model metadata.
@@ -21,6 +22,7 @@ internal static class JetEntityTypeMetadata
     private const string RelationalDefaultValueAnnotation = "Relational:DefaultValue";
     private const string RelationalDefaultValueSqlAnnotation = "Relational:DefaultValueSql";
     private const string RelationalComputedColumnSqlAnnotation = "Relational:ComputedColumnSql";
+    private const string RelationalCascadeUpdatesAnnotation = "Relational:CascadeUpdates";
     private const string JetDefaultValueAnnotation = "Jet:DefaultValue";
     private const string JetDefaultValueExpressionAnnotation = "Jet:DefaultValueExpression";
     private const string JetCalculatedExpressionAnnotation = "Jet:CalculatedExpression";
@@ -30,6 +32,99 @@ internal static class JetEntityTypeMetadata
     private const string JetAllowZeroLengthAnnotation = "Jet:AllowZeroLength";
     private const string JetIsCurrencyAnnotation = "Jet:IsCurrency";
     private const string JetIsDateTimeExtendedAnnotation = "Jet:IsDateTimeExtended";
+    private const string JetCascadeUpdatesAnnotation = "Jet:CascadeUpdates";
+
+    /// <summary>
+    /// Determines whether <paramref name="entityType"/> is a single-reference owned entity type (<c>OwnsOne</c>)
+    /// mapped via table splitting into its principal owner's table.
+    /// </summary>
+    /// <param name="entityType">The EF Core entity type.</param>
+    /// <returns><see langword="true"/> if table-split into the owner's table; otherwise, <see langword="false"/>.</returns>
+    internal static bool IsTableSplitOwned(IReadOnlyEntityType entityType)
+    {
+        ArgumentNullException.ThrowIfNull(entityType);
+
+        if (!entityType.IsOwned() || entityType.FindOwnership() is not { IsUnique: true } ownership)
+        {
+            return false;
+        }
+
+        if (TryGetExplicitTableName(entityType, out string? explicitTable))
+        {
+            string ownerTable = GetTableName(ownership.PrincipalEntityType);
+            return string.Equals(explicitTable, ownerTable, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves the root table-owner entity type for <paramref name="entityType"/>, walking up table-split ownership hops.
+    /// </summary>
+    /// <param name="entityType">The EF Core entity type.</param>
+    /// <returns>The non-table-split root entity type that owns the physical table.</returns>
+    internal static IEntityType GetTableOwnerEntityType(IEntityType entityType)
+    {
+        ArgumentNullException.ThrowIfNull(entityType);
+
+        IEntityType current = entityType;
+        while (IsTableSplitOwned(current) && current.FindOwnership() is { } ownership)
+        {
+            current = ownership.PrincipalEntityType;
+        }
+
+        return current.GetRootType();
+    }
+
+    /// <summary>
+    /// Returns all table-split <c>OwnsOne</c> entity types folded into <paramref name="ownerRootType"/>'s table,
+    /// ordered from outer owners to nested owned types.
+    /// </summary>
+    /// <param name="ownerRootType">The root entity type owning the table.</param>
+    /// <returns>The table-split owned entity types in ownership order.</returns>
+    internal static List<IEntityType> GetTableSplitOwnedEntityTypes(IEntityType ownerRootType)
+    {
+        ArgumentNullException.ThrowIfNull(ownerRootType);
+
+        IEntityType root = ownerRootType.GetRootType();
+        List<IEntityType> result = [];
+        HashSet<IEntityType> visited = [];
+
+        void CollectFrom(IEntityType currentOwner)
+        {
+            foreach (INavigation nav in currentOwner.GetNavigations())
+            {
+                IEntityType target = nav.TargetEntityType;
+                if (nav.ForeignKey.IsOwnership
+                    && !nav.IsOnDependent
+                    && IsTableSplitOwned(target)
+                    && visited.Add(target))
+                {
+                    result.Add(target);
+                    CollectFrom(target);
+                }
+            }
+
+            foreach (IEntityType derived in currentOwner.GetDerivedTypes())
+            {
+                foreach (INavigation nav in derived.GetDeclaredNavigations())
+                {
+                    IEntityType target = nav.TargetEntityType;
+                    if (nav.ForeignKey.IsOwnership
+                        && !nav.IsOnDependent
+                        && IsTableSplitOwned(target)
+                        && visited.Add(target))
+                    {
+                        result.Add(target);
+                        CollectFrom(target);
+                    }
+                }
+            }
+        }
+
+        CollectFrom(root);
+        return result;
+    }
 
     /// <summary>
     /// Resolves the physical JET table name for <paramref name="entityType"/>.
@@ -40,16 +135,14 @@ internal static class JetEntityTypeMetadata
     {
         ArgumentNullException.ThrowIfNull(entityType);
 
-        if (entityType.FindAnnotation(RelationalTableNameAnnotation)?.Value is string annotatedName
-            && !string.IsNullOrWhiteSpace(annotatedName))
+        if (TryGetExplicitTableName(entityType, out string? explicitName))
         {
-            return annotatedName;
+            return explicitName!;
         }
 
-        TableAttribute? directTableAttribute = entityType.ClrType.GetCustomAttribute<TableAttribute>(inherit: false);
-        if (directTableAttribute is not null && !string.IsNullOrWhiteSpace(directTableAttribute.Name))
+        if (entityType.IsOwned() && entityType.FindOwnership() is { IsUnique: true } ownership)
         {
-            return directTableAttribute.Name;
+            return GetTableName(ownership.PrincipalEntityType);
         }
 
         IReadOnlyEntityType rootType = entityType.GetRootType();
@@ -58,10 +151,13 @@ internal static class JetEntityTypeMetadata
             return GetTableName(rootType);
         }
 
-        TableAttribute? inheritedTableAttribute = entityType.ClrType.GetCustomAttribute<TableAttribute>(inherit: true);
-        if (inheritedTableAttribute is not null && !string.IsNullOrWhiteSpace(inheritedTableAttribute.Name))
+        if (!entityType.IsOwned() && !entityType.HasSharedClrType)
         {
-            return inheritedTableAttribute.Name;
+            TableAttribute? inheritedTableAttribute = entityType.ClrType.GetCustomAttribute<TableAttribute>(inherit: true);
+            if (inheritedTableAttribute is not null && !string.IsNullOrWhiteSpace(inheritedTableAttribute.Name))
+            {
+                return inheritedTableAttribute.Name;
+            }
         }
 
         string shortName = entityType.ShortName();
@@ -69,20 +165,20 @@ internal static class JetEntityTypeMetadata
     }
 
     /// <summary>
-    /// Returns all distinct properties declared across the entity type's inheritance hierarchy.
+    /// Returns all distinct flattened scalar properties (including complex-property members) declared across the entity type's inheritance hierarchy.
     /// </summary>
     /// <param name="entityType">The EF Core entity type.</param>
-    /// <returns>The properties across the root type and any derived types.</returns>
+    /// <returns>The flattened scalar properties across the root type and any derived types.</returns>
     internal static List<IProperty> GetHierarchyProperties(IEntityType entityType)
     {
         ArgumentNullException.ThrowIfNull(entityType);
 
         IEntityType rootType = entityType.GetRootType();
-        List<IProperty> properties = [.. rootType.GetProperties()];
+        List<IProperty> properties = [.. rootType.GetFlattenedProperties()];
         HashSet<IProperty> seen = [.. properties];
         foreach (IEntityType derivedType in rootType.GetDerivedTypes())
         {
-            foreach (IProperty prop in derivedType.GetDeclaredProperties())
+            foreach (IProperty prop in derivedType.GetFlattenedDeclaredProperties())
             {
                 if (seen.Add(prop))
                 {
@@ -103,6 +199,19 @@ internal static class JetEntityTypeMetadata
     {
         ArgumentNullException.ThrowIfNull(property);
 
+        if (property.DeclaringType is IReadOnlyEntityType declaringEntity
+            && IsTableSplitOwned(declaringEntity)
+            && declaringEntity.FindOwnership() is { } ownership)
+        {
+            for (int i = 0; i < ownership.Properties.Count; i++)
+            {
+                if (ReferenceEquals(ownership.Properties[i], property) && i < ownership.PrincipalKey.Properties.Count)
+                {
+                    return GetColumnName(ownership.PrincipalKey.Properties[i]);
+                }
+            }
+        }
+
         if (property.FindAnnotation(RelationalColumnNameAnnotation)?.Value is string annotatedName
             && !string.IsNullOrWhiteSpace(annotatedName))
         {
@@ -115,7 +224,126 @@ internal static class JetEntityTypeMetadata
             return columnAttribute.Name;
         }
 
+        List<string>? prefixSegments = null;
+        IReadOnlyTypeBase currentType = property.DeclaringType;
+        while (currentType is IReadOnlyComplexType complexType)
+        {
+            prefixSegments ??= [];
+            prefixSegments.Add(complexType.ComplexProperty.Name);
+            currentType = complexType.ComplexProperty.DeclaringType;
+        }
+
+        if (currentType is IReadOnlyEntityType currentEntity)
+        {
+            IReadOnlyEntityType walkEntity = currentEntity;
+            while (IsTableSplitOwned(walkEntity) && walkEntity.FindOwnership() is { } walkOwnership)
+            {
+                prefixSegments ??= [];
+                string navName = walkOwnership.PrincipalToDependent?.Name ?? walkEntity.ShortName();
+                prefixSegments.Add(navName);
+                walkEntity = walkOwnership.PrincipalEntityType;
+            }
+        }
+
+        if (prefixSegments is { Count: > 0 })
+        {
+            prefixSegments.Reverse();
+            return $"{string.Join("_", prefixSegments)}_{property.Name}";
+        }
+
         return property.Name;
+    }
+
+    /// <summary>
+    /// Determines whether <paramref name="property"/> is declared inside a nullable <see cref="IReadOnlyComplexProperty"/> chain.
+    /// </summary>
+    /// <param name="property">The EF Core property.</param>
+    /// <returns><see langword="true"/> if any containing complex property is nullable; otherwise, <see langword="false"/>.</returns>
+    internal static bool IsInNullableComplexType(IReadOnlyProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+
+        IReadOnlyTypeBase current = property.DeclaringType;
+        while (current is IReadOnlyComplexType complexType)
+        {
+            if (complexType.ComplexProperty.IsNullable)
+            {
+                return true;
+            }
+
+            current = complexType.ComplexProperty.DeclaringType;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Determines whether <paramref name="property"/> belongs to an optional table-split <c>OwnsOne</c> entity type
+    /// or a nullable complex property, requiring its physical column in the shared table to allow <c>NULL</c>.
+    /// </summary>
+    /// <param name="property">The EF Core property.</param>
+    /// <returns><see langword="true"/> if the physical column must be nullable; otherwise, <see langword="false"/>.</returns>
+    internal static bool IsInOptionalComplexOrTableSplitOwned(IReadOnlyProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+
+        if (IsInNullableComplexType(property))
+        {
+            return true;
+        }
+
+        IReadOnlyEntityType containingEntity = property.DeclaringType.ContainingEntityType;
+        while (IsTableSplitOwned(containingEntity) && containingEntity.FindOwnership() is { } ownership)
+        {
+            if (!ownership.IsRequiredDependent)
+            {
+                return true;
+            }
+
+            containingEntity = ownership.PrincipalEntityType;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Reads the current value of <paramref name="property"/> from <paramref name="entry"/>, returning <see langword="null"/>
+    /// when any enclosing <see cref="IComplexProperty"/> instance on <paramref name="entry"/> is <see langword="null"/>.
+    /// </summary>
+    /// <param name="entry">The update entry.</param>
+    /// <param name="property">The scalar property.</param>
+    /// <returns>The current property value, or <see langword="null"/>.</returns>
+    internal static object? GetPropertyCurrentValue(IUpdateEntry entry, IProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        ArgumentNullException.ThrowIfNull(property);
+
+        ITypeBase current = property.DeclaringType;
+        while (current is IComplexType complexType)
+        {
+            IComplexProperty complexProp = complexType.ComplexProperty;
+            if (entry.GetCurrentValue(complexProp) is null)
+            {
+                return null;
+            }
+
+            current = complexProp.DeclaringType;
+        }
+
+        return entry.GetCurrentValue(property);
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether <paramref name="foreignKey"/> is configured to cascade primary-key updates.
+    /// </summary>
+    /// <param name="foreignKey">The EF Core foreign key.</param>
+    /// <returns><see langword="true"/> if cascade updates are enabled; otherwise, <see langword="false"/>.</returns>
+    internal static bool GetCascadeUpdates(IReadOnlyForeignKey foreignKey)
+    {
+        ArgumentNullException.ThrowIfNull(foreignKey);
+
+        return foreignKey.FindAnnotation(JetCascadeUpdatesAnnotation)?.Value is true
+            || foreignKey.FindAnnotation(RelationalCascadeUpdatesAnnotation)?.Value is true;
     }
 
     /// <summary>
@@ -254,7 +482,7 @@ internal static class JetEntityTypeMetadata
     {
         ArgumentNullException.ThrowIfNull(property);
 
-        if (property.ValueGenerated != ValueGenerated.OnAdd || !property.IsPrimaryKey())
+        if (property.ValueGenerated != ValueGenerated.OnAdd || !property.IsPrimaryKey() || property.IsForeignKey())
         {
             return false;
         }
@@ -264,14 +492,38 @@ internal static class JetEntityTypeMetadata
             return false;
         }
 
-        IReadOnlyKey? primaryKey = property.DeclaringType.ContainingEntityType.FindPrimaryKey();
-        if (primaryKey is null || primaryKey.Properties.Count != 1)
+        IReadOnlyEntityType containingEntity = property.DeclaringType.ContainingEntityType;
+        if (IsTableSplitOwned(containingEntity))
         {
             return false;
         }
 
-        Type clrType = Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType;
-        return clrType == typeof(int) || clrType == typeof(long) || clrType == typeof(short);
+        IReadOnlyKey? primaryKey = containingEntity.FindPrimaryKey();
+        if (primaryKey is null)
+        {
+            return false;
+        }
+
+        if (primaryKey.Properties.Count != 1)
+        {
+            if (!containingEntity.IsOwned())
+            {
+                return false;
+            }
+
+            for (int i = 0; i < primaryKey.Properties.Count; i++)
+            {
+                IReadOnlyProperty pkProp = primaryKey.Properties[i];
+                if (!pkProp.IsForeignKey() && pkProp.ValueGenerated == ValueGenerated.OnAdd && IsIntegerAutoKeyClrType(pkProp.ClrType))
+                {
+                    return ReferenceEquals(pkProp, property);
+                }
+            }
+
+            return false;
+        }
+
+        return IsIntegerAutoKeyClrType(property.ClrType);
     }
 
     /// <summary>
@@ -569,5 +821,34 @@ internal static class JetEntityTypeMetadata
         }
 
         return Convert.ChangeType(value, unwrappedTarget, CultureInfo.InvariantCulture);
+    }
+
+    private static bool TryGetExplicitTableName(IReadOnlyEntityType entityType, out string? tableName)
+    {
+        if (entityType.FindAnnotation(RelationalTableNameAnnotation)?.Value is string annotatedName
+            && !string.IsNullOrWhiteSpace(annotatedName))
+        {
+            tableName = annotatedName;
+            return true;
+        }
+
+        if (!entityType.IsOwned() && !entityType.HasSharedClrType)
+        {
+            TableAttribute? directTableAttribute = entityType.ClrType.GetCustomAttribute<TableAttribute>(inherit: false);
+            if (directTableAttribute is not null && !string.IsNullOrWhiteSpace(directTableAttribute.Name))
+            {
+                tableName = directTableAttribute.Name;
+                return true;
+            }
+        }
+
+        tableName = null;
+        return false;
+    }
+
+    private static bool IsIntegerAutoKeyClrType(Type clrType)
+    {
+        Type unwrapped = Nullable.GetUnderlyingType(clrType) ?? clrType;
+        return unwrapped == typeof(int) || unwrapped == typeof(long) || unwrapped == typeof(short);
     }
 }

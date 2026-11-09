@@ -594,39 +594,100 @@ internal sealed class TableDataWriter(
         return pendingUpdates.Count;
     }
 
-    internal async ValueTask<int> DeleteRowsAsync(string tableName, RowCriteria criteria, CancellationToken cancellationToken)
+    internal ValueTask<int> DeleteRowsAsync(string tableName, RowCriteria criteria, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(criteria, nameof(criteria));
         pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
 
+        return this.DeleteRowsCoreAsync(tableName, [criteria], nameof(criteria), cancellationToken);
+    }
+
+    internal ValueTask<int> DeleteRowsAsync(string tableName, IReadOnlyList<RowCriteria> criteriaList, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        Guard.NotNull(criteriaList, nameof(criteriaList));
+        pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        if (criteriaList.Count == 0)
+        {
+            return new ValueTask<int>(0);
+        }
+
+        return this.DeleteRowsCoreAsync(tableName, criteriaList, nameof(criteriaList), cancellationToken);
+    }
+
+    private async ValueTask<int> DeleteRowsCoreAsync(
+        string tableName,
+        IReadOnlyList<RowCriteria> criteriaList,
+        string criteriaParamName,
+        CancellationToken cancellationToken)
+    {
         ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         CatalogEntry entry = table.Entry;
         TableDef tableDef = table.Definition;
-        var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, nameof(criteria));
 
-        List<LocatedRow>? selected = await snapshots.TryReadIndexedRowsAsync(table, criteria, cancellationToken).ConfigureAwait(false);
-
-        // FK enforcement: identify the rows we are about to delete; if any
-        // FK relationship names this table as the primary side, capture the
-        // deleted PK tuples and let PlanCascadeDeletesAsync find the
-        // dependent child rows to cascade-delete (or throw when cascade is
-        // disabled). It finds and checks every dependent row, at every
-        // cascade level, before anything is deleted, so a refused delete
-        // leaves the database unchanged.
-        List<LocatedRow> matchingRows = selected is null
-            ? await snapshots.ReadMatchingRowsAsync(table, predicate, cancellationToken).ConfigureAwait(false)
-            : [];
-        if (selected is not null)
+        List<LocatedRow> matchingRows;
+        if (criteriaList.Count == 1)
         {
-            foreach (LocatedRow row in selected)
+            RowCriteria criteria = criteriaList[0];
+            var predicate = RowCriteriaEvaluator.Compile(criteria, tableDef, tableName, criteriaParamName);
+            List<LocatedRow>? selected = await snapshots.TryReadIndexedRowsAsync(table, criteria, cancellationToken).ConfigureAwait(false);
+            matchingRows = selected is null
+                ? await snapshots.ReadMatchingRowsAsync(table, predicate, cancellationToken).ConfigureAwait(false)
+                : [];
+            if (selected is not null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (predicate.Matches(row.Values))
+                foreach (LocatedRow row in selected)
                 {
-                    matchingRows.Add(row);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (predicate.Matches(row.Values))
+                    {
+                        matchingRows.Add(row);
+                    }
                 }
             }
+        }
+        else
+        {
+            var predicates = new List<RowCriteriaEvaluator>(criteriaList.Count);
+            foreach (RowCriteria itemCriteria in criteriaList)
+            {
+                if (itemCriteria is null)
+                {
+                    throw new ArgumentException("RowCriteria collection cannot contain null elements.", criteriaParamName);
+                }
+
+                predicates.Add(RowCriteriaEvaluator.Compile(itemCriteria, tableDef, tableName, criteriaParamName));
+            }
+
+            var merged = new List<LocatedRow>();
+            var seenLocations = new HashSet<(long PageNumber, int RowIndex)>();
+            bool allSought = true;
+            for (int i = 0; i < criteriaList.Count; i++)
+            {
+                List<LocatedRow>? itemRows = await snapshots.TryReadIndexedRowsAsync(table, criteriaList[i], cancellationToken).ConfigureAwait(false);
+                if (itemRows is null)
+                {
+                    allSought = false;
+                    break;
+                }
+
+                RowCriteriaEvaluator itemPredicate = predicates[i];
+                foreach (LocatedRow row in itemRows)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (itemPredicate.Matches(row.Values)
+                        && seenLocations.Add((row.Location.PageNumber, row.Location.RowIndex)))
+                    {
+                        merged.Add(row);
+                    }
+                }
+            }
+
+            matchingRows = allSought
+                ? merged
+                : await snapshots.ReadMatchingRowsAsync(table, predicates, cancellationToken).ConfigureAwait(false);
         }
 
         // An index the writer cannot maintain would fail the index rebuild

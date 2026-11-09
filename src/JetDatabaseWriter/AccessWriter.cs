@@ -384,6 +384,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     public ValueTask<int> DeleteRowsAsync(string tableName, RowCriteria criteria, CancellationToken cancellationToken = default)
         => this.RunAutoCommitAsync(_ => this.Services.Data.DeleteRowsAsync(tableName, criteria, cancellationToken), cancellationToken);
 
+    internal ValueTask<int> DeleteRowsAsync(string tableName, IReadOnlyList<RowCriteria> criteriaList, CancellationToken cancellationToken = default)
+        => this.RunAutoCommitAsync(_ => this.Services.Data.DeleteRowsAsync(tableName, criteriaList, cancellationToken), cancellationToken);
+
     /// <inheritdoc/>
     public ValueTask<int> DeleteRowsAsync(string tableName, string predicateColumn, object? predicateValue, CancellationToken cancellationToken = default)
     {

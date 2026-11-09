@@ -340,11 +340,11 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 ValidatePreparationCopy(string.Empty, published, preparing, lease);
             }
 
-            JournalState state = ValidateJournal(database, primary, lease);
+            JournalState state = ValidateStreamJournal(database, primary, lease);
             if (!state.Committed)
             {
                 ValidateCurrentContent(database, primary, state);
-                RestoreBeforeImages(database, primary, state, lease);
+                RestoreStreamBeforeImages(database, primary, state, lease);
             }
         }
         finally
@@ -356,7 +356,10 @@ internal sealed class PersistentRollbackJournal : IDisposable
         lease.RetireJournal();
     }
 
-    private static void RestoreBeforeImages(Stream database, Stream journal, JournalState state, IPersistentStreamRecoveryLease? lease = null)
+    private static void RestoreBeforeImages(FileStream database, FileStream journal, JournalState state)
+        => RestoreStreamBeforeImages(database, journal, state, lease: null);
+
+    private static void RestoreStreamBeforeImages(Stream database, Stream journal, JournalState state, IPersistentStreamRecoveryLease? lease)
     {
         byte[] page = new byte[state.PageSize];
         byte[] record = new byte[state.PageSize + 40];
@@ -527,7 +530,10 @@ internal sealed class PersistentRollbackJournal : IDisposable
         return (pageSize, originalLength);
     }
 
-    private static JournalState ValidateJournal(Stream database, Stream journal, IPersistentStreamRecoveryLease? lease = null)
+    private static JournalState ValidateJournal(FileStream database, FileStream journal)
+        => ValidateStreamJournal(database, journal, lease: null);
+
+    private static JournalState ValidateStreamJournal(Stream database, Stream journal, IPersistentStreamRecoveryLease? lease)
     {
         string databasePath = lease is null && database is FileStream fileStream ? fileStream.Name : string.Empty;
         (int pageSize, long originalLength) = ValidateManifest(databasePath, journal, lease);
@@ -1062,7 +1068,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             throw new JetOperationException(JetErrorCode.InvalidOperationState, "A completed rollback journal cannot restore database bytes.");
         }
 
-        JournalState state = ValidateJournal(this.database, this.journal, this.lease);
+        JournalState state = ValidateStreamJournal(this.database, this.journal, this.lease);
         if (state.PageSize != this.pageSize || state.OriginalLength != this.originalLength || state.Committed)
         {
             throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery manifest differs from the prepared database image.");
