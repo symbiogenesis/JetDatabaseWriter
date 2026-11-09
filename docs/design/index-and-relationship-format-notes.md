@@ -850,12 +850,12 @@ New writer-side helper, now owned by `IndexMaintainer`: `TryMaintainIndexesIncre
   either defect: a stray `used_pages` byte puts a phantom
   column in a `col_map`, or, on a continuation page's type byte, ends the
   chain at the page before, cutting off the index descriptors, entries and
-  names past it. The indexes are never skipped. Three writes that reach such a table do
-  not call the check yet, and change the file before the rebuild throws: a
-  cascade from a related table (`RelationshipEnforcer`),
-  `CreateRelationshipAsync` (both tables), and the complex reference that
-  `AddAttachmentAsync` / `AddMultiValueItemAsync` allocates for a row whose
-  complex slot is null, when a complex column is indexed.
+  names past it. The indexes are never skipped. Cascading deletes and updates
+  from related tables (`RelationshipEnforcer`), relationship creation
+  (`CreateRelationshipAsync` on both tables), and complex-column writes that
+  allocate a complex reference for a null slot on a table with an indexed
+  complex column (`AddAttachmentAsync` / `AddMultiValueItemAsync`) likewise
+  pre-validate index maintainability before mutating any page.
 - Any key column is `Numeric` AND the column was written by a pre-W23 build (descriptor `NumericPrecision == 0`) — fall back to the W13 snapshot-driven canonical-scale pre-pass. W23+ NUMERIC columns engage the fast path using the declared scale.
 - The index root is not a single leaf (`IndexPageCodec.IsSingleRootLeaf` returns false).
 - The encoder rejects any value (text outside General Legacy, etc.).

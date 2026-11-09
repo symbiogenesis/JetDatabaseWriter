@@ -348,11 +348,10 @@ public sealed class UnmaintainableIndexWriteTests
     }
 
     /// <summary>
-    /// A delete that cascades into the damaged table deletes that table's
-    /// dependent rows before its index rebuild refuses (PLAN.md). The rows
-    /// the delete has not deleted by then, its own row and the rows of a
-    /// cascade applied after the damaged table's, must keep their attachments:
-    /// each set of rows loses its attachment rows just before it is deleted.
+    /// A delete that cascades into the damaged table pre-validates index
+    /// maintainability across the cascade graph before mutating any row or
+    /// attachment, leaving the database byte-for-byte unchanged and keeping the
+    /// attachments of all rows intact.
     /// </summary>
     /// <returns>A task that completes when the test has run.</returns>
     [Fact]
@@ -360,8 +359,8 @@ public sealed class UnmaintainableIndexWriteTests
     {
         // Owner (Id primary key, Files) <- Kid (Id primary key, OwnerId, Files)
         // <- Wide.C001, both cascading deletes. Deleting Owner 2 cascades to
-        // Kid 10001 and on to the 8 Wide rows whose C001 is 10001. The deepest
-        // cascade, Wide's, is applied first, and its index rebuild throws.
+        // Kid 10001 and on to the 8 Wide rows whose C001 is 10001. Pre-flight
+        // validation detects Wide's unmaintainable index before mutating any table.
         const int owners = 5;
         await using MemoryStream stream = await CreateDamagedTableAsync(
             DatabaseFormat.AceAccdb,
@@ -395,11 +394,14 @@ public sealed class UnmaintainableIndexWriteTests
                 await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_Wide_Kid", "Kid", "Id", TableName, "C001") { CascadeDeletes = true }, Ct);
             });
 
+        byte[] before = stream.ToArray();
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct))
         {
             JetLimitationException ex = await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.DeleteRowsAsync("Owner", "Id", 2, Ct));
             Assert.Contains($"'{TableName}'", ex.Message, StringComparison.Ordinal);
         }
+
+        Assert.Equal(before, stream.ToArray());
 
         stream.Position = 0;
         await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, Ct))

@@ -2,6 +2,8 @@ namespace JetDatabaseWriter;
 
 using System;
 using System.IO;
+using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Transactions;
 
 /// <summary>
@@ -107,6 +109,67 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     /// Default: <c>5000</c>.
     /// </summary>
     public int LockTimeoutMilliseconds { get; init; } = DefaultLockTimeoutMilliseconds;
+
+    /// <summary>
+    /// Gets the maximum combined pending and live page leases and in-flight direct page reads. Default: 4096.
+    /// The positive allowance is shared by concurrent operations on this reader or writer.
+    /// Exhaustion refuses immediately, including cache hits, instead of waiting
+    /// while a traversal holds other leases. Together with retained cache capacity
+    /// and <see cref="MaxLivePageFrames"/>, this bounds page images owned through the
+    /// reader or writer cache; pooled array sizes, decoded values and caller-owned
+    /// memory remain separate resources.
+    /// </summary>
+    public int MaxActivePageLeases { get; init; } = 4096;
+
+    /// <summary>
+    /// Gets the maximum total live page frames (retained cached frames plus evicted frames
+    /// still pinned by active leases). Default: 0, which uses the retained cache capacity
+    /// plus <see cref="MaxActivePageLeases"/>. Set a positive value to bound combined
+    /// retained and evicted-pinned page frames explicitly. Negative values are refused.
+    /// </summary>
+    public int MaxLivePageFrames { get; init; }
+
+    /// <summary>
+    /// Gets the maximum aggregate row-directory slot entries cached across live page frames.
+    /// Default: 262,144. Must be positive. When a page frame's parsed row directory would
+    /// exceed the remaining budget, the directory is returned to the caller without being
+    /// retained on the frame.
+    /// </summary>
+    public int MaxCachedRowDirectoryEntries { get; init; } = 262_144;
+
+    /// <summary>
+    /// Gets an optional persistent recovery adapter for caller-supplied non-<see cref="FileStream"/>
+    /// database streams. When <see langword="null"/> (the default), non-<see cref="FileStream"/> streams
+    /// use in-process rollback only and do not persist cross-open recovery journals.
+    /// </summary>
+    public IPersistentStreamRecoveryAdapter? PersistentStreamRecoveryAdapter { get; init; }
+
+    internal static void ValidatePersistentStreamRecoveryAdapter(IPersistentStreamRecoveryAdapter? adapter)
+    {
+        if (adapter is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(adapter.DatabaseIdentity))
+        {
+#pragma warning disable CA2208 // The public options parameter carries this value.
+            throw new ArgumentException("The persistent stream recovery adapter must supply a non-empty DatabaseIdentity.", "options");
+#pragma warning restore CA2208
+        }
+
+        if (adapter.Generation < 0)
+        {
+#pragma warning disable CA2208 // The public options parameter carries this value.
+            throw new ArgumentOutOfRangeException("options", adapter.Generation, "The persistent stream recovery adapter generation cannot be negative.");
+#pragma warning restore CA2208
+        }
+
+        if (!adapter.HasQuiescentCrashFencing)
+        {
+            throw new JetOperationException(JetErrorCode.InvalidOperationState, "Persistent caller-stream recovery requires host crash-quiescence confirmation (HasQuiescentCrashFencing = true).");
+        }
+    }
 
     internal static LockFileSettings CreateDefaultLockFileSettings(bool respectExisting)
         => new(

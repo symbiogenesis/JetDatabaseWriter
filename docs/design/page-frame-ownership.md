@@ -1,6 +1,6 @@
 # Page-frame ownership
 
-`AccessReaderOptions.MaxActivePageLeases` bounds pending acquisitions plus live reader-cache leases, with immediate refusal rather than waiting for another held lease. Concurrent non-Pager misses for the same page share one load, including when retention is disabled; a cancelled producer does not poison an uncancelled waiter. With retained capacity C and admitted pending/live leases L, this cache retains at most C + L page frames. Direct `IPageSource` reads, Pager-owned buffers, shared-pool overhead and decoded payloads have separate contracts. `PageFrameOwnership.AggregateFramesFitAdmission` proves the C + L cardinality bound for the union of retained frames and ticket-covered borrowed frames; actual C# coverage of that ownership relation remains a contract. The generated `DataPageKernel.TryReserveCount` proves reservation arithmetic; locks, CAS publication, frame identity and actual lifetime correspondence remain reviewed and tested C# effects.
+`AccessOptions.MaxActivePageLeases` (on both `AccessReaderOptions` and `AccessWriterOptions`) bounds pending acquisitions plus live page leases across `ReaderPageCache`, direct `PageFile` reads, and `Pager` reads, with immediate refusal (`JetErrorCode.PageLeaseBudgetExceeded`) rather than waiting for another held lease. `AccessOptions.MaxLivePageFrames` (0 for automatic `Math.Max(0, PageCacheSize) + MaxActivePageLeases`, or an explicit positive ceiling) bounds total live `PageFrame` instances (`RetainedFrames + EvictedPinnedFrames`), evicting unpinned cached frames (`IsExclusivelyOwned`, `ReferenceCount == 1`) in LRU/CLOCK order when headroom is needed and refusing immediately when all allowed live frames are pinned by active leases. `AccessOptions.MaxCachedRowDirectoryEntries` bounds the total lazily parsed `RowBound[]` slot entries retained across live frames, releasing reserved counts when a frame's final reference drops. Direct `PageFile.ReadPageAsync` and `Pager` store loads also bound concurrent in-flight physical reads (`InFlightReads` / `InFlightStoreReads`) under the active lease budget. Concurrent non-Pager misses for the same page share one load, including when retention is disabled; a cancelled producer does not poison an uncancelled waiter. `PageFrameOwnership.AggregateFramesFitAdmission` proves the C + L cardinality bound for the union of retained frames and ticket-covered borrowed frames; actual C# coverage of that ownership relation remains a contract. The generated `DataPageKernel.TryReserveCount` proves reservation arithmetic; locks, CAS publication, frame identity and actual lifetime correspondence remain reviewed and tested C# effects.
 
 Read leases keep immutable page bytes alive independently of cache membership.
 `PageFrame` owns one pooled buffer and its lazily parsed row directory;
@@ -15,8 +15,11 @@ A frame's reference count includes each live lease and its cache owner, when
 retained. Cache lookup and lease acquisition occur under the same cache lock,
 so eviction cannot remove the last owner between those operations. Eviction,
 replacement, invalidation and cache disposal release cache ownership; existing
-leases retain their bytes. Disposing a lease releases its reference once. Only
-the final release returns the buffer to the pool.
+leases retain their bytes as `EvictedPinnedFrames` within the `MaxLivePageFrames`
+budget until disposed. Disposing a lease releases its reference once. Only
+the final release returns the buffer to the pool and decrements `LiveFrames`
+and `CachedRowDirectoryEntries` on the frame's `IPageFrameOwner` (`PageFile`,
+`Pager`, or standalone `ReaderPageCache`).
 
 Acquisition refuses a nonlive frame and checks headroom before incrementing the
 signed reference count. Allocation failure while creating a lease must undo an
@@ -36,9 +39,12 @@ Lease lifetime holds no I/O semaphore. Scan, seek, overflow and long-value
 callers keep their own scoped leases, including asynchronous prefetch cleanup,
 and release them on completion, early disposal, cancellation and failure.
 Long-value streaming retains a located row until its awaited output completes
-and releases it before acquiring the next row. A cache capacity limits retained
-frames; live borrowers can keep additional evicted frames alive. It is not a
-process-wide heap or aggregate concurrent-reader memory limit.
+and releases it before acquiring the next row. `PageCacheStatistics` and
+`PagerStatistics` report `RetainedFrames` (`CachedFrames`), `EvictedPinnedFrames`,
+`LiveFrames`, `OutstandingLeases`, `ActiveLoadGates`, `InFlightStoreReads`,
+`DirtyBufferedPages` and `CachedRowDirectoryEntries`. These named per-instance
+budgets do not constitute a process-wide heap or aggregate concurrent-reader
+memory limit.
 
 ## Checked model and production boundary
 
@@ -68,7 +74,5 @@ This model does not execute in the library. Actual CAS linearization, cache
 locks, frame/array identity, producer handoff, pool behavior, decoder discipline
 and cancellation/disposal paths require source review and focused C# tests.
 Immutability is part of the modeled transition relation, not a proof that an
-arbitrary C# array user cannot mutate bytes. Aggregate memory accounting,
-complete C# refinement and the containing lifecycle composition remain I7/S1/V10
-work. Paired hosted measurements are required for performance acceptance; no
-allocation or throughput improvement follows from these theorems.
+arbitrary C# array user cannot mutate bytes. Complete C# refinement and the
+containing lifecycle composition remain S1/V10 work.

@@ -31,6 +31,7 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
     /// Tracks the next allocatable node slot; slot 0 is reserved for the sentinel.
     /// </summary>
     private int nextSlot = 1;
+    private int freeHead = Sentinel;
 
     /// <summary>
     /// Cache hit counter for monitoring effectiveness. Updated with <see cref="Interlocked"/> because hits are recorded under the shared read lock, where concurrent readers may increment it simultaneously.
@@ -140,6 +141,11 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
                 evicted.Key = default!;
                 evicted.Value = default!;
             }
+            else if (this.freeHead != Sentinel)
+            {
+                nodeIdx = this.freeHead;
+                this.freeHead = this.nodes[nodeIdx].Next;
+            }
             else
             {
                 nodeIdx = this.nextSlot++;
@@ -182,6 +188,83 @@ internal sealed class LruCache<TKey, TValue> : IDisposable
             this.nodes[Sentinel].Next = Sentinel;
             this.nodes[Sentinel].Prev = Sentinel;
             this.nextSlot = 1;
+            this.freeHead = Sentinel;
+        }
+        finally
+        {
+            this.rwLock.ExitWriteLock();
+        }
+    }
+
+    public bool ContainsKey(TKey key)
+    {
+        this.rwLock.EnterReadLock();
+        try
+        {
+            return this.map.ContainsKey(key);
+        }
+        finally
+        {
+            this.rwLock.ExitReadLock();
+        }
+    }
+
+    public bool HasMatch(Func<TValue, bool> predicate)
+    {
+        this.rwLock.EnterReadLock();
+        try
+        {
+            for (int cur = this.nodes[Sentinel].Prev; cur != Sentinel; cur = this.nodes[cur].Prev)
+            {
+                if (predicate(this.nodes[cur].Value))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        finally
+        {
+            this.rwLock.ExitReadLock();
+        }
+    }
+
+    public bool TryEvictOne(Func<TValue, bool> predicate)
+    {
+        this.rwLock.EnterWriteLock();
+        try
+        {
+            for (int pass = 0; pass < 2; pass++)
+            {
+                for (int cur = this.nodes[Sentinel].Prev; cur != Sentinel; cur = this.nodes[cur].Prev)
+                {
+                    if (!predicate(this.nodes[cur].Value))
+                    {
+                        continue;
+                    }
+
+                    if (pass == 0 && this.nodes[cur].Referenced)
+                    {
+                        this.nodes[cur].Referenced = false;
+                        continue;
+                    }
+
+                    this.Detach(cur);
+                    ref Node evicted = ref this.nodes[cur];
+                    this.map.Remove(evicted.Key);
+                    this.release?.Invoke(evicted.Value);
+                    evicted.Key = default!;
+                    evicted.Value = default!;
+                    evicted.Referenced = false;
+                    evicted.Next = this.freeHead;
+                    evicted.Prev = Sentinel;
+                    this.freeHead = cur;
+                    return true;
+                }
+            }
+
+            return false;
         }
         finally
         {

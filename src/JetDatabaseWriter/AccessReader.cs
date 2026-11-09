@@ -147,6 +147,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="options">Optional configuration options.</param>
     /// <param name="cancellationToken">A token used to cancel the open operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessReader"/> for the specified database.</returns>
+    /// <exception cref="ArgumentException">Thrown when <see cref="AccessOptions.PersistentStreamRecoveryAdapter"/> is configured on a path open.</exception>
     public static async ValueTask<AccessReader> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
     {
         DiagnosticTrace.ThrowIfReentrant();
@@ -156,6 +157,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.RequireExistingDatabaseFile(path, nameof(path));
 
         options ??= new AccessReaderOptions();
+        if (options.PersistentStreamRecoveryAdapter is not null)
+        {
+            throw new ArgumentException("PersistentStreamRecoveryAdapter applies only to non-FileStream caller streams; FileStream opens use native path-based recovery.", nameof(options));
+        }
 
         FileStream fs = CreateStream(path, options);
         AccessReader reader = await OpenCoreAsync(fs, options, leaveOpen: false, acquireLease: false, cancellationToken).ConfigureAwait(false);
@@ -213,9 +218,19 @@ public sealed class AccessReader : AccessBase, IAccessReader
             cancellationToken.ThrowIfCancellationRequested();
             context ??= ReaderOpenContext.CreateRoot(options ?? new AccessReaderOptions());
             string? linkedSourceHint = context.SourceHint;
+            if (linkedSourceHint is null)
+            {
+                AccessOptions.ValidatePersistentStreamRecoveryAdapter(context.Options.PersistentStreamRecoveryAdapter);
+            }
+
             string path = linkedSourceHint ?? (stream is FileStream fileStream ? fileStream.Name : string.Empty);
             if (linkedSourceHint is null && stream is FileStream recoveryFile)
             {
+                if (context.Options.PersistentStreamRecoveryAdapter is not null)
+                {
+                    throw new ArgumentException("PersistentStreamRecoveryAdapter applies only to non-FileStream caller streams; FileStream opens use native path-based recovery.", nameof(options));
+                }
+
                 EncryptionReplacementIntent.RejectPending(recoveryFile.Name);
                 if (acquireLease)
                 {
@@ -223,6 +238,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 }
 
                 PersistentRollbackJournal.RejectHotJournal(recoveryFile);
+            }
+            else if (linkedSourceHint is null && context.Options.PersistentStreamRecoveryAdapter is { } streamRecoveryAdapter && streamRecoveryAdapter.HasPendingJournal(stream))
+            {
+                throw new JetOperationException(JetErrorCode.HotJournalConflict, "The database has transaction recovery or writer-ownership evidence; open it with AccessWriter to recover first.");
             }
 
             byte[] header = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);

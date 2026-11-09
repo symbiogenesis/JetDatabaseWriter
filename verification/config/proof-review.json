@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "productionInventorySha256": "d6fe218c2cc38405e5797bdea517c7100b49804860b7756e60546a4ef1c84bdb",
+  "productionInventorySha256": "a8b74237cec928ae058812fcfbeed7bedeeb9e45f1f7e45fb393733210816ff4",
   "inventoryReview": "Reviewed the production source-name inventory and direct generated-kernel callers. RowEncoder now executes value-width admission; ReaderPageCache and IncludeLoader execute bounded reservations; TableSnapshotReader executes complete unique-key and bookmark admission. Existing recovery, descriptor, parsing, page/index/usage and digest boundaries retain their explicit adapter contracts. New tests and workflow helpers are conformance/tooling inputs rather than shipping proof code. The inventory hash establishes source-name freshness only. IndexHelpers and IndexPageCodec execute the generated complete-entry comparator; IndexMaintainer executes conservative relationship form/reference/key and exact tree/map admission. Full C# tree composition remains outside the generated boundary. The shared physical-root collector now supplies immutable actual leaf headers to generated complete chain admission; staged sibling targets execute generated membership/owner/type/reciprocal checks. Classified new CalculatedNativeRegionalDefaults as finite captured native date/name data and observable-override selection, not a verified locale implementation. CalculatedExpressionCoercion now calls generated tick rounding. The hot index byte scan uses the established span adapter followed by generated sign/bookmark completion; the fully verified scanner remains a conformance reference. Splicer sorting is a private-buffer BCL effect. Classified OrderStage as a direct generated integer-order admission caller using acquired table metadata; AccessQueryProvider retains local-table acquisition and source selection. Stream creation and writer option validation are C# ownership/admission adapters, with fault-injection evidence rather than a new abstract I/O proof. Classified the IndexTreeInventory acquisition boundary: the extracted internal type retains physical traversal, captured headers and direct generated leaf-chain/membership admission; IndexBTreeEditor retains staged neighbor admission, mutation planning and publication. Source identity changes do not promote B1 proof coverage. Classified AccessDatabaseCompact as a direct StreamRead caller for header inspection before delegating to CompactDatabasePlanner, CompactPinnedDatabaseBuilder, CompactEncodedDatabaseCopy and EncryptionFileReplacement; classified CompactReclamationPlan, CompactDatabasePlanner, CompactDatabasePlannerResult, AccessCompactOptions, AccessCompactDiagnostic and AccessCompactReport as C# maintenance orchestration and model types outside the generated kernel boundary. Classified new QueryPlanTemplateCache as a C# query-translation template and column-projection mask cache outside the generated kernel boundary; IndexSeekFilter now invokes generated RecoveryKernel.RewriteRoundedSeekOperator for inward-rounded range bounds, OrderStage.FindExtremeIndex invokes generated IndexMutationKernel.AdmitExtremeIndex for MinAsync/MaxAsync index admission, and IncludeLoader invokes generated RecoveryKernel.TryReserveBytes for MaxIncludeMaterializedPayloadBytesPerOperation enforcement. Classified CompactPrefixHolePacker, CompactPrefixHolePackResult, CompactTableLayoutOptimizer, CompactTableLayoutOptimizeResult, CompactIndexKeyRegenerator, CompactDataPageSalvager, CompactDataPageSalvageResult, CompactTableCounterRepairer, CompactTableCounterEvaluation, AccessCompactDiagnosticCategory, AccessCompactPhase, AccessCompactProgress, AccessCompactTableSummary and AccessCompactQuarantineRecord as C# maintenance orchestration, repair and reporting types outside the generated kernel boundary. Classified RowUpdate as a C# batch-update filter/assignment value model outside the generated kernel boundary.",
   "reviews": [
     {
@@ -428,6 +428,7 @@
         "tests/JetDatabaseWriter.Tests/Writer/MalformedRowWriteBackTests.cs",
         "tests/JetDatabaseWriter.Tests/Writer/MutationPipelineTests.cs",
         "tests/JetDatabaseWriter.Tests/Writer/OverflowRowWriteTests.cs",
+        "tests/JetDatabaseWriter.Tests/Writer/PersistentStreamRecoveryAdapterTests.cs",
         "tests/JetDatabaseWriter.Tests/Writer/RecoveryReplayCrashTests.cs",
         "tests/JetDatabaseWriter.Tests/Writer/RefusedStatementStateTests.cs",
         "tests/JetDatabaseWriter.Tests/Writer/StatementAtomicityAceTests.cs",
@@ -453,7 +454,7 @@
         },
         {
           "path": "AGENTS.md",
-          "sha256": "1b8bd557f4544ea8365d520b4076691dd68ea1b3ac9f7d506746254f47c6a3d2"
+          "sha256": "629e4c5df22d29a2993ae4c8296be40651c288649678aa760cab42221fb341ce"
         },
         {
           "path": "benchmarks/JetDatabaseWriter.Benchmarks/Indexes/IndexMutationBenchmarks.cs",
@@ -501,7 +502,7 @@
         },
         {
           "path": "docs/design/caller-stream-recovery.md",
-          "sha256": "a08835be832b1e3cf0af25ad009646b93a3480f60319acf48a48d1a5dfe9a3e3"
+          "sha256": "3dbcf3bdd08cd427281ebb081f428364ff5a8e3fb9673800e7a4daac884949d7"
         },
         {
           "path": "docs/design/catalog-index-maintenance-notes.md",
@@ -529,7 +530,7 @@
         },
         {
           "path": "docs/design/index-and-relationship-format-notes.md",
-          "sha256": "3641606b76bb3a1075e96aafdcfc53dfa9b7fc17589a132264e0ad503ced5d64"
+          "sha256": "0ca2ce293e2d14ab7bb29349f9c486da791545480e95b998e3a3e02b7b5237d4"
         },
         {
           "path": "docs/design/library-structure.md",
@@ -549,7 +550,7 @@
         },
         {
           "path": "docs/design/page-frame-ownership.md",
-          "sha256": "0f80ac0a72480ca882b3440785ceb27955dc87fde518b41ceb256554176d3cab"
+          "sha256": "50831ba42bf4acd536aaf20cac680a3a7c43049ec7685045b55ff08d0083bbd6"
         },
         {
           "path": "docs/design/persisted-column-properties-format-notes.md",
@@ -565,11 +566,11 @@
         },
         {
           "path": "docs/design/verification-evidence-map.md",
-          "sha256": "7d2ed8585f77c3f723189e142c3c71d94f3db2b2d27d1393a375b186aeb451f4"
+          "sha256": "39c9a113948d6582c64ac6932d3ac5467652660de2247c3dcbe9673bf5664ac7"
         },
         {
           "path": "docs/design/verification-scope.md",
-          "sha256": "70b2a3b0de70ef217bea05db27943318453101178012c5377d16680d63f478eb"
+          "sha256": "20054aad11e959b68b5479bf216b0d2e4645a5a1bd163febec70649fecfe4604"
         },
         {
           "path": "docs/design/writer-disk-format-validation-matrix.md",
@@ -633,23 +634,23 @@
         },
         {
           "path": "src/JetDatabaseWriter/AccessDatabaseEncryption.cs",
-          "sha256": "263821e879c6878355abb36ac24e010fe14f38628212c007c02d35a22aef246c"
+          "sha256": "af4e102b248cbe1c511a758787a5c1e5f6c9a972e5e28e73b4a08e82bf5fcc47"
         },
         {
           "path": "src/JetDatabaseWriter/AccessReader.cs",
-          "sha256": "bd87b92591a34043048cebbef35b5c44dd4161b20dff83f9ac1175953d73720c"
+          "sha256": "ddc38fdd57e8fb2349778fe866888763e96a67e1e05de8fdea6baa958d07ca57"
         },
         {
           "path": "src/JetDatabaseWriter/AccessReaderOptions.cs",
-          "sha256": "75bf248be6e2146ac262f60b0bc5206f39fcefdeea8f617e75433ff88261a551"
+          "sha256": "53f784e594fc9c8e16da959424d49b69066ba1005d4c7171c64cdf8837e1da4c"
         },
         {
           "path": "src/JetDatabaseWriter/AccessWriter.cs",
-          "sha256": "9323210be35f7b47691bbb7e3a20d157a2ae53c0ef27d3470d5e4fe83c542bf7"
+          "sha256": "049d7be6e607d19ed14bbb5fc33ac49f99507759031285049453eae090ef61f8"
         },
         {
           "path": "src/JetDatabaseWriter/AccessWriterOptions.cs",
-          "sha256": "0da950e65ed8f9ce3062474a80b0e888a3cf185167fac433f4ec464a4c94a0b5"
+          "sha256": "3eb38d3f5d7ac642af5da2d5bd0d17f117ec3cb64d52290d81b6f71f5354dc7a"
         },
         {
           "path": "src/JetDatabaseWriter/Catalog/CatalogWriter.LinkedDeletion.cs",
@@ -697,7 +698,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/DatabaseFile.cs",
-          "sha256": "10846f26cda9ee6dcafc29fd05a116a3f7a40d7f6ce70a9c375210460191ec94"
+          "sha256": "13a7bfd7688631b4f32f76d44cfb3b822b25ed394e1d93a89a6b8e72013ffb5c"
         },
         {
           "path": "src/JetDatabaseWriter/Encryption/EncryptionConverter.cs",
@@ -821,7 +822,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Infrastructure/LruCache.cs",
-          "sha256": "e75db7aec2bc8477d40bb5f851d68bc8de521d622042ac4476043ac84f8f4b9a"
+          "sha256": "3e88dc033d9f4a2020316b650a506914998322201b8d36a61b90f7333920be1d"
         },
         {
           "path": "src/JetDatabaseWriter/Infrastructure/ScalarConversion.cs",
@@ -1041,7 +1042,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/FilePageDigests.cs",
-          "sha256": "63680544ac31c374b12d4e0b7c7bb4bb7dbd4b5edf653872c553415ecfc4da23"
+          "sha256": "6050f2ae40d8833f388a645ba36cf28aa47160da1dfea078790abfc8a361c08d"
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/IPageSource.cs",
@@ -1049,15 +1050,15 @@
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/PageBuffers.cs",
-          "sha256": "1c08da50772d9694a2042c00023dc2bfa690c6b824be40e2a2cb88d73c71d107"
+          "sha256": "e10528af251d3316468905503443ee99d7a19208c958fbed595312119936d83a"
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/PageFile.cs",
-          "sha256": "635be147540726fed820b91e57e1a4f858bec1a405ebeaeb3b3c46caf8602e9c"
+          "sha256": "6ea037afca5f9ba08e539ff8eb9babe178a1cffefc78b38d69c1724d046ea144"
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/PageFrame.cs",
-          "sha256": "90e5117ac065f7375b2e6cd2f20f9eb0c2b9068ca1d59b659501c79259c1f17c"
+          "sha256": "22f8432cc7f2688c000b3d757f056c6e76fcb0aa1ed86db88d37d7f64686c868"
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/PageLease.cs",
@@ -1065,7 +1066,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/Pager.cs",
-          "sha256": "1160f0b5ed0a0c52c6f4cf22430f2f8c14eac39c80060126974d8fb9c44d893f"
+          "sha256": "bacfc4b2c7b18109819c47e1cae2eb855c9a946a412714db92c92d89d3164d08"
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/PagerTransaction.cs",
@@ -1073,19 +1074,19 @@
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/PersistentRollbackJournal.cs",
-          "sha256": "c0faefb16897fbeb24843e914ea3d6a7ff678b98b2627984515a1c6b66034667"
+          "sha256": "884bf541f98fee4aa1698cc7b4a94d8b6ac3e8ed15806de0cb3d1e51a4938752"
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/PhysicalRollback.cs",
-          "sha256": "170029d0a4cdf7cbbeae7b9c9b8cad0967a1af0f1af6a37b0f00cc628c45fc7a"
+          "sha256": "8a15356642944d5e008ece8a57b0fce550b88c2afda7ea233c3a7a44e308fd82"
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/StreamPageStore.cs",
-          "sha256": "c9dba39c8e0498ab864a6afb54cf1714ae601a7616809954f2d4f1ce2c38b488"
+          "sha256": "a711195a3517a1c7c6004ecde7a9598ab3d370bf1387e197005dda3d24fd6040"
         },
         {
           "path": "src/JetDatabaseWriter/Pages/ReaderPageCache.cs",
-          "sha256": "cc129c76ed3ae75b73b3ba147b150846ef70183d7c0eeb1fa9507747330c7dd0"
+          "sha256": "3d6125e0cd0c185f9f281222da6aeb8587248c4d5acae73de970a3f4cd43340f"
         },
         {
           "path": "src/JetDatabaseWriter/Pages/UsageMap.cs",
@@ -1161,7 +1162,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/ReaderServices.cs",
-          "sha256": "95dded661bd5fb011810dd4d62a500db04b5740dc54c9c8ec6cdcf816f7f1777"
+          "sha256": "ee0abae6311e7bcda90d008bb29d458a5cd06cd8a01a2a363a02550950810d7b"
         },
         {
           "path": "src/JetDatabaseWriter/Relationships/LinkedSourcePolicy.cs",
@@ -1417,7 +1418,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/WriterServices.cs",
-          "sha256": "4588f506f29fa5c176b84d40845c1b20280cf42e75b790056597bd27230657cb"
+          "sha256": "952d81e0366a5029e34f3e45bd85a65b7b6a1d0c14b3942c451f69071a0ffd8a"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Architecture/ServiceGraphTests.cs",
@@ -1597,7 +1598,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/Collation/TextCollationIndexMaintenanceTests.cs",
-          "sha256": "5136bc980e5bd76e8b4c3c3b5442d12a9039aab7510bae6586ba99ede92ef1c6"
+          "sha256": "53cc7ffb4f43400c1c5e74c77ae26846d4eedf2882bf848f44bc89d83a34265f"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Indexes/Collation/TextSortOrderFixtureTests.cs",
@@ -1813,7 +1814,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Pages/Paging/PagerFrameCacheTests.cs",
-          "sha256": "18dcb84a1ab841fdf8996f7818e6dfa47a390c1948efa91d6b520a7b91ee2823"
+          "sha256": "b6cf774d5b4bc650d28025cf0a7493382b6e53fd823b1718d0b0c2da21c49eaa"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Pages/Paging/PersistentRollbackJournalTests.cs",
@@ -1837,7 +1838,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Pages/ReaderPageCacheAdmissionTests.cs",
-          "sha256": "f507ec53004ebb58c77f17d9f8cf92c6020931ea8402ae50f923c527800855b8"
+          "sha256": "25074f41a2234807643da09d670943a69ab7e0d7532caac10c42b6421cebec2f"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Pages/UsageMapBitmapKernelTests.cs",
@@ -2292,6 +2293,10 @@
           "sha256": "9589615a0ffaf30b6c71d244f99e87d69e20e2ce63b0af40d420ea6e7a23eb7f"
         },
         {
+          "path": "tests/JetDatabaseWriter.Tests/Writer/PersistentStreamRecoveryAdapterTests.cs",
+          "sha256": "f4ae087496725417a22f9c632209bad5bd3c47d96896481f25081ab53c564124"
+        },
+        {
           "path": "tests/JetDatabaseWriter.Tests/Writer/RecoveryReplayCrashTests.cs",
           "sha256": "7a05b049681e54e1159214c61a040989739ded377b8383322a2ba017a358422b"
         },
@@ -2541,7 +2546,7 @@
         },
         {
           "path": "AGENTS.md",
-          "sha256": "1b8bd557f4544ea8365d520b4076691dd68ea1b3ac9f7d506746254f47c6a3d2"
+          "sha256": "629e4c5df22d29a2993ae4c8296be40651c288649678aa760cab42221fb341ce"
         },
         {
           "path": "Directory.Build.props",
@@ -2601,7 +2606,7 @@
         },
         {
           "path": "docs/design/caller-stream-recovery.md",
-          "sha256": "a08835be832b1e3cf0af25ad009646b93a3480f60319acf48a48d1a5dfe9a3e3"
+          "sha256": "3dbcf3bdd08cd427281ebb081f428364ff5a8e3fb9673800e7a4daac884949d7"
         },
         {
           "path": "docs/design/catalog-index-maintenance-notes.md",
@@ -2621,7 +2626,7 @@
         },
         {
           "path": "docs/design/index-and-relationship-format-notes.md",
-          "sha256": "3641606b76bb3a1075e96aafdcfc53dfa9b7fc17589a132264e0ad503ced5d64"
+          "sha256": "0ca2ce293e2d14ab7bb29349f9c486da791545480e95b998e3a3e02b7b5237d4"
         },
         {
           "path": "docs/design/library-structure.md",
@@ -2641,7 +2646,7 @@
         },
         {
           "path": "docs/design/page-frame-ownership.md",
-          "sha256": "0f80ac0a72480ca882b3440785ceb27955dc87fde518b41ceb256554176d3cab"
+          "sha256": "50831ba42bf4acd536aaf20cac680a3a7c43049ec7685045b55ff08d0083bbd6"
         },
         {
           "path": "docs/design/persisted-column-properties-format-notes.md",
@@ -2669,11 +2674,11 @@
         },
         {
           "path": "docs/design/verification-evidence-map.md",
-          "sha256": "7d2ed8585f77c3f723189e142c3c71d94f3db2b2d27d1393a375b186aeb451f4"
+          "sha256": "39c9a113948d6582c64ac6932d3ac5467652660de2247c3dcbe9673bf5664ac7"
         },
         {
           "path": "docs/design/verification-scope.md",
-          "sha256": "70b2a3b0de70ef217bea05db27943318453101178012c5377d16680d63f478eb"
+          "sha256": "20054aad11e959b68b5479bf216b0d2e4645a5a1bd163febec70649fecfe4604"
         },
         {
           "path": "docs/design/writer-lifecycle.md",
@@ -2841,11 +2846,11 @@
         },
         {
           "path": "src/JetDatabaseWriter/AccessDatabaseEncryption.cs",
-          "sha256": "263821e879c6878355abb36ac24e010fe14f38628212c007c02d35a22aef246c"
+          "sha256": "af4e102b248cbe1c511a758787a5c1e5f6c9a972e5e28e73b4a08e82bf5fcc47"
         },
         {
           "path": "src/JetDatabaseWriter/AccessWriter.cs",
-          "sha256": "9323210be35f7b47691bbb7e3a20d157a2ae53c0ef27d3470d5e4fe83c542bf7"
+          "sha256": "049d7be6e607d19ed14bbb5fc33ac49f99507759031285049453eae090ef61f8"
         },
         {
           "path": "src/JetDatabaseWriter/ComplexColumns/ComplexColumnReader.ItemInventory.cs",
@@ -2941,11 +2946,11 @@
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/FilePageDigests.cs",
-          "sha256": "63680544ac31c374b12d4e0b7c7bb4bb7dbd4b5edf653872c553415ecfc4da23"
+          "sha256": "6050f2ae40d8833f388a645ba36cf28aa47160da1dfea078790abfc8a361c08d"
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/PersistentRollbackJournal.cs",
-          "sha256": "c0faefb16897fbeb24843e914ea3d6a7ff678b98b2627984515a1c6b66034667"
+          "sha256": "884bf541f98fee4aa1698cc7b4a94d8b6ac3e8ed15806de0cb3d1e51a4938752"
         },
         {
           "path": "src/JetDatabaseWriter/Pages/UsageMap.cs",
@@ -2957,7 +2962,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/ReaderServices.cs",
-          "sha256": "95dded661bd5fb011810dd4d62a500db04b5740dc54c9c8ec6cdcf816f7f1777"
+          "sha256": "ee0abae6311e7bcda90d008bb29d458a5cd06cd8a01a2a363a02550950810d7b"
         },
         {
           "path": "src/JetDatabaseWriter/Schema/Models/ColumnPropertyBlock.cs",

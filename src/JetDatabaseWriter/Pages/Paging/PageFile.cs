@@ -7,7 +7,9 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Verification;
 
 /// <summary>
 /// The read side of one open database file's page I/O: the physical store,
@@ -18,9 +20,14 @@ using JetDatabaseWriter.Infrastructure;
 /// journal. A reader's object graph holds a <see cref="PageFile"/> and never a
 /// <see cref="Pager"/>.
 /// </summary>
-internal class PageFile : IPageSource, IAsyncDisposable
+internal class PageFile : IPageSource, IPageFrameOwner, IAsyncDisposable
 {
     private readonly Type ownerType;
+    private int inFlightReads;
+    private int outstandingLeases;
+    private int liveFrames;
+    private int cachedRowDirectoryEntries;
+    private long storeReads;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PageFile"/> class.
@@ -30,8 +37,26 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// <param name="pageKeys">The page cipher; the page file owns it and disposes it.</param>
     /// <param name="leaveOpen">When <see langword="true"/>, the caller keeps ownership of <paramref name="stream"/> and it is not disposed.</param>
     /// <param name="ownerType">The public type that owns the file, named by <see cref="ObjectDisposedException"/>s raised after disposal.</param>
-    internal PageFile(Stream stream, int pageSize, IPageCodec pageKeys, bool leaveOpen, Type ownerType)
-        : this(stream is MemoryStream memory ? new MemoryPageStore(memory, leaveOpen) : new StreamPageStore(stream, leaveOpen), pageSize, pageKeys, ownerType)
+    /// <param name="maxActiveLeases">The positive combined pending and live page lease allowance.</param>
+    /// <param name="maxLiveFrames">The maximum total live page frames, or 0 for automatic sizing.</param>
+    /// <param name="maxCachedRowDirectoryEntries">The positive aggregate cached row-directory entry allowance.</param>
+    internal PageFile(
+        Stream stream,
+        int pageSize,
+        IPageCodec pageKeys,
+        bool leaveOpen,
+        Type ownerType,
+        int maxActiveLeases = 4096,
+        int maxLiveFrames = 0,
+        int maxCachedRowDirectoryEntries = 262_144)
+        : this(
+            stream is MemoryStream memory ? new MemoryPageStore(memory, leaveOpen) : new StreamPageStore(stream, leaveOpen),
+            pageSize,
+            pageKeys,
+            ownerType,
+            maxActiveLeases,
+            maxLiveFrames,
+            maxCachedRowDirectoryEntries)
     {
     }
 
@@ -40,12 +65,37 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// <param name="pageSize">The page size.</param>
     /// <param name="pageKeys">The owned page codec.</param>
     /// <param name="ownerType">The disposal exception owner.</param>
-    internal PageFile(IPageStore store, int pageSize, IPageCodec pageKeys, Type ownerType)
+    /// <param name="maxActiveLeases">The positive combined pending and live page lease allowance.</param>
+    /// <param name="maxLiveFrames">The maximum total live page frames, or 0 for automatic sizing.</param>
+    /// <param name="maxCachedRowDirectoryEntries">The positive aggregate cached row-directory entry allowance.</param>
+    internal PageFile(
+        IPageStore store,
+        int pageSize,
+        IPageCodec pageKeys,
+        Type ownerType,
+        int maxActiveLeases = 4096,
+        int maxLiveFrames = 0,
+        int maxCachedRowDirectoryEntries = 262_144)
     {
+        Guard.Positive(maxActiveLeases, nameof(maxActiveLeases));
+#if NET8_0_OR_GREATER
+        ArgumentOutOfRangeException.ThrowIfNegative(maxLiveFrames);
+#else
+        if (maxLiveFrames < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxLiveFrames));
+        }
+#endif
+        Guard.Positive(maxCachedRowDirectoryEntries, nameof(maxCachedRowDirectoryEntries));
+
         this.Store = store;
         this.PageSize = pageSize;
         this.PageKeys = pageKeys;
         this.ownerType = ownerType;
+        this.MaxActiveLeases = maxActiveLeases;
+        this.MaxLiveFrames = maxLiveFrames > 0 ? maxLiveFrames : maxActiveLeases;
+        this.MaxCachedDirectoryEntries = maxCachedRowDirectoryEntries;
+        this.ReleaseLeaseCallback = () => Interlocked.Decrement(ref this.outstandingLeases);
     }
 
     /// <inheritdoc/>
@@ -101,6 +151,24 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// </remarks>
     internal bool ReadsInlineOnThreadPool { get; set; }
 
+    /// <summary>Gets the number of concurrent store or pending page reads currently in flight.</summary>
+    internal int InFlightReads => Volatile.Read(ref this.inFlightReads);
+
+    /// <summary>Gets the combined pending and live page leases.</summary>
+    internal int OutstandingLeases => Volatile.Read(ref this.outstandingLeases);
+
+    /// <summary>Gets the total live page frame count (retained plus evicted-pinned).</summary>
+    internal int LiveFrames => Volatile.Read(ref this.liveFrames);
+
+    /// <summary>Gets the total row-directory slot entries cached across live frames.</summary>
+    internal int CachedRowDirectoryEntries => Volatile.Read(ref this.cachedRowDirectoryEntries);
+
+    /// <summary>Gets the cumulative physical store read count.</summary>
+    internal long StoreReads => Interlocked.Read(ref this.storeReads);
+
+    /// <summary>Gets or sets an optional eviction callback invoked when a direct lease read needs to reclaim an unpinned frame from an attached reader cache.</summary>
+    internal Func<bool>? TryEvictUnpinnedCachedFrame { get; set; }
+
     /// <summary>Gets the gate for journal access only. It is never held across a store call.</summary>
     private protected SemaphoreSlim IoGate { get; } = new(1, 1);
 
@@ -113,9 +181,130 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// <summary>Gets a value indicating whether the writer may have pending journal pages.</summary>
     private protected virtual bool HasPendingPages => false;
 
-    /// <summary>Records a physical store read.</summary>
-    private protected virtual void OnStoreRead()
+    /// <summary>Gets the pre-allocated lease-release callback.</summary>
+    private protected Action ReleaseLeaseCallback { get; }
+
+    /// <summary>Gets the configured maximum active page leases.</summary>
+    private protected int MaxActiveLeases { get; private set; }
+
+    /// <summary>Gets the configured maximum live page frames.</summary>
+    private protected int MaxLiveFrames { get; private set; }
+
+    /// <summary>Gets the configured maximum cached row-directory entries.</summary>
+    private protected int MaxCachedDirectoryEntries { get; private set; }
+
+    /// <summary>Synchronizes aggregate resource limits with an owning cache composition.</summary>
+    /// <param name="cacheCapacity">The retained cache capacity.</param>
+    /// <param name="maxLeases">The maximum active page leases.</param>
+    /// <param name="maxFrames">The explicit maximum live frames, or 0 for automatic sizing.</param>
+    /// <param name="maxDirectoryEntries">The maximum cached row-directory entries.</param>
+    internal void ConfigureLimits(int cacheCapacity, int maxLeases, int maxFrames, int maxDirectoryEntries)
     {
+        this.MaxActiveLeases = maxLeases;
+        this.MaxLiveFrames = maxFrames > 0 ? maxFrames : checked(Math.Max(0, cacheCapacity) + maxLeases);
+        this.MaxCachedDirectoryEntries = maxDirectoryEntries;
+    }
+
+    /// <summary>Records a physical store read.</summary>
+    private protected virtual void OnStoreRead() => Interlocked.Increment(ref this.storeReads);
+
+    /// <summary>Reserves one pending/live lease slot or throws <see cref="JetLimitationException"/>.</summary>
+    /// <exception cref="JetLimitationException">The active page lease budget would be exceeded.</exception>
+    internal void CountLease()
+    {
+        int current;
+        do
+        {
+            current = Volatile.Read(ref this.outstandingLeases);
+            DataPageKernel.TryReserveCount(checked((uint)current), checked((uint)this.MaxActiveLeases), out bool admitted, out uint next);
+            if (!admitted)
+            {
+                string owner = this.ownerType == typeof(AccessWriter) ? "writer" : "reader";
+                throw new JetLimitationException(JetErrorCode.PageLeaseBudgetExceeded, $"The {owner} permits at most {this.MaxActiveLeases} pending and live page leases.");
+            }
+
+            if (Interlocked.CompareExchange(ref this.outstandingLeases, checked((int)next), current) == current)
+            {
+                return;
+            }
+        }
+        while (true);
+    }
+
+    /// <summary>Releases one reserved lease slot when acquisition fails before returning a lease.</summary>
+    internal void ReleaseLeaseSlot() => Interlocked.Decrement(ref this.outstandingLeases);
+
+    /// <summary>Reserves one live-frame slot or throws <see cref="JetLimitationException"/>.</summary>
+    /// <exception cref="JetLimitationException">The live page frame budget would be exceeded.</exception>
+    internal void ReserveLiveFrameOrThrow()
+    {
+        int current;
+        do
+        {
+            current = Volatile.Read(ref this.liveFrames);
+            DataPageKernel.TryReserveCount(checked((uint)current), checked((uint)this.MaxLiveFrames), out bool admitted, out uint next);
+            if (!admitted)
+            {
+                if (this.TryEvictUnpinnedCachedFrame?.Invoke() == true)
+                {
+                    continue;
+                }
+
+                string owner = this.ownerType == typeof(AccessWriter) ? "writer" : "reader";
+                throw new JetLimitationException(JetErrorCode.PageLeaseBudgetExceeded, $"The {owner} permits at most {this.MaxLiveFrames} live page frames.");
+            }
+
+            if (Interlocked.CompareExchange(ref this.liveFrames, checked((int)next), current) == current)
+            {
+                return;
+            }
+        }
+        while (true);
+    }
+
+    /// <summary>Increments the live-frame counter under caller-controlled cache admission.</summary>
+    /// <returns>The updated live-frame count.</returns>
+    internal int IncrementLiveFrames() => Interlocked.Increment(ref this.liveFrames);
+
+    /// <inheritdoc/>
+    public bool TryReserveRowDirectoryEntries(int entryCount)
+    {
+        if (entryCount <= 0)
+        {
+            return true;
+        }
+
+        int current;
+        do
+        {
+            current = Volatile.Read(ref this.cachedRowDirectoryEntries);
+            if ((long)current + entryCount > this.MaxCachedDirectoryEntries)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref this.cachedRowDirectoryEntries, current + entryCount, current) == current)
+            {
+                return true;
+            }
+        }
+        while (true);
+    }
+
+    /// <inheritdoc/>
+    public void OnFrameReleased(byte[] buffer, bool bound, int cachedDirectoryEntries)
+    {
+        if (cachedDirectoryEntries > 0)
+        {
+            _ = Interlocked.Add(ref this.cachedRowDirectoryEntries, -cachedDirectoryEntries);
+        }
+
+        if (bound)
+        {
+            _ = Interlocked.Decrement(ref this.liveFrames);
+        }
+
+        PageBuffers.Return(buffer);
     }
 
     /// <summary>
@@ -148,40 +337,81 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// <returns>The opened stream.</returns>
     internal static FileStream OpenFileStream(string path, FileAccess access, FileShare share, FileOptions options) => FileStreamFactory.Open(path, FileMode.Open, access, share, options);
 
+    /// <summary>Acquires a direct page lease accounted against this page file's lease and frame budgets.</summary>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The disposable read lease.</returns>
+    internal virtual async ValueTask<PageLease> ReadPageLeaseAsync(long pageNumber, CancellationToken cancellationToken = default)
+    {
+        this.ThrowIfDisposedOrCancelled(cancellationToken);
+        this.CountLease();
+        PageLease? lease = null;
+        try
+        {
+            byte[] bytes = await this.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            var frame = PageFrame.Own(bytes, this.PageSize, owner: this);
+            try
+            {
+                this.ReserveLiveFrameOrThrow();
+                frame.MarkBoundToOwner();
+                return lease = frame.Acquire(this.ReleaseLeaseCallback);
+            }
+            finally
+            {
+                frame.Release();
+            }
+        }
+        finally
+        {
+            if (lease is null)
+            {
+                this.ReleaseLeaseSlot();
+            }
+        }
+    }
+
     /// <inheritdoc/>
     public virtual async ValueTask<byte[]> ReadPageAsync(long pageNumber, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(this.PageSize);
+        this.ReserveInFlightRead();
         try
         {
-            bool pending = false;
-            if (this.HasPendingPages)
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(this.PageSize);
+            try
             {
-                await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-                try
+                bool pending = false;
+                if (this.HasPendingPages)
                 {
-                    pending = this.TryCopyPendingPage(pageNumber, buffer);
+                    await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        pending = this.TryCopyPendingPage(pageNumber, buffer);
+                    }
+                    finally
+                    {
+                        _ = this.IoGate.Release();
+                    }
                 }
-                finally
-                {
-                    _ = this.IoGate.Release();
-                }
-            }
 
-            if (!pending)
+                if (!pending)
+                {
+                    this.OnStoreRead();
+                    await this.Store.ReadAsync(pageNumber * this.PageSize, buffer.AsMemory(0, this.PageSize), this.CanReadInline(), cancellationToken).ConfigureAwait(false);
+                    this.PageKeys.Decode(buffer, 0, pageNumber, this.PageSize);
+                }
+
+                return buffer;
+            }
+            catch
             {
-                this.OnStoreRead();
-                await this.Store.ReadAsync(pageNumber * this.PageSize, buffer.AsMemory(0, this.PageSize), this.CanReadInline(), cancellationToken).ConfigureAwait(false);
-                this.PageKeys.Decode(buffer, 0, pageNumber, this.PageSize);
+                PageBuffers.Return(buffer);
+                throw;
             }
-
-            return buffer;
         }
-        catch
+        finally
         {
-            PageBuffers.Return(buffer);
-            throw;
+            _ = Interlocked.Decrement(ref this.inFlightReads);
         }
     }
 
@@ -251,6 +481,27 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// <param name="buffer">The buffer that receives the page.</param>
     /// <returns><see langword="true"/> when <paramref name="buffer"/> holds the pending page.</returns>
     private protected virtual bool TryCopyPendingPage(long pageNumber, byte[] buffer) => false;
+
+    private void ReserveInFlightRead()
+    {
+        int current;
+        do
+        {
+            current = Volatile.Read(ref this.inFlightReads);
+            DataPageKernel.TryReserveCount(checked((uint)current), checked((uint)this.MaxActiveLeases), out bool admitted, out uint next);
+            if (!admitted)
+            {
+                string owner = this.ownerType == typeof(AccessWriter) ? "writer" : "reader";
+                throw new JetLimitationException(JetErrorCode.PageLeaseBudgetExceeded, $"The {owner} permits at most {this.MaxActiveLeases} concurrent in-flight page reads.");
+            }
+
+            if (Interlocked.CompareExchange(ref this.inFlightReads, checked((int)next), current) == current)
+            {
+                return;
+            }
+        }
+        while (true);
+    }
 
     /// <summary>
     /// Determines whether this page read runs synchronously on the calling

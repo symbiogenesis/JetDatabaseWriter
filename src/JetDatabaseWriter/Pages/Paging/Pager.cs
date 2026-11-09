@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Transactions;
 
 /// <summary>
@@ -29,7 +30,6 @@ internal sealed class Pager : PageFile
 #endif
     private readonly Dictionary<long, PageFrame> frames = [];
     private readonly List<long> clock = [];
-    private readonly int cacheSize;
 
     /// <summary>
     /// The journal of the active explicit transaction, or <see langword="null"/>.
@@ -44,7 +44,6 @@ internal sealed class Pager : PageFile
     private bool scopeHasWrites;
     private long bufferedPageCount;
     private int clockHand;
-    private long storeReads;
     private long cacheHits;
     private long evictions;
 
@@ -57,9 +56,31 @@ internal sealed class Pager : PageFile
     /// <param name="leaveOpen">When <see langword="true"/>, the caller keeps ownership of <paramref name="stream"/> and it is not disposed.</param>
     /// <param name="ownerType">The public type that owns the file, named by <see cref="ObjectDisposedException"/>s raised after disposal.</param>
     /// <param name="cacheSize">The maximum cached frame count; zero disables caching.</param>
+    /// <param name="recoveryLease">An optional persistent caller-stream recovery lease owned by the store.</param>
+    /// <param name="maxActiveLeases">The positive combined pending and live page lease allowance.</param>
+    /// <param name="maxLiveFrames">The maximum total live page frames, or 0 for automatic sizing.</param>
+    /// <param name="maxCachedRowDirectoryEntries">The positive aggregate cached row-directory entry allowance.</param>
     /// <exception cref="ArgumentOutOfRangeException">The cache size is negative.</exception>
-    internal Pager(Stream stream, int pageSize, IPageCodec pageKeys, bool leaveOpen, Type ownerType, int cacheSize = 256)
-        : this(stream is MemoryStream memory ? new MemoryPageStore(memory, leaveOpen) : new StreamPageStore(stream, leaveOpen), pageSize, pageKeys, ownerType, cacheSize)
+    internal Pager(
+        Stream stream,
+        int pageSize,
+        IPageCodec pageKeys,
+        bool leaveOpen,
+        Type ownerType,
+        int cacheSize = 256,
+        IPersistentStreamRecoveryLease? recoveryLease = null,
+        int maxActiveLeases = 4096,
+        int maxLiveFrames = 0,
+        int maxCachedRowDirectoryEntries = 262_144)
+        : this(
+            stream is MemoryStream memory ? new MemoryPageStore(memory, leaveOpen, recoveryLease) : new StreamPageStore(stream, leaveOpen, recoveryLease),
+            pageSize,
+            pageKeys,
+            ownerType,
+            cacheSize,
+            maxActiveLeases,
+            maxLiveFrames,
+            maxCachedRowDirectoryEntries)
     {
     }
 
@@ -69,9 +90,27 @@ internal sealed class Pager : PageFile
     /// <param name="pageKeys">The owned page codec.</param>
     /// <param name="ownerType">The disposal exception owner.</param>
     /// <param name="cacheSize">The maximum frame count.</param>
+    /// <param name="maxActiveLeases">The positive combined pending and live page lease allowance.</param>
+    /// <param name="maxLiveFrames">The maximum total live page frames, or 0 for automatic sizing.</param>
+    /// <param name="maxCachedRowDirectoryEntries">The positive aggregate cached row-directory entry allowance.</param>
     /// <exception cref="ArgumentOutOfRangeException">The cache size is negative.</exception>
-    internal Pager(IPageStore store, int pageSize, IPageCodec pageKeys, Type ownerType, int cacheSize = 256)
-        : base(store, pageSize, pageKeys, ownerType)
+    internal Pager(
+        IPageStore store,
+        int pageSize,
+        IPageCodec pageKeys,
+        Type ownerType,
+        int cacheSize = 256,
+        int maxActiveLeases = 4096,
+        int maxLiveFrames = 0,
+        int maxCachedRowDirectoryEntries = 262_144)
+        : base(
+            store,
+            pageSize,
+            pageKeys,
+            ownerType,
+            maxActiveLeases,
+            maxLiveFrames > 0 ? maxLiveFrames : checked(Math.Max(0, cacheSize) + maxActiveLeases),
+            maxCachedRowDirectoryEntries)
     {
 #if NET8_0_OR_GREATER
         ArgumentOutOfRangeException.ThrowIfNegative(cacheSize);
@@ -82,7 +121,7 @@ internal sealed class Pager : PageFile
         }
 #endif
 
-        this.cacheSize = cacheSize;
+        this.CacheCapacity = cacheSize;
         this.ByteRangeLock = JetByteRangeLock.Disabled;
     }
 
@@ -124,14 +163,29 @@ internal sealed class Pager : PageFile
     /// <summary>Gets the invalidation epoch for derived state.</summary>
     internal long InvalidationGeneration { get; private set; }
 
-    /// <summary>Gets physical-read and cache counters.</summary>
+    /// <summary>Gets the configured retained frame cache capacity.</summary>
+    internal int CacheCapacity { get; }
+
+    /// <summary>Gets physical-read, frame-cache, lease, in-flight read, and row-directory counters.</summary>
     internal PagerStatistics Statistics
     {
         get
         {
             lock (this.frameSync)
             {
-                return new(Interlocked.Read(ref this.storeReads), this.cacheHits, this.evictions, this.frames.Count);
+                int retained = this.frames.Count;
+                int live = this.LiveFrames;
+                return new(
+                    this.StoreReads,
+                    this.cacheHits,
+                    this.evictions,
+                    retained,
+                    Math.Max(0, live - retained),
+                    live,
+                    this.OutstandingLeases,
+                    this.InFlightReads,
+                    this.dirtyPages.Count + this.zeroReservations.Count,
+                    this.CachedRowDirectoryEntries);
             }
         }
     }
@@ -228,12 +282,39 @@ internal sealed class Pager : PageFile
 
             lock (this.frameSync)
             {
-                if (this.frames.TryGetValue(pageNumber, out PageFrame? frame))
+                if (this.frames.ContainsKey(pageNumber))
                 {
-                    byte[] zero = ArrayPool<byte>.Shared.Rent(this.PageSize);
-                    Array.Clear(zero, 0, this.PageSize);
-                    this.frames[pageNumber] = PageFrame.Own(zero, this.PageSize);
-                    frame.Release();
+                    if (this.LiveFrames >= this.MaxLiveFrames && !this.HasUnpinnedFrame(pageNumber))
+                    {
+                        this.RemoveFrameIfPresent(pageNumber);
+                    }
+                    else
+                    {
+                        byte[] zero = ArrayPool<byte>.Shared.Rent(this.PageSize);
+                        Array.Clear(zero, 0, this.PageSize);
+                        var zeroFrame = PageFrame.Own(zero, this.PageSize, owner: this);
+                        _ = this.IncrementLiveFrames();
+                        zeroFrame.MarkBoundToOwner();
+                        bool retained = false;
+                        try
+                        {
+                            this.InstallFrame(pageNumber, zeroFrame, ref retained);
+                            while (this.LiveFrames > this.MaxLiveFrames)
+                            {
+                                if (!this.TryEvictUnpinnedFrame(pageNumber))
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            if (!retained)
+                            {
+                                zeroFrame.Release();
+                            }
+                        }
+                    }
                 }
             }
 
@@ -289,7 +370,7 @@ internal sealed class Pager : PageFile
         {
             await this.DrainDirtyPagesAsync().ConfigureAwait(false);
             long originalLength = this.Store.Length;
-            rollback = new PhysicalRollback(this.Store, originalLength, this.PageSize, Math.Max(64, this.cacheSize / 2), spill: true);
+            rollback = new PhysicalRollback(this.Store, originalLength, this.PageSize, Math.Max(64, this.CacheCapacity / 2), spill: true);
             for (long offset = length; offset < originalLength; offset += this.PageSize)
             {
                 await rollback.CaptureAsync(offset, cancellationToken).ConfigureAwait(false);
@@ -460,9 +541,6 @@ internal sealed class Pager : PageFile
     }
 
     /// <inheritdoc/>
-    private protected override void OnStoreRead() => Interlocked.Increment(ref this.storeReads);
-
-    /// <inheritdoc/>
     private protected override bool HasPendingPages => this.journal is not null || this.dirtyPages.Count != 0 || this.zeroReservations.Count != 0;
 
     /// <inheritdoc/>
@@ -477,64 +555,62 @@ internal sealed class Pager : PageFile
     public override ValueTask<byte[]> ReadPageAsync(long pageNumber, CancellationToken cancellationToken = default)
         => this.ReadPageAsync(pageNumber, PageReadHint.Normal, cancellationToken);
 
-    /// <summary>Acquires an immutable image without copying a retained frame; writes publish replacement images.</summary>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="released">Optional reader accounting callback.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A disposable reference that survives invalidation and subsequent writes.</returns>
-    internal async ValueTask<PageLease> ReadPageLeaseAsync(long pageNumber, Action? released, CancellationToken cancellationToken)
+    /// <inheritdoc/>
+    internal override async ValueTask<PageLease> ReadPageLeaseAsync(long pageNumber, CancellationToken cancellationToken = default)
     {
-        await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        this.ThrowIfDisposedOrCancelled(cancellationToken);
+        this.CountLease();
+        PageLease? lease = null;
         try
         {
-            this.ThrowIfDisposedOrCancelled(cancellationToken);
-            long generation;
-            lock (this.frameSync)
-            {
-                generation = this.InvalidationGeneration;
-                if (this.frames.TryGetValue(pageNumber, out PageFrame? frame))
-                {
-                    frame.Referenced = true;
-                    this.cacheHits++;
-                    return frame.Acquire(released);
-                }
-            }
-
-            byte[] page = await base.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            var loaded = PageFrame.Own(page, this.PageSize);
-            bool retained = false;
+            await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                this.ThrowIfDisposedOrCancelled(cancellationToken);
+                long generation;
                 lock (this.frameSync)
                 {
-                    if (this.cacheSize > 0 && generation == this.InvalidationGeneration)
+                    generation = this.InvalidationGeneration;
+                    if (this.frames.TryGetValue(pageNumber, out PageFrame? frame))
                     {
-                        this.InstallFrame(pageNumber, loaded, ref retained);
+                        frame.Referenced = true;
+                        this.cacheHits++;
+                        return lease = frame.Acquire(this.ReleaseLeaseCallback);
                     }
+                }
 
-                    return loaded.Acquire(released);
+                byte[] page = await base.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                var loaded = PageFrame.Own(page, this.PageSize, owner: this);
+                bool retained = false;
+                try
+                {
+                    lock (this.frameSync)
+                    {
+                        this.AdmitLeaseFrame(pageNumber, loaded, generation, ref retained);
+                        return lease = loaded.Acquire(this.ReleaseLeaseCallback);
+                    }
+                }
+                finally
+                {
+                    if (!retained)
+                    {
+                        loaded.Release();
+                    }
                 }
             }
             finally
             {
-                if (!retained)
-                {
-                    loaded.Release();
-                }
+                _ = this.frameGate.Release();
             }
         }
         finally
         {
-            _ = this.frameGate.Release();
+            if (lease is null)
+            {
+                this.ReleaseLeaseSlot();
+            }
         }
     }
-
-    /// <summary>Acquires an immutable page without reader-specific accounting.</summary>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The pinned page image.</returns>
-    internal ValueTask<PageLease> ReadPageLeaseAsync(long pageNumber, CancellationToken cancellationToken)
-        => this.ReadPageLeaseAsync(pageNumber, released: null, cancellationToken);
 
     /// <summary>Reads an owned page, optionally bypassing cache retention.</summary>
     /// <param name="pageNumber">The page number.</param>
@@ -546,7 +622,7 @@ internal sealed class Pager : PageFile
         await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (this.cacheSize == 0 || hint == PageReadHint.NoCache)
+            if (this.CacheCapacity == 0 || hint == PageReadHint.NoCache)
             {
                 return await base.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             }
@@ -661,7 +737,7 @@ internal sealed class Pager : PageFile
 
                 this.bufferedPageCount = Math.Max(this.PageCount, pageNumber + 1);
                 pending = true;
-                if (this.dirtyPages.Count >= Math.Max(64, this.cacheSize / 2))
+                if (this.dirtyPages.Count >= Math.Max(64, this.CacheCapacity / 2))
                 {
                     await this.DrainDirtyPagesAsync().ConfigureAwait(false);
                 }
@@ -705,18 +781,75 @@ internal sealed class Pager : PageFile
         }
     }
 
+    private void AdmitLeaseFrame(long pageNumber, PageFrame loaded, long generation, ref bool retained)
+    {
+        bool canRetainInCache = this.CacheCapacity > 0 && generation == this.InvalidationGeneration;
+        if (!canRetainInCache)
+        {
+            if (this.LiveFrames >= this.MaxLiveFrames && !this.TryEvictUnpinnedFrame(excludePageNumber: null))
+            {
+                throw new JetLimitationException(JetErrorCode.PageLeaseBudgetExceeded, $"The writer permits at most {this.MaxLiveFrames} live page frames.");
+            }
+
+            _ = this.IncrementLiveFrames();
+            loaded.MarkBoundToOwner();
+            return;
+        }
+
+        if (this.LiveFrames >= this.MaxLiveFrames && !this.HasUnpinnedFrame(pageNumber))
+        {
+            throw new JetLimitationException(JetErrorCode.PageLeaseBudgetExceeded, $"The writer permits at most {this.MaxLiveFrames} live page frames.");
+        }
+
+        _ = this.IncrementLiveFrames();
+        loaded.MarkBoundToOwner();
+        if (this.LiveFrames > this.MaxLiveFrames && !this.frames.ContainsKey(pageNumber))
+        {
+            _ = this.TryEvictUnpinnedFrame(excludePageNumber: pageNumber);
+        }
+
+        this.InstallFrame(pageNumber, loaded, ref retained);
+        while (this.LiveFrames > this.MaxLiveFrames)
+        {
+            if (!this.TryEvictUnpinnedFrame(excludePageNumber: pageNumber))
+            {
+                break;
+            }
+        }
+    }
+
     private void RetainFrame(long pageNumber, byte[] page)
     {
-        if (this.cacheSize == 0)
+        if (this.CacheCapacity == 0)
         {
             return;
         }
 
-        var frame = PageFrame.Copy(page, this.PageSize);
+        if (this.LiveFrames >= this.MaxLiveFrames && !this.HasUnpinnedFrame(pageNumber))
+        {
+            this.RemoveFrameIfPresent(pageNumber);
+            return;
+        }
+
+        var frame = PageFrame.Copy(page, this.PageSize, owner: this);
+        _ = this.IncrementLiveFrames();
+        frame.MarkBoundToOwner();
         bool retained = false;
         try
         {
+            if (this.LiveFrames > this.MaxLiveFrames && !this.frames.ContainsKey(pageNumber))
+            {
+                _ = this.TryEvictUnpinnedFrame(excludePageNumber: pageNumber);
+            }
+
             this.InstallFrame(pageNumber, frame, ref retained);
+            while (this.LiveFrames > this.MaxLiveFrames)
+            {
+                if (!this.TryEvictUnpinnedFrame(excludePageNumber: pageNumber))
+                {
+                    break;
+                }
+            }
         }
         finally
         {
@@ -725,6 +858,108 @@ internal sealed class Pager : PageFile
                 frame.Release();
             }
         }
+    }
+
+    private bool HasUnpinnedFrame(long incomingPageNumber)
+    {
+        if (this.frames.TryGetValue(incomingPageNumber, out PageFrame? existing) && existing.IsExclusivelyOwned)
+        {
+            return true;
+        }
+
+        foreach (KeyValuePair<long, PageFrame> entry in this.frames)
+        {
+            if (entry.Key != incomingPageNumber && entry.Value.IsExclusivelyOwned)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryEvictUnpinnedFrame(long? excludePageNumber)
+    {
+        int count = this.clock.Count;
+        if (count == 0)
+        {
+            return false;
+        }
+
+        for (int pass = 0; pass < 2; pass++)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                int idx = (this.clockHand + i) % count;
+                long candidatePage = this.clock[idx];
+                if (excludePageNumber == candidatePage)
+                {
+                    continue;
+                }
+
+                PageFrame candidate = this.frames[candidatePage];
+                if (!candidate.IsExclusivelyOwned)
+                {
+                    continue;
+                }
+
+                if (pass == 0 && candidate.Referenced)
+                {
+                    candidate.Referenced = false;
+                    continue;
+                }
+
+                _ = this.frames.Remove(candidatePage);
+                this.clock.RemoveAt(idx);
+                if (this.clock.Count == 0)
+                {
+                    this.clockHand = 0;
+                }
+                else if (idx < this.clockHand)
+                {
+                    this.clockHand--;
+                }
+                else if (this.clockHand >= this.clock.Count)
+                {
+                    this.clockHand = 0;
+                }
+
+                this.evictions++;
+                candidate.Release();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void RemoveFrameIfPresent(long pageNumber)
+    {
+        if (!this.frames.TryGetValue(pageNumber, out PageFrame? previous))
+        {
+            return;
+        }
+
+        _ = this.frames.Remove(pageNumber);
+        int idx = this.clock.IndexOf(pageNumber);
+        if (idx >= 0)
+        {
+            this.clock.RemoveAt(idx);
+            if (this.clock.Count == 0)
+            {
+                this.clockHand = 0;
+            }
+            else if (idx < this.clockHand)
+            {
+                this.clockHand--;
+            }
+            else if (this.clockHand >= this.clock.Count)
+            {
+                this.clockHand = 0;
+            }
+        }
+
+        previous.Release();
     }
 
     private void InstallFrame(long pageNumber, PageFrame frame, ref bool retained)
@@ -737,7 +972,7 @@ internal sealed class Pager : PageFile
             return;
         }
 
-        if (this.frames.Count == this.cacheSize)
+        if (this.frames.Count == this.CacheCapacity)
         {
             while (this.frames[this.clock[this.clockHand]] is { Referenced: true } candidate)
             {
@@ -876,7 +1111,7 @@ internal sealed class Pager : PageFile
 
     private async ValueTask SpillStatementAsync(PagerTransaction transaction, CancellationToken cancellationToken)
     {
-        if (!transaction.IsStatement || transaction.Count < Math.Max(64, this.cacheSize / 2))
+        if (!transaction.IsStatement || transaction.Count < Math.Max(64, this.CacheCapacity / 2))
         {
             return;
         }
@@ -905,7 +1140,7 @@ internal sealed class Pager : PageFile
     }
 
     private PhysicalRollback GetRollback(PagerTransaction transaction)
-        => transaction.Rollback ??= new PhysicalRollback(this.Store, transaction.BaseFileLengthBytes, this.PageSize, Math.Max(64, this.cacheSize / 2));
+        => transaction.Rollback ??= new PhysicalRollback(this.Store, transaction.BaseFileLengthBytes, this.PageSize, Math.Max(64, this.CacheCapacity / 2));
 
     private async ValueTask RestoreAfterFailureAsync(PhysicalRollback? rollback, Exception failure, bool durable)
     {

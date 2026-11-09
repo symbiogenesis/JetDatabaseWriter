@@ -32,8 +32,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         byte[] header,
         AccessWriterOptions options,
         bool leaveOpen = false,
+        IPersistentStreamRecoveryLease? recoveryLease = null,
         CancellationToken cancellationToken = default)
-        : base(DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize, options, cancellationToken))
+        : base(DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize, options, recoveryLease, cancellationToken))
     {
         this.lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
         WriterServices? services = null;
@@ -79,6 +80,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// that error before any encryption or password error.
     /// </remarks>
     /// <exception cref="JetAccessDeniedException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong, or when the file cannot be opened for writing. A pending transaction journal is recovered before password validation.</exception>
+    /// <exception cref="ArgumentException">Thrown when <see cref="AccessOptions.PersistentStreamRecoveryAdapter"/> is configured on a path open.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The writer options contain an invalid resource budget or lock timeout. The file is not opened.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(string path, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -87,6 +89,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNullOrEmpty(path, nameof(path));
         options ??= new AccessWriterOptions();
         options.Validate();
+        if (options.PersistentStreamRecoveryAdapter is not null)
+        {
+            throw new ArgumentException("PersistentStreamRecoveryAdapter applies only to non-FileStream caller streams; FileStream opens use native path-based recovery.", nameof(options));
+        }
 
         _ = EncryptionReplacementIntent.Recover(path, cancellationToken: cancellationToken);
         Guard.RequireExistingDatabaseFile(path, nameof(path));
@@ -157,6 +163,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the new database.</returns>
     /// <exception cref="IOException">Thrown when a database file already exists at <paramref name="path"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when <see cref="AccessOptions.PersistentStreamRecoveryAdapter"/> is configured on a path open.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The writer options contain an invalid resource budget or lock timeout. No file is created.</exception>
     /// <exception cref="JetIOException">The destination database file already exists.</exception>
     public static async ValueTask<AccessWriter> CreateDatabaseAsync(string path, DatabaseFormat format, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
@@ -166,6 +173,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         cancellationToken.ThrowIfCancellationRequested();
         options ??= new AccessWriterOptions();
         options.Validate();
+        if (options.PersistentStreamRecoveryAdapter is not null)
+        {
+            throw new ArgumentException("PersistentStreamRecoveryAdapter applies only to non-FileStream caller streams; FileStream opens use native path-based recovery.", nameof(options));
+        }
 
         PersistentRollbackJournal.RejectHotJournal(path);
         if (File.Exists(path))
@@ -201,8 +212,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the writer is disposed. Default is <c>false</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the new database.</returns>
-    /// <exception cref="ArgumentException">The stream is not readable, writable, seekable, or empty. Nothing is written and the stream is not disposed.</exception>
+    /// <exception cref="ArgumentException">The stream is not readable, writable, seekable, or empty, or <see cref="AccessOptions.PersistentStreamRecoveryAdapter"/> is configured on a <see cref="FileStream"/>. Nothing is written and the stream is not disposed.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The writer options contain an invalid resource budget or lock timeout. The stream is not read, written or disposed.</exception>
+    /// <exception cref="JetOperationException">Pending recovery evidence exists on the supplied persistent stream recovery adapter.</exception>
     /// <exception cref="AggregateException">Destination initialization and stream truncation both failed.</exception>
     public static async ValueTask<AccessWriter> CreateDatabaseAsync(Stream stream, DatabaseFormat format, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
@@ -214,7 +226,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         if (stream is FileStream creatingFile)
         {
+            if (options.PersistentStreamRecoveryAdapter is not null)
+            {
+                throw new ArgumentException("PersistentStreamRecoveryAdapter applies only to non-FileStream caller streams; FileStream opens use native path-based recovery.", nameof(options));
+            }
+
             PersistentRollbackJournal.RejectHotJournal(creatingFile);
+        }
+        else if (options.PersistentStreamRecoveryAdapter is { } creatingAdapter && creatingAdapter.HasPendingJournal(stream))
+        {
+            throw new JetOperationException(JetErrorCode.HotJournalConflict, "The database has transaction recovery or writer-ownership evidence; open it with AccessWriter to recover first.");
         }
 
         if (stream.Length != 0)
@@ -651,34 +672,65 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     {
         cancellationToken.ThrowIfCancellationRequested();
         string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
-
-        if (stream is FileStream recoveryFile)
+        IPersistentStreamRecoveryLease? recoveryLease = null;
+        bool transferredToWriter = false;
+        try
         {
-            EncryptionReplacementIntent.RejectPending(recoveryFile.Name);
+            if (stream is FileStream recoveryFile)
+            {
+                if (options.PersistentStreamRecoveryAdapter is not null)
+                {
+                    throw new ArgumentException("PersistentStreamRecoveryAdapter applies only to non-FileStream caller streams; FileStream opens use native path-based recovery.", nameof(options));
+                }
 
-            // Retain the durable recovery decision until lock-file cleanup succeeds.
-            PersistentRollbackJournal.Recover(
-                recoveryFile,
-                () => RemoveAbandonedLockFile(recoveryFile.Name));
-            _ = RecoverableWriterLock.Recover(recoveryFile.Name);
+                EncryptionReplacementIntent.RejectPending(recoveryFile.Name);
+
+                // Retain the durable recovery decision until lock-file cleanup succeeds.
+                PersistentRollbackJournal.Recover(
+                    recoveryFile,
+                    () => RemoveAbandonedLockFile(recoveryFile.Name));
+                _ = RecoverableWriterLock.Recover(recoveryFile.Name);
+            }
+            else if (options.PersistentStreamRecoveryAdapter is { } recoveryAdapter)
+            {
+                recoveryLease = recoveryAdapter.AcquireExclusiveLease(stream)
+                    ?? throw new JetLockException(JetErrorCode.DatabaseInUse, "The persistent stream recovery adapter did not grant an exclusive lease.");
+                if (!string.Equals(recoveryLease.DatabaseIdentity, recoveryAdapter.DatabaseIdentity, StringComparison.Ordinal) || recoveryLease.Generation < 0)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The persistent recovery lease identity or generation conflicts with its adapter.");
+                }
+
+                PersistentRollbackJournal.Recover(stream, recoveryLease);
+            }
+
+            // One read of page 0 serves the header and the flat Agile probe.
+            byte[] headerPage = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
+            byte[] header = headerPage.AsSpan(0, Constants.DatabaseHeader.Length).ToArray();
+
+            if (EncryptionManager.IsCompoundFileEncrypted(header))
+            {
+                throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Office compound packages are not native Microsoft Access databases.");
+            }
+
+            transferredToWriter = true;
+            return new AccessWriter(
+                path,
+                stream,
+                headerPage,
+                options,
+                leaveOpen: leaveOpen,
+                recoveryLease: recoveryLease,
+                cancellationToken: cancellationToken);
         }
-
-        // One read of page 0 serves the header and the flat Agile probe.
-        byte[] headerPage = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
-        byte[] header = headerPage.AsSpan(0, Constants.DatabaseHeader.Length).ToArray();
-
-        if (EncryptionManager.IsCompoundFileEncrypted(header))
+        catch
         {
-            throw new JetNotSupportedException(JetErrorCode.FeatureNotSupported, "Office compound packages are not native Microsoft Access databases.");
-        }
+            if (!transferredToWriter)
+            {
+                recoveryLease?.Dispose();
+            }
 
-        return new AccessWriter(
-            path,
-            stream,
-            headerPage,
-            options,
-            leaveOpen: leaveOpen,
-            cancellationToken: cancellationToken);
+            throw;
+        }
     }
 
     private static void RemoveAbandonedLockFile(string databasePath)

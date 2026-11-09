@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
@@ -36,7 +37,11 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="maxEncryptionInfoBytes">The descriptor byte budget.</param>
     /// <param name="maxTableDefinitionBytes">The per-table definition byte budget.</param>
     /// <param name="maxSchemaTraversalBytes">The combined definition-byte budget for catalog traversal.</param>
+    /// <param name="maxActivePageLeases">The positive combined pending and live page lease allowance.</param>
+    /// <param name="maxLivePageFrames">The maximum total live page frames, or 0 for automatic sizing.</param>
+    /// <param name="maxCachedRowDirectoryEntries">The positive aggregate cached row-directory entry allowance.</param>
     /// <param name="workBudget">The cumulative password work for a reader and linked sources.</param>
+    /// <param name="recoveryLease">Optional persistent caller-stream recovery lease held by the writer.</param>
     /// <param name="cancellationToken">Cancels password derivation during open.</param>
     private DatabaseFile(
         Stream stream,
@@ -50,7 +55,11 @@ internal sealed class DatabaseFile : IAsyncDisposable
         int maxEncryptionInfoBytes = 1024 * 1024,
         int maxTableDefinitionBytes = 16 * 1024 * 1024,
         int maxSchemaTraversalBytes = 64 * 1024 * 1024,
+        int maxActivePageLeases = 4096,
+        int maxLivePageFrames = 0,
+        int maxCachedRowDirectoryEntries = 262_144,
         EncryptionWorkBudget? workBudget = null,
+        IPersistentStreamRecoveryLease? recoveryLease = null,
         CancellationToken cancellationToken = default)
     {
 #if NET8_0_OR_GREATER
@@ -81,8 +90,8 @@ internal sealed class DatabaseFile : IAsyncDisposable
             : EncryptionManager.ReaderPasswordOption;
         IPageCodec pageKeys = PageCodecFactory.Open(header, this.Format.Kind, password, passwordOptionName, maxEncryptionSpinCount, maxEncryptionInfoBytes, workBudget: workBudget, cancellationToken: cancellationToken);
         this.Pages = writable
-            ? new Pager(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType, cacheSize)
-            : new PageFile(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType);
+            ? new Pager(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType, cacheSize, recoveryLease, maxActivePageLeases, maxLivePageFrames, maxCachedRowDirectoryEntries)
+            : new PageFile(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType, maxActivePageLeases, maxLivePageFrames, maxCachedRowDirectoryEntries);
         this.TableDefs = new TableDefReader(this.Pages, this.Format, cacheResults: true, maxTableDefinitionBytes, maxSchemaTraversalBytes);
         if (this.Pages is Pager pager)
         {
@@ -124,7 +133,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="cancellationToken">Cancels password derivation during open.</param>
     /// <returns>The read-only file.</returns>
     internal static DatabaseFile ForReader(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, AccessOptions? options = null, EncryptionWorkBudget? workBudget = null, CancellationToken cancellationToken = default)
-        => new(stream, header, password, path, leaveOpen, writable: false, maxEncryptionSpinCount: options?.MaxEncryptionSpinCount ?? 1_000_000, maxEncryptionInfoBytes: options?.MaxEncryptionInfoBytes ?? (1024 * 1024), maxTableDefinitionBytes: options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024), maxSchemaTraversalBytes: options?.MaxSchemaTraversalBytes ?? (64 * 1024 * 1024), workBudget: workBudget, cancellationToken: cancellationToken);
+        => new(stream, header, password, path, leaveOpen, writable: false, maxEncryptionSpinCount: options?.MaxEncryptionSpinCount ?? 1_000_000, maxEncryptionInfoBytes: options?.MaxEncryptionInfoBytes ?? (1024 * 1024), maxTableDefinitionBytes: options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024), maxSchemaTraversalBytes: options?.MaxSchemaTraversalBytes ?? (64 * 1024 * 1024), maxActivePageLeases: Math.Max(1, options?.MaxActivePageLeases ?? 4096), maxLivePageFrames: Math.Max(0, options?.MaxLivePageFrames ?? 0), maxCachedRowDirectoryEntries: Math.Max(1, options?.MaxCachedRowDirectoryEntries ?? 262_144), workBudget: workBudget, cancellationToken: cancellationToken);
 
     /// <summary>
     /// Opens the writer's file over a <see cref="Pager"/>, which writes and
@@ -141,11 +150,12 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="pager">Receives the file's pager; the file owns and disposes it.</param>
     /// <param name="cacheSize">The writer frame-cache capacity.</param>
     /// <param name="options">The configured encryption resource budgets.</param>
+    /// <param name="recoveryLease">Optional persistent caller-stream recovery lease held by the writer.</param>
     /// <param name="cancellationToken">Cancels password derivation during open.</param>
     /// <returns>The writer's file.</returns>
-    internal static DatabaseFile ForWriter(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, out Pager pager, int cacheSize = 256, AccessOptions? options = null, CancellationToken cancellationToken = default)
+    internal static DatabaseFile ForWriter(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, out Pager pager, int cacheSize = 256, AccessOptions? options = null, IPersistentStreamRecoveryLease? recoveryLease = null, CancellationToken cancellationToken = default)
     {
-        var file = new DatabaseFile(stream, header, password, path, leaveOpen, writable: true, cacheSize, options?.MaxEncryptionSpinCount ?? 1_000_000, options?.MaxEncryptionInfoBytes ?? (1024 * 1024), options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024), options?.MaxSchemaTraversalBytes ?? (64 * 1024 * 1024), cancellationToken: cancellationToken);
+        var file = new DatabaseFile(stream, header, password, path, leaveOpen, writable: true, cacheSize, options?.MaxEncryptionSpinCount ?? 1_000_000, options?.MaxEncryptionInfoBytes ?? (1024 * 1024), options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024), options?.MaxSchemaTraversalBytes ?? (64 * 1024 * 1024), Math.Max(1, options?.MaxActivePageLeases ?? 4096), Math.Max(0, options?.MaxLivePageFrames ?? 0), Math.Max(1, options?.MaxCachedRowDirectoryEntries ?? 262_144), recoveryLease: recoveryLease, cancellationToken: cancellationToken);
         pager = (Pager)file.Pages;
         return file;
     }

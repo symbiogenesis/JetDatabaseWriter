@@ -41,7 +41,7 @@ internal sealed class WriterServices : IDisposable
         // A capacity-0 page cache keeps nothing between calls, and names
         // resolve through the writer's catalog, so DDL and rollback cannot
         // leave a stale snapshot behind.
-        this.SnapshotPages = new ReaderPageCache(db.Format, db.Pages, capacity: 0);
+        this.SnapshotPages = new ReaderPageCache(db.Format, db.Pages, capacity: 0, options.MaxActivePageLeases, options.MaxLivePageFrames, options.MaxCachedRowDirectoryEntries);
         ReaderPageCache snapshotPages = this.SnapshotPages;
         var snapshotRows = new RowDecoder(db.Format, db.OwnedPages, snapshotPages, new LongValueDecoder(db.Format, snapshotPages, options.MaxLongValueBytes), strictParsing: true, new RowReadAccounting());
         var columnProperties = new ColumnPropertyReader(db.Format, db.TableDefs, snapshotRows);

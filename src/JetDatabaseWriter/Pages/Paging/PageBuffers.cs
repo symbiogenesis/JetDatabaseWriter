@@ -20,9 +20,9 @@ internal static class PageBuffers
     /// <returns>The disposable read reference.</returns>
     internal static async ValueTask<PageLease> ReadPageLeaseAsync(this IPageSource pages, long pageNumber, CancellationToken cancellationToken)
     {
-        if (pages is Pager pager)
+        if (pages is PageFile pageFile)
         {
-            return await pager.ReadPageLeaseAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            return await pageFile.ReadPageLeaseAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         }
 
         byte[] bytes = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);

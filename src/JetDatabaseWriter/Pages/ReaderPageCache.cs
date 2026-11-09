@@ -10,7 +10,7 @@ using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Verification;
 
 /// <summary>Retains immutable page images and their row directories; each read owns a disposable lease.</summary>
-internal sealed class ReaderPageCache : IDisposable
+internal sealed class ReaderPageCache : IPageFrameOwner, IDisposable
 {
 #if NET9_0_OR_GREATER
     private readonly System.Threading.Lock sync = new();
@@ -18,11 +18,16 @@ internal sealed class ReaderPageCache : IDisposable
     private readonly object sync = new();
 #endif
     private readonly IPageSource pages;
+    private readonly PageFile? pageFile;
     private readonly LruCache<long, PageFrame>? cache;
     private readonly Dictionary<long, PageLoad> loads = [];
     private readonly int maxActiveLeases;
+    private readonly int maxLiveFrames;
+    private readonly int maxCachedRowDirectoryEntries;
     private readonly Action releaseLease;
     private int outstandingLeases;
+    private int liveFrames;
+    private int cachedRowDirectoryEntries;
     private bool disposed;
 
     /// <summary>Initializes a new instance of the <see cref="ReaderPageCache"/> class.</summary>
@@ -30,7 +35,15 @@ internal sealed class ReaderPageCache : IDisposable
     /// <param name="pages">The source of owned page copies.</param>
     /// <param name="capacity">The retained image count; zero or negative disables reader retention.</param>
     /// <param name="maxActiveLeases">The positive combined pending and live reader lease allowance.</param>
-    internal ReaderPageCache(JetFormat format, IPageSource pages, int capacity, int maxActiveLeases = 4096)
+    /// <param name="maxLiveFrames">The maximum total live page frames (retained plus evicted-pinned), or 0 for automatic sizing.</param>
+    /// <param name="maxCachedRowDirectoryEntries">The positive aggregate cached row-directory entry allowance.</param>
+    internal ReaderPageCache(
+        JetFormat format,
+        IPageSource pages,
+        int capacity,
+        int maxActiveLeases = 4096,
+        int maxLiveFrames = 0,
+        int maxCachedRowDirectoryEntries = 262_144)
     {
         if (format.PageSize != pages.PageSize)
         {
@@ -38,10 +51,37 @@ internal sealed class ReaderPageCache : IDisposable
         }
 
         Guard.Positive(maxActiveLeases, nameof(maxActiveLeases));
+#if NET8_0_OR_GREATER
+        ArgumentOutOfRangeException.ThrowIfNegative(maxLiveFrames);
+#else
+        if (maxLiveFrames < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxLiveFrames));
+        }
+#endif
+        Guard.Positive(maxCachedRowDirectoryEntries, nameof(maxCachedRowDirectoryEntries));
 
         this.pages = pages;
+        this.pageFile = pages as PageFile;
+        int normalizedCapacity = Math.Max(0, capacity);
         this.maxActiveLeases = maxActiveLeases;
-        this.releaseLease = () => Interlocked.Decrement(ref this.outstandingLeases);
+        this.maxLiveFrames = maxLiveFrames > 0 ? maxLiveFrames : checked(normalizedCapacity + maxActiveLeases);
+        this.maxCachedRowDirectoryEntries = maxCachedRowDirectoryEntries;
+        if (this.pageFile is not null)
+        {
+            int effectiveCapacity = pages is Pager pager ? pager.CacheCapacity : normalizedCapacity;
+            this.pageFile.ConfigureLimits(effectiveCapacity, maxActiveLeases, maxLiveFrames, maxCachedRowDirectoryEntries);
+            this.releaseLease = this.pageFile.ReleaseLeaseSlot;
+            if (pages is not Pager)
+            {
+                this.pageFile.TryEvictUnpinnedCachedFrame = this.TryEvictUnpinnedFrame;
+            }
+        }
+        else
+        {
+            this.releaseLease = () => Interlocked.Decrement(ref this.outstandingLeases);
+        }
+
         if (capacity > 0 && pages is not Pager)
         {
             this.cache = new LruCache<long, PageFrame>(capacity, static frame => frame.Release());
@@ -49,16 +89,60 @@ internal sealed class ReaderPageCache : IDisposable
     }
 
     /// <summary>Gets the cache-hit count.</summary>
-    internal long Hits => this.cache?.Hits ?? 0;
+    internal long Hits => this.pages is Pager pager ? pager.Statistics.CacheHits : (this.cache?.Hits ?? 0);
 
     /// <summary>Gets the cache-miss count.</summary>
-    internal long Misses => this.cache?.Misses ?? 0;
+    internal long Misses => this.pages is Pager pager ? pager.Statistics.StoreReads : (this.cache?.Misses ?? 0);
 
     /// <summary>Gets the readable page count, including pending appended pages.</summary>
     internal long PageCount => this.pages.PageCount;
 
     /// <summary>Gets admitted pending acquisitions and reader leases not yet released.</summary>
-    internal int OutstandingLeases => Volatile.Read(ref this.outstandingLeases);
+    internal int OutstandingLeases => this.pageFile is not null ? this.pageFile.OutstandingLeases : Volatile.Read(ref this.outstandingLeases);
+
+    /// <summary>Gets the number of frames currently retained in the cache.</summary>
+    internal int RetainedFrames => this.pages is Pager pager ? pager.Statistics.CachedFrames : (this.cache?.Count ?? 0);
+
+    /// <summary>Gets the total live frame count (retained plus evicted-pinned).</summary>
+    internal int LiveFrames => this.pageFile is not null ? this.pageFile.LiveFrames : Volatile.Read(ref this.liveFrames);
+
+    /// <summary>Gets the number of frames evicted from the cache that remain pinned by active leases.</summary>
+    internal int EvictedPinnedFrames => this.pages is Pager pager
+        ? pager.Statistics.EvictedPinnedFrames
+        : Math.Max(0, this.LiveFrames - (this.cache?.Count ?? 0));
+
+    /// <summary>Gets the total row-directory slot entries cached across live frames.</summary>
+    internal int CachedRowDirectoryEntries => this.pageFile is not null ? this.pageFile.CachedRowDirectoryEntries : Volatile.Read(ref this.cachedRowDirectoryEntries);
+
+    /// <summary>Gets a snapshot of aggregate cache, frame, lease, load-gate, and row-directory accounting.</summary>
+    internal PageCacheStatistics Statistics
+    {
+        get
+        {
+            if (this.pages is Pager pager)
+            {
+                PagerStatistics s = pager.Statistics;
+                return new(s.CacheHits, s.StoreReads, s.CachedFrames, s.EvictedPinnedFrames, s.LiveFrames, s.OutstandingLeases, 0, s.InFlightStoreReads, s.CachedRowDirectoryEntries);
+            }
+
+            lock (this.sync)
+            {
+                int retained = this.cache?.Count ?? 0;
+                int live = this.LiveFrames;
+                int inFlight = this.pageFile?.InFlightReads ?? 0;
+                return new(
+                    this.cache?.Hits ?? 0,
+                    this.cache?.Misses ?? 0,
+                    retained,
+                    Math.Max(0, live - retained),
+                    live,
+                    this.OutstandingLeases,
+                    this.loads.Count,
+                    inFlight,
+                    this.CachedRowDirectoryEntries);
+            }
+        }
+    }
 
     /// <summary>Acquires immutable page bytes, valid until the returned lease is disposed.</summary>
     /// <param name="number">The page number.</param>
@@ -67,6 +151,16 @@ internal sealed class ReaderPageCache : IDisposable
     internal async ValueTask<PageLease> ReadPageAsync(long number, CancellationToken cancellationToken)
     {
         this.pages.ThrowIfDisposedOrCancelled(cancellationToken);
+        if (this.pages is Pager pager)
+        {
+            lock (this.sync)
+            {
+                this.ThrowIfDisposed();
+            }
+
+            return await pager.ReadPageLeaseAsync(number, cancellationToken).ConfigureAwait(false);
+        }
+
         lock (this.sync)
         {
             this.ThrowIfDisposed();
@@ -80,7 +174,7 @@ internal sealed class ReaderPageCache : IDisposable
             }
             catch
             {
-                Interlocked.Decrement(ref this.outstandingLeases);
+                this.ReleaseLeaseSlot();
                 throw;
             }
         }
@@ -88,20 +182,67 @@ internal sealed class ReaderPageCache : IDisposable
         PageLease? lease = null;
         try
         {
-            if (this.pages is Pager pager)
-            {
-                return lease = await pager.ReadPageLeaseAsync(number, this.releaseLease, cancellationToken).ConfigureAwait(false);
-            }
-
             return lease = await this.ReadMissAsync(number, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             if (lease is null)
             {
-                Interlocked.Decrement(ref this.outstandingLeases);
+                this.ReleaseLeaseSlot();
             }
         }
+    }
+
+    /// <inheritdoc/>
+    public bool TryReserveRowDirectoryEntries(int entryCount)
+    {
+        if (this.pageFile is not null)
+        {
+            return this.pageFile.TryReserveRowDirectoryEntries(entryCount);
+        }
+
+        if (entryCount <= 0)
+        {
+            return true;
+        }
+
+        int current;
+        do
+        {
+            current = Volatile.Read(ref this.cachedRowDirectoryEntries);
+            if ((long)current + entryCount > this.maxCachedRowDirectoryEntries)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref this.cachedRowDirectoryEntries, current + entryCount, current) == current)
+            {
+                return true;
+            }
+        }
+        while (true);
+    }
+
+    /// <inheritdoc/>
+    public void OnFrameReleased(byte[] buffer, bool bound, int cachedDirectoryEntries)
+    {
+        if (this.pageFile is not null)
+        {
+            this.pageFile.OnFrameReleased(buffer, bound, cachedDirectoryEntries);
+            return;
+        }
+
+        if (cachedDirectoryEntries > 0)
+        {
+            _ = Interlocked.Add(ref this.cachedRowDirectoryEntries, -cachedDirectoryEntries);
+        }
+
+        if (bound)
+        {
+            _ = Interlocked.Decrement(ref this.liveFrames);
+        }
+
+        PageBuffers.Return(buffer);
     }
 
     /// <inheritdoc/>
@@ -115,6 +256,11 @@ internal sealed class ReaderPageCache : IDisposable
             }
 
             this.disposed = true;
+            if (this.pageFile is not null && this.pages is not Pager)
+            {
+                this.pageFile.TryEvictUnpinnedCachedFrame = null;
+            }
+
             this.cache?.Dispose();
         }
     }
@@ -159,22 +305,17 @@ internal sealed class ReaderPageCache : IDisposable
             }
 
             byte[] bytes = await this.pages.ReadPageAsync(number, cancellationToken).ConfigureAwait(false);
-            var loaded = PageFrame.Own(bytes, this.pages.PageSize);
+            var loaded = PageFrame.Own(bytes, this.pages.PageSize, owner: this);
             PageLease? hold = null;
             bool retained = false;
             try
             {
-                hold = loaded.Acquire();
                 lock (this.sync)
                 {
                     this.ThrowIfDisposed();
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (this.cache is not null)
-                    {
-                        this.cache.Add(number, loaded);
-                        retained = true;
-                    }
-
+                    this.AdmitAndInstallLoadedFrame(number, loaded, ref retained);
+                    hold = loaded.Acquire();
                     load.Frame = loaded;
                     load.Hold = hold;
                     hold = null;
@@ -209,8 +350,62 @@ internal sealed class ReaderPageCache : IDisposable
         }
     }
 
+    private void AdmitAndInstallLoadedFrame(long number, PageFrame loaded, ref bool retained)
+    {
+        if (this.cache is null)
+        {
+            this.ReserveLiveFrameOrThrow();
+            loaded.MarkBoundToOwner();
+            return;
+        }
+
+        if (this.LiveFrames >= this.maxLiveFrames && !this.HasUnpinnedFrame())
+        {
+            throw new JetLimitationException(JetErrorCode.PageLeaseBudgetExceeded, $"The reader permits at most {this.maxLiveFrames} live page frames.");
+        }
+
+        this.IncrementLiveFrames();
+        loaded.MarkBoundToOwner();
+        if (this.LiveFrames > this.maxLiveFrames && !this.cache.ContainsKey(number))
+        {
+            _ = this.cache.TryEvictOne(static frame => frame.IsExclusivelyOwned);
+        }
+
+        this.cache.Add(number, loaded);
+        retained = true;
+        while (this.LiveFrames > this.maxLiveFrames)
+        {
+            if (!this.cache.TryEvictOne(frame => !ReferenceEquals(frame, loaded) && frame.IsExclusivelyOwned))
+            {
+                break;
+            }
+        }
+    }
+
+    private bool HasUnpinnedFrame()
+        => this.cache?.HasMatch(static frame => frame.IsExclusivelyOwned) == true;
+
+    private bool TryEvictUnpinnedFrame()
+    {
+        lock (this.sync)
+        {
+            if (this.disposed || this.cache is null)
+            {
+                return false;
+            }
+
+            return this.cache.TryEvictOne(static frame => frame.IsExclusivelyOwned);
+        }
+    }
+
     private void CountLease()
     {
+        if (this.pageFile is not null)
+        {
+            this.pageFile.CountLease();
+            return;
+        }
+
         int current;
         do
         {
@@ -227,6 +422,54 @@ internal sealed class ReaderPageCache : IDisposable
             }
         }
         while (true);
+    }
+
+    private void ReleaseLeaseSlot()
+    {
+        if (this.pageFile is not null)
+        {
+            this.pageFile.ReleaseLeaseSlot();
+            return;
+        }
+
+        _ = Interlocked.Decrement(ref this.outstandingLeases);
+    }
+
+    private void ReserveLiveFrameOrThrow()
+    {
+        if (this.pageFile is not null)
+        {
+            this.pageFile.ReserveLiveFrameOrThrow();
+            return;
+        }
+
+        int current;
+        do
+        {
+            current = Volatile.Read(ref this.liveFrames);
+            DataPageKernel.TryReserveCount(checked((uint)current), checked((uint)this.maxLiveFrames), out bool admitted, out uint next);
+            if (!admitted)
+            {
+                throw new JetLimitationException(JetErrorCode.PageLeaseBudgetExceeded, $"The reader permits at most {this.maxLiveFrames} live page frames.");
+            }
+
+            if (Interlocked.CompareExchange(ref this.liveFrames, checked((int)next), current) == current)
+            {
+                return;
+            }
+        }
+        while (true);
+    }
+
+    private void IncrementLiveFrames()
+    {
+        if (this.pageFile is not null)
+        {
+            _ = this.pageFile.IncrementLiveFrames();
+            return;
+        }
+
+        _ = Interlocked.Increment(ref this.liveFrames);
     }
 
     private void ThrowIfDisposed()

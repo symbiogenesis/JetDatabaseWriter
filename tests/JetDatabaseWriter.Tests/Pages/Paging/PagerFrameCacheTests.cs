@@ -4,11 +4,16 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Paging;
 using Xunit;
 
-/// <summary>Checks owned reads, write-through coherence and invalidation.</summary>
+/// <summary>Checks owned reads, write-through coherence, invalidation, and aggregate frame/lease accounting.</summary>
 public sealed class PagerFrameCacheTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -287,6 +292,172 @@ public sealed class PagerFrameCacheTests
         Assert.Equal(91, plaintext[0]);
         Assert.Equal(plaintext, await pager.ReadPageCopyAsync(1, Ct));
         Assert.Equal(1, codec.Decodes);
+    }
+
+    /// <summary>Pager enforces MaxLiveFrames by evicting unpinned CLOCK frames and refusing when all live frames are pinned.</summary>
+    [Fact]
+    public async Task MaxLiveFrames_EvictsUnpinnedClockFrames_AndRefusesWhenAllPinned()
+    {
+#pragma warning disable CA2000 // The awaited pager owns this store and codec and disposes them on every exit.
+        var store = new ControlledStore(80);
+        await using var pager = new Pager(store, 16, new NoPageCodec(), typeof(AccessWriter), cacheSize: 2, maxActiveLeases: 4, maxLiveFrames: 2);
+#pragma warning restore CA2000
+        using (PageLease first = await pager.ReadPageLeaseAsync(1, Ct))
+        {
+            Assert.Equal(1, pager.Statistics.CachedFrames);
+            Assert.Equal(0, pager.Statistics.EvictedPinnedFrames);
+            Assert.Equal(1, pager.Statistics.LiveFrames);
+        }
+
+        using PageLease pinnedSecond = await pager.ReadPageLeaseAsync(2, Ct);
+        Assert.Equal(2, pager.Statistics.CachedFrames);
+        Assert.Equal(2, pager.Statistics.LiveFrames);
+
+        using PageLease pinnedThird = await pager.ReadPageLeaseAsync(3, Ct);
+        Assert.Equal(2, pager.Statistics.CachedFrames);
+        Assert.Equal(0, pager.Statistics.EvictedPinnedFrames);
+        Assert.Equal(2, pager.Statistics.LiveFrames);
+        Assert.Equal(2, pager.Statistics.OutstandingLeases);
+
+        JetLimitationException exhausted = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+            await pager.ReadPageLeaseAsync(1, Ct));
+        Assert.Equal(JetErrorCode.PageLeaseBudgetExceeded, exhausted.ErrorCode);
+
+        byte[] update = new byte[16];
+        update[0] = 42;
+        await pager.WritePageAsync(2, update, Ct);
+        Assert.Equal(1, pager.Statistics.CachedFrames);
+        Assert.Equal(1, pager.Statistics.EvictedPinnedFrames);
+        Assert.Equal(2, pager.Statistics.LiveFrames);
+
+        JetLimitationException stillPinned = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+            await pager.ReadPageLeaseAsync(2, Ct));
+        Assert.Equal(JetErrorCode.PageLeaseBudgetExceeded, stillPinned.ErrorCode);
+
+        pinnedSecond.Dispose();
+        Assert.Equal(1, pager.Statistics.CachedFrames);
+        Assert.Equal(0, pager.Statistics.EvictedPinnedFrames);
+        Assert.Equal(1, pager.Statistics.LiveFrames);
+
+        using PageLease updatedSecond = await pager.ReadPageLeaseAsync(2, Ct);
+        Assert.Equal(42, updatedSecond.Memory.Span[0]);
+        Assert.Equal(2, pager.Statistics.CachedFrames);
+        Assert.Equal(2, pager.Statistics.LiveFrames);
+
+        updatedSecond.Dispose();
+        pinnedThird.Dispose();
+        Assert.Equal(0, pager.Statistics.OutstandingLeases);
+        Assert.Equal(0, pager.Statistics.EvictedPinnedFrames);
+    }
+
+    /// <summary>Direct read-only PageFile tracks in-flight reads, leases, and live frames within configured budgets.</summary>
+    [Fact]
+    public async Task DirectPageFile_TracksInFlightReadsLeasesAndLiveFrames()
+    {
+#pragma warning disable CA2000 // The awaited PageFile owns this store and codec and disposes them on every exit.
+        var store = new ControlledStore(48) { HoldRead = true };
+        await using var pageFile = new PageFile(store, 16, new NoPageCodec(), typeof(AccessReader), maxActiveLeases: 1, maxLiveFrames: 1, maxCachedRowDirectoryEntries: 4);
+#pragma warning restore CA2000
+        Task<byte[]> inFlight = pageFile.ReadPageAsync(1, Ct).AsTask();
+        await store.ReadCaptured.Task;
+        Assert.Equal(1, pageFile.InFlightReads);
+
+        JetLimitationException inFlightLimit = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+            await pageFile.ReadPageAsync(2, Ct));
+        Assert.Equal(JetErrorCode.PageLeaseBudgetExceeded, inFlightLimit.ErrorCode);
+
+        store.ReleaseRead.SetResult();
+        PageBuffers.Return(await inFlight);
+        Assert.Equal(0, pageFile.InFlightReads);
+
+        using PageLease lease = await pageFile.ReadPageLeaseAsync(1, Ct);
+        Assert.Equal(1, pageFile.OutstandingLeases);
+        Assert.Equal(1, pageFile.LiveFrames);
+
+        JetLimitationException leaseLimit = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+            await pageFile.ReadPageLeaseAsync(2, Ct));
+        Assert.Equal(JetErrorCode.PageLeaseBudgetExceeded, leaseLimit.ErrorCode);
+
+        lease.Dispose();
+        Assert.Equal(0, pageFile.OutstandingLeases);
+        Assert.Equal(0, pageFile.LiveFrames);
+    }
+
+    /// <summary>Writer nested and outer transaction rollbacks invalidate uncommitted frames and release all leases across abandoned reads.</summary>
+    [Fact]
+    public async Task WriterRollbackAndAbandonedReads_ReleaseLeasesAndInvalidateUncommittedFrames()
+    {
+        await using var stream = new MemoryStream();
+        var options = new AccessWriterOptions
+        {
+            UseLockFile = false,
+            PageCacheSize = 4,
+            MaxActivePageLeases = 16,
+            MaxLivePageFrames = 20,
+            MaxCachedRowDirectoryEntries = 64,
+        };
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.Jet4Mdb, options, leaveOpen: true, cancellationToken: Ct);
+        await writer.CreateTableAsync(
+            "Ledger",
+            [
+                new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                new ColumnDefinition("Tag", typeof(string), 32),
+                new ColumnDefinition("Notes", typeof(string), 2000),
+            ],
+            [new IndexDefinition("IX_Ledger_Tag", "Tag")],
+            Ct);
+
+        string memo = new('N', 2200);
+        await writer.InsertRowsAsync(
+            "Ledger",
+            [
+                [1, "alpha", memo],
+                [2, "beta", memo],
+            ],
+            Ct);
+
+        CatalogEntry? entry = await writer.Services.Catalog.GetCatalogEntryAsync("Ledger", Ct);
+        Assert.NotNull(entry);
+
+        await using (JetTransaction outerTx = await writer.BeginTransactionAsync(Ct))
+        {
+            await writer.InsertRowAsync("Ledger", [3, "gamma", memo], Ct);
+            await using (JetTransaction childTx = await writer.BeginTransactionAsync(Ct))
+            {
+                await writer.InsertRowAsync("Ledger", [4, "delta", memo], Ct);
+
+                int visited = 0;
+                await writer.Services.Snapshots.ForEachDecodedRowAsync(
+                    entry.TDefPage,
+                    (row, _) =>
+                    {
+                        Assert.NotNull(row.Values);
+                        visited++;
+                        return ValueTask.FromResult(false);
+                    },
+                    Ct);
+                Assert.Equal(1, visited);
+
+                await childTx.RollbackAsync(Ct);
+            }
+
+            Assert.Equal(3, (await writer.Services.Snapshots.ReadRowsAsync(entry.TDefPage, Ct)).Count);
+            await outerTx.RollbackAsync(Ct);
+        }
+
+        Assert.Equal(2, (await writer.Services.Snapshots.ReadRowsAsync(entry.TDefPage, Ct)).Count);
+
+        PagerStatistics stats = writer.Pager.Statistics;
+        ReaderPageCache snapshotCache = writer.Services.SnapshotPages;
+        Assert.Equal(0, stats.OutstandingLeases);
+        Assert.Equal(0, stats.EvictedPinnedFrames);
+        Assert.Equal(0, stats.InFlightStoreReads);
+        Assert.Equal(0, stats.DirtyBufferedPages);
+        Assert.Equal(0, snapshotCache.OutstandingLeases);
+        Assert.Equal(0, snapshotCache.EvictedPinnedFrames);
+        Assert.Equal(0, snapshotCache.Statistics.ActiveLoadGates);
+        Assert.InRange(stats.LiveFrames, 0, options.MaxLivePageFrames);
+        Assert.InRange(stats.CachedRowDirectoryEntries, 0, options.MaxCachedRowDirectoryEntries);
     }
 
     private sealed class CountingCodec(IPageCodec inner) : IPageCodec

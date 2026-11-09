@@ -148,6 +148,27 @@ public sealed class AccessWriterOptions : AccessOptions
 #pragma warning restore CA2208
         }
 
+        if (this.MaxActivePageLeases <= 0)
+        {
+#pragma warning disable CA2208 // The public options parameter carries this value.
+            throw new ArgumentOutOfRangeException("options", this.MaxActivePageLeases, "AccessWriterOptions.MaxActivePageLeases must be positive.");
+#pragma warning restore CA2208
+        }
+
+        if (this.MaxLivePageFrames < 0)
+        {
+#pragma warning disable CA2208 // The public options parameter carries this value.
+            throw new ArgumentOutOfRangeException("options", this.MaxLivePageFrames, "AccessWriterOptions.MaxLivePageFrames must be nonnegative.");
+#pragma warning restore CA2208
+        }
+
+        if (this.MaxCachedRowDirectoryEntries <= 0)
+        {
+#pragma warning disable CA2208 // The public options parameter carries this value.
+            throw new ArgumentOutOfRangeException("options", this.MaxCachedRowDirectoryEntries, "AccessWriterOptions.MaxCachedRowDirectoryEntries must be positive.");
+#pragma warning restore CA2208
+        }
+
         if (this.MaxTransactionPageBudget <= 0)
         {
 #pragma warning disable CA2208 // The value arrives through the public methods' options parameter, which the exception names.
@@ -206,5 +227,7 @@ public sealed class AccessWriterOptions : AccessOptions
             throw new ArgumentOutOfRangeException("options", this.MaxLongValueBytes, "AccessWriterOptions.MaxLongValueBytes must be between 1 and 1,073,741,823.");
 #pragma warning restore CA2208
         }
+
+        ValidatePersistentStreamRecoveryAdapter(this.PersistentStreamRecoveryAdapter);
     }
 }

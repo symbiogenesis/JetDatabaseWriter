@@ -106,4 +106,92 @@ public sealed class AgileMaintenanceFaultTests
             await writer.DisposeAsync();
         }
     }
+
+    /// <summary>Supported native encryption providers restore exact ciphertext across write, flush and truncate faults and prohibit mutations after failed undo.</summary>
+    /// <param name="fixture">The native encrypted database fixture.</param>
+    /// <param name="password">The database password.</param>
+    /// <param name="fault">The physical failure to inject.</param>
+    [Theory]
+    [InlineData("NativeJet3Rc4.mdb", "Pássword", "truncate")]
+    [InlineData("NativeJet3Rc4.mdb", "Pássword", "truncated")]
+    [InlineData("NativeJet3Rc4.mdb", "Pássword", "write")]
+    [InlineData("NativeJet3Rc4.mdb", "Pássword", "undo-fail")]
+    [InlineData("NativeJet4Rc4.mdb", "Native123", "truncate")]
+    [InlineData("NativeJet4Rc4.mdb", "Native123", "truncated")]
+    [InlineData("NativeJet4Rc4.mdb", "Native123", "write")]
+    [InlineData("NativeJet4Rc4.mdb", "Native123", "undo-fail")]
+    [InlineData("NativeJet4Password.mdb", "Native123", "truncated")]
+    [InlineData("NativeAceAgile.accdb", "Native123", "truncate")]
+    [InlineData("NativeAceAgile.accdb", "Native123", "truncated")]
+    [InlineData("NativeAceAgile.accdb", "Native123", "flush")]
+    [InlineData("NativeAceAgile.accdb", "Native123", "write")]
+    [InlineData("NativeAceAgile.accdb", "Native123", "undo-fail")]
+    [InlineData("NativeAceStandard.accdb", "Password1234_", "truncate")]
+    [InlineData("NativeAceStandard.accdb", "Password1234_", "truncated")]
+    [InlineData("NativeAceStandard.accdb", "Password1234_", "write")]
+    [InlineData("NativeAceStandard.accdb", "Password1234_", "undo-fail")]
+    [InlineData("Upstream-db2007-oldenc.accdb", "Test123", "truncated")]
+    [InlineData("Upstream-db2007-oldenc.accdb", "Test123", "write")]
+    [InlineData("Upstream-db2007-oldenc.accdb", "Test123", "undo-fail")]
+    [InlineData("Upstream-db2007-enc.accdb", "Test123", "truncated")]
+    [InlineData("Upstream-db2007-enc.accdb", "Test123", "write")]
+    [InlineData("Upstream-db2007-enc.accdb", "Test123", "undo-fail")]
+    [InlineData("Upstream-db-nonstandard.accdb", "password", "truncated")]
+    [InlineData("Upstream-db-nonstandard.accdb", "password", "write")]
+    [InlineData("Upstream-db-nonstandard.accdb", "password", "undo-fail")]
+    public async Task NativeProviderShrinkAndWriteFaults_PreserveCiphertextOrFaultWriter(string fixture, string password, string fault)
+    {
+        byte[] native = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, fixture), TestContext.Current.CancellationToken);
+        await using var stream = new WriteFaultStream();
+        await stream.WriteAsync(native, TestContext.Current.CancellationToken);
+        stream.Position = 0;
+        AccessWriter writer = await AccessWriter.OpenAsync(
+            stream,
+            new AccessWriterOptions(password) { UseLockFile = false, SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+        try
+        {
+            await FreePageTailFixture.AddFreeTailAsync(writer, 6);
+            byte[] baseline = stream.ToArray();
+            if (fault == "undo-fail")
+            {
+                stream.FailWritesFrom(2);
+                await Assert.ThrowsAsync<AggregateException>(async () => await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken));
+                JetOperationException failure = await StructuredFormatAssert.ThrowsAsync<JetOperationException>(
+                    JetErrorCode.WriterFaulted,
+                    async () => await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken));
+                Assert.Equal(JetErrorCode.WriterFaulted, failure.ErrorCode);
+                int writes = stream.WriteCount;
+                await writer.DisposeAsync();
+                Assert.Equal(writes, stream.WriteCount);
+                return;
+            }
+
+            switch (fault)
+            {
+                case "truncate":
+                    stream.FailOnTruncate(afterTruncate: false);
+                    break;
+                case "truncated":
+                    stream.FailOnTruncate(afterTruncate: true);
+                    break;
+                case "flush":
+                    stream.FailOnFlush(1);
+                    break;
+                default:
+                    stream.FailOnWrite(2);
+                    break;
+            }
+
+            await Assert.ThrowsAsync<IOException>(async () => await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken));
+            Assert.True(stream.Faulted);
+            Assert.Equal(baseline, stream.ToArray());
+            Assert.True(await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken) >= 6);
+        }
+        finally
+        {
+            await writer.DisposeAsync();
+        }
+    }
 }

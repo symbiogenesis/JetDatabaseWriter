@@ -37,7 +37,7 @@ internal sealed class FilePageDigests
     /// <param name="pageSize">The validated raw page size.</param>
     /// <returns>The exact digest ledger for the acquired image.</returns>
     /// <exception cref="ArgumentOutOfRangeException">The image exceeds the supported digest-ledger bounds.</exception>
-    internal static FilePageDigests Load(FileStream database, int pageSize)
+    internal static FilePageDigests Load(Stream database, int pageSize)
     {
         long length = database.Length;
         if (length < 0 || pageSize is not (2048 or 4096) || !PageDigestKernel.ValidShape((ulong)length, (uint)pageSize))

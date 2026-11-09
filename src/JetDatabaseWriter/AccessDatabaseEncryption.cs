@@ -108,7 +108,7 @@ public static class AccessDatabaseEncryption
             await using var source = new MemoryStream(plaintext, writable: false);
             await using var target = new MemoryStream(plaintext.Length);
             await EncryptionConverter.TransformPagesAsync(source, target, targetHeader, sourceCodec, targetCodec, cancellationToken).ConfigureAwait(false);
-            var database = DatabaseFile.ForWriter(target, targetHeader, options.Password, string.Empty, leaveOpen: true, out Pager pager, options.PageCacheSize, options, cancellationToken);
+            var database = DatabaseFile.ForWriter(target, targetHeader, options.Password, string.Empty, leaveOpen: true, out Pager pager, options.PageCacheSize, options, cancellationToken: cancellationToken);
             try
             {
                 if (database.Format.UsesHeaderMaskedSecuritySids)
@@ -175,7 +175,7 @@ public static class AccessDatabaseEncryption
                         ? PreparePasswordOnlyHeader(targetHeader, format, newPassword)
                         : PrepareHeader(targetHeader, format, target, newPassword, options, token);
                     await EncryptionConverter.TransformPagesAsync(source, destination, targetHeader, sourceCodec, targetCodec, token).ConfigureAwait(false);
-                    var database = DatabaseFile.ForWriter(destination, targetHeader, newPassword, string.Empty, leaveOpen: true, out Pager pager, options.PageCacheSize, options, token);
+                    var database = DatabaseFile.ForWriter(destination, targetHeader, newPassword, string.Empty, leaveOpen: true, out Pager pager, options.PageCacheSize, options, cancellationToken: token);
                     try
                     {
                         if (database.Format.UsesHeaderMaskedSecuritySids)

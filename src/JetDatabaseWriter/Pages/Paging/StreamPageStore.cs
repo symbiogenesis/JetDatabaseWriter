@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Interfaces;
 
 /// <summary>Stream storage with its own seek gate and optional positional reads.</summary>
 internal class StreamPageStore : IPageStore
@@ -20,14 +21,16 @@ internal class StreamPageStore : IPageStore
     /// <summary>Initializes a new instance of the <see cref="StreamPageStore"/> class.</summary>
     /// <param name="stream">The backing stream.</param>
     /// <param name="leaveOpen">Whether the caller owns the stream.</param>
-    internal StreamPageStore(Stream stream, bool leaveOpen)
+    /// <param name="recoveryLease">An optional persistent caller-stream recovery lease.</param>
+    internal StreamPageStore(Stream stream, bool leaveOpen, IPersistentStreamRecoveryLease? recoveryLease = null)
     {
         this.Stream = stream;
         this.leaveOpen = leaveOpen;
+        this.RecoveryLease = recoveryLease;
     }
 
     /// <inheritdoc/>
-    public StoreCapabilities Capabilities => new(this.Stream is FileStream, this.PositionalReads, this.Stream is FileStream, false, this.Stream is FileStream && this.AcquireWriteLock is not null, true);
+    public StoreCapabilities Capabilities => new(this.Stream is FileStream, this.PositionalReads, this.HasPersistentRecovery, false, this.Stream is FileStream && this.AcquireWriteLock is not null, true);
 
     /// <inheritdoc/>
     public long Length => this.Stream.Length;
@@ -35,24 +38,30 @@ internal class StreamPageStore : IPageStore
     /// <summary>Gets the backing stream for container maintenance.</summary>
     internal Stream Stream { get; }
 
+    /// <summary>Gets the active persistent caller-stream recovery lease, if any.</summary>
+    internal IPersistentStreamRecoveryLease? RecoveryLease { get; }
+
+    /// <summary>Gets a value indicating whether the store uses persistent recovery journaling.</summary>
+    internal bool HasPersistentRecovery => this.Stream is FileStream || this.RecoveryLease is not null;
+
     /// <summary>Gets or sets the crash journal active during physical transaction writes.</summary>
     internal PersistentRollbackJournal? RollbackJournal { get; set; }
 
     /// <summary>Acquires raw digest reuse under the writer's exclusive, serialized store ownership.</summary>
     /// <param name="pageSize">The validated physical page size.</param>
     /// <returns>The digest ledger for the current physical image.</returns>
-    /// <exception cref="InvalidOperationException">The store is not backed by a file.</exception>
+    /// <exception cref="InvalidOperationException">The store does not own persistent recovery.</exception>
     internal FilePageDigests GetPageDigests(int pageSize)
     {
-        if (this.Stream is not FileStream database)
+        if (!this.HasPersistentRecovery)
         {
-            throw new InvalidOperationException("Only an exclusively owned file store can retain raw page digests.");
+            throw new InvalidOperationException("Only an exclusively owned persistent store can retain raw page digests.");
         }
 
-        if (this.pageDigests is not { IsValid: true } || this.pageDigests.Length != database.Length || this.pageDigests.PageSize != pageSize)
+        if (this.pageDigests is not { IsValid: true } || this.pageDigests.Length != this.Stream.Length || this.pageDigests.PageSize != pageSize)
         {
             this.pageDigests?.Invalidate();
-            this.pageDigests = FilePageDigests.Load(database, pageSize);
+            this.pageDigests = FilePageDigests.Load(this.Stream, pageSize);
         }
 
         return this.pageDigests;
@@ -196,7 +205,12 @@ internal class StreamPageStore : IPageStore
         await this.ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (toDisk && this.Stream is FileStream file)
+            if (toDisk && this.RecoveryLease is { } recoveryLease)
+            {
+                await this.Stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                recoveryLease.FenceDatabase(this.Stream);
+            }
+            else if (toDisk && this.Stream is FileStream file)
             {
                 file.Flush(true);
             }
@@ -234,6 +248,7 @@ internal class StreamPageStore : IPageStore
         {
             this.resourcesDisposed = true;
             this.ioGate.Dispose();
+            this.RecoveryLease?.Dispose();
         }
     }
 }

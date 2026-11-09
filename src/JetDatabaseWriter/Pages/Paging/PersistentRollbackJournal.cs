@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Pages.Paging;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -11,6 +12,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.Verification;
 
@@ -21,11 +23,14 @@ internal sealed class PersistentRollbackJournal : IDisposable
     private const int HeaderLength = 128;
     private const long MaximumJournalLength = 16L * 1024 * 1024 * 1024;
     private static readonly byte[] Magic = Encoding.ASCII.GetBytes("JDWUNDO3");
-    private readonly FileStream database;
-    private readonly FileStream journal;
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The database stream is owned by StreamPageStore, not the single-transaction journal.")]
+    private readonly Stream database;
+    private readonly Stream journal;
     private readonly int pageSize;
     private readonly long originalLength;
     private readonly FilePageDigests? pageDigests;
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The recovery lease is owned by StreamPageStore for the writer's lifetime, not the single-transaction journal.")]
+    private readonly IPersistentStreamRecoveryLease? lease;
     private readonly Dictionary<long, long> beforeImages = [];
     private bool completed;
     private bool cleanupAttempted;
@@ -50,13 +55,14 @@ internal sealed class PersistentRollbackJournal : IDisposable
         Complete = 5,
     }
 
-    private PersistentRollbackJournal(FileStream database, FileStream journal, int pageSize, long originalLength, FilePageDigests? pageDigests)
+    private PersistentRollbackJournal(Stream database, Stream journal, int pageSize, long originalLength, FilePageDigests? pageDigests, IPersistentStreamRecoveryLease? lease = null)
     {
         this.database = database;
         this.journal = journal;
         this.pageSize = pageSize;
         this.originalLength = originalLength;
         this.pageDigests = pageDigests;
+        this.lease = lease;
     }
 
     /// <summary>Gets the sidecar name associated with a database.</summary>
@@ -136,6 +142,95 @@ internal sealed class PersistentRollbackJournal : IDisposable
         }
     }
 
+    /// <summary>Creates and fences the original raw page-hash manifest through an explicit caller-stream recovery lease.</summary>
+    /// <param name="database">The exclusively leased database stream.</param>
+    /// <param name="lease">The active persistent recovery lease.</param>
+    /// <param name="pageSize">The raw page size.</param>
+    /// <param name="pageDigests">Optional digest reuse owned by the physical store that tracks every successful write.</param>
+    /// <param name="onJournalRetained">Invoked if preparation fails after promotion or when discarding the preparing journal fails.</param>
+    /// <returns>The live journal.</returns>
+    /// <exception cref="IOException">The preparing or promoted journal stream could not be opened or fenced.</exception>
+    /// <exception cref="JetOperationException">A recovery journal already exists.</exception>
+    internal static PersistentRollbackJournal Create(Stream database, IPersistentStreamRecoveryLease lease, int pageSize, FilePageDigests? pageDigests = null, Action? onJournalRetained = null)
+    {
+        ValidatePageSize(pageSize);
+        long length = database.Length;
+        ValidateLength(length);
+        ValidateLeaseIdentity(lease);
+        long priorGeneration = lease.Generation;
+        long nextGeneration = checked(priorGeneration + 1);
+        Stream? staging = lease.CreatePreparingJournal();
+        if (staging is not { CanRead: true, CanWrite: true, CanSeek: true, Length: 0 })
+        {
+            onJournalRetained?.Invoke();
+            staging?.Dispose();
+            throw new JetOperationException(JetErrorCode.HotJournalConflict, "An existing recovery journal must be recovered before starting another transaction.");
+        }
+
+        Stream? journal = null;
+        bool promoted = false;
+        try
+        {
+            byte[] header = new byte[HeaderLength];
+            Magic.CopyTo(header, 0);
+            BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(8), pageSize);
+            BinaryPrimitives.WriteInt64LittleEndian(header.AsSpan(16), length);
+            AdapterIdentity(lease.DatabaseIdentity).CopyTo(header, 24);
+            BinaryPrimitives.WriteInt64LittleEndian(header.AsSpan(88, 8), nextGeneration);
+            staging.Write(header, 0, header.Length);
+            FilePageDigests? tracked = pageDigests is { IsValid: true } && pageDigests.Length == length && pageDigests.PageSize == pageSize
+                ? pageDigests
+                : null;
+            FilePageDigests manifest = tracked ?? FilePageDigests.Load(database, pageSize);
+            staging.Write(manifest.Manifest);
+            using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
+            {
+                hash.AppendData(manifest.Manifest);
+                hash.GetHashAndReset().CopyTo(header, 56);
+            }
+
+            Hash(header, 96).CopyTo(header, 96);
+            staging.Position = 0;
+            staging.Write(header, 0, header.Length);
+            FlushJournal(staging, lease);
+            staging.Dispose();
+            staging = null;
+            lease.BindGeneration(nextGeneration);
+            journal = lease.PromotePreparingJournal() ?? throw new IOException("The persistent stream recovery adapter failed to open the promoted journal stream.");
+            promoted = true;
+            if (!journal.CanRead || !journal.CanWrite || !journal.CanSeek)
+            {
+                throw new IOException("The promoted recovery journal stream must be readable, writable, and seekable.");
+            }
+
+            return new PersistentRollbackJournal(database, journal, pageSize, length, tracked, lease);
+        }
+        catch
+        {
+            try
+            {
+                staging?.Dispose();
+                journal?.Dispose();
+                if (!promoted)
+                {
+                    lease.DiscardPreparingJournal();
+                }
+                else
+                {
+                    onJournalRetained?.Invoke();
+                }
+            }
+            catch (Exception cleanupFailure) when (cleanupFailure is IOException or UnauthorizedAccessException)
+            {
+                onJournalRetained?.Invoke();
+
+                // Preserve the original preparation failure. A promoted manifest remains recoverable.
+            }
+
+            throw;
+        }
+    }
+
     /// <summary>Refuses independent readers while recovery or writer-ownership evidence exists.</summary>
     /// <param name="database">The opened database.</param>
     /// <exception cref="JetOperationException">Recovery or writer-ownership evidence exists.</exception>
@@ -185,7 +280,8 @@ internal sealed class PersistentRollbackJournal : IDisposable
         {
             if (path != preparation && File.Exists(preparation))
             {
-                ValidatePreparationCopy(database.Name, journal, preparation);
+                using var staged = new FileStream(preparation, FileMode.Open, FileAccess.Read, FileShare.None);
+                ValidatePreparationCopy(database.Name, journal, staged);
                 matchingPreparation = true;
             }
 
@@ -208,7 +304,59 @@ internal sealed class PersistentRollbackJournal : IDisposable
         _ = DirectoryPersistence.FlushParent(path);
     }
 
-    private static void RestoreBeforeImages(FileStream database, FileStream journal, JournalState state)
+    /// <summary>Validates all original and current content before idempotently restoring an undecided caller-stream transaction.</summary>
+    /// <param name="database">The exclusively leased writable database stream.</param>
+    /// <param name="lease">The active persistent recovery lease.</param>
+    /// <exception cref="IOException">The journal or database stream could not be read or restored.</exception>
+    /// <exception cref="JetCorruptDataException">The journal or database content conflicts with the recovery manifest.</exception>
+    internal static void Recover(Stream database, IPersistentStreamRecoveryLease lease)
+    {
+        ValidateLeaseIdentity(lease);
+        if (!lease.TryOpenPendingJournal(out Stream? published, out Stream? preparing))
+        {
+            return;
+        }
+
+        try
+        {
+            Stream? primary = published ?? preparing;
+            if (primary is null)
+            {
+                return;
+            }
+
+            if (!primary.CanRead || !primary.CanWrite || !primary.CanSeek)
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The persistent recovery journal stream must be readable, writable, and seekable.");
+            }
+
+            if (published is not null && preparing is not null)
+            {
+                if (!preparing.CanRead || !preparing.CanSeek)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The preparing recovery journal stream must be readable and seekable.");
+                }
+
+                ValidatePreparationCopy(string.Empty, published, preparing, lease);
+            }
+
+            JournalState state = ValidateJournal(database, primary, lease);
+            if (!state.Committed)
+            {
+                ValidateCurrentContent(database, primary, state);
+                RestoreBeforeImages(database, primary, state, lease);
+            }
+        }
+        finally
+        {
+            preparing?.Dispose();
+            published?.Dispose();
+        }
+
+        lease.RetireJournal();
+    }
+
+    private static void RestoreBeforeImages(Stream database, Stream journal, JournalState state, IPersistentStreamRecoveryLease? lease = null)
     {
         byte[] page = new byte[state.PageSize];
         byte[] record = new byte[state.PageSize + 40];
@@ -222,7 +370,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             switch (NextReplayAction(state, recovering, remaining, phase))
             {
                 case JournalReplayAction.Marker:
-                    _ = AppendRecord(journal, state.PageSize, -3, []);
+                    _ = AppendRecord(journal, state.PageSize, -3, [], durable: true, lease);
                     recovering = true;
                     break;
                 case JournalReplayAction.Page:
@@ -237,11 +385,11 @@ internal sealed class PersistentRollbackJournal : IDisposable
                     phase = 1;
                     break;
                 case JournalReplayAction.Flush:
-                    database.Flush(true);
+                    FlushDatabase(database, lease);
                     phase = 2;
                     break;
                 case JournalReplayAction.Complete:
-                    _ = AppendRecord(journal, state.PageSize, -1, DatabaseHash(database, state.PageSize));
+                    _ = AppendRecord(journal, state.PageSize, -1, DatabaseHash(database, state.PageSize), durable: true, lease);
                     return;
                 case JournalReplayAction.Invalid:
                     throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery replay control state is invalid.");
@@ -255,7 +403,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         => (JournalReplayAction)RecoveryKernel.JournalReplayAction(
             (uint)state.PageSize, (ulong)state.OriginalLength, (ulong)state.MinimumLength, recovering, remaining, phase);
 
-    private static void ValidateReplayInventory(FileStream journal, JournalState state, byte[] record)
+    private static void ValidateReplayInventory(Stream journal, JournalState state, byte[] record)
     {
         uint remaining = checked((uint)state.BeforeImages.Count);
         for (long position = state.Start; position < state.CompleteEnd; position = NextRecord(state.PageSize, state.OriginalLength, state.CompleteEnd, position))
@@ -274,7 +422,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         }
     }
 
-    private static KeyValuePair<long, long> NextReplayPage(FileStream journal, JournalState state, ref long position, uint remaining, byte[] record)
+    private static KeyValuePair<long, long> NextReplayPage(Stream journal, JournalState state, ref long position, uint remaining, byte[] record)
     {
         while (position < state.CompleteEnd)
         {
@@ -310,10 +458,9 @@ internal sealed class PersistentRollbackJournal : IDisposable
         return checked((long)offset);
     }
 
-    private static void ValidatePreparationCopy(string databasePath, FileStream journal, string preparation)
+    private static void ValidatePreparationCopy(string databasePath, Stream journal, Stream staged, IPersistentStreamRecoveryLease? lease = null)
     {
-        using var staged = new FileStream(preparation, FileMode.Open, FileAccess.Read, FileShare.None);
-        (int pageSize, long originalLength) = ValidateManifest(databasePath, staged);
+        (int pageSize, long originalLength) = ValidateManifest(databasePath, staged, lease);
         long completeEnd = CompleteRecordEnd(pageSize, originalLength, staged.Length);
         if (completeEnd > journal.Length)
         {
@@ -339,7 +486,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         }
     }
 
-    private static (int PageSize, long OriginalLength) ValidateManifest(string databasePath, FileStream journal)
+    private static (int PageSize, long OriginalLength) ValidateManifest(string databasePath, Stream journal, IPersistentStreamRecoveryLease? lease = null)
     {
         if (journal.Length is < HeaderLength or > MaximumJournalLength)
         {
@@ -354,7 +501,10 @@ internal sealed class PersistentRollbackJournal : IDisposable
         ValidateLength(originalLength);
         long manifestLength = RecordStart(pageSize, originalLength) - HeaderLength;
         _ = CompleteRecordEnd(pageSize, originalLength, journal.Length);
-        if (!header.AsSpan(0, 8).SequenceEqual(Magic) || !header.AsSpan(96, 32).SequenceEqual(Hash(header, 96)) || !header.AsSpan(24, 32).SequenceEqual(Identity(databasePath)))
+        byte[] expectedIdentity = lease is not null ? AdapterIdentity(lease.DatabaseIdentity) : Identity(databasePath);
+        long journalGeneration = BinaryPrimitives.ReadInt64LittleEndian(header.AsSpan(88, 8));
+        bool validGeneration = lease is null || (journalGeneration > 0 && journalGeneration == lease.Generation);
+        if (!header.AsSpan(0, 8).SequenceEqual(Magic) || !header.AsSpan(96, 32).SequenceEqual(Hash(header, 96)) || !header.AsSpan(24, 32).SequenceEqual(expectedIdentity) || !validGeneration)
         {
             throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery journal identity or header is invalid.");
         }
@@ -377,9 +527,10 @@ internal sealed class PersistentRollbackJournal : IDisposable
         return (pageSize, originalLength);
     }
 
-    private static JournalState ValidateJournal(FileStream database, FileStream journal)
+    private static JournalState ValidateJournal(Stream database, Stream journal, IPersistentStreamRecoveryLease? lease = null)
     {
-        (int pageSize, long originalLength) = ValidateManifest(database.Name, journal);
+        string databasePath = lease is null && database is FileStream fileStream ? fileStream.Name : string.Empty;
+        (int pageSize, long originalLength) = ValidateManifest(databasePath, journal, lease);
         ValidateLength(database.Length);
         long start = RecordStart(pageSize, originalLength);
         int recordSize = pageSize + 40;
@@ -473,7 +624,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         return true;
     }
 
-    private static void ValidateCurrentContent(FileStream database, FileStream journal, JournalState state)
+    private static void ValidateCurrentContent(Stream database, Stream journal, JournalState state)
     {
         byte[] original = new byte[state.PageSize];
         byte[] current = new byte[state.PageSize];
@@ -591,7 +742,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         return checked((long)next);
     }
 
-    private static int ReadOriginalPage(FileStream journal, JournalState state, long offset, long position, byte[] page, byte[] record)
+    private static int ReadOriginalPage(Stream journal, JournalState state, long offset, long position, byte[] page, byte[] record)
     {
         int count = OriginalPageLength(state.PageSize, state.OriginalLength, offset);
         long tag = ReadRecord(journal, state.PageSize, state.OriginalLength, state.CompleteEnd, position, record);
@@ -608,7 +759,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         return count;
     }
 
-    private static void VerifyOriginalPage(FileStream journal, int pageSize, long originalLength, long offset, ReadOnlySpan<byte> page)
+    private static void VerifyOriginalPage(Stream journal, int pageSize, long originalLength, long offset, ReadOnlySpan<byte> page)
     {
         if (!OriginalPageMatches(journal, pageSize, originalLength, offset, page))
         {
@@ -616,7 +767,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         }
     }
 
-    private static bool OriginalPageMatches(FileStream journal, int pageSize, long originalLength, long offset, ReadOnlySpan<byte> page)
+    private static bool OriginalPageMatches(Stream journal, int pageSize, long originalLength, long offset, ReadOnlySpan<byte> page)
     {
         ulong hashOffset = RecoveryKernel.OriginalPageHashOffset(unchecked((uint)pageSize), unchecked((ulong)originalLength), unchecked((ulong)offset));
         if (hashOffset == 0)
@@ -629,7 +780,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         return expected.AsSpan().SequenceEqual(Hash(page[..OriginalPageLength(pageSize, originalLength, offset)]));
     }
 
-    private static long AppendRecord(FileStream journal, int pageSize, long offset, ReadOnlySpan<byte> bytes, bool durable = true)
+    private static long AppendRecord(Stream journal, int pageSize, long offset, ReadOnlySpan<byte> bytes, bool durable = true, IPersistentStreamRecoveryLease? lease = null)
     {
         int payloadLength = Math.Max(pageSize, 32);
         byte[] record = new byte[checked(8 + payloadLength + 32)];
@@ -651,13 +802,13 @@ internal sealed class PersistentRollbackJournal : IDisposable
         journal.Write(record, 0, record.Length);
         if (durable)
         {
-            journal.Flush(true);
+            FlushJournal(journal, lease);
         }
 
         return position;
     }
 
-    private static long ReadRecord(FileStream journal, int pageSize, long originalLength, long completeEnd, long position, byte[] record)
+    private static long ReadRecord(Stream journal, int pageSize, long originalLength, long completeEnd, long position, byte[] record)
     {
         long next = NextRecord(pageSize, originalLength, completeEnd, position);
         if (record.Length != next - position)
@@ -674,7 +825,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         return BinaryPrimitives.ReadInt64LittleEndian(record);
     }
 
-    private static byte[] DatabaseHash(FileStream database, int pageSize)
+    private static byte[] DatabaseHash(Stream database, int pageSize)
     {
         ValidateLength(database.Length);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -703,6 +854,46 @@ internal sealed class PersistentRollbackJournal : IDisposable
         return Hash(bytes, bytes.Length);
     }
 
+    private static byte[] AdapterIdentity(string identity)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes("jdw-stream-adapter:" + identity);
+        return Hash(bytes, bytes.Length);
+    }
+
+    private static void ValidateLeaseIdentity(IPersistentStreamRecoveryLease lease)
+    {
+        if (string.IsNullOrWhiteSpace(lease.DatabaseIdentity) || lease.Generation < 0)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The persistent recovery lease identity or generation is invalid.");
+        }
+    }
+
+    private static void FlushDatabase(Stream database, IPersistentStreamRecoveryLease? lease)
+    {
+        if (lease is not null)
+        {
+            database.Flush();
+            lease.FenceDatabase(database);
+        }
+        else
+        {
+            ((FileStream)database).Flush(true);
+        }
+    }
+
+    private static void FlushJournal(Stream journal, IPersistentStreamRecoveryLease? lease)
+    {
+        if (lease is not null)
+        {
+            journal.Flush();
+            lease.FenceJournal(journal);
+        }
+        else
+        {
+            ((FileStream)journal).Flush(true);
+        }
+    }
+
     private static byte[] Hash(byte[] bytes, int length)
     {
 #if NET6_0_OR_GREATER
@@ -724,7 +915,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
 #endif
     }
 
-    private static void Read(FileStream stream, long offset, byte[] bytes, int count)
+    private static void Read(Stream stream, long offset, byte[] bytes, int count)
     {
         stream.Position = offset;
         int read = 0;
@@ -871,7 +1062,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             throw new JetOperationException(JetErrorCode.InvalidOperationState, "A completed rollback journal cannot restore database bytes.");
         }
 
-        JournalState state = ValidateJournal(this.database, this.journal);
+        JournalState state = ValidateJournal(this.database, this.journal, this.lease);
         if (state.PageSize != this.pageSize || state.OriginalLength != this.originalLength || state.Committed)
         {
             throw new JetCorruptDataException(JetErrorCode.CorruptRecoveryJournal, "The recovery manifest differs from the prepared database image.");
@@ -934,7 +1125,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
     /// <summary>Durably records the final database hash and removes the completed journal.</summary>
     internal void Complete()
     {
-        this.database.Flush(true);
+        FlushDatabase(this.database, this.lease);
         byte[] digest = this.pageDigests is { IsValid: true } && this.pageDigests.Length == this.database.Length
             ? this.pageDigests.DatabaseHash()
             : DatabaseHash(this.database, this.pageSize);
@@ -968,8 +1159,16 @@ internal sealed class PersistentRollbackJournal : IDisposable
         try
         {
             this.journal.Dispose();
-            File.Delete(JournalPath(this.database.Name));
-            _ = DirectoryPersistence.FlushParent(this.database.Name);
+            if (this.lease is not null)
+            {
+                this.lease.RetireJournal();
+            }
+            else
+            {
+                string name = ((FileStream)this.database).Name;
+                File.Delete(JournalPath(name));
+                _ = DirectoryPersistence.FlushParent(name);
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -978,7 +1177,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
     }
 
     private long AppendRecord(long offset, ReadOnlySpan<byte> bytes, bool durable = true)
-        => AppendRecord(this.journal, this.pageSize, offset, bytes, durable);
+        => AppendRecord(this.journal, this.pageSize, offset, bytes, durable, this.lease);
 
     private void RequireRecordCapacity(int records)
     {

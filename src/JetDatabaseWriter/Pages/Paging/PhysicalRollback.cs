@@ -44,7 +44,7 @@ internal sealed class PhysicalRollback : IAsyncDisposable
     /// <returns>The capture completion.</returns>
     internal async ValueTask CaptureAsync(long offset, CancellationToken cancellationToken)
     {
-        if (this.store is StreamPageStore { Stream: FileStream } || offset >= this.originalLength || this.records.ContainsKey(offset))
+        if (this.store is StreamPageStore { HasPersistentRecovery: true } || offset >= this.originalLength || this.records.ContainsKey(offset))
         {
             return;
         }
@@ -78,12 +78,26 @@ internal sealed class PhysicalRollback : IAsyncDisposable
     /// <summary>Prepares durable file recovery before permitting physical writes.</summary>
     internal void BeginWrite()
     {
-        if (this.store is StreamPageStore { Stream: FileStream database } streamStore)
+        if (this.store is StreamPageStore { HasPersistentRecovery: true } streamStore && this.recovery is null)
         {
-            this.IsFaulted = true;
-            this.recovery ??= PersistentRollbackJournal.Create(database, this.pageSize, streamStore.GetPageDigests(this.pageSize));
+            if (streamStore.RecoveryLease is { } lease)
+            {
+                this.IsFaulted = false;
+                this.recovery = PersistentRollbackJournal.Create(
+                    streamStore.Stream,
+                    lease,
+                    this.pageSize,
+                    streamStore.GetPageDigests(this.pageSize),
+                    () => this.IsFaulted = true);
+            }
+            else
+            {
+                this.IsFaulted = true;
+                this.recovery = PersistentRollbackJournal.Create((FileStream)streamStore.Stream, this.pageSize, streamStore.GetPageDigests(this.pageSize));
+                this.IsFaulted = false;
+            }
+
             streamStore.RollbackJournal = this.recovery;
-            this.IsFaulted = false;
         }
 
         this.hasWrites = true;
