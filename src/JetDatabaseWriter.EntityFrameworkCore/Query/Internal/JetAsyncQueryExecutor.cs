@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -89,26 +90,22 @@ internal static class JetAsyncQueryExecutor
         }
 
         QueryCompilationContext compilationContext = dependencies.QueryCompilationContextFactory.Create(async: true);
-        JetQueryPlan plan = JetQueryPlanExtractor.Analyze(
-            query,
-            compilationContext,
-            dependencies.QueryCompilationContextFactory,
-            preprocessorFactory,
-            shaperFactory);
+        IModel model = compilationContext.Model;
+        JetQueryPlan plan = JetQueryPlanExtractor.Analyze(query, model);
 
         Type resultType = typeof(TResult);
         if (resultType.IsGenericType && resultType.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>))
         {
             Type elementType = resultType.GetGenericArguments()[0];
             MethodInfo genericMethod = BuildSequenceExecutorMethod.MakeGenericMethod(elementType);
-            return (Func<QueryContext, TResult>)genericMethod.Invoke(null, [query, plan, compilationContext])!;
+            return (Func<QueryContext, TResult>)genericMethod.Invoke(null, [query, plan, model])!;
         }
 
         if (resultType.IsGenericType && resultType.GetGenericTypeDefinition() == typeof(Task<>))
         {
             Type scalarType = resultType.GetGenericArguments()[0];
             MethodInfo genericMethod = BuildScalarExecutorMethod.MakeGenericMethod(scalarType);
-            return (Func<QueryContext, TResult>)genericMethod.Invoke(null, [query, plan, compilationContext])!;
+            return (Func<QueryContext, TResult>)genericMethod.Invoke(null, [query, plan, model])!;
         }
 
         throw new NotSupportedException($"Unsupported asynchronous query result type '{resultType}'.");
@@ -117,18 +114,18 @@ internal static class JetAsyncQueryExecutor
     private static Func<QueryContext, IAsyncEnumerable<TElement>> BuildSequenceExecutor<TElement>(
         Expression query,
         JetQueryPlan plan,
-        QueryCompilationContext compilationContext)
+        IModel model)
     {
         Func<QueryContext, JetExecutionMaterializedState, IEnumerable<TElement>> compiledQuery =
-            CompileSequenceDelegate<TElement>(query, plan, compilationContext.Model);
-        IEntityType? resultEntityType = compilationContext.Model.FindEntityType(typeof(TElement));
+            CompileSequenceDelegate<TElement>(query, plan, model);
+        IEntityType? resultEntityType = model.FindEntityType(typeof(TElement));
         return queryContext => ExecuteSequenceAsync(queryContext, plan, compiledQuery, resultEntityType);
     }
 
     private static Func<QueryContext, Task<TScalar>> BuildScalarExecutor<TScalar>(
         Expression query,
         JetQueryPlan plan,
-        QueryCompilationContext compilationContext)
+        IModel model)
     {
         if (TryBuildEntityFreeAggregateExecutor<TScalar>(query, plan, out Func<QueryContext, Task<TScalar>>? fastExecutor))
         {
@@ -136,8 +133,8 @@ internal static class JetAsyncQueryExecutor
         }
 
         Func<QueryContext, JetExecutionMaterializedState, TScalar> compiledQuery =
-            CompileScalarDelegate<TScalar>(query, plan, compilationContext.Model);
-        IEntityType? resultEntityType = compilationContext.Model.FindEntityType(typeof(TScalar));
+            CompileScalarDelegate<TScalar>(query, plan, model);
+        IEntityType? resultEntityType = model.FindEntityType(typeof(TScalar));
         return queryContext => ExecuteScalarAsync(queryContext, plan, compiledQuery, resultEntityType);
     }
 
@@ -1344,7 +1341,7 @@ internal static class JetAsyncQueryExecutor
             }
         }
 
-        object tracked = plan.GetTrackedMaterializer(concreteType)(queryContext, buffer);
+        object tracked = plan.GetTrackedMaterializer(queryContext, concreteType)(queryContext, buffer);
         state.PromotedEntities[candidateEntity] = tracked;
         state.EntityBuffers[tracked] = buffer;
         state.EntityTypesByInstance[tracked] = concreteType;
@@ -1466,7 +1463,7 @@ internal static class JetAsyncQueryExecutor
         bool deduplicateCandidates,
         Dictionary<IEntityType, Dictionary<StructuralKey, object>> untrackedIdentityMaps)
     {
-        Func<QueryContext, ValueBuffer, object> untrackedMaterializer = plan.GetUntrackedMaterializer(rootEntityType);
+        Func<QueryContext, ValueBuffer, object> untrackedMaterializer = plan.GetUntrackedMaterializer(queryContext, rootEntityType);
         IKey? primaryKey = rootEntityType.FindPrimaryKey();
 
         Dictionary<StructuralKey, object>? untrackedMap = null;
@@ -2148,10 +2145,7 @@ internal static class JetAsyncQueryExecutor
         List<JetIncludeChain> includeChains,
         List<INavigationBase> queryReferencedNavigations,
         QueryTrackingBehavior? trackingBehaviorOverride,
-        bool ignoreQueryFilters,
-        IQueryCompilationContextFactory compilationContextFactory,
-        IQueryTranslationPreprocessorFactory preprocessorFactory,
-        IShapedQueryCompilingExpressionVisitorFactory shaperFactory)
+        bool ignoreQueryFilters)
     {
         private readonly Dictionary<IEntityType, Func<QueryContext, ValueBuffer, object>> trackedMaterializers = [];
         private readonly Dictionary<IEntityType, Func<QueryContext, ValueBuffer, object>> untrackedMaterializers = [];
@@ -2169,13 +2163,13 @@ internal static class JetAsyncQueryExecutor
 
         public bool IgnoreQueryFilters { get; } = ignoreQueryFilters;
 
-        public Func<QueryContext, ValueBuffer, object> GetTrackedMaterializer(IEntityType entityType)
+        public Func<QueryContext, ValueBuffer, object> GetTrackedMaterializer(QueryContext queryContext, IEntityType entityType)
         {
             lock (this.trackedMaterializers)
             {
                 if (!this.trackedMaterializers.TryGetValue(entityType, out Func<QueryContext, ValueBuffer, object>? materializer))
                 {
-                    JetShapedQueryCompilingExpressionVisitor visitor = this.CreateShaperVisitor(entityType, trackAll: true);
+                    JetShapedQueryCompilingExpressionVisitor visitor = CreateShaperVisitor(queryContext, entityType, trackAll: true);
                     materializer = visitor.CreateEntityMaterializer(entityType);
                     this.trackedMaterializers[entityType] = materializer;
                 }
@@ -2184,13 +2178,13 @@ internal static class JetAsyncQueryExecutor
             }
         }
 
-        public Func<QueryContext, ValueBuffer, object> GetUntrackedMaterializer(IEntityType entityType)
+        public Func<QueryContext, ValueBuffer, object> GetUntrackedMaterializer(QueryContext queryContext, IEntityType entityType)
         {
             lock (this.untrackedMaterializers)
             {
                 if (!this.untrackedMaterializers.TryGetValue(entityType, out Func<QueryContext, ValueBuffer, object>? materializer))
                 {
-                    JetShapedQueryCompilingExpressionVisitor visitor = this.CreateShaperVisitor(entityType, trackAll: false);
+                    JetShapedQueryCompilingExpressionVisitor visitor = CreateShaperVisitor(queryContext, entityType, trackAll: false);
                     materializer = visitor.CreateEntityMaterializer(entityType);
                     this.untrackedMaterializers[entityType] = materializer;
                 }
@@ -2235,8 +2229,18 @@ internal static class JetAsyncQueryExecutor
             }
         }
 
-        private JetShapedQueryCompilingExpressionVisitor CreateShaperVisitor(IEntityType entityType, bool trackAll)
+        private static JetShapedQueryCompilingExpressionVisitor CreateShaperVisitor(
+            QueryContext queryContext,
+            IEntityType entityType,
+            bool trackAll)
         {
+            IQueryCompilationContextFactory compilationContextFactory =
+                queryContext.Context.GetService<IQueryCompilationContextFactory>();
+            IQueryTranslationPreprocessorFactory preprocessorFactory =
+                queryContext.Context.GetService<IQueryTranslationPreprocessorFactory>();
+            IShapedQueryCompilingExpressionVisitorFactory shaperFactory =
+                queryContext.Context.GetService<IShapedQueryCompilingExpressionVisitorFactory>();
+
             QueryCompilationContext context = compilationContextFactory.Create(async: true);
             string methodName = trackAll
                 ? nameof(EntityFrameworkQueryableExtensions.AsTracking)
@@ -2282,12 +2286,9 @@ internal static class JetAsyncQueryExecutor
 
         public static JetQueryPlan Analyze(
             Expression query,
-            QueryCompilationContext compilationContext,
-            IQueryCompilationContextFactory compilationContextFactory,
-            IQueryTranslationPreprocessorFactory preprocessorFactory,
-            IShapedQueryCompilingExpressionVisitorFactory shaperFactory)
+            IModel model)
         {
-            JetQueryPlanExtractor extractor = new(compilationContext.Model);
+            JetQueryPlanExtractor extractor = new(model);
             _ = extractor.Visit(query);
 
             if (!extractor.ignoreAutoIncludes)
@@ -2320,12 +2321,12 @@ internal static class JetAsyncQueryExecutor
                 JetTableLoadPlan singlePlan = extractor.rootTables[0];
                 singlePlan.RequiredProperties = TryComputeRequiredProperties(
                     query,
-                    compilationContext.Model,
+                    model,
                     singlePlan,
                     extractor.IgnoreQueryFilters);
                 ConfigureSingleTableScanOptimizations(
                     query,
-                    compilationContext.Model,
+                    model,
                     singlePlan,
                     extractor.IgnoreQueryFilters);
             }
@@ -2336,10 +2337,7 @@ internal static class JetAsyncQueryExecutor
                 extractor.includeChains,
                 extractor.queryReferencedNavigations,
                 extractor.TrackingBehaviorOverride,
-                extractor.IgnoreQueryFilters,
-                compilationContextFactory,
-                preprocessorFactory,
-                shaperFactory);
+                extractor.IgnoreQueryFilters);
         }
 
         protected override Expression VisitExtension(Expression node)
