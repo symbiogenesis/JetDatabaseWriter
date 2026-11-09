@@ -79,14 +79,11 @@ public sealed class JetTransactionManager : IDbContextTransactionManager, IDispo
 
     /// <inheritdoc/>
     public void ResetState()
-        => this.currentTransaction = null;
+        => this.Dispose();
 
     /// <inheritdoc/>
-    public async Task ResetStateAsync(CancellationToken cancellationToken = default)
-    {
-        this.currentTransaction = null;
-        await this.connection.DisposeTransactionAsync().ConfigureAwait(false);
-    }
+    public Task ResetStateAsync(CancellationToken cancellationToken = default)
+        => this.DisposeAsync().AsTask();
 
     /// <inheritdoc/>
     public void Dispose()
