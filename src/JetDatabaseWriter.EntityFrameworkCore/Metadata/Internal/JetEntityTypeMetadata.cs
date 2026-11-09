@@ -2,10 +2,12 @@ namespace JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
 
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -33,6 +35,13 @@ internal static class JetEntityTypeMetadata
     private const string JetIsCurrencyAnnotation = "Jet:IsCurrency";
     private const string JetIsDateTimeExtendedAnnotation = "Jet:IsDateTimeExtended";
     private const string JetCascadeUpdatesAnnotation = "Jet:CascadeUpdates";
+
+    private static readonly ConditionalWeakTable<Type, TableAttributes> CachedTableAttributes = [];
+    private static readonly ConditionalWeakTable<PropertyInfo, PropertyAttributes> CachedPropertyAttributes = [];
+    private static readonly ConditionalWeakTable<IReadOnlyEntityType, ResolvedName> CachedTableNames = [];
+    private static readonly ConditionalWeakTable<IReadOnlyProperty, ResolvedName> CachedColumnNames = [];
+    private static readonly ConditionalWeakTable<IEntityType, ReadOnlyCollection<IEntityType>> CachedSplitOwnedTypes = [];
+    private static readonly ConditionalWeakTable<IEntityType, ReadOnlyCollection<IProperty>> CachedHierarchyProperties = [];
 
     /// <summary>
     /// Determines whether <paramref name="entityType"/> is a single-reference owned entity type (<c>OwnsOne</c>)
@@ -82,11 +91,18 @@ internal static class JetEntityTypeMetadata
     /// </summary>
     /// <param name="ownerRootType">The root entity type owning the table.</param>
     /// <returns>The table-split owned entity types in ownership order.</returns>
-    internal static List<IEntityType> GetTableSplitOwnedEntityTypes(IEntityType ownerRootType)
+    internal static IReadOnlyList<IEntityType> GetTableSplitOwnedEntityTypes(IEntityType ownerRootType)
     {
         ArgumentNullException.ThrowIfNull(ownerRootType);
 
         IEntityType root = ownerRootType.GetRootType();
+        return CanCache(root)
+            ? CachedSplitOwnedTypes.GetValue(root, static type => CollectTableSplitOwnedEntityTypes(type))
+            : CollectTableSplitOwnedEntityTypes(root);
+    }
+
+    private static ReadOnlyCollection<IEntityType> CollectTableSplitOwnedEntityTypes(IEntityType root)
+    {
         List<IEntityType> result = [];
         HashSet<IEntityType> visited = [];
 
@@ -123,7 +139,7 @@ internal static class JetEntityTypeMetadata
         }
 
         CollectFrom(root);
-        return result;
+        return result.AsReadOnly();
     }
 
     /// <summary>
@@ -135,6 +151,13 @@ internal static class JetEntityTypeMetadata
     {
         ArgumentNullException.ThrowIfNull(entityType);
 
+        return CanCache(entityType)
+            ? CachedTableNames.GetValue(entityType, static type => new ResolvedName(ResolveTableName(type))).Value
+            : ResolveTableName(entityType);
+    }
+
+    private static string ResolveTableName(IReadOnlyEntityType entityType)
+    {
         if (TryGetExplicitTableName(entityType, out string? explicitName))
         {
             return explicitName!;
@@ -153,7 +176,7 @@ internal static class JetEntityTypeMetadata
 
         if (!entityType.IsOwned() && !entityType.HasSharedClrType)
         {
-            TableAttribute? inheritedTableAttribute = entityType.ClrType.GetCustomAttribute<TableAttribute>(inherit: true);
+            TableAttribute? inheritedTableAttribute = CachedTableAttributes.GetValue(entityType.ClrType, static type => new TableAttributes(type)).Inherited;
             if (inheritedTableAttribute is not null && !string.IsNullOrWhiteSpace(inheritedTableAttribute.Name))
             {
                 return inheritedTableAttribute.Name;
@@ -169,11 +192,18 @@ internal static class JetEntityTypeMetadata
     /// </summary>
     /// <param name="entityType">The EF Core entity type.</param>
     /// <returns>The flattened scalar properties across the root type and any derived types.</returns>
-    internal static List<IProperty> GetHierarchyProperties(IEntityType entityType)
+    internal static IReadOnlyList<IProperty> GetHierarchyProperties(IEntityType entityType)
     {
         ArgumentNullException.ThrowIfNull(entityType);
 
         IEntityType rootType = entityType.GetRootType();
+        return CanCache(rootType)
+            ? CachedHierarchyProperties.GetValue(rootType, static type => CollectHierarchyProperties(type))
+            : CollectHierarchyProperties(rootType);
+    }
+
+    private static ReadOnlyCollection<IProperty> CollectHierarchyProperties(IEntityType rootType)
+    {
         List<IProperty> properties = [.. rootType.GetFlattenedProperties()];
         HashSet<IProperty> seen = [.. properties];
         foreach (IEntityType derivedType in rootType.GetDerivedTypes())
@@ -187,7 +217,7 @@ internal static class JetEntityTypeMetadata
             }
         }
 
-        return properties;
+        return properties.AsReadOnly();
     }
 
     /// <summary>
@@ -199,6 +229,13 @@ internal static class JetEntityTypeMetadata
     {
         ArgumentNullException.ThrowIfNull(property);
 
+        return CanCache(property)
+            ? CachedColumnNames.GetValue(property, static prop => new ResolvedName(ResolveColumnName(prop))).Value
+            : ResolveColumnName(property);
+    }
+
+    private static string ResolveColumnName(IReadOnlyProperty property)
+    {
         if (property.DeclaringType is IReadOnlyEntityType declaringEntity
             && IsTableSplitOwned(declaringEntity)
             && declaringEntity.FindOwnership() is { } ownership)
@@ -218,7 +255,9 @@ internal static class JetEntityTypeMetadata
             return annotatedName;
         }
 
-        ColumnAttribute? columnAttribute = property.PropertyInfo?.GetCustomAttribute<ColumnAttribute>(inherit: true);
+        ColumnAttribute? columnAttribute = property.PropertyInfo is { } propertyInfo
+            ? CachedPropertyAttributes.GetValue(propertyInfo, static info => new PropertyAttributes(info)).Column
+            : null;
         if (columnAttribute is not null && !string.IsNullOrWhiteSpace(columnAttribute.Name))
         {
             return columnAttribute.Name;
@@ -364,7 +403,9 @@ internal static class JetEntityTypeMetadata
             return true;
         }
 
-        DefaultValueAttribute? defaultAttr = property.PropertyInfo?.GetCustomAttribute<DefaultValueAttribute>(inherit: true);
+        DefaultValueAttribute? defaultAttr = property.PropertyInfo is { } propertyInfo
+            ? CachedPropertyAttributes.GetValue(propertyInfo, static info => new PropertyAttributes(info)).Default
+            : null;
         if (defaultAttr is not null)
         {
             defaultValue = defaultAttr.Value;
@@ -834,7 +875,7 @@ internal static class JetEntityTypeMetadata
 
         if (!entityType.IsOwned() && !entityType.HasSharedClrType)
         {
-            TableAttribute? directTableAttribute = entityType.ClrType.GetCustomAttribute<TableAttribute>(inherit: false);
+            TableAttribute? directTableAttribute = CachedTableAttributes.GetValue(entityType.ClrType, static type => new TableAttributes(type)).Direct;
             if (directTableAttribute is not null && !string.IsNullOrWhiteSpace(directTableAttribute.Name))
             {
                 tableName = directTableAttribute.Name;
@@ -850,5 +891,24 @@ internal static class JetEntityTypeMetadata
     {
         Type unwrapped = Nullable.GetUnderlyingType(clrType) ?? clrType;
         return unwrapped == typeof(int) || unwrapped == typeof(long) || unwrapped == typeof(short);
+    }
+
+    private static bool CanCache(IReadOnlyAnnotatable metadata)
+        => metadata is AnnotatableBase { IsReadOnly: true } or RuntimeAnnotatableBase;
+
+    private sealed record ResolvedName(string Value);
+
+    private sealed class TableAttributes(Type type)
+    {
+        internal TableAttribute? Direct { get; } = type.GetCustomAttribute<TableAttribute>(inherit: false);
+
+        internal TableAttribute? Inherited { get; } = type.GetCustomAttribute<TableAttribute>(inherit: true);
+    }
+
+    private sealed class PropertyAttributes(PropertyInfo property)
+    {
+        internal ColumnAttribute? Column { get; } = property.GetCustomAttribute<ColumnAttribute>(inherit: true);
+
+        internal DefaultValueAttribute? Default { get; } = property.GetCustomAttribute<DefaultValueAttribute>(inherit: true);
     }
 }
