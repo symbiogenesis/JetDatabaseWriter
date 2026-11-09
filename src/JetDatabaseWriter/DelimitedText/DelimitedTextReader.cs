@@ -430,7 +430,7 @@ internal sealed class DelimitedTextReader : IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         this.MaterializeBufferedFieldsBeforeFill();
         this.bufferIndex = 0;
-        this.bufferLength = await this.reader.ReadAsync(this.buffer, 0, this.buffer.Length).ConfigureAwait(false);
+        this.bufferLength = await this.reader.ReadAsync(this.buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
         return this.bufferLength > 0;
     }
 

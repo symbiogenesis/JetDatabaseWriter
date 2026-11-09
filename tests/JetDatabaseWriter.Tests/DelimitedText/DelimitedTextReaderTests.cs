@@ -341,6 +341,39 @@ public sealed class DelimitedTextReaderTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BlockedSource_CancelledDuringRead_StopsWithoutWaitingForSource(bool countRecords)
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var source = new BlockedTextReader();
+        using DelimitedTextReader reader = CreateReader(source);
+        Task reading = countRecords
+            ? reader.CountRecordsAsync(skipFirstRecord: false, cancellation.Token).AsTask()
+            : reader.ReadRecordAsync(cancellation.Token).AsTask();
+        try
+        {
+            await source.ReadStarted.WaitAsync(TestContext.Current.CancellationToken);
+            await cancellation.CancelAsync();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                await reading.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            source.CompleteRead();
+            try
+            {
+                await reading;
+            }
+            catch (OperationCanceledException)
+            {
+                // The expected cancellation already completed the parser operation.
+            }
+        }
+    }
+
+    [Theory]
     [MemberData(nameof(FuzzSeedRoundTripCases))]
     public async Task ReadRecordAsync_FuzzSeedCorpus_RoundTripsEscapedRows(
         byte[] fuzzSeed,
@@ -519,6 +552,25 @@ public sealed class DelimitedTextReaderTests
         public override int Peek() => -1;
     }
 
+    private sealed class BlockedTextReader : TextReader
+    {
+        private readonly TaskCompletionSource<int> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal Task ReadStarted => this.started.Task;
+
+        public override Task<int> ReadAsync(char[] buffer, int index, int count)
+            => this.ReadAsync(buffer.AsMemory(index, count), CancellationToken.None).AsTask();
+
+        public override ValueTask<int> ReadAsync(Memory<char> buffer, CancellationToken cancellationToken = default)
+        {
+            this.started.TrySetResult(true);
+            return new ValueTask<int>(this.completion.Task.WaitAsync(cancellationToken));
+        }
+
+        internal void CompleteRead() => this.completion.TrySetResult(0);
+    }
+
     /// <summary>Cancels <paramref name="cancellation"/> once it has handed out <paramref name="cancelAt"/> characters.</summary>
     /// <param name="value">The text to read.</param>
     /// <param name="cancelAt">The number of characters read after which the token is cancelled.</param>
@@ -527,9 +579,9 @@ public sealed class DelimitedTextReaderTests
     {
         public int CharsRead { get; private set; }
 
-        public override async Task<int> ReadAsync(char[] buffer, int index, int count)
+        public override async ValueTask<int> ReadAsync(Memory<char> buffer, CancellationToken cancellationToken = default)
         {
-            int read = await this.ReadAsync(buffer.AsMemory(index, count), TestContext.Current.CancellationToken);
+            int read = await base.ReadAsync(buffer, cancellationToken);
             this.CharsRead += read;
             if (this.CharsRead >= cancelAt)
             {
