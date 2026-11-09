@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tables;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -98,5 +97,8 @@ public sealed class TableRewritePlanningTests
             cancellationToken);
 
     private static int[] References(TableRewritePlan plan)
-        => [.. plan.Rows.Select(static row => Assert.IsType<ComplexIdRef>(row[1]).Id)];
+    {
+        Assert.NotNull(plan.AssignedComplexReferences);
+        return [.. plan.AssignedComplexReferences.Select(static reference => Assert.NotNull(reference))];
+    }
 }

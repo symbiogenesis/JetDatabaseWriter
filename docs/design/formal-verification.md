@@ -203,7 +203,7 @@ metadata, raw LVAL ownership and encoded-key equality remain
 C# contracts. Index-directed writer discovery additionally relies on a correct
 supported index for complete membership; bookmark checks do not reconstruct
 missing index entries. Full mutation/rollback and native-format correspondence
-retain their separate I2/I5/I6/V6/V9/V10 obligations.
+retain their separate I2/I5/V6/V9/V10 obligations.
 
 ## Writer lifecycle specification
 

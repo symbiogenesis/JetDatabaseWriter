@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Relationships;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 
 /// <summary>A prepared replacement schema and its original storage and dependent identities.</summary>
@@ -16,8 +17,12 @@ using JetDatabaseWriter.Schema.Models;
 /// <param name="Indexes">The surviving ordinary indexes.</param>
 /// <param name="Properties">The projected persisted property block.</param>
 /// <param name="PropertyBytes">The serialized catalog property payload.</param>
-/// <param name="Rows">The validated projected row values.</param>
-/// <param name="TextBytes">Original Text slots in projected column order, paired with each row.</param>
+/// <param name="ProjectRow">The row projection applied as source rows stream into the replacement table.</param>
+/// <param name="ResolveLongValueColumns">Physical column mask selecting which external long values must be resolved during streaming copy.</param>
+/// <param name="RewrittenRowCount">The validated source row count.</param>
+/// <param name="AddedCalculatedEvaluator">Per-row evaluator for newly added calculated columns, or null when none were added.</param>
+/// <param name="AddedComplexColumns">Projected column ordinals of newly added complex columns.</param>
+/// <param name="AssignedComplexReferences">Per-row complex reference IDs to assign to null added complex slots, or null when no complex column was added.</param>
 /// <param name="Relationships">The captured relationship identities.</param>
 /// <param name="MapColumnName">The column identity projection.</param>
 /// <param name="DroppedComplexColumns">Complex children to reclaim after replacement.</param>
@@ -33,8 +38,12 @@ internal sealed record TableRewritePlan(
     List<IndexDefinition> Indexes,
     ColumnPropertyBlock Properties,
     byte[]? PropertyBytes,
-    List<object[]> Rows,
-    List<IReadOnlyDictionary<int, byte[]>?> TextBytes,
+    Func<object[], TableDef, object[]> ProjectRow,
+    bool[] ResolveLongValueColumns,
+    int RewrittenRowCount,
+    ConstraintRegistry.AddedCalculatedEvaluator? AddedCalculatedEvaluator,
+    IReadOnlyList<int> AddedComplexColumns,
+    int?[]? AssignedComplexReferences,
     RelationshipRewriteState Relationships,
     Func<string, string?> MapColumnName,
     List<(string Name, int ComplexId)> DroppedComplexColumns,

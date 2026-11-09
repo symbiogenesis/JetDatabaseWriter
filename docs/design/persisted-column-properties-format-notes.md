@@ -48,7 +48,7 @@ When any external field transfers to the replacement, deletion retains all
 original row chains. Different roots can share an interior tail, so comparing
 root tokens cannot authorize reclamation. The catalog row itself still follows
 its clearing policy. Replaced metadata can remain allocated until complete
-incoming ownership evidence permits reclamation (S9/I6/I17); this is not a
+incoming ownership evidence permits reclamation (S9/I17); this is not a
 reclaiming compact operation.
 
 `CatalogLongValuePreservationTests` checks inline, single-row and chained fields

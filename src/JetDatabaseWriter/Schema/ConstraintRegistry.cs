@@ -127,14 +127,12 @@ internal sealed class ConstraintRegistry(
         }
     }
 
-    /// <summary>Populates appended calculations using the source row's retained caches.</summary>
+    /// <summary>Creates a per-row evaluator for newly added calculated columns, or returns <see langword="null"/> when none were added.</summary>
     /// <param name="tableName">The existing table.</param>
     /// <param name="definitions">The complete projected column definitions.</param>
     /// <param name="format">The database format.</param>
-    /// <param name="rows">The projected source rows, updated in place.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task representing table-rule validation.</returns>
-    internal async ValueTask PopulateAddedCalculatedColumnsAsync(string tableName, IReadOnlyList<ColumnDefinition> definitions, JetFormat format, IReadOnlyList<object[]> rows, CancellationToken cancellationToken)
+    /// <returns>The evaluator when at least one new calculated column is present; otherwise <see langword="null"/>.</returns>
+    internal AddedCalculatedEvaluator? CreateAddedCalculatedEvaluator(string tableName, IReadOnlyList<ColumnDefinition> definitions, JetFormat format)
     {
         var added = new List<int>();
         for (int index = 0; index < definitions.Count; index++)
@@ -145,9 +143,9 @@ internal sealed class ConstraintRegistry(
             }
         }
 
-        if (added.Count == 0 || rows.Count == 0)
+        if (added.Count == 0)
         {
-            return;
+            return null;
         }
 
         TableDef definition = TDefPageBuilder.BuildTableDefinition(definitions, format);
@@ -159,18 +157,26 @@ internal sealed class ConstraintRegistry(
             projected.Add(constraint);
         }
 
-        foreach (object[] values in rows)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var context = new CalculatedExpressionEvaluationContext(definition, projected, values, tableName, textCollation, calculatedCulture);
-            foreach (int index in added)
-            {
-                values[index] = context.EvaluateAddedColumn(index);
-            }
+        return new AddedCalculatedEvaluator(this, tableName, definition, projected, added);
+    }
 
-            // Native field append fills existing caches without enforcing Required
-            // or field rules, including cached Text/Memo errors. Table rules still apply.
-            await this.CheckTableValidationRuleAsync(tableName, definition, projected, values, cancellationToken).ConfigureAwait(false);
+    private void EvaluateAddedCalculatedRow(
+        string tableName,
+        TableDef definition,
+        List<ColumnConstraint> projectedConstraints,
+        List<int> addedColumns,
+        object[] values)
+    {
+        var context = new CalculatedExpressionEvaluationContext(
+            definition,
+            projectedConstraints,
+            values,
+            tableName,
+            textCollation,
+            calculatedCulture);
+        foreach (int index in addedColumns)
+        {
+            values[index] = context.EvaluateAddedColumn(index);
         }
     }
 
@@ -1284,4 +1290,26 @@ internal sealed class ConstraintRegistry(
         readComplexReferenceHighWater is null
             ? new ValueTask<long>(0L)
             : readComplexReferenceHighWater(tableName, tableDef, cancellationToken);
+
+    /// <summary>Evaluates newly added calculated columns and table validation rules per row during a streaming schema rewrite.</summary>
+    /// <param name="registry">The owning constraint registry.</param>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="definition">The projected table definition.</param>
+    /// <param name="projectedConstraints">The projected column constraints.</param>
+    /// <param name="addedColumns">The column ordinals of newly added calculated columns.</param>
+    internal sealed class AddedCalculatedEvaluator(
+        ConstraintRegistry registry,
+        string tableName,
+        TableDef definition,
+        List<ColumnConstraint> projectedConstraints,
+        List<int> addedColumns)
+    {
+        public IReadOnlyList<int> AddedColumns => addedColumns;
+
+        public void EvaluateRow(object[] values)
+            => registry.EvaluateAddedCalculatedRow(tableName, definition, projectedConstraints, addedColumns, values);
+
+        public ValueTask ValidateRowRuleAsync(object[] values, CancellationToken cancellationToken)
+            => registry.CheckTableValidationRuleAsync(tableName, definition, projectedConstraints, values, cancellationToken);
+    }
 }

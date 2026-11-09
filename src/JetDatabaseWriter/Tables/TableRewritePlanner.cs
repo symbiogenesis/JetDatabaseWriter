@@ -223,8 +223,6 @@ internal sealed class TableRewritePlanner(
             resolveLongValues[colIndex] = mapColumnName(tableDef.Columns[colIndex].Name) is not null;
         }
 
-        var projectedRows = new List<object[]>();
-        var projectedFixedText = new List<IReadOnlyDictionary<int, byte[]>?>();
         IndexDefinition? requiredIndex = addedIndex is { IsPrimaryKey: true } or { IsRequired: true }
             ? addedIndex
             : shortcutPrimaryKey;
@@ -237,47 +235,51 @@ internal sealed class TableRewritePlanner(
             requiredKeyPositions[key] = newDefs.FindIndex(column => string.Equals(column.Name, keyColumn, StringComparison.OrdinalIgnoreCase));
         }
 
-        Dictionary<string, int>? targetIndexes = null;
+        List<int> survivingComplexColumns = [];
+        List<int> addedComplexColumns = [];
+        for (int i = 0; i < newDefs.Count; i++)
+        {
+            if (newDefs[i].IsAttachment || newDefs[i].IsMultiValue)
+            {
+                if (newDefs[i].ComplexId == 0 && newDefs[i].SourceColumn is null)
+                {
+                    addedComplexColumns.Add(i);
+                }
+                else
+                {
+                    survivingComplexColumns.Add(i);
+                }
+            }
+        }
+
+        ConstraintRegistry.AddedCalculatedEvaluator? calcEvaluator =
+            constraints.CreateAddedCalculatedEvaluator(tableName, newDefs, format);
+        var targetIndexes = new Dictionary<string, int>(newDefs.Count, StringComparer.OrdinalIgnoreCase);
+        for (int index = 0; index < newDefs.Count; index++)
+        {
+            targetIndexes.TryAdd(newDefs[index].Name, index);
+        }
+
         uint rewrittenRowCount = 0;
         ulong rewrittenPayloadBytes = 0;
+        ulong addedCalcPayloadBytes = 0;
+        bool addedCalcOverflowed = false;
         uint maxRewriteRows = checked((uint)options.MaxSchemaRewriteRows);
         ulong maxRewriteBytes = checked((ulong)options.MaxSchemaRewriteBytes);
+        Exception? deferredValidationError = null;
+        Exception? deferredRequiredKeyError = null;
+        List<(object?[] SurvivingSlots, bool NeedsInit)>? complexStates = addedComplexColumns.Count > 0 ? [] : null;
         await snapshots.ForEachDecodedRowAsync(
             entry.TDefPage,
-            (row, token) =>
+            tableDef,
+            tableName,
+            async (row, token) =>
             {
                 token.ThrowIfCancellationRequested();
                 object[] projected = projectRow(row.Values, tableDef);
                 UnreadableLongValue.ThrowIfAny(projected, tableName);
 
-                Dictionary<int, byte[]>? textBytes = null;
-                if (row.TextBytes is not null)
-                {
-                    if (targetIndexes is null)
-                    {
-                        targetIndexes = new Dictionary<string, int>(newDefs.Count, StringComparer.OrdinalIgnoreCase);
-                        for (int index = 0; index < newDefs.Count; index++)
-                        {
-                            targetIndexes.TryAdd(newDefs[index].Name, index);
-                        }
-                    }
-
-                    foreach ((int sourceIndex, byte[] bytes) in row.TextBytes)
-                    {
-                        if (sourceIndex < 0 || sourceIndex >= tableDef.Columns.Count || tableDef.Columns[sourceIndex].Type != ColumnType.TextType)
-                        {
-                            continue;
-                        }
-
-                        string? targetName = mapColumnName(tableDef.Columns[sourceIndex].Name);
-                        if (targetName is not null && targetIndexes.TryGetValue(targetName, out int targetIndex))
-                        {
-                            textBytes ??= [];
-                            textBytes.Add(targetIndex, bytes);
-                        }
-                    }
-                }
-
+                Dictionary<int, byte[]>? textBytes = ProjectRowTextBytes(row.TextBytes, tableDef, mapColumnName, targetIndexes);
                 ReserveRewriteRowAndBytes(
                     tableName,
                     entry.TDefPage,
@@ -287,27 +289,99 @@ internal sealed class TableRewritePlanner(
                     maxRewriteBytes,
                     ref rewrittenRowCount,
                     ref rewrittenPayloadBytes);
-                projectedRows.Add(projected);
-                projectedFixedText.Add(textBytes);
-                return new ValueTask<bool>(true);
+
+                if (calcEvaluator is not null && deferredValidationError is null)
+                {
+                    try
+                    {
+                        calcEvaluator.EvaluateRow(projected);
+                        await calcEvaluator.ValidateRowRuleAsync(projected, token).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        deferredValidationError = ex;
+                    }
+                }
+
+                if (calcEvaluator is not null && deferredValidationError is null && !addedCalcOverflowed)
+                {
+                    for (int k = 0; k < calcEvaluator.AddedColumns.Count; k++)
+                    {
+                        int colIndex = calcEvaluator.AddedColumns[k];
+                        ulong valueBytes = MeasureRewriteValueBytes(projected[colIndex]);
+                        RecoveryKernel.TryReserveBytes(addedCalcPayloadBytes, valueBytes, maxRewriteBytes, out bool admitted, out ulong nextCalcBytes);
+                        if (!admitted)
+                        {
+                            addedCalcOverflowed = true;
+                            break;
+                        }
+
+                        addedCalcPayloadBytes = nextCalcBytes;
+                    }
+                }
+
+                if (deferredRequiredKeyError is null)
+                {
+                    foreach (int position in requiredKeyPositions)
+                    {
+                        if (projected[position] is null or DBNull)
+                        {
+                            deferredRequiredKeyError = new JetConstraintException(
+                                JetErrorCode.NotNullViolation,
+                                $"Index '{requiredIndex!.Name}' on table '{tableName}' requires a value for every key column.",
+                                new JetErrorInfo { TableName = tableName, IndexName = requiredIndex.Name });
+                            break;
+                        }
+                    }
+                }
+
+                if (complexStates is not null)
+                {
+                    object?[] survivingSlots = survivingComplexColumns.Count > 0 ? new object?[survivingComplexColumns.Count] : [];
+                    for (int s = 0; s < survivingComplexColumns.Count; s++)
+                    {
+                        survivingSlots[s] = projected[survivingComplexColumns[s]];
+                    }
+
+                    bool needsInit = addedComplexColumns.Exists(i => projected[i] is null or DBNull);
+                    complexStates.Add((survivingSlots, needsInit));
+                }
+
+                return true;
             },
             cancellationToken,
             resolveLongValueColumns: resolveLongValues).ConfigureAwait(false);
 
-        await constraints.PopulateAddedCalculatedColumnsAsync(tableName, newDefs, format, projectedRows, cancellationToken).ConfigureAwait(false);
-        ReserveAddedCalculatedPayloadBytes(tableName, entry.TDefPage, newDefs, projectedRows, maxRewriteBytes, ref rewrittenPayloadBytes);
-        foreach (object[] projected in projectedRows)
+        if (deferredValidationError is not null)
         {
-            foreach (int position in requiredKeyPositions)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(deferredValidationError).Throw();
+        }
+
+        if (calcEvaluator is not null)
+        {
+            RecoveryKernel.TryReserveBytes(rewrittenPayloadBytes, addedCalcPayloadBytes, maxRewriteBytes, out bool calcBytesAdmitted, out rewrittenPayloadBytes);
+            if (!calcBytesAdmitted || addedCalcOverflowed)
             {
-                if (projected[position] is null or DBNull)
-                {
-                    throw new JetConstraintException(JetErrorCode.NotNullViolation, $"Index '{requiredIndex!.Name}' on table '{tableName}' requires a value for every key column.", new JetErrorInfo { TableName = tableName, IndexName = requiredIndex.Name });
-                }
+                throw new JetLimitationException(
+                    JetErrorCode.SchemaRewriteBudgetExceeded,
+                    $"Schema rewrite of table '{tableName}' exceeds the configured payload budget of {maxRewriteBytes} bytes.",
+                    new JetErrorInfo { TableName = tableName, PageNumber = entry.TDefPage });
             }
         }
 
-        await this.InitializeNewComplexReferencesAsync(tableName, tableDef, newDefs, projectedRows, cancellationToken).ConfigureAwait(false);
+        if (deferredRequiredKeyError is not null)
+        {
+            throw deferredRequiredKeyError;
+        }
+
+        int?[]? assignedComplexReferences = await this.InitializeNewComplexReferencesAsync(
+            tableName,
+            tableDef,
+            newDefs,
+            survivingComplexColumns,
+            addedComplexColumns,
+            complexStates,
+            cancellationToken).ConfigureAwait(false);
 
         // Preserve surviving complex identities; reclaim dropped children and rename
         // their catalog artifacts after publishing storage on the original root.
@@ -352,8 +426,12 @@ internal sealed class TableRewritePlanner(
             projectedIndexes,
             persistedProperties,
             persistedLvProp,
-            projectedRows,
-            projectedFixedText,
+            projectRow,
+            resolveLongValues,
+            checked((int)rewrittenRowCount),
+            calcEvaluator,
+            addedComplexColumns,
+            assignedComplexReferences,
             relationshipState,
             mapColumnName,
             droppedComplex,
@@ -636,17 +714,17 @@ internal sealed class TableRewritePlanner(
     /// </summary>
     /// <param name="tableName">The table being rewritten.</param>
     /// <param name="tdefPage">The original table-definition page.</param>
-    /// <param name="row">The projected row.</param>
+    /// <param name="survivingSlots">The row's surviving complex column values.</param>
     /// <param name="survivingColumns">The indexes of existing complex columns in the projected row.</param>
     /// <param name="newDefs">The projected column list.</param>
     /// <exception cref="JetCorruptDataException">A surviving slot is invalid or disagrees with the row's shared reference.</exception>
-    private static int? SharedComplexReference(string tableName, long tdefPage, object[] row, List<int> survivingColumns, List<ColumnDefinition> newDefs)
+    private static int? SharedComplexReference(string tableName, long tdefPage, object?[] survivingSlots, List<int> survivingColumns, List<ColumnDefinition> newDefs)
     {
         int? shared = null;
-        foreach (int i in survivingColumns)
+        for (int s = 0; s < survivingColumns.Count; s++)
         {
-            ColumnDefinition column = newDefs[i];
-            if (row[i] is not ComplexIdRef { Id: > 0 } reference)
+            ColumnDefinition column = newDefs[survivingColumns[s]];
+            if (survivingSlots[s] is not ComplexIdRef { Id: > 0 } reference)
             {
                 throw new JetCorruptDataException(
                     JetErrorCode.CorruptComplexColumn,
@@ -668,14 +746,45 @@ internal sealed class TableRewritePlanner(
         return shared;
     }
 
-    private static void FillNullComplexSlots(object[] row, List<int> complexColumns, int reference)
+    internal static Dictionary<int, byte[]>? ProjectRowTextBytes(
+        IReadOnlyDictionary<int, byte[]>? sourceTextBytes,
+        TableDef tableDef,
+        Func<string, string?> mapColumnName,
+        IReadOnlyDictionary<string, int> targetIndexes)
+    {
+        if (sourceTextBytes is null)
+        {
+            return null;
+        }
+
+        Dictionary<int, byte[]>? textBytes = null;
+        foreach ((int sourceIndex, byte[] bytes) in sourceTextBytes)
+        {
+            if (sourceIndex < 0 || sourceIndex >= tableDef.Columns.Count || tableDef.Columns[sourceIndex].Type != ColumnType.TextType)
+            {
+                continue;
+            }
+
+            string? targetName = mapColumnName(tableDef.Columns[sourceIndex].Name);
+            if (targetName is not null && targetIndexes.TryGetValue(targetName, out int targetIndex))
+            {
+                textBytes ??= [];
+                textBytes.Add(targetIndex, bytes);
+            }
+        }
+
+        return textBytes;
+    }
+
+    internal static void FillNullComplexSlots(object[] row, IReadOnlyList<int> complexColumns, int reference)
     {
         var value = new ComplexIdRef(reference);
-        foreach (int i in complexColumns)
+        for (int index = 0; index < complexColumns.Count; index++)
         {
-            if (row[i] is null or DBNull)
+            int colIndex = complexColumns[index];
+            if (row[colIndex] is null or DBNull)
             {
-                row[i] = value;
+                row[colIndex] = value;
             }
         }
     }
@@ -711,39 +820,6 @@ internal sealed class TableRewritePlanner(
 
         currentRows = nextRows;
         currentBytes = nextBytes;
-    }
-
-    private static void ReserveAddedCalculatedPayloadBytes(
-        string tableName,
-        long tdefPage,
-        List<ColumnDefinition> columns,
-        List<object[]> projectedRows,
-        ulong maxBytes,
-        ref ulong currentBytes)
-    {
-        for (int colIndex = 0; colIndex < columns.Count; colIndex++)
-        {
-            ColumnDefinition column = columns[colIndex];
-            if (!column.IsCalculated || column.SourceColumn is not null)
-            {
-                continue;
-            }
-
-            for (int rowIndex = 0; rowIndex < projectedRows.Count; rowIndex++)
-            {
-                ulong valueBytes = MeasureRewriteValueBytes(projectedRows[rowIndex][colIndex]);
-                RecoveryKernel.TryReserveBytes(currentBytes, valueBytes, maxBytes, out bool admitted, out ulong nextBytes);
-                if (!admitted)
-                {
-                    throw new JetLimitationException(
-                        JetErrorCode.SchemaRewriteBudgetExceeded,
-                        $"Schema rewrite of table '{tableName}' exceeds the configured payload budget of {maxBytes} bytes.",
-                        new JetErrorInfo { TableName = tableName, PageNumber = tdefPage });
-                }
-
-                currentBytes = nextBytes;
-            }
-        }
     }
 
     private static ulong MeasureProjectedRowBytes(object[] projected, IReadOnlyDictionary<int, byte[]>? textBytes)
@@ -857,36 +933,24 @@ internal sealed class TableRewritePlanner(
     /// <param name="tableName">The table being rewritten.</param>
     /// <param name="tableDef">Its current definition.</param>
     /// <param name="newDefs">The projected column list.</param>
-    /// <param name="rows">The projected rows, aligned with <paramref name="newDefs"/>.</param>
+    /// <param name="survivingColumns">Projected column indexes of surviving complex columns.</param>
+    /// <param name="addedColumns">Projected column indexes of newly added complex columns.</param>
+    /// <param name="complexStates">Per-row surviving complex slots and null-init flags captured during the validation walk.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>Per-row complex reference IDs to assign to null added complex slots during streaming copy, or <see langword="null"/> when no complex column was added.</returns>
     /// <exception cref="JetCorruptDataException">An existing complex column has no valid ID, or its persisted references are invalid, duplicated, above the counter, or disagree within a row.</exception>
-    private async ValueTask InitializeNewComplexReferencesAsync(
+    private async ValueTask<int?[]?> InitializeNewComplexReferencesAsync(
         string tableName,
         TableDef tableDef,
         List<ColumnDefinition> newDefs,
-        List<object[]> rows,
+        List<int> survivingColumns,
+        List<int> addedColumns,
+        List<(object?[] SurvivingSlots, bool NeedsInit)>? complexStates,
         CancellationToken cancellationToken)
     {
-        List<int> survivingColumns = [];
-        List<int> addedColumns = [];
-        for (int i = 0; i < newDefs.Count; i++)
+        if (addedColumns.Count == 0 || complexStates is null)
         {
-            if (newDefs[i].IsAttachment || newDefs[i].IsMultiValue)
-            {
-                if (newDefs[i].ComplexId == 0 && newDefs[i].SourceColumn is null)
-                {
-                    addedColumns.Add(i);
-                }
-                else
-                {
-                    survivingColumns.Add(i);
-                }
-            }
-        }
-
-        if (addedColumns.Count == 0)
-        {
-            return;
+            return null;
         }
 
         ResolvedTable parent = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -895,8 +959,9 @@ internal sealed class TableRewritePlanner(
 
         // Check each surviving column before deciding which reference to reuse.
         // A warm allocation cache must not bypass validation of stored data.
-        foreach (int i in survivingColumns)
+        for (int s = 0; s < survivingColumns.Count; s++)
         {
+            int i = survivingColumns[s];
             ColumnDefinition column = newDefs[i];
             if (column.ComplexId <= 0)
             {
@@ -907,9 +972,9 @@ internal sealed class TableRewritePlanner(
             }
 
             var holders = new HashSet<int>();
-            foreach (object[] row in rows)
+            foreach ((object?[] survivingSlots, _) in complexStates)
             {
-                if (row[i] is not ComplexIdRef { Id: > 0 } reference)
+                if (survivingSlots[s] is not ComplexIdRef { Id: > 0 } reference)
                 {
                     throw new JetCorruptDataException(
                         JetErrorCode.CorruptComplexColumn,
@@ -935,17 +1000,17 @@ internal sealed class TableRewritePlanner(
             }
         }
 
-        int?[] shared = new int?[rows.Count];
-        for (int r = 0; r < rows.Count; r++)
+        int?[] shared = new int?[complexStates.Count];
+        for (int r = 0; r < complexStates.Count; r++)
         {
-            shared[r] = SharedComplexReference(tableName, tdefPage, rows[r], survivingColumns, newDefs);
+            shared[r] = SharedComplexReference(tableName, tdefPage, complexStates[r].SurvivingSlots, survivingColumns, newDefs);
         }
 
-        List<object[]> needing = [];
-        for (int r = 0; r < rows.Count; r++)
+        int?[] assigned = new int?[complexStates.Count];
+        List<int> needingRows = [];
+        for (int r = 0; r < complexStates.Count; r++)
         {
-            object[] row = rows[r];
-            if (!addedColumns.Exists(i => row[i] is null or DBNull))
+            if (!complexStates[r].NeedsInit)
             {
                 continue;
             }
@@ -953,26 +1018,28 @@ internal sealed class TableRewritePlanner(
             // Initialize only added columns; surviving slots are preserved.
             if (shared[r] is int reference)
             {
-                FillNullComplexSlots(row, addedColumns, reference);
+                assigned[r] = reference;
             }
             else
             {
-                needing.Add(row);
+                needingRows.Add(r);
             }
         }
 
-        if (needing.Count == 0)
+        if (needingRows.Count == 0)
         {
-            return;
+            return assigned;
         }
 
         // The enclosing mutation owns this reservation; its constraint snapshot
         // restores the cached counter if preparation or replacement is abandoned.
-        int first = await constraints.AllocateComplexReferencesAsync(tableName, tableDef, needing.Count, cancellationToken).ConfigureAwait(false);
-        for (int k = 0; k < needing.Count; k++)
+        int first = await constraints.AllocateComplexReferencesAsync(tableName, tableDef, needingRows.Count, cancellationToken).ConfigureAwait(false);
+        for (int k = 0; k < needingRows.Count; k++)
         {
-            FillNullComplexSlots(needing[k], addedColumns, first + k);
+            assigned[needingRows[k]] = first + k;
         }
+
+        return assigned;
     }
 
     private ColumnDefinition BuildColumnDefinitionFromInfo(ColumnInfo column, ColumnPropertyBlock? properties = null)

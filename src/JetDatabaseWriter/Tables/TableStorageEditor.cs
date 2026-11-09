@@ -39,6 +39,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="relationships">The relationships service.</param>
 /// <param name="autoNumbers">The autoNumbers service.</param>
 /// <param name="catalogRows">The catalog used to prove surviving map ownership.</param>
+/// <param name="snapshots">Streams decoded source rows into replacement storage without pre-buffering the table.</param>
 internal sealed class TableStorageEditor(
     JetFormat format,
     TableDefReader tableDefs,
@@ -54,7 +55,8 @@ internal sealed class TableStorageEditor(
     ConstraintRegistry constraints,
     RelationshipManager relationships,
     AutoNumberMaintainer autoNumbers,
-    CatalogRowReader catalogRows)
+    CatalogRowReader catalogRows,
+    TableSnapshotReader snapshots)
 {
     /// <summary>Copies prepared rows and transfers storage and metadata ownership to the replacement.</summary>
     /// <param name="plan">The validated rewrite projection.</param>
@@ -95,7 +97,6 @@ internal sealed class TableStorageEditor(
     private async ValueTask<TableRewriteCopy> CopyRowsAndIndexesAsync(TableRewritePlan plan, string tempName, CancellationToken cancellationToken)
     {
         List<IndexDefinition> projectedIndexes = plan.Indexes;
-        List<object[]> projectedRows = plan.Rows;
         RelationshipRewriteState relationshipState = plan.Relationships;
         Func<string, string?> mapColumnName = plan.MapColumnName;
         ResolvedTable tempTable = await catalog.ResolveRequiredTableAsync(tempName, cancellationToken).ConfigureAwait(false);
@@ -131,25 +132,55 @@ internal sealed class TableStorageEditor(
             tempEntry.TDefPage,
             tempDef,
             tempName,
-            projectedRows.Count,
+            plan.RewrittenRowCount,
             cancellationToken).ConfigureAwait(false);
-        var storagePages = new SortedSet<long>();
-        for (int rowIndex = 0; rowIndex < projectedRows.Count; rowIndex++)
+        var targetIndexes = new Dictionary<string, int>(plan.Columns.Count, StringComparer.OrdinalIgnoreCase);
+        for (int index = 0; index < plan.Columns.Count; index++)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            object[] projected = projectedRows[rowIndex];
-            IReadOnlyDictionary<int, byte[]>? rowTextBytes = plan.TextBytes[rowIndex];
-            RowLocation location = await tableRows.InsertRowDataLocAsync(tempEntry.TDefPage, tempDef, projected, textBytes: rowTextBytes, cancellationToken: cancellationToken).ConfigureAwait(false);
-            storagePages.Add(location.PageNumber);
-            storagePages.Add(location.DataPageNumber);
-            autoNumberHighWater = Math.Max(autoNumberHighWater, AutoNumberMaintainer.MaxAutoNumberValue(tempDef, projected));
-            complexHighWater = Math.Max(complexHighWater, AutoNumberMaintainer.MaxComplexReference(tempDef, projected));
-
-            // Encode compact index entries on the fly and release buffered row and raw-slot payloads immediately.
-            indexCollector?.AddRow(location, projected);
-            projectedRows[rowIndex] = [];
-            plan.TextBytes[rowIndex] = null;
+            targetIndexes.TryAdd(plan.Columns[index].Name, index);
         }
+
+        var storagePages = new SortedSet<long>();
+        int rowIndex = 0;
+        await snapshots.ForEachDecodedRowAsync(
+            plan.Entry.TDefPage,
+            plan.Definition,
+            plan.TableName,
+            async (row, token) =>
+            {
+                token.ThrowIfCancellationRequested();
+                object[] projected = plan.ProjectRow(row.Values, plan.Definition);
+                IReadOnlyDictionary<int, byte[]>? rowTextBytes = TableRewritePlanner.ProjectRowTextBytes(
+                    row.TextBytes,
+                    plan.Definition,
+                    mapColumnName,
+                    targetIndexes);
+                plan.AddedCalculatedEvaluator?.EvaluateRow(projected);
+                if (plan.AssignedComplexReferences is { } assignedRefs
+                    && rowIndex < assignedRefs.Length
+                    && assignedRefs[rowIndex] is int complexRef)
+                {
+                    TableRewritePlanner.FillNullComplexSlots(projected, plan.AddedComplexColumns, complexRef);
+                }
+
+                rowIndex++;
+                RowLocation location = await tableRows.InsertRowDataLocAsync(
+                    tempEntry.TDefPage,
+                    tempDef,
+                    projected,
+                    textBytes: rowTextBytes,
+                    cancellationToken: token).ConfigureAwait(false);
+                storagePages.Add(location.PageNumber);
+                storagePages.Add(location.DataPageNumber);
+                autoNumberHighWater = Math.Max(autoNumberHighWater, AutoNumberMaintainer.MaxAutoNumberValue(tempDef, projected));
+                complexHighWater = Math.Max(complexHighWater, AutoNumberMaintainer.MaxComplexReference(tempDef, projected));
+
+                // Encode compact index entries on the fly without retaining row payloads.
+                indexCollector?.AddRow(location, projected);
+                return true;
+            },
+            cancellationToken,
+            resolveLongValueColumns: plan.ResolveLongValueColumns).ConfigureAwait(false);
 
         await autoNumbers.RaiseHighWaterAsync(tempEntry.TDefPage, autoNumberHighWater, cancellationToken).ConfigureAwait(false);
         await autoNumbers.RaiseComplexHighWaterAsync(tempEntry.TDefPage, complexHighWater, cancellationToken).ConfigureAwait(false);

@@ -1343,4 +1343,55 @@ public sealed class InPlaceRowUpdateTests
             PageBuffers.Return(pageRelocated);
         }
     }
+
+    /// <summary>Unique-key-changing updates and multi-item scan batches skip non-matching external LVAL chains while enforcing full-table uniqueness.</summary>
+    /// <param name="format">The native file generation.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task UniqueKeyAndBatchUpdates_SkipNonMatchingExternalLongValueReads(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var source = new MemoryStream();
+        string memo = new('m', 12_000);
+        await using (AccessWriter creator = await AccessWriter.CreateDatabaseAsync(source, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await creator.CreateTableAsync(
+                "Items",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("UniqueCode", typeof(int)),
+                    new ColumnDefinition("Name", typeof(string), maxLength: 30),
+                    new ColumnDefinition("Score", typeof(int)),
+                    new ColumnDefinition("Note", typeof(string)),
+                ],
+                [new IndexDefinition("IX_UniqueCode", ["UniqueCode"]) { IsUnique = true }],
+                ct);
+            await creator.InsertRowsAsync(
+                "Items",
+                Enumerable.Range(1, 32).Select(id => new object[] { id, id * 100, $"item{id}", 0, memo }),
+                ct);
+        }
+
+        await using var trace = new CountingStream(source);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(trace, new AccessWriterOptions { UseLockFile = false, PageCacheSize = 0 }, leaveOpen: true, ct);
+
+        trace.Reset();
+        Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 1), new RowValues { ["UniqueCode"] = 9999 }, ct));
+        Assert.True(trace.BytesRead < source.Length / 3, $"Unique-key update read {trace.BytesRead} bytes from a {source.Length}-byte database.");
+
+        JetConstraintException conflict = await Assert.ThrowsAsync<JetConstraintException>(
+            () => writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 1), new RowValues { ["UniqueCode"] = 200 }, ct).AsTask());
+        Assert.Equal(JetErrorCode.UniqueViolation, conflict.ErrorCode);
+
+        trace.Reset();
+        RowUpdate[] batch =
+        [
+            new RowUpdate(RowCriteria.Where("Name", "item1"), new RowValues { ["Score"] = 11 }),
+            new RowUpdate(RowCriteria.Where("Name", "item2"), new RowValues { ["Score"] = 22 }),
+        ];
+        Assert.Equal(2, await writer.UpdateRowsAsync("Items", batch, ct));
+        Assert.True(trace.BytesRead < source.Length / 3, $"Multi-item scan batch update read {trace.BytesRead} bytes from a {source.Length}-byte database.");
+    }
 }

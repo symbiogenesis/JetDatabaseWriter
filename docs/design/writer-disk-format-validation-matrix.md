@@ -979,7 +979,7 @@ rewrites and relationship renames in Jet3/Jet4/ACE and all statement modes.
 Secure erase retains live shared roots and interior chain tails; statement
 rollback and every injected partial-write position restore exact database bytes
 and permit a same-writer retry. Any transferred external field conservatively
-pins every original row chain, so obsolete metadata reclamation remains S9/I6/I17
+pins every original row chain, so obsolete metadata reclamation remains S9/I17
 work. Existing native application/security specimens and fresh DAO120 mutation
 acceptance retain their separate limits.
 
@@ -988,9 +988,9 @@ from both frozen native compressed-Text specimens through column add/drop/rename
 index creation and unrelated updates in every write mode. Explicit equal-value
 assignment still encodes the supplied value; rollback restores every byte and
 permits retry. Fresh DAO3.6 and DAO120 checks read the edited values and compacted
-output after the combined schema changes. This extends raw-slot preservation to
-ordinary Text; other scalar representations and original user LVAL identities
-remain I6 work.
+output after the combined schema changes. Unassigned raw fixed, variable, null-fixed
+and dropped slots and per-column LVAL descriptors are likewise preserved across
+in-place updates and row relocation (`InPlaceRowUpdateTests`).
 
 `AllowZeroLengthTests` and `NativeAllowZeroLengthTests` distinguish explicitly
 stored False, True and absent properties in ordinary Text/Memo/Hyperlink fields.

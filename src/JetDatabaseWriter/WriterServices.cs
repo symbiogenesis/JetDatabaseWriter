@@ -148,7 +148,8 @@ internal sealed class WriterServices : IDisposable
             constraints,
             this.Relationships,
             autoNumbers,
-            catalogRows);
+            catalogRows,
+            snapshots);
         this.Schema = new TableSchemaEditor(
             db.Format,
             pager,

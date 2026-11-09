@@ -803,6 +803,13 @@ public sealed class SchemaEvolutionTests
         Assert.Equal(3, table.Rows.Count);
     }
 
+    [Fact]
+    public void TableRewritePlan_DoesNotBufferProjectedRowLists()
+    {
+        Assert.Null(typeof(JetDatabaseWriter.Tables.TableRewritePlan).GetProperty("Rows", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic));
+        Assert.Null(typeof(JetDatabaseWriter.Tables.TableRewritePlan).GetProperty("TextBytes", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────
 
     private static bool MentionsTable(DataRow row, string tableName)

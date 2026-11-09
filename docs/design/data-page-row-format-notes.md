@@ -613,18 +613,26 @@ reclaimed while shared roots and interior tails survive. Multi-index incremental
 updates skip unchanged index trees (including `IgnoreNulls` Null-key cancels),
 filter unchanged index slots out of post-edit ownership and non-relationship
 usage-map walks, and rewrite the TDEF chain only when root or usage-map pointers
-change. Schema rewrites (TableRewritePlanner.PrepareAsync and
-TableStorageEditor.CopyRowsAndIndexesAsync) validate index additions and drops
-before reading rows, stream table rows via TableSnapshotReader.ForEachDecodedRowAsync`
+change. Update target discovery decouples unique-index equality seeks and
+predicate-filtered scan fallbacks (single and multi-item `RowUpdate` batches)
+from post-update uniqueness validation: `TableDataWriter.UpdateRowsCoreAsync`
+locates only matching rows via `TableSnapshotReader.TryReadIndexedRowsAsync`
+or `ReadMatchingRowsAsync`, and when a unique-key or relationship column may
+change (`!canSeek`), `UniqueIndexChecker.CheckUniqueIndexesPreUpdateByLocationAsync`
+streams live table rows via `ForEachDecodedRowAsync` without reading non-key
+external LVAL chains or allocating raw-slot dictionaries (`CheckUniqueIndexesPreInsertAsync`
+streams snapshot-required unique checks the same way). Schema rewrites (`TableRewritePlanner.PrepareAsync` and
+`TableStorageEditor.CopyRowsAndIndexesAsync`) validate index additions and drops
+before reading rows, stream table rows via `TableSnapshotReader.ForEachDecodedRowAsync`
 while skipping external LVAL chain reads for dropped columns, enforce
-AccessWriterOptions.MaxSchemaRewriteRows and AccessWriterOptions.MaxSchemaRewriteBytes`
+`AccessWriterOptions.MaxSchemaRewriteRows` and `AccessWriterOptions.MaxSchemaRewriteBytes`
 across projected row values, preserved fixed-text slots and added calculated
-column payloads (JetErrorCode.SchemaRewriteBudgetExceeded), encode compact `IndexEntry` keys on the fly as each row is inserted into the
-replacement table (`IndexMaintainer.RewriteIndexEntryCollector`, also used to
-stream full index rebuilds via `ForEachDecodedRowAsync`), and release buffered
-row and fixed-text payloads immediately without retaining `LocatedRow` or
-key-column `object[]` slots in memory.
-TableSchemaEditor.SetTableValidationRuleAsync likewise streams rows without
+column payloads (`JetErrorCode.SchemaRewriteBudgetExceeded`), stream projected
+rows directly into replacement storage without pre-buffering `Rows` or `TextBytes`
+lists on `TableRewritePlan`, and encode compact `IndexEntry` keys on the fly as
+each row is inserted into the replacement table (`IndexMaintainer.RewriteIndexEntryCollector`,
+also used to stream full index rebuilds via `ForEachDecodedRowAsync`).
+`TableSchemaEditor.SetTableValidationRuleAsync` likewise streams rows without
 retaining raw fixed-text slot maps and resolves only external LVAL columns
 referenced by the validation rule expression. Ordinary public table reads retain
 their own decode-fault policy.

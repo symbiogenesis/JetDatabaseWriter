@@ -340,46 +340,59 @@ internal sealed class TableDataWriter(
         }
 
         List<LocatedRow>? selected = null;
-        if (canSeek)
+        if (compiledUpdates.Count == 1)
         {
-            if (compiledUpdates.Count == 1)
+            selected = await snapshots.TryReadIndexedRowsAsync(table, compiledUpdates[0].Criteria, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            var merged = new List<LocatedRow>();
+            var seenLocations = new HashSet<(long PageNumber, int RowIndex)>();
+            bool allSought = true;
+            foreach ((RowCriteria itemCriteria, _, _) in compiledUpdates)
             {
-                selected = await snapshots.TryReadIndexedRowsAsync(table, compiledUpdates[0].Criteria, cancellationToken).ConfigureAwait(false);
+                List<LocatedRow>? itemRows = await snapshots.TryReadIndexedRowsAsync(table, itemCriteria, cancellationToken).ConfigureAwait(false);
+                if (itemRows is null)
+                {
+                    allSought = false;
+                    break;
+                }
+
+                foreach (LocatedRow located in itemRows)
+                {
+                    if (seenLocations.Add((located.Location.PageNumber, located.Location.RowIndex)))
+                    {
+                        merged.Add(located);
+                    }
+                }
             }
-            else
+
+            if (allSought)
             {
-                var merged = new List<LocatedRow>();
-                var seenLocations = new HashSet<(long PageNumber, int RowIndex)>();
-                bool allSought = true;
-                foreach ((RowCriteria itemCriteria, _, _) in compiledUpdates)
-                {
-                    List<LocatedRow>? itemRows = await snapshots.TryReadIndexedRowsAsync(table, itemCriteria, cancellationToken).ConfigureAwait(false);
-                    if (itemRows is null)
-                    {
-                        allSought = false;
-                        break;
-                    }
-
-                    foreach (LocatedRow located in itemRows)
-                    {
-                        if (seenLocations.Add((located.Location.PageNumber, located.Location.RowIndex)))
-                        {
-                            merged.Add(located);
-                        }
-                    }
-                }
-
-                if (allSought)
-                {
-                    selected = merged;
-                }
+                selected = merged;
             }
         }
 
-        bool singlePredicateEvaluated = compiledUpdates.Count == 1 && selected is null && canSeek;
-        List<LocatedRow> rows = selected ?? (singlePredicateEvaluated
-            ? await snapshots.ReadMatchingRowsAsync(table, compiledUpdates[0].Predicate, cancellationToken).ConfigureAwait(false)
-            : await snapshots.ReadRowsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false));
+        bool singlePredicateEvaluated = compiledUpdates.Count == 1 && selected is null;
+        List<LocatedRow> rows;
+        if (selected is not null)
+        {
+            rows = selected;
+        }
+        else if (compiledUpdates.Count == 1)
+        {
+            rows = await snapshots.ReadMatchingRowsAsync(table, compiledUpdates[0].Predicate, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            var batchPredicates = new List<RowCriteriaEvaluator>(compiledUpdates.Count);
+            foreach ((_, RowCriteriaEvaluator itemPredicate, _) in compiledUpdates)
+            {
+                batchPredicates.Add(itemPredicate);
+            }
+
+            rows = await snapshots.ReadMatchingRowsAsync(table, batchPredicates, cancellationToken).ConfigureAwait(false);
+        }
 
         // Stage every matching row so FK / unique-index checks complete before
         // any disk page is mutated.
@@ -493,7 +506,20 @@ internal sealed class TableDataWriter(
         // rewrites and the caller's rows substituted in one final row set.
         if (!cascades.Exists(cascade => cascade.Table.Entry.TDefPage == entry.TDefPage))
         {
-            await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, rows, pendingUpdates, cancellationToken).ConfigureAwait(false);
+            if (canSeek)
+            {
+                await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, rows, pendingUpdates, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                var pendingUpdatesByLocation = new List<(RowLocation Location, object[] OldRow, object[] NewRow)>(pendingUpdates.Count);
+                foreach ((int i, object[] oldRow, object[] newRow) in pendingUpdates)
+                {
+                    pendingUpdatesByLocation.Add((rows[i].Location, oldRow, newRow));
+                }
+
+                await uniqueIndexes.CheckUniqueIndexesPreUpdateByLocationAsync(entry.TDefPage, tableDef, tableName, pendingUpdatesByLocation, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         var historyBatches = new List<AppendOnlyHistoryWriter.HistoryBatch>();

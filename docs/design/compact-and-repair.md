@@ -198,9 +198,8 @@ preservation remain mandatory for every page proposed for reclamation.
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
 | Replace the source safely | Bounded generation-bound replacement intents and old/new copies; validated process commit decisions; exclusive recovery leases; repeated interruption, missing-destination and unchanged-evidence refusal tests | E4/F6 and the file-recovery part of I15: bootstrap/namespace persistence, missing-destination filesystem metadata policy and actual power-interruption qualification |
 
-The compact-copy engine must avoid the existing table rewrite snapshots; it can
-implement the required bounded raw copy without completing I6's separate
-in-place-update and seek optimizations.
+The compact-copy engine must avoid the existing table rewrite snapshots; it
+implements the required bounded raw copy directly over source storage pages.
 
 Raw LVAL streaming preserves observed Jet4/ACE page-header tokens, including nonzero tokens; independent reopened validation compares each row's page token with its source observation. Token changes require separate private pages. Jet3 retains its row-count field at offset 8.
 

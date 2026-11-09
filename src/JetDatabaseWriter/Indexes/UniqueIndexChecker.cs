@@ -163,8 +163,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         // values may require LVAL traversal outside the fast path.
         if (RequiresSnapshotForPreInsert(descriptors))
         {
-            List<LocatedRow> existingRows = await snapshots.ReadRowsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-            this.CheckUniqueIndexesCore(tableName, descriptors, existingRows, pendingRows, replaceAtRowIndex: null, cancellationToken);
+            await this.CheckUniqueIndexesStreamingAsync(tdefPage, tableDef, tableName, descriptors, pendingRows, replaceAtLocation: null, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -258,6 +257,50 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         this.CheckUniqueIndexesCore(tableName, descriptors, existingRows, pendingInsertRows: [], replaceAtRowIndex: replaceAt, cancellationToken);
     }
 
+    /// <summary>
+    /// Pre-write unique-index validation for an update batch whose selected target rows were
+    /// discovered without buffering the entire table, streaming live table rows and resolving
+    /// only external long-value columns that participate in unique indexes.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="updates">The updates keyed by physical row location.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask CheckUniqueIndexesPreUpdateByLocationAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string tableName,
+        IReadOnlyList<(RowLocation Location, object[] OldRow, object[] NewRow)> updates,
+        CancellationToken cancellationToken)
+    {
+        if (updates.Count == 0)
+        {
+            return;
+        }
+
+        List<UniqueIndexDescriptor> descriptors = await this.LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        if (descriptors.Count == 0)
+        {
+            return;
+        }
+
+        Dictionary<(long PageNumber, int RowIndex), object[]> replaceAtLocation = [with(updates.Count)];
+        foreach ((RowLocation location, _, object[] newRow) in updates)
+        {
+            replaceAtLocation[(location.PageNumber, location.RowIndex)] = newRow;
+        }
+
+        await this.CheckUniqueIndexesStreamingAsync(
+            tdefPage,
+            tableDef,
+            tableName,
+            descriptors,
+            pendingInsertRows: [],
+            replaceAtLocation,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private static bool ShouldCheckKey(string tableName, UniqueIndexDescriptor descriptor, object[] row)
     {
         int nullCount = IndexHelpers.CountNullKeyColumns(descriptor.KeyColumns, row);
@@ -291,6 +334,122 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         }
 
         return false;
+    }
+
+    private static bool[] GetUniqueKeyLongValueMask(TableDef tableDef, IReadOnlyList<UniqueIndexDescriptor> descriptors)
+    {
+        bool[] mask = new bool[tableDef.Columns.Count];
+        foreach (UniqueIndexDescriptor descriptor in descriptors)
+        {
+            foreach (KeyColumnInfo keyColumn in descriptor.KeyColumns)
+            {
+                if (keyColumn.SnapIdx >= 0 && keyColumn.SnapIdx < mask.Length && UsesLongValueStorage(keyColumn.Col))
+                {
+                    mask[keyColumn.SnapIdx] = true;
+                }
+            }
+        }
+
+        return mask;
+    }
+
+    private async ValueTask CheckUniqueIndexesStreamingAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string tableName,
+        List<UniqueIndexDescriptor> descriptors,
+        List<object[]> pendingInsertRows,
+        Dictionary<(long PageNumber, int RowIndex), object[]>? replaceAtLocation,
+        CancellationToken cancellationToken)
+    {
+        bool[] resolveLongValueColumns = GetUniqueKeyLongValueMask(tableDef, descriptors);
+        var seenSets = new HashSet<byte[]>[descriptors.Count];
+        var firstViolations = new JetConstraintException?[descriptors.Count];
+        for (int d = 0; d < descriptors.Count; d++)
+        {
+            seenSets[d] = [with(ByteArrayEqualityComparer.Instance)];
+        }
+
+        await snapshots.ForEachDecodedRowAsync(
+            tdefPage,
+            tableDef,
+            tableName,
+            (row, ct) =>
+            {
+                ct.ThrowIfCancellationRequested();
+                object[] effectiveRow = replaceAtLocation != null && replaceAtLocation.TryGetValue((row.Location.PageNumber, row.Location.RowIndex), out object[]? rep)
+                    ? rep
+                    : row.Values;
+
+                for (int d = 0; d < descriptors.Count; d++)
+                {
+                    if (firstViolations[d] is not null)
+                    {
+                        continue;
+                    }
+
+                    this.TryRecordRowKey(tableName, descriptors[d], effectiveRow, seenSets[d], ref firstViolations[d]);
+                }
+
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken,
+            resolveLongValueColumns: resolveLongValueColumns,
+            captureRawSlots: false).ConfigureAwait(false);
+
+        for (int p = 0; p < pendingInsertRows.Count; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            for (int d = 0; d < descriptors.Count; d++)
+            {
+                if (firstViolations[d] is not null)
+                {
+                    continue;
+                }
+
+                this.TryRecordRowKey(tableName, descriptors[d], pendingInsertRows[p], seenSets[d], ref firstViolations[d]);
+            }
+        }
+
+        for (int d = 0; d < firstViolations.Length; d++)
+        {
+            if (firstViolations[d] is not null)
+            {
+                throw firstViolations[d]!;
+            }
+        }
+    }
+
+    private void TryRecordRowKey(
+        string tableName,
+        UniqueIndexDescriptor descriptor,
+        object[] row,
+        HashSet<byte[]> seen,
+        ref JetConstraintException? firstViolation)
+    {
+        int nullCount = IndexHelpers.CountNullKeyColumns(descriptor.KeyColumns, row);
+        if (descriptor.IsRequired && nullCount != 0)
+        {
+            firstViolation = new JetConstraintException(
+                JetErrorCode.NotNullViolation,
+                $"Index '{descriptor.Name}' on table '{tableName}' requires a value for every key column. The table is unchanged.",
+                new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
+            return;
+        }
+
+        if (!descriptor.IsUnique || nullCount == descriptor.KeyColumns.Count)
+        {
+            return;
+        }
+
+        byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, row);
+        if (!seen.Add(key))
+        {
+            firstViolation = new JetConstraintException(
+                JetErrorCode.UniqueViolation,
+                $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. The conflict was detected before any row was written; the table is unchanged.",
+                new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
+        }
     }
 
     /// <summary>
