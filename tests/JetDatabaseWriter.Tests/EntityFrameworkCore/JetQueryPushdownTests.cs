@@ -1,12 +1,17 @@
 namespace JetDatabaseWriter.Tests.EntityFrameworkCore;
 
-using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
+using JetDatabaseWriter.EntityFrameworkCore.Query.Internal;
+using JetDatabaseWriter.EntityFrameworkCore.Storage.Internal;
 using JetDatabaseWriter.Enums;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
 public sealed class JetQueryPushdownTests
@@ -72,9 +77,15 @@ public sealed class JetQueryPushdownTests
         await SeedAsync(context);
 
         var query = context.Items.AsNoTracking()
-            .Join(context.Groups.Where(group => group.Active), item => item.GroupId, group => group.Id,
+            .Join(
+                context.Groups.Where(group => group.Active),
+                item => item.GroupId,
+                group => group.Id,
                 (item, group) => new { item, group })
-            .Join(context.Categories, pair => pair.group.CategoryId, category => category.Id,
+            .Join(
+                context.Categories,
+                pair => pair.group.CategoryId,
+                category => category.Id,
                 (pair, category) => new { pair.item, pair.group, category })
             .Where(pair => pair.item.Id > 15 && pair.category.Id == 2)
             .OrderBy(pair => pair.item.Id)
@@ -94,7 +105,10 @@ public sealed class JetQueryPushdownTests
         await SeedAsync(context);
 
         int[] actual = await context.Items.AsNoTracking()
-            .LeftJoin(context.Groups.Where(group => group.Id == 2), item => item.GroupId, group => group.Id,
+            .LeftJoin(
+                context.Groups.Where(group => group.Id == 2),
+                item => item.GroupId,
+                group => group.Id,
                 (item, group) => new { item, group })
             .Where(pair => pair.group == null)
             .OrderBy(pair => pair.item.Id)
@@ -116,11 +130,55 @@ public sealed class JetQueryPushdownTests
             .Select(item => new { item.Id, item.Group.Name, Category = item.Group.Category.Name })
             .ToArrayAsync(TestContext.Current.CancellationToken);
 
-        Assert.Single(actual);
-        Assert.Equal(20, actual[0].Id);
-        Assert.Equal("Even", actual[0].Name);
-        Assert.Equal("Second", actual[0].Category);
+        var row = Assert.Single(actual);
+        Assert.Equal(20, row.Id);
+        Assert.Equal("Even", row.Name);
+        Assert.Equal("Second", row.Category);
     }
+
+#pragma warning disable EF1001 // Verify the provider's internal index scan contract directly.
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task Snapshot_Index_Scan_Reverses_Primary_Key_And_Honors_Mixed_Directions(DatabaseFormat format)
+    {
+        await using MemoryStream stream = new();
+        DbContextOptions<QueryContext> options = new DbContextOptionsBuilder<QueryContext>()
+            .UseJetDatabaseWriter(stream, format, leaveOpen: true).Options;
+        await using QueryContext context = new(options);
+        await SeedAsync(context);
+        await using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        IJetClientConnection connection = context.GetService<IJetClientConnection>();
+        IEntityType entityType = context.Model.FindEntityType(typeof(Item))!;
+        IProperty id = entityType.FindProperty(nameof(Item.Id))!;
+        IProperty group = entityType.FindProperty(nameof(Item.GroupId))!;
+        IReadOnlyDictionary<string, object?> parameters = new Dictionary<string, object?>();
+        IReadOnlySet<IProperty> properties = new HashSet<IProperty> { id, group };
+
+        IReadOnlyList<ValueBuffer> reversed = await connection.ReadTableValueBuffersAsync(
+            entityType,
+            seekConditions: null,
+            parameters,
+            properties,
+            maxRows: 3,
+            [new JetOrdering(id, Descending: true)],
+            rowFilter: null,
+            TestContext.Current.CancellationToken);
+        Assert.Equal([20, 19, 18], reversed.Select(buffer => (int)buffer[id.GetIndex()]!));
+
+        IReadOnlyList<ValueBuffer> mixed = await connection.ReadTableValueBuffersAsync(
+            entityType,
+            seekConditions: null,
+            parameters,
+            properties,
+            maxRows: 4,
+            [new JetOrdering(group, Descending: false), new JetOrdering(id, Descending: true)],
+            rowFilter: null,
+            TestContext.Current.CancellationToken);
+        Assert.Equal([19, 17, 15, 13], mixed.Select(buffer => (int)buffer[id.GetIndex()]!));
+    }
+#pragma warning restore EF1001
 
     private static DbContextOptions<QueryContext> CreateOptions(Stream stream)
         => new DbContextOptionsBuilder<QueryContext>()
@@ -149,6 +207,7 @@ public sealed class JetQueryPushdownTests
             modelBuilder.Entity<Item>().HasKey(x => x.Id);
             modelBuilder.Entity<Item>().Property(x => x.Id).ValueGeneratedNever();
             modelBuilder.Entity<Item>().HasOne(x => x.Group).WithMany().HasForeignKey(x => x.GroupId);
+            modelBuilder.Entity<Item>().HasIndex(x => new { x.GroupId, x.Id }).IsDescending(false, true);
             modelBuilder.Entity<Group>().Property(x => x.Id).ValueGeneratedNever();
             modelBuilder.Entity<Group>().HasOne(x => x.Category).WithMany().HasForeignKey(x => x.CategoryId);
             modelBuilder.Entity<Category>().Property(x => x.Id).ValueGeneratedNever();

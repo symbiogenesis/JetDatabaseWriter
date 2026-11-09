@@ -3786,6 +3786,13 @@ internal static partial class JetAsyncQueryExecutor
                 }
                 else
                 {
+                    if (rowPredicates.Any(predicate => predicate.Parameters.Count != 1
+                        || !predicate.Parameters[0].Type.IsAssignableFrom(tablePlan.QueryEntityType.ClrType)))
+                    {
+                        tablePlan.MaxRowsEvaluator = null;
+                        return;
+                    }
+
                     tablePlan.CandidateRowFilter = CompileCombinedCandidateFilter(model, tablePlan.QueryEntityType, rowPredicates);
                 }
             }
