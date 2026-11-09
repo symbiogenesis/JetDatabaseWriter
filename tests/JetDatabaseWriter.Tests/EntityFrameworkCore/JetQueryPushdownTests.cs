@@ -136,6 +136,46 @@ public sealed class JetQueryPushdownTests
         Assert.Equal("Second", row.Category);
     }
 
+    [Fact]
+    public async Task Self_Join_Preserves_Independent_Alias_Predicates()
+    {
+        await using MemoryStream stream = new();
+        await using QueryContext context = new(CreateOptions(stream));
+        await SeedAsync(context);
+
+        var actual = await context.Items.AsNoTracking().Where(item => item.Id <= 3)
+            .Join(
+                context.Items.Where(item => item.Id > 17),
+                outer => outer.Active,
+                inner => inner.Active,
+                (outer, inner) => new { OuterId = outer.Id, InnerId = inner.Id })
+            .OrderBy(pair => pair.OuterId).ThenBy(pair => pair.InnerId)
+            .ToArrayAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal([1, 2, 2, 3], actual.Select(pair => pair.OuterId));
+        Assert.Equal([19, 18, 20, 19], actual.Select(pair => pair.InnerId));
+    }
+
+    [Fact]
+    public async Task Entity_Terminals_And_Nested_Entity_Results_Hydrate_All_Columns()
+    {
+        await using MemoryStream stream = new();
+        await using QueryContext context = new(CreateOptions(stream));
+        await SeedAsync(context);
+
+        Group single = await context.Groups.AsNoTracking().SingleAsync(group => group.Id == 2, TestContext.Current.CancellationToken);
+        Assert.Equal("Even", single.Name);
+
+        var projected = await context.Items.AsNoTracking().Where(item => item.Id == 2)
+            .Select(item => new { Entity = item.Group, Label = item.Id })
+            .SingleAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("Even", projected.Entity.Name);
+
+        Item tracked = await context.Items.Where(item => item.Group.Id == 2).OrderBy(item => item.Id)
+            .FirstAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("Even", tracked.Group.Name);
+    }
+
 #pragma warning disable EF1001 // Verify the provider's internal index scan contract directly.
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]

@@ -82,7 +82,11 @@ internal static partial class JetAsyncQueryExecutor
 
             if (call.Method.Name is nameof(Queryable.Where) or nameof(Queryable.OrderBy)
                 or nameof(Queryable.OrderByDescending) or nameof(Queryable.ThenBy) or nameof(Queryable.ThenByDescending)
-                || (allowBounds && call.Method.Name is nameof(Queryable.Skip) or nameof(Queryable.Take) or nameof(Queryable.Distinct)))
+                || (allowBounds && call.Method.Name is nameof(Queryable.Skip) or nameof(Queryable.Take) or nameof(Queryable.Distinct)
+                    or nameof(Queryable.First) or nameof(Queryable.FirstOrDefault)
+                    or nameof(Queryable.Single) or nameof(Queryable.SingleOrDefault)
+                    or nameof(Queryable.Last) or nameof(Queryable.LastOrDefault)
+                    or nameof(Queryable.ElementAt) or nameof(Queryable.ElementAtOrDefault)))
             {
                 return this.ResolveSourceShape(call.Arguments[0], allowBounds);
             }
@@ -109,6 +113,20 @@ internal static partial class JetAsyncQueryExecutor
 
         private HashSet<IProperty>? ComputeRequiredProperties(Expression query, IEntityType entityType)
         {
+            Expression? resultShape = this.ResolveSourceShape(query, allowBounds: true);
+            ResultEntityFinder resultFinder = new(model);
+            _ = resultFinder.Visit(resultShape);
+            EntityEqualityFinder equalityFinder = new(model);
+            _ = equalityFinder.Visit(query);
+            if (model.FindEntityType(UnwrapSequenceType(query.Type)) is not null
+                || resultFinder.ContainsEntity
+                || equalityFinder.ContainsEntityEquality
+                || entityType.GetNavigations().Any(static navigation => navigation.TargetEntityType.IsOwned()))
+            {
+                // Entities in the result expose their complete fixed-up navigation graph.
+                return null;
+            }
+
             RootEntityPropertyUsageAnalyzer analyzer = new(model, entityType, ignoreTransparentEntities: true);
             this.VisitUsage(query, analyzer);
             if (analyzer.EntityEscapes)
@@ -116,7 +134,6 @@ internal static partial class JetAsyncQueryExecutor
                 return null;
             }
 
-            Expression? resultShape = this.ResolveSourceShape(query, allowBounds: true);
             if (resultShape is not null)
             {
                 RootEntityPropertyUsageAnalyzer resultAnalyzer = new(model, entityType);
@@ -326,6 +343,69 @@ internal static partial class JetAsyncQueryExecutor
                 }
 
                 return node.Update(owner);
+            }
+        }
+
+        private sealed class ResultEntityFinder(IModel model) : ExpressionVisitor
+        {
+            public bool ContainsEntity { get; private set; }
+
+            protected override Expression VisitMember(MemberExpression node)
+            {
+                if (model.FindEntityType(UnwrapSequenceType(node.Type)) is not null)
+                {
+                    this.ContainsEntity = true;
+                    return node;
+                }
+
+                if (node.Expression is not null
+                    && model.FindEntityType(node.Expression.Type)?.FindProperty(node.Member) is not null)
+                {
+                    return node;
+                }
+
+                return base.VisitMember(node);
+            }
+
+            protected override Expression VisitMethodCall(MethodCallExpression node)
+            {
+                if (model.FindEntityType(UnwrapSequenceType(node.Type)) is not null)
+                {
+                    this.ContainsEntity = true;
+                    return node;
+                }
+
+                return base.VisitMethodCall(node);
+            }
+
+            protected override Expression VisitParameter(ParameterExpression node)
+            {
+                if (model.FindEntityType(node.Type) is not null)
+                {
+                    this.ContainsEntity = true;
+                }
+
+                return node;
+            }
+        }
+
+        private sealed class EntityEqualityFinder(IModel model) : ExpressionVisitor
+        {
+            public bool ContainsEntityEquality { get; private set; }
+
+            protected override Expression VisitMethodCall(MethodCallExpression node)
+            {
+                if (node.Method.DeclaringType == typeof(Queryable)
+                    && node.Method.Name is nameof(Queryable.Distinct) or nameof(Queryable.Union)
+                        or nameof(Queryable.Intersect) or nameof(Queryable.Except)
+                        or nameof(Queryable.Contains) or nameof(Queryable.SequenceEqual)
+                    && node.Arguments.Count > 0
+                    && model.FindEntityType(UnwrapSequenceType(node.Arguments[0].Type)) is not null)
+                {
+                    this.ContainsEntityEquality = true;
+                }
+
+                return base.VisitMethodCall(node);
             }
         }
 
