@@ -69,8 +69,16 @@ fallback where equivalence to the requested CLR order is unqualified.
 
 ## Connection and persistence ownership
 
-Connections to the same file or stream coordinate lifecycle transitions and
-acquire per-connection operation leases. A writer rental holds its lease through
+File paths resolve to an absolute path when the scoped `JetClientConnection` is
+constructed. Its `DatabasePath` property, existence checks, creation, reads,
+writes and deletion all use that captured path, even if the working directory
+later changes. EF peer identity compares absolute paths ordinally on every
+platform, preserving distinct files on case-sensitive filesystems and Windows
+case-sensitive directories. Callers must use the same absolute path spelling
+for peer handoff; case aliases, symbolic links and hard links are not unified.
+
+Connections with the same absolute path spelling or stream instance coordinate
+lifecycle transitions and acquire per-connection operation leases. A writer rental holds its lease through
 release, so peer invalidation and disposal wait for the operation. Idle file and
 stream writers are reused; switching a peer connection retires idle writer
 state. Reader peers may coexist. Explicit transactions prevent another

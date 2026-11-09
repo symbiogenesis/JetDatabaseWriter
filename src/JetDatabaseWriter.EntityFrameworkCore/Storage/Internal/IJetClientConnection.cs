@@ -15,7 +15,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 public interface IJetClientConnection : IAsyncDisposable, IDisposable
 {
     /// <summary>
-    /// Gets the configured database file path, or <see langword="null"/> when backed by a stream.
+    /// Gets the absolute database file path resolved when the connection is constructed, or <see langword="null"/> when backed by a stream.
     /// </summary>
     public string? DatabasePath { get; }
 

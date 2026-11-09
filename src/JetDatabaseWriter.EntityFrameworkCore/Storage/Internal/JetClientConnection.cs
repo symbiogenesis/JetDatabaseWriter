@@ -36,7 +36,6 @@ public sealed class JetClientConnection : IJetClientConnection
 #pragma warning restore CA2213
     private readonly List<(string Name, JetTransaction Scope)> savepoints = [];
     private readonly JetOptionsExtension optionsExtension;
-    private readonly string? normalizedDatabasePath;
     private Stream? resolvedStream;
     private AccessReader? activeReader;
     private AccessWriter? cachedWriter;
@@ -56,10 +55,10 @@ public sealed class JetClientConnection : IJetClientConnection
             ?? throw new InvalidOperationException("JetOptionsExtension was not found in IDbContextOptions.");
         if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
         {
-            this.normalizedDatabasePath = Path.GetFullPath(this.optionsExtension.DatabasePath);
+            this.DatabasePath = Path.GetFullPath(this.optionsExtension.DatabasePath);
         }
 
-        if (this.normalizedDatabasePath is null)
+        if (this.DatabasePath is null)
         {
             _ = this.GetOrCreateStream();
         }
@@ -68,7 +67,7 @@ public sealed class JetClientConnection : IJetClientConnection
     }
 
     /// <inheritdoc/>
-    public string? DatabasePath => this.optionsExtension.DatabasePath;
+    public string? DatabasePath { get; }
 
     /// <inheritdoc/>
     public DatabaseFormat Format => this.optionsExtension.Format;
@@ -191,16 +190,16 @@ public sealed class JetClientConnection : IJetClientConnection
 
             await this.CloseAllReadersForSameTargetAsync(cancellationToken).ConfigureAwait(false);
             AccessWriterOptions writerOptions = this.BuildWriterOptions();
-            if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+            if (!string.IsNullOrWhiteSpace(this.DatabasePath))
             {
-                string? directory = Path.GetDirectoryName(this.optionsExtension.DatabasePath);
+                string? directory = Path.GetDirectoryName(this.DatabasePath);
                 if (!string.IsNullOrEmpty(directory))
                 {
                     _ = Directory.CreateDirectory(directory);
                 }
 
                 this.cachedWriter = await AccessWriter.CreateDatabaseAsync(
-                    this.optionsExtension.DatabasePath,
+                    this.DatabasePath,
                     this.optionsExtension.Format,
                     writerOptions,
                     cancellationToken).ConfigureAwait(false);
@@ -339,9 +338,9 @@ public sealed class JetClientConnection : IJetClientConnection
                 return true;
             }
 
-            if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+            if (!string.IsNullOrWhiteSpace(this.DatabasePath))
             {
-                if (!File.Exists(this.optionsExtension.DatabasePath) || new FileInfo(this.optionsExtension.DatabasePath).Length < 2048)
+                if (!File.Exists(this.DatabasePath) || new FileInfo(this.DatabasePath).Length < 2048)
                 {
                     return false;
                 }
@@ -707,7 +706,7 @@ public sealed class JetClientConnection : IJetClientConnection
     internal AccessReaderOptions BuildReaderOptions()
     {
         AccessReaderOptions? template = this.optionsExtension.ReaderOptions;
-        bool isStream = string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath);
+        bool isStream = string.IsNullOrWhiteSpace(this.DatabasePath);
         ReadOnlyMemory<char> password = !string.IsNullOrEmpty(this.optionsExtension.Password)
             ? this.optionsExtension.Password.AsMemory()
             : (template?.Password ?? ReadOnlyMemory<char>.Empty);
@@ -754,7 +753,7 @@ public sealed class JetClientConnection : IJetClientConnection
     internal AccessWriterOptions BuildWriterOptions()
     {
         AccessWriterOptions? template = this.optionsExtension.WriterOptions;
-        bool isStream = string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath);
+        bool isStream = string.IsNullOrWhiteSpace(this.DatabasePath);
         ReadOnlyMemory<char> password = !string.IsNullOrEmpty(this.optionsExtension.Password)
             ? this.optionsExtension.Password.AsMemory()
             : (template?.Password ?? ReadOnlyMemory<char>.Empty);
@@ -796,9 +795,9 @@ public sealed class JetClientConnection : IJetClientConnection
                     continue;
                 }
 
-                if ((connection.normalizedDatabasePath is not null
-                    && existing.normalizedDatabasePath is not null
-                    && string.Equals(connection.normalizedDatabasePath, existing.normalizedDatabasePath, StringComparison.OrdinalIgnoreCase))
+                if ((connection.DatabasePath is not null
+                    && existing.DatabasePath is not null
+                    && string.Equals(connection.DatabasePath, existing.DatabasePath, StringComparison.Ordinal))
                     || (stream is not null && ReferenceEquals(stream, existing.optionsExtension.DatabaseStream ?? existing.resolvedStream)))
                 {
                     lifecycleGate = LiveConnections[i].LifecycleGate;
@@ -1580,14 +1579,14 @@ public sealed class JetClientConnection : IJetClientConnection
         await this.DisposeTransactionCoreAsync().ConfigureAwait(false);
         await this.CloseAllReadersForSameTargetAsync(cancellationToken).ConfigureAwait(false);
 
-        if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+        if (!string.IsNullOrWhiteSpace(this.DatabasePath))
         {
-            if (!File.Exists(this.optionsExtension.DatabasePath))
+            if (!File.Exists(this.DatabasePath))
             {
                 return false;
             }
 
-            File.Delete(this.optionsExtension.DatabasePath);
+            File.Delete(this.DatabasePath);
             return true;
         }
 
@@ -1657,9 +1656,9 @@ public sealed class JetClientConnection : IJetClientConnection
                     continue;
                 }
 
-                if ((this.normalizedDatabasePath is not null
-                    && peer.normalizedDatabasePath is not null
-                    && string.Equals(this.normalizedDatabasePath, peer.normalizedDatabasePath, StringComparison.OrdinalIgnoreCase))
+                if ((this.DatabasePath is not null
+                    && peer.DatabasePath is not null
+                    && string.Equals(this.DatabasePath, peer.DatabasePath, StringComparison.Ordinal))
                     || (myStream is not null && ReferenceEquals(myStream, peer.optionsExtension.DatabaseStream ?? peer.resolvedStream)))
                 {
                     peers.Add(peer);
@@ -1701,9 +1700,9 @@ public sealed class JetClientConnection : IJetClientConnection
     private async ValueTask<AccessWriter> OpenWriterCoreAsync(CancellationToken cancellationToken)
     {
         AccessWriterOptions writerOptions = this.BuildWriterOptions();
-        if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+        if (!string.IsNullOrWhiteSpace(this.DatabasePath))
         {
-            return await AccessWriter.OpenAsync(this.optionsExtension.DatabasePath, writerOptions, cancellationToken).ConfigureAwait(false);
+            return await AccessWriter.OpenAsync(this.DatabasePath, writerOptions, cancellationToken).ConfigureAwait(false);
         }
 
         Stream stream = this.GetOrCreateStream();
@@ -1754,9 +1753,9 @@ public sealed class JetClientConnection : IJetClientConnection
         }
 
         AccessReaderOptions readerOptions = this.BuildReaderOptions();
-        if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
+        if (!string.IsNullOrWhiteSpace(this.DatabasePath))
         {
-            this.activeReader = await AccessReader.OpenAsync(this.optionsExtension.DatabasePath, readerOptions, cancellationToken).ConfigureAwait(false);
+            this.activeReader = await AccessReader.OpenAsync(this.DatabasePath, readerOptions, cancellationToken).ConfigureAwait(false);
             return this.activeReader;
         }
 
