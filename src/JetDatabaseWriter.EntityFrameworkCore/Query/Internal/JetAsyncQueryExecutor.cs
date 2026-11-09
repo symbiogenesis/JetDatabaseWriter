@@ -305,27 +305,25 @@ internal static partial class JetAsyncQueryExecutor
         return queryContext => ExecuteScalarSync(asyncExecutor, queryContext);
     }
 
-    private static List<TElement> ExecuteSequenceSync<TElement>(
+    private static IEnumerable<TElement> ExecuteSequenceSync<TElement>(
         Func<QueryContext, IAsyncEnumerable<TElement>> asyncExecutor,
         QueryContext queryContext)
     {
-#pragma warning disable RS0030, MA0042 // Synchronous query execution is a required sync-over-async callback boundary.
-        return MaterializeAsync(asyncExecutor, queryContext)
-            .GetAwaiter()
-            .GetResult();
-#pragma warning restore RS0030, MA0042
-
-        static async Task<List<TElement>> MaterializeAsync(
-            Func<QueryContext, IAsyncEnumerable<TElement>> executor,
-            QueryContext qc)
+        IAsyncEnumerator<TElement> enumerator = asyncExecutor(queryContext).GetAsyncEnumerator(queryContext.CancellationToken);
+        try
         {
-            List<TElement> results = [];
-            await foreach (TElement item in executor(qc).WithCancellation(qc.CancellationToken).ConfigureAwait(false))
+#pragma warning disable RS0030, MA0042 // Synchronous query execution advances the async pipeline one requested row at a time.
+            while (enumerator.MoveNextAsync().AsTask().GetAwaiter().GetResult())
+#pragma warning restore RS0030, MA0042
             {
-                results.Add(item);
+                yield return enumerator.Current;
             }
-
-            return results;
+        }
+        finally
+        {
+#pragma warning disable RS0030, MA0042 // Synchronous enumerator disposal must release its asynchronous read lease, including early exits.
+            enumerator.DisposeAsync().AsTask().GetAwaiter().GetResult();
+#pragma warning restore RS0030, MA0042
         }
     }
 

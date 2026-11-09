@@ -25,6 +25,12 @@ early termination for `All`. A visitor cannot retain its buffer after returning.
 Streaming consumers receive independent buffers and own a read lease until their
 enumerator is disposed, including cancellation and early exit.
 
+Synchronous enumeration advances the asynchronous pipeline once per requested
+row and synchronously disposes that enumerator when the consumer stops or throws.
+It adds no full-result buffer; blocking operators retain their own buffering
+requirements. Synchronous scalar terminals use the same asynchronous execution
+path and wait for their single result.
+
 Entity equality, user methods that consume entities, constrained generic shapes,
 inheritance, owned graphs and navigation-dependent shapes can require the general
 entity execution path. These cases preserve CLR and EF behavior rather than
