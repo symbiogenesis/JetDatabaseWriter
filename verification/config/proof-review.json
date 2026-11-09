@@ -521,7 +521,7 @@
         },
         {
           "path": "docs/design/data-page-row-format-notes.md",
-          "sha256": "999e0bb76619e3d3bd675863418506fdf4b526f20d7cefe1a18c8adc1e64c147"
+          "sha256": "13551c13a8114389ec0322677d4ecdcbef18c7a8b46b052d41d4d2485e34f57b"
         },
         {
           "path": "docs/design/formal-verification.md",
@@ -1033,7 +1033,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Models/LocatedRow.cs",
-          "sha256": "ba43fe69d89b9073b9c32f3ead8f0a5f883615843dc142ff02c0065c99a6df4c"
+          "sha256": "24e672800c4e7f20a446c69e6598e6e877360621169f69eb401e76cd114a6aba"
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Models/OverflowRowTarget.cs",
@@ -1325,7 +1325,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableRowStore.cs",
-          "sha256": "acd32bde8f4cdd4ec27de841346e6b0655f2108e05e05833fe45d331e1994d92"
+          "sha256": "049157cab6fd63ee9722b4b4410a017b9f662b437460be27bc1a77b51ae2d80e"
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableSchemaEditor.cs",
@@ -1333,7 +1333,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableSnapshotReader.cs",
-          "sha256": "a9a849d53399a13c503b6570d035da9ae491c5f7c73ca86b225c7c5db6b26688"
+          "sha256": "cae905b67c75549de729849836f58b46e68f87b70e506761207db82990d6931e"
         },
         {
           "path": "src/JetDatabaseWriter/Transactions/LockFileCoordinator.cs",
@@ -1357,7 +1357,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/ValueDecoding/RowDecodePlan.cs",
-          "sha256": "723dc21d111f3b525b6b0d7052b72150a0acb82f08649ccc832dda9a7e2fc14f"
+          "sha256": "9bc5cd706fc5b18bc92f29b4dae24d337c2d697b111a1b1bdacf95daf3193f9d"
         },
         {
           "path": "src/JetDatabaseWriter/ValueDecoding/RowDecoder.cs",
@@ -1389,7 +1389,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/ValueEncoding/RowEncoder.cs",
-          "sha256": "d4c3f6728d1bafca8f733d0e32e3935259b2d3620864e3f633f57c5c5ad80419"
+          "sha256": "48bcc29b3801a938923c0de1b1c1ddb5a386a471f715a4ddcf3e3561a05ebf8d"
         },
         {
           "path": "src/JetDatabaseWriter/Verification/DataPageKernel.g.cs",
@@ -2265,7 +2265,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Writer/InPlaceRowUpdateTests.cs",
-          "sha256": "ae74cf227e4c7e3ae32f6a83500ef8d39468df105bec3734920fb41b0b509a81"
+          "sha256": "afb66b6055b537e632656d13a290c50b3dc751f195eed2843407a1e1a2a6d586"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Writer/JetTransactionTests.cs",
@@ -2937,7 +2937,7 @@
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Models/LocatedRow.cs",
-          "sha256": "ba43fe69d89b9073b9c32f3ead8f0a5f883615843dc142ff02c0065c99a6df4c"
+          "sha256": "24e672800c4e7f20a446c69e6598e6e877360621169f69eb401e76cd114a6aba"
         },
         {
           "path": "src/JetDatabaseWriter/Pages/Paging/FilePageDigests.cs",
@@ -2981,11 +2981,11 @@
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableRowStore.cs",
-          "sha256": "acd32bde8f4cdd4ec27de841346e6b0655f2108e05e05833fe45d331e1994d92"
+          "sha256": "049157cab6fd63ee9722b4b4410a017b9f662b437460be27bc1a77b51ae2d80e"
         },
         {
           "path": "src/JetDatabaseWriter/Tables/TableSnapshotReader.cs",
-          "sha256": "a9a849d53399a13c503b6570d035da9ae491c5f7c73ca86b225c7c5db6b26688"
+          "sha256": "cae905b67c75549de729849836f58b46e68f87b70e506761207db82990d6931e"
         },
         {
           "path": "src/JetDatabaseWriter/Transactions/RecoverableWriterLock.cs",
@@ -3169,7 +3169,7 @@
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Writer/InPlaceRowUpdateTests.cs",
-          "sha256": "ae74cf227e4c7e3ae32f6a83500ef8d39468df105bec3734920fb41b0b509a81"
+          "sha256": "afb66b6055b537e632656d13a290c50b3dc751f195eed2843407a1e1a2a6d586"
         },
         {
           "path": "tests/JetDatabaseWriter.Tests/Writer/MalformedRowTraversalWriteBackTests.cs",

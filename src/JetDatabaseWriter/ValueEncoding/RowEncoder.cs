@@ -26,6 +26,12 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="format">The database's immutable format profile.</param>
 internal sealed class RowEncoder(JetFormat format)
 {
+    internal const int PreservedFixedAreaKey = -1;
+    internal const int PreservedNullMaskKey = -2;
+    internal const int PreservedVarCountKey = -3;
+
+    internal static int GetPreservedDroppedVarSlotKey(int varIdx) => -1000 - varIdx;
+
     internal static byte[]? EncodeOleValue(object value)
     {
         if (value is PreEncodedLongValue pre)
@@ -346,8 +352,37 @@ internal sealed class RowEncoder(JetFormat format)
             }
         }
 
+        int origNumCols = 0;
+        if (textBytes?.TryGetValue(PreservedNullMaskKey, out byte[]? preservedNullMask) == true && preservedNullMask.Length >= 2)
+        {
+            origNumCols = BinaryPrimitives.ReadUInt16LittleEndian(preservedNullMask);
+            numCols = Math.Max(numCols, origNumCols);
+        }
+        else
+        {
+            preservedNullMask = null;
+        }
+
+        if (textBytes?.TryGetValue(PreservedFixedAreaKey, out byte[]? preservedFixedArea) == true && preservedFixedArea.Length > 0)
+        {
+            maxFixedEnd = Math.Max(maxFixedEnd, preservedFixedArea.Length);
+        }
+        else
+        {
+            preservedFixedArea = null;
+        }
+
         int nullMaskLen = JetFormat.GetNullMaskSizeBytes(numCols);
         int varLen = maxDefinedVarIdx + 1;
+        if (tableDef.HasVarColumns && textBytes?.TryGetValue(PreservedVarCountKey, out byte[]? preservedVarCount) == true && preservedVarCount.Length >= 2)
+        {
+            varLen = Math.Max(varLen, BinaryPrimitives.ReadUInt16LittleEndian(preservedVarCount));
+        }
+        else
+        {
+            preservedVarCount = null;
+        }
+
         bool jet3 = format.RowFields.HasJumpTable;
         if (jet3 && (numCols > Constants.TableDefinition.MaxJet3Columns || varLen > Constants.TableDefinition.MaxJet3Columns))
         {
@@ -391,16 +426,78 @@ internal sealed class RowEncoder(JetFormat format)
             if (maxFixedEnd > 0)
             {
                 fixedArea.AsSpan(0, maxFixedEnd).Clear();
+                if (preservedFixedArea is not null)
+                {
+                    preservedFixedArea.AsSpan().CopyTo(fixedArea.AsSpan(0, preservedFixedArea.Length));
+                    for (int i = 0; i < tableDef.Columns.Count; i++)
+                    {
+                        ColumnInfo col = tableDef.Columns[i];
+                        if (col.IsFixed && col.Type != BooleanType)
+                        {
+                            int fixedSize = JetTypeInfo.GetFixedStorageSize(col.Type, col.Size);
+                            if (fixedSize > 0 && col.FixedOff >= 0 && col.FixedOff + fixedSize <= maxFixedEnd)
+                            {
+                                fixedArea.AsSpan(col.FixedOff, fixedSize).Clear();
+                            }
+                        }
+                    }
+                }
             }
 
             // Stack-allocate nullMask for typical table widths (up to 256 columns → 32 bytes).
             Span<byte> nullMask = nullMaskLen <= 32 ? stackalloc byte[nullMaskLen] : new byte[nullMaskLen];
             nullMask.Clear();
+            if (preservedNullMask is { Length: > 2 })
+            {
+                int copyMaskBytes = Math.Min(nullMaskLen, preservedNullMask.Length - 2);
+                preservedNullMask.AsSpan(2, copyMaskBytes).CopyTo(nullMask);
+                for (int c = origNumCols; c < numCols; c++)
+                {
+                    JetFormat.SetNullMaskBit(nullMask, c, false);
+                }
+
+                int excessBits = (nullMaskLen * 8) - numCols;
+                if (excessBits > 0 && excessBits < 8 && nullMaskLen > 0)
+                {
+                    nullMask[nullMaskLen - 1] &= (byte)((1 << (8 - excessBits)) - 1);
+                }
+
+                for (int i = 0; i < tableDef.Columns.Count; i++)
+                {
+                    ColumnInfo col = tableDef.Columns[i];
+                    if (col.ColNum >= 0 && col.ColNum < numCols)
+                    {
+                        JetFormat.SetNullMaskBit(nullMask, col.ColNum, false);
+                    }
+                }
+            }
 
             // Access reserves every declared fixed slot, including trailing Null scalars.
             int fixedAreaSize = maxFixedEnd;
             byte[][] varEntries = varLen > 0 ? new byte[varLen][] : [];
             int varPayloadSize = 0;
+            if (preservedVarCount is not null && textBytes is not null && varLen > 0)
+            {
+                Span<bool> definedVarMask = varLen <= 256 ? stackalloc bool[varLen] : new bool[varLen];
+                definedVarMask.Clear();
+                for (int i = 0; i < tableDef.Columns.Count; i++)
+                {
+                    ColumnInfo col = tableDef.Columns[i];
+                    if (!col.IsFixed && col.VarIdx >= 0 && col.VarIdx < varLen)
+                    {
+                        definedVarMask[col.VarIdx] = true;
+                    }
+                }
+
+                for (int vi = 0; vi < varLen; vi++)
+                {
+                    if (!definedVarMask[vi] && textBytes.TryGetValue(GetPreservedDroppedVarSlotKey(vi), out byte[]? droppedVarBytes) && droppedVarBytes.Length > 0)
+                    {
+                        varEntries[vi] = droppedVarBytes;
+                        varPayloadSize += droppedVarBytes.Length;
+                    }
+                }
+            }
 
             for (int i = 0; i < tableDef.Columns.Count; i++)
             {

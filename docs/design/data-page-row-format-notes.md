@@ -615,8 +615,10 @@ filter unchanged index slots out of post-edit ownership and non-relationship
 usage-map walks, and rewrite the TDEF chain only when root or usage-map pointers
 change. Schema rewrites (TableRewritePlanner.PrepareAsync and
 TableStorageEditor.CopyRowsAndIndexesAsync) validate index additions and drops
-before reading rows, stream table rows via TableSnapshotReader.ForEachDecodedRowAsync`nwhile skipping external LVAL chain reads for dropped columns, enforce
-AccessWriterOptions.MaxSchemaRewriteRows and AccessWriterOptions.MaxSchemaRewriteBytes`nacross projected row values, preserved fixed-text slots and added calculated
+before reading rows, stream table rows via TableSnapshotReader.ForEachDecodedRowAsync`
+while skipping external LVAL chain reads for dropped columns, enforce
+AccessWriterOptions.MaxSchemaRewriteRows and AccessWriterOptions.MaxSchemaRewriteBytes`
+across projected row values, preserved fixed-text slots and added calculated
 column payloads (JetErrorCode.SchemaRewriteBudgetExceeded), release buffered
 row and fixed-text payloads as each row is inserted into the replacement table,
 and retain only indexed key-column slots for post-copy index rebuilds.

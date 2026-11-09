@@ -491,11 +491,119 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                             }
                         }
                     }
+
+                    this.CaptureDroppedColumnSlots(tableDef, row.Page, row.Location.RowStart, row.Location.RowSize, layout, ref textBytes);
                 }
 
                 return await visit(new LocatedRow(row.Location, (object[])values) { TextBytes = textBytes, LongValues = longValues }, token).ConfigureAwait(false);
             },
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private void CaptureDroppedColumnSlots(
+        TableDef tableDef,
+        byte[] page,
+        int rowStart,
+        int rowSize,
+        in RowLayout layout,
+        ref Dictionary<int, byte[]>? textBytes)
+    {
+        int maxDefinedColNum = 0;
+        int definedFixedBytes = 0;
+        int maxDefinedFixedEnd = 0;
+        int definedVarCount = 0;
+        int maxDefinedVarIdx = -1;
+        for (int i = 0; i < tableDef.Columns.Count; i++)
+        {
+            ColumnInfo col = tableDef.Columns[i];
+            maxDefinedColNum = Math.Max(maxDefinedColNum, col.ColNum + 1);
+            if (col.IsFixed && col.Type != BooleanType)
+            {
+                int fixedSize = col.IsCalculated ? col.Size : JetTypeInfo.GetFixedStorageSize(col.Type, col.Size);
+                if (fixedSize > 0)
+                {
+                    definedFixedBytes += fixedSize;
+                    maxDefinedFixedEnd = Math.Max(maxDefinedFixedEnd, col.FixedOff + fixedSize);
+                }
+            }
+            else if (!col.IsFixed)
+            {
+                definedVarCount++;
+                maxDefinedVarIdx = Math.Max(maxDefinedVarIdx, col.VarIdx);
+            }
+        }
+
+        int fixedAreaEnd = RowDecodePlan.GetFixedAreaEnd(format.RowFields, page, rowStart, layout);
+        int rawFixedAreaLen = Math.Max(0, fixedAreaEnd - format.RowFields.NumCols);
+        bool hasDroppedColNums = maxDefinedColNum != tableDef.Columns.Count || layout.NumCols > maxDefinedColNum;
+        bool hasDroppedFixedBytes = (tableDef.HasVarColumns && rawFixedAreaLen > definedFixedBytes) || maxDefinedFixedEnd > definedFixedBytes;
+        bool hasDroppedVarSlots = tableDef.HasVarColumns && (maxDefinedVarIdx + 1 != definedVarCount || layout.VarLen > maxDefinedVarIdx + 1);
+        if (!hasDroppedColNums && !hasDroppedFixedBytes && !hasDroppedVarSlots)
+        {
+            return;
+        }
+
+        int fixedAreaLen = tableDef.HasVarColumns
+            ? rawFixedAreaLen
+            : Math.Min(maxDefinedFixedEnd, rawFixedAreaLen);
+        if (!tableDef.HasVarColumns && hasDroppedColNums && rawFixedAreaLen > maxDefinedFixedEnd)
+        {
+            int syntheticTrailerLen = format.RowFields.Eod + format.RowFields.VarLen;
+            int eodPos = layout.NullMaskPos - syntheticTrailerLen;
+            int varLenPos = layout.NullMaskPos - format.RowFields.VarLen;
+            bool hasSyntheticTrailer = rawFixedAreaLen >= maxDefinedFixedEnd + syntheticTrailerLen
+                && eodPos >= format.RowFields.NumCols
+                && format.RowFields.ReadVarLen(page, rowStart + varLenPos) == 0
+                && format.RowFields.ReadEod(page, rowStart + eodPos) == eodPos;
+            fixedAreaLen = hasSyntheticTrailer ? rawFixedAreaLen - syntheticTrailerLen : rawFixedAreaLen;
+        }
+
+        int nullMaskBytesLen = rowSize - layout.NullMaskPos;
+        if (nullMaskBytesLen > 0)
+        {
+            byte[] nullMaskEnvelope = new byte[2 + nullMaskBytesLen];
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(nullMaskEnvelope, checked((ushort)layout.NumCols));
+            page.AsSpan(rowStart + layout.NullMaskPos, nullMaskBytesLen).CopyTo(nullMaskEnvelope.AsSpan(2));
+            textBytes ??= [];
+            textBytes[ValueEncoding.RowEncoder.PreservedNullMaskKey] = nullMaskEnvelope;
+        }
+
+        if (fixedAreaLen > 0 && rowStart + format.RowFields.NumCols + fixedAreaLen <= page.Length)
+        {
+            textBytes ??= [];
+            textBytes[ValueEncoding.RowEncoder.PreservedFixedAreaKey] = page.AsSpan(rowStart + format.RowFields.NumCols, fixedAreaLen).ToArray();
+        }
+
+        if (hasDroppedVarSlots && layout.VarLen > 0)
+        {
+            byte[] varCountEnvelope = new byte[2];
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(varCountEnvelope, checked((ushort)layout.VarLen));
+            textBytes ??= [];
+            textBytes[ValueEncoding.RowEncoder.PreservedVarCountKey] = varCountEnvelope;
+            bool[] definedVarMask = new bool[layout.VarLen];
+            for (int i = 0; i < tableDef.Columns.Count; i++)
+            {
+                ColumnInfo col = tableDef.Columns[i];
+                if (!col.IsFixed && col.VarIdx >= 0 && col.VarIdx < definedVarMask.Length)
+                {
+                    definedVarMask[col.VarIdx] = true;
+                }
+            }
+
+            for (int vi = 0; vi < layout.VarLen; vi++)
+            {
+                if (definedVarMask[vi])
+                {
+                    continue;
+                }
+
+                ColumnSlice droppedVar = RowDecodePlan.ResolveVariableSliceByIndex(format.RowFields, page, rowStart, rowSize, layout, vi);
+                if (droppedVar.Kind == ColumnSliceKind.Var && droppedVar.DataLen > 0)
+                {
+                    textBytes[ValueEncoding.RowEncoder.GetPreservedDroppedVarSlotKey(vi)] = page.AsSpan(rowStart + droppedVar.DataStart, droppedVar.DataLen).ToArray();
+                }
+            }
+        }
     }
 
     private async ValueTask ForEachSnapshotRowAsync(long tdefPage, string? tableName, IReadOnlyList<(long DataPage, int RowIndex)>? selected, RowDecodePlan plan, OwnedDataPages.TableRowVisitor visit, CancellationToken cancellationToken)

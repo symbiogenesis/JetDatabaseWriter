@@ -206,7 +206,7 @@ internal sealed class TableRowStore(
                 return true;
             }
 
-            if (current.NumCols > updated.NumCols || current.VarLen > updated.VarLen || tableDef.Columns.Count != updated.NumCols)
+            if (current.NumCols > updated.NumCols || current.VarLen > updated.VarLen)
             {
                 return false;
             }

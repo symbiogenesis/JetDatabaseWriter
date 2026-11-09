@@ -245,12 +245,30 @@ internal sealed class RowDecodePlan
             return ResolveFixedColumnSlice(rowFields, page, rowStart, layout, col);
         }
 
-        if (col.VarIdx >= layout.VarLen)
+        return ResolveVariableSliceByIndex(rowFields, page, rowStart, rowSize, layout, col.VarIdx);
+    }
+
+    /// <summary>Resolves a variable-length slot slice by its physical variable-column index.</summary>
+    /// <param name="rowFields">The format's row field sizes.</param>
+    /// <param name="page">The containing page.</param>
+    /// <param name="rowStart">The row's start offset.</param>
+    /// <param name="rowSize">The row's byte length.</param>
+    /// <param name="layout">The parsed row layout.</param>
+    /// <param name="varIdx">The variable-column offset index.</param>
+    internal static ColumnSlice ResolveVariableSliceByIndex(
+        in RowFieldSizes rowFields,
+        ReadOnlySpan<byte> page,
+        int rowStart,
+        int rowSize,
+        in RowLayout layout,
+        int varIdx)
+    {
+        if (varIdx < 0 || varIdx >= layout.VarLen)
         {
             return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
         }
 
-        int entryPos = layout.VarTableStart + ((layout.VarLen - 1 - col.VarIdx) * rowFields.VarEntry);
+        int entryPos = layout.VarTableStart + ((layout.VarLen - 1 - varIdx) * rowFields.VarEntry);
         if (entryPos < 0 || entryPos + rowFields.VarEntry > rowSize)
         {
             return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
@@ -259,17 +277,17 @@ internal sealed class RowDecodePlan
         int varOff = rowFields.ReadVarEntry(page, rowStart + entryPos);
         if (layout.JumpCount != 0)
         {
-            varOff += Jet3JumpTable.HighPart(page, rowStart, layout.JumpTableEnd, layout.JumpCount, col.VarIdx);
+            varOff += Jet3JumpTable.HighPart(page, rowStart, layout.JumpTableEnd, layout.JumpCount, varIdx);
         }
 
         int varEnd;
-        if (col.VarIdx + 1 < layout.VarLen)
+        if (varIdx + 1 < layout.VarLen)
         {
-            int nextEntry = layout.VarTableStart + ((layout.VarLen - 2 - col.VarIdx) * rowFields.VarEntry);
+            int nextEntry = layout.VarTableStart + ((layout.VarLen - 2 - varIdx) * rowFields.VarEntry);
             varEnd = rowFields.ReadVarEntry(page, rowStart + nextEntry);
             if (layout.JumpCount != 0)
             {
-                varEnd += Jet3JumpTable.HighPart(page, rowStart, layout.JumpTableEnd, layout.JumpCount, col.VarIdx + 1);
+                varEnd += Jet3JumpTable.HighPart(page, rowStart, layout.JumpTableEnd, layout.JumpCount, varIdx + 1);
             }
         }
         else
@@ -287,16 +305,13 @@ internal sealed class RowDecodePlan
         return new ColumnSlice(ColumnSliceKind.Var, dataStart, dataLen, false);
     }
 
-    /// <summary>Resolves a fixed slot's physical bounds independently of its null bit.</summary>
+    /// <summary>Computes the row-relative byte offset where the fixed-column area ends.</summary>
     /// <param name="rowFields">The format's row field sizes.</param>
     /// <param name="page">The containing page.</param>
     /// <param name="rowStart">The row's start offset.</param>
     /// <param name="layout">The parsed row layout.</param>
-    /// <param name="col">The fixed column descriptor.</param>
-    internal static ColumnSlice ResolveFixedColumnSlice(in RowFieldSizes rowFields, ReadOnlySpan<byte> page, int rowStart, in RowLayout layout, ColumnInfo col)
+    internal static int GetFixedAreaEnd(in RowFieldSizes rowFields, ReadOnlySpan<byte> page, int rowStart, in RowLayout layout)
     {
-        int start = rowFields.NumCols + col.FixedOff;
-        int sz = col.IsCalculated ? col.Size : JetTypeInfo.GetFixedStorageSize(col.Type, col.Size);
         int payloadEnd = Math.Min(layout.Eod, layout.NullMaskPos);
         if (layout.VarTableStart < layout.NullMaskPos)
         {
@@ -315,6 +330,20 @@ internal sealed class RowDecodePlan
             payloadEnd = Math.Min(payloadEnd, firstVariableStart);
         }
 
+        return Math.Max(rowFields.NumCols, payloadEnd);
+    }
+
+    /// <summary>Resolves a fixed slot's physical bounds independently of its null bit.</summary>
+    /// <param name="rowFields">The format's row field sizes.</param>
+    /// <param name="page">The containing page.</param>
+    /// <param name="rowStart">The row's start offset.</param>
+    /// <param name="layout">The parsed row layout.</param>
+    /// <param name="col">The fixed column descriptor.</param>
+    internal static ColumnSlice ResolveFixedColumnSlice(in RowFieldSizes rowFields, ReadOnlySpan<byte> page, int rowStart, in RowLayout layout, ColumnInfo col)
+    {
+        int start = rowFields.NumCols + col.FixedOff;
+        int sz = col.IsCalculated ? col.Size : JetTypeInfo.GetFixedStorageSize(col.Type, col.Size);
+        int payloadEnd = GetFixedAreaEnd(rowFields, page, rowStart, layout);
         if (sz == 0 || start < rowFields.NumCols || start > payloadEnd || sz > payloadEnd - start)
         {
             return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);

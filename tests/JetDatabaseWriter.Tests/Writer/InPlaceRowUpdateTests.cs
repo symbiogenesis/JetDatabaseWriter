@@ -18,6 +18,8 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueDecoding.Models;
+using JetDatabaseWriter.ValueEncoding;
 using Xunit;
 
 /// <summary>Small non-key edits retain physical identity, long values and index pages.</summary>
@@ -1090,5 +1092,261 @@ public sealed class InPlaceRowUpdateTests
         LocatedRow[] leaves = [.. await writer.Services.Snapshots.ReadRowsAsync(leavesTable.Entry.TDefPage, ct)];
         Assert.Equal(2, leaves.Single(r => Equals(r.Values[0], 100)).Values[1]);
         Assert.Equal(1, leaves.Single(r => Equals(r.Values[0], 200)).Values[1]);
+    }
+
+    /// <summary>Microsoft-authored DroppedFixed fixtures support changed-width in-place compaction and row relocation while preserving dropped fixed-slot bytes and null-mask bits.</summary>
+    /// <param name="generation">The native fixture generation.</param>
+    [Theory]
+    [InlineData("Jet3")]
+    [InlineData("Jet4")]
+    [InlineData("Ace")]
+    public async Task NativeDroppedFixedFixture_InPlaceAndRelocatedUpdates_PreserveDroppedSlotBytesAndNullMask(string generation)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string fixturePath = Path.Combine(
+            AppContext.BaseDirectory,
+            "Databases",
+            "RowBoundaries",
+            "NativeRowBoundaries" + generation + (generation == "Ace" ? ".accdb" : ".mdb"));
+        byte[] originalFileBytes = await File.ReadAllBytesAsync(fixturePath, ct);
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(originalFileBytes, ct);
+        stream.Position = 0;
+
+        await using AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+        ResolvedTable? table = await writer.Services.Snapshots.ResolveTableAsync("DroppedFixed", ct);
+        Assert.NotNull(table);
+        LocatedRow[] before = [.. await writer.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, ct)];
+        LocatedRow row1Before = before.Single(r => Equals(r.Values[0], 1));
+        LocatedRow row2Before = before.Single(r => Equals(r.Values[0], 2));
+
+        int numColsSize = writer.Database.Format.RowFields.NumCols;
+        byte[] expectedDroppedBytes = [0x08, 0x07, 0x06, 0x05];
+
+        await using (JetTransaction tx = await writer.BeginTransactionAsync(ct))
+        {
+            Assert.Equal(1, await writer.UpdateRowsAsync("DroppedFixed", RowCriteria.Where("Id", 1), new RowValues { ["Note"] = "before-updated-in-place" }, ct));
+            LocatedRow[] afterInPlace = [.. await writer.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, ct)];
+            LocatedRow row1After = afterInPlace.Single(r => Equals(r.Values[0], 1));
+            LocatedRow row2After = afterInPlace.Single(r => Equals(r.Values[0], 2));
+            Assert.Equal(row1Before.Location.PageNumber, row1After.Location.PageNumber);
+            Assert.Equal(row1Before.Location.RowIndex, row1After.Location.RowIndex);
+            Assert.Equal("before-updated-in-place", row1After.Values[3]);
+            Assert.Equal(row2Before.Location.PageNumber, row2After.Location.PageNumber);
+            Assert.Equal(row2Before.Location.RowIndex, row2After.Location.RowIndex);
+
+            byte[] page = await writer.Database.Pages.ReadPageAsync(row1After.Location.PageNumber, ct);
+            try
+            {
+                Assert.True(page.AsSpan(row1After.Location.RowStart + numColsSize + 8, 4).SequenceEqual(expectedDroppedBytes));
+                Assert.True(JetFormat.IsNullMaskBitSet(page.AsSpan(row1After.Location.RowStart + row1After.Location.RowSize - 1, 1), 2));
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+
+            await tx.RollbackAsync(ct);
+        }
+
+        Assert.Equal(originalFileBytes, stream.ToArray());
+
+        byte[] crampedPage = await writer.Database.Pages.ReadPageAsync(row1Before.Location.PageNumber, ct);
+        try
+        {
+            BinaryPrimitives.WriteUInt16LittleEndian(crampedPage.AsSpan(2, 2), 2);
+        }
+        finally
+        {
+            PageBuffers.Return(crampedPage);
+        }
+
+        for (int fillerId = 10; fillerId < 120; fillerId++)
+        {
+            await writer.InsertRowAsync("DroppedFixed", [fillerId, 1, 2, new string('f', 24)], ct);
+        }
+
+        Assert.Equal(1, await writer.UpdateRowsAsync("DroppedFixed", RowCriteria.Where("Id", 1), new RowValues { ["Note"] = new string('w', 24) }, ct));
+        LocatedRow row1Relocated = (await writer.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, ct)).Single(r => Equals(r.Values[0], 1));
+        Assert.NotEqual(row1Before.Location.PageNumber, row1Relocated.Location.PageNumber);
+        Assert.Equal(new string('w', 24), row1Relocated.Values[3]);
+        byte[] relocatedPage = await writer.Database.Pages.ReadPageAsync(row1Relocated.Location.PageNumber, ct);
+        try
+        {
+            Assert.True(relocatedPage.AsSpan(row1Relocated.Location.RowStart + numColsSize + 8, 4).SequenceEqual(expectedDroppedBytes));
+            Assert.True(JetFormat.IsNullMaskBitSet(relocatedPage.AsSpan(row1Relocated.Location.RowStart + row1Relocated.Location.RowSize - 1, 1), 2));
+        }
+        finally
+        {
+            PageBuffers.Return(relocatedPage);
+        }
+    }
+
+    /// <summary>Dropped variable-length, trailing-dropped and pre-ADD-COLUMN absent-slot layouts preserve all dropped slots across changed-width in-place compaction and row relocation.</summary>
+    /// <param name="format">The native file generation.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task DroppedVariableTrailingAndAbsentColumnLayouts_InPlaceAndRelocatedUpdates_PreserveAllSlots(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        byte[] fullRowBytes;
+        byte[] oldRowBytes;
+        TableDef fullTableDef;
+        await using (var helperStream = new MemoryStream())
+        {
+            await using AccessWriter helper = await AccessWriter.CreateDatabaseAsync(helperStream, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+            await helper.CreateTableAsync(
+                "FullSchema",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("DropFixed", typeof(int)),
+                    new ColumnDefinition("KeepFixed", typeof(int)),
+                    new ColumnDefinition("DropVar", typeof(string), maxLength: 80),
+                    new ColumnDefinition("Note", typeof(string), maxLength: 160),
+                    new ColumnDefinition("TrailDrop", typeof(string), maxLength: 80),
+                ],
+                ct);
+            await helper.CreateTableAsync(
+                "OldSchema",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                ],
+                ct);
+            fullTableDef = (await helper.Services.Snapshots.ResolveTableAsync("FullSchema", ct))!.Definition;
+            TableDef oldTableDef = (await helper.Services.Snapshots.ResolveTableAsync("OldSchema", ct))!.Definition;
+            var encoder = new RowEncoder(helper.Database.Format);
+            fullRowBytes = encoder.SerializeRow(fullTableDef, [1, 0x11223344, 77, "dropped-var-head", "initial-note", "dropped-var-tail"]);
+            oldRowBytes = encoder.SerializeRow(oldTableDef, [2]);
+        }
+
+        await using var seed = new MemoryStream();
+        JetFormat profile;
+        long tdefPage;
+        long dataPageNumber;
+        await using (AccessWriter creator = await AccessWriter.CreateDatabaseAsync(seed, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await creator.CreateTableAsync(
+                "Items",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("KeepFixed", typeof(int)),
+                    new ColumnDefinition("Note", typeof(string), maxLength: 160),
+                ],
+                ct);
+            await creator.InsertRowsAsync(
+                "Items",
+                [
+                    [1, 77, new string('p', 60)],
+                    [2, 88, new string('q', 40)],
+                ],
+                ct);
+            ResolvedTable resolvedSeed = (await creator.Services.Snapshots.ResolveTableAsync("Items", ct))!;
+            tdefPage = resolvedSeed.Entry.TDefPage;
+            profile = creator.Database.Format;
+            LocatedRow[] seedRows = [.. await creator.Services.Snapshots.ReadRowsAsync(tdefPage, ct)];
+            dataPageNumber = seedRows[0].Location.PageNumber;
+        }
+
+        byte[] patchedBytes = seed.ToArray();
+        int tdefOffset = checked((int)(tdefPage * profile.PageSize));
+        int numRealIdx = BinaryPrimitives.ReadInt32LittleEndian(patchedBytes.AsSpan(tdefOffset + profile.TDef.NumRealIdx, 4));
+        int colStart = tdefOffset + profile.TDef.BlockEnd + (numRealIdx * profile.TDef.RealIdxEntrySz);
+        int colSize = profile.ColumnDescriptor.Size;
+        BinaryPrimitives.WriteUInt16LittleEndian(patchedBytes.AsSpan(tdefOffset + profile.TDefFormat.Header.MaxCols, 2), 6);
+        BinaryPrimitives.WriteUInt16LittleEndian(patchedBytes.AsSpan(tdefOffset + profile.TDefFormat.Header.NumVarCols, 2), 3);
+        int keepFixedDesc = colStart + colSize;
+        BinaryPrimitives.WriteUInt16LittleEndian(patchedBytes.AsSpan(keepFixedDesc + profile.ColumnDescriptor.NumOff, 2), 2);
+        BinaryPrimitives.WriteUInt16LittleEndian(patchedBytes.AsSpan(keepFixedDesc + profile.ColumnDescriptor.FixedOff, 2), 8);
+        int noteDesc = colStart + (2 * colSize);
+        BinaryPrimitives.WriteUInt16LittleEndian(patchedBytes.AsSpan(noteDesc + profile.ColumnDescriptor.NumOff, 2), 4);
+        BinaryPrimitives.WriteUInt16LittleEndian(patchedBytes.AsSpan(noteDesc + profile.ColumnDescriptor.VarOff, 2), 1);
+        int pageOffset = checked((int)(dataPageNumber * profile.PageSize));
+        int row0Start = profile.PageSize - fullRowBytes.Length;
+        int row1Start = row0Start - oldRowBytes.Length;
+        int dirEnd = profile.DataPage.RowsStart + 4;
+        patchedBytes.AsSpan(pageOffset + dirEnd, profile.PageSize - dirEnd).Clear();
+        fullRowBytes.CopyTo(patchedBytes.AsSpan(pageOffset + row0Start, fullRowBytes.Length));
+        oldRowBytes.CopyTo(patchedBytes.AsSpan(pageOffset + row1Start, oldRowBytes.Length));
+        BinaryPrimitives.WriteUInt16LittleEndian(patchedBytes.AsSpan(pageOffset + profile.DataPage.RowsStart, 2), checked((ushort)row0Start));
+        BinaryPrimitives.WriteUInt16LittleEndian(patchedBytes.AsSpan(pageOffset + profile.DataPage.RowsStart + 2, 2), checked((ushort)row1Start));
+        BinaryPrimitives.WriteUInt16LittleEndian(patchedBytes.AsSpan(pageOffset + 2, 2), checked((ushort)(row1Start - dirEnd)));
+
+        await using var testStream = new MemoryStream();
+        await testStream.WriteAsync(patchedBytes, ct);
+        testStream.Position = 0;
+        await using AccessWriter writer = await AccessWriter.OpenAsync(testStream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct);
+
+        Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 1), new RowValues { ["Note"] = "updated-longer-note-in-place" }, ct));
+        LocatedRow[] afterInPlace = [.. await writer.Services.Snapshots.ReadRowsAsync(tdefPage, ct)];
+        LocatedRow row1After = afterInPlace.Single(r => Equals(r.Values[0], 1));
+        Assert.Equal(dataPageNumber, row1After.Location.PageNumber);
+        Assert.Equal(0, row1After.Location.RowIndex);
+        Assert.Equal(77, row1After.Values[1]);
+        Assert.Equal("updated-longer-note-in-place", row1After.Values[2]);
+
+        byte[] expectedDropVar0;
+        byte[] expectedDropVar2;
+        byte[] pageAfterInPlace = await writer.Database.Pages.ReadPageAsync(row1After.Location.PageNumber, ct);
+        try
+        {
+            Assert.True(RowDecodePlan.TryParseRowLayout(profile.RowFields, pageAfterInPlace, row1After.Location.RowStart, row1After.Location.RowSize, true, out RowLayout layoutAfter));
+            Assert.Equal(6, layoutAfter.NumCols);
+            Assert.Equal(3, layoutAfter.VarLen);
+            Assert.Equal(0x11223344, BinaryPrimitives.ReadInt32LittleEndian(pageAfterInPlace.AsSpan(row1After.Location.RowStart + profile.RowFields.NumCols + 4, 4)));
+            Assert.NotNull(row1After.TextBytes);
+            expectedDropVar0 = row1After.TextBytes[RowEncoder.GetPreservedDroppedVarSlotKey(0)];
+            expectedDropVar2 = row1After.TextBytes[RowEncoder.GetPreservedDroppedVarSlotKey(2)];
+            Assert.NotEmpty(expectedDropVar0);
+            Assert.NotEmpty(expectedDropVar2);
+            ColumnSlice slice0 = RowDecodePlan.ResolveVariableSliceByIndex(profile.RowFields, pageAfterInPlace, row1After.Location.RowStart, row1After.Location.RowSize, layoutAfter, 0);
+            ColumnSlice slice2 = RowDecodePlan.ResolveVariableSliceByIndex(profile.RowFields, pageAfterInPlace, row1After.Location.RowStart, row1After.Location.RowSize, layoutAfter, 2);
+            Assert.True(pageAfterInPlace.AsSpan(row1After.Location.RowStart + slice0.DataStart, slice0.DataLen).SequenceEqual(expectedDropVar0));
+            Assert.True(pageAfterInPlace.AsSpan(row1After.Location.RowStart + slice2.DataStart, slice2.DataLen).SequenceEqual(expectedDropVar2));
+            ReadOnlySpan<byte> maskAfter = pageAfterInPlace.AsSpan(row1After.Location.RowStart + layoutAfter.NullMaskPos, row1After.Location.RowSize - layoutAfter.NullMaskPos);
+            Assert.True(JetFormat.IsNullMaskBitSet(maskAfter, 1));
+            Assert.True(JetFormat.IsNullMaskBitSet(maskAfter, 3));
+            Assert.True(JetFormat.IsNullMaskBitSet(maskAfter, 5));
+        }
+        finally
+        {
+            PageBuffers.Return(pageAfterInPlace);
+        }
+
+        Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 2), new RowValues { ["KeepFixed"] = 99, ["Note"] = "expanded-pre-add-column-row" }, ct));
+        LocatedRow row2Expanded = (await writer.Services.Snapshots.ReadRowsAsync(tdefPage, ct)).Single(r => Equals(r.Values[0], 2));
+        Assert.Equal(dataPageNumber, row2Expanded.Location.PageNumber);
+        Assert.Equal(1, row2Expanded.Location.RowIndex);
+        Assert.Equal(99, row2Expanded.Values[1]);
+        Assert.Equal("expanded-pre-add-column-row", row2Expanded.Values[2]);
+
+        for (int fillerId = 10; fillerId < 40; fillerId++)
+        {
+            await writer.InsertRowAsync("Items", [fillerId, fillerId, new string('f', 140)], ct);
+        }
+
+        Assert.Equal(1, await writer.UpdateRowsAsync("Items", RowCriteria.Where("Id", 1), new RowValues { ["Note"] = new string('r', 155) }, ct));
+        LocatedRow row1Relocated = (await writer.Services.Snapshots.ReadRowsAsync(tdefPage, ct)).Single(r => Equals(r.Values[0], 1));
+        byte[] pageRelocated = await writer.Database.Pages.ReadPageAsync(row1Relocated.Location.PageNumber, ct);
+        try
+        {
+            Assert.True(RowDecodePlan.TryParseRowLayout(profile.RowFields, pageRelocated, row1Relocated.Location.RowStart, row1Relocated.Location.RowSize, true, out RowLayout layoutRelocated));
+            Assert.Equal(6, layoutRelocated.NumCols);
+            Assert.Equal(3, layoutRelocated.VarLen);
+            Assert.Equal(0x11223344, BinaryPrimitives.ReadInt32LittleEndian(pageRelocated.AsSpan(row1Relocated.Location.RowStart + profile.RowFields.NumCols + 4, 4)));
+            ColumnSlice slice0 = RowDecodePlan.ResolveVariableSliceByIndex(profile.RowFields, pageRelocated, row1Relocated.Location.RowStart, row1Relocated.Location.RowSize, layoutRelocated, 0);
+            ColumnSlice slice2 = RowDecodePlan.ResolveVariableSliceByIndex(profile.RowFields, pageRelocated, row1Relocated.Location.RowStart, row1Relocated.Location.RowSize, layoutRelocated, 2);
+            Assert.True(pageRelocated.AsSpan(row1Relocated.Location.RowStart + slice0.DataStart, slice0.DataLen).SequenceEqual(expectedDropVar0));
+            Assert.True(pageRelocated.AsSpan(row1Relocated.Location.RowStart + slice2.DataStart, slice2.DataLen).SequenceEqual(expectedDropVar2));
+            ReadOnlySpan<byte> maskRelocated = pageRelocated.AsSpan(row1Relocated.Location.RowStart + layoutRelocated.NullMaskPos, row1Relocated.Location.RowSize - layoutRelocated.NullMaskPos);
+            Assert.True(JetFormat.IsNullMaskBitSet(maskRelocated, 1));
+            Assert.True(JetFormat.IsNullMaskBitSet(maskRelocated, 3));
+            Assert.True(JetFormat.IsNullMaskBitSet(maskRelocated, 5));
+        }
+        finally
+        {
+            PageBuffers.Return(pageRelocated);
+        }
     }
 }
