@@ -28,6 +28,8 @@ function New-Fixture {
     $context.EmptyLibrary = $false
     [IO.Directory]::CreateDirectory((Join-Path $fixture 'src/Library')) | Out-Null
     [IO.Directory]::CreateDirectory((Join-Path $scripts 'AotSmoke')) | Out-Null
+    [IO.Directory]::CreateDirectory((Join-Path $fixture '.github/dotnet11')) | Out-Null
+    [IO.File]::WriteAllText((Join-Path $fixture '.github/dotnet11/global.json'), "{`r`n  `"sdk`": { `"version`": `"11.0.100-rc.2.26501.1`", `"rollForward`": `"disable`", `"allowPrerelease`": false }`r`n}`r`n")
     [IO.File]::WriteAllText((Join-Path $fixture 'global.json'), "{`r`n  `"sdk`": { `"version`": `"10.0.401`", `"rollForward`": `"disable`" }`r`n}`r`n")
     [IO.File]::WriteAllText((Join-Path $fixture 'JetDatabaseWriter.slnx'), '<Solution><Folder Name="/src/"><Project Path="src/Library/Library.csproj" /></Folder></Solution>')
     [IO.File]::WriteAllText((Join-Path $fixture 'src/Library/packages.lock.json'), "original library`r`n")
@@ -59,6 +61,7 @@ function dotnet {
 function Invoke-Scenario([string] $Name, [string] $ExpectedError = '', [string] $Version = '10.0.402') {
     $location = (Get-Location).Path
     $originalConfiguration = [IO.File]::ReadAllText((Join-Path $fixture 'global.json'))
+    $originalRuntimeConfiguration = [IO.File]::ReadAllText((Join-Path $fixture '.github/dotnet11/global.json'))
     $caught = ''
     try { & (Join-Path $scripts 'update-sdk.ps1') -Version $Version }
     catch { $caught = $_.Exception.Message }
@@ -67,6 +70,7 @@ function Invoke-Scenario([string] $Name, [string] $ExpectedError = '', [string] 
         Assert-Check ($caught.Contains($ExpectedError)) "$Name expected '$ExpectedError', got '$caught'."
         Assert-Check (([IO.File]::ReadAllText((Join-Path $fixture 'global.json')) | ConvertFrom-Json).sdk.version -eq '10.0.401') "$Name kept a partial SDK update."
         Assert-Check ([IO.File]::ReadAllText((Join-Path $fixture 'global.json')) -ceq $originalConfiguration) "$Name did not restore the exact SDK configuration bytes."
+        Assert-Check ([IO.File]::ReadAllText((Join-Path $fixture '.github/dotnet11/global.json')) -ceq $originalRuntimeConfiguration) "$Name did not restore the exact CI runtime configuration bytes."
         $libraryLock = Join-Path $fixture 'src/Library/packages.lock.json'
         Assert-Check ([IO.File]::Exists($libraryLock)) "$Name deleted an existing library lock."
         $expectedLibrary = if ($context.EmptyLibrary) { '' } else { "original library`r`n" }
@@ -118,6 +122,7 @@ for ($i = 0; $i -lt 5; $i++) {
     Assert-Check ($context.Calls[$i + 5] -contains '--locked-mode') 'Fresh locks were not verified in locked mode.'
 }
 Assert-Check (([IO.File]::ReadAllText((Join-Path $fixture 'global.json')) | ConvertFrom-Json).sdk.version -eq '10.0.402') 'The SDK pin was not updated.'
+Assert-Check (([IO.File]::ReadAllText((Join-Path $fixture '.github/dotnet11/global.json')) | ConvertFrom-Json).sdk.version -eq '11.0.100-rc.2.26501.1') 'Updating .NET 10 must preserve the separate .NET 11 runtime pin.'
 Assert-Check ([IO.File]::ReadAllText((Join-Path $scripts 'AotSmoke/packages.native.lock.json')) -eq "updated 10.0.402`r`n") 'Generated locks were not normalized to CRLF.'
 
 Assert-Check ([IO.File]::ReadAllText((Join-Path $fixture 'src/Library/packages.netstandard.lock.json')) -eq "updated 10.0.402`r`n") 'The standard-asset lock was not refreshed and normalized.'
@@ -144,8 +149,12 @@ foreach ($version in '11.0.100', '11.0.100-rc.3.26522.148') {
     Invoke-Scenario "exact SDK $version refreshes all locks" -Version $version
     $updated = [IO.File]::ReadAllText((Join-Path $fixture 'global.json')) | ConvertFrom-Json
     Assert-Check ($updated.sdk.version -eq $version) 'The exact requested SDK pin was lost.'
+    $runtime = [IO.File]::ReadAllText((Join-Path $fixture '.github/dotnet11/global.json')) | ConvertFrom-Json
+    Assert-Check ($runtime.sdk.version -eq $version) 'The CI runtime SDK pin diverged from the requested .NET 11 SDK.'
     Assert-Check ($context.Calls.Count -eq 10) 'The requested SDK did not refresh and verify every lock.'
-    if ($version.Contains('-')) { Assert-Check ($updated.sdk.allowPrerelease -eq $true) 'A prerelease pin must explicitly allow its SDK.' }
+    if ($version.Contains('-')) {
+        Assert-Check ($updated.sdk.allowPrerelease -eq $true -and $runtime.sdk.allowPrerelease -eq $true) 'Both prerelease pins must explicitly allow their SDK.'
+    }
 }
 foreach ($allowPrerelease in 'false', 'true') {
     New-Fixture

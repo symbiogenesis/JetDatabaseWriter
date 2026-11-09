@@ -11,8 +11,9 @@ $testRoot = [IO.Path]::GetFullPath($OutputDirectory)
 $fixture = Join-Path $testRoot 'fixture'
 [IO.Directory]::CreateDirectory((Join-Path $fixture 'src/Library')) | Out-Null
 [IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts/AotSmoke')) | Out-Null
+[IO.Directory]::CreateDirectory((Join-Path $fixture '.github/dotnet11')) | Out-Null
 [IO.File]::WriteAllText((Join-Path $fixture 'JetDatabaseWriter.slnx'), '<Solution><Folder Name="/src/"><Project Path="src/Library/Library.csproj" /></Folder></Solution>')
-$expectedPaths = @('global.json', 'src/Library/packages.lock.json', 'src/Library/packages.netstandard.lock.json', 'scripts/AotSmoke/packages.native.lock.json', 'scripts/AotSmoke/packages.seed.lock.json', 'scripts/AotSmoke/packages.trimmed.lock.json')
+$expectedPaths = @('global.json', '.github/dotnet11/global.json', 'src/Library/packages.lock.json', 'src/Library/packages.netstandard.lock.json', 'scripts/AotSmoke/packages.native.lock.json', 'scripts/AotSmoke/packages.seed.lock.json', 'scripts/AotSmoke/packages.trimmed.lock.json')
 foreach ($path in $expectedPaths) { [IO.File]::WriteAllText((Join-Path $fixture $path), 'generated SDK file') }
 [IO.File]::WriteAllText((Join-Path $fixture 'Unrelated.cs'), '// Other work must be excluded')
 [IO.File]::WriteAllText((Join-Path $fixture 'src/Library/packages.unrelated.lock.json'), 'Other lock must be excluded')
@@ -79,6 +80,7 @@ try {
 }
 $patch = [IO.File]::ReadAllText((Join-Path $testRoot 'sdk-lock-patch/sdk-locks.patch'))
 Assert-Check ($patch.Contains('scripts/AotSmoke/packages.native.lock.json')) 'The hosted patch omitted a newly generated smoke lockfile.'
+Assert-Check ($patch.Contains('.github/dotnet11/global.json')) 'The hosted patch omitted the CI runtime SDK pin.'
 $adds = @($context.Calls | Where-Object { $_ -contains '--intent-to-add' })
 Assert-Check ($adds.Count -eq 1) 'Generated SDK files must be made visible with one intent-to-add operation.'
 Assert-Check ((@(Get-Paths $adds[0] | Sort-Object) -join ',') -eq (($expectedPaths | Sort-Object) -join ',')) 'Intent-to-add included arbitrary source or lock files.'

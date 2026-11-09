@@ -3,7 +3,8 @@
 Updates the exact SDK pin and every restore lockfile together, without compiling.
 .DESCRIPTION
 Install the requested SDK first, or dispatch maintenance.yml with task=sdk-lock-refresh for a hosted patch.
-If any refresh or locked verification fails, the original global.json and lockfile bytes
+The .NET 11 CI runtime pin is updated alongside a requested .NET 11 SDK.
+If any refresh or locked verification fails, the original global.json files and lockfile bytes
 are restored. Successful changes stay uncommitted for review and the ordinary main CI gate.
 #>
 [CmdletBinding()]
@@ -17,12 +18,13 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repository = Split-Path -Parent $PSScriptRoot
 $globalPath = Join-Path $repository 'global.json'
-$configuration = [IO.File]::ReadAllText($globalPath)
-$globalJson = $configuration | ConvertFrom-Json
-if ($globalJson.sdk.rollForward -ne 'disable') { throw 'SDK updates require an exact pin with rollForward disabled.' }
+$globalPaths = @($globalPath)
+if ($Version.StartsWith('11.', [StringComparison]::Ordinal)) {
+    $globalPaths += Join-Path $repository '.github/dotnet11/global.json'
+}
 $solution = [xml][IO.File]::ReadAllText((Join-Path $repository 'JetDatabaseWriter.slnx'))
 $files = [Collections.Generic.List[string]]::new()
-$files.Add($globalPath)
+foreach ($path in $globalPaths) { $files.Add($path) }
 foreach ($project in $solution.SelectNodes('//Project[@Path]')) {
     $projectPath = [IO.Path]::GetFullPath((Join-Path $repository $project.Path))
     if (-not $projectPath.StartsWith($repository + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
@@ -45,24 +47,29 @@ foreach ($file in $files | Select-Object -Unique) {
 
 Push-Location $repository
 try {
-    # Preserve JSON formatting while updating the version and enabling prerelease selection when needed.
-    $versionPattern = '("version"\s*:\s*")' + [regex]::Escape($globalJson.sdk.version) + '(")'
-    if ([regex]::Matches($configuration, $versionPattern).Count -ne 1) { throw 'global.json must contain exactly one SDK version pin.' }
-    $replacement = [Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + $Version + $match.Groups[2].Value }
-    $updatedConfiguration = [regex]::Replace($configuration, $versionPattern, $replacement)
-    if ($Version.Contains('-')) {
-        if ($null -ne $globalJson.sdk.PSObject.Properties['allowPrerelease']) {
-            $prereleasePattern = '("allowPrerelease"\s*:\s*)(?:true|false)'
-            if ([regex]::Matches($updatedConfiguration, $prereleasePattern).Count -ne 1) { throw 'global.json must contain exactly one Boolean allowPrerelease setting.' }
-            $enablePrerelease = [Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + 'true' }
-            $updatedConfiguration = [regex]::Replace($updatedConfiguration, $prereleasePattern, $enablePrerelease)
-        } else {
-            $sdkPattern = '("sdk"\s*:\s*\{)(\s*)'
-            $addPrerelease = [Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + $match.Groups[2].Value + '"allowPrerelease": true,' + $match.Groups[2].Value }
-            $updatedConfiguration = [regex]::Replace($updatedConfiguration, $sdkPattern, $addPrerelease)
+    foreach ($globalPath in $globalPaths) {
+        $configuration = [IO.File]::ReadAllText($globalPath)
+        $globalJson = $configuration | ConvertFrom-Json
+        if ($globalJson.sdk.rollForward -ne 'disable') { throw 'SDK updates require an exact pin with rollForward disabled.' }
+        # Preserve JSON formatting while updating the version and enabling prerelease selection when needed.
+        $versionPattern = '("version"\s*:\s*")' + [regex]::Escape($globalJson.sdk.version) + '(")'
+        if ([regex]::Matches($configuration, $versionPattern).Count -ne 1) { throw 'global.json must contain exactly one SDK version pin.' }
+        $replacement = [Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + $Version + $match.Groups[2].Value }
+        $updatedConfiguration = [regex]::Replace($configuration, $versionPattern, $replacement)
+        if ($Version.Contains('-')) {
+            if ($null -ne $globalJson.sdk.PSObject.Properties['allowPrerelease']) {
+                $prereleasePattern = '("allowPrerelease"\s*:\s*)(?:true|false)'
+                if ([regex]::Matches($updatedConfiguration, $prereleasePattern).Count -ne 1) { throw 'global.json must contain exactly one Boolean allowPrerelease setting.' }
+                $enablePrerelease = [Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + 'true' }
+                $updatedConfiguration = [regex]::Replace($updatedConfiguration, $prereleasePattern, $enablePrerelease)
+            } else {
+                $sdkPattern = '("sdk"\s*:\s*\{)(\s*)'
+                $addPrerelease = [Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + $match.Groups[2].Value + '"allowPrerelease": true,' + $match.Groups[2].Value }
+                $updatedConfiguration = [regex]::Replace($updatedConfiguration, $sdkPattern, $addPrerelease)
+            }
         }
+        [IO.File]::WriteAllText($globalPath, $updatedConfiguration, [Text.UTF8Encoding]::new($false))
     }
-    [IO.File]::WriteAllText($globalPath, $updatedConfiguration, [Text.UTF8Encoding]::new($false))
     $selected = (& dotnet --version | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $selected -ne $Version) {
         throw "The selected SDK is '$selected'; install SDK $Version before updating its locks."

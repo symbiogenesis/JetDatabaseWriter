@@ -123,6 +123,7 @@ jobs:
           $solution = [xml][IO.File]::ReadAllText((Join-Path $repository 'JetDatabaseWriter.slnx'))
           $files = [Collections.Generic.List[string]]::new()
           $files.Add('global.json')
+          $files.Add('.github/dotnet11/global.json')
           foreach ($project in $solution.SelectNodes('//Project[@Path]')) {
             $projectPath = [IO.Path]::GetFullPath((Join-Path $repository $project.Path))
             if (-not $projectPath.StartsWith($repository + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
