@@ -41,20 +41,21 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
     /// <param name="data">The unchanged payload bytes.</param>
     /// <returns>The placeholder used to measure the row before writing pages.</returns>
     /// <exception cref="JetLimitationException">The payload exceeds the supported writer limit.</exception>
-    internal static PreEncodedLongValue PrepareExternalValue(byte[] data)
+    internal PreEncodedLongValue PrepareExternalValue(byte[] data)
     {
-        ThrowIfLongerThanLvalLimit(data);
+        this.ThrowIfLongerThanLvalLimit(data);
         return new PreEncodedLongValue(new byte[Constants.LongValue.HeaderSize], data);
     }
 
-    /// <summary>Throws when <paramref name="data"/> is too long for an supported writer payload limit.</summary>
+    /// <summary>Throws when <paramref name="data"/> is too long for the configured writer payload limit.</summary>
     /// <param name="data">The long value's payload.</param>
-    /// <exception cref="JetLimitationException">Thrown when <paramref name="data"/> exceeds the supported writer LVAL payload limit.</exception>
-    private static void ThrowIfLongerThanLvalLimit(byte[] data)
+    /// <exception cref="JetLimitationException">Thrown when <paramref name="data"/> exceeds the configured writer LVAL payload limit.</exception>
+    private void ThrowIfLongerThanLvalLimit(byte[] data)
     {
-        if (data.Length > Constants.LongValue.MaxPayloadBytes)
+        int maxPayloadBytes = options.MaxLongValueBytes;
+        if (data.Length > maxPayloadBytes)
         {
-            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Long value is {data.Length} bytes, which exceeds the supported writer LVAL payload limit of {Constants.LongValue.MaxPayloadBytes} bytes.");
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Long value is {data.Length} bytes, which exceeds the supported writer LVAL payload limit of {maxPayloadBytes} bytes.");
         }
     }
 
@@ -84,7 +85,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
                 continue;
             }
 
-            ThrowIfLongerThanLvalLimit(data);
+            this.ThrowIfLongerThanLvalLimit(data);
             result ??= (object[])values.Clone();
             result[i] = new PreEncodedLongValue(new byte[Constants.LongValue.HeaderSize], data);
         }
@@ -268,7 +269,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
         uint? lvalTokenOverride = null,
         (UsageMapPointer Owned, UsageMapPointer Free)? maps = null)
     {
-        ThrowIfLongerThanLvalLimit(data);
+        this.ThrowIfLongerThanLvalLimit(data);
         int pgSz = format.PageSize;
         LvalPageLayout layout = format.LvalPage;
 

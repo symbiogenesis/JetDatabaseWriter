@@ -264,7 +264,7 @@ internal sealed class TableRewritePlanner(
 
                     foreach ((int sourceIndex, byte[] bytes) in row.TextBytes)
                     {
-                        if (tableDef.Columns[sourceIndex].Type != ColumnType.TextType)
+                        if (sourceIndex < 0 || sourceIndex >= tableDef.Columns.Count || tableDef.Columns[sourceIndex].Type != ColumnType.TextType)
                         {
                             continue;
                         }

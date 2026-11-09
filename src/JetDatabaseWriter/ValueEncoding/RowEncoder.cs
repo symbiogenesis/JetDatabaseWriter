@@ -356,29 +356,20 @@ internal sealed class RowEncoder(JetFormat format)
         if (textBytes?.TryGetValue(PreservedNullMaskKey, out byte[]? preservedNullMask) == true && preservedNullMask.Length >= 2)
         {
             origNumCols = BinaryPrimitives.ReadUInt16LittleEndian(preservedNullMask);
-            numCols = Math.Max(numCols, origNumCols);
         }
         else
         {
             preservedNullMask = null;
         }
 
-        if (textBytes?.TryGetValue(PreservedFixedAreaKey, out byte[]? preservedFixedArea) == true && preservedFixedArea.Length > 0)
-        {
-            maxFixedEnd = Math.Max(maxFixedEnd, preservedFixedArea.Length);
-        }
-        else
+        if (textBytes?.TryGetValue(PreservedFixedAreaKey, out byte[]? preservedFixedArea) != true || preservedFixedArea is not { Length: > 0 })
         {
             preservedFixedArea = null;
         }
 
         int nullMaskLen = JetFormat.GetNullMaskSizeBytes(numCols);
         int varLen = maxDefinedVarIdx + 1;
-        if (tableDef.HasVarColumns && textBytes?.TryGetValue(PreservedVarCountKey, out byte[]? preservedVarCount) == true && preservedVarCount.Length >= 2)
-        {
-            varLen = Math.Max(varLen, BinaryPrimitives.ReadUInt16LittleEndian(preservedVarCount));
-        }
-        else
+        if (!tableDef.HasVarColumns || textBytes?.TryGetValue(PreservedVarCountKey, out byte[]? preservedVarCount) != true || preservedVarCount is not { Length: >= 2 })
         {
             preservedVarCount = null;
         }
@@ -428,7 +419,8 @@ internal sealed class RowEncoder(JetFormat format)
                 fixedArea.AsSpan(0, maxFixedEnd).Clear();
                 if (preservedFixedArea is not null)
                 {
-                    preservedFixedArea.AsSpan().CopyTo(fixedArea.AsSpan(0, preservedFixedArea.Length));
+                    int copyFixedBytes = Math.Min(preservedFixedArea.Length, maxFixedEnd);
+                    preservedFixedArea.AsSpan(0, copyFixedBytes).CopyTo(fixedArea.AsSpan(0, copyFixedBytes));
                     for (int i = 0; i < tableDef.Columns.Count; i++)
                     {
                         ColumnInfo col = tableDef.Columns[i];

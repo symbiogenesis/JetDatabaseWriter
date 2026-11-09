@@ -229,7 +229,7 @@ representations and fresh ACE checks stay open in F8/E2.
 
 ## Long-value integrity
 
-Stored MEMO/OLE payload lengths are exact. Every read path uses all 30 native length bits, including typed inline decoding; the upper two bits select storage mode. The declared length is checked against `MaxLongValueBytes` before copying inline bytes. Resource-limit refusals propagate in strict and lenient modes. An inline payload is bounded by its column slice, not the remaining page; a single-row payload must contain its declared bytes. A chain must supply its declared length without truncation or cycling. Exact reads throw JetCorruptDataException for malformed payloads and propagate storage I/O failures. They never manufacture placeholder text or substitute an empty payload for unreadable data.
+Stored MEMO/OLE payload lengths are exact. Every read path uses all 30 native length bits, including typed inline decoding; the upper two bits select storage mode. `AccessOptions.MaxLongValueBytes` (shared by `AccessReaderOptions`, `AccessWriterOptions` and `AccessCompactOptions`, defaulting to `0xFFFFFF` and configurable up to `LongValueDescriptor.MaxLength` = `0x3FFFFFFF`) bounds single-value MEMO/OLE length admission across reading, writer LVAL chain encoding/snapshot decoding and compact discovery. The declared length is checked against `MaxLongValueBytes` before copying inline bytes. Resource-limit refusals propagate in strict and lenient modes. An inline payload is bounded by its column slice, not the remaining page; a single-row payload must contain its declared bytes. A chain must supply its declared length without truncation or cycling. Exact reads throw JetCorruptDataException for malformed payloads and propagate storage I/O failures. They never manufacture placeholder text or substitute an empty payload for unreadable data.
 
 Mixed scalar/OLE typed scans use the same row-layout and column-slice validation as projected rows. The compiled hybrid plan assigns scalar auto-properties and records only bound OLE slices. Each enumerator owns its slice array; cached plans contain no mutable row state. The scan retains the data or resolved overflow page through every awaited LVAL read, and resolves all bound OLE byte arrays before yielding the target. Arrays contain the stored bytes without OLE unwrapping or content interpretation; null and empty remain distinct.
 
@@ -619,9 +619,11 @@ before reading rows, stream table rows via TableSnapshotReader.ForEachDecodedRow
 while skipping external LVAL chain reads for dropped columns, enforce
 AccessWriterOptions.MaxSchemaRewriteRows and AccessWriterOptions.MaxSchemaRewriteBytes`
 across projected row values, preserved fixed-text slots and added calculated
-column payloads (JetErrorCode.SchemaRewriteBudgetExceeded), release buffered
-row and fixed-text payloads as each row is inserted into the replacement table,
-and retain only indexed key-column slots for post-copy index rebuilds.
+column payloads (JetErrorCode.SchemaRewriteBudgetExceeded), encode compact `IndexEntry` keys on the fly as each row is inserted into the
+replacement table (`IndexMaintainer.RewriteIndexEntryCollector`, also used to
+stream full index rebuilds via `ForEachDecodedRowAsync`), and release buffered
+row and fixed-text payloads immediately without retaining `LocatedRow` or
+key-column `object[]` slots in memory.
 TableSchemaEditor.SetTableValidationRuleAsync likewise streams rows without
 retaining raw fixed-text slot maps and resolves only external LVAL columns
 referenced by the validation rule expression. Ordinary public table reads retain

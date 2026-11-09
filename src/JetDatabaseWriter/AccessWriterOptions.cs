@@ -199,5 +199,12 @@ public sealed class AccessWriterOptions : AccessOptions
             throw new ArgumentOutOfRangeException("options", this.MaxSchemaRewriteBytes, "AccessWriterOptions.MaxSchemaRewriteBytes must be positive.");
 #pragma warning restore CA2208
         }
+
+        if (this.MaxLongValueBytes is <= 0 or > LongValues.Models.LongValueDescriptor.MaxLength)
+        {
+#pragma warning disable CA2208 // The public options parameter carries this value.
+            throw new ArgumentOutOfRangeException("options", this.MaxLongValueBytes, "AccessWriterOptions.MaxLongValueBytes must be between 1 and 1,073,741,823.");
+#pragma warning restore CA2208
+        }
     }
 }

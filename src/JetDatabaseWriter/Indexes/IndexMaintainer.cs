@@ -542,16 +542,18 @@ internal sealed class IndexMaintainer(
     public ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
         => this.RebuildIndexesAsync(tdefPage, tableDef, tableName, writtenRows: null, cancellationToken);
 
-    /// <summary>Returns a column mask for all key columns referenced by real indexes on <paramref name="tdefPage"/>, or <see langword="null"/> when no real indexes exist.</summary>
+    /// <summary>Creates a per-row index key collector for <paramref name="tdefPage"/> when the table has real indexes, or <see langword="null"/> when no real indexes exist.</summary>
     /// <param name="tdefPage">The table definition page.</param>
     /// <param name="tableDef">The hydrated table definition.</param>
     /// <param name="tableName">The table name for error messages.</param>
+    /// <param name="initialCapacity">The initial entry capacity per index.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A mask indexed by column position in <paramref name="tableDef"/>, or <see langword="null"/> when no real indexes exist.</returns>
-    internal async ValueTask<bool[]?> GetIndexedColumnMaskAsync(
+    /// <returns>A collector that encodes compact <see cref="IndexEntry"/> keys as each row is inserted, or <see langword="null"/> when no real indexes exist.</returns>
+    internal async ValueTask<RewriteIndexEntryCollector?> CreateRewriteEntryCollectorAsync(
         long tdefPage,
         TableDef tableDef,
         string tableName,
+        int initialCapacity,
         CancellationToken cancellationToken)
     {
         (_, IndexCatalogReader.ResolvedIndexCatalog? catalog) =
@@ -561,21 +563,20 @@ internal sealed class IndexMaintainer(
             return null;
         }
 
-        return BuildIndexedColumnMask(tableDef, catalog);
+        return new RewriteIndexEntryCollector(this, catalog, tableName, initialCapacity);
     }
 
     /// <summary>
     /// The bulk rebuild behind <see cref="MaintainIndexesAsync"/>. When
-    /// <paramref name="writtenRows"/> is supplied, the indexes are built from
-    /// those rows and locations instead of decoding the table again. The schema
-    /// rewrite passes the rows it has just copied into the rebuilt table,
-    /// with the location each insert returned.
+    /// <paramref name="collectedEntries"/> or <paramref name="writtenRows"/> is supplied,
+    /// the indexes are built from those entries or rows instead of decoding the table again.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="tableDef">The table def.</param>
     /// <param name="tableName">The table name.</param>
     /// <param name="writtenRows">Every live row of the table, in <paramref name="tableDef"/> column order, with its location; or <see langword="null"/> to decode every live row of the table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="collectedEntries">Optional pre-encoded index entries collected while writing replacement rows.</param>
     /// <exception cref="JetOperationException">Thrown when a unique index violation is detected after a row mutation.</exception>
     /// <exception cref="JetLimitationException">Thrown when the TDEF's index section cannot be parsed or an index names a column the table does not have, so the indexes cannot be rebuilt.</exception>
     /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
@@ -584,7 +585,8 @@ internal sealed class IndexMaintainer(
         TableDef tableDef,
         string tableName,
         IReadOnlyList<LocatedRow>? writtenRows,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RewriteIndexEntryCollector? collectedEntries = null)
     {
         // Jet3 (.mdb Access 97) live leaf maintenance is now
         // supported. The 39-byte real-idx + 20-byte logical-idx layouts
@@ -624,14 +626,35 @@ internal sealed class IndexMaintainer(
             return;
         }
 
-        // Every live row, decoded from the location its index entry points at,
-        // unless the caller supplied the rows it wrote with their locations.
-        IReadOnlyList<LocatedRow> rows = writtenRows
-            ?? await snapshots.ReadRowsAsync(
+        // Stream and encode index entries without retaining full LocatedRow[] snapshots
+        // when the caller did not already supply pre-encoded entries.
+        RewriteIndexEntryCollector entryCollector;
+        if (collectedEntries is not null)
+        {
+            entryCollector = collectedEntries;
+        }
+        else if (writtenRows is not null)
+        {
+            entryCollector = new RewriteIndexEntryCollector(this, catalog, tableName, writtenRows.Count);
+            foreach (LocatedRow row in writtenRows)
+            {
+                entryCollector.AddRow(row.Location, row.Values);
+            }
+        }
+        else
+        {
+            entryCollector = new RewriteIndexEntryCollector(this, catalog, tableName, initialCapacity: 0);
+            await snapshots.ForEachDecodedRowAsync(
                 tdefPage,
+                (row, _) =>
+                {
+                    entryCollector.AddRow(row.Location, row.Values);
+                    return new ValueTask<bool>(true);
+                },
                 cancellationToken,
                 resolveLongValueColumns: BuildIndexedColumnMask(tableDef, catalog),
                 captureRawSlots: false).ConfigureAwait(false);
+        }
 
         bool tdefDirty = false;
         bool jet3 = format.IsJet3;
@@ -672,38 +695,11 @@ internal sealed class IndexMaintainer(
                 // fine; the resolver has already refused an index naming a
                 // column the table does not have.
                 List<KeyColumnInfo> keyColInfos = catalog.KeyColumnInfosByRealIdx[rieKey];
-
-                List<IndexEntry> entries = [with(rows.Count)];
                 object?[] cells = new object?[keyColInfos.Count];
                 byte[]? allowedNullKey = !rie.IsRequired && !catalog.Catalog.PkRealIdxNums.Contains(rieKey)
                     ? this.EncodeCompositeKey(keyColInfos, cells)
                     : null;
-                foreach ((RowLocation location, object[] values) in rows)
-                {
-                    int nullKeyColumns = IndexHelpers.CountNullKeyColumns(keyColInfos, values);
-                    if (rie.IgnoreNulls && nullKeyColumns == keyColInfos.Count)
-                    {
-                        continue;
-                    }
-
-                    if (nullKeyColumns > 0 && (rie.IsRequired || catalog.Catalog.PkRealIdxNums.Contains(rieKey)))
-                    {
-                        string indexName = catalog.Catalog.GetNameOrFallback(rieKey);
-                        throw new JetConstraintException(
-                            JetErrorCode.NotNullViolation,
-                            $"Index '{indexName}' on table '{tableName}' requires a value for every key column.",
-                            new JetErrorInfo { TableName = tableName, IndexName = indexName });
-                    }
-
-                    for (int k = 0; k < keyColInfos.Count; k++)
-                    {
-                        object cell = values[keyColInfos[k].SnapIdx];
-                        cells[k] = cell is DBNull ? null : cell;
-                    }
-
-                    byte[] composite = this.EncodeCompositeKey(keyColInfos, cells);
-                    entries.Add(new IndexEntry(composite, location.PageNumber, (byte)location.RowIndex));
-                }
+                List<IndexEntry> entries = entryCollector.TakeEntriesOrThrow(rieKey);
 
                 entries.Sort(IndexPageCodec.CompareEntries);
 
@@ -2739,5 +2735,95 @@ internal sealed class IndexMaintainer(
 
         /// <summary>Gets or sets a value indicating whether native relationship map admission must be retained.</summary>
         public bool RequireExactRelationshipMaps { get; set; }
+    }
+
+    /// <summary>Encodes and accumulates compact <see cref="IndexEntry"/> keys per real index as rows are written or scanned, avoiding retention of <see cref="LocatedRow"/> or <see cref="object"/> arrays.</summary>
+    internal sealed class RewriteIndexEntryCollector
+    {
+        private readonly IndexMaintainer maintainer;
+        private readonly IndexCatalogReader.ResolvedIndexCatalog catalog;
+        private readonly string tableName;
+        private readonly Dictionary<int, List<IndexEntry>> entriesByRealIdx;
+        private readonly Dictionary<int, object?[]> cellScratchByRealIdx;
+        private readonly Dictionary<int, Exception> deferredErrorsByRealIdx = [];
+
+        internal RewriteIndexEntryCollector(
+            IndexMaintainer maintainer,
+            IndexCatalogReader.ResolvedIndexCatalog catalog,
+            string tableName,
+            int initialCapacity)
+        {
+            this.maintainer = maintainer;
+            this.catalog = catalog;
+            this.tableName = tableName;
+            this.entriesByRealIdx = [with(catalog.RealIdxByNum.Count)];
+            this.cellScratchByRealIdx = [with(catalog.RealIdxByNum.Count)];
+            foreach ((int rieKey, _) in catalog.RealIdxByNum)
+            {
+                List<KeyColumnInfo> keyColInfos = catalog.KeyColumnInfosByRealIdx[rieKey];
+                this.entriesByRealIdx[rieKey] = [with(Math.Max(0, initialCapacity))];
+                this.cellScratchByRealIdx[rieKey] = new object?[keyColInfos.Count];
+            }
+        }
+
+        internal int RowCount { get; private set; }
+
+        internal void AddRow(RowLocation location, object[] values)
+        {
+            this.RowCount++;
+            foreach ((int rieKey, RealIdxEntry rie) in this.catalog.RealIdxByNum)
+            {
+                if (this.deferredErrorsByRealIdx.ContainsKey(rieKey))
+                {
+                    continue;
+                }
+
+                List<KeyColumnInfo> keyColInfos = this.catalog.KeyColumnInfosByRealIdx[rieKey];
+                int nullKeyColumns = IndexHelpers.CountNullKeyColumns(keyColInfos, values);
+                if (rie.IgnoreNulls && nullKeyColumns == keyColInfos.Count)
+                {
+                    continue;
+                }
+
+                if (nullKeyColumns > 0 && (rie.IsRequired || this.catalog.Catalog.PkRealIdxNums.Contains(rieKey)))
+                {
+                    string indexName = this.catalog.Catalog.GetNameOrFallback(rieKey);
+                    this.deferredErrorsByRealIdx[rieKey] = new JetConstraintException(
+                        JetErrorCode.NotNullViolation,
+                        $"Index '{indexName}' on table '{this.tableName}' requires a value for every key column.",
+                        new JetErrorInfo { TableName = this.tableName, IndexName = indexName });
+                    continue;
+                }
+
+                object?[] cells = this.cellScratchByRealIdx[rieKey];
+                for (int k = 0; k < keyColInfos.Count; k++)
+                {
+                    object cell = values[keyColInfos[k].SnapIdx];
+                    cells[k] = cell is DBNull ? null : cell;
+                }
+
+                try
+                {
+                    byte[] composite = this.maintainer.EncodeCompositeKey(keyColInfos, cells);
+                    this.entriesByRealIdx[rieKey].Add(new IndexEntry(composite, location.PageNumber, (byte)location.RowIndex));
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    this.deferredErrorsByRealIdx[rieKey] = ex;
+                }
+            }
+        }
+
+        internal List<IndexEntry> TakeEntriesOrThrow(int rieKey)
+        {
+            if (this.deferredErrorsByRealIdx.TryGetValue(rieKey, out Exception? error))
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+            }
+
+            List<IndexEntry> entries = this.entriesByRealIdx[rieKey];
+            this.entriesByRealIdx[rieKey] = [];
+            return entries;
+        }
     }
 }

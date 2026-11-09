@@ -535,28 +535,15 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
 
         int fixedAreaEnd = RowDecodePlan.GetFixedAreaEnd(format.RowFields, page, rowStart, layout);
         int rawFixedAreaLen = Math.Max(0, fixedAreaEnd - format.RowFields.NumCols);
-        bool hasDroppedColNums = maxDefinedColNum != tableDef.Columns.Count || layout.NumCols > maxDefinedColNum;
-        bool hasDroppedFixedBytes = (tableDef.HasVarColumns && rawFixedAreaLen > definedFixedBytes) || maxDefinedFixedEnd > definedFixedBytes;
-        bool hasDroppedVarSlots = tableDef.HasVarColumns && (maxDefinedVarIdx + 1 != definedVarCount || layout.VarLen > maxDefinedVarIdx + 1);
+        bool hasDroppedColNums = maxDefinedColNum != tableDef.Columns.Count;
+        bool hasDroppedFixedBytes = maxDefinedFixedEnd > definedFixedBytes;
+        bool hasDroppedVarSlots = tableDef.HasVarColumns && maxDefinedVarIdx + 1 != definedVarCount;
         if (!hasDroppedColNums && !hasDroppedFixedBytes && !hasDroppedVarSlots)
         {
             return;
         }
 
-        int fixedAreaLen = tableDef.HasVarColumns
-            ? rawFixedAreaLen
-            : Math.Min(maxDefinedFixedEnd, rawFixedAreaLen);
-        if (!tableDef.HasVarColumns && hasDroppedColNums && rawFixedAreaLen > maxDefinedFixedEnd)
-        {
-            int syntheticTrailerLen = format.RowFields.Eod + format.RowFields.VarLen;
-            int eodPos = layout.NullMaskPos - syntheticTrailerLen;
-            int varLenPos = layout.NullMaskPos - format.RowFields.VarLen;
-            bool hasSyntheticTrailer = rawFixedAreaLen >= maxDefinedFixedEnd + syntheticTrailerLen
-                && eodPos >= format.RowFields.NumCols
-                && format.RowFields.ReadVarLen(page, rowStart + varLenPos) == 0
-                && format.RowFields.ReadEod(page, rowStart + eodPos) == eodPos;
-            fixedAreaLen = hasSyntheticTrailer ? rawFixedAreaLen - syntheticTrailerLen : rawFixedAreaLen;
-        }
+        int fixedAreaLen = Math.Min(maxDefinedFixedEnd, rawFixedAreaLen);
 
         int nullMaskBytesLen = rowSize - layout.NullMaskPos;
         if (nullMaskBytesLen > 0)
@@ -574,13 +561,14 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
             textBytes[ValueEncoding.RowEncoder.PreservedFixedAreaKey] = page.AsSpan(rowStart + format.RowFields.NumCols, fixedAreaLen).ToArray();
         }
 
-        if (hasDroppedVarSlots && layout.VarLen > 0)
+        int preservedVarLimit = Math.Min(layout.VarLen, maxDefinedVarIdx + 1);
+        if (hasDroppedVarSlots && preservedVarLimit > 0)
         {
             byte[] varCountEnvelope = new byte[2];
-            System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(varCountEnvelope, checked((ushort)layout.VarLen));
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(varCountEnvelope, checked((ushort)preservedVarLimit));
             textBytes ??= [];
             textBytes[ValueEncoding.RowEncoder.PreservedVarCountKey] = varCountEnvelope;
-            bool[] definedVarMask = new bool[layout.VarLen];
+            bool[] definedVarMask = new bool[preservedVarLimit];
             for (int i = 0; i < tableDef.Columns.Count; i++)
             {
                 ColumnInfo col = tableDef.Columns[i];
@@ -590,7 +578,7 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                 }
             }
 
-            for (int vi = 0; vi < layout.VarLen; vi++)
+            for (int vi = 0; vi < preservedVarLimit; vi++)
             {
                 if (definedVarMask[vi])
                 {

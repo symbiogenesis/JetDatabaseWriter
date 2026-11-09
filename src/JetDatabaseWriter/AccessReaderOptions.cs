@@ -30,14 +30,6 @@ public sealed class AccessReaderOptions : AccessOptions
     }
 
     /// <summary>
-    /// Gets the maximum stored byte length read for one MEMO or OLE value.
-    /// Default: 16,777,215 bytes. The caller may set a positive budget up to the
-    /// native 30-bit descriptor maximum of 1,073,741,823 bytes. Larger budgets
-    /// permit correspondingly larger allocations for individual values.
-    /// </summary>
-    public int MaxLongValueBytes { get; init; } = 0xFFFFFF;
-
-    /// <summary>
     /// Gets the maximum uncompressed attachment content length, including its
     /// extension header. Default: 64 MiB. Set a positive value appropriate for
     /// the largest attachment the application permits before opening the file.

@@ -206,11 +206,6 @@ internal sealed class TableRowStore(
                 return true;
             }
 
-            if (current.NumCols > updated.NumCols || current.VarLen > updated.VarLen)
-            {
-                return false;
-            }
-
             int newSize = encoded.Length;
             int delta = rowSize - newSize;
             int directoryEnd = format.DataPage.RowsStart + (checked((int)count) * 2);

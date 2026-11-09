@@ -158,6 +158,11 @@ public sealed class AccessCompactOptions : AccessOptions
             throw new ArgumentOutOfRangeException(nameof(this.MaxSchemaTraversalBytes), this.MaxSchemaTraversalBytes, "MaxSchemaTraversalBytes must be positive.");
         }
 
+        if (this.MaxLongValueBytes is <= 0 or > LongValues.Models.LongValueDescriptor.MaxLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(this.MaxLongValueBytes), this.MaxLongValueBytes, "MaxLongValueBytes must be between 1 and 1,073,741,823.");
+        }
+
         if (this.MaxPages is <= 0 or > 0x1000000L)
         {
             throw new ArgumentOutOfRangeException(nameof(this.MaxPages), this.MaxPages, "MaxPages must be between 1 and 16,777,216.");

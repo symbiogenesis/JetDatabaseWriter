@@ -59,6 +59,15 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     public int MaxSchemaTraversalBytes { get; init; } = 64 * 1024 * 1024;
 
     /// <summary>
+    /// Gets the maximum stored byte length permitted for one MEMO or OLE long value
+    /// when reading, writing, or compacting a database.
+    /// Default: 16,777,215 bytes (<c>0xFFFFFF</c>). The caller may set a positive budget
+    /// up to the native 30-bit LVAL descriptor maximum of 1,073,741,823 bytes (<c>0x3FFFFFFF</c>).
+    /// Larger budgets permit correspondingly larger allocations for individual values.
+    /// </summary>
+    public int MaxLongValueBytes { get; init; } = 0xFFFFFF;
+
+    /// <summary>
     /// Gets a value indicating whether a lockfile (.ldb / .laccdb) slot is maintained
     /// alongside a file database while open. Disposal releases this opener's slot and
     /// attempts to remove an unused lockfile; other holders or permissions can retain it.

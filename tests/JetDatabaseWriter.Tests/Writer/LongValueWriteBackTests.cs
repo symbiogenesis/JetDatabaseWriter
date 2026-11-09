@@ -159,6 +159,79 @@ public sealed class LongValueWriteBackTests
         Assert.Equal(payload, Assert.IsType<byte[]>(row[blobColumn]));
     }
 
+    [Fact]
+    public async Task ConfiguredMaxLongValueBytes_AboveDefault16MiB_WritesReadsUpdatesAndCompacts()
+    {
+        System.Threading.CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var stream = new MemoryStream();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
+            await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false, MaxLongValueBytes = 0 }, leaveOpen: true, ct));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
+            await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false, MaxLongValueBytes = 0x40000000 }, leaveOpen: true, ct));
+
+        const int customMaxBytes = 18 * 1024 * 1024;
+        const int payloadBytes = (16 * 1024 * 1024) + 32_768; // > 0xFFFFFF (16,777,215 bytes)
+        byte[] largeBlob = new byte[payloadBytes];
+        largeBlob[0] = 0x5A;
+        largeBlob[payloadBytes / 2] = 0xA5;
+        largeBlob[^1] = 0xCC;
+
+        await using (AccessWriter defaultWriter = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await defaultWriter.CreateTableAsync(
+                TableName,
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("Note", typeof(string), maxLength: 50),
+                    new ColumnDefinition("Blob", typeof(byte[])),
+                ],
+                ct);
+            await Assert.ThrowsAsync<JetLimitationException>(async () =>
+                await defaultWriter.InsertRowAsync(TableName, [1, "too-large-for-default", largeBlob], ct));
+        }
+
+        stream.Position = 0;
+        var writerOptions = new AccessWriterOptions { UseLockFile = false, MaxLongValueBytes = customMaxBytes };
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, writerOptions, leaveOpen: true, ct))
+        {
+            await writer.InsertRowAsync(TableName, [1, "initial", largeBlob], ct);
+            Assert.Equal(1, await writer.UpdateRowsAsync(TableName, RowCriteria.Where("Id", 1), new RowValues { ["Note"] = "updated-note" }, ct));
+        }
+
+        stream.Position = 0;
+        await using (AccessReader defaultReader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await Assert.ThrowsAsync<JetLimitationException>(async () => await defaultReader.ReadTableAsync(TableName, cancellationToken: ct));
+        }
+
+        stream.Position = 0;
+        await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, MaxLongValueBytes = customMaxBytes }, leaveOpen: true, ct))
+        {
+            using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
+            DataRow single = Assert.Single(table.Rows.Cast<DataRow>());
+            Assert.Equal("updated-note", single["Note"]);
+            Assert.True(largeBlob.AsSpan().SequenceEqual(Assert.IsType<byte[]>(single["Blob"])));
+        }
+
+        await using var compactedStream = new MemoryStream();
+        stream.Position = 0;
+        AccessCompactReport report = await AccessDatabaseCompact.CompactAsync(
+            stream,
+            compactedStream,
+            new AccessCompactOptions { UseLockFile = false, MaxLongValueBytes = customMaxBytes },
+            ct);
+        Assert.True(report.ReplacementAuthorized);
+
+        compactedStream.Position = 0;
+        await using (AccessReader compactedReader = await AccessReader.OpenAsync(compactedStream, new AccessReaderOptions { UseLockFile = false, MaxLongValueBytes = customMaxBytes }, leaveOpen: true, ct))
+        {
+            using DataTable table = await compactedReader.ReadTableAsync(TableName, cancellationToken: ct);
+            DataRow single = Assert.Single(table.Rows.Cast<DataRow>());
+            Assert.Equal("updated-note", single["Note"]);
+            Assert.True(largeBlob.AsSpan().SequenceEqual(Assert.IsType<byte[]>(single["Blob"])));
+        }
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

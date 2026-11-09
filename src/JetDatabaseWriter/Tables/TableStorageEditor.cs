@@ -127,8 +127,12 @@ internal sealed class TableStorageEditor(
         // out again once the temp table takes the original's place.
         long autoNumberHighWater = plan.AutoNumberHighWater;
         long complexHighWater = plan.ComplexHighWater;
-        bool[]? indexedColumns = await indexMaintainer.GetIndexedColumnMaskAsync(tempEntry.TDefPage, tempDef, tempName, cancellationToken).ConfigureAwait(false);
-        var writtenRows = new List<LocatedRow>(indexedColumns is not null ? projectedRows.Count : 0);
+        IndexMaintainer.RewriteIndexEntryCollector? indexCollector = await indexMaintainer.CreateRewriteEntryCollectorAsync(
+            tempEntry.TDefPage,
+            tempDef,
+            tempName,
+            projectedRows.Count,
+            cancellationToken).ConfigureAwait(false);
         var storagePages = new SortedSet<long>();
         for (int rowIndex = 0; rowIndex < projectedRows.Count; rowIndex++)
         {
@@ -141,22 +145,10 @@ internal sealed class TableStorageEditor(
             autoNumberHighWater = Math.Max(autoNumberHighWater, AutoNumberMaintainer.MaxAutoNumberValue(tempDef, projected));
             complexHighWater = Math.Max(complexHighWater, AutoNumberMaintainer.MaxComplexReference(tempDef, projected));
 
-            // Release buffered row and raw-slot payloads immediately after writing the row;
-            // retain only key-column values needed by the post-copy index rebuild.
+            // Encode compact index entries on the fly and release buffered row and raw-slot payloads immediately.
+            indexCollector?.AddRow(location, projected);
             projectedRows[rowIndex] = [];
             plan.TextBytes[rowIndex] = null;
-            if (indexedColumns is not null)
-            {
-                for (int colIndex = 0; colIndex < projected.Length; colIndex++)
-                {
-                    if (colIndex >= indexedColumns.Length || !indexedColumns[colIndex])
-                    {
-                        projected[colIndex] = DBNull.Value;
-                    }
-                }
-
-                writtenRows.Add(new LocatedRow(location, projected));
-            }
         }
 
         await autoNumbers.RaiseHighWaterAsync(tempEntry.TDefPage, autoNumberHighWater, cancellationToken).ConfigureAwait(false);
@@ -165,16 +157,14 @@ internal sealed class TableStorageEditor(
         long[] initialIndexPages = await indexMaintainer.CollectRewriteIndexPagesAsync(tempEntry.TDefPage, cancellationToken).ConfigureAwait(false);
 
         // Rebuild forwarded indexes once after the bulk row copy completes,
-        // so we don't pay the rebuild cost per row. The rebuild keys the rows
-        // just written at the locations the inserts returned, rather than
-        // re-reading the copy. Re-emitted FK entries need the rebuild even on
+        // so we don't pay the rebuild cost per row. The rebuild uses the compact
+        // index entries encoded as each row was written, rather than retaining or
+        // re-reading row objects. Re-emitted FK entries need the rebuild even on
         // an empty table, so it records their leaves in the index usage map.
-        if (fkIndexNumbers.Count > 0 || ((projectedIndexes.Count > 0 || initialIndexPages.Length > 0) && writtenRows.Count > 0))
+        if (fkIndexNumbers.Count > 0 || ((projectedIndexes.Count > 0 || initialIndexPages.Length > 0) && (indexCollector?.RowCount ?? 0) > 0))
         {
-            await indexMaintainer.RebuildIndexesAsync(tempEntry.TDefPage, tempDef, tempName, writtenRows, cancellationToken).ConfigureAwait(false);
+            await indexMaintainer.RebuildIndexesAsync(tempEntry.TDefPage, tempDef, tempName, writtenRows: null, cancellationToken, indexCollector).ConfigureAwait(false);
         }
-
-        writtenRows.Clear();
 
         storagePages.UnionWith(await indexMaintainer.CollectRewriteIndexPagesAsync(tempEntry.TDefPage, cancellationToken).ConfigureAwait(false));
 

@@ -465,7 +465,7 @@ internal sealed partial class CatalogWriter(
     /// <returns>The value prepared for row validation and later long-value allocation.</returns>
     private object PrepareCatalogProperties(byte[] properties)
         => format.IsJet3
-            ? LongValueEncoder.PrepareExternalValue(properties)
+            ? longValueEncoder.PrepareExternalValue(properties)
             : properties;
 
     /// <summary>Reads the unique native database owner without synthesizing security metadata.</summary>

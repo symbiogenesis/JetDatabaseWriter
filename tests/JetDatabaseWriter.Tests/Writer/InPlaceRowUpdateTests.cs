@@ -1287,27 +1287,23 @@ public sealed class InPlaceRowUpdateTests
         Assert.Equal("updated-longer-note-in-place", row1After.Values[2]);
 
         byte[] expectedDropVar0;
-        byte[] expectedDropVar2;
         byte[] pageAfterInPlace = await writer.Database.Pages.ReadPageAsync(row1After.Location.PageNumber, ct);
         try
         {
             Assert.True(RowDecodePlan.TryParseRowLayout(profile.RowFields, pageAfterInPlace, row1After.Location.RowStart, row1After.Location.RowSize, true, out RowLayout layoutAfter));
-            Assert.Equal(6, layoutAfter.NumCols);
-            Assert.Equal(3, layoutAfter.VarLen);
+            Assert.Equal(5, layoutAfter.NumCols);
+            Assert.Equal(2, layoutAfter.VarLen);
             Assert.Equal(0x11223344, BinaryPrimitives.ReadInt32LittleEndian(pageAfterInPlace.AsSpan(row1After.Location.RowStart + profile.RowFields.NumCols + 4, 4)));
             Assert.NotNull(row1After.TextBytes);
             expectedDropVar0 = row1After.TextBytes[RowEncoder.GetPreservedDroppedVarSlotKey(0)];
-            expectedDropVar2 = row1After.TextBytes[RowEncoder.GetPreservedDroppedVarSlotKey(2)];
             Assert.NotEmpty(expectedDropVar0);
-            Assert.NotEmpty(expectedDropVar2);
+            Assert.False(row1After.TextBytes.ContainsKey(RowEncoder.GetPreservedDroppedVarSlotKey(2)));
             ColumnSlice slice0 = RowDecodePlan.ResolveVariableSliceByIndex(profile.RowFields, pageAfterInPlace, row1After.Location.RowStart, row1After.Location.RowSize, layoutAfter, 0);
-            ColumnSlice slice2 = RowDecodePlan.ResolveVariableSliceByIndex(profile.RowFields, pageAfterInPlace, row1After.Location.RowStart, row1After.Location.RowSize, layoutAfter, 2);
             Assert.True(pageAfterInPlace.AsSpan(row1After.Location.RowStart + slice0.DataStart, slice0.DataLen).SequenceEqual(expectedDropVar0));
-            Assert.True(pageAfterInPlace.AsSpan(row1After.Location.RowStart + slice2.DataStart, slice2.DataLen).SequenceEqual(expectedDropVar2));
             ReadOnlySpan<byte> maskAfter = pageAfterInPlace.AsSpan(row1After.Location.RowStart + layoutAfter.NullMaskPos, row1After.Location.RowSize - layoutAfter.NullMaskPos);
             Assert.True(JetFormat.IsNullMaskBitSet(maskAfter, 1));
             Assert.True(JetFormat.IsNullMaskBitSet(maskAfter, 3));
-            Assert.True(JetFormat.IsNullMaskBitSet(maskAfter, 5));
+            Assert.False(JetFormat.IsNullMaskBitSet(maskAfter, 5));
         }
         finally
         {
@@ -1332,17 +1328,15 @@ public sealed class InPlaceRowUpdateTests
         try
         {
             Assert.True(RowDecodePlan.TryParseRowLayout(profile.RowFields, pageRelocated, row1Relocated.Location.RowStart, row1Relocated.Location.RowSize, true, out RowLayout layoutRelocated));
-            Assert.Equal(6, layoutRelocated.NumCols);
-            Assert.Equal(3, layoutRelocated.VarLen);
+            Assert.Equal(5, layoutRelocated.NumCols);
+            Assert.Equal(2, layoutRelocated.VarLen);
             Assert.Equal(0x11223344, BinaryPrimitives.ReadInt32LittleEndian(pageRelocated.AsSpan(row1Relocated.Location.RowStart + profile.RowFields.NumCols + 4, 4)));
             ColumnSlice slice0 = RowDecodePlan.ResolveVariableSliceByIndex(profile.RowFields, pageRelocated, row1Relocated.Location.RowStart, row1Relocated.Location.RowSize, layoutRelocated, 0);
-            ColumnSlice slice2 = RowDecodePlan.ResolveVariableSliceByIndex(profile.RowFields, pageRelocated, row1Relocated.Location.RowStart, row1Relocated.Location.RowSize, layoutRelocated, 2);
             Assert.True(pageRelocated.AsSpan(row1Relocated.Location.RowStart + slice0.DataStart, slice0.DataLen).SequenceEqual(expectedDropVar0));
-            Assert.True(pageRelocated.AsSpan(row1Relocated.Location.RowStart + slice2.DataStart, slice2.DataLen).SequenceEqual(expectedDropVar2));
             ReadOnlySpan<byte> maskRelocated = pageRelocated.AsSpan(row1Relocated.Location.RowStart + layoutRelocated.NullMaskPos, row1Relocated.Location.RowSize - layoutRelocated.NullMaskPos);
             Assert.True(JetFormat.IsNullMaskBitSet(maskRelocated, 1));
             Assert.True(JetFormat.IsNullMaskBitSet(maskRelocated, 3));
-            Assert.True(JetFormat.IsNullMaskBitSet(maskRelocated, 5));
+            Assert.False(JetFormat.IsNullMaskBitSet(maskRelocated, 5));
         }
         finally
         {

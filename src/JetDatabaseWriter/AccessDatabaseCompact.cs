@@ -1105,6 +1105,9 @@ public static class AccessDatabaseCompact
             MaxDefinitionBytes = options.MaxTableDefinitionBytes,
             MaxSchemaBytes = options.MaxSchemaTraversalBytes,
             MaxWorkingBytes = options.MaxWorkingBytes,
+            MaxValueBytes = options.MaxLongValueBytes,
+            MaxLongValueBytes = Math.Max(1024L * 1024 * 1024, options.MaxReadBytes),
+            MaxLongValuePayloadBytes = Math.Max(1024L * 1024 * 1024, options.MaxReadBytes),
         };
 
     private static CompactPinnedDatabaseBuilderBudget CreateBuilderBudget(
