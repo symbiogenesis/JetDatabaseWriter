@@ -19,7 +19,7 @@ function New-Scenario([string] $Name) {
 }
 
 function Invoke-Coordinator([string] $Root) {
-    $output = & $pwsh -NoProfile -File (Join-Path $Root 'test-scripts.ps1') 2>&1
+    $output = & $pwsh -NoProfile -NonInteractive -File (Join-Path $Root 'test-scripts.ps1') 2>&1
     return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output -join "`n" }
 }
 
@@ -49,6 +49,17 @@ $result = Invoke-Coordinator $failure
 Assert-Check ($result.ExitCode -ne 0) 'A failed regression subprocess passed the coordinator.'
 Assert-Check ($result.Output.Contains('first.tests.ps1') -and $result.Output.Contains('7')) 'The failed test and exit code were lost.'
 Assert-Check ($result.Output.Contains('Failed child diagnostics') -and $result.Output.Contains('Passing child diagnostics')) 'Parallel child diagnostics were not retained on failure.'
+
+$prompt = New-Scenario 'prompt'
+$promptScript = @'
+$ErrorActionPreference = 'Stop'
+# Refuse an interactive host before attempting a prompt, so this regression cannot hang.
+if ([Environment]::GetCommandLineArgs() -notcontains '-NonInteractive') { throw 'Regression checks must use a noninteractive host.' }
+Read-Host 'A regression must never wait for interactive input'
+'@
+[IO.File]::WriteAllText((Join-Path $prompt 'tests/prompt.tests.ps1'), $promptScript)
+$result = Invoke-Coordinator $prompt
+Assert-Check ($result.ExitCode -ne 0 -and $result.Output.Contains('NonInteractive')) "An interactive prompt must fail immediately with its diagnostic: $($result.Output)"
 
 $parse = New-Scenario 'parse'
 [IO.File]::WriteAllText((Join-Path $parse 'invalid.ps1'), 'function {')

@@ -17,7 +17,7 @@ $results = @($tests | ForEach-Object -Parallel {
     $PSNativeCommandUseErrorActionPreference = $false
     $test = $_
     try {
-        $output = @(& $using:pwsh -NoProfile -File $test.FullName 2>&1)
+        $output = @(& $using:pwsh -NoProfile -NonInteractive -File $test.FullName 2>&1)
         $exitCode = $LASTEXITCODE
     }
     catch {
