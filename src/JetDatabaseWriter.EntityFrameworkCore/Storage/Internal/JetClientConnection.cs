@@ -7,8 +7,8 @@ using System.IO;
 using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using System.Threading;
-using System.Threading.Tasks;
 using System.Threading.Channels;
+using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.EntityFrameworkCore.Infrastructure.Internal;
 using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
@@ -25,7 +25,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 /// </summary>
 public sealed class JetClientConnection : IJetClientConnection
 {
-    private static readonly List<WeakReference<JetClientConnection>> LiveConnections = [];
+    private static readonly List<(WeakReference<JetClientConnection> Connection, SemaphoreSlim LifecycleGate)> LiveConnections = [];
     private static readonly Lock LiveConnectionsGate = new();
     private static readonly bool DefaultWriterByteRangeLocks = new AccessWriterOptions().UseByteRangeLocks;
     private static readonly ConcurrentDictionary<Type, object> BoxedDefaultValues = [];
@@ -381,7 +381,6 @@ public sealed class JetClientConnection : IJetClientConnection
         }
     }
 
-
     /// <inheritdoc/>
     public ValueTask<IReadOnlyList<ValueBuffer>> ReadTableValueBuffersAsync(
         IEntityType entityType,
@@ -455,7 +454,7 @@ public sealed class JetClientConnection : IJetClientConnection
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<ValueBuffer> StreamTableValueBuffersAsync(
+    public IAsyncEnumerable<ValueBuffer> StreamTableValueBuffersAsync(
         IEntityType entityType,
         IReadOnlyList<JetIndexSeekCondition>? seekConditions,
         IReadOnlyDictionary<string, object?> parameters,
@@ -463,109 +462,12 @@ public sealed class JetClientConnection : IJetClientConnection
         int? maxRows,
         IReadOnlyList<JetOrdering>? orderedProperties,
         Func<ValueBuffer, bool>? rowFilter,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(entityType);
         ArgumentNullException.ThrowIfNull(parameters);
         ObjectDisposedException.ThrowIf(this.disposed, this);
-        if (maxRows is <= 0)
-        {
-            yield break;
-        }
-
-        bool ownsGate = !this.writerRented;
-        if (ownsGate)
-        {
-            await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        bool lifecycleHeld = ownsGate;
-        try
-        {
-            IEntityType rootType = entityType.GetRootType();
-            string tableName = JetEntityTypeMetadata.GetTableName(rootType);
-            IReadOnlyList<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(rootType);
-            AccessWriter? writer = this.ActiveWriter ?? this.cachedWriter;
-            ResolvedTable? resolved;
-            IAsyncEnumerable<object?[]> rows;
-            bool ordered = false;
-            int?[] columnMap;
-            bool[]? wanted = null;
-            if (writer is not null)
-            {
-                resolved = await writer.Services.Catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-                columnMap = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
-                wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties);
-                (IAsyncEnumerable<object?[]> Rows, bool Ordered)? indexQuery = await JetIndexSeekPlanner.TryBuildActiveWriterIndexQueryAsync(
-                    writer, resolved, seekConditions, orderedProperties, parameters, wanted, cancellationToken).ConfigureAwait(false);
-                rows = indexQuery?.Rows ?? StreamWriterRowsAsync(writer, resolved, wanted, cancellationToken);
-                ordered = indexQuery?.Ordered ?? false;
-            }
-            else
-            {
-                await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
-                AccessReader reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
-                resolved = await reader.Services.Tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-                if (resolved is not null)
-                {
-                    columnMap = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
-                    wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties);
-                    IAsyncEnumerable<object[]>? indexRows = null;
-                    if (orderedProperties is { Count: > 0 })
-                    {
-                        indexRows = await JetIndexSeekPlanner.TryBuildOrderedIndexQueryAsync(reader, resolved, orderedProperties, wanted, cancellationToken).ConfigureAwait(false);
-                        ordered = indexRows is not null;
-                    }
-                    else if (seekConditions is { Count: > 0 })
-                    {
-                        indexRows = await JetIndexSeekPlanner.TryBuildIndexQueryAsync(reader, resolved, seekConditions, parameters, wanted, cancellationToken).ConfigureAwait(false);
-                    }
-
-                    rows = indexRows ?? reader.Services.Tables.Rows(tableName, wanted, progress: null, cancellationToken);
-                }
-                else
-                {
-                    columnMap = BuildPropertyColumnMap(properties, await reader.GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false));
-                    rows = reader.Rows(tableName, progress: null, cancellationToken);
-                }
-            }
-
-            if (lifecycleHeld)
-            {
-                this.lifecycleGate.Release();
-                lifecycleHeld = false;
-            }
-
-            ValueBufferFactory factory = new(rootType, properties, columnMap, wanted, reuseBuffer: false);
-            int? limit = orderedProperties is null or { Count: 0 } || ordered ? maxRows : null;
-            int emitted = 0;
-            await foreach (object?[] row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
-            {
-                if (!factory.TryCreate(row, out ValueBuffer buffer) || (rowFilter is not null && !rowFilter(buffer)))
-                {
-                    continue;
-                }
-
-                yield return buffer;
-                emitted++;
-                if (limit is int maximum && emitted >= maximum)
-                {
-                    yield break;
-                }
-            }
-        }
-        finally
-        {
-            if (lifecycleHeld)
-            {
-                this.lifecycleGate.Release();
-            }
-
-            if (ownsGate)
-            {
-                this.connectionGate.Release();
-            }
-        }
+        return this.StreamTableValueBuffersCoreAsync(entityType, seekConditions, parameters, requiredProperties, maxRows, orderedProperties, rowFilter, cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -606,7 +508,7 @@ public sealed class JetClientConnection : IJetClientConnection
                     lifecycleHeld = false;
                 }
 
-                bool Visit(object?[] row, bool ordered) => !factory.TryCreate(row, out ValueBuffer buffer) || visitor(buffer);
+                bool Visit(object?[] row, bool _) => !factory.TryCreate(row, out ValueBuffer buffer) || visitor(buffer);
                 if (seekConditions is { Count: > 0 }
                     && await JetIndexSeekPlanner.TryReadFromActiveWriterIndexAsync(writer, resolved, seekConditions, orderedProperties: null, parameters, wanted, Visit, cancellationToken).ConfigureAwait(false))
                 {
@@ -882,7 +784,7 @@ public sealed class JetClientConnection : IJetClientConnection
             Stream? stream = connection.optionsExtension.DatabaseStream ?? connection.resolvedStream;
             for (int i = LiveConnections.Count - 1; i >= 0; i--)
             {
-                if (!LiveConnections[i].TryGetTarget(out JetClientConnection? existing) || existing.disposed)
+                if (!LiveConnections[i].Connection.TryGetTarget(out JetClientConnection? existing) || existing.disposed)
                 {
                     LiveConnections.RemoveAt(i);
                     continue;
@@ -893,12 +795,13 @@ public sealed class JetClientConnection : IJetClientConnection
                     && string.Equals(connection.normalizedDatabasePath, existing.normalizedDatabasePath, StringComparison.OrdinalIgnoreCase))
                     || (stream is not null && ReferenceEquals(stream, existing.optionsExtension.DatabaseStream ?? existing.resolvedStream)))
                 {
-                    lifecycleGate = existing.lifecycleGate;
+                    lifecycleGate = LiveConnections[i].LifecycleGate;
                 }
             }
 
-            LiveConnections.Add(new WeakReference<JetClientConnection>(connection));
-            return lifecycleGate ?? new SemaphoreSlim(1, 1);
+            lifecycleGate ??= new SemaphoreSlim(1, 1);
+            LiveConnections.Add((new WeakReference<JetClientConnection>(connection), lifecycleGate));
+            return lifecycleGate;
         }
     }
 
@@ -908,7 +811,7 @@ public sealed class JetClientConnection : IJetClientConnection
         {
             for (int i = LiveConnections.Count - 1; i >= 0; i--)
             {
-                if (!LiveConnections[i].TryGetTarget(out JetClientConnection? existing)
+                if (!LiveConnections[i].Connection.TryGetTarget(out JetClientConnection? existing)
                     || existing.disposed
                     || ReferenceEquals(existing, connection))
                 {
@@ -1246,13 +1149,13 @@ public sealed class JetClientConnection : IJetClientConnection
         bool[] wantedColumns,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        Channel<object?[]> channel = Channel.CreateBounded<object?[]>(new BoundedChannelOptions(1)
+        var channel = Channel.CreateBounded<object?[]>(new BoundedChannelOptions(1)
         {
             SingleReader = true,
             SingleWriter = true,
             AllowSynchronousContinuations = false,
         });
-        using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Task producer = ProduceAsync();
         try
         {
@@ -1264,7 +1167,13 @@ public sealed class JetClientConnection : IJetClientConnection
         finally
         {
             await stop.CancelAsync().ConfigureAwait(false);
-            await producer.ConfigureAwait(false);
+            try
+            {
+                await producer.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && stop.IsCancellationRequested)
+            {
+            }
         }
 
         async Task ProduceAsync()
@@ -1292,6 +1201,7 @@ public sealed class JetClientConnection : IJetClientConnection
             catch (Exception exception)
             {
                 channel.Writer.TryComplete(exception);
+                throw;
             }
         }
     }
@@ -1328,6 +1238,116 @@ public sealed class JetClientConnection : IJetClientConnection
 
         key = new KeyTupleValue(values);
         return true;
+    }
+
+    private async IAsyncEnumerable<ValueBuffer> StreamTableValueBuffersCoreAsync(
+        IEntityType entityType,
+        IReadOnlyList<JetIndexSeekCondition>? seekConditions,
+        IReadOnlyDictionary<string, object?> parameters,
+        IReadOnlySet<IProperty>? requiredProperties,
+        int? maxRows,
+        IReadOnlyList<JetOrdering>? orderedProperties,
+        Func<ValueBuffer, bool>? rowFilter,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (maxRows is <= 0)
+        {
+            yield break;
+        }
+
+        bool ownsGate = !this.writerRented;
+        if (ownsGate)
+        {
+            await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        bool lifecycleHeld = ownsGate;
+        try
+        {
+            IEntityType rootType = entityType.GetRootType();
+            string tableName = JetEntityTypeMetadata.GetTableName(rootType);
+            IReadOnlyList<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(rootType);
+            AccessWriter? writer = this.ActiveWriter ?? this.cachedWriter;
+            ResolvedTable? resolved;
+            IAsyncEnumerable<object?[]> rows;
+            bool ordered = false;
+            int?[] columnMap;
+            bool[]? wanted = null;
+            if (writer is not null)
+            {
+                resolved = await writer.Services.Catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+                columnMap = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
+                wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties);
+                (IAsyncEnumerable<object?[]> Rows, bool Ordered)? indexQuery = await JetIndexSeekPlanner.TryBuildActiveWriterIndexQueryAsync(
+                    writer, resolved, seekConditions, orderedProperties, parameters, wanted, cancellationToken).ConfigureAwait(false);
+                rows = indexQuery?.Rows ?? StreamWriterRowsAsync(writer, resolved, wanted, cancellationToken);
+                ordered = indexQuery?.Ordered ?? false;
+            }
+            else
+            {
+                await this.ClosePeerConnectionsAsync(cancellationToken).ConfigureAwait(false);
+                AccessReader reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
+                resolved = await reader.Services.Tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+                if (resolved is not null)
+                {
+                    columnMap = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
+                    wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties);
+                    IAsyncEnumerable<object[]>? indexRows = null;
+                    if (orderedProperties is { Count: > 0 })
+                    {
+                        indexRows = await JetIndexSeekPlanner.TryBuildOrderedIndexQueryAsync(reader, resolved, orderedProperties, wanted, cancellationToken).ConfigureAwait(false);
+                        ordered = indexRows is not null;
+                    }
+                    else if (seekConditions is { Count: > 0 })
+                    {
+                        indexRows = await JetIndexSeekPlanner.TryBuildIndexQueryAsync(reader, resolved, seekConditions, parameters, wanted, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    rows = indexRows ?? reader.Services.Tables.Rows(tableName, wanted, progress: null, cancellationToken);
+                }
+                else
+                {
+                    columnMap = BuildPropertyColumnMap(properties, await reader.GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false));
+                    rows = reader.Rows(tableName, progress: null, cancellationToken);
+                }
+            }
+
+            if (lifecycleHeld)
+            {
+                this.lifecycleGate.Release();
+                lifecycleHeld = false;
+            }
+
+            ValueBufferFactory factory = new(rootType, properties, columnMap, wanted, reuseBuffer: false);
+            int? limit = orderedProperties is null or { Count: 0 } || ordered ? maxRows : null;
+            int emitted = 0;
+            await foreach (object?[] row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
+            {
+                if (!factory.TryCreate(row, out ValueBuffer buffer) || (rowFilter is not null && !rowFilter(buffer)))
+                {
+                    continue;
+                }
+
+                yield return buffer;
+                emitted++;
+                if (limit is int maximum && emitted >= maximum)
+                {
+                    yield break;
+                }
+            }
+        }
+        finally
+        {
+            if (lifecycleHeld)
+            {
+                this.lifecycleGate.Release();
+            }
+
+            if (ownsGate)
+            {
+                this.connectionGate.Release();
+            }
+        }
     }
 
     private async ValueTask<JetTransaction> BeginTransactionCoreAsync(CancellationToken cancellationToken = default)
@@ -1615,7 +1635,7 @@ public sealed class JetClientConnection : IJetClientConnection
         {
             for (int i = LiveConnections.Count - 1; i >= 0; i--)
             {
-                if (!LiveConnections[i].TryGetTarget(out JetClientConnection? peer) || peer.disposed)
+                if (!LiveConnections[i].Connection.TryGetTarget(out JetClientConnection? peer) || peer.disposed)
                 {
                     LiveConnections.RemoveAt(i);
                     continue;
@@ -1782,7 +1802,7 @@ public sealed class JetClientConnection : IJetClientConnection
             List<(IProperty Property, int Source, int Target)> projected = [];
             for (int i = 0; i < properties.Count; i++)
             {
-                if (columnMap[i] is int source && (wantedColumns is null || wantedColumns[source]))
+                if (columnMap[i] is int source && wantedColumns?[source] != false)
                 {
                     IProperty property = properties[i];
                     int target = property.GetIndex();
@@ -1816,9 +1836,9 @@ public sealed class JetClientConnection : IJetClientConnection
             }
 
             IReadOnlyEntityType? concreteType = null;
-            if (this.discriminator is not null && this.discriminatorColumn is int source && (uint)source < (uint)row.Length)
+            if (this.discriminator is not null && this.discriminatorColumn is int discriminatorSource && (uint)discriminatorSource < (uint)row.Length)
             {
-                concreteType = FindMatchingEntityType(this.rootType, JetEntityTypeMetadata.ConvertFromProvider(this.discriminator, row[source]));
+                concreteType = FindMatchingEntityType(this.rootType, JetEntityTypeMetadata.ConvertFromProvider(this.discriminator, row[discriminatorSource]));
             }
 
             object?[] template = concreteType is not null && this.concreteDefaults.TryGetValue(concreteType, out object?[]? defaultsForType)
