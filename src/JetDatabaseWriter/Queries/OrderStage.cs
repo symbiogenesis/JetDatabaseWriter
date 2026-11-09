@@ -272,7 +272,7 @@ internal sealed class OrderStage : QueryStage
         var compiled = new QuerySortKey<T>[keys.Count];
         for (int i = 0; i < keys.Count; i++)
         {
-            compiled[i] = new QuerySortKey<T>(CompileKey<T>(keys[i].KeySelector), QueryKeyComparer.Instance, keys[i].Descending);
+            compiled[i] = new QuerySortKey<T>(CompileKey<T>(keys[i].KeySelector), QueryKeyComparer.For(keys[i].KeySelector.ReturnType), keys[i].Descending);
         }
 
         return QueryOrdering.Apply(buffer, compiled).ToList();

@@ -16,7 +16,7 @@ internal sealed class IncludeOrderOperation : IncludeOperation
     /// <param name="selector">The key-selector lambda.</param>
     /// <param name="descending">Whether the key sorts in descending order.</param>
     public void AddKey(LambdaExpression selector, bool descending) =>
-        this.keys.Add(new QuerySortKey<object>(CompileSelector(selector), QueryKeyComparer.Instance, descending));
+        this.keys.Add(new QuerySortKey<object>(CompileSelector(selector), QueryKeyComparer.For(selector.ReturnType), descending));
 
     public override IEnumerable<object> Apply(IEnumerable<object> source) => QueryOrdering.Apply(source, this.keys);
 }

@@ -23,8 +23,8 @@ using static JetDatabaseWriter.Queries.QueryPlanTemplateCache;
 /// a comparer. Each operator becomes one step over a sequence of boxed elements, so no step is
 /// built per element type: lambdas reuse bounded compiled templates against an
 /// <see cref="object"/> parameter, and ordering and equality go through the key or element
-/// type's own comparer (the default one, or the one the query passes), so the results are the
-/// ones LINQ to Objects gives. <c>Where</c>, <c>Select</c>, the paging operators,
+/// type's own comparer, with shared null normalization and same-runtime-type admission for
+/// default ordering. Explicit comparers retain their own policy. <c>Where</c>, <c>Select</c>, the paging operators,
 /// <c>Concat</c>, <c>Append</c> and the like pass rows on as they arrive, so a <c>Take</c> or
 /// <c>FirstAsync</c> stops the table read; ordering, <c>Reverse</c>, <c>TakeLast</c> and the
 /// set operators buffer what they need. A second sequence that is itself a
@@ -42,7 +42,6 @@ internal static class InMemoryTail
 
     private static readonly Func<object?, object?> Identity = static item => item;
     private static readonly BoundedCache<Type, Func<object?, object?>> CastDelegates = new(AdapterCacheCapacity);
-    private static readonly BoundedCache<Type, Comparer<object?>> DefaultKeyComparers = new(AdapterCacheCapacity);
     private static readonly BoundedCache<Type, BoxedEqualityComparer> DefaultEqualityComparers = new(AdapterCacheCapacity);
 
     private static readonly Dictionary<string, StepFactory> Steps = new(StringComparer.Ordinal)
@@ -175,7 +174,7 @@ internal static class InMemoryTail
                         : CompileElementLambda<object?>(keyCall);
                     Comparer<object?> comparer = keyTemplate.HasComparerArgument
                         ? KeyOrder(keyTemplate.KeyType, keyCall.Arguments[keyTemplate.IsElementOrder ? 1 : 2])
-                        : GetDefaultKeyOrder(keyTemplate.KeyType);
+                        : QueryKeyComparer.For(keyTemplate.KeyType);
                     keys.Add(new QuerySortKey<object?>(selector, comparer, keyTemplate.Descending));
                 }
 
@@ -325,15 +324,9 @@ internal static class InMemoryTail
         return values.Cast<object?>().ToAsyncEnumerable();
     }
 
-    private static Comparer<object?> GetDefaultKeyOrder(Type keyType) =>
-        QueryPlanTemplateCache.HasCollectibleType(keyType)
-            ? CreateKeyOrder(keyType, comparer: null)
-            : DefaultKeyComparers.GetOrCreate(keyType, static type => CreateKeyOrder(type, comparer: null));
-
     /// <summary>
     /// Returns a comparer that orders boxed keys through <paramref name="keyType"/>'s comparer:
-    /// the one the query passes, or <see cref="Comparer{T}.Default"/> when it passes none, as
-    /// LINQ to Objects does.
+    /// the one the query passes, or the shared default query ordering when it passes none.
     /// </summary>
     /// <param name="keyType">The key type.</param>
     /// <param name="comparerArgument">The query's <see cref="IComparer{T}"/> argument, or <see langword="null"/>.</param>
@@ -341,17 +334,16 @@ internal static class InMemoryTail
     private static Comparer<object?> KeyOrder(Type keyType, Expression? comparerArgument)
     {
         object? comparer = comparerArgument is null ? null : ClosureValueReader.Evaluate(comparerArgument);
-        return comparer is null ? GetDefaultKeyOrder(keyType) : CreateKeyOrder(keyType, comparer);
+        return comparer is null ? QueryKeyComparer.For(keyType) : CreateKeyOrder(keyType, comparer);
     }
 
-    private static Comparer<object?> CreateKeyOrder(Type keyType, object? comparer)
+    private static Comparer<object?> CreateKeyOrder(Type keyType, object comparer)
     {
         Type comparerType = typeof(IComparer<>).MakeGenericType(keyType);
-        object instance = comparer ?? DefaultInstance(typeof(Comparer<>), keyType);
         ParameterExpression x = Expression.Parameter(typeof(object), "x");
         ParameterExpression y = Expression.Parameter(typeof(object), "y");
         MethodCallExpression compare = Expression.Call(
-            Expression.Constant(instance, comparerType),
+            Expression.Constant(comparer, comparerType),
             RequireMethod(comparerType, "Compare", keyType, keyType),
             Expression.Convert(x, keyType),
             Expression.Convert(y, keyType));

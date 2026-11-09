@@ -460,7 +460,7 @@ src/JetDatabaseWriter/
 │   ├── SkipStage.cs                       (Skip paging stage)
 │   ├── TakeStage.cs                       (Take paging stage)
 │   ├── OrderingKey.cs                     (one sort key: selector plus direction)
-│   ├── QueryKeyComparer.cs                (null-first, type-tolerant ordering-key comparison)
+│   ├── QueryKeyComparer.cs                (null-first ordering with same-runtime-type comparison)
 │   ├── QueryOrdering.cs                   (stable multikey ordering for roots, includes and tails)
 │   ├── QuerySortKey.cs                    (prepared selector, comparer and direction)
 │   ├── RuntimeRowMapper.cs                (maps object?[] rows onto a runtime-resolved POCO type)
