@@ -78,6 +78,12 @@ queries against an active writer. Each caller supplies its acquired schema and
 retains ownership of planning, I/O and residual evaluation. Ordering admission
 continues to follow each query surface's materialization and equality contracts.
 
+Core index reads and EF transaction index reads use `RowDecoder.ReadIndexedRowAsync`
+for page ownership checks, live slot lookup, overflow traversal and projected value
+decoding. Each caller retains its page source, parsing policy and omission accounting.
+Decoded values own their data before page leases are released; complex-column
+resolution and Hyperlink wrapping follow in the caller.
+
 A predicate outside `Skip` or `Take` cannot narrow the scan before that operator.
 An outer match limit cannot become an unfiltered inner limit after a predicate
 boundary. Unknown operators retain full evaluation when the planner cannot prove

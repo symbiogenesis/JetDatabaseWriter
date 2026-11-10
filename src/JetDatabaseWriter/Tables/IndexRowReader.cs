@@ -18,15 +18,12 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
-using JetDatabaseWriter.Pages.Models;
-using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Queries;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Enums.ColumnType;
-using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Index reads behind <see cref="Interfaces.IAccessReader"/>: lists a table's
@@ -557,46 +554,9 @@ internal sealed class IndexRowReader(
         bool needsHyperlinkPass,
         CancellationToken cancellationToken)
     {
-        using PageLease lease = await pages.ReadPageAsync(dataPage, cancellationToken).ConfigureAwait(false);
-        byte[] page = lease.Buffer;
-        if (page[0] != Constants.PageTypes.Data || Ri32(page, format.DataPage.TDefOff) != expectedTDefPage)
+        object?[]? row = await rows.ReadIndexedRowAsync(expectedTDefPage, dataPage, rowIndex, decodePlan, cancellationToken).ConfigureAwait(false);
+        if (row is null)
         {
-            _ = rows.AdmitRow(readable: false, dataPage, new RowBound(rowIndex, 0, 0));
-            return null;
-        }
-
-        if (!this.TryFindRowEntry(lease, rowIndex, out RowBound rowBound))
-        {
-            _ = rows.AdmitRow(readable: false, dataPage, new RowBound(rowIndex, 0, 0));
-            return null;
-        }
-
-        // Index entries name an overflow row's header slot; read the row from
-        // the slot the header points at.
-        using OverflowRowTarget? resolved = rowBound.IsOverflowPointer
-            ? await rows.ResolveOverflowAsync(page, rowBound, cancellationToken).ConfigureAwait(false)
-            : null;
-        if (rowBound.IsOverflowPointer)
-        {
-            if (resolved is not { } target)
-            {
-                _ = rows.AdmitRow(readable: false, dataPage, rowBound);
-                return null;
-            }
-
-            (page, rowBound) = (target.Page, target.Bound);
-        }
-
-        if (rowBound.RowSize < format.RowFields.NumCols)
-        {
-            _ = rows.AdmitRow(readable: false, dataPage, rowBound);
-            return null;
-        }
-
-        object?[]? row = await rows.CrackRowTypedAsync(page, rowBound.RowStart, rowBound.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
-        if (row == null)
-        {
-            _ = rows.AdmitRow(readable: false, dataPage, rowBound);
             return null;
         }
 
@@ -611,20 +571,5 @@ internal sealed class IndexRowReader(
         }
 
         return row;
-    }
-
-    private bool TryFindRowEntry(PageLease lease, int rowIndex, out RowBound rowBound)
-    {
-        foreach (RowBound candidate in lease.GetRowDirectory(format))
-        {
-            if (candidate.RowIndex == rowIndex)
-            {
-                rowBound = candidate;
-                return true;
-            }
-        }
-
-        rowBound = default;
-        return false;
     }
 }

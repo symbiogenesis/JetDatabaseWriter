@@ -14,8 +14,6 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
-using JetDatabaseWriter.Pages.Models;
-using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
 using JetDatabaseWriter.ValueDecoding;
@@ -23,7 +21,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using static JetDatabaseWriter.Enums.ColumnType;
-using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Extracts seekable predicates from LINQ expressions and selects optimal B-tree index queries on <see cref="AccessReader"/> and <see cref="AccessWriter"/>.
@@ -707,100 +704,24 @@ internal static class JetIndexSeekPlanner
             cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            object?[]? row = await MaterializeActiveWriterSeekRowAsync(
-                format,
-                snapshotPages,
-                rowDecoder,
+            object?[]? row = await rowDecoder.ReadIndexedRowAsync(
                 resolved.Entry.TDefPage,
-                td,
                 dataPage,
                 rowIndex,
                 decodePlan,
-                needsHyperlinkPass,
                 cancellationToken).ConfigureAwait(false);
             if (row is null)
             {
                 continue;
             }
 
+            if (needsHyperlinkPass)
+            {
+                TableReader.WrapHyperlinkColumns(row, td.ClrTypes);
+            }
+
             yield return row;
         }
-    }
-
-    private static async ValueTask<object?[]?> MaterializeActiveWriterSeekRowAsync(
-        JetFormat format,
-        ReaderPageCache pages,
-        RowDecoder rows,
-        long expectedTDefPage,
-        TableDef td,
-        long dataPage,
-        int rowIndex,
-        RowDecodePlan decodePlan,
-        bool needsHyperlinkPass,
-        CancellationToken cancellationToken)
-    {
-        using PageLease lease = await pages.ReadPageAsync(dataPage, cancellationToken).ConfigureAwait(false);
-        byte[] page = lease.Buffer;
-        if (page[0] != Constants.PageTypes.Data || Ri32(page, format.DataPage.TDefOff) != expectedTDefPage)
-        {
-            _ = rows.AdmitRow(readable: false, dataPage, new RowBound(rowIndex, 0, 0));
-            return null;
-        }
-
-        if (!TryFindRowEntry(format, lease, rowIndex, out RowBound rowBound))
-        {
-            _ = rows.AdmitRow(readable: false, dataPage, new RowBound(rowIndex, 0, 0));
-            return null;
-        }
-
-        using OverflowRowTarget? resolved = rowBound.IsOverflowPointer
-            ? await rows.ResolveOverflowAsync(page, rowBound, cancellationToken).ConfigureAwait(false)
-            : null;
-        if (rowBound.IsOverflowPointer)
-        {
-            if (resolved is not { } target)
-            {
-                _ = rows.AdmitRow(readable: false, dataPage, rowBound);
-                return null;
-            }
-
-            (page, rowBound) = (target.Page, target.Bound);
-        }
-
-        if (rowBound.RowSize < format.RowFields.NumCols)
-        {
-            _ = rows.AdmitRow(readable: false, dataPage, rowBound);
-            return null;
-        }
-
-        object?[]? row = await rows.CrackRowTypedAsync(page, rowBound.RowStart, rowBound.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
-        if (row is null)
-        {
-            _ = rows.AdmitRow(readable: false, dataPage, rowBound);
-            return null;
-        }
-
-        if (needsHyperlinkPass)
-        {
-            TableReader.WrapHyperlinkColumns(row, td.ClrTypes);
-        }
-
-        return row;
-    }
-
-    private static bool TryFindRowEntry(JetFormat format, PageLease lease, int rowIndex, out RowBound rowBound)
-    {
-        foreach (RowBound candidate in lease.GetRowDirectory(format))
-        {
-            if (candidate.RowIndex == rowIndex)
-            {
-                rowBound = candidate;
-                return true;
-            }
-        }
-
-        rowBound = default;
-        return false;
     }
 
     private static ColumnPredicate CreateColumnPredicate(string columnName, ColumnPredicateOperator op, object value)

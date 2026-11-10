@@ -43,6 +43,75 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
     internal ValueTask<PageLease> ReadPageAsync(long pageNumber, CancellationToken cancellationToken)
         => pages.ReadPageAsync(pageNumber, cancellationToken);
 
+    /// <summary>Decodes an index bookmark, following moved rows while retaining the caller's read policy and page source.</summary>
+    /// <param name="expectedTDefPage">The table that must own the bookmarked data page.</param>
+    /// <param name="dataPage">The original bookmark's data page.</param>
+    /// <param name="rowIndex">The original bookmark's row slot.</param>
+    /// <param name="decodePlan">The typed column projection and parsing policy.</param>
+    /// <param name="cancellationToken">Cancels page acquisition and value decoding.</param>
+    /// <returns>The decoded values, or <see langword="null"/> for an explicitly lenient omission.</returns>
+    internal async ValueTask<object?[]?> ReadIndexedRowAsync(
+        long expectedTDefPage,
+        long dataPage,
+        int rowIndex,
+        RowDecodePlan decodePlan,
+        CancellationToken cancellationToken)
+    {
+        using PageLease lease = await pages.ReadPageAsync(dataPage, cancellationToken).ConfigureAwait(false);
+        byte[] page = lease.Buffer;
+        if (page[0] != Constants.PageTypes.Data
+            || BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(format.DataPage.TDefOff, 4)) != expectedTDefPage)
+        {
+            _ = this.AdmitRow(readable: false, dataPage, new RowBound(rowIndex, 0, 0));
+            return null;
+        }
+
+        RowBound? selected = null;
+        foreach (RowBound candidate in lease.GetRowDirectory(format))
+        {
+            if (candidate.RowIndex == rowIndex)
+            {
+                selected = candidate;
+                break;
+            }
+        }
+
+        if (selected is not RowBound rowBound)
+        {
+            _ = this.AdmitRow(readable: false, dataPage, new RowBound(rowIndex, 0, 0));
+            return null;
+        }
+
+        // Index entries retain the header slot when a row moves to another slot.
+        using OverflowRowTarget? resolved = rowBound.IsOverflowPointer
+            ? await this.ResolveOverflowAsync(page, rowBound, cancellationToken).ConfigureAwait(false)
+            : null;
+        if (rowBound.IsOverflowPointer)
+        {
+            if (resolved is not { } target)
+            {
+                _ = this.AdmitRow(readable: false, dataPage, rowBound);
+                return null;
+            }
+
+            (page, rowBound) = (target.Page, target.Bound);
+        }
+
+        if (rowBound.RowSize < format.RowFields.NumCols)
+        {
+            _ = this.AdmitRow(readable: false, dataPage, rowBound);
+            return null;
+        }
+
+        object?[]? row = await this.CrackRowTypedAsync(page, rowBound.RowStart, rowBound.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
+        if (row is null)
+        {
+            _ = this.AdmitRow(readable: false, dataPage, rowBound);
+        }
+
+        return row;
+    }
+
     /// <summary>Requires a readable row in strict mode and records every explicitly lenient omission.</summary>
     /// <param name="readable">Whether the complete row layout or referenced row was acquired.</param>
     /// <param name="pageNumber">The page holding the original live slot.</param>
