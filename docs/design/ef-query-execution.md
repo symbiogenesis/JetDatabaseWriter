@@ -41,18 +41,29 @@ navigations, including nested owned references and collections. Repeated owned
 include prefixes reuse each owner's instances without resolving identities
 between separate no-tracking owners.
 
-Entity equality, user methods that consume entities, constrained generic shapes,
+Entity comparisons, user methods that consume entities, constrained generic shapes,
 inheritance, owned graphs and navigation-dependent shapes can require the general
 entity execution path. These cases use complete entities for CLR and EF
 evaluation. Complete entities include all mapped properties, including at `First`,
 `Single` and `Last` terminals and inside projected graphs. Result-graph promotion
 uses weakly cached compiled accessors and constructors, including private DTO
-setters; it does not perform member reflection for every result.
+setters; it does not perform member reflection for every result. Entity-valued
+constructor and factory arguments resolve existing tracked instances before
+result construction, including get-only DTO members. Surviving new candidates
+attach in place, including owned entities with shadow ownership keys. Mapped
+scalar predicates and ordering read the stored buffers even when a result
+contains an already tracked entity with local changes. User CLR methods receive
+the actual constructed objects.
 
-Several EF key-matching adapters currently use ordinary object equality instead
-of the property's EF key comparer. Equal-content binary keys can consequently
-fail entity membership and navigation matching. Consolidation using EF property
-key comparers and its query/save regression requirements remain open in plan I18.
+Entity `==`, `!=` and `Contains` compare primary keys using their EF property key
+comparers, including composite, binary and shadow keys. Null and inheritance
+identity remain part of that comparison; keyless entity identity comparisons
+refuse. Explicit CLR reference comparisons and ordinary LINQ grouping retain
+their CLR semantics.
+
+Query identity maps and navigation-read key tuples still use ordinary object
+equality instead of the property's EF key comparer. Their consolidation and
+remaining query/navigation regressions remain open in plan I18.
 
 Supported single-table bulk mutations rent the writer before selecting buffers.
 They read the key, filter and setter columns, evaluate every assignment against
@@ -104,9 +115,10 @@ lifecycle transitions and acquire per-connection operation leases. A writer rent
 release, so peer invalidation and disposal wait for the operation. Idle file and
 stream writers are reused; switching a peer connection retires idle writer
 state. File reader peers may coexist. Connections sharing a caller stream retain
-the shared lifecycle lease through scans and cursor disposal, serializing seeks,
-reads and reader initialization across those connections. Cancellation while
-waiting leaves the current reader's lease intact. Explicit transactions prevent another
+the shared lifecycle lease through scans, schema catalog reads and cursor
+disposal, serializing seeks, reads and reader initialization across those
+connections. Cancellation while waiting leaves the current reader's lease intact.
+Explicit transactions prevent another
 connection from taking over their writer. Schema creation releases its file
 writer when finished.
 The configured `leaveOpen` option applies to both direct streams and streams
@@ -123,10 +135,25 @@ scope cannot be opened; releasing a savepoint permits retry. Table-split owned
 values retain foreign keys other than their ownership keys. Update and delete
 predicates include original concurrency tokens from the tracked entities sharing
 the row, and successful saves propagate shared-column tokens across them.
+Generated keys use EF temporary-value and sentinel metadata, preserving explicit
+negative keys and zero keys with a custom sentinel. Save dependencies compare keys using the principal
+properties' EF key comparers. Unique-value releases precede replacement inserts
+while retaining actual foreign-key dependencies, including changes to table-split
+owned values. Native encoded unique keys
+preserve Access collation and numeric equality. Same-table modified cycles remain
+atomic update batches; an unsatisfiable mixed dependency cycle refuses before
+row mutation.
 
 Creation requires an empty destination stream and initializes it from offset
 zero. `EnsureCreatedAsync` and `MigrateAsync` preserve nonempty unreadable streams
 and throw, including when the configured password cannot open the database.
+
+Generated index and relationship names use a stable hash suffix when shortening
+to Access's 64-character limit. Oversized explicit index names and conflicting
+constraint names refuse. Additive migration compares primary keys, index columns,
+directions, uniqueness and null policies, and relationship enforcement/cascade
+flags. Incompatible existing constraints refuse transactionally, including
+rolling back columns added earlier in that migration.
 
 Creation and additive migration invoke `UseAsyncSeeding` after releasing the
 schema writer, including when the schema is already current. Callbacks receive
@@ -150,6 +177,9 @@ Inheritance seed rows fill omitted discriminator values through the property's
 provider conversion. Decimal precision defaults use enum underlying and converter
 provider types, preserving full unsigned 64-bit values and integer-backed time
 values while honoring explicit precision and scale.
+Jet3 refuses explicit decimal facets that Currency cannot represent, unless
+Currency was explicitly selected. Inferred unsigned integer and duration mappings
+use Currency on Jet3 and enforce its value range when writing.
 
 Common decoded scalar conversions use the core `ValueCoercer` rules, including
 Hyperlink and calculated-error text. EF retains its model value converters and
