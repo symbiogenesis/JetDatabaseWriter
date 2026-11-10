@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Xunit;
 
 public sealed class JetCompiledBufferQueryTests
@@ -49,7 +50,8 @@ public sealed class JetCompiledBufferQueryTests
         int[] repeatedValues = await ReadAsync(query(first, 8, 7), ct);
         Assert.Equal([8, 7], repeatedValues);
         await using MemoryStream secondStream = new();
-        await using ReviewContext second = await CreateContextAsync(secondStream);
+        await using ReviewContext second = await CreateContextAsync(secondStream, first.Model);
+        Assert.Same(first.Model, second.Model);
         int[] secondValues = await ReadAsync(query(second, 4, 2), ct);
         Assert.Equal([4, 3, 2], secondValues);
         Assert.Empty(await ReadAsync(query(second, 0, 0), ct));
@@ -95,10 +97,17 @@ public sealed class JetCompiledBufferQueryTests
         return [.. result];
     }
 
-    private static async Task<ReviewContext> CreateContextAsync(Stream stream)
+    private static async Task<ReviewContext> CreateContextAsync(Stream stream, IModel? model = null)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        ReviewContext context = new(new DbContextOptionsBuilder<ReviewContext>().UseJetDatabaseWriter(stream, leaveOpen: true).Options);
+        DbContextOptionsBuilder<ReviewContext> builder = new();
+        _ = builder.UseJetDatabaseWriter(stream, leaveOpen: true);
+        if (model is not null)
+        {
+            _ = builder.UseModel(model);
+        }
+
+        ReviewContext context = new(builder.Options);
         try
         {
             Assert.True(await context.Database.EnsureCreatedAsync(ct));
