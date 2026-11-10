@@ -19,8 +19,8 @@ internal static partial class JetAsyncQueryExecutor
         out Func<QueryContext, Task<TResult>>? executor)
     {
         executor = null;
-        if (!CanExecuteBuffers(plan) || plan.RootTables.Count != 1
-            || UnwrapEfQueryModifiers(query) is not MethodCallExpression terminal
+        if (!CanExecuteScalarBuffers(plan) || plan.RootTables.Count != 1
+            || UnwrapBufferQueryModifiers(query) is not MethodCallExpression terminal
             || terminal.Method.DeclaringType != typeof(Queryable)
             || terminal.Method.Name is not (nameof(Queryable.Sum) or nameof(Queryable.Average)
                 or nameof(Queryable.Min) or nameof(Queryable.Max) or nameof(Queryable.All)))
@@ -28,13 +28,13 @@ internal static partial class JetAsyncQueryExecutor
             return false;
         }
 
-        Expression source = UnwrapEfQueryModifiers(terminal.Arguments[0]);
+        Expression source = UnwrapBufferQueryModifiers(terminal.Arguments[0]);
         LambdaExpression? selector = terminal.Arguments.Count == 2 ? StripQuotesAndObjectConvert(terminal.Arguments[1]) as LambdaExpression : null;
         if (source is MethodCallExpression projection && projection.Method.DeclaringType == typeof(Queryable)
             && projection.Method.Name == nameof(Queryable.Select) && selector is null)
         {
             selector = StripQuotesAndObjectConvert(projection.Arguments[1]) as LambdaExpression;
-            source = UnwrapEfQueryModifiers(projection.Arguments[0]);
+            source = UnwrapBufferQueryModifiers(projection.Arguments[0]);
         }
 
         if (selector is null || selector.Parameters.Count != 1)
@@ -48,7 +48,7 @@ internal static partial class JetAsyncQueryExecutor
             && StripQuotesAndObjectConvert(where.Arguments[1]) is LambdaExpression { Parameters.Count: 1 } predicate)
         {
             predicates.Insert(0, predicate);
-            source = UnwrapEfQueryModifiers(where.Arguments[0]);
+            source = UnwrapBufferQueryModifiers(where.Arguments[0]);
         }
 
         if (source is not EntityQueryRootExpression)
@@ -76,7 +76,7 @@ internal static partial class JetAsyncQueryExecutor
             Expression value = new ExpressionReplacer(mapped.Parameters[0], buffer).Visit(mapped.Body)!;
             LambdaExpression evaluate = Expression.Lambda(
                 typeof(Func<,,>).MakeGenericType(typeof(QueryContext), typeof(ValueBuffer), value.Type), value, context, buffer);
-            Expression keep = Expression.Constant(true);
+            Expression keep = BufferDiscriminatorPredicate(plan.RootTables[0], buffer);
             foreach (LambdaExpression predicate in predicates)
             {
                 var rewritten = (LambdaExpression)rewriter.Visit(predicate);
@@ -87,6 +87,7 @@ internal static partial class JetAsyncQueryExecutor
             MethodInfo build = typeof(JetAsyncQueryExecutor).GetMethod(nameof(BuildStreamingAggregate), BindingFlags.NonPublic | BindingFlags.Static)!
                 .MakeGenericMethod(value.Type, typeof(TResult));
             executor = InvokeBuilderMethod<Func<QueryContext, Task<TResult>>>(build, [plan.RootTables[0], terminal.Method.Name, evaluate.Compile(), filter]);
+            NarrowBufferProperties(plan, rewriter.ReferencedProperties);
             return true;
         }
         catch (BufferTranslationException)

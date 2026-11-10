@@ -17,9 +17,44 @@ using Microsoft.EntityFrameworkCore.Storage;
 internal static partial class JetAsyncQueryExecutor
 {
     private static bool CanExecuteBuffers(JetQueryPlan plan)
-        => plan.IncludeChains.Count == 0 && plan.QueryReferencedNavigations.Count == 0
+        => CanExecuteScalarBuffers(plan) && CanShapeBufferEntities(plan);
+
+    private static bool CanExecuteScalarBuffers(JetQueryPlan plan)
+        => plan.QueryReferencedNavigations.Count == 0;
+
+    private static bool CanShapeBufferEntities(JetQueryPlan plan)
+        => plan.IncludeChains.Count == 0
             && plan.RootTables.All(static p => !p.RootEntityType.GetDerivedTypes().Any() && p.QueryEntityType == p.RootEntityType
                 && !p.RootEntityType.GetNavigations().Any(static n => n.TargetEntityType.IsOwned()));
+
+    private static Expression UnwrapBufferQueryModifiers(Expression expression)
+    {
+        Expression current = UnwrapEfQueryModifiers(expression);
+        while (current is MethodCallExpression call
+            && call.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
+            && call.Method.Name is nameof(EntityFrameworkQueryableExtensions.Include)
+                or nameof(EntityFrameworkQueryableExtensions.ThenInclude) or "NotQuiteInclude")
+        {
+            current = UnwrapEfQueryModifiers(call.Arguments[0]);
+        }
+
+        return current;
+    }
+
+    private static Expression BufferDiscriminatorPredicate(JetTableLoadPlan table, Expression buffer)
+    {
+        if (table.QueryEntityType == table.RootEntityType)
+        {
+            return Expression.Constant(true);
+        }
+
+        IProperty discriminator = table.RootEntityType.FindDiscriminatorProperty() ?? throw new BufferTranslationException();
+        HashSet<object?> allowed = [.. table.QueryEntityType.GetConcreteDerivedTypesInclusive().Select(static type => type.GetDiscriminatorValue())];
+        return Expression.Call(
+            Expression.Constant(allowed),
+            typeof(HashSet<object?>).GetMethod(nameof(HashSet<>.Contains))!,
+            Expression.Call(ReadValueBufferPropertyMethod.MakeGenericMethod(typeof(object)), buffer, Expression.Constant(discriminator.GetIndex())));
+    }
 
     private static bool TryBuildBufferSequence<TElement>(
         Expression query,
@@ -28,7 +63,7 @@ internal static partial class JetAsyncQueryExecutor
         out Func<QueryContext, IAsyncEnumerable<TElement>>? executor)
     {
         executor = null;
-        if (!CanExecuteBuffers(plan))
+        if (!CanExecuteScalarBuffers(plan))
         {
             return false;
         }
@@ -50,7 +85,7 @@ internal static partial class JetAsyncQueryExecutor
                     return true;
                 }
 
-                if (streamed.Type == typeof(IAsyncEnumerable<ValueBuffer>) && model.FindEntityType(typeof(TElement)) is { } entityType)
+                if (CanShapeBufferEntities(plan) && streamed.Type == typeof(IAsyncEnumerable<ValueBuffer>) && model.FindEntityType(typeof(TElement)) is { } entityType)
                 {
                     Func<QueryContext, IAsyncEnumerable<ValueBuffer>> source = Expression.Lambda<Func<QueryContext, IAsyncEnumerable<ValueBuffer>>>(streamed, context).Compile();
                     plan.RequiresMaterializers = true;
@@ -72,6 +107,11 @@ internal static partial class JetAsyncQueryExecutor
             Expression rewritten = rewriter.Visit(query)!;
             if (!typeof(IEnumerable<TElement>).IsAssignableFrom(rewritten.Type))
             {
+                if (!CanShapeBufferEntities(plan))
+                {
+                    return false;
+                }
+
                 Type? sequence = rewritten.Type.GetInterfaces().Append(rewritten.Type)
                     .FirstOrDefault(static t => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(IEnumerable<>));
                 if (sequence is null)
@@ -106,7 +146,7 @@ internal static partial class JetAsyncQueryExecutor
         out Func<QueryContext, Task<TScalar>>? executor)
     {
         executor = null;
-        if (!CanExecuteBuffers(plan))
+        if (!CanExecuteScalarBuffers(plan))
         {
             return false;
         }
@@ -142,6 +182,11 @@ internal static partial class JetAsyncQueryExecutor
             if (table.JoinLoadSpec is { } join)
             {
                 required.UnionWith(join.InnerKeyProperties);
+            }
+
+            if (table.QueryEntityType != table.RootEntityType && table.RootEntityType.FindDiscriminatorProperty() is { } discriminator)
+            {
+                required.Add(discriminator);
             }
 
             foreach (JetTableLoadPlan dependent in plan.RootTables)
@@ -416,6 +461,15 @@ internal static partial class JetAsyncQueryExecutor
             Expression result = streaming
                 ? Expression.Call(typeof(JetAsyncQueryExecutor), nameof(StreamBufferRoot), null, context, Expression.Constant(table))
                 : Expression.Call(typeof(JetAsyncQueryExecutor), nameof(BufferRoot), null, roots, Expression.Constant(table.RootId));
+            if (table.QueryEntityType != table.RootEntityType)
+            {
+                ParameterExpression buffer = Expression.Parameter(typeof(ValueBuffer), "buffer");
+                LambdaExpression predicate = Expression.Lambda(BufferDiscriminatorPredicate(table, buffer), buffer);
+                result = streaming
+                    ? Expression.Call(typeof(JetAsyncQueryExecutor), nameof(StreamWhere), [typeof(ValueBuffer)], result, predicate, Expression.Default(typeof(CancellationToken)))
+                    : Expression.Call(typeof(Queryable), nameof(Queryable.Where), [typeof(ValueBuffer)], result, Expression.Quote(predicate));
+            }
+
             if (!plan.IgnoreQueryFilters)
             {
                 foreach (IQueryFilter filter in GetAllQueryFilters(table.QueryEntityType, plan.IgnoredQueryFilterNames))
@@ -522,6 +576,11 @@ internal static partial class JetAsyncQueryExecutor
                 throw new BufferTranslationException();
             }
 
+            if (operand.Type != node.Operand.Type && model.FindEntityType(node.Type) is not null)
+            {
+                throw new BufferTranslationException();
+            }
+
             return Expression.MakeUnary(node.NodeType, operand, mapped, node.Method);
         }
 
@@ -574,10 +633,19 @@ internal static partial class JetAsyncQueryExecutor
 
         protected override Expression VisitMethodCall(MethodCallExpression node)
         {
-            Expression unwrapped = UnwrapEfQueryModifiers(node);
+            Expression unwrapped = UnwrapBufferQueryModifiers(node);
             if (!ReferenceEquals(unwrapped, node))
             {
                 return this.Visit(unwrapped)!;
+            }
+
+            if ((node.Method.DeclaringType == typeof(Queryable) || node.Method.DeclaringType == typeof(Enumerable))
+                && node.Method.Name is nameof(Queryable.OfType) or nameof(Queryable.Cast)
+                && (node.Method.GetGenericArguments().Any(type => this.MapType(type) != type)
+                    || this.MapType(node.Arguments[0].Type) != node.Arguments[0].Type
+                    || node.Arguments[0].Type == typeof(IQueryable) || node.Arguments[0].Type == typeof(System.Collections.IEnumerable)))
+            {
+                throw new BufferTranslationException();
             }
 
             if (node.Method.DeclaringType == typeof(EF) && node.Method.Name == nameof(EF.Property)

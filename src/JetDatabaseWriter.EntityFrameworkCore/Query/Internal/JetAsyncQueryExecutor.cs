@@ -3277,11 +3277,8 @@ internal static partial class JetAsyncQueryExecutor
             Dictionary<IEntityType, IReadOnlySet<IProperty>?> requiredByType = [];
             foreach (JetTableLoadPlan tablePlan in extractor.rootTables)
             {
-                if (extractor.includeChains.Count == 0)
-                {
-                    tablePlan.RequiredProperties = extractor.ComputeRequiredProperties(query, tablePlan.RootEntityType);
-                    requiredByType[tablePlan.RootEntityType] = tablePlan.RequiredProperties;
-                }
+                tablePlan.RequiredProperties = extractor.ComputeRequiredProperties(query, tablePlan.RootEntityType);
+                requiredByType[tablePlan.RootEntityType] = tablePlan.RequiredProperties;
 
                 if (extractor.rootTables.Count == 1 && extractor.queryReferencedNavigations.Count == 0)
                 {
@@ -3628,6 +3625,9 @@ internal static partial class JetAsyncQueryExecutor
                         or nameof(EntityFrameworkQueryableExtensions.AsTracking)
                         or nameof(EntityFrameworkQueryableExtensions.IgnoreQueryFilters)
                         or nameof(EntityFrameworkQueryableExtensions.IgnoreAutoIncludes)
+                        or nameof(EntityFrameworkQueryableExtensions.Include)
+                        or nameof(EntityFrameworkQueryableExtensions.ThenInclude)
+                        or "NotQuiteInclude"
                         or nameof(EntityFrameworkQueryableExtensions.TagWith)
                         or nameof(EntityFrameworkQueryableExtensions.TagWithCallSite))
                     {

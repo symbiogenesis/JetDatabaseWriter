@@ -120,8 +120,7 @@ internal static partial class JetAsyncQueryExecutor
             _ = equalityFinder.Visit(query);
             if (model.FindEntityType(UnwrapSequenceType(query.Type)) is not null
                 || resultFinder.ContainsEntity
-                || equalityFinder.ContainsEntityEquality
-                || entityType.GetNavigations().Any(static navigation => navigation.TargetEntityType.IsOwned()))
+                || equalityFinder.ContainsEntityEquality)
             {
                 // Entities in the result expose their complete fixed-up navigation graph.
                 return null;
@@ -202,6 +201,13 @@ internal static partial class JetAsyncQueryExecutor
             }
 
             this.VisitUsage(call.Arguments[0], analyzer);
+            if (call.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
+                && call.Method.Name is nameof(EntityFrameworkQueryableExtensions.Include)
+                    or nameof(EntityFrameworkQueryableExtensions.ThenInclude) or "NotQuiteInclude")
+            {
+                return;
+            }
+
             bool join = call.Method.DeclaringType == typeof(Queryable)
                 && call.Method.Name is nameof(Queryable.Join) or nameof(Queryable.GroupJoin) or nameof(Queryable.LeftJoin);
             if (join)
