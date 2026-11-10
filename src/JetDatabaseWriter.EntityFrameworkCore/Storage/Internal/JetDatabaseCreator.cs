@@ -14,6 +14,7 @@ using JetDatabaseWriter.ValueDecoding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 /// <summary>
 /// Creates, migrates, and deletes Microsoft Access databases and their schema from an EF Core <see cref="IModel"/>.
@@ -204,7 +205,14 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
 
         if (storageType == typeof(decimal))
         {
-            Type unwrappedClr = Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType;
+            ValueConverter? converter = property.GetValueConverter() ?? property.FindTypeMapping()?.Converter;
+            Type providerType = converter?.ProviderClrType ?? property.ClrType;
+            Type unwrappedClr = Nullable.GetUnderlyingType(providerType) ?? providerType;
+            if (unwrappedClr.IsEnum)
+            {
+                unwrappedClr = Enum.GetUnderlyingType(unwrappedClr);
+            }
+
             bool isIntegerBackedDecimal = unwrappedClr == typeof(TimeSpan) || unwrappedClr == typeof(ulong);
             int defaultPrecision = isIntegerBackedDecimal ? 20 : 18;
             int defaultScale = isIntegerBackedDecimal ? 0 : 4;
