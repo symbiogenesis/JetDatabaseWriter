@@ -110,7 +110,10 @@ public sealed class JetTransactionManager : IDbContextTransactionManager, IDispo
         }
         finally
         {
-            this.currentTransaction = null;
+            if (this.connection.ActiveTransaction is null)
+            {
+                this.currentTransaction = null;
+            }
         }
     }
 
@@ -122,7 +125,10 @@ public sealed class JetTransactionManager : IDbContextTransactionManager, IDispo
         }
         finally
         {
-            this.currentTransaction = null;
+            if (this.connection.ActiveTransaction is null)
+            {
+                this.currentTransaction = null;
+            }
         }
     }
 

@@ -85,6 +85,11 @@ state. Reader peers may coexist. Explicit transactions prevent another
 connection from taking over their writer. Schema creation releases its file
 writer when finished.
 
+Cancellation before transaction completion enters the connection preserves the
+EF transaction handle and its savepoints for retry or rollback. Once completion
+has entered and ends the underlying transaction, the handle is invalidated even
+when commit or rollback reports a failure.
+
 Creation requires an empty destination stream and initializes it from offset
 zero. `EnsureCreatedAsync` and `MigrateAsync` preserve nonempty unreadable streams
 and throw, including when the configured password cannot open the database.

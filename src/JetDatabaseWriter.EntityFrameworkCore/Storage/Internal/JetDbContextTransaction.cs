@@ -93,8 +93,14 @@ public sealed class JetDbContextTransaction : IDbContextTransaction
             throw new InvalidOperationException("This transaction has already been completed.");
         }
 
-        this.completed = true;
-        await this.manager.CommitTransactionInternalAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await this.manager.CommitTransactionInternalAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            this.completed = !ReferenceEquals(this.manager.CurrentTransaction, this);
+        }
     }
 
     /// <inheritdoc/>
@@ -110,8 +116,14 @@ public sealed class JetDbContextTransaction : IDbContextTransaction
             throw new InvalidOperationException("This transaction has already been completed.");
         }
 
-        this.completed = true;
-        await this.manager.RollbackTransactionInternalAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await this.manager.RollbackTransactionInternalAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            this.completed = !ReferenceEquals(this.manager.CurrentTransaction, this);
+        }
     }
 
     /// <inheritdoc/>
