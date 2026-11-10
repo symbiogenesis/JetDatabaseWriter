@@ -36,6 +36,10 @@ including cached and compiled queries. Index candidates and residual predicates
 use the same bound values. Named `IgnoreQueryFilters` exclusions disable only
 the requested filters; the parameterless call disables all filters. The last
 tracking modifier in a query chain determines tracking and identity resolution.
+`IgnoreAutoIncludes` suppresses configured eager loading while retaining owned
+navigations, including nested owned references and collections. Repeated owned
+include prefixes reuse each owner's instances without resolving identities
+between separate no-tracking owners.
 
 Entity equality, user methods that consume entities, constrained generic shapes,
 inheritance, owned graphs and navigation-dependent shapes can require the general
@@ -59,6 +63,8 @@ boundary. Unknown operators retain full evaluation when the planner cannot prove
 a safe bound. Join provenance permits scalar predicates after inner joins and
 key lookups for later joins in a chain. Inner predicates remain residuals after
 join-key lookup. Outer joins retain null-extension behavior.
+Comparer overloads and constructed join keys with nullable components retain
+ordinary evaluation when exact-key candidate lookup cannot preserve equality.
 
 Projected root and navigation reads retain key and relationship columns and skip
 unreferenced long values when the result does not require a complete entity.
@@ -92,9 +98,23 @@ EF transaction handle and its savepoints for retry or rollback. Once completion
 has entered and ends the underlying transaction, the handle is invalidated even
 when commit or rollback reports a failure.
 
+`SaveChangesAsync` protects multiple row operations with a nested transaction.
+At the native write-nesting limit it refuses before mutation if that protective
+scope cannot be opened; releasing a savepoint permits retry. Table-split owned
+values retain foreign keys other than their ownership keys. Update and delete
+predicates include original concurrency tokens from the tracked entities sharing
+the row, and successful saves propagate shared-column tokens across them.
+
 Creation requires an empty destination stream and initializes it from offset
 zero. `EnsureCreatedAsync` and `MigrateAsync` preserve nonempty unreadable streams
 and throw, including when the configured password cannot open the database.
+
+Creation and additive migration invoke `UseAsyncSeeding` after releasing the
+schema writer, including when the schema is already current. Callbacks receive
+the executing context, cancellation token and whether schema or model-seed
+operations occurred. Schema creation commits before callback execution. Callback
+writes use a separate transaction when the caller has none, and roll back on
+failure or cancellation; an explicit caller transaction remains caller-owned.
 
 `DeleteBehavior.NoAction` creates an enforcing relationship without cascading
 deletes. Self-referencing save dependencies use each foreign key's actual
@@ -107,6 +127,10 @@ key type or is unavailable. Migration seeding converts model keys to provider
 values, compares binary values structurally, and uses indexed or stop-first
 streamed existence checks. Finalized metadata and CLR mapping attributes are
 weakly cached; mutable model construction continues to observe edits.
+Inheritance seed rows fill omitted discriminator values through the property's
+provider conversion. Decimal precision defaults use enum underlying and converter
+provider types, preserving full unsigned 64-bit values and integer-backed time
+values while honoring explicit precision and scale.
 
 The reverse cursor and EF adapters remain reviewed and tested C# components.
 Their tests do not extend the generated recovery or index-kernel proof boundary.
