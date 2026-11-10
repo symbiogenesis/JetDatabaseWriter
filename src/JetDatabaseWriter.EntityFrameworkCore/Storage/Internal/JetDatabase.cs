@@ -1208,10 +1208,7 @@ public sealed class JetDatabase : Database
                 {
                     object? currentVal = currentEntry.GetCurrentValue(property);
                     bool hasTempOrDefault = currentEntry.HasTemporaryValue(property)
-                        || currentVal is null
-                        || (currentVal is int i && i <= 0)
-                        || (currentVal is short s && s <= 0)
-                        || (currentVal is long l && l <= 0);
+                        || IsClrDefaultOrSentinel(property, currentVal);
                     if (hasTempOrDefault)
                     {
                         autoIncrementProperty = property;
