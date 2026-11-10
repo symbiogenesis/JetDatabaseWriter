@@ -29,7 +29,7 @@ public sealed class JetValueConversionTests
                 "Links",
                 [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("Text", typeof(Hyperlink)), new ColumnDefinition("Converted", typeof(Hyperlink))],
                 ct);
-            await writer.InsertRowsAsync("Links", [new object?[] { 1, link, link }], ct);
+            await writer.InsertRowsAsync("Links", [[1, link, link]], ct);
         }
 
         DbContextOptions<LinkContext> options = new DbContextOptionsBuilder<LinkContext>()

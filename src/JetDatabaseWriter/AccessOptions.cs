@@ -30,11 +30,13 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     /// Gets the password for opening password-protected databases.
     /// Empty (the default) means no password is supplied.
     /// </summary>
+#pragma warning disable RCS1085 // Connection snapshots must override the cloned field without making the public init-only option mutable.
     public ReadOnlyMemory<char> Password
     {
         get => this.password;
         init => this.password = value;
     }
+#pragma warning restore RCS1085
 
     /// <summary>
     /// Gets the maximum password-hash iteration count permitted while opening
@@ -81,11 +83,13 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     /// attempts to remove an unused lockfile; other holders or permissions can retain it.
     /// Default: true.
     /// </summary>
+#pragma warning disable RCS1085 // Connection snapshots must override the cloned field without making the public init-only option mutable.
     public bool UseLockFile
     {
         get => this.useLockFile;
         init => this.useLockFile = value;
     }
+#pragma warning restore RCS1085
 
     /// <summary>
     /// Gets the user / security name written into this opener's slot in the
@@ -160,7 +164,7 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     /// <returns>A shallow copy retaining the concrete option type and caller-supplied collaborators.</returns>
     private protected AccessOptions CloneWithConnectionSettings(ReadOnlyMemory<char> password, bool useLockFile)
     {
-        AccessOptions copy = (AccessOptions)this.MemberwiseClone();
+        var copy = (AccessOptions)this.MemberwiseClone();
         copy.password = password;
         copy.useLockFile = useLockFile;
         return copy;
