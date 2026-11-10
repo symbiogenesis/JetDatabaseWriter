@@ -55,8 +55,8 @@ public sealed class JetProjectionIdentityTests
         await using IdentityContext context = await CreateContextAsync(stream, DatabaseFormat.AceAccdb);
         EntityEnvelope[] results = await context.Rows.Select(x => new EntityEnvelope(x, x.Name))
             .Where(x => x.Entity.Id == 1).ToArrayAsync(ct);
-        Assert.Single(results);
-        Assert.Same(results[0].Entity, Assert.Single(context.ChangeTracker.Entries()).Entity);
+        EntityEnvelope result = Assert.Single(results);
+        Assert.Same(result.Entity, Assert.Single(context.ChangeTracker.Entries()).Entity);
     }
 
     [Theory]

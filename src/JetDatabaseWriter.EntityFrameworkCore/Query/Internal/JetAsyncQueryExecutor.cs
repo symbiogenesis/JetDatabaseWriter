@@ -85,6 +85,11 @@ internal static partial class JetAsyncQueryExecutor
             nameof(EvaluateContains),
             BindingFlags.NonPublic | BindingFlags.Static)!;
 
+    private static readonly MethodInfo EvaluateEntityEqualityMethod =
+        typeof(JetAsyncQueryExecutor).GetMethod(
+            nameof(EvaluateEntityEquality),
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+
     private static readonly MethodInfo GetParameterValueMethod =
         typeof(JetAsyncQueryExecutor).GetMethod(
             nameof(GetParameterValue),
@@ -2810,38 +2815,22 @@ internal static partial class JetAsyncQueryExecutor
         return new StructuralKey(values);
     }
 
-    private static StructuralKey ExtractKeyFromEntity(IKey key, object entity)
-    {
-        object?[] values = new object?[key.Properties.Count];
-        for (int i = 0; i < key.Properties.Count; i++)
-        {
-            values[i] = key.Properties[i].GetGetter().GetClrValueUsingContainingEntity(entity);
-        }
-
-        return new StructuralKey(values);
-    }
-
     private static bool EvaluateContains<TSource>(
         QueryContext queryContext,
+        JetExecutionMaterializedState state,
+        IKey primaryKey,
         IEnumerable<TSource> source,
         TSource item)
     {
-        if (item is not null
-            && queryContext.Context.Model.FindEntityType(typeof(TSource))?.FindPrimaryKey() is IKey primaryKey)
+        foreach (TSource candidate in source)
         {
-            StructuralKey itemKey = ExtractKeyFromEntity(primaryKey, item);
-            foreach (TSource candidate in source)
+            if (EvaluateEntityEquality(queryContext, state, primaryKey, candidate, item))
             {
-                if (candidate is not null && ExtractKeyFromEntity(primaryKey, candidate).Equals(itemKey))
-                {
-                    return true;
-                }
+                return true;
             }
-
-            return false;
         }
 
-        return source.Contains(item);
+        return false;
     }
 
     private static bool TryExtractNonNullKey(IReadOnlyList<IProperty> properties, ValueBuffer buffer, out StructuralKey key)
@@ -4759,6 +4748,22 @@ internal static partial class JetAsyncQueryExecutor
 
         protected override Expression VisitBinary(BinaryExpression node)
         {
+            if (node.NodeType is ExpressionType.Equal or ExpressionType.NotEqual
+                && (model.FindEntityType(StripQuotesAndObjectConvert(node.Left).Type)
+                    ?? model.FindEntityType(StripQuotesAndObjectConvert(node.Right).Type)) is { } entityType)
+            {
+                IKey key = entityType.FindPrimaryKey()
+                    ?? throw new NotSupportedException($"Entity equality requires a primary key on '{entityType.DisplayName()}'.");
+                Expression equals = Expression.Call(
+                    EvaluateEntityEqualityMethod,
+                    queryContextExpression,
+                    stateExpression,
+                    Expression.Constant(key, typeof(IKey)),
+                    Expression.Convert(this.Visit(node.Left), typeof(object)),
+                    Expression.Convert(this.Visit(node.Right), typeof(object)));
+                return node.NodeType == ExpressionType.Equal ? equals : Expression.Not(equals);
+            }
+
             if (node.NodeType is ExpressionType.Equal
                     or ExpressionType.NotEqual
                     or ExpressionType.LessThan
@@ -4972,11 +4977,15 @@ internal static partial class JetAsyncQueryExecutor
             if (node.Method.Name == nameof(Queryable.Contains)
                 && enumerableArgs.Length == 2
                 && typeArgs.Length == 1
-                && model.FindEntityType(typeArgs[0]) is not null)
+                && model.FindEntityType(typeArgs[0]) is { } entityType)
             {
+                IKey key = entityType.FindPrimaryKey()
+                    ?? throw new NotSupportedException($"Entity Contains requires a primary key on '{entityType.DisplayName()}'.");
                 return Expression.Call(
                     EvaluateContainsMethod.MakeGenericMethod(typeArgs[0]),
                     queryContextExpression,
+                    stateExpression,
+                    Expression.Constant(key, typeof(IKey)),
                     enumerableArgs[0],
                     enumerableArgs[1]);
             }
