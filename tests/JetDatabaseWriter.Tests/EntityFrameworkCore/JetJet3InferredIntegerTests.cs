@@ -49,7 +49,7 @@ public sealed class JetJet3InferredIntegerTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task InferredIntegerStorage_RefusesOutOfRangeValuesWithoutChangingTheRow(bool unsigned)
+    public async Task InferredIntegerStorage_RefusesOutOfRangeValuesWithoutChangingTheRow(bool useUnsignedValue)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = new();
@@ -59,7 +59,7 @@ public sealed class JetJet3InferredIntegerTests
         IntegerRow row = new() { Id = 1, Duration = TimeSpan.FromTicks(17), Unsigned = 23 };
         context.Add(row);
         Assert.Equal(1, await context.SaveChangesAsync(ct));
-        if (unsigned)
+        if (useUnsignedValue)
         {
             row.Unsigned = ulong.MaxValue;
         }
