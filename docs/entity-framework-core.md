@@ -65,6 +65,11 @@ entities, complex properties, TPH inheritance, relationships, `Include` and
 `ThenInclude` are supported. Use `HasConversion` and EF value/key comparers for
 model types needing custom storage or equality.
 
+Tracking Includes retain existing tracked relationships. A filtered Include can
+therefore contain previously tracked related entities that do not match its
+filter. Use `AsNoTracking` or a fresh context when an isolated filtered graph is
+required.
+
 ## Files, streams and options
 
 ACE `.accdb` is the default creation format. Select `DatabaseFormat.Jet4Mdb` or

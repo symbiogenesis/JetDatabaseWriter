@@ -78,6 +78,14 @@ navigations, including nested owned references and collections. Repeated owned
 include prefixes reuse each owner's instances without resolving identities
 between separate no-tracking owners.
 
+Tracking Includes merge related entities into existing navigation collections
+without replacing the tracked relationships. Filtered Includes retain previously
+tracked related entities even when those entities do not match the filter.
+Loading a navigation preserves pending relationship additions, removals and
+reparenting; querying alone does not schedule relationship writes or deletes.
+Detached navigation-predicate candidates discard collection contents scheduled
+for Include before promotion, so filtered Includes load only admitted candidates.
+
 Entity comparisons, user methods that consume entities, constrained generic shapes,
 inheritance, owned graphs and navigation-dependent shapes can require the general
 entity execution path. These cases use complete entities for CLR and EF

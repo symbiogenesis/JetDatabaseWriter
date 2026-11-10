@@ -1744,7 +1744,7 @@ internal static partial class JetAsyncQueryExecutor
         foreach ((object declaringEntity, _) in declaringRows)
         {
             object? collectionInstance = collectionAccessor?.GetOrCreate(declaringEntity, forMaterialization: true);
-            if (initializedCollections?.Add((declaringEntity, skipNavigation)) == true)
+            if (initializedCollections?.Add((declaringEntity, skipNavigation)) == true && !isTracking)
             {
                 ClearCollectionInstance(collectionInstance);
             }
@@ -1956,6 +1956,12 @@ internal static partial class JetAsyncQueryExecutor
                     promotedTargets.Add((targetEntity, targetBuffer));
                 }
 
+                // StateManager fixup uses tracked relationship values and preserves pending changes.
+                if (isTracking)
+                {
+                    continue;
+                }
+
                 if (collectionAccessor?.Contains(declaringEntity, targetEntity) == false)
                 {
                     collectionAccessor.Add(declaringEntity, targetEntity, forMaterialization: true);
@@ -2122,6 +2128,19 @@ internal static partial class JetAsyncQueryExecutor
         if (concreteType is null)
         {
             return candidateEntity;
+        }
+
+        // Navigation predicates populate detached candidates before Include filtering.
+        // Discard those collection contents before attaching or merging the candidate.
+        foreach (JetIncludeChain chain in plan.IncludeChains)
+        {
+            foreach (JetIncludeStep step in chain.Steps)
+            {
+                if (step.Navigation.IsCollection && step.Navigation.DeclaringEntityType.IsAssignableFrom(concreteType))
+                {
+                    ClearCollectionInstance(GetNavigationValue(step.Navigation, candidateEntity));
+                }
+            }
         }
 
         IEntityType rootType = concreteType.GetRootType();
@@ -2589,7 +2608,7 @@ internal static partial class JetAsyncQueryExecutor
             foreach ((object declaringEntity, _) in declaringRows)
             {
                 object? collectionInstance = collectionAccessor?.GetOrCreate(declaringEntity, forMaterialization: true);
-                if (initializedCollections?.Add((declaringEntity, navigation)) == true)
+                if (initializedCollections?.Add((declaringEntity, navigation)) == true && !isTracking)
                 {
                     ClearCollectionInstance(collectionInstance);
                 }
@@ -2646,6 +2665,11 @@ internal static partial class JetAsyncQueryExecutor
                 if (promotedSet.Add(principalEntity))
                 {
                     promotedTargets.Add((principalEntity, principalEntry.Buffer));
+                }
+
+                if (isTracking)
+                {
+                    continue;
                 }
 
                 SetNavigationValue(navigation, dependentEntity, principalEntity);
@@ -2727,6 +2751,11 @@ internal static partial class JetAsyncQueryExecutor
                     if (promotedSet.Add(dependentEntity))
                     {
                         promotedTargets.Add((dependentEntity, childBuffer));
+                    }
+
+                    if (isTracking)
+                    {
+                        continue;
                     }
 
                     if (collectionAccessor is not null)
