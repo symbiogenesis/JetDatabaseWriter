@@ -12,6 +12,7 @@ using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.ValueDecoding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -722,55 +723,15 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             return [];
         }
 
-        int relNameOrd = msysRel.Definition.FindColumnIndex("szRelationship");
-        int foreignTableOrd = msysRel.Definition.FindColumnIndex("szObject");
-        int primaryTableOrd = msysRel.Definition.FindColumnIndex("szReferencedObject");
-        int foreignColOrd = msysRel.Definition.FindColumnIndex("szColumn");
-        int primaryColOrd = msysRel.Definition.FindColumnIndex("szReferencedColumn");
-        int iColOrd = msysRel.Definition.FindColumnIndex("icolumn");
-        int flagsOrd = msysRel.Definition.FindColumnIndex("grbit");
-        if (relNameOrd < 0 || foreignTableOrd < 0 || primaryTableOrd < 0 || foreignColOrd < 0 || primaryColOrd < 0)
-        {
-            return [];
-        }
-
         List<LocatedRow> rows = await writer.Services.Snapshots.ReadRowsAsync(msysRel.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        Dictionary<string, (string PrimaryTable, string ForeignTable, uint Flags, List<(int Order, string PrimaryCol, string ForeignCol)> Columns)> grouped =
-            [with(StringComparer.OrdinalIgnoreCase)];
-        foreach (LocatedRow row in rows)
-        {
-            object?[] vals = row.Values;
-            if (vals[relNameOrd] is not string relName || string.IsNullOrEmpty(relName)
-                || vals[primaryTableOrd] is not string primaryTable || string.IsNullOrEmpty(primaryTable)
-                || vals[foreignTableOrd] is not string foreignTable || string.IsNullOrEmpty(foreignTable)
-                || vals[primaryColOrd] is not string primaryCol || string.IsNullOrEmpty(primaryCol)
-                || vals[foreignColOrd] is not string foreignCol || string.IsNullOrEmpty(foreignCol))
-            {
-                continue;
-            }
-
-            int order = iColOrd >= 0 && vals[iColOrd] is int iCol ? iCol : 0;
-            if (!grouped.TryGetValue(relName, out (string PrimaryTable, string ForeignTable, uint Flags, List<(int Order, string PrimaryCol, string ForeignCol)> Columns) entry))
-            {
-                uint flags = flagsOrd >= 0 && vals[flagsOrd] is int rawFlags ? unchecked((uint)rawFlags) : 0;
-                entry = (primaryTable, foreignTable, flags, []);
-                grouped[relName] = entry;
-            }
-
-            entry.Columns.Add((order, primaryCol, foreignCol));
-        }
-
         List<RelationshipDefinition> result = [];
-        foreach (KeyValuePair<string, (string PrimaryTable, string ForeignTable, uint Flags, List<(int Order, string PrimaryCol, string ForeignCol)> Columns)> kvp in grouped)
+        foreach (RelationshipMetadata relationship in RelationshipMetadataAggregator.Aggregate(msysRel.Definition, rows.Select(static row => row.Values)))
         {
-            kvp.Value.Columns.Sort(static (a, b) => a.Order.CompareTo(b.Order));
-            List<string> primaryCols = [.. kvp.Value.Columns.Select(static c => c.PrimaryCol)];
-            List<string> foreignCols = [.. kvp.Value.Columns.Select(static c => c.ForeignCol)];
-            result.Add(new RelationshipDefinition(kvp.Key, kvp.Value.PrimaryTable, primaryCols, kvp.Value.ForeignTable, foreignCols)
+            result.Add(new RelationshipDefinition(relationship.Name, relationship.PrimaryTable, relationship.PrimaryColumns, relationship.ForeignTable, relationship.ForeignColumns)
             {
-                EnforceReferentialIntegrity = (kvp.Value.Flags & Constants.RelationshipFlags.NoRefIntegrity) == 0,
-                CascadeUpdates = (kvp.Value.Flags & Constants.RelationshipFlags.CascadeUpdates) != 0,
-                CascadeDeletes = (kvp.Value.Flags & Constants.RelationshipFlags.CascadeDeletes) != 0,
+                EnforceReferentialIntegrity = relationship.EnforcesReferentialIntegrity,
+                CascadeUpdates = relationship.CascadeUpdates,
+                CascadeDeletes = relationship.CascadeDeletes,
             });
         }
 

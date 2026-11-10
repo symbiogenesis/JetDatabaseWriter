@@ -161,6 +161,10 @@ directions, uniqueness and null policies, and relationship enforcement/cascade
 flags. Incompatible existing constraints refuse transactionally, including
 rolling back columns added earlier in that migration.
 
+Reader relationship metadata and additive migration share catalog aggregation,
+including composite-column ordering, numeric catalog fields and omission of
+malformed groups.
+
 Creation and additive migration invoke `UseAsyncSeeding` after releasing the
 schema writer, including when the schema is already current. Callbacks receive
 the executing context, cancellation token and whether schema or model-seed

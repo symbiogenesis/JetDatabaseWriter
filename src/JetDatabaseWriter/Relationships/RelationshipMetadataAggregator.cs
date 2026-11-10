@@ -3,13 +3,15 @@ namespace JetDatabaseWriter.Relationships;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Linq;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Aggregates raw <c>MSysRelationships</c> rows (one per foreign-key column)
 /// into per-relationship <see cref="RelationshipMetadata"/> records. Consumed by
-/// <see cref="AccessReader.ListRelationshipsAsync"/>; the grouping is a pure
-/// projection over a <see cref="DataTable"/> that touches no reader state.
+/// <see cref="AccessReader.ListRelationshipsAsync"/> and EF schema migration;
+/// the grouping is a pure projection that touches no reader or writer state.
 /// </summary>
 internal static class RelationshipMetadataAggregator
 {
@@ -22,6 +24,22 @@ internal static class RelationshipMetadataAggregator
     /// </summary>
     /// <param name="table">The decoded <c>MSysRelationships</c> table.</param>
     public static List<RelationshipMetadata> Aggregate(DataTable table)
+        => Aggregate(
+            table.Rows.Cast<DataRow>(),
+            name => table.Columns.Contains(name) && table.Columns[name] is DataColumn column ? column.Ordinal : -1,
+            static (row, ordinal) => row[ordinal]);
+
+    /// <summary>Groups transaction-visible catalog rows using the same rules as reader metadata.</summary>
+    /// <param name="definition">The catalog table's acquired definition.</param>
+    /// <param name="rows">Decoded catalog rows in storage order.</param>
+    /// <returns>The relationship groups admitted by the reader's metadata policy.</returns>
+    internal static List<RelationshipMetadata> Aggregate(TableDef definition, IEnumerable<object[]> rows)
+        => Aggregate(rows, definition.FindColumnIndex, static (row, ordinal) => row[ordinal]);
+
+    private static List<RelationshipMetadata> Aggregate<TRow>(
+        IEnumerable<TRow> source,
+        Func<string, int> findColumn,
+        Func<TRow, int, object?> getValue)
     {
         static string Str(object? value) => value as string ?? string.Empty;
         static int Int(object? value) => value switch
@@ -33,31 +51,33 @@ internal static class RelationshipMetadataAggregator
             _ => 0,
         };
 
-        if (!table.Columns.Contains("szRelationship")
-            || !table.Columns.Contains("szObject")
-            || !table.Columns.Contains("szReferencedObject")
-            || !table.Columns.Contains("szColumn")
-            || !table.Columns.Contains("szReferencedColumn"))
+        int nameOrdinal = findColumn("szRelationship");
+        int foreignTableOrdinal = findColumn("szObject");
+        int primaryTableOrdinal = findColumn("szReferencedObject");
+        int foreignColumnOrdinal = findColumn("szColumn");
+        int primaryColumnOrdinal = findColumn("szReferencedColumn");
+        if (nameOrdinal < 0 || foreignTableOrdinal < 0 || primaryTableOrdinal < 0
+            || foreignColumnOrdinal < 0 || primaryColumnOrdinal < 0)
         {
             return [];
         }
 
-        bool hasIcolumn = table.Columns.Contains("icolumn");
-        bool hasGrbit = table.Columns.Contains("grbit");
+        int columnOrdinal = findColumn("icolumn");
+        int flagsOrdinal = findColumn("grbit");
 
         // Group one MSysRelationships row per FK column back into a single
         // relationship, preserving first-seen order for a deterministic result.
-        var groups = new Dictionary<string, List<DataRow>>(StringComparer.OrdinalIgnoreCase);
+        var groups = new Dictionary<string, List<TRow>>(StringComparer.OrdinalIgnoreCase);
         var order = new List<string>();
-        foreach (DataRow row in table.Rows)
+        foreach (TRow row in source)
         {
-            string name = Str(row["szRelationship"]);
+            string name = Str(getValue(row, nameOrdinal));
             if (name.Length == 0)
             {
                 continue;
             }
 
-            if (!groups.TryGetValue(name, out List<DataRow>? list))
+            if (!groups.TryGetValue(name, out List<TRow>? list))
             {
                 list = [];
                 groups[name] = list;
@@ -70,14 +90,14 @@ internal static class RelationshipMetadataAggregator
         var result = new List<RelationshipMetadata>(groups.Count);
         foreach (string name in order)
         {
-            List<DataRow> rows = groups[name];
-            if (hasIcolumn)
+            List<TRow> rows = groups[name];
+            if (columnOrdinal >= 0)
             {
-                rows.Sort((left, right) => Int(left["icolumn"]).CompareTo(Int(right["icolumn"])));
+                rows.Sort((left, right) => Int(getValue(left, columnOrdinal)).CompareTo(Int(getValue(right, columnOrdinal))));
             }
 
-            string primaryTable = Str(rows[0]["szReferencedObject"]);
-            string foreignTable = Str(rows[0]["szObject"]);
+            string primaryTable = Str(getValue(rows[0], primaryTableOrdinal));
+            string foreignTable = Str(getValue(rows[0], foreignTableOrdinal));
             if (primaryTable.Length == 0 || foreignTable.Length == 0)
             {
                 continue;
@@ -88,8 +108,8 @@ internal static class RelationshipMetadataAggregator
             bool malformed = false;
             for (int i = 0; i < rows.Count; i++)
             {
-                primaryColumns[i] = Str(rows[i]["szReferencedColumn"]);
-                foreignColumns[i] = Str(rows[i]["szColumn"]);
+                primaryColumns[i] = Str(getValue(rows[i], primaryColumnOrdinal));
+                foreignColumns[i] = Str(getValue(rows[i], foreignColumnOrdinal));
                 if (primaryColumns[i].Length == 0 || foreignColumns[i].Length == 0)
                 {
                     malformed = true;
@@ -101,7 +121,7 @@ internal static class RelationshipMetadataAggregator
                 continue;
             }
 
-            int grbit = hasGrbit ? Int(rows[0]["grbit"]) : 0;
+            int grbit = flagsOrdinal >= 0 ? Int(getValue(rows[0], flagsOrdinal)) : 0;
             result.Add(new RelationshipMetadata
             {
                 Name = name,

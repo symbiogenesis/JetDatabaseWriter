@@ -4,8 +4,10 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -159,6 +161,48 @@ public sealed class JetMigrationConstraintTests
         Assert.Equal(enforceIntegrity, relationship.EnforcesReferentialIntegrity);
         Assert.Equal(cascadeUpdates, relationship.CascadeUpdates);
         Assert.Equal(cascadeDeletes, relationship.CascadeDeletes);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task MalformedRelationshipGroup_RefusesMigrationInsteadOfAcceptingPartialKey(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions<RelationshipContext> options = new DbContextOptionsBuilder<RelationshipContext>()
+            .UseJetDatabaseWriter(stream, format, leaveOpen: true).Options;
+        await using (RelationshipContext original = new(options))
+        {
+            Assert.True(await original.Database.EnsureCreatedAsync(ct));
+        }
+
+        const string relationshipName = "FK_Children_Parents_ParentId";
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, leaveOpen: true, cancellationToken: ct))
+        {
+            long page = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, ct);
+            TableDef definition = await writer.Database.TableDefs.ReadRequiredTableDefAsync(page, Constants.SystemTableNames.Relationships, ct);
+            object[] row = definition.CreateNullValueRow();
+            definition.SetValueByName(row, "szRelationship", relationshipName);
+            definition.SetValueByName(row, "szObject", "Children");
+            definition.SetValueByName(row, "szReferencedObject", "Parents");
+            definition.SetValueByName(row, "szColumn", "ParentId");
+            definition.SetValueByName(row, "szReferencedColumn", string.Empty);
+            definition.SetValueByName(row, "icolumn", 1);
+            definition.SetValueByName(row, "ccolumn", 2);
+            definition.SetValueByName(row, "grbit", 0);
+            await writer.Services.Mutations.InsertSystemRowAndMaintainAsync(page, definition, Constants.SystemTableNames.Relationships, row, cancellationToken: ct);
+        }
+
+        await using (AccessReader reader = await AccessReader.OpenAsync(stream, leaveOpen: true, cancellationToken: ct))
+        {
+            Assert.Empty(await reader.ListRelationshipsAsync(ct));
+        }
+
+        await using RelationshipContext current = new(options);
+        JetObjectExistsException exception = await Assert.ThrowsAsync<JetObjectExistsException>(() => current.Database.MigrateAsync(ct));
+        Assert.Equal(JetErrorCode.RelationshipExists, exception.ErrorCode);
     }
 
     private static void ConfigureIndexedRow(ModelBuilder modelBuilder)
