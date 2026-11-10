@@ -96,7 +96,8 @@ public sealed class JetOrderedStreamingSemanticsTests
     private static async Task<OrderedContext> CreateAsync(Stream stream)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        OrderedContext context = new(new DbContextOptionsBuilder<OrderedContext>().UseJetDatabaseWriter(stream, leaveOpen: true).Options);
+        DbContextOptions<OrderedContext> options = new DbContextOptionsBuilder<OrderedContext>().UseJetDatabaseWriter(stream, leaveOpen: true).Options;
+        OrderedContext context = new(options);
         await context.Database.EnsureCreatedAsync(ct);
         context.Items.AddRange(
             new Item { Id = 1, Group = 1, Score = 2, UnindexedScore = 60, Name = "f" },
@@ -106,8 +107,8 @@ public sealed class JetOrderedStreamingSemanticsTests
             new Item { Id = 4, Group = 2, Score = 6, UnindexedScore = 20, Name = "d" },
             new Item { Id = 5, Group = 2, Score = 5, UnindexedScore = 10, Name = "e" });
         await context.SaveChangesAsync(ct);
-        context.ChangeTracker.Clear();
-        return context;
+        await context.DisposeAsync();
+        return new OrderedContext(options);
     }
 
     private sealed class OrderedContext(DbContextOptions<OrderedContext> options) : DbContext(options)

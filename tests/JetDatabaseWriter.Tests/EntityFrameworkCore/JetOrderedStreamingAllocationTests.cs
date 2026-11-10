@@ -8,17 +8,22 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
 public sealed class JetOrderedStreamingAllocationTests
 {
-    [Fact(DisableParallelization = true)]
-    public async Task FirstOrderedRow_DoesNotAllocateBuffersForTheWholeTable()
+    [Theory(DisableParallelization = true)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FirstOrderedRow_DoesNotAllocateBuffersForTheWholeTable(bool transaction)
     {
         await using MemoryStream smallStream = new();
         await using MemoryStream largeStream = new();
         await using AllocationContext small = await CreateAsync(smallStream, 100);
         await using AllocationContext large = await CreateAsync(largeStream, 4000);
+        await using IDbContextTransaction? smallScope = transaction ? await small.Database.BeginTransactionAsync(TestContext.Current.CancellationToken) : null;
+        await using IDbContextTransaction? largeScope = transaction ? await large.Database.BeginTransactionAsync(TestContext.Current.CancellationToken) : null;
         for (int warmup = 0; warmup < 3; warmup++)
         {
             _ = await ReadFirstRowAsync(small);
@@ -33,12 +38,13 @@ public sealed class JetOrderedStreamingAllocationTests
     private static async Task<AllocationContext> CreateAsync(Stream stream, int count)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        AllocationContext context = new(new DbContextOptionsBuilder<AllocationContext>().UseJetDatabaseWriter(stream, leaveOpen: true).Options);
+        DbContextOptions<AllocationContext> options = new DbContextOptionsBuilder<AllocationContext>().UseJetDatabaseWriter(stream, leaveOpen: true).Options;
+        AllocationContext context = new(options);
         await context.Database.EnsureCreatedAsync(ct);
         context.Items.AddRange(Enumerable.Range(1, count).Select(static id => new Item { Id = id }));
         await context.SaveChangesAsync(ct);
-        context.ChangeTracker.Clear();
-        return context;
+        await context.DisposeAsync();
+        return new AllocationContext(options);
     }
 
     private static async Task<long> MeasureFirstRowAsync(AllocationContext context)

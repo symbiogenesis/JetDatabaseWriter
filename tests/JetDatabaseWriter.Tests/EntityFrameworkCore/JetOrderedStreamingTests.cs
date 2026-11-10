@@ -104,12 +104,13 @@ public sealed class JetOrderedStreamingTests
     private static async Task<OrderedContext> CreateAsync(Stream stream)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        OrderedContext context = new(new DbContextOptionsBuilder<OrderedContext>().UseJetDatabaseWriter(stream, DatabaseFormat.AceAccdb, leaveOpen: true).Options);
+        DbContextOptions<OrderedContext> options = new DbContextOptionsBuilder<OrderedContext>().UseJetDatabaseWriter(stream, DatabaseFormat.AceAccdb, leaveOpen: true).Options;
+        OrderedContext context = new(options);
         await context.Database.EnsureCreatedAsync(ct);
         context.Items.AddRange(Enumerable.Range(1, 20).Select(id => new Item { Id = id, Name = id % 2 == 0 ? "a" : "B" }));
         await context.SaveChangesAsync(ct);
-        context.ChangeTracker.Clear();
-        return context;
+        await context.DisposeAsync();
+        return new OrderedContext(options);
     }
 
     private sealed class OrderedContext(DbContextOptions<OrderedContext> options) : DbContext(options)

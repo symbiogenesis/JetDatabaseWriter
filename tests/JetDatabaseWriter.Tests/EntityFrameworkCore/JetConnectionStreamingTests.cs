@@ -48,13 +48,19 @@ public sealed class JetConnectionStreamingTests
         }
 
         DbContextOptions<BufferContext> options = new DbContextOptionsBuilder<BufferContext>()
-            .UseJetDatabaseWriter(stream, leaveOpen: true, jetOptionsAction: jet => jet.WithWriterOptions(new AccessWriterOptions { PageCacheSize = 0 })).Options;
+            .UseJetDatabaseWriter(stream, leaveOpen: true, jetOptionsAction: jet => jet
+                .WithWriterOptions(new AccessWriterOptions { PageCacheSize = 0 })
+                .WithReaderOptions(new AccessReaderOptions { PageCacheSize = 0 })).Options;
         await using BufferContext context = new(options);
         await using IDbContextTransaction? scope = transaction ? await context.Database.BeginTransactionAsync(ct) : null;
-        IJetClientConnection connection = context.GetService<IJetClientConnection>();
-        (AccessWriter writer, bool owned) = await connection.RentWriterAsync(ct);
-        writer.Pager.InvalidateAll();
-        await connection.ReleaseWriterAsync(writer, owned);
+        if (transaction)
+        {
+            IJetClientConnection connection = context.GetService<IJetClientConnection>();
+            (AccessWriter writer, bool owned) = await connection.RentWriterAsync(ct);
+            writer.Pager.InvalidateAll();
+            await connection.ReleaseWriterAsync(writer, owned);
+        }
+
         stream.FaultOffset = faultOffset;
         try
         {
