@@ -94,10 +94,14 @@ public sealed class JetDatabase : Database
         try
         {
             int totalOperations = primaryEntries.Count + tableSplitIndex.StandaloneUpdates.Count;
-            bool canOpenBatchScope = this.connection is not JetClientConnection jetConn
-                || jetConn.ActiveTransactionNestingDepth < 5;
-            if (totalOperations > 1 && canOpenBatchScope)
+            if (totalOperations > 1)
             {
+                if (this.connection is JetClientConnection { ActiveTransactionNestingDepth: >= 5 })
+                {
+                    throw new InvalidOperationException(
+                        "SaveChangesAsync cannot preserve batch atomicity at the current transaction nesting limit. Release a savepoint before saving multiple rows.");
+                }
+
                 batchTransaction = await writer.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             }
 
