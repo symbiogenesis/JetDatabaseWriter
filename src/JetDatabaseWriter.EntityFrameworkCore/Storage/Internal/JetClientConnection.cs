@@ -1293,6 +1293,7 @@ public sealed class JetClientConnection : IJetClientConnection
 
             ValueBufferFactory factory = new(rootType, properties, columnMap, wanted, reuseBuffer: false);
             int? limit = orderedProperties is null or { Count: 0 } || ordered ? maxRows : null;
+            List<ValueBuffer>? sortBuffer = orderedProperties is { Count: > 0 } && !ordered ? [] : null;
             int emitted = 0;
             await foreach (object?[] row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
@@ -1301,11 +1302,30 @@ public sealed class JetClientConnection : IJetClientConnection
                     continue;
                 }
 
+                if (sortBuffer is not null)
+                {
+                    sortBuffer.Add(buffer);
+                    continue;
+                }
+
                 yield return buffer;
                 emitted++;
                 if (limit is int maximum && emitted >= maximum)
                 {
                     yield break;
+                }
+            }
+
+            if (sortBuffer is not null)
+            {
+                foreach (ValueBuffer buffer in JetBufferOrdering.Apply(sortBuffer, orderedProperties!))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    yield return buffer;
+                    if (maxRows is int maximum && ++emitted >= maximum)
+                    {
+                        yield break;
+                    }
                 }
             }
         }

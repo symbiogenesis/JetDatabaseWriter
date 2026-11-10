@@ -224,7 +224,7 @@ internal static partial class JetAsyncQueryExecutor
             context.Parameters,
             table.RequiredProperties,
             maxRows: null,
-            orderedProperties: null,
+            orderedProperties: table.OrderedProperties,
             rowFilter: null,
             context.CancellationToken);
 
@@ -367,6 +367,7 @@ internal static partial class JetAsyncQueryExecutor
         ParameterExpression context, ParameterExpression roots, JetQueryPlan plan, IModel model, bool streaming) : ExpressionVisitor
     {
         private readonly Dictionary<ParameterExpression, ParameterExpression> parameters = [];
+        private int orderingOperators;
 
         public HashSet<IProperty> ReferencedProperties { get; } = [];
 
@@ -596,6 +597,25 @@ internal static partial class JetAsyncQueryExecutor
 
             if (streaming && node.Method.DeclaringType == typeof(Queryable))
             {
+                if (node.Method.Name is nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending)
+                    or nameof(Queryable.ThenBy) or nameof(Queryable.ThenByDescending))
+                {
+                    JetTableLoadPlan table = plan.RootTables[0];
+                    IReadOnlyList<JetOrdering>? ordering = table.OrderedProperties;
+                    int position = (ordering?.Count ?? 0) - ++this.orderingOperators;
+                    if (position < 0 || node.Arguments.Count != 2
+                        || node.Arguments[1] is not UnaryExpression { Operand: LambdaExpression { Parameters.Count: 1 } selector }
+                        || !JetIndexSeekPlanner.TryExtractPropertyAccess(table.RootEntityType, selector.Parameters[0], selector.Body, out IProperty? property)
+                        || ordering![position].Property != property
+                        || ordering[position].Descending != (node.Method.Name is nameof(Queryable.OrderByDescending) or nameof(Queryable.ThenByDescending)))
+                    {
+                        throw new BufferTranslationException();
+                    }
+
+                    this.ReferencedProperties.Add(property!);
+                    return this.Visit(node.Arguments[0])!;
+                }
+
                 if (node.Method.Name == nameof(Queryable.Distinct)
                     && this.MapType(node.Method.GetGenericArguments()[0]) != node.Method.GetGenericArguments()[0])
                 {

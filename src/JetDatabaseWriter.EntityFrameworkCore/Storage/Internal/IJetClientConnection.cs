@@ -214,7 +214,7 @@ public interface IJetClientConnection : IAsyncDisposable, IDisposable
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Streams matching rows without retaining the table before the first result is yielded.
+    /// Streams matching rows in the requested order, buffering for a CLR sort when no equivalent index order is available.
     /// The enumerator owns its read lease until disposal.
     /// </summary>
     /// <param name="entityType">The EF entity type.</param>

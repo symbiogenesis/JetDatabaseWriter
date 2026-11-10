@@ -10,13 +10,20 @@ translate operators that the provider's executor owns.
 ## Buffer execution and materialization
 
 Scalar property projections, scalar grouping and supported joins operate on
-value buffers without constructing intermediate entities. Unordered single-table
+value buffers without constructing intermediate entities. Single-table
 `Where`, `Select`, `Skip`, `Take` and scalar `Distinct` pipelines stream through
 the connection. Plain entity enumeration constructs a returned entity when its
 row is requested. Blocking operators retain buffers; compiled result shapes
 materialize surviving entity references and honor tracking and identity
 resolution. Scalar grouping retains only columns actually referenced by its
 keys, aggregates, predicates and joins.
+
+A single mapped-property `OrderBy`/`ThenBy` chain streams in admitted index order,
+including reverse and mixed directions. Residual predicates and paging retain
+their original operator positions. If no equivalent index order is available,
+the connection buffers and sorts with each property's CLR comparer. Explicit
+comparers, repeated independent orderings and orderings across paging boundaries
+retain the general buffer evaluation path.
 
 `Count` and `LongCount` visit rows with one reusable value buffer. Supported
 single-table `Sum`, `Min`, `Max`, `Average` and `All` use the same visitor contract,
