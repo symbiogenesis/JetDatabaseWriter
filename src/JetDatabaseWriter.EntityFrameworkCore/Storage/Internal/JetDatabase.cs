@@ -27,7 +27,7 @@ using Microsoft.EntityFrameworkCore.Update;
 /// translating change-tracker <see cref="IUpdateEntry"/> operations directly to <see cref="AccessWriter"/> calls
 /// and compiling LINQ expression trees to <see cref="JetDatabaseWriter"/> table and index queries.
 /// </summary>
-public sealed class JetDatabase : Database
+public sealed partial class JetDatabase : Database
 {
     private readonly IJetClientConnection connection;
     private readonly IQueryTranslationPreprocessorFactory queryTranslationPreprocessorFactory;
@@ -106,6 +106,7 @@ public sealed class JetDatabase : Database
                 batchTransaction = await writer.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             }
 
+            primaryEntries = await OrderUniqueHandoffsAsync(primaryEntries, writer, cancellationToken).ConfigureAwait(false);
             Dictionary<string, ResolvedTable> resolvedTableCache = [with(StringComparer.OrdinalIgnoreCase)];
             int totalAffected = 0;
             int index = 0;
