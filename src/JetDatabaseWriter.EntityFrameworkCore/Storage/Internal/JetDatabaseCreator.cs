@@ -643,56 +643,72 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
 
     private static bool HasMatchingIndex(IReadOnlyList<IndexMetadata> existingIndexes, IndexDefinition candidate)
     {
-        foreach (IndexMetadata existing in existingIndexes)
+        IndexMetadata? named = existingIndexes.FirstOrDefault(existing => string.Equals(existing.Name, candidate.Name, StringComparison.OrdinalIgnoreCase));
+        if (named is not null)
         {
-            if (string.Equals(existing.Name, candidate.Name, StringComparison.OrdinalIgnoreCase))
+            if (!IndexMatches(named, candidate))
             {
-                return true;
+                throw new InvalidOperationException(
+                    $"Existing index '{candidate.Name}' differs from the EF model. Additive migration cannot change an existing index definition.");
             }
 
-            if (existing.EnforcesUniqueness == candidate.IsUnique
-                && existing.Columns.Count == candidate.Columns.Count)
-            {
-                bool columnsMatch = true;
-                for (int i = 0; i < existing.Columns.Count; i++)
-                {
-                    if (!string.Equals(existing.Columns[i].Name, candidate.Columns[i], StringComparison.OrdinalIgnoreCase))
-                    {
-                        columnsMatch = false;
-                        break;
-                    }
-                }
+            return true;
+        }
 
-                if (columnsMatch)
-                {
-                    return true;
-                }
+        return existingIndexes.Any(existing => IndexMatches(existing, candidate));
+    }
+
+    private static bool IndexMatches(IndexMetadata existing, IndexDefinition candidate)
+    {
+        if ((existing.Kind == IndexKind.PrimaryKey) != candidate.IsPrimaryKey
+            || existing.EnforcesUniqueness != (candidate.IsUnique || candidate.IsPrimaryKey)
+            || existing.IgnoreNulls != candidate.IgnoreNulls
+            || existing.IsRequired != (candidate.IsRequired || candidate.IsPrimaryKey)
+            || existing.Columns.Count != candidate.Columns.Count)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < existing.Columns.Count; i++)
+        {
+            string column = candidate.Columns[i];
+            bool descending = candidate.DescendingColumns.Contains(column, StringComparer.OrdinalIgnoreCase);
+            if (!string.Equals(existing.Columns[i].Name, column, StringComparison.OrdinalIgnoreCase)
+                || existing.Columns[i].IsAscending == descending)
+            {
+                return false;
             }
         }
 
-        return false;
+        return true;
     }
 
     private static bool HasMatchingRelationship(IReadOnlyList<RelationshipDefinition> existingRels, RelationshipDefinition candidate)
     {
-        foreach (RelationshipDefinition existing in existingRels)
+        RelationshipDefinition? existing = existingRels.FirstOrDefault(relationship => string.Equals(relationship.Name, candidate.Name, StringComparison.OrdinalIgnoreCase))
+            ?? existingRels.FirstOrDefault(relationship => RelationshipColumnsMatch(relationship, candidate));
+        if (existing is null)
         {
-            if (string.Equals(existing.Name, candidate.Name, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            if (string.Equals(existing.PrimaryTable, candidate.PrimaryTable, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(existing.ForeignTable, candidate.ForeignTable, StringComparison.OrdinalIgnoreCase)
-                && existing.PrimaryColumns.SequenceEqual(candidate.PrimaryColumns, StringComparer.OrdinalIgnoreCase)
-                && existing.ForeignColumns.SequenceEqual(candidate.ForeignColumns, StringComparer.OrdinalIgnoreCase))
-            {
-                return true;
-            }
+            return false;
         }
 
-        return false;
+        if (!RelationshipColumnsMatch(existing, candidate)
+            || existing.EnforceReferentialIntegrity != candidate.EnforceReferentialIntegrity
+            || existing.CascadeUpdates != candidate.CascadeUpdates
+            || existing.CascadeDeletes != candidate.CascadeDeletes)
+        {
+            throw new InvalidOperationException(
+                $"Existing relationship '{candidate.Name}' differs from the EF model. Additive migration cannot change an existing relationship definition.");
+        }
+
+        return true;
     }
+
+    private static bool RelationshipColumnsMatch(RelationshipDefinition existing, RelationshipDefinition candidate)
+        => string.Equals(existing.PrimaryTable, candidate.PrimaryTable, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(existing.ForeignTable, candidate.ForeignTable, StringComparison.OrdinalIgnoreCase)
+            && existing.PrimaryColumns.SequenceEqual(candidate.PrimaryColumns, StringComparer.OrdinalIgnoreCase)
+            && existing.ForeignColumns.SequenceEqual(candidate.ForeignColumns, StringComparer.OrdinalIgnoreCase);
 
     private static async ValueTask<List<RelationshipDefinition>> ReadExistingRelationshipsAsync(
         AccessWriter writer,
@@ -710,13 +726,14 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         int foreignColOrd = msysRel.Definition.FindColumnIndex("szColumn");
         int primaryColOrd = msysRel.Definition.FindColumnIndex("szReferencedColumn");
         int iColOrd = msysRel.Definition.FindColumnIndex("icolumn");
+        int flagsOrd = msysRel.Definition.FindColumnIndex("grbit");
         if (relNameOrd < 0 || foreignTableOrd < 0 || primaryTableOrd < 0 || foreignColOrd < 0 || primaryColOrd < 0)
         {
             return [];
         }
 
         List<LocatedRow> rows = await writer.Services.Snapshots.ReadRowsAsync(msysRel.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        Dictionary<string, (string PrimaryTable, string ForeignTable, List<(int Order, string PrimaryCol, string ForeignCol)> Columns)> grouped =
+        Dictionary<string, (string PrimaryTable, string ForeignTable, uint Flags, List<(int Order, string PrimaryCol, string ForeignCol)> Columns)> grouped =
             [with(StringComparer.OrdinalIgnoreCase)];
         foreach (LocatedRow row in rows)
         {
@@ -731,9 +748,10 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             }
 
             int order = iColOrd >= 0 && vals[iColOrd] is int iCol ? iCol : 0;
-            if (!grouped.TryGetValue(relName, out (string PrimaryTable, string ForeignTable, List<(int Order, string PrimaryCol, string ForeignCol)> Columns) entry))
+            if (!grouped.TryGetValue(relName, out (string PrimaryTable, string ForeignTable, uint Flags, List<(int Order, string PrimaryCol, string ForeignCol)> Columns) entry))
             {
-                entry = (primaryTable, foreignTable, []);
+                uint flags = flagsOrd >= 0 && vals[flagsOrd] is int rawFlags ? unchecked((uint)rawFlags) : 0;
+                entry = (primaryTable, foreignTable, flags, []);
                 grouped[relName] = entry;
             }
 
@@ -741,12 +759,17 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         }
 
         List<RelationshipDefinition> result = [];
-        foreach (KeyValuePair<string, (string PrimaryTable, string ForeignTable, List<(int Order, string PrimaryCol, string ForeignCol)> Columns)> kvp in grouped)
+        foreach (KeyValuePair<string, (string PrimaryTable, string ForeignTable, uint Flags, List<(int Order, string PrimaryCol, string ForeignCol)> Columns)> kvp in grouped)
         {
             kvp.Value.Columns.Sort(static (a, b) => a.Order.CompareTo(b.Order));
             List<string> primaryCols = [.. kvp.Value.Columns.Select(static c => c.PrimaryCol)];
             List<string> foreignCols = [.. kvp.Value.Columns.Select(static c => c.ForeignCol)];
-            result.Add(new RelationshipDefinition(kvp.Key, kvp.Value.PrimaryTable, primaryCols, kvp.Value.ForeignTable, foreignCols));
+            result.Add(new RelationshipDefinition(kvp.Key, kvp.Value.PrimaryTable, primaryCols, kvp.Value.ForeignTable, foreignCols)
+            {
+                EnforceReferentialIntegrity = (kvp.Value.Flags & Constants.RelationshipFlags.NoRefIntegrity) == 0,
+                CascadeUpdates = (kvp.Value.Flags & Constants.RelationshipFlags.CascadeUpdates) != 0,
+                CascadeDeletes = (kvp.Value.Flags & Constants.RelationshipFlags.CascadeDeletes) != 0,
+            });
         }
 
         return result;
@@ -1024,9 +1047,15 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             IReadOnlyList<IndexMetadata> existingIndexes = await writer.Services.Snapshots.ReadIndexMetadataSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
             foreach (IndexDefinition idx in indexes)
             {
-                if (idx.IsPrimaryKey || HasMatchingIndex(existingIndexes, idx))
+                if (HasMatchingIndex(existingIndexes, idx))
                 {
                     continue;
+                }
+
+                if (idx.IsPrimaryKey)
+                {
+                    throw new InvalidOperationException(
+                        $"Existing table '{tableName}' has no matching primary key '{idx.Name}'. Additive migration cannot change an existing primary key definition.");
                 }
 
                 await writer.CreateIndexAsync(tableName, idx, cancellationToken).ConfigureAwait(false);
