@@ -8,6 +8,7 @@
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="..\..\src\JetDatabaseWriter\JetDatabaseWriter.csproj" />
+        <ProjectReference Include="..\..\src\JetDatabaseWriter.EntityFrameworkCore\JetDatabaseWriter.EntityFrameworkCore.csproj" />
         <ProjectReference Include="..\..\tests\JetDatabaseWriter.TestSupport\JetDatabaseWriter.TestSupport.csproj" />
     </ItemGroup>
     <ItemGroup>
