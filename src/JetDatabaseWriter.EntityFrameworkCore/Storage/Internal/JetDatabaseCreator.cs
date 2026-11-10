@@ -108,7 +108,14 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
     public async Task<bool> CanConnectAsync(CancellationToken cancellationToken = default)
         => await this.connection.CanConnectAsync(cancellationToken).ConfigureAwait(false);
 
-    private static ColumnDefinition CreateColumnDefinition(IProperty property, DatabaseFormat format)
+    /// <summary>
+    /// Resolves the physical definition used to persist a model property.
+    /// </summary>
+    /// <param name="property">The mapped model property.</param>
+    /// <param name="format">The database format.</param>
+    /// <returns>The physical column definition.</returns>
+    /// <exception cref="NotSupportedException">The property's decimal facets cannot be represented in Jet3.</exception>
+    internal static ColumnDefinition CreateColumnDefinition(IProperty property, DatabaseFormat format)
     {
         string columnName = JetEntityTypeMetadata.GetColumnName(property);
         Type storageType = JetEntityTypeMetadata.GetStorageClrType(property);

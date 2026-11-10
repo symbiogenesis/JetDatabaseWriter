@@ -157,6 +157,12 @@ preserve Access collation and numeric equality. Same-table modified cycles remai
 atomic update batches; an unsatisfiable mixed dependency cycle refuses before
 row mutation.
 
+Model validation groups physical table and column names without case sensitivity.
+Independent scalar properties cannot overwrite one physical column. Shared
+ownership keys, concurrency tokens across table-split row peers and mutually
+exclusive TPH sibling properties require compatible model types, conversion
+expressions and physical column facets before schema creation or persistence.
+
 Creation requires an empty destination stream and initializes it from offset
 zero. `EnsureCreatedAsync` and `MigrateAsync` preserve nonempty unreadable streams
 and throw, including when the configured password cannot open the database.
