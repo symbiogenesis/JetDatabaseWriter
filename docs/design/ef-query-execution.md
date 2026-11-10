@@ -103,7 +103,10 @@ Connections with the same absolute path spelling or stream instance coordinate
 lifecycle transitions and acquire per-connection operation leases. A writer rental holds its lease through
 release, so peer invalidation and disposal wait for the operation. Idle file and
 stream writers are reused; switching a peer connection retires idle writer
-state. Reader peers may coexist. Explicit transactions prevent another
+state. File reader peers may coexist. Connections sharing a caller stream retain
+the shared lifecycle lease through scans and cursor disposal, serializing seeks,
+reads and reader initialization across those connections. Cancellation while
+waiting leaves the current reader's lease intact. Explicit transactions prevent another
 connection from taking over their writer. Schema creation releases its file
 writer when finished.
 The configured `leaveOpen` option applies to both direct streams and streams

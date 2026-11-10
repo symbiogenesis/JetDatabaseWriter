@@ -501,7 +501,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 int?[] columnMap = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
                 bool[] wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties);
                 ValueBufferFactory factory = new(rootType, properties, columnMap, wanted, reuseBuffer: true);
-                if (lifecycleHeld)
+                if (lifecycleHeld && this.DatabasePath is not null)
                 {
                     this.lifecycleGate.Release();
                     lifecycleHeld = false;
@@ -552,7 +552,7 @@ public sealed class JetClientConnection : IJetClientConnection
                     rows = reader.Rows(tableName, progress: null, cancellationToken);
                 }
 
-                if (lifecycleHeld)
+                if (lifecycleHeld && this.DatabasePath is not null)
                 {
                     this.lifecycleGate.Release();
                     lifecycleHeld = false;
@@ -619,7 +619,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            if (lifecycleHeld)
+            if (lifecycleHeld && this.DatabasePath is not null)
             {
                 this.lifecycleGate.Release();
                 lifecycleHeld = false;
@@ -1264,7 +1264,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 }
             }
 
-            if (lifecycleHeld)
+            if (lifecycleHeld && this.DatabasePath is not null)
             {
                 this.lifecycleGate.Release();
                 lifecycleHeld = false;
