@@ -68,7 +68,9 @@ listener requests them, with no per-row diagnostic allocations.
 
 Global query filters bind context references to the context executing the query,
 including cached and compiled queries. Index candidates and residual predicates
-use the same bound values. Named `IgnoreQueryFilters` exclusions disable only
+use the same bound values. Many-to-many navigation loads apply filters to both
+the join entity and the target entity before connecting their rows. Named
+`IgnoreQueryFilters` exclusions disable only
 the requested filters; the parameterless call disables all filters. The last
 tracking modifier in a query chain determines tracking and identity resolution.
 `IgnoreAutoIncludes` suppresses configured eager loading while retaining owned

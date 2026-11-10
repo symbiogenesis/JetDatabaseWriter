@@ -1815,6 +1815,10 @@ internal static partial class JetAsyncQueryExecutor
             deduplicateCandidates,
             untrackedIdentityMaps,
             cancellationToken);
+        if (!plan.IgnoreQueryFilters)
+        {
+            joinRows = ApplyEntityQueryFilters(queryContext, plan, state, joinEntityType, joinRows);
+        }
 
         HashSet<JetKeyTuple> seenTargetKeys = [];
         List<object?[]> distinctTargetKeyTuples = [];
