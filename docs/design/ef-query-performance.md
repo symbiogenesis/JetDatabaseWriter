@@ -40,3 +40,31 @@ All twelve measured cases have valid means, errors and allocations. The run's
 baseline/head BenchmarkDotNet JSON and Markdown reports. These measurements do
 not qualify cold file I/O, other platforms, other key domains or full navigation
 graphs; their execution rules remain in [EF query execution](ef-query-execution.md).
+
+## Broader workload harness
+
+`EfWorkloadQueryBenchmarks` covers 100 and 4,000 parents, each with a table-split
+owned reference and three children. Each case runs against both a caller-owned
+memory stream and a private ACE file:
+
+| Case | Work measured |
+|---|---|
+| `OwnedScalarPage` | Ten scalar keys from a model with owned entities |
+| `NoTrackingEntityPage` | Ten complete entities and their owned references |
+| `TrackingEntityPage` | Clear the preceding tracked page and track ten entities |
+| `IncludeGraphPage` | Ten parents, owned references and thirty related children |
+| `GuidKeyLookup` | An exact GUID key lookup returning an integer foreign key |
+| `ReopenedFirstRow` | Create and dispose a context around a first-row query |
+
+`EfWorkloadWriteBenchmarks` measures ten-row `SaveChangesAsync` batches,
+`ExecuteUpdateAsync` and `ExecuteDeleteAsync` with thirty cascaded child deletes,
+using 1,000-parent file and stream fixtures. Every iteration copies an unmeasured
+baseline image, so mutations do not accumulate and schema creation is excluded.
+Context creation and disposal are part of each write measurement. The iteration
+setup requires one invocation per iteration, as for the core writer benchmarks.
+
+The shared `EfWorkloadData` generator and complete page checks also run in
+`JetWorkloadFixtureTests` on Jet3, Jet4 and ACE. Hosted setup checks every measured
+query and affected-row count before measurement. These cases broaden workload
+coverage; they do not establish physical cold-disk I/O because operating-system
+caches are uncontrolled, or qualify other operating systems.
