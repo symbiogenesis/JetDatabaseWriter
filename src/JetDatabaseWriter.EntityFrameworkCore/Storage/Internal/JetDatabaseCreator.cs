@@ -179,7 +179,9 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             int defaultScale = isIntegerBackedDecimal ? 0 : 4;
             int precision = Math.Clamp(property.GetPrecision() ?? defaultPrecision, 1, 28);
             int scale = Math.Clamp(property.GetScale() ?? defaultScale, 0, precision);
-            bool isCurrency = JetEntityTypeMetadata.GetIsCurrency(property);
+            bool inferredJet3Integer = format == DatabaseFormat.Jet3Mdb && isIntegerBackedDecimal
+                && property.GetPrecision() is null && property.GetScale() is null;
+            bool isCurrency = JetEntityTypeMetadata.GetIsCurrency(property) || inferredJet3Integer;
             if (format == DatabaseFormat.Jet3Mdb && !isCurrency && (precision - scale > 14 || scale > 4))
             {
                 throw new NotSupportedException(
