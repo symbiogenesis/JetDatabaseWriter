@@ -3384,7 +3384,7 @@ internal static partial class JetAsyncQueryExecutor
                 }
 
                 if (node.Method.Name is nameof(Queryable.Join) or nameof(Queryable.GroupJoin) or nameof(Queryable.LeftJoin)
-                    && node.Arguments.Count >= 5
+                    && node.Arguments.Count == 5
                     && StripQuotes(node.Arguments[2]) is LambdaExpression outerKeyLambda
                     && StripQuotes(node.Arguments[3]) is LambdaExpression innerKeyLambda
                     && this.TryExtractMappedJoinKeys(node.Arguments[0], outerKeyLambda, out EntityQueryRootExpression? outerRoot, out List<IProperty>? outerKeyProps)

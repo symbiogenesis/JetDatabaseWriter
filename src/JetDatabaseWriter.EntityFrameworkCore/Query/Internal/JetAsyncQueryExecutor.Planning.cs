@@ -280,6 +280,13 @@ internal static partial class JetAsyncQueryExecutor
                 }
             }
 
+            // A constructed key can compare null components as equal, while key-prefetch
+            // skips null values to preserve scalar Join and relationship semantics.
+            if (key is NewExpression && found.Any(static property => property.IsNullable))
+            {
+                return false;
+            }
+
             properties = found;
             return root is not null && found.Count > 0;
         }
