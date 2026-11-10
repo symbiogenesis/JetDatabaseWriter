@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Fuzz;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -43,6 +44,27 @@ public sealed class AccessReaderFuzzExerciseTests
         Assert.Contains("[FuzzCoverage] reader:seek:completed", messages);
         Assert.Equal(4, messages.Count(static message => message == "[FuzzCoverage] reader:seek:completed"));
         Assert.Contains("[Fuzzing] rows consumed: 8", messages);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NativeComplexSeed_ExercisesIndexes(bool shiftUsageMapBase)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        byte[] bytes = await File.ReadAllBytesAsync(TestDatabases.ComplexFields, ct);
+        if (shiftUsageMapBase)
+        {
+            // Hosted reader case 21, seed 109, shifts this native inline usage map's base page.
+            BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(49_015, 4), 1);
+        }
+
+        var messages = new List<string>();
+
+        await AccessReaderFuzzExercise.RunAsync(bytes, messages.Add, ct);
+
+        Assert.Contains("[FuzzCoverage] reader:rows:completed", messages);
+        Assert.Contains("[FuzzCoverage] reader:seek:completed", messages);
     }
 
     [Fact]

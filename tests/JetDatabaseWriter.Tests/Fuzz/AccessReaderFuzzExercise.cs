@@ -148,6 +148,7 @@ internal static class AccessReaderFuzzExercise
             string table = tables[tableNumber];
             IReadOnlyList<ColumnMetadata>? columns = null;
             IReadOnlyList<IndexMetadata>? indexes = null;
+            IReadOnlyList<ComplexColumnInfo>? complexColumns = null;
             object[]? firstRow = null;
             await RunOperationAsync(
                 "schema",
@@ -155,7 +156,7 @@ internal static class AccessReaderFuzzExercise
             {
                 columns = await reader.GetColumnMetadataAsync(table, cancellationToken);
                 _ = await reader.GetTableValidationRuleAsync(table, cancellationToken);
-                _ = await reader.GetComplexColumnsAsync(table, cancellationToken);
+                complexColumns = await reader.GetComplexColumnsAsync(table, cancellationToken);
             },
                 log);
             await RunOperationAsync("index-list", async () => indexes = await reader.ListIndexesAsync(table, cancellationToken), log);
@@ -168,11 +169,11 @@ internal static class AccessReaderFuzzExercise
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 IndexMetadata index = indexes![indexNumber];
-                object?[]? key = TryCreateKey(index, columns, firstRow);
                 await RunOperationAsync(
                     "seek",
                     async () =>
                 {
+                    object?[]? key = TryCreateKey(index, columns, complexColumns, firstRow);
                     IAsyncEnumerable<object[]> rows = key is null
                         ? reader.FromIndex(table, index.Name).ToRowsAsync(cancellationToken)
                         : reader.SeekRowsAsync(table, index.Name, key, cancellationToken);
@@ -183,9 +184,9 @@ internal static class AccessReaderFuzzExercise
         }
     }
 
-    private static object?[]? TryCreateKey(IndexMetadata index, IReadOnlyList<ColumnMetadata>? columns, object[]? row)
+    private static object?[]? TryCreateKey(IndexMetadata index, IReadOnlyList<ColumnMetadata>? columns, IReadOnlyList<ComplexColumnInfo>? complexColumns, object[]? row)
     {
-        if (columns is null || row is null || index.Columns.Count is 0 or > 10)
+        if (columns is null || complexColumns is null || row is null || index.Columns.Count is 0 or > 10)
         {
             return null;
         }
@@ -208,10 +209,46 @@ internal static class AccessReaderFuzzExercise
                 return null;
             }
 
-            key[i] = row[match.Ordinal];
+            object value = row[match.Ordinal];
+            foreach (ComplexColumnInfo complexColumn in complexColumns)
+            {
+                if (!string.Equals(complexColumn.ColumnName, match.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // Public row cells contain the items; the native index keys their parent reference.
+                int? reference = value is byte[] cell ? ReadComplexReference(complexColumn.Kind, cell) : null;
+                if (!reference.HasValue)
+                {
+                    return null;
+                }
+
+                value = reference.Value;
+                break;
+            }
+
+            key[i] = value;
         }
 
         return key;
+    }
+
+    private static int? ReadComplexReference(ComplexColumnKind kind, byte[] cell)
+    {
+        if (kind == ComplexColumnKind.Attachment)
+        {
+            IReadOnlyList<AttachmentRecord> items = ComplexCellValue.ReadAttachments(cell);
+            return items.Count == 0 ? null : items[0].ConceptualTableId;
+        }
+
+        if (kind is ComplexColumnKind.MultiValue or ComplexColumnKind.VersionHistory)
+        {
+            IReadOnlyList<MultiValueItem> items = ComplexCellValue.ReadMultiValueItems(cell);
+            return items.Count == 0 ? null : items[0].ConceptualTableId;
+        }
+
+        return null;
     }
 
     private static async Task RunOperationAsync(string operation, Func<Task> action, Action<string> log)

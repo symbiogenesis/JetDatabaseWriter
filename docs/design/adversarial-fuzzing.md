@@ -35,6 +35,13 @@ denied, including transitive reads, so database content cannot grant access to a
 local file or external service. Ordinary regression tests establish that the deny
 policy is actually invoked before opening a source.
 
+Seek keys use the first row's column values. Complex columns expose serialized
+item cells through public row APIs, while their native indexes use the parent's
+integer reference. The harness decodes that reference through `ComplexCellValue`
+before seeking. When no reference is available, it traverses the index instead;
+ordinary binary keys retain their byte values. Unexpected exceptions still fail
+the exercise.
+
 The writer uses transactional writes. Attempted operations and their success or
 refusal have separate markers. Every accepted input rejection compares the
 entire database image with its pre-operation snapshot. This covers schema and row
