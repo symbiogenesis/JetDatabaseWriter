@@ -660,7 +660,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
 
     private static bool IndexMatches(IndexMetadata existing, IndexDefinition candidate)
     {
-        if ((existing.Kind == IndexKind.PrimaryKey) != candidate.IsPrimaryKey
+        if (existing.Kind == IndexKind.PrimaryKey != candidate.IsPrimaryKey
             || existing.EnforcesUniqueness != (candidate.IsUnique || candidate.IsPrimaryKey)
             || existing.IgnoreNulls != candidate.IgnoreNulls
             || existing.IsRequired != (candidate.IsRequired || candidate.IsPrimaryKey)
