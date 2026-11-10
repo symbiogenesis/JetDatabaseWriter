@@ -75,6 +75,11 @@ internal static partial class JetAsyncQueryExecutor
             nameof(ReadEfProperty),
             BindingFlags.NonPublic | BindingFlags.Static)!;
 
+    private static readonly MethodInfo ReadCandidatePropertyMethod =
+        typeof(JetAsyncQueryExecutor).GetMethod(
+            nameof(ReadCandidateProperty),
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+
     private static readonly MethodInfo EvaluateLikeMethod =
         typeof(JetAsyncQueryExecutor).GetMethod(
             nameof(EvaluateLike),
@@ -2107,89 +2112,72 @@ internal static partial class JetAsyncQueryExecutor
                 return trackedEntry.Entity;
             }
 
-            if (!concreteType.IsOwned())
-            {
 #pragma warning disable EF1001 // QueryContext.TryGetEntry provides O(1) StateManager lookup by key.
-                InternalEntityEntry? existingStateEntry = queryContext.TryGetEntry(
-                    primaryKey,
-                    key.Values!,
-                    throwOnNullKey: false,
-                    out bool hasNullKey);
-                if (!hasNullKey
-                    && existingStateEntry is { EntityState: not EntityState.Detached, Entity: object stateManagerEntity })
+            InternalEntityEntry? existingStateEntry = queryContext.TryGetEntry(
+                primaryKey,
+                key.Values!,
+                throwOnNullKey: false,
+                out bool hasNullKey);
+            if (!hasNullKey
+                && existingStateEntry is { EntityState: not EntityState.Detached, Entity: object stateManagerEntity })
 #pragma warning restore EF1001
+            {
+                if (!existingTrackedByType.TryGetValue(rootType, out Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>? map))
                 {
-                    if (!existingTrackedByType.TryGetValue(rootType, out Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>? map))
-                    {
-                        map = [];
-                        existingTrackedByType[rootType] = map;
-                    }
-
-                    map[key] = (stateManagerEntity, buffer);
-                    state.PromotedEntities[candidateEntity] = stateManagerEntity;
-                    state.EntityBuffers[stateManagerEntity] = buffer;
-                    state.EntityTypesByInstance[stateManagerEntity] = concreteType;
-                    _ = state.AlreadyTrackedEntities.Add(stateManagerEntity);
-                    TransferPopulatedNavigations(
-                        concreteType,
-                        candidateEntity,
-                        stateManagerEntity,
-                        queryContext,
-                        plan,
-                        state,
-                        existingTrackedByType);
-                    return stateManagerEntity;
+                    map = [];
+                    existingTrackedByType[rootType] = map;
                 }
+
+                map[key] = (stateManagerEntity, buffer);
+                state.PromotedEntities[candidateEntity] = stateManagerEntity;
+                state.EntityBuffers[stateManagerEntity] = buffer;
+                state.EntityTypesByInstance[stateManagerEntity] = concreteType;
+                _ = state.AlreadyTrackedEntities.Add(stateManagerEntity);
+                TransferPopulatedNavigations(
+                    concreteType,
+                    candidateEntity,
+                    stateManagerEntity,
+                    queryContext,
+                    plan,
+                    state,
+                    existingTrackedByType);
+                return stateManagerEntity;
             }
         }
 
 #pragma warning disable EF1001 // QueryContext.StartTracking attaches the already-materialized entity instance in-place without allocating a second CLR object.
-        object tracked;
-        if (!concreteType.IsOwned() && !HasComplexShadowProperties(concreteType))
+        foreach (INavigation nav in concreteType.GetNavigations())
         {
-            foreach (INavigation nav in concreteType.GetNavigations())
+            if (!nav.IsCollection
+                && nav.TargetEntityType.IsOwned()
+                && GetNavigationValue(nav, candidateEntity) is object defaultOwned
+                && !state.EntityBuffers.ContainsKey(defaultOwned))
             {
-                if (!nav.IsCollection
-                    && nav.TargetEntityType.IsOwned()
-                    && GetNavigationValue(nav, candidateEntity) is object defaultOwned
-                    && !state.EntityBuffers.ContainsKey(defaultOwned))
-                {
-                    SetNavigationValue(nav, candidateEntity, null);
-                }
+                SetNavigationValue(nav, candidateEntity, null);
             }
+        }
 
-            var runtimeType = (IRuntimeTypeBase)concreteType;
-            ISnapshot shadowSnapshot;
-            if (runtimeType.ShadowPropertyCount == 0)
-            {
-                shadowSnapshot = Snapshot.Empty;
-            }
-            else
-            {
-                Dictionary<string, object?> shadowValues = [with(StringComparer.Ordinal)];
-                foreach (IProperty prop in concreteType.GetProperties())
-                {
-                    if (prop.IsShadowProperty())
-                    {
-                        int idx = prop.GetIndex();
-                        object? val = (uint)idx < (uint)buffer.Count ? buffer[idx] : null;
-                        if (val is not null)
-                        {
-                            shadowValues[prop.Name] = val;
-                        }
-                    }
-                }
-
-                shadowSnapshot = runtimeType.ShadowValuesFactory(shadowValues);
-            }
-
-            _ = queryContext.StartTracking(concreteType, candidateEntity, in shadowSnapshot);
-            tracked = candidateEntity;
+        var runtimeType = (IRuntimeTypeBase)concreteType;
+        ISnapshot shadowSnapshot;
+        if (runtimeType.ShadowPropertyCount == 0)
+        {
+            shadowSnapshot = Snapshot.Empty;
         }
         else
         {
-            tracked = plan.GetTrackedMaterializer(queryContext, concreteType)(queryContext, buffer);
+            shadowSnapshot = runtimeType.EmptyShadowValuesFactory();
+            foreach (IProperty prop in concreteType.GetFlattenedProperties())
+            {
+                if (prop.IsShadowProperty())
+                {
+                    int idx = prop.GetIndex();
+                    shadowSnapshot[prop.GetShadowIndex()] = (uint)idx < (uint)buffer.Count ? buffer[idx] : null;
+                }
+            }
         }
+
+        _ = queryContext.StartTracking(concreteType, candidateEntity, in shadowSnapshot);
+        object tracked = candidateEntity;
 #pragma warning restore EF1001
         state.PromotedEntities[candidateEntity] = tracked;
         state.EntityBuffers[tracked] = buffer;
@@ -2215,22 +2203,6 @@ internal static partial class JetAsyncQueryExecutor
             state,
             existingTrackedByType);
         return tracked;
-    }
-
-    private static bool HasComplexShadowProperties(IEntityType entityType)
-    {
-        foreach (IComplexProperty complexProperty in entityType.GetComplexProperties())
-        {
-            foreach (IProperty prop in complexProperty.ComplexType.GetFlattenedProperties())
-            {
-                if (prop.IsShadowProperty())
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
     }
 
     private static void TransferPopulatedNavigations(
@@ -2974,12 +2946,6 @@ internal static partial class JetAsyncQueryExecutor
         IProperty? property = entityType?.FindProperty(propertyName);
         if (property is not null)
         {
-            if (property.PropertyInfo is not null || property.FieldInfo is not null)
-            {
-                object? clrVal = property.GetGetter().GetClrValueUsingContainingEntity(entity);
-                return clrVal is TProperty typedClr ? typedClr : default!;
-            }
-
             if (entityBuffers.TryGetValue(entity, out ValueBuffer buffer))
             {
                 int idx = property.GetIndex();
@@ -2987,6 +2953,12 @@ internal static partial class JetAsyncQueryExecutor
                 {
                     return typedBuf;
                 }
+            }
+
+            if (property.PropertyInfo is not null || property.FieldInfo is not null)
+            {
+                object? clrVal = property.GetGetter().GetClrValueUsingContainingEntity(entity);
+                return clrVal is TProperty typedClr ? typedClr : default!;
             }
 
             object? trackedVal = queryContext.Context.Entry(entity).Property(propertyName).CurrentValue;
@@ -4789,6 +4761,15 @@ internal static partial class JetAsyncQueryExecutor
             if (node.Expression is not null)
             {
                 Expression visitedTarget = this.Visit(node.Expression);
+                if (model.FindEntityType(node.Expression.Type)?.FindProperty(node.Member) is { } property)
+                {
+                    return Expression.Call(
+                        ReadCandidatePropertyMethod.MakeGenericMethod(node.Type),
+                        Expression.Convert(visitedTarget, typeof(object)),
+                        Expression.Constant(property, typeof(IProperty)),
+                        stateExpression);
+                }
+
                 if (!visitedTarget.Type.IsValueType
                     && visitedTarget is not ParameterExpression
                     && this.IsNullSafeNavigableReceiverType(visitedTarget.Type))
@@ -4943,7 +4924,7 @@ internal static partial class JetAsyncQueryExecutor
                     Expression.Condition(
                         Expression.ReferenceEqual(targetVar, Expression.Constant(null, visitedTarget.Type)),
                         Expression.Constant(null, liftedType),
-                        Expression.Convert(member.Update(targetVar), liftedType)));
+                        Expression.Convert(this.Visit(member.Update(targetVar)), liftedType)));
             }
 
             return Expression.Convert(this.Visit(expr), liftedType);

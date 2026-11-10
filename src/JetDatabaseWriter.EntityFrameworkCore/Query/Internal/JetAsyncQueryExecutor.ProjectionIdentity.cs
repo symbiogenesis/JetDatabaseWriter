@@ -11,6 +11,19 @@ using Microsoft.EntityFrameworkCore.Storage;
 
 internal static partial class JetAsyncQueryExecutor
 {
+    private static TProperty ReadCandidateProperty<TProperty>(object? entity, IProperty property, JetExecutionMaterializedState state)
+    {
+        if (entity is null)
+        {
+            return default!;
+        }
+
+        object? value = state.EntityBuffers.TryGetValue(entity, out ValueBuffer buffer)
+            ? buffer[property.GetIndex()]
+            : property.GetGetter().GetClrValueUsingContainingEntity(entity);
+        return value is TProperty typed ? typed : default!;
+    }
+
     private static TEntity ResolveProjectedEntity<TEntity>(
         TEntity entity,
         QueryContext context,
@@ -21,7 +34,6 @@ internal static partial class JetAsyncQueryExecutor
             || (plan.TrackingBehaviorOverride ?? context.Context.ChangeTracker.QueryTrackingBehavior) != QueryTrackingBehavior.TrackAll
             || !state.EntityBuffers.TryGetValue(entity, out ValueBuffer buffer)
             || !state.EntityTypesByInstance.TryGetValue(entity, out IEntityType? entityType)
-            || entityType.IsOwned()
             || entityType.FindPrimaryKey() is not { } key)
         {
             return entity;
