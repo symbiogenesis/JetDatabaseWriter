@@ -12,6 +12,8 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.ValueDecoding;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
@@ -23,19 +25,31 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
 {
     private readonly IJetClientConnection connection;
     private readonly IModel model;
+    private readonly ICurrentDbContext currentContext;
+    private readonly CoreOptionsExtension? options;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="JetDatabaseCreator"/> class.
     /// </summary>
     /// <param name="connection">The client connection for the current context scope.</param>
     /// <param name="designTimeModel">The design-time EF Core model describing the schema.</param>
-    public JetDatabaseCreator(IJetClientConnection connection, IDesignTimeModel designTimeModel)
+    /// <param name="options">Options containing the configured asynchronous seed callback.</param>
+    /// <param name="currentContext">The current EF Core context.</param>
+    public JetDatabaseCreator(
+        IJetClientConnection connection,
+        IDesignTimeModel designTimeModel,
+        IDbContextOptions options,
+        ICurrentDbContext currentContext)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(designTimeModel);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(currentContext);
 
         this.connection = connection;
         this.model = designTimeModel.Model;
+        this.options = options.FindExtension<CoreOptionsExtension>();
+        this.currentContext = currentContext;
     }
 
     /// <inheritdoc/>
@@ -55,43 +69,9 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
     /// <inheritdoc/>
     public async Task<bool> EnsureCreatedAsync(CancellationToken cancellationToken = default)
     {
-        bool canConnect = await this.connection.CanConnectAsync(cancellationToken).ConfigureAwait(false);
-        if (canConnect)
-        {
-            int existingTableCount = this.connection.ActiveWriter is { } activeWriter
-                ? (await activeWriter.Services.Catalog.GetUserTablesAsync(cancellationToken).ConfigureAwait(false)).Count
-                : (await (await this.connection.GetReaderAsync(cancellationToken).ConfigureAwait(false))
-                    .ListTablesAsync(cancellationToken).ConfigureAwait(false)).Count;
-            if (existingTableCount > 0)
-            {
-                return false;
-            }
-        }
-
-        AccessWriter? writer = null;
-        bool rentedOwned = false;
-        try
-        {
-            if (!canConnect)
-            {
-                writer = await this.connection.CreateDatabaseWriterAsync(cancellationToken).ConfigureAwait(false);
-                rentedOwned = !string.IsNullOrWhiteSpace(this.connection.DatabasePath);
-            }
-            else
-            {
-                (writer, rentedOwned) = await this.connection.RentWriterAsync(cancellationToken).ConfigureAwait(false);
-            }
-
-            await this.ExecuteInSchemaTransactionAsync(writer, this.BuildSchemaCoreAsync, cancellationToken).ConfigureAwait(false);
-            return true;
-        }
-        finally
-        {
-            if (writer is not null)
-            {
-                await this.connection.ReleaseWriterAsync(writer, ownedByCaller: rentedOwned).ConfigureAwait(false);
-            }
-        }
+        bool operationsPerformed = await this.EnsureSchemaCreatedAsync(cancellationToken).ConfigureAwait(false);
+        await this.RunAsyncSeederAsync(operationsPerformed, cancellationToken).ConfigureAwait(false);
+        return operationsPerformed;
     }
 
     /// <summary>
@@ -112,29 +92,8 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
     /// <returns>A task representing the asynchronous migration operation.</returns>
     public async Task MigrateAsync(CancellationToken cancellationToken = default)
     {
-        bool canConnect = await this.connection.CanConnectAsync(cancellationToken).ConfigureAwait(false);
-        AccessWriter? writer = null;
-        bool rentedOwned = false;
-        try
-        {
-            if (!canConnect)
-            {
-                writer = await this.connection.CreateDatabaseWriterAsync(cancellationToken).ConfigureAwait(false);
-                rentedOwned = !string.IsNullOrWhiteSpace(this.connection.DatabasePath);
-                await this.ExecuteInSchemaTransactionAsync(writer, this.BuildSchemaCoreAsync, cancellationToken).ConfigureAwait(false);
-                return;
-            }
-
-            (writer, rentedOwned) = await this.connection.RentWriterAsync(cancellationToken).ConfigureAwait(false);
-            await this.ExecuteInSchemaTransactionAsync(writer, this.MigrateSchemaCoreAsync, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            if (writer is not null)
-            {
-                await this.connection.ReleaseWriterAsync(writer, ownedByCaller: rentedOwned).ConfigureAwait(false);
-            }
-        }
+        bool operationsPerformed = await this.MigrateSchemaAsync(cancellationToken).ConfigureAwait(false);
+        await this.RunAsyncSeederAsync(operationsPerformed, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -798,9 +757,128 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         return exists;
     }
 
-    private async ValueTask ExecuteInSchemaTransactionAsync(
+    private async Task<bool> EnsureSchemaCreatedAsync(CancellationToken cancellationToken)
+    {
+        bool canConnect = await this.connection.CanConnectAsync(cancellationToken).ConfigureAwait(false);
+        if (canConnect)
+        {
+            int existingTableCount = this.connection.ActiveWriter is { } activeWriter
+                ? (await activeWriter.Services.Catalog.GetUserTablesAsync(cancellationToken).ConfigureAwait(false)).Count
+                : (await (await this.connection.GetReaderAsync(cancellationToken).ConfigureAwait(false))
+                    .ListTablesAsync(cancellationToken).ConfigureAwait(false)).Count;
+            if (existingTableCount > 0)
+            {
+                return false;
+            }
+        }
+
+        AccessWriter? writer = null;
+        bool rentedOwned = false;
+        try
+        {
+            if (!canConnect)
+            {
+                writer = await this.connection.CreateDatabaseWriterAsync(cancellationToken).ConfigureAwait(false);
+                rentedOwned = !string.IsNullOrWhiteSpace(this.connection.DatabasePath);
+            }
+            else
+            {
+                (writer, rentedOwned) = await this.connection.RentWriterAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            await this.ExecuteInSchemaTransactionAsync(writer, this.BuildSchemaCoreAsync, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        finally
+        {
+            if (writer is not null)
+            {
+                await this.connection.ReleaseWriterAsync(writer, ownedByCaller: rentedOwned).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task<bool> MigrateSchemaAsync(CancellationToken cancellationToken)
+    {
+        bool canConnect = await this.connection.CanConnectAsync(cancellationToken).ConfigureAwait(false);
+        AccessWriter? writer = null;
+        bool rentedOwned = false;
+        try
+        {
+            if (!canConnect)
+            {
+                writer = await this.connection.CreateDatabaseWriterAsync(cancellationToken).ConfigureAwait(false);
+                rentedOwned = !string.IsNullOrWhiteSpace(this.connection.DatabasePath);
+                await this.ExecuteInSchemaTransactionAsync(writer, this.BuildSchemaCoreAsync, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+
+            (writer, rentedOwned) = await this.connection.RentWriterAsync(cancellationToken).ConfigureAwait(false);
+            return await this.ExecuteInSchemaTransactionAsync(writer, this.MigrateSchemaCoreAsync, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (writer is not null)
+            {
+                await this.connection.ReleaseWriterAsync(writer, ownedByCaller: rentedOwned).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async ValueTask RunAsyncSeederAsync(bool operationsPerformed, CancellationToken cancellationToken)
+    {
+        if (this.options?.AsyncSeeder is not { } seeder)
+        {
+            if (this.options?.Seeder is not null)
+            {
+                throw new InvalidOperationException(CoreStrings.MissingAsyncSeeder);
+            }
+
+            return;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        DbContext context = this.currentContext.Context;
+        IDbContextTransaction? transaction = this.connection.ActiveTransaction is null
+            ? await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false)
+            : null;
+        try
+        {
+            await seeder(context, operationsPerformed, cancellationToken).ConfigureAwait(false);
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            if (transaction is not null)
+            {
+#pragma warning disable CA1031, RCS1075 // Preserve the seed callback exception if rollback fails.
+                try
+                {
+                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                }
+#pragma warning restore CA1031, RCS1075
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (transaction is not null)
+            {
+                await transaction.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async ValueTask<bool> ExecuteInSchemaTransactionAsync(
         AccessWriter writer,
-        Func<AccessWriter, CancellationToken, ValueTask> action,
+        Func<AccessWriter, CancellationToken, ValueTask<bool>> action,
         CancellationToken cancellationToken)
     {
         JetTransaction? schemaTransaction = this.connection.ActiveTransaction is null
@@ -808,11 +886,13 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             : null;
         try
         {
-            await action(writer, cancellationToken).ConfigureAwait(false);
+            bool operationsPerformed = await action(writer, cancellationToken).ConfigureAwait(false);
             if (schemaTransaction is not null)
             {
                 await schemaTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
+
+            return operationsPerformed;
         }
         catch
         {
@@ -840,7 +920,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         }
     }
 
-    private async ValueTask BuildSchemaCoreAsync(AccessWriter writer, CancellationToken cancellationToken)
+    private async ValueTask<bool> BuildSchemaCoreAsync(AccessWriter writer, CancellationToken cancellationToken)
     {
         DatabaseFormat format = this.connection.Format;
         List<IEntityType> allEntityTypes = [.. this.model.GetEntityTypes()];
@@ -859,17 +939,19 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         {
             await writer.InsertRowsAsync(tableName, seedRows, cancellationToken).ConfigureAwait(false);
         }
+
+        return allEntityTypes.Count > 0;
     }
 
-    private async ValueTask MigrateSchemaCoreAsync(AccessWriter writer, CancellationToken cancellationToken)
+    private async ValueTask<bool> MigrateSchemaCoreAsync(AccessWriter writer, CancellationToken cancellationToken)
     {
         List<CatalogEntry> existingTableEntries = await writer.Services.Catalog.GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
         if (existingTableEntries.Count == 0)
         {
-            await this.BuildSchemaCoreAsync(writer, cancellationToken).ConfigureAwait(false);
-            return;
+            return await this.BuildSchemaCoreAsync(writer, cancellationToken).ConfigureAwait(false);
         }
 
+        bool operationsPerformed = false;
         DatabaseFormat format = this.connection.Format;
         List<IEntityType> allEntityTypes = [.. this.model.GetEntityTypes()];
         HashSet<string> existingTables = [with(StringComparer.OrdinalIgnoreCase), .. existingTableEntries.Select(static e => e.Name)];
@@ -880,6 +962,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             if (!existingTables.Contains(tableName))
             {
                 await writer.CreateTableAsync(tableName, columns, indexes, cancellationToken).ConfigureAwait(false);
+                operationsPerformed = true;
                 _ = existingTables.Add(tableName);
                 _ = newlyCreatedTables.Add(tableName);
                 continue;
@@ -897,6 +980,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                 if (existingColNames.Add(col.Name))
                 {
                     await writer.AddColumnAsync(tableName, col, cancellationToken).ConfigureAwait(false);
+                    operationsPerformed = true;
                     if (!col.IsCalculated && !col.IsAutoIncrement)
                     {
                         object? backfill = col.DefaultValue ?? (!col.IsNullable ? GetDefaultProviderValueForClrType(col.ClrType) : null);
@@ -921,6 +1005,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                 }
 
                 await writer.CreateIndexAsync(tableName, idx, cancellationToken).ConfigureAwait(false);
+                operationsPerformed = true;
             }
         }
 
@@ -930,6 +1015,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             if (!HasMatchingRelationship(existingRels, relDef))
             {
                 await writer.CreateRelationshipAsync(relDef, cancellationToken).ConfigureAwait(false);
+                operationsPerformed = true;
                 existingRels.Add(relDef);
             }
         }
@@ -939,6 +1025,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             if (newlyCreatedTables.Contains(tableName))
             {
                 await writer.InsertRowsAsync(tableName, seedRows, cancellationToken).ConfigureAwait(false);
+                operationsPerformed = true;
                 continue;
             }
 
@@ -994,7 +1081,10 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             if (missingSeedRows.Count > 0)
             {
                 await writer.InsertRowsAsync(tableName, missingSeedRows, cancellationToken).ConfigureAwait(false);
+                operationsPerformed = true;
             }
         }
+
+        return operationsPerformed;
     }
 }
