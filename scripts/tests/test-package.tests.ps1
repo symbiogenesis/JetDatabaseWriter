@@ -27,7 +27,7 @@ function New-Package([string] $Name, [string] $Missing = '', [string] $Stale = '
             'lib/netstandard2.1/JetDatabaseWriter.dll' = 'Synthetic DLL'
             'lib/netstandard2.1/JetDatabaseWriter.xml' = 'Synthetic documentation'
         }
-        foreach ($file in 'README.md', 'LICENSE', 'LICENSE-APACHE-2.0.txt', 'THIRD-PARTY-NOTICES.md') { $entries[$file] = [IO.File]::ReadAllText((Join-Path $repository $file)) }
+        foreach ($file in 'README.md', 'LICENSE', 'licenses/LICENSE-APACHE-2.0.txt', 'THIRD-PARTY-NOTICES.md') { $entries[$file] = [IO.File]::ReadAllText((Join-Path $repository $file)) }
         foreach ($name in $entries.Keys) {
             if ($name -eq $Missing) { continue }
             $writer = [IO.StreamWriter]::new($archive.CreateEntry($name).Open())
@@ -44,7 +44,7 @@ function New-Package([string] $Name, [string] $Missing = '', [string] $Stale = '
             'lib/net10.0/JetDatabaseWriter.EntityFrameworkCore.dll' = 'Synthetic DLL'
             'lib/net10.0/JetDatabaseWriter.EntityFrameworkCore.xml' = 'Synthetic documentation'
         }
-        foreach ($file in 'README.md', 'LICENSE', 'LICENSE-APACHE-2.0.txt', 'THIRD-PARTY-NOTICES.md') { $efEntries[$file] = [IO.File]::ReadAllText((Join-Path $repository $file)) }
+        foreach ($file in 'README.md', 'LICENSE', 'licenses/LICENSE-APACHE-2.0.txt', 'THIRD-PARTY-NOTICES.md') { $efEntries[$file] = [IO.File]::ReadAllText((Join-Path $repository $file)) }
         foreach ($name in $efEntries.Keys) {
             if ($name -eq $Missing) { continue }
             $writer = [IO.StreamWriter]::new($efArchive.CreateEntry($name).Open())
@@ -120,14 +120,14 @@ foreach ($case in @(@{ Index = 3; Runtime = '11.0.0-rc.3.26522.148' }, @{ Index 
     Assert-Check ($option -ge 0 -and $arguments[$option + 1] -ceq $case.Runtime) 'Package consumers must pin the intended installed runtime, including prereleases.'
 }
 
-foreach ($missing in 'LICENSE', 'LICENSE-APACHE-2.0.txt', 'lib/netstandard2.1/JetDatabaseWriter.dll', 'lib/net11.0/JetDatabaseWriter.xml') {
+foreach ($missing in 'LICENSE', 'licenses/LICENSE-APACHE-2.0.txt', 'lib/netstandard2.1/JetDatabaseWriter.dll', 'lib/net11.0/JetDatabaseWriter.xml') {
     $name = 'missing-' + [IO.Path]::GetFileName($missing)
     $scenario = Invoke-Scenario $name (New-Package $name $missing)
-    Assert-Check ($scenario.Error.Contains('missing ' + $missing.Split('/')[-1]) -or $scenario.Error.Contains('missing the ')) "Missing $missing was accepted: $($scenario.Error)"
+    Assert-Check ($scenario.Error.Contains('missing ' + $missing) -or $scenario.Error.Contains('missing the ')) "Missing $missing was accepted: $($scenario.Error)"
     Assert-Check ($packageTestContext.Calls.Count -eq 0) 'A malformed archive reached the consumer commands.'
 }
-$stale = Invoke-Scenario 'stale' (New-Package 'stale' '' 'LICENSE-APACHE-2.0.txt')
-Assert-Check ($stale.Error.Contains('stale or incomplete LICENSE-APACHE-2.0.txt')) 'An incomplete Apache license was accepted.'
+$stale = Invoke-Scenario 'stale' (New-Package 'stale' '' 'licenses/LICENSE-APACHE-2.0.txt')
+Assert-Check ($stale.Error.Contains('stale or incomplete licenses/LICENSE-APACHE-2.0.txt')) 'An incomplete Apache license was accepted.'
 $staleProjectUrl = Invoke-Scenario 'stale-project-url' (New-Package 'stale-project-url' '' 'JetDatabaseWriter.nuspec')
 Assert-Check ($staleProjectUrl.Error.Contains('Invalid shipping package project URL.')) 'A stale package project URL was accepted.'
 Assert-Check ($packageTestContext.Calls.Count -eq 0) 'A stale package project URL reached the consumer commands.'

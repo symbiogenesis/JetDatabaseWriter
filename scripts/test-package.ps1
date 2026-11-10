@@ -15,7 +15,7 @@ if ($efPackages.Count -ne 1) { throw 'Expected exactly one JetDatabaseWriter.Ent
 $package = $packages[0]
 $archive = [IO.Compression.ZipFile]::OpenRead($package.FullName)
 try {
-    foreach ($name in 'README.md', 'LICENSE', 'LICENSE-APACHE-2.0.txt', 'THIRD-PARTY-NOTICES.md') {
+    foreach ($name in 'README.md', 'LICENSE', 'licenses/LICENSE-APACHE-2.0.txt', 'THIRD-PARTY-NOTICES.md') {
         $entry = $archive.GetEntry($name)
         if ($null -eq $entry) { throw "The shipping package is missing $name." }
         $reader = [IO.StreamReader]::new($entry.Open())
@@ -39,7 +39,7 @@ finally { $archive.Dispose() }
 $efPackage = $efPackages[0]
 $efArchive = [IO.Compression.ZipFile]::OpenRead($efPackage.FullName)
 try {
-    foreach ($name in 'README.md', 'LICENSE', 'LICENSE-APACHE-2.0.txt', 'THIRD-PARTY-NOTICES.md') {
+    foreach ($name in 'README.md', 'LICENSE', 'licenses/LICENSE-APACHE-2.0.txt', 'THIRD-PARTY-NOTICES.md') {
         $entry = $efArchive.GetEntry($name)
         if ($null -eq $entry) { throw "The shipping EF Core package is missing $name." }
         $reader = [IO.StreamReader]::new($entry.Open())

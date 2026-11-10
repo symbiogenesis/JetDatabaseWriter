@@ -10,16 +10,17 @@ foreach ($projectPath in 'src/JetDatabaseWriter/JetDatabaseWriter.csproj', 'src/
     if ($project.Project.PropertyGroup.PackageProjectUrl -cne 'https://symbiogenesis.github.io/JetDatabaseWriter/') {
         throw "The NuGet package project URL in $projectPath must be https://symbiogenesis.github.io/JetDatabaseWriter/."
     }
-    foreach ($name in 'LICENSE', 'LICENSE-APACHE-2.0.txt', 'THIRD-PARTY-NOTICES.md') {
-        $item = @($project.SelectNodes('/Project/ItemGroup/None') | Where-Object { $_.Include -eq ('..\..\' + $name) })
-        if ($item.Count -ne 1 -or $item[0].Pack -ne 'true' -or $item[0].PackagePath -ne '\') {
-            throw "The NuGet package in $projectPath must include the complete $name at its root."
+    foreach ($name in 'LICENSE', 'licenses/LICENSE-APACHE-2.0.txt', 'THIRD-PARTY-NOTICES.md') {
+        $item = @($project.SelectNodes('/Project/ItemGroup/None') | Where-Object { $_.Include.Replace('\', '/') -eq ('../../' + $name) })
+        $packagePath = if ($name.StartsWith('licenses/', [StringComparison]::Ordinal)) { 'licenses/' } else { '/' }
+        if ($item.Count -ne 1 -or $item[0].Pack -ne 'true' -or $item[0].PackagePath.Replace('\', '/') -ne $packagePath) {
+            throw "The NuGet package in $projectPath must include the complete $name."
         }
         if (-not (Test-Path -LiteralPath (Join-Path $repository $name) -PathType Leaf)) { throw "Missing shipping license: $name" }
     }
 }
 $project = [xml][IO.File]::ReadAllText((Join-Path $repository 'src/JetDatabaseWriter/JetDatabaseWriter.csproj'))
-$apache = [IO.File]::ReadAllText((Join-Path $repository 'LICENSE-APACHE-2.0.txt'))
+$apache = [IO.File]::ReadAllText((Join-Path $repository 'licenses/LICENSE-APACHE-2.0.txt'))
 foreach ($section in 'TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION', '4. Redistribution.', '9. Accepting Warranty or Additional Liability.', 'END OF TERMS AND CONDITIONS') {
     if (-not $apache.Contains($section)) { throw "The Apache license is incomplete: missing $section" }
 }

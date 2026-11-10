@@ -1,5 +1,7 @@
 # Third-Party Notices
 
+JetDatabaseWriter is licensed under the MIT License in [LICENSE](LICENSE).
+
 JetDatabaseWriter incorporates material from the following third-party sources.
 It also documents reference-only projects used to guide interoperability and
 coverage work where no source code, binaries, or fixtures were copied.
@@ -75,7 +77,8 @@ translated and adapted from Jackcess's `Expressionator` and `Default*Functions`
 classes, with storage-specific behavior implemented locally for this library.
 
 The complete Apache License, Version 2.0 is included in
-`LICENSE-APACHE-2.0.txt` in the repository and NuGet package.
+[licenses/LICENSE-APACHE-2.0.txt](licenses/LICENSE-APACHE-2.0.txt) in the
+repository and NuGet package.
 
 ```
 Copyright (c) 2008 Health Market Science, Inc.

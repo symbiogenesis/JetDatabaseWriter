@@ -40,7 +40,7 @@
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
     <None Include="..\..\THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="\" />
     <None Include="..\..\LICENSE" Pack="true" PackagePath="\" />
-    <None Include="..\..\LICENSE-APACHE-2.0.txt" Pack="true" PackagePath="\" />
+    <None Include="..\..\licenses\LICENSE-APACHE-2.0.txt" Pack="true" PackagePath="licenses/" />
   </ItemGroup>
   <!--
     Per-codepoint General Legacy text-index sort-key tables, sourced verbatim from

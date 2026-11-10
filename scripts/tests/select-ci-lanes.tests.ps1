@@ -22,7 +22,7 @@ Assert-Lanes 'release evidence admission changes proof trust' @('scripts/assert-
 Assert-Lanes 'readme only needs package validation' @('README.md') $false $false $true
 Assert-Lanes 'packaged notices need package validation' @('THIRD-PARTY-NOTICES.md') $false $false $true
 Assert-Lanes 'packaged project license needs package validation' @('LICENSE') $false $false $true
-Assert-Lanes 'packaged Apache license needs package validation' @('LICENSE-APACHE-2.0.txt') $false $false $true
+Assert-Lanes 'packaged third-party license needs package validation' @('licenses/LICENSE-APACHE-2.0.txt') $false $false $true
 Assert-Lanes 'ordinary prose and instructions' @('AGENTS.md', 'PLAN.md', 'docs/operations.md', '.github/ISSUE_TEMPLATE/bug.md') $false $false
 Assert-Lanes 'fixture provenance prose' @('tests/JetDatabaseWriter.Tests/Databases/Golden/README.md') $false $false
 Assert-Lanes 'project prose' @('src/JetDatabaseWriter/README.md', 'tools/JetDatabaseWriter.FormatProbe/README.md', 'benchmarks/README.md') $false $false

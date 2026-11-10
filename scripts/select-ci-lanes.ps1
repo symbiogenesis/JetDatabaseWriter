@@ -14,7 +14,7 @@ function Get-CiLanes([string[]] $Paths) {
             $path -cmatch '^scripts/tests/(?:verify-proofs|proof-review|formal-workflow|select-ci-lanes|select-specialized-validation|run-hosted-fuzz|specialized-workflow-trigger|fuzz-workflow|portability-workflow|release-readiness|write-release-evidence|release-evidence-workflow|ci-matrix|ci-workflow|ci-tools|test-scripts)\.tests\.ps1$' -or
             $path -cmatch '^docs/design/(?:formal-verification|proof-trust-review|recovery-storage-contract|verification-[^/]+)\.md$') {
             $formal = $true
-        } elseif ($path -cin 'README.md', 'THIRD-PARTY-NOTICES.md', 'LICENSE', 'LICENSE-APACHE-2.0.txt') {
+        } elseif ($path -cin 'README.md', 'THIRD-PARTY-NOTICES.md', 'LICENSE', 'licenses/LICENSE-APACHE-2.0.txt') {
             # These documents ship in NuGet, but cannot change test binaries.
             $package = $true
         } elseif ($path -cmatch '^(?:(?:docs|src|tests|tools|benchmarks|Databases|\.github)/[^"\\]+\.md|[^/"\\]+\.md|LICENSE(?:\.txt)?)$') {
