@@ -41,6 +41,25 @@ It adds no full-result buffer; blocking operators retain their own buffering
 requirements. Synchronous scalar terminals use the same asynchronous execution
 path and wait for their single result.
 
+Provider diagnostics emit Debug events in EF's query category. `JetEventId.QueryExecution`
+describes the buffer, streaming, aggregate or entity execution strategy and its
+reason. `JetEventId.TableRead` reports the actual admitted index seek/order or scan
+path, including a required CLR sort when native index order is unavailable or
+not equivalent. Aggregate visitors and navigation/join key loads also report
+their actual index or scan choice.
+
+`JetEventId.TableReadCompleted` measures streamed table enumerations, including
+those collected into a buffer. Its `JetQueryEventData` payload reports candidate
+rows, returned buffers, elapsed time and whether the table ended or reached its
+requested limit. Counts precede outer LINQ filtering and shaping; elapsed time
+includes consumer waits. Early disposal and cancellation do not claim completion.
+Aggregate visitors and specialized key loads report their access path without
+these enumeration metrics. EF `LogTo`, `ILogger`, diagnostic listeners and
+`ConfigureWarnings` control these events. Query text, parameters and row values
+are omitted even when sensitive logging is enabled. Disabled events do not
+allocate payloads; counters and timing run only when completion logging or a
+listener requests them, with no per-row diagnostic allocations.
+
 Global query filters bind context references to the context executing the query,
 including cached and compiled queries. Index candidates and residual predicates
 use the same bound values. Named `IgnoreQueryFilters` exclusions disable only

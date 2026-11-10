@@ -9,6 +9,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.EntityFrameworkCore.Diagnostics;
 using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
 using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore;
@@ -170,6 +171,7 @@ internal static partial class JetAsyncQueryExecutor
         return queryContext =>
         {
             queryContext.Parameters[QueryFilterContextParameterName] = queryContext.Context;
+            JetQueryDiagnostics.QueryExecution(queryContext.QueryLogger, queryContext.Context, plan.ExecutionPath, plan.ExecutionReason);
             return executor(queryContext);
         };
     }
@@ -363,6 +365,7 @@ internal static partial class JetAsyncQueryExecutor
         Func<QueryContext, JetExecutionMaterializedState, IEnumerable<TElement>> compiledQuery =
             CompileSequenceDelegate<TElement>(query, plan, model);
         plan.RequiresMaterializers = true;
+        plan.ExecutionReason = GetMaterializedFallbackReason(plan);
         return queryContext => ExecuteSequenceAsync(queryContext, plan, compiledQuery);
     }
 
@@ -373,28 +376,59 @@ internal static partial class JetAsyncQueryExecutor
     {
         if (TryBuildExecuteDeleteOrUpdateExecutor<TScalar>(query, plan, model, out Func<QueryContext, Task<TScalar>>? bulkExecutor))
         {
+            plan.ExecutionPath = "BulkMutation";
+            plan.ExecutionReason = "SetBasedMutation";
             return bulkExecutor!;
         }
 
         if (TryBuildStreamingAggregate<TScalar>(query, plan, model, out Func<QueryContext, Task<TScalar>>? aggregateExecutor))
         {
+            plan.ExecutionPath = "StreamingAggregate";
+            plan.ExecutionReason = "AggregateCanVisitBuffers";
             return aggregateExecutor!;
         }
 
         if (TryBuildEntityFreeAggregateExecutor<TScalar>(query, plan, out Func<QueryContext, Task<TScalar>>? fastExecutor))
         {
+            plan.ExecutionPath = "BufferAggregate";
+            plan.ExecutionReason = "AggregateDoesNotRequireEntities";
             return fastExecutor!;
         }
 
         if (TryBuildBufferScalar<TScalar>(query, plan, model, out Func<QueryContext, Task<TScalar>>? bufferExecutor))
         {
+            plan.ExecutionPath = "BufferedBuffers";
+            plan.ExecutionReason = "ScalarRequiresBufferedEvaluation";
             return bufferExecutor!;
         }
 
         Func<QueryContext, JetExecutionMaterializedState, TScalar> compiledQuery =
             CompileScalarDelegate<TScalar>(query, plan, model);
         plan.RequiresMaterializers = true;
+        plan.ExecutionReason = GetMaterializedFallbackReason(plan);
         return queryContext => ExecuteScalarAsync(queryContext, plan, compiledQuery);
+    }
+
+    private static string GetMaterializedFallbackReason(JetQueryPlan plan)
+    {
+        if (plan.IncludeChains.Count > 0)
+        {
+            return "IncludesRequireEntityGraph";
+        }
+
+        if (plan.QueryReferencedNavigations.Count > 0)
+        {
+            return "NavigationRequiresEntityGraph";
+        }
+
+        if (plan.RootTables.Any(static table => table.RootEntityType.GetDerivedTypes().Any()))
+        {
+            return "HierarchyRequiresEntityEvaluation";
+        }
+
+        return plan.RootTables.Any(static table => table.RootEntityType.GetNavigations().Any(static navigation => navigation.TargetEntityType.IsOwned()))
+            ? "OwnershipRequiresEntityGraph"
+            : "BufferTranslationUnavailable";
     }
 
     private static bool TryBuildExecuteDeleteOrUpdateExecutor<TScalar>(
@@ -3105,6 +3139,10 @@ internal static partial class JetAsyncQueryExecutor
         public IReadOnlySet<string> IgnoredQueryFilterNames { get; } = ignoredQueryFilterNames;
 
         public bool RequiresMaterializers { get; set; }
+
+        public string ExecutionPath { get; set; } = "MaterializedEntities";
+
+        public string ExecutionReason { get; set; } = "RequiresEntityEvaluation";
 
         public void InitializeMaterializers(
             IQueryCompilationContextFactory contextFactory,

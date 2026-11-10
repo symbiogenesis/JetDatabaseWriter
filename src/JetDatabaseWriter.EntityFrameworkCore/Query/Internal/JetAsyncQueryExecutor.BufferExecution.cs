@@ -43,6 +43,8 @@ internal static partial class JetAsyncQueryExecutor
                 if (typeof(IAsyncEnumerable<TElement>).IsAssignableFrom(streamed.Type))
                 {
                     NarrowBufferProperties(plan, streamingRewriter.ReferencedProperties);
+                    plan.ExecutionPath = "StreamingBuffers";
+                    plan.ExecutionReason = "SingleTableBufferTranslation";
                     executor = Expression.Lambda<Func<QueryContext, IAsyncEnumerable<TElement>>>(streamed, context).Compile();
                     return true;
                 }
@@ -51,6 +53,8 @@ internal static partial class JetAsyncQueryExecutor
                 {
                     Func<QueryContext, IAsyncEnumerable<ValueBuffer>> source = Expression.Lambda<Func<QueryContext, IAsyncEnumerable<ValueBuffer>>>(streamed, context).Compile();
                     plan.RequiresMaterializers = true;
+                    plan.ExecutionPath = "StreamingEntities";
+                    plan.ExecutionReason = "SingleTableEntityShaping";
                     executor = qc => MaterializeStream<TElement>(source(qc), qc, plan, entityType);
                     return true;
                 }
@@ -83,6 +87,8 @@ internal static partial class JetAsyncQueryExecutor
             Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TElement>> evaluate = Expression.Lambda<Func<QueryContext, Dictionary<int, IReadOnlyList<ValueBuffer>>, IEnumerable<TElement>>>(
                 rewritten, context, roots).Compile();
             NarrowBufferProperties(plan, rewriter.ReferencedProperties);
+            plan.ExecutionPath = "BufferedBuffers";
+            plan.ExecutionReason = "BlockingOperatorOrMultipleRoots";
             executor = qc => ExecuteBufferSequence(qc, plan, evaluate);
             return true;
         }

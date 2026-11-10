@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.EntityFrameworkCore.Storage.Internal;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
@@ -10,12 +11,15 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.EntityFrameworkCore.Diagnostics;
 using JetDatabaseWriter.EntityFrameworkCore.Infrastructure.Internal;
 using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
 using JetDatabaseWriter.EntityFrameworkCore.Query.Internal;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tables;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -37,6 +41,8 @@ public sealed class JetClientConnection : IJetClientConnection
 #pragma warning restore CA2213
     private readonly List<(string Name, JetTransaction Scope)> savepoints = [];
     private readonly JetOptionsExtension optionsExtension;
+    private readonly IDiagnosticsLogger<DbLoggerCategory.Query>? queryLogger;
+    private readonly ICurrentDbContext? currentContext;
     private Stream? resolvedStream;
     private AccessReader? activeReader;
     private AccessWriter? cachedWriter;
@@ -48,10 +54,17 @@ public sealed class JetClientConnection : IJetClientConnection
     /// Initializes a new instance of the <see cref="JetClientConnection"/> class.
     /// </summary>
     /// <param name="options">The context options containing <see cref="JetOptionsExtension"/>.</param>
-    public JetClientConnection(IDbContextOptions options)
+    /// <param name="queryLogger">The EF Core query diagnostics logger, when constructed by EF Core.</param>
+    /// <param name="currentContext">The current context for diagnostic events, when constructed by EF Core.</param>
+    public JetClientConnection(
+        IDbContextOptions options,
+        IDiagnosticsLogger<DbLoggerCategory.Query>? queryLogger = null,
+        ICurrentDbContext? currentContext = null)
     {
         ArgumentNullException.ThrowIfNull(options);
 
+        this.queryLogger = queryLogger;
+        this.currentContext = currentContext;
         this.optionsExtension = options.FindExtension<JetOptionsExtension>()
             ?? throw new InvalidOperationException("JetOptionsExtension was not found in IDbContextOptions.");
         if (!string.IsNullOrWhiteSpace(this.optionsExtension.DatabasePath))
@@ -532,9 +545,11 @@ public sealed class JetClientConnection : IJetClientConnection
                 if (seekConditions is { Count: > 0 }
                     && await JetIndexSeekPlanner.TryReadFromActiveWriterIndexAsync(writer, resolved, seekConditions, orderedProperties: null, parameters, wanted, (row, _) => Visit(row), cancellationToken).ConfigureAwait(false))
                 {
+                    JetQueryDiagnostics.TableRead(this.queryLogger, this.currentContext?.Context, tableName, "IndexSeek", "AdmittedPredicateIndex");
                     return;
                 }
 
+                JetQueryDiagnostics.TableRead(this.queryLogger, this.currentContext?.Context, tableName, "Scan", seekConditions is { Count: > 0 } ? "NoAdmissibleIndex" : "NoPredicateOrOrdering");
                 bool wrapHyperlinks = resolved.Definition.HasHyperlinkColumns && TableReader.HasWantedHyperlinkColumn(resolved.Definition.ClrTypes, wanted);
                 await writer.Services.Snapshots.ForEachTypedRowAsync(
                     resolved.Entry.TDefPage,
@@ -563,14 +578,18 @@ public sealed class JetClientConnection : IJetClientConnection
                 {
                     columnMap = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
                     wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties);
-                    rows = (seekConditions is { Count: > 0 }
+                    IAsyncEnumerable<object[]>? indexRows = seekConditions is { Count: > 0 }
                         ? await JetIndexSeekPlanner.TryBuildIndexQueryAsync(reader, resolved, seekConditions, parameters, wanted, cancellationToken).ConfigureAwait(false)
-                        : null) ?? reader.Services.Tables.Rows(tableName, wanted, progress: null, cancellationToken);
+                        : null;
+                    rows = indexRows ?? reader.Services.Tables.Rows(tableName, wanted, progress: null, cancellationToken);
+                    string scanReason = seekConditions is { Count: > 0 } ? "NoAdmissibleIndex" : "NoPredicateOrOrdering";
+                    JetQueryDiagnostics.TableRead(this.queryLogger, this.currentContext?.Context, tableName, indexRows is null ? "Scan" : "IndexSeek", indexRows is not null ? "AdmittedPredicateIndex" : scanReason);
                 }
                 else
                 {
                     columnMap = BuildPropertyColumnMap(properties, await reader.GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false));
                     rows = reader.Rows(tableName, progress: null, cancellationToken);
+                    JetQueryDiagnostics.TableRead(this.queryLogger, this.currentContext?.Context, tableName, "Scan", "LocalIndexUnavailable");
                 }
 
                 if (lifecycleHeld && this.DatabasePath is not null)
@@ -647,8 +666,8 @@ public sealed class JetClientConnection : IJetClientConnection
             }
 
             return writer is not null
-                ? await ReadByKeysFromActiveWriterAsync(writer, tableName, rootType, properties, keyProperties, keyTuples, requiredProperties, cancellationToken).ConfigureAwait(false)
-                : await ReadByKeysFromReaderAsync(reader!, tableName, rootType, properties, keyProperties, keyTuples, requiredProperties, cancellationToken).ConfigureAwait(false);
+                ? await ReadByKeysFromActiveWriterAsync(writer, tableName, rootType, properties, keyProperties, keyTuples, requiredProperties, this.queryLogger, this.currentContext?.Context, cancellationToken).ConfigureAwait(false)
+                : await ReadByKeysFromReaderAsync(reader!, tableName, rootType, properties, keyProperties, keyTuples, requiredProperties, this.queryLogger, this.currentContext?.Context, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -879,6 +898,8 @@ public sealed class JetClientConnection : IJetClientConnection
         IReadOnlyList<IProperty> keyProperties,
         IReadOnlyList<object?[]> keyTuples,
         IReadOnlySet<IProperty>? requiredProperties,
+        IDiagnosticsLogger<DbLoggerCategory.Query>? logger,
+        DbContext? context,
         CancellationToken cancellationToken)
     {
         ResolvedTable? resolved = await reader.Services.Tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -903,6 +924,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 cancellationToken).ConfigureAwait(false);
             if (indexedRows is not null)
             {
+                JetQueryDiagnostics.TableRead(logger, context, tableName, "IndexSeek", "AdmittedKeyIndex");
                 List<ValueBuffer> indexedBuffers = [];
                 foreach (object[] row in indexedRows)
                 {
@@ -915,6 +937,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 return indexedBuffers;
             }
 
+            JetQueryDiagnostics.TableRead(logger, context, tableName, "Scan", "NoAdmissibleKeyIndex");
             HashSet<KeyTupleValue> targetSet = BuildKeyTupleSet(keyTuples);
             List<ValueBuffer> scanResults = [];
             await foreach (object[] row in reader.Services.Tables.Rows(tableName, wantedColumns, progress: null, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
@@ -930,6 +953,7 @@ public sealed class JetClientConnection : IJetClientConnection
             return scanResults;
         }
 
+        JetQueryDiagnostics.TableRead(logger, context, tableName, "Scan", "LocalIndexUnavailable");
         IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
         int?[] fallbackColumnMap = BuildPropertyColumnMap(properties, columns);
         ValueBufferFactory fallbackFactory = new(rootType, properties, fallbackColumnMap, wantedColumns: null, reuseBuffer: false);
@@ -1046,6 +1070,8 @@ public sealed class JetClientConnection : IJetClientConnection
         IReadOnlyList<IProperty> keyProperties,
         IReadOnlyList<object?[]> keyTuples,
         IReadOnlySet<IProperty>? requiredProperties,
+        IDiagnosticsLogger<DbLoggerCategory.Query>? logger,
+        DbContext? context,
         CancellationToken cancellationToken)
     {
         ResolvedTable resolved = await writer.Services.Catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -1079,9 +1105,11 @@ public sealed class JetClientConnection : IJetClientConnection
             cancellationToken).ConfigureAwait(false);
         if (indexedUsed)
         {
+            JetQueryDiagnostics.TableRead(logger, context, tableName, "IndexSeek", "AdmittedKeyIndex");
             return indexedBuffers;
         }
 
+        JetQueryDiagnostics.TableRead(logger, context, tableName, "Scan", "NoAdmissibleKeyIndex");
         bool wrapScannedHyperlinks = resolved.Definition.HasHyperlinkColumns
             && TableReader.HasWantedHyperlinkColumn(resolved.Definition.ClrTypes, wantedColumns);
         HashSet<KeyTupleValue> targetSet = BuildKeyTupleSet(keyTuples);
@@ -1235,10 +1263,21 @@ public sealed class JetClientConnection : IJetClientConnection
         }
 
         bool lifecycleHeld = ownsGate;
+        bool measure = false;
+        long started = 0;
+        long rowsRead = 0;
+        long rowsReturned = 0;
+        bool completed = false;
+        string? diagnosticTable = null;
+        string readPath = "Scan";
+        string reason = seekConditions is { Count: > 0 } ? "NoAdmissibleIndex" : "NoPredicateOrOrdering";
         try
         {
+            measure = JetQueryDiagnostics.MeasuresTableRead(this.queryLogger);
+            started = measure ? Stopwatch.GetTimestamp() : 0;
             IEntityType rootType = entityType.GetRootType();
             string tableName = JetEntityTypeMetadata.GetTableName(rootType);
+            diagnosticTable = tableName;
             IReadOnlyList<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(rootType);
             AccessWriter? writer = this.ActiveWriter ?? this.cachedWriter;
             ResolvedTable? resolved;
@@ -1265,6 +1304,11 @@ public sealed class JetClientConnection : IJetClientConnection
                     writer, resolved, seekConditions, orderedProperties, parameters, wanted, cancellationToken).ConfigureAwait(false);
                 rows = indexQuery?.Rows ?? StreamWriterRowsAsync(writer, resolved, wanted, cancellationToken);
                 ordered = indexQuery?.Ordered ?? false;
+                if (indexQuery is not null)
+                {
+                    readPath = ordered ? "IndexOrder" : "IndexSeek";
+                    reason = ordered ? "EquivalentNativeIndexOrder" : "AdmittedPredicateIndex";
+                }
             }
             else
             {
@@ -1287,14 +1331,27 @@ public sealed class JetClientConnection : IJetClientConnection
                     }
 
                     rows = indexRows ?? reader.Services.Tables.Rows(tableName, wanted, progress: null, cancellationToken);
+                    if (indexRows is not null)
+                    {
+                        readPath = ordered ? "IndexOrder" : "IndexSeek";
+                        reason = ordered ? "EquivalentNativeIndexOrder" : "AdmittedPredicateIndex";
+                    }
                 }
                 else
                 {
                     columnMap = BuildPropertyColumnMap(properties, await reader.GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false));
                     rows = reader.Rows(tableName, progress: null, cancellationToken);
+                    reason = "LocalIndexUnavailable";
                 }
             }
 
+            if (orderedProperties is { Count: > 0 } && !ordered)
+            {
+                readPath = readPath == "IndexSeek" ? "IndexSeekSort" : "ScanSort";
+                reason = "RequestedOrderRequiresClrSort";
+            }
+
+            JetQueryDiagnostics.TableRead(this.queryLogger, this.currentContext?.Context, tableName, readPath, reason);
             if (lifecycleHeld && this.DatabasePath is not null)
             {
                 this.lifecycleGate.Release();
@@ -1307,6 +1364,11 @@ public sealed class JetClientConnection : IJetClientConnection
             int emitted = 0;
             await foreach (object?[] row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
+                if (measure)
+                {
+                    rowsRead++;
+                }
+
                 if (!factory.TryCreate(row, out ValueBuffer buffer) || (rowFilter is not null && !rowFilter(buffer)))
                 {
                     continue;
@@ -1318,9 +1380,16 @@ public sealed class JetClientConnection : IJetClientConnection
                     continue;
                 }
 
-                yield return buffer;
                 emitted++;
-                if (limit is int maximum && emitted >= maximum)
+                if (measure)
+                {
+                    rowsReturned++;
+                }
+
+                bool reachedLimit = limit is int maximum && emitted >= maximum;
+                completed = reachedLimit;
+                yield return buffer;
+                if (reachedLimit)
                 {
                     yield break;
                 }
@@ -1331,13 +1400,23 @@ public sealed class JetClientConnection : IJetClientConnection
                 foreach (ValueBuffer buffer in JetBufferOrdering.Apply(sortBuffer, orderedProperties!))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    emitted++;
+                    if (measure)
+                    {
+                        rowsReturned++;
+                    }
+
+                    bool reachedLimit = maxRows is int maximum && emitted >= maximum;
+                    completed = reachedLimit;
                     yield return buffer;
-                    if (maxRows is int maximum && ++emitted >= maximum)
+                    if (reachedLimit)
                     {
                         yield break;
                     }
                 }
             }
+
+            completed = true;
         }
         finally
         {
@@ -1349,6 +1428,11 @@ public sealed class JetClientConnection : IJetClientConnection
             if (ownsGate)
             {
                 this.connectionGate.Release();
+            }
+
+            if (measure && diagnosticTable is not null)
+            {
+                JetQueryDiagnostics.TableReadCompleted(this.queryLogger!, this.currentContext?.Context, diagnosticTable, readPath, reason, rowsRead, rowsReturned, Stopwatch.GetElapsedTime(started), completed);
             }
         }
     }
