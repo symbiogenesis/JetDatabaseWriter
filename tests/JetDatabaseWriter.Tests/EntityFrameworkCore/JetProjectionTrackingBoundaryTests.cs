@@ -70,6 +70,28 @@ public sealed class JetProjectionTrackingBoundaryTests
         Assert.Same(tracked, Assert.Single(results).Owner);
     }
 
+    [Fact]
+    public async Task OuterComplexPredicateAndOrdering_UseStoredScalarValues()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        await using BoundaryContext context = await CreateContextAsync(stream);
+        context.Add(new ComplexOwner { Id = 2, Left = new ComplexData { Code = "second", Number = 3 } });
+        Assert.Equal(1, await context.SaveChangesAsync(ct));
+        context.ChangeTracker.Clear();
+        ComplexOwner tracked = await context.Set<ComplexOwner>().SingleAsync(x => x.Id == 1, ct);
+        tracked.Left.Code = "local";
+        tracked.Left.Number = -100;
+        IQueryable<ComplexEnvelope> source = context.Set<ComplexOwner>().Select(x => new ComplexEnvelope(x));
+        ComplexEnvelope[] matches = await source.Where(x => x.Entity.Left.Code == "left" && x.Entity.Left.Number == 17)
+            .OrderBy(x => x.Entity.Left.Number).ToArrayAsync(ct);
+        Assert.Same(tracked, Assert.Single(matches).Entity);
+        ComplexEnvelope[] ordered = await source.OrderBy(x => x.Entity.Left.Number).ToArrayAsync(ct);
+        Assert.Equal([2, 1], ordered.Select(x => x.Entity.Id));
+        ComplexEnvelope dynamicPropertyMatch = await source.SingleAsync(x => EF.Property<int>(x.Entity.Left, "Number") == 17, ct);
+        Assert.Same(tracked, dynamicPropertyMatch.Entity);
+    }
+
     private static async Task<BoundaryContext> CreateContextAsync(MemoryStream stream)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;

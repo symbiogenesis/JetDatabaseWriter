@@ -4676,6 +4676,15 @@ internal static partial class JetAsyncQueryExecutor
                 && node.Method.Name == nameof(EF.Property)
                 && node.Arguments.Count == 2)
             {
+                if (this.TryResolveCandidateProperty(node, out Expression entityReceiver, out IProperty? scalarProperty))
+                {
+                    return Expression.Call(
+                        ReadCandidatePropertyMethod.MakeGenericMethod(node.Type),
+                        Expression.Convert(this.Visit(entityReceiver), typeof(object)),
+                        Expression.Constant(scalarProperty, typeof(IProperty)),
+                        stateExpression);
+                }
+
                 Expression target = this.Visit(node.Arguments[0]);
                 Expression propName = this.Visit(node.Arguments[1]);
                 MethodInfo readMethod = ReadEfPropertyMethod.MakeGenericMethod(node.Type);
@@ -4760,16 +4769,16 @@ internal static partial class JetAsyncQueryExecutor
         {
             if (node.Expression is not null)
             {
-                Expression visitedTarget = this.Visit(node.Expression);
-                if (model.FindEntityType(node.Expression.Type)?.FindProperty(node.Member) is { } property)
+                if (this.TryResolveCandidateProperty(node, out Expression entityReceiver, out IProperty? property))
                 {
                     return Expression.Call(
                         ReadCandidatePropertyMethod.MakeGenericMethod(node.Type),
-                        Expression.Convert(visitedTarget, typeof(object)),
+                        Expression.Convert(this.Visit(entityReceiver), typeof(object)),
                         Expression.Constant(property, typeof(IProperty)),
                         stateExpression);
                 }
 
+                Expression visitedTarget = this.Visit(node.Expression);
                 if (!visitedTarget.Type.IsValueType
                     && visitedTarget is not ParameterExpression
                     && this.IsNullSafeNavigableReceiverType(visitedTarget.Type))
@@ -4900,6 +4909,59 @@ internal static partial class JetAsyncQueryExecutor
                 && this.IsNullSafeNavigableReceiverType(member.Expression.Type);
         }
 
+        private bool TryResolveCandidateProperty(Expression access, out Expression entityReceiver, out IProperty? property)
+        {
+            Expression? receiver = access switch
+            {
+                MemberExpression member => member.Expression,
+                MethodCallExpression call when call.Method.DeclaringType == typeof(EF)
+                    && call.Method.Name == nameof(EF.Property)
+                    && call.Arguments.Count == 2 => call.Arguments[0],
+                _ => null,
+            };
+            Expression? candidate = receiver is null ? null : StripQuotesAndObjectConvert(receiver);
+            while (candidate is not null)
+            {
+                if (model.FindEntityType(candidate.Type) is { } entityType)
+                {
+                    ParameterExpression parameter = Expression.Parameter(candidate.Type, "entity");
+                    Expression adaptedReceiver = new ExpressionReplacer(candidate, parameter).Visit(receiver)!;
+                    ITypeBase? structuralType = ResolveStructuralTypeChain(entityType, model, parameter, adaptedReceiver);
+                    property = access switch
+                    {
+                        MemberExpression member => structuralType?.FindProperty(member.Member),
+                        MethodCallExpression { Arguments: [_, ConstantExpression { Value: string name }] } => structuralType?.FindProperty(name),
+                        _ => null,
+                    };
+                    if (property is not null)
+                    {
+                        Expression? entityAccess = receiver;
+                        while (entityAccess is not null)
+                        {
+                            Expression adaptedEntity = new ExpressionReplacer(candidate, parameter).Visit(entityAccess)!;
+                            if (ResolveStructuralTypeChain(entityType, model, parameter, adaptedEntity) == property.DeclaringType.ContainingEntityType)
+                            {
+                                entityReceiver = entityAccess;
+                                return true;
+                            }
+
+                            entityAccess = entityAccess is MemberExpression entityStep ? entityStep.Expression : null;
+                        }
+                    }
+
+                    break;
+                }
+
+                candidate = candidate is MemberExpression { Expression: not null } step
+                    ? StripQuotesAndObjectConvert(step.Expression)
+                    : null;
+            }
+
+            entityReceiver = access;
+            property = null;
+            return false;
+        }
+
         private Expression VisitAsLiftedNullable(Expression expr, Type liftedType)
         {
             if (expr is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary
@@ -4913,10 +4975,20 @@ internal static partial class JetAsyncQueryExecutor
             }
 
             if (expr is MemberExpression { Expression: not null and not ParameterExpression } member
-                && !member.Expression.Type.IsValueType
-                && this.IsNullSafeNavigableReceiverType(member.Expression.Type))
+                && this.TryResolveCandidateProperty(member, out Expression entityReceiver, out IProperty? property))
             {
-                Expression visitedTarget = this.Visit(member.Expression);
+                return Expression.Call(
+                    ReadCandidatePropertyMethod.MakeGenericMethod(liftedType),
+                    Expression.Convert(this.Visit(entityReceiver), typeof(object)),
+                    Expression.Constant(property, typeof(IProperty)),
+                    stateExpression);
+            }
+
+            if (expr is MemberExpression { Expression: not null and not ParameterExpression } nullableMember
+                && !nullableMember.Expression.Type.IsValueType
+                && this.IsNullSafeNavigableReceiverType(nullableMember.Expression.Type))
+            {
+                Expression visitedTarget = this.Visit(nullableMember.Expression);
                 ParameterExpression targetVar = Expression.Variable(visitedTarget.Type, "navTarget");
                 return Expression.Block(
                     [targetVar],
@@ -4924,7 +4996,7 @@ internal static partial class JetAsyncQueryExecutor
                     Expression.Condition(
                         Expression.ReferenceEqual(targetVar, Expression.Constant(null, visitedTarget.Type)),
                         Expression.Constant(null, liftedType),
-                        Expression.Convert(this.Visit(member.Update(targetVar)), liftedType)));
+                        Expression.Convert(this.Visit(nullableMember.Update(targetVar)), liftedType)));
             }
 
             return Expression.Convert(this.Visit(expr), liftedType);
