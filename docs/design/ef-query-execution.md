@@ -233,6 +233,13 @@ that conversion and the property's model-to-provider conversion before opening a
 database writer. Unsupported literal storage values refuse instead of silently
 losing their default. Explicit values and configured sentinels retain EF's
 generated-value behavior; storage conversion occurs after default selection.
+Physical default admission uses the row codecs for Numeric precision, Currency
+range and classic OLE date limits, and refuses required nulls and forbidden empty
+text. Accepted storage rounding is converted back to the generated model value,
+so tracked defaults match a later read, including nullable and converted values.
+Format-specific defaults are checked before opening a schema writer.
+Configured GUID literals and expressions take precedence over temporary GUID
+generation; explicit values honor each property's sentinel.
 Jet3 refuses explicit decimal facets that Currency cannot represent, unless
 Currency was explicitly selected. Inferred unsigned integer and duration mappings
 use Currency on Jet3 and enforce its value range when writing.

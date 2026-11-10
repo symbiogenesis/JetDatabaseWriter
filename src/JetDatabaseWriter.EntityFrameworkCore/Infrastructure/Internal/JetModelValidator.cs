@@ -31,6 +31,7 @@ public sealed class JetModelValidator(ModelValidatorDependencies dependencies) :
             foreach (IProperty property in entityType.GetFlattenedProperties())
             {
                 JetEntityTypeMetadata.ValidateDefaultValue(property);
+                JetLiteralDefaultValidator.Validate(property, DatabaseFormat.AceAccdb);
             }
 
             foreach (IComplexProperty complexProperty in entityType.GetFlattenedComplexProperties())

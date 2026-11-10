@@ -53,6 +53,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         this.model = designTimeModel.Model;
         this.options = options.FindExtension<CoreOptionsExtension>();
         this.currentContext = currentContext;
+        JetLiteralDefaultValidator.ValidateModel(this.model, connection.Format);
     }
 
     /// <inheritdoc/>

@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
 using JetDatabaseWriter.EntityFrameworkCore.Query.Internal;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
@@ -120,7 +121,7 @@ public sealed partial class JetDatabase : Database
                 if (entry.EntityState == EntityState.Added)
                 {
                     (RowValues rowValues, IProperty? autoIncrementProperty, List<(IUpdateEntry TargetEntry, IProperty Property)>? serverGeneratedProps, List<IUpdateEntry>? attachedOwnedEntries) =
-                        PrepareInsertRow(entry, tableSplitIndex);
+                        PrepareInsertRow(entry, tableSplitIndex, writer.Database.Format.Kind);
                     string tableName = JetEntityTypeMetadata.GetTableName(entry.EntityType);
 
                     if (autoIncrementProperty is null)
@@ -134,7 +135,7 @@ public sealed partial class JetDatabase : Database
                             && string.Equals(JetEntityTypeMetadata.GetTableName(primaryEntries[nextIdx].EntityType), tableName, StringComparison.OrdinalIgnoreCase))
                         {
                             (RowValues nextRow, IProperty? nextAutoInc, List<(IUpdateEntry TargetEntry, IProperty Property)>? nextServerProps, _) =
-                                PrepareInsertRow(primaryEntries[nextIdx], tableSplitIndex);
+                                PrepareInsertRow(primaryEntries[nextIdx], tableSplitIndex, writer.Database.Format.Kind);
                             if (nextAutoInc is not null)
                             {
                                 break;
@@ -178,7 +179,7 @@ public sealed partial class JetDatabase : Database
                             && !HasSelfReferencingForeignKey(primaryEntries[nextAutoIdx].EntityType))
                         {
                             (RowValues nextRow, IProperty? nextAutoInc, List<(IUpdateEntry TargetEntry, IProperty Property)>? nextServerProps, List<IUpdateEntry>? nextOwned) =
-                                PrepareInsertRow(primaryEntries[nextAutoIdx], tableSplitIndex);
+                                PrepareInsertRow(primaryEntries[nextAutoIdx], tableSplitIndex, writer.Database.Format.Kind);
                             if (nextAutoInc is null)
                             {
                                 break;
@@ -1127,7 +1128,8 @@ public sealed partial class JetDatabase : Database
 
     private static (RowValues Values, IProperty? AutoIncrementProperty, List<(IUpdateEntry TargetEntry, IProperty Property)>? ServerGeneratedProperties, List<IUpdateEntry>? AttachedOwnedEntries) PrepareInsertRow(
         IUpdateEntry entry,
-        TableSplitEntryIndex tableSplitIndex)
+        TableSplitEntryIndex tableSplitIndex,
+        DatabaseFormat format)
     {
         IEntityType entityType = entry.EntityType;
         RowValues rowValues = [];
@@ -1165,10 +1167,12 @@ public sealed partial class JetDatabase : Database
                     }
                 }
 
-                if (property.ValueGenerated == ValueGenerated.OnAdd && property.ClrType == typeof(Guid))
+                if (property.ValueGenerated == ValueGenerated.OnAdd && property.ClrType == typeof(Guid)
+                    && !(JetEntityTypeMetadata.TryGetDefaultValue(property, out object? literalGuidDefault) && literalGuidDefault is not null)
+                    && string.IsNullOrWhiteSpace(JetEntityTypeMetadata.GetDefaultValueExpression(property)))
                 {
                     object? currentGuid = JetEntityTypeMetadata.GetPropertyCurrentValue(currentEntry, property);
-                    if (currentEntry.HasTemporaryValue(property) || currentGuid is null || (currentGuid is Guid g && g == Guid.Empty))
+                    if (currentEntry.HasTemporaryValue(property) || IsClrDefaultOrSentinel(property, currentGuid))
                     {
                         var generatedGuid = Guid.NewGuid();
                         currentEntry.SetStoreGeneratedValue(property, generatedGuid);
@@ -1192,8 +1196,10 @@ public sealed partial class JetDatabase : Database
                     && defaultValue is not (null or DBNull)
                     && (currentEntry.HasTemporaryValue(property) || IsClrDefaultOrSentinel(property, modelValue)))
                 {
-                    currentEntry.SetStoreGeneratedValue(property, defaultValue);
-                    modelValue = defaultValue;
+                    object? providerDefault = JetLiteralDefaultValidator.NormalizeProviderValue(property, JetEntityTypeMetadata.ConvertToProvider(property, defaultValue), format);
+                    currentEntry.SetStoreGeneratedValue(property, JetEntityTypeMetadata.ConvertFromProvider(property, providerDefault));
+                    rowValues[columnName] = providerDefault;
+                    continue;
                 }
 
                 rowValues[columnName] = JetEntityTypeMetadata.ConvertToProvider(property, modelValue);

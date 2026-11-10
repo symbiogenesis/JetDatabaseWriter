@@ -18,6 +18,14 @@ public sealed class JetValueGeneratorSelector(ValueGeneratorSelectorDependencies
         ArgumentNullException.ThrowIfNull(typeBase);
         ArgumentNullException.ThrowIfNull(clrType);
 
+        if ((Nullable.GetUnderlyingType(clrType) ?? clrType) == typeof(Guid)
+            && property.ValueGenerated == ValueGenerated.OnAdd
+            && ((JetEntityTypeMetadata.TryGetDefaultValue(property, out object? literalDefault) && literalDefault is not null)
+                || !string.IsNullOrWhiteSpace(JetEntityTypeMetadata.GetDefaultValueExpression(property))))
+        {
+            return new TemporaryGuidValueGenerator();
+        }
+
         if (JetEntityTypeMetadata.IsAutoIncrementProperty(property))
         {
             Type unwrapped = Nullable.GetUnderlyingType(clrType) ?? clrType;
