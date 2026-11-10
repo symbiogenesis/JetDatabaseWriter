@@ -16,6 +16,7 @@ using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueDecoding;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -82,7 +83,7 @@ public sealed class JetDatabase : Database
             return 0;
         }
 
-        (List<IUpdateEntry> primaryEntries, TableSplitEntryIndex tableSplitIndex) = PartitionAndOrderEntries(entries);
+        (List<IUpdateEntry> primaryEntries, TableSplitEntryIndex tableSplitIndex) = PartitionAndOrderEntries(entries, this.Dependencies.UpdateAdapterFactory);
         if (primaryEntries.Count == 0 && tableSplitIndex.StandaloneUpdates.Count == 0)
         {
             return 0;
@@ -155,7 +156,7 @@ public sealed class JetDatabase : Database
                         {
                             if (itemServerProps is { Count: > 0 })
                             {
-                                await PopulateStoreGeneratedColumnsAsync(writer, tableName, itemEntry, itemServerProps, resolvedTableCache, cancellationToken).ConfigureAwait(false);
+                                await PopulateStoreGeneratedColumnsAsync(writer, tableName, itemEntry, itemServerProps, resolvedTableCache, tableSplitIndex, cancellationToken).ConfigureAwait(false);
                             }
                         }
 
@@ -191,6 +192,7 @@ public sealed class JetDatabase : Database
                         tableName,
                         autoIncBatch,
                         resolvedTableCache,
+                        tableSplitIndex,
                         cancellationToken).ConfigureAwait(false);
                     totalAffected += autoIncBatch.Count;
                     index = nextAutoIdx;
@@ -229,7 +231,7 @@ public sealed class JetDatabase : Database
                     if (HasSelfReferencingForeignKey(entry.EntityType))
                     {
                         // A set-based delete does not preserve the sorted dependency order.
-                        totalAffected += await ExecuteDeleteAsync(writer, entry, cancellationToken).ConfigureAwait(false);
+                        totalAffected += await ExecuteDeleteAsync(writer, entry, tableSplitIndex, cancellationToken).ConfigureAwait(false);
                         index++;
                         continue;
                     }
@@ -245,7 +247,7 @@ public sealed class JetDatabase : Database
 
                     if (nextIdx == index + 1)
                     {
-                        totalAffected += await ExecuteDeleteAsync(writer, entry, cancellationToken).ConfigureAwait(false);
+                        totalAffected += await ExecuteDeleteAsync(writer, entry, tableSplitIndex, cancellationToken).ConfigureAwait(false);
                         index++;
                         continue;
                     }
@@ -256,7 +258,7 @@ public sealed class JetDatabase : Database
                         batchDeletedEntries.Add(primaryEntries[i]);
                     }
 
-                    totalAffected += await ExecuteBatchDeleteAsync(writer, tableName, batchDeletedEntries, cancellationToken).ConfigureAwait(false);
+                    totalAffected += await ExecuteBatchDeleteAsync(writer, tableName, batchDeletedEntries, tableSplitIndex, cancellationToken).ConfigureAwait(false);
                     index = nextIdx;
                     continue;
                 }
@@ -287,6 +289,22 @@ public sealed class JetDatabase : Database
                 }
 
                 totalAffected += affected;
+                List<(IUpdateEntry TargetEntry, IProperty Property)>? calculatedTokens = CollectCalculatedConcurrencyProperties(
+                    tableSplitIndex,
+                    standalone.RepresentativeEntry);
+                if (calculatedTokens is { Count: > 0 })
+                {
+                    await PopulateStoreGeneratedColumnsAsync(
+                        writer,
+                        standalone.TableName,
+                        standalone.RepresentativeEntry,
+                        calculatedTokens,
+                        resolvedTableCache,
+                        tableSplitIndex,
+                        cancellationToken).ConfigureAwait(false);
+                }
+
+                RecordSharedConcurrencyValues(tableSplitIndex, standalone.RepresentativeEntry, standalone.UpdatedValues);
             }
 
             activeEntry = null;
@@ -295,6 +313,7 @@ public sealed class JetDatabase : Database
                 await batchTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
 
+            ApplySharedConcurrencyValues(tableSplitIndex);
             return totalAffected;
         }
         catch (Exception ex)
@@ -331,7 +350,9 @@ public sealed class JetDatabase : Database
         }
     }
 
-    private static (List<IUpdateEntry> OrderedPrimaryEntries, TableSplitEntryIndex TableSplitIndex) PartitionAndOrderEntries(IList<IUpdateEntry> entries)
+    private static (List<IUpdateEntry> OrderedPrimaryEntries, TableSplitEntryIndex TableSplitIndex) PartitionAndOrderEntries(
+        IList<IUpdateEntry> entries,
+        IUpdateAdapterFactory updateAdapterFactory)
     {
         List<IUpdateEntry> primaryCandidates = [];
         List<IUpdateEntry> tableSplitCandidates = [];
@@ -353,7 +374,7 @@ public sealed class JetDatabase : Database
         }
 
         List<IUpdateEntry> orderedPrimary = OrderEntriesLinear(primaryCandidates);
-        TableSplitEntryIndex splitIndex = BuildTableSplitEntryIndex(orderedPrimary, tableSplitCandidates);
+        TableSplitEntryIndex splitIndex = BuildTableSplitEntryIndex(orderedPrimary, tableSplitCandidates, updateAdapterFactory);
         return (orderedPrimary, splitIndex);
     }
 
@@ -791,9 +812,21 @@ public sealed class JetDatabase : Database
 
     private static TableSplitEntryIndex BuildTableSplitEntryIndex(
         List<IUpdateEntry> primaryEntries,
-        List<IUpdateEntry> tableSplitEntries)
+        List<IUpdateEntry> tableSplitEntries,
+        IUpdateAdapterFactory updateAdapterFactory)
     {
         TableSplitEntryIndex index = new();
+        IUpdateAdapter? updateAdapter = null;
+
+        foreach (IUpdateEntry owner in primaryEntries)
+        {
+            if (JetEntityTypeMetadata.GetTableSplitOwnedEntityTypes(owner.EntityType.GetRootType()).Count > 0)
+            {
+                updateAdapter ??= updateAdapterFactory.Create();
+                _ = GetTableSplitRowEntries(owner, updateAdapter, index);
+            }
+        }
+
         if (tableSplitEntries.Count == 0)
         {
             return index;
@@ -834,6 +867,8 @@ public sealed class JetDatabase : Database
 
         foreach (IUpdateEntry owned in tableSplitEntries)
         {
+            updateAdapter ??= updateAdapterFactory.Create();
+            List<IUpdateEntry> rowEntries = GetTableSplitRowEntries(owned, updateAdapter, index);
             IEntityType ownerRoot = JetEntityTypeMetadata.GetTableOwnerEntityType(owned.EntityType);
             IReadOnlyList<IProperty>? ownershipProps = GetRootOwnershipProperties(owned.EntityType);
             if (ownershipProps is null || ownershipProps.Count == 0)
@@ -885,10 +920,63 @@ public sealed class JetDatabase : Database
                 index.StandaloneUpdates.Add(standalone);
             }
 
-            ApplyTableSplitUpdateValues(owned, standalone.UpdatedValues);
+            ApplyTableSplitUpdateValues(owned, standalone.UpdatedValues, rowEntries);
+        }
+
+        foreach (StandaloneTableSplitUpdate standalone in index.StandaloneUpdates)
+        {
+            AppendConcurrencyCriteria(standalone.Criteria, index.RowEntries[standalone.RepresentativeEntry]);
         }
 
         return index;
+    }
+
+    private static List<IUpdateEntry> GetTableSplitRowEntries(IUpdateEntry entry, IUpdateAdapter updateAdapter, TableSplitEntryIndex index)
+    {
+        if (index.RowEntries.TryGetValue(entry, out List<IUpdateEntry>? existing))
+        {
+            return existing;
+        }
+
+        IUpdateEntry owner = entry;
+        while (JetEntityTypeMetadata.IsTableSplitOwned(owner.EntityType)
+            && owner.EntityType.FindOwnership() is { } ownership
+            && updateAdapter.FindPrincipal(owner, ownership) is { } principal)
+        {
+            owner = principal;
+        }
+
+        if (!index.RowEntries.TryGetValue(owner, out List<IUpdateEntry>? rowEntries))
+        {
+            rowEntries = [owner];
+            index.RowEntries[owner] = rowEntries;
+            for (int i = 0; i < rowEntries.Count; i++)
+            {
+                IUpdateEntry current = rowEntries[i];
+                foreach (IForeignKey foreignKey in current.EntityType.GetReferencingForeignKeys())
+                {
+                    if (!foreignKey.IsOwnership || !JetEntityTypeMetadata.IsTableSplitOwned(foreignKey.DeclaringEntityType))
+                    {
+                        continue;
+                    }
+
+                    foreach (IUpdateEntry dependent in updateAdapter.GetDependents(current, foreignKey))
+                    {
+                        if (index.RowEntries.TryAdd(dependent, rowEntries))
+                        {
+                            rowEntries.Add(dependent);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (index.RowEntries.TryAdd(entry, rowEntries))
+        {
+            rowEntries.Add(entry);
+        }
+
+        return rowEntries;
     }
 
     private static int GetEntityStateOrderForSplit(EntityState state)
@@ -928,7 +1016,7 @@ public sealed class JetDatabase : Database
         return criteria;
     }
 
-    private static void ApplyTableSplitUpdateValues(IUpdateEntry ownedEntry, RowValues targetValues)
+    private static void ApplyTableSplitUpdateValues(IUpdateEntry ownedEntry, RowValues targetValues, List<IUpdateEntry> rowEntries)
     {
         foreach (IProperty prop in ownedEntry.EntityType.GetFlattenedProperties())
         {
@@ -940,12 +1028,126 @@ public sealed class JetDatabase : Database
             string colName = JetEntityTypeMetadata.GetColumnName(prop);
             if (ownedEntry.EntityState == EntityState.Deleted)
             {
-                targetValues[colName] = null;
+                if (!IsSharedWithSurvivingEntry(ownedEntry, colName, rowEntries))
+                {
+                    targetValues[colName] = null;
+                }
             }
             else if (ownedEntry.EntityState == EntityState.Added || ownedEntry.IsModified(prop))
             {
                 object? val = JetEntityTypeMetadata.GetPropertyCurrentValue(ownedEntry, prop);
                 targetValues[colName] = JetEntityTypeMetadata.ConvertToProvider(prop, val);
+            }
+        }
+    }
+
+    private static bool IsSharedWithSurvivingEntry(IUpdateEntry removedEntry, string columnName, List<IUpdateEntry> rowEntries)
+    {
+        foreach (IUpdateEntry rowEntry in rowEntries)
+        {
+            if (ReferenceEquals(rowEntry, removedEntry) || rowEntry.EntityState == EntityState.Deleted)
+            {
+                continue;
+            }
+
+            foreach (IProperty property in rowEntry.EntityType.GetFlattenedProperties())
+            {
+                if (string.Equals(JetEntityTypeMetadata.GetColumnName(property), columnName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static void AppendConcurrencyCriteria(RowCriteria criteria, List<IUpdateEntry> rowEntries, IUpdateEntry? excludedEntry = null)
+    {
+        foreach (IUpdateEntry rowEntry in rowEntries)
+        {
+            if (ReferenceEquals(rowEntry, excludedEntry) || rowEntry.EntityState == EntityState.Added)
+            {
+                continue;
+            }
+
+            foreach (IProperty property in rowEntry.EntityType.GetFlattenedProperties())
+            {
+                if (property.IsConcurrencyToken && !property.IsPrimaryKey())
+                {
+                    string columnName = JetEntityTypeMetadata.GetColumnName(property);
+                    object? originalValue = JetEntityTypeMetadata.ConvertToProvider(property, rowEntry.GetOriginalValue(property));
+                    criteria.Add(ColumnPredicate.EqualTo(columnName, originalValue));
+                }
+            }
+        }
+    }
+
+    private static void RecordSharedConcurrencyValues(TableSplitEntryIndex index, IUpdateEntry entry, RowValues updatedValues)
+    {
+        if (!index.RowEntries.TryGetValue(entry, out List<IUpdateEntry>? rowEntries))
+        {
+            return;
+        }
+
+        foreach (IUpdateEntry rowEntry in rowEntries)
+        {
+            if (rowEntry.EntityState == EntityState.Deleted)
+            {
+                continue;
+            }
+
+            foreach (IProperty property in rowEntry.EntityType.GetFlattenedProperties())
+            {
+                if (property.IsConcurrencyToken && updatedValues.TryGetValue(JetEntityTypeMetadata.GetColumnName(property), out object? providerValue))
+                {
+                    index.SharedConcurrencyValues[(rowEntry, property)] = JetEntityTypeMetadata.ConvertFromProvider(property, providerValue);
+                }
+            }
+        }
+    }
+
+    private static List<(IUpdateEntry TargetEntry, IProperty Property)>? CollectCalculatedConcurrencyProperties(
+        TableSplitEntryIndex index,
+        IUpdateEntry entry)
+    {
+        if (!index.RowEntries.TryGetValue(entry, out List<IUpdateEntry>? rowEntries))
+        {
+            return null;
+        }
+
+        List<(IUpdateEntry TargetEntry, IProperty Property)>? properties = null;
+        foreach (IUpdateEntry rowEntry in rowEntries)
+        {
+            if (rowEntry.EntityState == EntityState.Deleted)
+            {
+                continue;
+            }
+
+            foreach (IProperty property in rowEntry.EntityType.GetFlattenedProperties())
+            {
+                if (property.IsConcurrencyToken && !string.IsNullOrWhiteSpace(JetEntityTypeMetadata.GetCalculatedExpression(property)))
+                {
+                    properties ??= [];
+                    properties.Add((rowEntry, property));
+                }
+            }
+        }
+
+        return properties;
+    }
+
+    private static void ApplySharedConcurrencyValues(TableSplitEntryIndex index)
+    {
+        foreach (KeyValuePair<(IUpdateEntry Entry, IProperty Property), object?> pair in index.SharedConcurrencyValues)
+        {
+            (IUpdateEntry entry, IProperty property) = pair.Key;
+#pragma warning disable EF1001 // Shared columns must update tracked values without marking unchanged row peers Modified.
+            entry.ToEntityEntry().GetInfrastructure().SetProperty(property, pair.Value, isMaterialization: false, setModified: false);
+#pragma warning restore EF1001
+            if (entry.EntityState == EntityState.Unchanged)
+            {
+                entry.SetOriginalValue(property, pair.Value);
             }
         }
     }
@@ -1184,6 +1386,7 @@ public sealed class JetDatabase : Database
         string tableName,
         List<(RowValues Values, IUpdateEntry Entry, IProperty Property, List<(IUpdateEntry TargetEntry, IProperty Property)>? ServerProps, List<IUpdateEntry>? OwnedEntries)> batch,
         Dictionary<string, ResolvedTable> resolvedTableCache,
+        TableSplitEntryIndex tableSplitIndex,
         CancellationToken cancellationToken)
     {
         if (batch.Count == 1)
@@ -1248,7 +1451,7 @@ public sealed class JetDatabase : Database
             (_, IUpdateEntry itemEntry, _, List<(IUpdateEntry TargetEntry, IProperty Property)>? serverProps, _) = batch[i];
             if (serverProps is { Count: > 0 })
             {
-                await PopulateStoreGeneratedColumnsAsync(writer, tableName, itemEntry, serverProps, resolvedTableCache, cancellationToken).ConfigureAwait(false);
+                await PopulateStoreGeneratedColumnsAsync(writer, tableName, itemEntry, serverProps, resolvedTableCache, tableSplitIndex, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -1259,6 +1462,7 @@ public sealed class JetDatabase : Database
         IUpdateEntry entry,
         List<(IUpdateEntry TargetEntry, IProperty Property)> serverProperties,
         Dictionary<string, ResolvedTable> resolvedTableCache,
+        TableSplitEntryIndex tableSplitIndex,
         CancellationToken cancellationToken)
     {
         IKey? primaryKey = entry.EntityType.FindPrimaryKey();
@@ -1297,15 +1501,28 @@ public sealed class JetDatabase : Database
         }
 
         object?[] rowValues = matched[0].Values;
+        RowValues? generatedConcurrencyValues = null;
         foreach ((IUpdateEntry targetEntry, IProperty prop) in serverProperties)
         {
             string colName = JetEntityTypeMetadata.GetColumnName(prop);
             int colIdx = resolved.Definition.FindColumnIndex(colName);
             if ((uint)colIdx < (uint)rowValues.Length)
             {
+                if (prop.IsConcurrencyToken && tableSplitIndex.RowEntries.ContainsKey(targetEntry))
+                {
+                    generatedConcurrencyValues ??= [];
+                    generatedConcurrencyValues[colName] = rowValues[colIdx];
+                    continue;
+                }
+
                 object? converted = JetEntityTypeMetadata.ConvertFromProvider(prop, rowValues[colIdx]);
                 targetEntry.SetStoreGeneratedValue(prop, converted);
             }
+        }
+
+        if (generatedConcurrencyValues is not null)
+        {
+            RecordSharedConcurrencyValues(tableSplitIndex, entry, generatedConcurrencyValues);
         }
     }
 
@@ -1318,16 +1535,20 @@ public sealed class JetDatabase : Database
     {
         IEntityType entityType = entry.EntityType;
         string tableName = JetEntityTypeMetadata.GetTableName(entityType);
-        RowCriteria criteria = BuildIdentityAndConcurrencyCriteria(entry);
+        RowCriteria criteria = BuildIdentityAndConcurrencyCriteria(entry, tableSplitIndex);
         RowValues updatedValues = [];
-        List<(IUpdateEntry TargetEntry, IProperty Property)>? calculatedProperties = null;
+        List<(IUpdateEntry TargetEntry, IProperty Property)>? calculatedProperties = CollectCalculatedConcurrencyProperties(tableSplitIndex, entry);
 
         foreach (IProperty property in entityType.GetFlattenedProperties())
         {
             if (!string.IsNullOrWhiteSpace(JetEntityTypeMetadata.GetCalculatedExpression(property)))
             {
-                calculatedProperties ??= [];
-                calculatedProperties.Add((entry, property));
+                if (!property.IsConcurrencyToken || !tableSplitIndex.RowEntries.ContainsKey(entry))
+                {
+                    calculatedProperties ??= [];
+                    calculatedProperties.Add((entry, property));
+                }
+
                 continue;
             }
 
@@ -1345,7 +1566,7 @@ public sealed class JetDatabase : Database
         {
             foreach (IUpdateEntry splitEntry in splitEntries)
             {
-                ApplyTableSplitUpdateValues(splitEntry, updatedValues);
+                ApplyTableSplitUpdateValues(splitEntry, updatedValues, tableSplitIndex.RowEntries[entry]);
             }
         }
 
@@ -1364,9 +1585,10 @@ public sealed class JetDatabase : Database
 
         if (calculatedProperties is { Count: > 0 })
         {
-            await PopulateStoreGeneratedColumnsAsync(writer, tableName, entry, calculatedProperties, resolvedTableCache, cancellationToken).ConfigureAwait(false);
+            await PopulateStoreGeneratedColumnsAsync(writer, tableName, entry, calculatedProperties, resolvedTableCache, tableSplitIndex, cancellationToken).ConfigureAwait(false);
         }
 
+        RecordSharedConcurrencyValues(tableSplitIndex, entry, updatedValues);
         return affected;
     }
 
@@ -1386,16 +1608,20 @@ public sealed class JetDatabase : Database
         foreach (IUpdateEntry entry in entries)
         {
             IEntityType entityType = entry.EntityType;
-            RowCriteria criteria = BuildIdentityAndConcurrencyCriteria(entry);
+            RowCriteria criteria = BuildIdentityAndConcurrencyCriteria(entry, tableSplitIndex);
             RowValues updatedValues = [];
-            List<(IUpdateEntry TargetEntry, IProperty Property)>? calculatedProperties = null;
+            List<(IUpdateEntry TargetEntry, IProperty Property)>? calculatedProperties = CollectCalculatedConcurrencyProperties(tableSplitIndex, entry);
 
             foreach (IProperty property in entityType.GetFlattenedProperties())
             {
                 if (!string.IsNullOrWhiteSpace(JetEntityTypeMetadata.GetCalculatedExpression(property)))
                 {
-                    calculatedProperties ??= [];
-                    calculatedProperties.Add((entry, property));
+                    if (!property.IsConcurrencyToken || !tableSplitIndex.RowEntries.ContainsKey(entry))
+                    {
+                        calculatedProperties ??= [];
+                        calculatedProperties.Add((entry, property));
+                    }
+
                     continue;
                 }
 
@@ -1413,7 +1639,7 @@ public sealed class JetDatabase : Database
             {
                 foreach (IUpdateEntry splitEntry in splitEntries)
                 {
-                    ApplyTableSplitUpdateValues(splitEntry, updatedValues);
+                    ApplyTableSplitUpdateValues(splitEntry, updatedValues, tableSplitIndex.RowEntries[entry]);
                 }
             }
 
@@ -1446,7 +1672,12 @@ public sealed class JetDatabase : Database
 
         foreach ((IUpdateEntry itemEntry, List<(IUpdateEntry TargetEntry, IProperty Property)> calcProps) in calculatedByEntry)
         {
-            await PopulateStoreGeneratedColumnsAsync(writer, tableName, itemEntry, calcProps, resolvedTableCache, cancellationToken).ConfigureAwait(false);
+            await PopulateStoreGeneratedColumnsAsync(writer, tableName, itemEntry, calcProps, resolvedTableCache, tableSplitIndex, cancellationToken).ConfigureAwait(false);
+        }
+
+        for (int i = 0; i < updates.Count; i++)
+        {
+            RecordSharedConcurrencyValues(tableSplitIndex, updateEntries[i], updates[i].UpdatedValues);
         }
 
         return affected + noOpCount;
@@ -1455,11 +1686,12 @@ public sealed class JetDatabase : Database
     private static async ValueTask<int> ExecuteDeleteAsync(
         AccessWriter writer,
         IUpdateEntry entry,
+        TableSplitEntryIndex tableSplitIndex,
         CancellationToken cancellationToken)
     {
         IEntityType entityType = entry.EntityType;
         string tableName = JetEntityTypeMetadata.GetTableName(entityType);
-        RowCriteria criteria = BuildIdentityAndConcurrencyCriteria(entry);
+        RowCriteria criteria = BuildIdentityAndConcurrencyCriteria(entry, tableSplitIndex);
 
         int affected = await writer.DeleteRowsAsync(tableName, criteria, cancellationToken).ConfigureAwait(false);
         if (affected == 0)
@@ -1476,12 +1708,13 @@ public sealed class JetDatabase : Database
         AccessWriter writer,
         string tableName,
         List<IUpdateEntry> entries,
+        TableSplitEntryIndex tableSplitIndex,
         CancellationToken cancellationToken)
     {
         var criteriaList = new List<RowCriteria>(entries.Count);
         foreach (IUpdateEntry entry in entries)
         {
-            criteriaList.Add(BuildIdentityAndConcurrencyCriteria(entry));
+            criteriaList.Add(BuildIdentityAndConcurrencyCriteria(entry, tableSplitIndex));
         }
 
         int affected = await writer.DeleteRowsAsync(tableName, criteriaList, cancellationToken).ConfigureAwait(false);
@@ -1495,7 +1728,7 @@ public sealed class JetDatabase : Database
         return affected;
     }
 
-    private static RowCriteria BuildIdentityAndConcurrencyCriteria(IUpdateEntry entry)
+    private static RowCriteria BuildIdentityAndConcurrencyCriteria(IUpdateEntry entry, TableSplitEntryIndex tableSplitIndex)
     {
         IEntityType entityType = entry.EntityType;
         IKey primaryKey = entityType.FindPrimaryKey()
@@ -1517,6 +1750,11 @@ public sealed class JetDatabase : Database
                 object? originalToken = JetEntityTypeMetadata.ConvertToProvider(property, entry.GetOriginalValue(property));
                 criteria.Add(ColumnPredicate.EqualTo(columnName, originalToken));
             }
+        }
+
+        if (tableSplitIndex.RowEntries.TryGetValue(entry, out List<IUpdateEntry>? rowEntries))
+        {
+            AppendConcurrencyCriteria(criteria, rowEntries, excludedEntry: entry);
         }
 
         return criteria;
@@ -1555,6 +1793,10 @@ public sealed class JetDatabase : Database
     private sealed class TableSplitEntryIndex
     {
         public Dictionary<IUpdateEntry, List<IUpdateEntry>> ByOwnerEntry { get; } = [with(ReferenceEqualityComparer.Instance)];
+
+        public Dictionary<IUpdateEntry, List<IUpdateEntry>> RowEntries { get; } = [with(ReferenceEqualityComparer.Instance)];
+
+        public Dictionary<(IUpdateEntry Entry, IProperty Property), object?> SharedConcurrencyValues { get; } = [];
 
         public List<StandaloneTableSplitUpdate> StandaloneUpdates { get; } = [];
     }
