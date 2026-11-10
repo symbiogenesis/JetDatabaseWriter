@@ -627,6 +627,13 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                     }
                 }
 
+                if (entityType.FindDiscriminatorProperty() is { } discriminator
+                    && !seedDict.ContainsKey(discriminator.Name))
+                {
+                    row[JetEntityTypeMetadata.GetColumnName(discriminator)] =
+                        JetEntityTypeMetadata.ConvertToProvider(discriminator, entityType.GetDiscriminatorValue());
+                }
+
                 if (row.Count > 0)
                 {
                     seedRows.Add(row);
