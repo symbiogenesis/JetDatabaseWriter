@@ -3,6 +3,8 @@ namespace JetDatabaseWriter.EntityFrameworkCore.Storage.Internal;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -324,7 +326,12 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
     {
         if (!string.IsNullOrWhiteSpace(explicitName))
         {
-            return TruncateObjectName(explicitName);
+            if (explicitName.Length > 64)
+            {
+                throw new InvalidOperationException($"Explicit index name '{explicitName}' exceeds the Access limit of 64 characters.");
+            }
+
+            return explicitName;
         }
 
         string joined = string.Join("_", columns);
@@ -338,7 +345,15 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
     }
 
     private static string TruncateObjectName(string name)
-        => name.Length <= 64 ? name : name[..64];
+    {
+        if (name.Length <= 64)
+        {
+            return name;
+        }
+
+        string suffix = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(name)))[..16];
+        return $"{name[..47]}_{suffix}";
+    }
 
     private static List<(string TableName, List<ColumnDefinition> Columns, List<IndexDefinition> Indexes)> BuildDesiredTableDefinitions(
         List<IEntityType> allEntityTypes,
@@ -431,6 +446,10 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                                 IgnoreNulls = false,
                             });
                         }
+                        else
+                        {
+                            throw new InvalidOperationException($"Multiple indexes on table '{tableName}' use the Access name '{akName}'.");
+                        }
                     }
                 }
 
@@ -464,7 +483,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                     string indexName = BuildIndexName(tableName, idxCols, index.Name);
                     if (!createdIndexNames.Add(indexName))
                     {
-                        continue;
+                        throw new InvalidOperationException($"Multiple indexes on table '{tableName}' use the Access name '{indexName}'.");
                     }
 
                     bool anyNullable = index.Properties.Any(static p =>
@@ -540,7 +559,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                 string relName = BuildRelationshipName(foreignTable, primaryTable, foreignColumns);
                 if (!createdRelationships.Add(relName))
                 {
-                    continue;
+                    throw new InvalidOperationException($"Multiple relationships use the Access name '{relName}'.");
                 }
 
                 result.Add(new RelationshipDefinition(
