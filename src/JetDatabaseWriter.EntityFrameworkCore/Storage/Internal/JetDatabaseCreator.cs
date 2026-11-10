@@ -768,6 +768,45 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         return exists;
     }
 
+    private static async ValueTask<bool> ExecuteInSchemaTransactionAsync(
+        AccessWriter writer,
+        Func<AccessWriter, CancellationToken, ValueTask<bool>> action,
+        CancellationToken cancellationToken)
+    {
+        if (writer.Services.Transactions.ActiveTransaction is { NestingLevel: >= 5 })
+        {
+            throw new InvalidOperationException(
+                "Schema changes cannot preserve atomicity at the current transaction nesting limit. Release a savepoint before migrating.");
+        }
+
+        JetTransaction schemaTransaction = await writer.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            bool operationsPerformed = await action(writer, cancellationToken).ConfigureAwait(false);
+            await schemaTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+            return operationsPerformed;
+        }
+        catch
+        {
+#pragma warning disable CA1031, RCS1075 // Preserve original exception when rollback fails.
+            try
+            {
+                await schemaTransaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+            }
+#pragma warning restore CA1031, RCS1075
+
+            throw;
+        }
+        finally
+        {
+            await schemaTransaction.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
     private async Task<bool> EnsureSchemaCreatedAsync(CancellationToken cancellationToken)
     {
         bool canConnect = await this.connection.CanConnectAsync(cancellationToken).ConfigureAwait(false);
@@ -790,7 +829,7 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
                 (writer, rentedOwned) = await this.connection.RentWriterAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            await this.ExecuteInSchemaTransactionAsync(writer, this.BuildSchemaCoreAsync, cancellationToken).ConfigureAwait(false);
+            await ExecuteInSchemaTransactionAsync(writer, this.BuildSchemaCoreAsync, cancellationToken).ConfigureAwait(false);
             return true;
         }
         finally
@@ -813,12 +852,12 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             {
                 writer = await this.connection.CreateDatabaseWriterAsync(cancellationToken).ConfigureAwait(false);
                 rentedOwned = !string.IsNullOrWhiteSpace(this.connection.DatabasePath);
-                await this.ExecuteInSchemaTransactionAsync(writer, this.BuildSchemaCoreAsync, cancellationToken).ConfigureAwait(false);
+                await ExecuteInSchemaTransactionAsync(writer, this.BuildSchemaCoreAsync, cancellationToken).ConfigureAwait(false);
                 return true;
             }
 
             (writer, rentedOwned) = await this.connection.RentWriterAsync(cancellationToken).ConfigureAwait(false);
-            return await this.ExecuteInSchemaTransactionAsync(writer, this.MigrateSchemaCoreAsync, cancellationToken).ConfigureAwait(false);
+            return await ExecuteInSchemaTransactionAsync(writer, this.MigrateSchemaCoreAsync, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -876,50 +915,6 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             if (transaction is not null)
             {
                 await transaction.DisposeAsync().ConfigureAwait(false);
-            }
-        }
-    }
-
-    private async ValueTask<bool> ExecuteInSchemaTransactionAsync(
-        AccessWriter writer,
-        Func<AccessWriter, CancellationToken, ValueTask<bool>> action,
-        CancellationToken cancellationToken)
-    {
-        JetTransaction? schemaTransaction = this.connection.ActiveTransaction is null
-            ? await writer.BeginTransactionAsync(cancellationToken).ConfigureAwait(false)
-            : null;
-        try
-        {
-            bool operationsPerformed = await action(writer, cancellationToken).ConfigureAwait(false);
-            if (schemaTransaction is not null)
-            {
-                await schemaTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            }
-
-            return operationsPerformed;
-        }
-        catch
-        {
-            if (schemaTransaction is not null)
-            {
-#pragma warning disable CA1031, RCS1075 // Preserve original exception when rollback fails.
-                try
-                {
-                    await schemaTransaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (Exception)
-                {
-                }
-#pragma warning restore CA1031, RCS1075
-            }
-
-            throw;
-        }
-        finally
-        {
-            if (schemaTransaction is not null)
-            {
-                await schemaTransaction.DisposeAsync().ConfigureAwait(false);
             }
         }
     }

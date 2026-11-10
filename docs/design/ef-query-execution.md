@@ -166,7 +166,12 @@ to Access's 64-character limit. Oversized explicit index names and conflicting
 constraint names refuse. Additive migration compares primary keys, index columns,
 directions, uniqueness and null policies, and relationship enforcement/cascade
 flags. Incompatible existing constraints refuse transactionally, including
-rolling back columns added earlier in that migration.
+rolling back columns added earlier in that migration. Schema changes always use
+their own transaction scope, nested inside a caller transaction when present.
+Failure or cancellation rolls back only the schema scope, preserving earlier
+caller work and savepoints. At five active transaction levels, schema changes
+refuse before mutation; releasing a savepoint permits retry within the native
+write limit.
 
 Reader relationship metadata and additive migration share catalog aggregation,
 including composite-column ordering, numeric catalog fields and omission of

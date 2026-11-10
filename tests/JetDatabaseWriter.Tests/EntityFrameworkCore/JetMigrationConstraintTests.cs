@@ -6,14 +6,132 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
+using JetDatabaseWriter.EntityFrameworkCore.Storage.Internal;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
 public sealed class JetMigrationConstraintTests
 {
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task FailedMigration_InCallerTransaction_PreservesPriorWorkAndSavepoint(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions options = new DbContextOptionsBuilder().UseJetDatabaseWriter(stream, format, leaveOpen: true).Options;
+        await using (OriginalContext original = new(options))
+        {
+            Assert.True(await original.Database.EnsureCreatedAsync(ct));
+        }
+
+        await using (UniqueContext changed = new(options))
+        {
+            await using IDbContextTransaction transaction = await changed.Database.BeginTransactionAsync(ct);
+            await InsertExistingRowAsync(changed, 1, ct);
+            await transaction.CreateSavepointAsync("retained", ct);
+            await InsertExistingRowAsync(changed, 2, ct);
+
+            InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => changed.Database.MigrateAsync(ct));
+            Assert.Contains("IX_Rows_Code", exception.Message, StringComparison.Ordinal);
+            Assert.Same(transaction, changed.Database.CurrentTransaction);
+            Assert.False(await HasAddedColumnAsync(changed, ct));
+            Assert.Equal(2, await changed.Set<IndexedRow>().CountAsync(ct));
+            await transaction.RollbackToSavepointAsync("retained", ct);
+            Assert.Equal(1, await changed.Set<IndexedRow>().CountAsync(ct));
+            await transaction.ReleaseSavepointAsync("retained", ct);
+            await transaction.CommitAsync(ct);
+        }
+
+        await using OriginalContext verify = new(options);
+        Assert.Equal(1, await verify.Set<IndexedRow>().CountAsync(ct));
+        Assert.False(await HasAddedColumnAsync(verify, ct));
+    }
+
+    [Theory]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(7)]
+    public async Task Migration_AtWriteNestingLimit_RefusesBeforeMutationAndRetriesAfterRelease(int nestingDepth)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions options = new DbContextOptionsBuilder().UseJetDatabaseWriter(stream, leaveOpen: true).Options;
+        await using (OriginalContext original = new(options))
+        {
+            Assert.True(await original.Database.EnsureCreatedAsync(ct));
+        }
+
+        await using AddedColumnContext changed = new(options);
+        await using IDbContextTransaction transaction = await changed.Database.BeginTransactionAsync(ct);
+        await InsertExistingRowAsync(changed, 1, ct);
+        await transaction.CreateSavepointAsync("one", ct);
+        await transaction.CreateSavepointAsync("two", ct);
+        await transaction.CreateSavepointAsync("three", ct);
+        await transaction.CreateSavepointAsync("four", ct);
+        for (int level = 6; level <= nestingDepth; level++)
+        {
+            await transaction.CreateSavepointAsync($"level-{level}", ct);
+        }
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => changed.Database.MigrateAsync(ct));
+        Assert.Contains("nesting", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Same(transaction, changed.Database.CurrentTransaction);
+        Assert.False(await HasAddedColumnAsync(changed, ct));
+        await transaction.ReleaseSavepointAsync("four", ct);
+        await changed.Database.MigrateAsync(ct);
+        Assert.True(await HasAddedColumnAsync(changed, ct));
+        Assert.Equal(1, await changed.Set<IndexedRow>().CountAsync(ct));
+        await transaction.RollbackToSavepointAsync("one", ct);
+        Assert.False(await HasAddedColumnAsync(changed, ct));
+        Assert.Equal(1, await changed.Set<IndexedRow>().CountAsync(ct));
+        await transaction.ReleaseSavepointAsync("one", ct);
+        await transaction.CommitAsync(ct);
+    }
+
+    [Fact]
+    public async Task CanceledMigration_InCallerTransaction_RollsBackSchemaAndPreservesSavepoint()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = new();
+        DbContextOptions options = new DbContextOptionsBuilder().UseJetDatabaseWriter(stream, leaveOpen: true).Options;
+        await using (OriginalContext original = new(options))
+        {
+            Assert.True(await original.Database.EnsureCreatedAsync(ct));
+        }
+
+        using var canceled = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        MigrationSeed seed = new();
+        await using SeededMigrationContext changed = new(options, seed);
+        _ = changed.GetService<IDesignTimeModel>().Model;
+        await using IDbContextTransaction transaction = await changed.Database.BeginTransactionAsync(ct);
+        await InsertExistingRowAsync(changed, 1, ct);
+        await transaction.CreateSavepointAsync("retained", ct);
+        await InsertExistingRowAsync(changed, 2, ct);
+
+        // Seed values are read after the additive schema work, canceling after the column was added.
+        seed.OnRead = canceled.Cancel;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => changed.Database.MigrateAsync(canceled.Token));
+        seed.OnRead = null;
+        Assert.True(canceled.IsCancellationRequested);
+        Assert.Same(transaction, changed.Database.CurrentTransaction);
+        Assert.False(await HasAddedColumnAsync(changed, ct));
+        Assert.Equal(2, await changed.Set<IndexedRow>().CountAsync(ct));
+        await transaction.RollbackToSavepointAsync("retained", ct);
+        Assert.Equal(1, await changed.Set<IndexedRow>().CountAsync(ct));
+        await transaction.ReleaseSavepointAsync("retained", ct);
+        await changed.Database.MigrateAsync(ct);
+        Assert.True(await HasAddedColumnAsync(changed, ct));
+        await transaction.CommitAsync(ct);
+    }
+
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb, "unique")]
     [InlineData(DatabaseFormat.Jet4Mdb, "unique")]
@@ -205,6 +323,38 @@ public sealed class JetMigrationConstraintTests
         Assert.Equal(JetErrorCode.RelationshipExists, exception.ErrorCode);
     }
 
+#pragma warning disable EF1001 // Inspect schema and preserve caller work through the active writer's normal connection lease.
+    private static async Task InsertExistingRowAsync(DbContext context, int id, CancellationToken cancellationToken)
+    {
+        IJetClientConnection connection = context.GetService<IJetClientConnection>();
+        (AccessWriter writer, bool ownedByCaller) = await connection.RentWriterAsync(cancellationToken);
+        try
+        {
+            await writer.InsertRowAsync("Rows", new RowValues { ["Id"] = id, ["Code"] = $"code-{id}", ["Other"] = "caller" }, cancellationToken);
+        }
+        finally
+        {
+            await connection.ReleaseWriterAsync(writer, ownedByCaller);
+        }
+    }
+
+    private static async Task<bool> HasAddedColumnAsync(DbContext context, CancellationToken cancellationToken)
+    {
+        IJetClientConnection connection = context.GetService<IJetClientConnection>();
+        (AccessWriter writer, bool ownedByCaller) = await connection.RentWriterAsync(cancellationToken);
+        try
+        {
+            ResolvedTable? table = await writer.Services.Snapshots.ResolveTableAsync("Rows", cancellationToken);
+            Assert.NotNull(table);
+            return table.Definition.FindColumnIndex(nameof(IndexedRow.Added)) >= 0;
+        }
+        finally
+        {
+            await connection.ReleaseWriterAsync(writer, ownedByCaller);
+        }
+    }
+#pragma warning restore EF1001
+
     private static void ConfigureIndexedRow(ModelBuilder modelBuilder)
     {
         _ = modelBuilder.Entity<IndexedRow>().ToTable("Rows");
@@ -238,6 +388,45 @@ public sealed class JetMigrationConstraintTests
             ConfigureIndexedRow(modelBuilder);
             _ = modelBuilder.Entity<IndexedRow>().HasIndex(row => row.Code).IsUnique();
         }
+    }
+
+    private sealed class AddedColumnContext(DbContextOptions options) : DbContext(options)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            ConfigureIndexedRow(modelBuilder);
+            _ = modelBuilder.Entity<IndexedRow>().HasIndex(row => row.Code);
+        }
+    }
+
+    private sealed class SeededMigrationContext(DbContextOptions options, MigrationSeed seed) : DbContext(options)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            ConfigureIndexedRow(modelBuilder);
+            _ = modelBuilder.Entity<IndexedRow>().HasIndex(row => row.Code);
+            _ = modelBuilder.Entity<IndexedRow>().HasData(seed);
+        }
+    }
+
+    private sealed class MigrationSeed
+    {
+        public Action? OnRead { get; set; }
+
+        public int Id
+        {
+            get
+            {
+                this.OnRead?.Invoke();
+                return 3;
+            }
+        }
+
+        public string Code { get; } = "seed";
+
+        public string Other { get; } = "seed";
+
+        public int Added { get; } = 1;
     }
 
     private sealed class DescendingContext(DbContextOptions options) : DbContext(options)
