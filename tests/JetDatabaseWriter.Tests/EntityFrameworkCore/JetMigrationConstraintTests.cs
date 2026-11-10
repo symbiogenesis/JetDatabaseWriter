@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Tests.EntityFrameworkCore;
 
 using System;
 using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
@@ -49,7 +48,7 @@ public sealed class JetMigrationConstraintTests
 
         await using AccessReader reader = await AccessReader.OpenAsync(stream, leaveOpen: true, cancellationToken: ct);
         Assert.DoesNotContain(await reader.GetColumnMetadataAsync("Rows", ct), static column => column.Name == nameof(IndexedRow.Added));
-        IndexMetadata index = Assert.Single((await reader.ListIndexesAsync("Rows", ct)).Where(static index => index.Name == "IX_Rows_Code"));
+        IndexMetadata index = Assert.Single(await reader.ListIndexesAsync("Rows", ct), static index => index.Name == "IX_Rows_Code");
         Assert.False(index.EnforcesUniqueness);
         Assert.True(Assert.Single(index.Columns).IsAscending);
         Assert.Equal(nameof(IndexedRow.Code), Assert.Single(index.Columns).Name);
@@ -139,12 +138,14 @@ public sealed class JetMigrationConstraintTests
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, leaveOpen: true, cancellationToken: ct))
         {
             await writer.DropRelationshipAsync(relationshipName, ct);
-            await writer.CreateRelationshipAsync(new RelationshipDefinition(relationshipName, "Parents", "Id", "Children", "ParentId")
-            {
-                EnforceReferentialIntegrity = enforceIntegrity,
-                CascadeUpdates = cascadeUpdates,
-                CascadeDeletes = cascadeDeletes,
-            }, ct);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition(relationshipName, "Parents", "Id", "Children", "ParentId")
+                {
+                    EnforceReferentialIntegrity = enforceIntegrity,
+                    CascadeUpdates = cascadeUpdates,
+                    CascadeDeletes = cascadeDeletes,
+                },
+                ct);
         }
 
         await using (RelationshipContext current = new(options))
@@ -243,6 +244,7 @@ public sealed class JetMigrationConstraintTests
         public int Added { get; set; }
     }
 
+#pragma warning disable CA1812 // These types supply relationship metadata without constructing related entities.
     private sealed class Parent
     {
         public int Id { get; set; }
@@ -254,4 +256,5 @@ public sealed class JetMigrationConstraintTests
 
         public int ParentId { get; set; }
     }
+#pragma warning restore CA1812
 }
