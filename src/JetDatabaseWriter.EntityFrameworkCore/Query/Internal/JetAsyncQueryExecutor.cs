@@ -3813,7 +3813,8 @@ internal static partial class JetAsyncQueryExecutor
                         }
 
                         completedOrdering = call.Method.Name is nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending);
-                        if (JetIndexSeekPlanner.TryExtractPropertyAccess(
+                        if (orderLambda.Body is not UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked }
+                            && JetIndexSeekPlanner.TryExtractPropertyAccess(
                             tablePlan.RootEntityType,
                             orderLambda.Parameters[0],
                             orderLambda.Body,

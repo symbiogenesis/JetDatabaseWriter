@@ -1246,11 +1246,21 @@ public sealed class JetClientConnection : IJetClientConnection
             bool ordered = false;
             int?[] columnMap;
             bool[]? wanted = null;
+            IProperty[]? orderingProperties = null;
+            if (orderedProperties is { Count: > 0 })
+            {
+                orderingProperties = new IProperty[orderedProperties.Count];
+                for (int i = 0; i < orderingProperties.Length; i++)
+                {
+                    orderingProperties[i] = orderedProperties[i].Property;
+                }
+            }
+
             if (writer is not null)
             {
                 resolved = await writer.Services.Catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
                 columnMap = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
-                wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties);
+                wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties, orderingProperties);
                 (IAsyncEnumerable<object?[]> Rows, bool Ordered)? indexQuery = await JetIndexSeekPlanner.TryBuildActiveWriterIndexQueryAsync(
                     writer, resolved, seekConditions, orderedProperties, parameters, wanted, cancellationToken).ConfigureAwait(false);
                 rows = indexQuery?.Rows ?? StreamWriterRowsAsync(writer, resolved, wanted, cancellationToken);
@@ -1264,7 +1274,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 if (resolved is not null)
                 {
                     columnMap = BuildPropertyColumnMapFromTableDef(properties, resolved.Definition);
-                    wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties);
+                    wanted = BuildWantedColumnsMask(rootType, properties, columnMap, resolved.Definition.Columns.Count, requiredProperties, orderingProperties);
                     IAsyncEnumerable<object[]>? indexRows = null;
                     if (orderedProperties is { Count: > 0 })
                     {

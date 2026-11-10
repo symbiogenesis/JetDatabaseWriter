@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
 using JetDatabaseWriter.Enums;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Xunit;
 
 public sealed class JetOrderedStreamingTests
@@ -23,7 +24,7 @@ public sealed class JetOrderedStreamingTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = new();
         await using OrderedContext context = await CreateAsync(stream);
-        await using var scope = transaction ? await context.Database.BeginTransactionAsync(ct) : null;
+        await using IDbContextTransaction? scope = transaction ? await context.Database.BeginTransactionAsync(ct) : null;
         int visited = 0;
         OnPredicate.Value = () => visited++;
         try
@@ -65,11 +66,14 @@ public sealed class JetOrderedStreamingTests
         await using MemoryStream stream = new();
         await using OrderedContext context = await CreateAsync(stream);
         Item[] source = await context.Items.AsNoTracking().ToArrayAsync(ct);
-        Assert.Equal(source.OrderBy(item => item.Name).Select(item => item.Id),
+        Assert.Equal(
+            source.OrderBy(item => item.Name).Select(item => item.Id),
             await context.Items.OrderBy(item => item.Name).Select(item => item.Id).ToArrayAsync(ct));
-        Assert.Equal(source.OrderByDescending(item => item.Id).OrderBy(item => item.Name).Select(item => item.Id),
+        Assert.Equal(
+            source.OrderByDescending(item => item.Id).OrderBy(item => item.Name).Select(item => item.Id),
             await context.Items.OrderByDescending(item => item.Id).OrderBy(item => item.Name).Select(item => item.Id).ToArrayAsync(ct));
-        Assert.Equal(source.OrderByDescending(item => item.Id).Take(8).OrderBy(item => item.Name).Select(item => item.Id),
+        Assert.Equal(
+            source.OrderByDescending(item => item.Id).Take(8).OrderBy(item => item.Name).Select(item => item.Id),
             await context.Items.OrderByDescending(item => item.Id).Take(8).OrderBy(item => item.Name).Select(item => item.Id).ToArrayAsync(ct));
     }
 
@@ -79,7 +83,7 @@ public sealed class JetOrderedStreamingTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = new();
         await using OrderedContext context = await CreateAsync(stream);
-        using CancellationTokenSource canceled = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var canceled = CancellationTokenSource.CreateLinkedTokenSource(ct);
         await using (IAsyncEnumerator<int> rows = context.Items.OrderBy(item => item.Id).Select(item => item.Id).AsAsyncEnumerable().GetAsyncEnumerator(canceled.Token))
         {
             Assert.True(await rows.MoveNextAsync());

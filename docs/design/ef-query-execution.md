@@ -22,8 +22,11 @@ A single mapped-property `OrderBy`/`ThenBy` chain streams in admitted index orde
 including reverse and mixed directions. Residual predicates and paging retain
 their original operator positions. If no equivalent index order is available,
 the connection buffers and sorts with each property's CLR comparer. Explicit
-comparers, repeated independent orderings and orderings across paging boundaries
-retain the general buffer evaluation path.
+comparers, converted sort selectors, repeated independent orderings and orderings
+across paging boundaries retain the general buffer evaluation path. Converted
+selectors also prevent native row-limit pushdown, preserving narrowing order and
+checked conversion exceptions. Connection sort fallbacks decode their sort keys
+even when the caller requests only other projected properties.
 
 `Count` and `LongCount` visit rows with one reusable value buffer. Supported
 single-table `Sum`, `Min`, `Max`, `Average` and `All` use the same visitor contract,

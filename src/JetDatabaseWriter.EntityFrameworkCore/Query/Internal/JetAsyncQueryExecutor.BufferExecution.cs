@@ -605,6 +605,7 @@ internal static partial class JetAsyncQueryExecutor
                     int position = (ordering?.Count ?? 0) - ++this.orderingOperators;
                     if (position < 0 || node.Arguments.Count != 2
                         || node.Arguments[1] is not UnaryExpression { Operand: LambdaExpression { Parameters.Count: 1 } selector }
+                        || selector.Body is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked }
                         || !JetIndexSeekPlanner.TryExtractPropertyAccess(table.RootEntityType, selector.Parameters[0], selector.Body, out IProperty? property)
                         || ordering![position].Property != property
                         || ordering[position].Descending != (node.Method.Name is nameof(Queryable.OrderByDescending) or nameof(Queryable.ThenByDescending)))
