@@ -390,7 +390,7 @@ internal static class JetEntityTypeMetadata
     /// Attempts to read a configured default value annotation or <see cref="DefaultValueAttribute"/> for <paramref name="property"/>.
     /// </summary>
     /// <param name="property">The EF Core property.</param>
-    /// <param name="defaultValue">When this method returns, contains the configured default value if present.</param>
+    /// <param name="defaultValue">When this method returns, contains the default value converted to the model property type if present.</param>
     /// <returns><see langword="true"/> if a default value was configured; otherwise, <see langword="false"/>.</returns>
     internal static bool TryGetDefaultValue(IReadOnlyProperty property, out object? defaultValue)
     {
@@ -400,7 +400,7 @@ internal static class JetEntityTypeMetadata
             ?? property.FindAnnotation(JetDefaultValueAnnotation);
         if (annotation is not null)
         {
-            defaultValue = annotation.Value;
+            defaultValue = NormalizeDefaultValue(property, annotation.Value);
             return true;
         }
 
@@ -409,12 +409,43 @@ internal static class JetEntityTypeMetadata
             : null;
         if (defaultAttr is not null)
         {
-            defaultValue = defaultAttr.Value;
+            defaultValue = NormalizeDefaultValue(property, defaultAttr.Value);
             return true;
         }
 
         defaultValue = null;
         return false;
+    }
+
+    /// <summary>
+    /// Validates that a configured literal default has a supported Access storage representation.
+    /// </summary>
+    /// <param name="property">The EF Core property.</param>
+    /// <exception cref="InvalidOperationException">The literal default cannot be represented by the property's model or storage type.</exception>
+    internal static void ValidateDefaultValue(IReadOnlyProperty property)
+    {
+        if (!TryGetDefaultValue(property, out object? defaultValue) || defaultValue is null)
+        {
+            return;
+        }
+
+        object? providerValue;
+        try
+        {
+            providerValue = ConvertToProvider(property, defaultValue);
+        }
+        catch (Exception exception) when (exception is ArgumentException or FormatException or InvalidCastException or OverflowException)
+        {
+            throw new InvalidOperationException(
+                $"The literal default for property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be converted to its storage type.",
+                exception);
+        }
+
+        if (providerValue is not (null or string or bool or byte or short or int or long or float or double or decimal or DateTime or Guid))
+        {
+            throw new InvalidOperationException(
+                $"The literal default for property '{property.DeclaringType.DisplayName()}.{property.Name}' has an unsupported Access storage type.");
+        }
     }
 
     /// <summary>
@@ -844,6 +875,20 @@ internal static class JetEntityTypeMetadata
         }
 
         return ValueCoercer.ConvertValue(value, unwrappedTarget);
+    }
+
+    private static object? NormalizeDefaultValue(IReadOnlyProperty property, object? defaultValue)
+    {
+        try
+        {
+            return CoerceToType(defaultValue, property.ClrType);
+        }
+        catch (Exception exception) when (exception is ArgumentException or FormatException or InvalidCastException or OverflowException)
+        {
+            throw new InvalidOperationException(
+                $"The literal default for property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be converted to model type '{property.ClrType.ShortDisplayName()}'.",
+                exception);
+        }
     }
 
     private static bool TryGetExplicitTableName(IReadOnlyEntityType entityType, out string? tableName)

@@ -199,6 +199,12 @@ Inheritance seed rows fill omitted discriminator values through the property's
 provider conversion. Decimal precision defaults use enum underlying and converter
 provider types, preserving full unsigned 64-bit values and integer-backed time
 values while honoring explicit precision and scale.
+Literal defaults are normalized to the model property type before EF receives a
+generated value, including nullable and enum types. Model validation checks both
+that conversion and the property's model-to-provider conversion before opening a
+database writer. Unsupported literal storage values refuse instead of silently
+losing their default. Explicit values and configured sentinels retain EF's
+generated-value behavior; storage conversion occurs after default selection.
 Jet3 refuses explicit decimal facets that Currency cannot represent, unless
 Currency was explicitly selected. Inferred unsigned integer and duration mappings
 use Currency on Jet3 and enforce its value range when writing.
