@@ -600,56 +600,142 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
         List<IEntityType> allEntityTypes)
     {
         List<(string TableName, IKey? PrimaryKey, List<RowValues> SeedRows)> result = [];
+        List<SeedRow> seeds = [];
+        Dictionary<IEntityType, List<SeedRow>> seedsByType = [];
+        foreach (IEntityType entityType in allEntityTypes)
+        {
+            foreach (IDictionary<string, object?> values in entityType.GetSeedData())
+            {
+                SeedRow seed = new(entityType, values);
+                seeds.Add(seed);
+                if (!seedsByType.TryGetValue(entityType, out List<SeedRow>? typeSeeds))
+                {
+                    typeSeeds = [];
+                    seedsByType.Add(entityType, typeSeeds);
+                }
+
+                typeSeeds.Add(seed);
+            }
+        }
+
+        Dictionary<IKey, Dictionary<JetKeyTuple, SeedRow>> principalIndexes = [];
+        foreach (SeedRow seed in seeds)
+        {
+            _ = ResolveSeedRow(seed, seeds, principalIndexes);
+        }
+
         List<IEntityType> tableOwnerTypes = [.. allEntityTypes.Where(static et => !JetEntityTypeMetadata.IsTableSplitOwned(et))];
         foreach (IEntityType entityType in SortEntityTypesTopologically(tableOwnerTypes))
         {
-            List<IDictionary<string, object?>> rawSeeds = [.. entityType.GetSeedData()];
-            if (rawSeeds.Count == 0)
+            if (!seedsByType.TryGetValue(entityType, out List<SeedRow>? typeSeeds))
             {
                 continue;
             }
 
-            IReadOnlyList<IProperty> properties = JetEntityTypeMetadata.GetHierarchyProperties(entityType);
-            Dictionary<string, IProperty> propertyByName = [with(StringComparer.Ordinal)];
-            foreach (IProperty prop in properties)
-            {
-                propertyByName[prop.Name] = prop;
-            }
-
             string tableName = JetEntityTypeMetadata.GetTableName(entityType);
-            List<RowValues> seedRows = [];
-            foreach (IDictionary<string, object?> seedDict in rawSeeds)
-            {
-                RowValues row = [];
-                foreach (KeyValuePair<string, object?> kvp in seedDict)
-                {
-                    if (propertyByName.TryGetValue(kvp.Key, out IProperty? prop))
-                    {
-                        string colName = JetEntityTypeMetadata.GetColumnName(prop);
-                        row[colName] = JetEntityTypeMetadata.ConvertToProvider(prop, kvp.Value);
-                    }
-                }
-
-                if (entityType.FindDiscriminatorProperty() is { } discriminator
-                    && !seedDict.ContainsKey(discriminator.Name))
-                {
-                    row[JetEntityTypeMetadata.GetColumnName(discriminator)] =
-                        JetEntityTypeMetadata.ConvertToProvider(discriminator, entityType.GetDiscriminatorValue());
-                }
-
-                if (row.Count > 0)
-                {
-                    seedRows.Add(row);
-                }
-            }
-
-            if (seedRows.Count > 0)
-            {
-                result.Add((tableName, entityType.GetRootType().FindPrimaryKey(), seedRows));
-            }
+            List<RowValues> seedRows = [.. typeSeeds.Select(static seed => seed.PhysicalRow!)];
+            result.Add((tableName, entityType.GetRootType().FindPrimaryKey(), seedRows));
         }
 
         return result;
+    }
+
+    private static RowValues ResolveSeedRow(
+        SeedRow seed,
+        List<SeedRow> seeds,
+        Dictionary<IKey, Dictionary<JetKeyTuple, SeedRow>> principalIndexes)
+    {
+        if (seed.PhysicalRow is not null)
+        {
+            return seed.PhysicalRow;
+        }
+
+        IForeignKey? ownership = JetEntityTypeMetadata.IsTableSplitOwned(seed.EntityType)
+            ? seed.EntityType.FindOwnership()
+            : null;
+        RowValues row;
+        if (ownership is null)
+        {
+            row = [];
+        }
+        else
+        {
+            if (!principalIndexes.TryGetValue(ownership.PrincipalKey, out Dictionary<JetKeyTuple, SeedRow>? principalIndex))
+            {
+                principalIndex = [];
+                foreach (SeedRow principal in seeds)
+                {
+                    if (ownership.PrincipalKey.DeclaringEntityType.IsAssignableFrom(principal.EntityType)
+                        && !principalIndex.TryAdd(ReadSeedKey(principal, ownership.PrincipalKey.Properties, ownership.PrincipalKey.Properties), principal))
+                    {
+                        throw new InvalidOperationException($"Multiple seed rows match the ownership key for '{seed.EntityType.DisplayName()}'.");
+                    }
+                }
+
+                principalIndexes.Add(ownership.PrincipalKey, principalIndex);
+            }
+
+            JetKeyTuple key = ReadSeedKey(seed, ownership.Properties, ownership.PrincipalKey.Properties);
+            if (!principalIndex.TryGetValue(key, out SeedRow? parent)
+                || !ownership.PrincipalEntityType.IsAssignableFrom(parent.EntityType))
+            {
+                throw new InvalidOperationException($"Owned seed data for '{seed.EntityType.DisplayName()}' has no matching principal seed row.");
+            }
+
+            row = ResolveSeedRow(parent, seeds, principalIndexes);
+        }
+
+        foreach (IProperty property in JetEntityTypeMetadata.GetHierarchyProperties(seed.EntityType))
+        {
+            if (!seed.Values.TryGetValue(property.Name, out object? value)
+                || ownership?.Properties.Contains(property) == true)
+            {
+                continue;
+            }
+
+            string columnName = JetEntityTypeMetadata.GetColumnName(property);
+            object? providerValue = JetEntityTypeMetadata.ConvertToProvider(property, value);
+            if (row.TryGetValue(columnName, out object? existingValue)
+                && !property.GetProviderValueComparer().Equals(existingValue, providerValue))
+            {
+                throw new InvalidOperationException($"Seed data contains conflicting values for shared column '{columnName}'.");
+            }
+
+            row[columnName] = providerValue;
+        }
+
+        if (seed.EntityType.FindDiscriminatorProperty() is { } discriminator
+            && !seed.Values.ContainsKey(discriminator.Name))
+        {
+            row[JetEntityTypeMetadata.GetColumnName(discriminator)] =
+                JetEntityTypeMetadata.ConvertToProvider(discriminator, seed.EntityType.GetDiscriminatorValue());
+        }
+
+        seed.PhysicalRow = row;
+        return row;
+    }
+
+    private static JetKeyTuple ReadSeedKey(SeedRow seed, IReadOnlyList<IProperty> properties, IReadOnlyList<IProperty> comparisonProperties)
+    {
+        object?[] values = new object?[properties.Count];
+        for (int i = 0; i < properties.Count; i++)
+        {
+            if (!seed.Values.TryGetValue(properties[i].Name, out values[i]) || values[i] is null)
+            {
+                throw new InvalidOperationException($"Seed data for '{seed.EntityType.DisplayName()}' omits ownership key property '{properties[i].Name}'.");
+            }
+        }
+
+        return new JetKeyTuple(comparisonProperties, values);
+    }
+
+    private sealed class SeedRow(IEntityType entityType, IDictionary<string, object?> values)
+    {
+        public IEntityType EntityType { get; } = entityType;
+
+        public IDictionary<string, object?> Values { get; } = values;
+
+        public RowValues? PhysicalRow { get; set; }
     }
 
     private static bool HasMatchingIndex(IReadOnlyList<IndexMetadata> existingIndexes, IndexDefinition candidate)
