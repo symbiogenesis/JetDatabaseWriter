@@ -72,7 +72,11 @@ internal static class ValueCoercer
         }
     }
 
-    private static object? ConvertValue(object value, Type target)
+    /// <summary>Converts a decoded scalar for both POCO and EF property mappings.</summary>
+    /// <param name="value">The non-null value, already checked for assignment compatibility.</param>
+    /// <param name="target">The non-nullable target type.</param>
+    /// <returns>The converted scalar.</returns>
+    internal static object? ConvertValue(object value, Type target)
     {
         if (target == typeof(string) && value is CalculatedError error)
         {

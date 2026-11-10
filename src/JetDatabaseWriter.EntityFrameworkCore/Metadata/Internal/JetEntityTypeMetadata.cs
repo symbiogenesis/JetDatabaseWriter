@@ -8,6 +8,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -746,25 +747,16 @@ internal static class JetEntityTypeMetadata
             return Convert.ChangeType(rawEnum, unwrappedTarget, CultureInfo.InvariantCulture);
         }
 
-        if (unwrappedTarget == typeof(Hyperlink))
+        if (unwrappedTarget == typeof(Hyperlink) && value is not string)
         {
-            return value switch
-            {
-                Hyperlink h => h,
-                string s => Hyperlink.Parse(s),
-                _ => Hyperlink.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)),
-            };
+            return Hyperlink.Parse(Convert.ToString(value, CultureInfo.InvariantCulture));
         }
 
-        if (unwrappedTarget == typeof(Guid))
+        if (unwrappedTarget == typeof(Guid) && value is not (string or byte[] { Length: 16 }))
         {
-            return value switch
-            {
-                Guid g => g,
-                string s => Guid.Parse(s),
-                byte[] b => new Guid(b),
-                _ => new Guid(Convert.ToString(value, CultureInfo.InvariantCulture)!),
-            };
+            return value is byte[] bytes
+                ? new Guid(bytes)
+                : new Guid(Convert.ToString(value, CultureInfo.InvariantCulture)!);
         }
 
         if (unwrappedTarget == typeof(DateOnly))
@@ -845,23 +837,13 @@ internal static class JetEntityTypeMetadata
             return span.Ticks;
         }
 
-        if (unwrappedTarget == typeof(bool))
-        {
-            return value switch
-            {
-                bool b => b,
-                string s => bool.Parse(s),
-                _ => Convert.ToBoolean(value, CultureInfo.InvariantCulture),
-            };
-        }
-
         if (unwrappedTarget == typeof(char))
         {
             string text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
             return text.Length > 0 ? text[0] : '\0';
         }
 
-        return Convert.ChangeType(value, unwrappedTarget, CultureInfo.InvariantCulture);
+        return ValueCoercer.ConvertValue(value, unwrappedTarget);
     }
 
     private static bool TryGetExplicitTableName(IReadOnlyEntityType entityType, out string? tableName)
