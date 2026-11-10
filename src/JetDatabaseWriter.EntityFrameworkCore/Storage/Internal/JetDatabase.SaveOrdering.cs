@@ -17,14 +17,16 @@ public sealed partial class JetDatabase
 {
     private static async ValueTask<List<IUpdateEntry>> OrderUniqueHandoffsAsync(
         List<IUpdateEntry> entries,
+        TableSplitEntryIndex splitIndex,
         AccessWriter writer,
         CancellationToken cancellationToken)
     {
-        var insertedTypes = entries.Where(static entry => entry.EntityState == EntityState.Added)
-            .Select(static entry => entry.EntityType.GetRootType()).ToHashSet();
-        if (!entries.Any(entry => entry.EntityState == EntityState.Modified
-            && insertedTypes.Contains(entry.EntityType.GetRootType())
-            && entry.EntityType.GetIndexes().Any(index => index.IsUnique && index.Properties.Any(entry.IsModified))))
+        var insertedTables = entries.Where(static entry => entry.EntityState == EntityState.Added)
+            .Select(static entry => JetEntityTypeMetadata.GetTableName(entry.EntityType)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!entries.Any(entry => insertedTables.Contains(JetEntityTypeMetadata.GetTableName(entry.EntityType))
+            && GetSaveRowEntries(entry, splitIndex).Any(source => source.EntityState is EntityState.Modified or EntityState.Deleted
+                && source.EntityType.GetIndexes().Any(index => index.IsUnique
+                    && (source.EntityState == EntityState.Deleted || index.Properties.Any(source.IsModified))))))
         {
             return entries;
         }
@@ -36,43 +38,51 @@ public sealed partial class JetDatabase
         {
             cancellationToken.ThrowIfCancellationRequested();
             IUpdateEntry entry = entries[entryIndex];
-            foreach (IIndex index in entry.EntityType.GetIndexes().Where(static index => index.IsUnique))
+            foreach (IUpdateEntry source in GetSaveRowEntries(entry, splitIndex))
             {
-                string tableName = JetEntityTypeMetadata.GetTableName(entry.EntityType);
-                if (!tables.TryGetValue(tableName, out ResolvedTable? table))
+                foreach (IIndex index in source.EntityType.GetIndexes().Where(static index => index.IsUnique))
                 {
-                    table = await writer.Services.Snapshots.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false)
-                        ?? throw new InvalidOperationException($"Table '{tableName}' does not exist.");
-                    tables[tableName] = table;
-                }
-
-                string? currentKey = entry.EntityState == EntityState.Deleted ? null : EncodeUniqueKey(entry, index.Properties, table, originalValues: false);
-                string? originalKey = entry.EntityState == EntityState.Added ? null : EncodeUniqueKey(entry, index.Properties, table, originalValues: true);
-                if (originalKey == currentKey)
-                {
-                    continue;
-                }
-
-                if (originalKey is not null)
-                {
-                    if (!releases.TryGetValue(index, out Dictionary<string, List<int>>? keys))
+                    string tableName = JetEntityTypeMetadata.GetTableName(entry.EntityType);
+                    if (!tables.TryGetValue(tableName, out ResolvedTable? table))
                     {
-                        keys = [with(StringComparer.Ordinal)];
-                        releases[index] = keys;
+                        table = await writer.Services.Snapshots.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false)
+                            ?? throw new InvalidOperationException($"Table '{tableName}' does not exist.");
+                        tables[tableName] = table;
                     }
 
-                    if (!keys.TryGetValue(originalKey, out List<int>? owners))
+                    bool isInsert = entry.EntityState == EntityState.Added;
+                    string? currentKey = entry.EntityState == EntityState.Deleted || source.EntityState == EntityState.Deleted
+                        ? null
+                        : EncodeUniqueKey(source, index.Properties, table, originalValues: false, isInsert);
+                    string? originalKey = isInsert || source.EntityState == EntityState.Added
+                        ? null
+                        : EncodeUniqueKey(source, index.Properties, table, originalValues: true, isInsert: false);
+                    if (originalKey == currentKey)
                     {
-                        owners = [];
-                        keys[originalKey] = owners;
+                        continue;
                     }
 
-                    owners.Add(entryIndex);
-                }
+                    if (originalKey is not null)
+                    {
+                        if (!releases.TryGetValue(index, out Dictionary<string, List<int>>? keys))
+                        {
+                            keys = [with(StringComparer.Ordinal)];
+                            releases[index] = keys;
+                        }
 
-                if (currentKey is not null)
-                {
-                    acquisitions.Add((index, currentKey, entryIndex));
+                        if (!keys.TryGetValue(originalKey, out List<int>? owners))
+                        {
+                            owners = [];
+                            keys[originalKey] = owners;
+                        }
+
+                        owners.Add(entryIndex);
+                    }
+
+                    if (currentKey is not null)
+                    {
+                        acquisitions.Add((index, currentKey, entryIndex));
+                    }
                 }
             }
         }
@@ -104,11 +114,14 @@ public sealed partial class JetDatabase
             return entries;
         }
 
-        AddForeignKeyOrderingEdges(entries, edges);
-        return OrderDependencyComponents(entries, edges);
+        AddForeignKeyOrderingEdges(entries, splitIndex, edges);
+        return OrderDependencyComponents(entries, splitIndex, edges);
     }
 
-    private static string? EncodeUniqueKey(IUpdateEntry entry, IReadOnlyList<IProperty> properties, ResolvedTable table, bool originalValues)
+    private static List<IUpdateEntry> GetSaveRowEntries(IUpdateEntry entry, TableSplitEntryIndex splitIndex)
+        => splitIndex.RowEntries.TryGetValue(entry, out List<IUpdateEntry>? rowEntries) ? rowEntries : [entry];
+
+    private static string? EncodeUniqueKey(IUpdateEntry entry, IReadOnlyList<IProperty> properties, ResolvedTable table, bool originalValues, bool isInsert)
     {
         string[] components = new string[properties.Count];
         bool hasValue = false;
@@ -116,7 +129,7 @@ public sealed partial class JetDatabase
         {
             IProperty property = properties[i];
             object? value = originalValues ? entry.GetOriginalValue(property) : entry.GetCurrentValue(property);
-            if (!originalValues && (entry.HasTemporaryValue(property)
+            if (!originalValues && isInsert && (entry.HasTemporaryValue(property)
                 || (property.ValueGenerated != ValueGenerated.Never && IsClrDefaultOrSentinel(property, value))))
             {
                 return null;
@@ -151,7 +164,7 @@ public sealed partial class JetDatabase
         return hasValue ? string.Join(":", components) : null;
     }
 
-    private static void AddForeignKeyOrderingEdges(List<IUpdateEntry> entries, HashSet<int>[] edges)
+    private static void AddForeignKeyOrderingEdges(List<IUpdateEntry> entries, TableSplitEntryIndex splitIndex, HashSet<int>[] edges)
     {
         Dictionary<(IKey Key, EntityState State), Dictionary<StructuralKey, List<int>>> principals = [];
         Dictionary<StructuralKey, List<int>> PrincipalIndex(IKey key, EntityState state)
@@ -164,20 +177,22 @@ public sealed partial class JetDatabase
             Dictionary<StructuralKey, List<int>> result = [];
             for (int i = 0; i < entries.Count; i++)
             {
-                IUpdateEntry entry = entries[i];
-                if (entry.EntityState != state || !key.DeclaringEntityType.IsAssignableFrom(entry.EntityType)
-                    || !TryExtractEntryKey(entry, key.Properties, state == EntityState.Deleted, out StructuralKey value))
+                foreach (IUpdateEntry entry in GetSaveRowEntries(entries[i], splitIndex))
                 {
-                    continue;
-                }
+                    if (entry.EntityState != state || !key.DeclaringEntityType.IsAssignableFrom(entry.EntityType)
+                        || !TryExtractEntryKey(entry, key.Properties, state == EntityState.Deleted, out StructuralKey value))
+                    {
+                        continue;
+                    }
 
-                if (!result.TryGetValue(value, out List<int>? owners))
-                {
-                    owners = [];
-                    result[value] = owners;
-                }
+                    if (!result.TryGetValue(value, out List<int>? owners))
+                    {
+                        owners = [];
+                        result[value] = owners;
+                    }
 
-                owners.Add(i);
+                    owners.Add(i);
+                }
             }
 
             principals[(key, state)] = result;
@@ -186,31 +201,33 @@ public sealed partial class JetDatabase
 
         for (int i = 0; i < entries.Count; i++)
         {
-            IUpdateEntry entry = entries[i];
-            foreach (IForeignKey foreignKey in entry.EntityType.GetForeignKeys())
+            foreach (IUpdateEntry entry in GetSaveRowEntries(entries[i], splitIndex))
             {
-                if (entry.EntityState != EntityState.Deleted
-                    && TryExtractEntryKey(entry, foreignKey.Properties, useOriginalValues: false, out StructuralKey current, foreignKey.PrincipalKey.Properties)
-                    && PrincipalIndex(foreignKey.PrincipalKey, EntityState.Added).TryGetValue(current, out List<int>? added))
+                foreach (IForeignKey foreignKey in entry.EntityType.GetForeignKeys())
                 {
-                    foreach (int parent in added)
+                    if (entry.EntityState != EntityState.Deleted
+                        && TryExtractEntryKey(entry, foreignKey.Properties, useOriginalValues: false, out StructuralKey current, foreignKey.PrincipalKey.Properties)
+                        && PrincipalIndex(foreignKey.PrincipalKey, EntityState.Added).TryGetValue(current, out List<int>? added))
                     {
-                        if (parent != i)
+                        foreach (int parent in added)
                         {
-                            _ = edges[parent].Add(i);
+                            if (parent != i)
+                            {
+                                _ = edges[parent].Add(i);
+                            }
                         }
                     }
-                }
 
-                if (entry.EntityState != EntityState.Added
-                    && TryExtractEntryKey(entry, foreignKey.Properties, useOriginalValues: true, out StructuralKey original, foreignKey.PrincipalKey.Properties)
-                    && PrincipalIndex(foreignKey.PrincipalKey, EntityState.Deleted).TryGetValue(original, out List<int>? deleted))
-                {
-                    foreach (int parent in deleted)
+                    if (entry.EntityState != EntityState.Added
+                        && TryExtractEntryKey(entry, foreignKey.Properties, useOriginalValues: true, out StructuralKey original, foreignKey.PrincipalKey.Properties)
+                        && PrincipalIndex(foreignKey.PrincipalKey, EntityState.Deleted).TryGetValue(original, out List<int>? deleted))
                     {
-                        if (parent != i)
+                        foreach (int parent in deleted)
                         {
-                            _ = edges[i].Add(parent);
+                            if (parent != i)
+                            {
+                                _ = edges[i].Add(parent);
+                            }
                         }
                     }
                 }
@@ -218,7 +235,7 @@ public sealed partial class JetDatabase
         }
     }
 
-    private static List<IUpdateEntry> OrderDependencyComponents(List<IUpdateEntry> entries, HashSet<int>[] edges)
+    private static List<IUpdateEntry> OrderDependencyComponents(List<IUpdateEntry> entries, TableSplitEntryIndex splitIndex, HashSet<int>[] edges)
     {
         var reverse = new List<int>[entries.Count];
         for (int i = 0; i < reverse.Length; i++)
@@ -293,7 +310,7 @@ public sealed partial class JetDatabase
 
             component.Sort();
             string table = JetEntityTypeMetadata.GetTableName(entries[component[0]].EntityType);
-            if (component.Count > 1 && component.Any(node => entries[node].EntityState != EntityState.Modified
+            if (component.Count > 1 && component.Any(node => !IsRowUpdate(entries[node], splitIndex)
                 || !string.Equals(table, JetEntityTypeMetadata.GetTableName(entries[node].EntityType), StringComparison.OrdinalIgnoreCase)))
             {
                 throw new InvalidOperationException("SaveChangesAsync cannot order the unique-value and foreign-key dependencies without violating a constraint.");

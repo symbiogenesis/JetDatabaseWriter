@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.EntityFrameworkCore.Storage.Internal;
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -94,7 +95,7 @@ public sealed partial class JetDatabase : Database
         IUpdateEntry? activeEntry = null;
         try
         {
-            int totalOperations = primaryEntries.Count + tableSplitIndex.StandaloneUpdates.Count;
+            int totalOperations = primaryEntries.Count;
             if (totalOperations > 1)
             {
                 if (this.connection is JetClientConnection { ActiveTransactionNestingDepth: >= 5 })
@@ -106,7 +107,7 @@ public sealed partial class JetDatabase : Database
                 batchTransaction = await writer.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            primaryEntries = await OrderUniqueHandoffsAsync(primaryEntries, writer, cancellationToken).ConfigureAwait(false);
+            primaryEntries = await OrderUniqueHandoffsAsync(primaryEntries, tableSplitIndex, writer, cancellationToken).ConfigureAwait(false);
             Dictionary<string, ResolvedTable> resolvedTableCache = [with(StringComparer.OrdinalIgnoreCase)];
             int totalAffected = 0;
             int index = 0;
@@ -199,12 +200,12 @@ public sealed partial class JetDatabase : Database
                     index = nextAutoIdx;
                     continue;
                 }
-                else if (entry.EntityState == EntityState.Modified)
+                else if (IsRowUpdate(entry, tableSplitIndex))
                 {
                     string tableName = JetEntityTypeMetadata.GetTableName(entry.EntityType);
                     int nextIdx = index + 1;
                     while (nextIdx < primaryEntries.Count
-                        && primaryEntries[nextIdx].EntityState == EntityState.Modified
+                        && IsRowUpdate(primaryEntries[nextIdx], tableSplitIndex)
                         && string.Equals(JetEntityTypeMetadata.GetTableName(primaryEntries[nextIdx].EntityType), tableName, StringComparison.OrdinalIgnoreCase))
                     {
                         nextIdx++;
@@ -265,47 +266,6 @@ public sealed partial class JetDatabase : Database
                 }
 
                 index++;
-            }
-
-            foreach (StandaloneTableSplitUpdate standalone in tableSplitIndex.StandaloneUpdates)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                activeEntry = standalone.RepresentativeEntry;
-                if (standalone.UpdatedValues.Count == 0)
-                {
-                    totalAffected++;
-                    continue;
-                }
-
-                int affected = await writer.UpdateRowsAsync(
-                    standalone.TableName,
-                    standalone.Criteria,
-                    standalone.UpdatedValues,
-                    cancellationToken).ConfigureAwait(false);
-                if (affected == 0)
-                {
-                    throw new DbUpdateConcurrencyException(
-                        "The database operation was expected to affect 1 row(s), but actually affected 0 row(s); data may have been modified or deleted since entities were loaded.",
-                        [standalone.RepresentativeEntry]);
-                }
-
-                totalAffected += affected;
-                List<(IUpdateEntry TargetEntry, IProperty Property)>? calculatedTokens = CollectCalculatedConcurrencyProperties(
-                    tableSplitIndex,
-                    standalone.RepresentativeEntry);
-                if (calculatedTokens is { Count: > 0 })
-                {
-                    await PopulateStoreGeneratedColumnsAsync(
-                        writer,
-                        standalone.TableName,
-                        standalone.RepresentativeEntry,
-                        calculatedTokens,
-                        resolvedTableCache,
-                        tableSplitIndex,
-                        cancellationToken).ConfigureAwait(false);
-                }
-
-                RecordSharedConcurrencyValues(tableSplitIndex, standalone.RepresentativeEntry, standalone.UpdatedValues);
             }
 
             activeEntry = null;
@@ -376,8 +336,12 @@ public sealed partial class JetDatabase : Database
 
         List<IUpdateEntry> orderedPrimary = OrderEntriesLinear(primaryCandidates);
         TableSplitEntryIndex splitIndex = BuildTableSplitEntryIndex(orderedPrimary, tableSplitCandidates, updateAdapterFactory);
+        orderedPrimary.AddRange(splitIndex.StandaloneUpdates.Select(static update => update.OperationEntry));
         return (orderedPrimary, splitIndex);
     }
+
+    private static bool IsRowUpdate(IUpdateEntry entry, TableSplitEntryIndex splitIndex)
+        => entry.EntityState == EntityState.Modified || splitIndex.StandaloneOperationEntries.Contains(entry);
 
     private static List<IUpdateEntry> OrderEntriesLinear(List<IUpdateEntry> candidates)
     {
@@ -915,19 +879,18 @@ public sealed partial class JetDatabase : Database
 
             if (!standaloneByOwner.TryGetValue((ownerRoot, ownerKey), out StandaloneTableSplitUpdate? standalone))
             {
-                string tableName = JetEntityTypeMetadata.GetTableName(ownerRoot);
-                RowCriteria criteria = BuildOwnerKeyCriteria(ownerRoot, ownerKey);
-                standalone = new StandaloneTableSplitUpdate(tableName, criteria, owned);
+                standalone = new StandaloneTableSplitUpdate(owned, rowEntries[0]);
                 standaloneByOwner[(ownerRoot, ownerKey)] = standalone;
                 index.StandaloneUpdates.Add(standalone);
+                _ = index.StandaloneOperationEntries.Add(standalone.OperationEntry);
             }
-
-            ApplyTableSplitUpdateValues(owned, standalone.UpdatedValues, rowEntries);
         }
 
         foreach (StandaloneTableSplitUpdate standalone in index.StandaloneUpdates)
         {
-            AppendConcurrencyCriteria(standalone.Criteria, index.RowEntries[standalone.RepresentativeEntry]);
+            index.ByOwnerEntry[standalone.OperationEntry] = index.RowEntries[standalone.RepresentativeEntry]
+                .Where(entry => !ReferenceEquals(entry, standalone.OperationEntry)
+                    && entry.EntityState is EntityState.Added or EntityState.Modified or EntityState.Deleted).ToList();
         }
 
         return index;
@@ -1000,22 +963,6 @@ public sealed partial class JetDatabase : Database
     {
         IForeignKey? ownership = ownedType.FindOwnership();
         return ownership?.Properties;
-    }
-
-    private static RowCriteria BuildOwnerKeyCriteria(IEntityType ownerRoot, StructuralKey ownerKey)
-    {
-        IKey primaryKey = ownerRoot.FindPrimaryKey()
-            ?? throw new InvalidOperationException($"Entity type '{ownerRoot.DisplayName()}' does not define a primary key.");
-        RowCriteria criteria = [];
-        for (int i = 0; i < primaryKey.Properties.Count; i++)
-        {
-            IProperty pkProp = primaryKey.Properties[i];
-            string colName = JetEntityTypeMetadata.GetColumnName(pkProp);
-            object? providerVal = JetEntityTypeMetadata.ConvertToProvider(pkProp, ownerKey.Values[i]);
-            criteria.Add(ColumnPredicate.EqualTo(colName, providerVal));
-        }
-
-        return criteria;
     }
 
     private static void ApplyTableSplitUpdateValues(IUpdateEntry ownedEntry, RowValues targetValues, List<IUpdateEntry> rowEntries)
@@ -1798,17 +1745,15 @@ public sealed partial class JetDatabase : Database
         public Dictionary<(IUpdateEntry Entry, IProperty Property), object?> SharedConcurrencyValues { get; } = [];
 
         public List<StandaloneTableSplitUpdate> StandaloneUpdates { get; } = [];
+
+        public HashSet<IUpdateEntry> StandaloneOperationEntries { get; } = [with(ReferenceEqualityComparer.Instance)];
     }
 
-    private sealed class StandaloneTableSplitUpdate(string tableName, RowCriteria criteria, IUpdateEntry representativeEntry)
+    private sealed class StandaloneTableSplitUpdate(IUpdateEntry representativeEntry, IUpdateEntry operationEntry)
     {
-        public string TableName { get; } = tableName;
-
-        public RowCriteria Criteria { get; } = criteria;
-
         public IUpdateEntry RepresentativeEntry { get; } = representativeEntry;
 
-        public RowValues UpdatedValues { get; } = [];
+        public IUpdateEntry OperationEntry { get; } = operationEntry;
     }
 
     private readonly struct StructuralKey(object?[] values, IReadOnlyList<IProperty> properties) : IEquatable<StructuralKey>
