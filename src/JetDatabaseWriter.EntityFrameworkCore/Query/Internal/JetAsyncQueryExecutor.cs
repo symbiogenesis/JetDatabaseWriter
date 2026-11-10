@@ -829,6 +829,16 @@ internal static partial class JetAsyncQueryExecutor
             entityParam).Compile();
     }
 
+    private static bool IsResultSelector(string methodName, int argumentIndex, int argumentCount)
+        => methodName switch
+        {
+            nameof(Queryable.Select) => argumentIndex == 1,
+            nameof(Queryable.Join) or nameof(Queryable.LeftJoin) or nameof(Queryable.RightJoin)
+                or nameof(Queryable.GroupJoin) => argumentIndex == 4,
+            nameof(Queryable.SelectMany) or nameof(Queryable.Zip) => argumentIndex == 2 && argumentCount == 3,
+            _ => false,
+        };
+
     private static Expression StripQuotesAndObjectConvert(Expression expression)
     {
         Expression current = expression;
@@ -1019,7 +1029,8 @@ internal static partial class JetAsyncQueryExecutor
             model,
             plan.RootPlansByExpression,
             plan.IgnoreQueryFilters,
-            plan.IgnoredQueryFilterNames).Visit(query);
+            plan.IgnoredQueryFilterNames,
+            plan).Visit(query);
 
         if (typeof(IEnumerable<TElement>).IsAssignableFrom(rewritten.Type))
         {
@@ -1055,7 +1066,8 @@ internal static partial class JetAsyncQueryExecutor
             model,
             plan.RootPlansByExpression,
             plan.IgnoreQueryFilters,
-            plan.IgnoredQueryFilterNames).Visit(query);
+            plan.IgnoredQueryFilterNames,
+            plan).Visit(query);
 
         Expression body = rewritten.Type == typeof(TScalar)
             ? rewritten
@@ -3246,6 +3258,8 @@ internal static partial class JetAsyncQueryExecutor
 
         public Dictionary<object, object> PromotedEntities { get; } = [with(ReferenceEqualityComparer.Instance)];
 
+        public Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> ProjectedTrackedEntities { get; } = [];
+
         public HashSet<object> AlreadyTrackedEntities { get; } = [with(ReferenceEqualityComparer.Instance)];
 
         public Dictionary<object, List<(object JoinEntity, ValueBuffer JoinBuffer)>> SkipJoinEntitiesByTarget { get; } =
@@ -4621,7 +4635,8 @@ internal static partial class JetAsyncQueryExecutor
         IModel model,
         IReadOnlyDictionary<EntityQueryRootExpression, JetTableLoadPlan> rootPlansByExpression,
         bool ignoreQueryFilters,
-        IReadOnlySet<string> ignoredQueryFilterNames) : ExpressionVisitor
+        IReadOnlySet<string> ignoredQueryFilterNames,
+        JetQueryPlan? queryPlan = null) : ExpressionVisitor
     {
         protected override Expression VisitExtension(Expression node)
         {
@@ -4939,6 +4954,13 @@ internal static partial class JetAsyncQueryExecutor
                 if (typeof(Expression).IsAssignableFrom(queryableParams[i].ParameterType))
                 {
                     enumerableArgs[i] = this.Visit(StripQuotes(arg));
+                    if (queryPlan is not null && enumerableArgs[i] is LambdaExpression selector
+                        && IsResultSelector(node.Method.Name, i, node.Arguments.Count))
+                    {
+                        ProjectionEntityRewriter shaper = new(queryContextExpression, stateExpression, queryPlan, model);
+                        Expression shaped = shaper.ResolveEntity(shaper.Visit(selector.Body));
+                        enumerableArgs[i] = Expression.Lambda(shaped, selector.Parameters);
+                    }
                 }
                 else
                 {
