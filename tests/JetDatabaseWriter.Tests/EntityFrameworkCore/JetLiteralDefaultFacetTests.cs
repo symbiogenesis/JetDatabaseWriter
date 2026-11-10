@@ -39,6 +39,8 @@ public sealed class JetLiteralDefaultFacetTests
     [InlineData("empty-text", DatabaseFormat.AceAccdb)]
     [InlineData("date-overflow", DatabaseFormat.AceAccdb)]
     [InlineData("inferred-currency-overflow", DatabaseFormat.Jet3Mdb)]
+    [InlineData("autonumber-default", DatabaseFormat.AceAccdb)]
+    [InlineData("calculated-default", DatabaseFormat.AceAccdb)]
     public async Task InvalidPhysicalDefault_RefusesBeforeMutation(string scenario, DatabaseFormat format)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -116,6 +118,12 @@ public sealed class JetLiteralDefaultFacetTests
                 .Ignore(row => row.Text).Ignore(row => row.Date).Ignore(row => row.Large);
             switch (this.Scenario)
             {
+                case "autonumber-default":
+                    _ = entity.Property(row => row.Id).HasJetDefaultValue(5);
+                    break;
+                case "calculated-default":
+                    _ = entity.Property(row => row.Numeric).HasJetCalculatedExpression("1 + 1").HasJetDefaultValue(5);
+                    break;
                 case "numeric-overflow":
                     _ = entity.Property(row => row.Numeric).HasPrecision(3, 0).HasJetDefaultValue(1000m);
                     break;

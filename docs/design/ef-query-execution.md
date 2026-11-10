@@ -233,6 +233,8 @@ that conversion and the property's model-to-provider conversion before opening a
 database writer. Unsupported literal storage values refuse instead of silently
 losing their default. Explicit values and configured sentinels retain EF's
 generated-value behavior; storage conversion occurs after default selection.
+AutoNumber and calculated columns reject literal default declarations, matching
+Access's generated-column constraints.
 Physical default admission uses the row codecs for Numeric precision, Currency
 range and classic OLE date limits, and refuses required nulls and forbidden empty
 text. Accepted storage rounding is converted back to the generated model value,

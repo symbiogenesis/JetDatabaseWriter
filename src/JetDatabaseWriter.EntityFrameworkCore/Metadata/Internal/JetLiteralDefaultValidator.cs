@@ -48,6 +48,12 @@ internal static class JetLiteralDefaultValidator
     internal static object? NormalizeProviderValue(IProperty property, object? providerValue, DatabaseFormat format)
     {
         ColumnDefinition column = JetDatabaseCreator.CreateColumnDefinition(property, format);
+        if (!column.CanHaveDefault)
+        {
+            throw new InvalidOperationException(
+                $"The literal default for property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be combined with its generated physical column.");
+        }
+
         if (providerValue is null && (!property.IsNullable || !column.IsNullable))
         {
             throw new InvalidOperationException(
