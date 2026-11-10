@@ -633,7 +633,7 @@ public sealed class JetDatabase : Database
             foreach (IForeignKey fk in child.EntityType.GetForeignKeys())
             {
                 if (fk.PrincipalEntityType.GetRootType() != rootType
-                    || !TryExtractEntryKey(child, fk.Properties, useOriginal, out StructuralKey fkKey))
+                    || !TryExtractEntryKey(child, fk.Properties, useOriginal, out StructuralKey fkKey, fk.PrincipalKey.Properties))
                 {
                     continue;
                 }
@@ -775,7 +775,7 @@ public sealed class JetDatabase : Database
         {
             if (fk.PrincipalEntityType.GetRootType() == rootType
                 && parentKeys.TryGetValue(fk.PrincipalKey, out HashSet<StructuralKey>? keys)
-                && TryExtractEntryKey(childCandidate, fk.Properties, useOriginalForChild, out StructuralKey fkKey)
+                && TryExtractEntryKey(childCandidate, fk.Properties, useOriginalForChild, out StructuralKey fkKey, fk.PrincipalKey.Properties)
                 && keys.Contains(fkKey))
             {
                 return true;
@@ -789,7 +789,8 @@ public sealed class JetDatabase : Database
         IUpdateEntry entry,
         IReadOnlyList<IProperty> properties,
         bool useOriginalValues,
-        out StructuralKey key)
+        out StructuralKey key,
+        IReadOnlyList<IProperty>? comparisonProperties = null)
     {
         object?[] values = new object?[properties.Count];
         for (int i = 0; i < properties.Count; i++)
@@ -806,7 +807,7 @@ public sealed class JetDatabase : Database
             values[i] = val;
         }
 
-        key = new StructuralKey(values);
+        key = new StructuralKey(values, comparisonProperties ?? properties);
         return true;
     }
 
@@ -877,7 +878,7 @@ public sealed class JetDatabase : Database
             }
 
             bool useOriginal = owned.EntityState == EntityState.Deleted;
-            if (!TryExtractEntryKey(owned, ownershipProps, useOriginal, out StructuralKey ownerKey))
+            if (!TryExtractEntryKey(owned, ownershipProps, useOriginal, out StructuralKey ownerKey, ownerRoot.FindPrimaryKey()!.Properties))
             {
                 continue;
             }
@@ -1809,7 +1810,7 @@ public sealed class JetDatabase : Database
         public RowValues UpdatedValues { get; } = [];
     }
 
-    private readonly struct StructuralKey(object?[] values) : IEquatable<StructuralKey>
+    private readonly struct StructuralKey(object?[] values, IReadOnlyList<IProperty> properties) : IEquatable<StructuralKey>
     {
         public object?[] Values { get; } = values;
 
@@ -1822,7 +1823,7 @@ public sealed class JetDatabase : Database
 
             for (int i = 0; i < this.Values.Length; i++)
             {
-                if (!Equals(this.Values[i], other.Values[i]))
+                if (!properties[i].GetKeyValueComparer().Equals(this.Values[i], other.Values[i]))
                 {
                     return false;
                 }
@@ -1837,9 +1838,9 @@ public sealed class JetDatabase : Database
         public override int GetHashCode()
         {
             HashCode hash = default;
-            foreach (object? val in this.Values)
+            for (int i = 0; i < this.Values.Length; i++)
             {
-                hash.Add(val);
+                hash.Add(properties[i].GetKeyValueComparer().GetHashCode(this.Values[i]));
             }
 
             return hash.ToHashCode();
