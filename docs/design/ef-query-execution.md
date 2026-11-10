@@ -43,12 +43,16 @@ between separate no-tracking owners.
 
 Entity equality, user methods that consume entities, constrained generic shapes,
 inheritance, owned graphs and navigation-dependent shapes can require the general
-entity execution path. These cases preserve CLR and EF behavior rather than
-substituting buffer equality or incomplete entities. Complete entities include
-all mapped properties, including at `First`, `Single` and `Last` terminals and
-inside projected graphs. Result-graph promotion uses weakly cached compiled
-accessors and constructors, including private DTO setters; it does not perform
-member reflection for every result.
+entity execution path. These cases use complete entities for CLR and EF
+evaluation. Complete entities include all mapped properties, including at `First`,
+`Single` and `Last` terminals and inside projected graphs. Result-graph promotion
+uses weakly cached compiled accessors and constructors, including private DTO
+setters; it does not perform member reflection for every result.
+
+Several EF key-matching adapters currently use ordinary object equality instead
+of the property's EF key comparer. Equal-content binary keys can consequently
+fail entity membership and navigation matching. Consolidation using EF property
+key comparers and its query/save regression requirements remain open in plan I18.
 
 Supported single-table bulk mutations rent the writer before selecting buffers.
 They read the key, filter and setter columns, evaluate every assignment against
@@ -56,6 +60,12 @@ the original buffer, deduplicate selected keys and apply atomic writer batches.
 The general path remains available for richer entity graphs and setter shapes.
 
 ## Pushdown boundaries
+
+The core `IndexQueryAdmission` checks index column support, encoded equality and
+range bounds, and join-key collation eligibility for both reader queries and EF
+queries against an active writer. Each caller supplies its acquired schema and
+retains ownership of planning, I/O and residual evaluation. Ordering admission
+continues to follow each query surface's materialization and equality contracts.
 
 A predicate outside `Skip` or `Take` cannot narrow the scan before that operator.
 An outer match limit cannot become an unfiltered inner limit after a predicate
@@ -74,6 +84,12 @@ value converters, calculated ordering and legacy Numeric key order retain a sort
 fallback where equivalence to the requested CLR order is unqualified.
 
 ## Connection and persistence ownership
+
+Reader and writer option snapshots come from the core library. The provider
+overrides the connection password and disables lockfiles for streams; all other
+caller settings, including page budgets and persistent stream recovery, carry
+through unchanged. Without explicit writer options, EF enables transactional
+writes while taking the remaining defaults from the core option type.
 
 File paths resolve to an absolute path when the scoped `JetClientConnection` is
 constructed. Its `DatabasePath` property, existence checks, creation, reads,
@@ -131,6 +147,10 @@ Inheritance seed rows fill omitted discriminator values through the property's
 provider conversion. Decimal precision defaults use enum underlying and converter
 provider types, preserving full unsigned 64-bit values and integer-backed time
 values while honoring explicit precision and scale.
+
+Common decoded scalar conversions use the core `ValueCoercer` rules, including
+Hyperlink and calculated-error text. EF retains its model value converters and
+its enum, character and temporal conversions around that shared primitive.
 
 The reverse cursor and EF adapters remain reviewed and tested C# components.
 Their tests do not extend the generated recovery or index-kernel proof boundary.
