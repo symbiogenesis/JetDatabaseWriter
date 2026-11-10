@@ -1,12 +1,14 @@
 namespace JetDatabaseWriter.Tests.EntityFrameworkCore;
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.EntityFrameworkCore.Extensions;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -33,7 +35,7 @@ public sealed class JetSchemaNameTests
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(stream, leaveOpen: true, cancellationToken: ct);
-        var indexes = (await reader.ListIndexesAsync(LongTableName, ct)).Where(static index => index.EnforcesUniqueness).ToArray();
+        IndexMetadata[] indexes = (await reader.ListIndexesAsync(LongTableName, ct)).Where(static index => index.EnforcesUniqueness).ToArray();
         Assert.Equal(3, indexes.Length);
         Assert.Equal(3, indexes.Select(static index => index.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.All(indexes, static index => Assert.InRange(index.Name.Length, 1, 64));
@@ -56,7 +58,7 @@ public sealed class JetSchemaNameTests
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(stream, leaveOpen: true, cancellationToken: ct);
-        var indexes = (await reader.ListIndexesAsync(LongTableName, ct)).Where(static index => index.EnforcesUniqueness).ToArray();
+        IndexMetadata[] indexes = (await reader.ListIndexesAsync(LongTableName, ct)).Where(static index => index.EnforcesUniqueness).ToArray();
         Assert.Equal(3, indexes.Length);
         Assert.Equal(3, indexes.Select(static index => index.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
@@ -82,7 +84,7 @@ public sealed class JetSchemaNameTests
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(stream, leaveOpen: true, cancellationToken: ct);
-        var relationships = await reader.ListRelationshipsAsync(ct);
+        IReadOnlyList<RelationshipMetadata> relationships = await reader.ListRelationshipsAsync(ct);
         Assert.Equal(2, relationships.Count);
         Assert.All(relationships, static relationship => Assert.InRange(relationship.Name.Length, 1, 64));
     }

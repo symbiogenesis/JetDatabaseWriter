@@ -60,7 +60,7 @@ public sealed class JetSharedStreamConcurrencyTests
         await using (IAsyncEnumerator<StreamRow> cursor = first.Set<StreamRow>().AsAsyncEnumerable().GetAsyncEnumerator(ct))
         {
             Assert.True(await cursor.MoveNextAsync());
-            using CancellationTokenSource cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
             Task<int> blocked = second.Set<StreamRow>().CountAsync(cancel.Token);
             Assert.False(blocked.IsCompleted);
             await cancel.CancelAsync();
