@@ -23,9 +23,9 @@ public sealed class JetJoinKeySemanticsTests
         IEqualityComparer<int> comparer = new ParityComparer();
         IQueryable<int> query = operation switch
         {
-            "Join" => context.OuterRows.Join(context.InnerRows, outer => outer.Number, inner => inner.Number, (outer, inner) => inner.Id, comparer),
-            "GroupJoin" => context.OuterRows.GroupJoin(context.InnerRows, outer => outer.Number, inner => inner.Number, (outer, matches) => matches.Select(inner => inner.Id).Single(), comparer),
-            "LeftJoin" => context.OuterRows.LeftJoin(context.InnerRows, outer => outer.Number, inner => inner.Number, (outer, inner) => inner == null ? -1 : inner.Id, comparer),
+            "Join" => context.OuterRows.Join(context.InnerRows, outer => outer.Number, inner => inner.Number, (_, inner) => inner.Id, comparer),
+            "GroupJoin" => context.OuterRows.GroupJoin(context.InnerRows, outer => outer.Number, inner => inner.Number, (_, matches) => matches.Select(inner => inner.Id).Single(), comparer),
+            "LeftJoin" => context.OuterRows.LeftJoin(context.InnerRows, outer => outer.Number, inner => inner.Number, (_, inner) => inner == null ? -1 : inner.Id, comparer),
             _ => throw new ArgumentOutOfRangeException(nameof(operation)),
         };
 
@@ -43,9 +43,9 @@ public sealed class JetJoinKeySemanticsTests
         await SeedAsync(context);
         IQueryable<int> query = operation switch
         {
-            "Join" => context.OuterRows.Join(context.InnerRows, outer => new { outer.NullablePart, outer.OtherPart }, inner => new { inner.NullablePart, inner.OtherPart }, (outer, inner) => inner.Id),
-            "GroupJoin" => context.OuterRows.GroupJoin(context.InnerRows, outer => new { outer.NullablePart, outer.OtherPart }, inner => new { inner.NullablePart, inner.OtherPart }, (outer, matches) => matches.Select(inner => inner.Id).Single()),
-            "LeftJoin" => context.OuterRows.LeftJoin(context.InnerRows, outer => new { outer.NullablePart, outer.OtherPart }, inner => new { inner.NullablePart, inner.OtherPart }, (outer, inner) => inner == null ? -1 : inner.Id),
+            "Join" => context.OuterRows.Join(context.InnerRows, outer => new { outer.NullablePart, outer.OtherPart }, inner => new { inner.NullablePart, inner.OtherPart }, (_, inner) => inner.Id),
+            "GroupJoin" => context.OuterRows.GroupJoin(context.InnerRows, outer => new { outer.NullablePart, outer.OtherPart }, inner => new { inner.NullablePart, inner.OtherPart }, (_, matches) => matches.Select(inner => inner.Id).Single()),
+            "LeftJoin" => context.OuterRows.LeftJoin(context.InnerRows, outer => new { outer.NullablePart, outer.OtherPart }, inner => new { inner.NullablePart, inner.OtherPart }, (_, inner) => inner == null ? -1 : inner.Id),
             _ => throw new ArgumentOutOfRangeException(nameof(operation)),
         };
 

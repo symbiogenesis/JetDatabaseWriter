@@ -126,5 +126,4 @@ public sealed class JetOwnedForeignKeyTests
     {
         public int Id { get; set; }
     }
-
 }

@@ -45,8 +45,8 @@ public sealed class JetInheritanceSeedTests
 
     private enum SeedKind
     {
-        Root,
-        Child,
+        Root = 0,
+        Child = 1,
     }
 
     private sealed class SeedContext(DbContextOptions<SeedContext> options) : DbContext(options)

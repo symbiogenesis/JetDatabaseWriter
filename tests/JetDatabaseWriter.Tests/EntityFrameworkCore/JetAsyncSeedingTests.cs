@@ -48,7 +48,7 @@ public sealed class JetAsyncSeedingTests
             Assert.False(await context.Database.EnsureCreatedAsync(ct));
         }
 
-        Assert.Equal(new[] { true, false }, changedFlags);
+        Assert.Collection(changedFlags, Assert.True, Assert.False);
         Assert.Equal("callback", (await context.Items.SingleAsync(ct)).Name);
         Assert.Null(context.Database.CurrentTransaction);
     }
@@ -85,7 +85,7 @@ public sealed class JetAsyncSeedingTests
     public async Task SeederCancellation_RollsBackWrites_AndPropagatesToken(bool migrate)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
         await using MemoryStream stream = new();
         DbContextOptions<SeederContext> options = CreateOptions(stream)
             .UseAsyncSeeding(async (context, _, token) =>
@@ -172,7 +172,7 @@ public sealed class JetAsyncSeedingTests
         await using ModelSeedContext context = new(options);
         await context.Database.MigrateAsync(ct);
         await context.Database.MigrateAsync(ct);
-        Assert.Equal(new[] { true, false }, changedFlags);
+        Assert.Collection(changedFlags, Assert.True, Assert.False);
         Assert.Equal("model seed", (await context.Set<SeedItem>().SingleAsync(ct)).Name);
     }
 
@@ -182,15 +182,16 @@ public sealed class JetAsyncSeedingTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = new();
         DbContext? observedContext = null;
-        Func<DbContext, bool, CancellationToken, Task> seeder = (context, changed, token) =>
-        {
-            Assert.True(changed);
-            Assert.Equal(ct, token);
-            observedContext = context;
-            return Task.CompletedTask;
-        };
-        DbContextOptions<SeederContext> options = CreateOptions(stream).UseAsyncSeeding(seeder).Options;
-        await using SeederContext context = new(options);
+        DbContextOptionsBuilder<SeederContext> optionsBuilder = CreateOptions(stream);
+        _ = ((DbContextOptionsBuilder)optionsBuilder)
+            .UseAsyncSeeding((seedContext, changed, token) =>
+            {
+                Assert.True(changed);
+                Assert.Equal(ct, token);
+                observedContext = seedContext;
+                return Task.CompletedTask;
+            });
+        await using SeederContext context = new(optionsBuilder.Options);
         Assert.True(await context.Database.EnsureCreatedAsync(ct));
         Assert.Same(context, observedContext);
     }
