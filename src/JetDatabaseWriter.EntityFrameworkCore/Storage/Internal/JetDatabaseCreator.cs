@@ -179,8 +179,14 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
             int defaultScale = isIntegerBackedDecimal ? 0 : 4;
             int precision = Math.Clamp(property.GetPrecision() ?? defaultPrecision, 1, 28);
             int scale = Math.Clamp(property.GetScale() ?? defaultScale, 0, precision);
-            bool isCurrency = JetEntityTypeMetadata.GetIsCurrency(property)
-                || (format == DatabaseFormat.Jet3Mdb && (precision - scale > 14 || scale > 4));
+            bool isCurrency = JetEntityTypeMetadata.GetIsCurrency(property);
+            if (format == DatabaseFormat.Jet3Mdb && !isCurrency && (precision - scale > 14 || scale > 4))
+            {
+                throw new NotSupportedException(
+                    $"Decimal({precision},{scale}) for property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be represented by Jet3 Currency. " +
+                    "Configure a scale of at most 4 and precision of at most scale + 14, explicitly configure UseJetCurrency(), or use Jet4 or ACE.");
+            }
+
             return new ColumnDefinition(columnName, typeof(decimal))
             {
                 IsNullable = isNullable,
