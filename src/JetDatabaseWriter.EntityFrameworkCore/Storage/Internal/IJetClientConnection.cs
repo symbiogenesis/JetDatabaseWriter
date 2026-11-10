@@ -39,7 +39,15 @@ public interface IJetClientConnection : IAsyncDisposable, IDisposable
     /// </summary>
     /// <param name="cancellationToken">A token to observe while waiting for the task to complete.</param>
     /// <returns>The open <see cref="AccessReader"/>.</returns>
+    /// <remarks>The returned reader has no operation lease. Advanced callers must isolate its subsequent use from peer operations on the same stream.</remarks>
     public ValueTask<AccessReader> GetReaderAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Checks for user tables while holding the connection's operation lease through the catalog read.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels lease acquisition and the catalog read.</param>
+    /// <returns>Whether the database contains a user table.</returns>
+    public ValueTask<bool> HasUserTablesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Closes the cached <see cref="AccessReader"/> if one is open.

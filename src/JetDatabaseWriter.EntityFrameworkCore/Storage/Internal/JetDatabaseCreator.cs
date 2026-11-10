@@ -808,16 +808,9 @@ public sealed class JetDatabaseCreator : IDatabaseCreator
     private async Task<bool> EnsureSchemaCreatedAsync(CancellationToken cancellationToken)
     {
         bool canConnect = await this.connection.CanConnectAsync(cancellationToken).ConfigureAwait(false);
-        if (canConnect)
+        if (canConnect && await this.connection.HasUserTablesAsync(cancellationToken).ConfigureAwait(false))
         {
-            int existingTableCount = this.connection.ActiveWriter is { } activeWriter
-                ? (await activeWriter.Services.Catalog.GetUserTablesAsync(cancellationToken).ConfigureAwait(false)).Count
-                : (await (await this.connection.GetReaderAsync(cancellationToken).ConfigureAwait(false))
-                    .ListTablesAsync(cancellationToken).ConfigureAwait(false)).Count;
-            if (existingTableCount > 0)
-            {
-                return false;
-            }
+            return false;
         }
 
         AccessWriter? writer = null;

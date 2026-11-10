@@ -97,6 +97,27 @@ public sealed class JetClientConnection : IJetClientConnection
     }
 
     /// <inheritdoc/>
+    public async ValueTask<bool> HasUserTablesAsync(CancellationToken cancellationToken = default)
+    {
+        await this.EnterLifecycleAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (this.ActiveWriter is { } writer)
+            {
+                return (await writer.Services.Catalog.GetUserTablesAsync(cancellationToken).ConfigureAwait(false)).Count > 0;
+            }
+
+            await this.ClosePeerConnectionsAsync(closeReaders: false, cancellationToken).ConfigureAwait(false);
+            AccessReader reader = await this.GetReaderCoreAsync(cancellationToken).ConfigureAwait(false);
+            return (await reader.ListTablesAsync(cancellationToken).ConfigureAwait(false)).Count > 0;
+        }
+        finally
+        {
+            this.ExitLifecycle();
+        }
+    }
+
+    /// <inheritdoc/>
     public async ValueTask CloseReaderAsync()
     {
         if (this.disposed)
