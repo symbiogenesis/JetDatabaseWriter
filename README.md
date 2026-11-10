@@ -20,6 +20,7 @@ The [supported operating envelope](docs/support-contract.md) defines the release
 - [Quick Start](#quick-start)
 - [Reading Data](#reading-data)
 - [Writing Data](#writing-data)
+- [Entity Framework Core](#entity-framework-core)
 - [Documentation](#documentation)
 - [Encryption Support](#encryption-support)
 - [Limitations](#limitations)
@@ -151,6 +152,30 @@ await writer.InsertRowAsync("Contacts", new RowValues
 
 To edit an existing file, open it with `AccessWriter.OpenAsync("contacts.mdb")`. Use one writer per file and dispose it when finished; `await using` does this automatically. The [writing guide](docs/writing.md) covers updates, deletes, schema changes and constraints, and the [operations guide](docs/operations.md#transactions) explains transactions.
 
+## Entity Framework Core
+
+Install `JetDatabaseWriter.EntityFrameworkCore` to use EF Core 10 on .NET 10 or
+.NET 11. The provider reads and writes Access files directly, without native
+drivers:
+
+```csharp
+using JetDatabaseWriter.EntityFrameworkCore.Extensions;
+using Microsoft.EntityFrameworkCore;
+
+var options = new DbContextOptionsBuilder<MyContext>()
+    .UseJetDatabaseWriter("application.accdb")
+    .Options;
+await using var context = new MyContext(options);
+await context.Database.EnsureCreatedAsync();
+await context.SaveChangesAsync();
+```
+
+Use asynchronous persistence and transaction APIs. Queries support async and
+synchronous enumeration. `MigrateAsync` adds missing schema objects and seed
+rows; it does not run versioned EF migrations or alter existing columns. The
+[EF provider guide](docs/entity-framework-core.md) covers a complete model,
+configuration, owned values, transactions, seeding and query diagnostics.
+
 ## Documentation
 
 See [PLAN.md](PLAN.md) for open work, dependencies and acceptance criteria across all workstreams, including formal verification.
@@ -161,6 +186,7 @@ See [PLAN.md](PLAN.md) for open work, dependencies and acceptance criteria acros
 | Insert or edit data and change schemas | [Writing data](docs/writing.md) |
 | Use streams, configure options or handle failures | [Database operations](docs/operations.md) |
 | Generate C# models from an existing database | [Scaffolding](docs/scaffolding.md) |
+| Use EF Core models, tracking and relationships | [Entity Framework Core](docs/entity-framework-core.md) |
 | Understand Access terminology and file formats | [Glossary](docs/glossary.md) and [design notes](docs/design/) |
 | Assess recent proofs and algorithms against this library | [Proof and algorithm survey](docs/design/proof-survey.md) |
 
