@@ -928,7 +928,7 @@ public sealed class JetDatabase : Database
     {
         foreach (IProperty prop in ownedEntry.EntityType.GetFlattenedProperties())
         {
-            if (prop.IsPrimaryKey() || prop.IsForeignKey() || !string.IsNullOrWhiteSpace(JetEntityTypeMetadata.GetCalculatedExpression(prop)))
+            if (prop.IsPrimaryKey() || IsOwnershipProperty(prop) || !string.IsNullOrWhiteSpace(JetEntityTypeMetadata.GetCalculatedExpression(prop)))
             {
                 continue;
             }
@@ -984,7 +984,7 @@ public sealed class JetDatabase : Database
         {
             foreach (IProperty property in currentEntry.EntityType.GetFlattenedProperties())
             {
-                if (!isOwnerEntry && (property.IsPrimaryKey() || property.IsForeignKey()))
+                if (!isOwnerEntry && (property.IsPrimaryKey() || IsOwnershipProperty(property)))
                 {
                     continue;
                 }
@@ -1084,7 +1084,7 @@ public sealed class JetDatabase : Database
             foreach (IProperty splitProp in splitOwnedType.GetFlattenedProperties())
             {
                 if (splitProp.IsPrimaryKey()
-                    || splitProp.IsForeignKey()
+                    || IsOwnershipProperty(splitProp)
                     || !string.IsNullOrWhiteSpace(JetEntityTypeMetadata.GetCalculatedExpression(splitProp)))
                 {
                     continue;
@@ -1099,6 +1099,19 @@ public sealed class JetDatabase : Database
         }
 
         return (rowValues, autoIncrementProperty, serverGeneratedProperties, attachedOwned);
+    }
+
+    private static bool IsOwnershipProperty(IProperty property)
+    {
+        foreach (IForeignKey foreignKey in property.GetContainingForeignKeys())
+        {
+            if (foreignKey.IsOwnership)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsClrDefaultOrSentinel(IProperty property, object? value)
