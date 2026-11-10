@@ -81,6 +81,21 @@ public sealed class JetLiteralDefaultTests
     public Task ProviderTypedDefault_RefusesBeforeDatabaseMutation()
         => AssertInvalidDefaultAsync<Code>("provider-value");
 
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public Task NonfiniteDefault_RefusesBeforeDatabaseMutation(double value)
+        => AssertInvalidDefaultAsync<double>(value);
+
+    [Fact]
+    public Task OverlongDefault_RefusesBeforeDatabaseMutation()
+        => AssertInvalidDefaultAsync<string>("too long");
+
+    [Fact]
+    public Task OverlongConvertedDefault_RefusesBeforeDatabaseMutation()
+        => AssertInvalidDefaultAsync<Code>(new Code(new string('x', 21)));
+
     private static void AssertDefaults(LiteralRow row)
     {
         Assert.Equal(5L, row.Widened);
@@ -132,6 +147,11 @@ public sealed class JetLiteralDefaultTests
                 _ = entity.Property<int>("Id").ValueGeneratedNever();
                 _ = entity.HasKey("Id");
                 PropertyBuilder<T> property = entity.Property<T>("Value");
+                if (typeof(T) == typeof(string))
+                {
+                    _ = property.HasMaxLength(3);
+                }
+
                 if (typeof(T) == typeof(Code))
                 {
                     _ = property.HasConversion(new ValueConverter<Code, string>(x => x.Value, x => new Code(x))).HasMaxLength(20);

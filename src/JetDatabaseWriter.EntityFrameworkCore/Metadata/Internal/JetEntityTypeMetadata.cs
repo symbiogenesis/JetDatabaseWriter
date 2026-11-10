@@ -446,6 +446,18 @@ internal static class JetEntityTypeMetadata
             throw new InvalidOperationException(
                 $"The literal default for property '{property.DeclaringType.DisplayName()}.{property.Name}' has an unsupported Access storage type.");
         }
+
+        if (providerValue is double number ? !double.IsFinite(number) : providerValue is float single && !float.IsFinite(single))
+        {
+            throw new InvalidOperationException(
+                $"The literal default for property '{property.DeclaringType.DisplayName()}.{property.Name}' must be finite.");
+        }
+
+        if (providerValue is string text && property.GetMaxLength() is > 0 and var maximum && text.Length > maximum)
+        {
+            throw new InvalidOperationException(
+                $"The literal default for property '{property.DeclaringType.DisplayName()}.{property.Name}' exceeds its maximum length.");
+        }
     }
 
     /// <summary>
