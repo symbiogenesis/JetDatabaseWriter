@@ -606,6 +606,14 @@ internal static class JetIndexSeekPlanner
 
         for (int i = 0; i < keyProperties.Count; i++)
         {
+            // Native equality must contain every match of the model key comparer.
+            // Arbitrary configured equality has no proven native representation.
+            if (!JetKeyTuple.HasDefaultComparer(keyProperties[i]))
+            {
+                providerTuples = null;
+                return false;
+            }
+
             string colName = JetEntityTypeMetadata.GetColumnName(keyProperties[i]);
             ColumnInfo? col = tableDef.FindColumn(colName);
             if (col is null)

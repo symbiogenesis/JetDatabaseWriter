@@ -938,12 +938,12 @@ public sealed class JetClientConnection : IJetClientConnection
             }
 
             JetQueryDiagnostics.TableRead(logger, context, tableName, "Scan", "NoAdmissibleKeyIndex");
-            HashSet<KeyTupleValue> targetSet = BuildKeyTupleSet(keyTuples);
+            HashSet<JetKeyTuple> targetSet = BuildKeyTupleSet(keyProperties, keyTuples);
             List<ValueBuffer> scanResults = [];
             await foreach (object[] row in reader.Services.Tables.Rows(tableName, wantedColumns, progress: null, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
             {
                 if (factory.TryCreate(row, out ValueBuffer buffer)
-                    && TryExtractBufferKeyTuple(keyProperties, buffer, out KeyTupleValue candidateKey)
+                    && TryExtractBufferKeyTuple(keyProperties, buffer, out JetKeyTuple candidateKey)
                     && targetSet.Contains(candidateKey))
                 {
                     scanResults.Add(buffer);
@@ -957,12 +957,12 @@ public sealed class JetClientConnection : IJetClientConnection
         IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
         int?[] fallbackColumnMap = BuildPropertyColumnMap(properties, columns);
         ValueBufferFactory fallbackFactory = new(rootType, properties, fallbackColumnMap, wantedColumns: null, reuseBuffer: false);
-        HashSet<KeyTupleValue> fallbackTargetSet = BuildKeyTupleSet(keyTuples);
+        HashSet<JetKeyTuple> fallbackTargetSet = BuildKeyTupleSet(keyProperties, keyTuples);
         List<ValueBuffer> fallbackResults = [];
         await foreach (object[] row in reader.Rows(tableName, progress: null, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             if (fallbackFactory.TryCreate(row, out ValueBuffer buffer)
-                && TryExtractBufferKeyTuple(keyProperties, buffer, out KeyTupleValue candidateKey)
+                && TryExtractBufferKeyTuple(keyProperties, buffer, out JetKeyTuple candidateKey)
                 && fallbackTargetSet.Contains(candidateKey))
             {
                 fallbackResults.Add(buffer);
@@ -1112,7 +1112,7 @@ public sealed class JetClientConnection : IJetClientConnection
         JetQueryDiagnostics.TableRead(logger, context, tableName, "Scan", "NoAdmissibleKeyIndex");
         bool wrapScannedHyperlinks = resolved.Definition.HasHyperlinkColumns
             && TableReader.HasWantedHyperlinkColumn(resolved.Definition.ClrTypes, wantedColumns);
-        HashSet<KeyTupleValue> targetSet = BuildKeyTupleSet(keyTuples);
+        HashSet<JetKeyTuple> targetSet = BuildKeyTupleSet(keyProperties, keyTuples);
         List<ValueBuffer> scanResults = [];
         await writer.Services.Snapshots.ForEachTypedRowAsync(
             resolved.Entry.TDefPage,
@@ -1126,7 +1126,7 @@ public sealed class JetClientConnection : IJetClientConnection
                 }
 
                 if (factory.TryCreate(values, out ValueBuffer buffer)
-                    && TryExtractBufferKeyTuple(keyProperties, buffer, out KeyTupleValue candidateKey)
+                    && TryExtractBufferKeyTuple(keyProperties, buffer, out JetKeyTuple candidateKey)
                     && targetSet.Contains(candidateKey))
                 {
                     scanResults.Add(buffer);
@@ -1207,12 +1207,12 @@ public sealed class JetClientConnection : IJetClientConnection
         }
     }
 
-    private static HashSet<KeyTupleValue> BuildKeyTupleSet(IReadOnlyList<object?[]> keyTuples)
+    private static HashSet<JetKeyTuple> BuildKeyTupleSet(IReadOnlyList<IProperty> keyProperties, IReadOnlyList<object?[]> keyTuples)
     {
-        HashSet<KeyTupleValue> set = [];
+        HashSet<JetKeyTuple> set = [];
         foreach (object?[] tuple in keyTuples)
         {
-            _ = set.Add(new KeyTupleValue(tuple));
+            _ = set.Add(new JetKeyTuple(keyProperties, tuple));
         }
 
         return set;
@@ -1221,7 +1221,7 @@ public sealed class JetClientConnection : IJetClientConnection
     private static bool TryExtractBufferKeyTuple(
         IReadOnlyList<IProperty> keyProperties,
         ValueBuffer buffer,
-        out KeyTupleValue key)
+        out JetKeyTuple key)
     {
         object?[] values = new object?[keyProperties.Count];
         for (int i = 0; i < keyProperties.Count; i++)
@@ -1237,7 +1237,7 @@ public sealed class JetClientConnection : IJetClientConnection
             values[i] = val;
         }
 
-        key = new KeyTupleValue(values);
+        key = new JetKeyTuple(keyProperties, values);
         return true;
     }
 
@@ -2001,43 +2001,6 @@ public sealed class JetClientConnection : IJetClientConnection
             }
 
             return template;
-        }
-    }
-
-    private readonly struct KeyTupleValue(object?[] values) : IEquatable<KeyTupleValue>
-    {
-        private readonly object?[] values = values;
-
-        public bool Equals(KeyTupleValue other)
-        {
-            if (this.values.Length != other.values.Length)
-            {
-                return false;
-            }
-
-            for (int i = 0; i < this.values.Length; i++)
-            {
-                if (!Equals(this.values[i], other.values[i]))
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        public override bool Equals(object? obj)
-            => obj is KeyTupleValue other && this.Equals(other);
-
-        public override int GetHashCode()
-        {
-            HashCode hash = default;
-            foreach (object? val in this.values)
-            {
-                hash.Add(val);
-            }
-
-            return hash.ToHashCode();
         }
     }
 }

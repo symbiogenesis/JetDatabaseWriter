@@ -74,7 +74,7 @@ internal static partial class JetAsyncQueryExecutor
             try
             {
                 Dictionary<int, IReadOnlyList<ValueBuffer>> buffers = await LoadBufferRootsAsync(context, plan).ConfigureAwait(false);
-                HashSet<StructuralKey> seen = [];
+                HashSet<JetKeyTuple> seen = [];
                 List<RowCriteria> criteria = [];
                 foreach (ValueBuffer buffer in evaluate!(context, buffers))
                 {
@@ -163,7 +163,7 @@ internal static partial class JetAsyncQueryExecutor
             try
             {
                 Dictionary<int, IReadOnlyList<ValueBuffer>> buffers = await LoadBufferRootsAsync(qc, plan).ConfigureAwait(false);
-                HashSet<StructuralKey> seen = [];
+                HashSet<JetKeyTuple> seen = [];
                 List<RowUpdate> updates = [];
                 foreach (ValueBuffer buffer in evaluate!(qc, buffers))
                 {

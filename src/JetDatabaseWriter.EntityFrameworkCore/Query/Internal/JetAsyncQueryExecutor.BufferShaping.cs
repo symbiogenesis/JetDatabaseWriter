@@ -7,6 +7,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -98,7 +99,7 @@ internal static partial class JetAsyncQueryExecutor
         private readonly QueryContext context;
         private readonly JetQueryPlan plan;
         private readonly bool tracking;
-        private readonly Dictionary<(IEntityType Type, StructuralKey Key), object>? identities;
+        private readonly Dictionary<(IEntityType Type, JetKeyTuple Key), object>? identities;
         private readonly Dictionary<(IEntityType Type, ValueBuffer Buffer), object> resultEntities = [];
 
         public BufferResultScope(QueryContext context, JetQueryPlan plan)
@@ -133,7 +134,7 @@ internal static partial class JetAsyncQueryExecutor
 
             if (this.identities is not null && entityType.FindPrimaryKey() is { } key)
             {
-                (IEntityType Type, StructuralKey Key) identity = (entityType, ExtractKey(key, buffer));
+                (IEntityType Type, JetKeyTuple Key) identity = (entityType, ExtractKey(key, buffer));
                 if (!this.identities.TryGetValue(identity, out object? entity))
                 {
                     entity = this.plan.GetUntrackedMaterializer(this.context, entityType)(this.context, buffer);

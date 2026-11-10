@@ -511,7 +511,7 @@ internal static partial class JetAsyncQueryExecutor
                 ct).ConfigureAwait(false);
 
             List<RowCriteria> criteriaList = [];
-            HashSet<StructuralKey> seenKeys = [];
+            HashSet<JetKeyTuple> seenKeys = [];
             foreach (TSource item in compiledSource(queryContext, state))
             {
                 if (item is not object entityObj
@@ -520,7 +520,7 @@ internal static partial class JetAsyncQueryExecutor
                     continue;
                 }
 
-                StructuralKey key = ExtractKey(primaryKey, buffer);
+                JetKeyTuple key = ExtractKey(primaryKey, buffer);
                 if (!seenKeys.Add(key))
                 {
                     continue;
@@ -630,7 +630,7 @@ internal static partial class JetAsyncQueryExecutor
                 ct).ConfigureAwait(false);
 
             Dictionary<string, List<RowUpdate>> updatesByTable = [with(StringComparer.OrdinalIgnoreCase)];
-            HashSet<StructuralKey> seenKeys = [];
+            HashSet<JetKeyTuple> seenKeys = [];
             int matchedCount = 0;
 
             foreach (TSource item in compiledSource(queryContext, state))
@@ -641,7 +641,7 @@ internal static partial class JetAsyncQueryExecutor
                     continue;
                 }
 
-                StructuralKey key = ExtractKey(primaryKey, buffer);
+                JetKeyTuple key = ExtractKey(primaryKey, buffer);
                 if (!seenKeys.Add(key))
                 {
                     continue;
@@ -1165,7 +1165,7 @@ internal static partial class JetAsyncQueryExecutor
 
         if (plan.IncludeChains.Count == 0)
         {
-            Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>>? existingTrackedByType =
+            Dictionary<IEntityType, Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)>>? existingTrackedByType =
                 isTracking ? [] : null;
             List<(object Entity, ValueBuffer Buffer)>? unusedIncludeRoots = null;
             HashSet<object>? unusedSeenRoots = null;
@@ -1203,7 +1203,7 @@ internal static partial class JetAsyncQueryExecutor
 
         if (results.Count > 0)
         {
-            Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType = [];
+            Dictionary<IEntityType, Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)>> existingTrackedByType = [];
             List<(object Entity, ValueBuffer Buffer)> rootRowsForIncludes = [];
             HashSet<object> seenIncludeRoots = [with(ReferenceEqualityComparer.Instance)];
             for (int i = 0; i < results.Count; i++)
@@ -1278,7 +1278,7 @@ internal static partial class JetAsyncQueryExecutor
 
         if (result is object resultObj)
         {
-            Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType = [];
+            Dictionary<IEntityType, Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)>> existingTrackedByType = [];
             List<(object Entity, ValueBuffer Buffer)> rootRowsForIncludes = [];
             HashSet<object> seenIncludeRoots = [with(ReferenceEqualityComparer.Instance)];
             object? promoted = PromoteResultGraph(
@@ -1323,7 +1323,7 @@ internal static partial class JetAsyncQueryExecutor
         JetExecutionMaterializedState state = new();
 
         Dictionary<IEntityType, IReadOnlyList<ValueBuffer>> unindexedBufferCache = [];
-        Dictionary<IEntityType, Dictionary<StructuralKey, object>> untrackedIdentityMaps = [];
+        Dictionary<IEntityType, Dictionary<JetKeyTuple, object>> untrackedIdentityMaps = [];
         bool deduplicateCandidates = isTracking || resolveIdentityUntracked;
 
         foreach (JetTableLoadPlan tablePlan in plan.RootTables)
@@ -1336,11 +1336,11 @@ internal static partial class JetAsyncQueryExecutor
             if (tablePlan.JoinLoadSpec is { } joinSpec
                 && state.RootRows.TryGetValue(joinSpec.OuterPlan.RootId, out List<(object Entity, ValueBuffer Buffer)>? outerRows))
             {
-                HashSet<StructuralKey> seenJoinKeys = [];
+                HashSet<JetKeyTuple> seenJoinKeys = [];
                 List<object?[]> distinctJoinKeyTuples = [];
                 foreach ((_, ValueBuffer outerBuf) in outerRows)
                 {
-                    if (TryExtractNonNullKey(joinSpec.OuterKeyProperties, outerBuf, out StructuralKey joinKey)
+                    if (TryExtractNonNullKey(joinSpec.OuterKeyProperties, outerBuf, out JetKeyTuple joinKey)
                         && seenJoinKeys.Add(joinKey))
                     {
                         distinctJoinKeyTuples.Add(joinKey.Values);
@@ -1570,12 +1570,12 @@ internal static partial class JetAsyncQueryExecutor
         JetQueryPlan plan,
         JetExecutionMaterializedState state,
         List<(object Entity, ValueBuffer Buffer)> resultRows,
-        Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType,
+        Dictionary<IEntityType, Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)>> existingTrackedByType,
         bool isTracking,
         bool resolveIdentityUntracked,
         CancellationToken cancellationToken)
     {
-        Dictionary<IEntityType, Dictionary<StructuralKey, object>> untrackedIdentityMaps = [];
+        Dictionary<IEntityType, Dictionary<JetKeyTuple, object>> untrackedIdentityMaps = [];
         HashSet<(object Entity, INavigationBase Navigation)> initializedCollections = [with(EntityNavigationPairComparer.Instance)];
         Dictionary<(object Entity, INavigationBase Navigation), List<(object Entity, ValueBuffer Buffer)>> loadedOwnedNavigations =
             [with(EntityNavigationPairComparer.Instance)];
@@ -1728,9 +1728,9 @@ internal static partial class JetAsyncQueryExecutor
         Func<QueryContext, JetExecutionMaterializedState, IEnumerable<object>, IEnumerable<object>>? collectionFilter,
         JetQueryPlan plan,
         JetExecutionMaterializedState state,
-        Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>>? existingTrackedByType,
+        Dictionary<IEntityType, Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)>>? existingTrackedByType,
         HashSet<(object Entity, INavigationBase Navigation)>? initializedCollections,
-        Dictionary<IEntityType, Dictionary<StructuralKey, object>> untrackedIdentityMaps,
+        Dictionary<IEntityType, Dictionary<JetKeyTuple, object>> untrackedIdentityMaps,
         bool isTracking,
         bool deduplicateCandidates,
         CancellationToken cancellationToken)
@@ -1771,11 +1771,11 @@ internal static partial class JetAsyncQueryExecutor
             return [];
         }
 
-        Dictionary<StructuralKey, List<object>> declaringEntitiesByKey = [];
+        Dictionary<JetKeyTuple, List<object>> declaringEntitiesByKey = [];
         List<object?[]> distinctSourceKeyTuples = [];
         foreach ((object declaringEntity, ValueBuffer declaringBuffer) in declaringRows)
         {
-            if (!TryExtractNonNullKey(declaringKeyProps, declaringBuffer, out StructuralKey srcKey))
+            if (!TryExtractNonNullKey(declaringKeyProps, declaringBuffer, out JetKeyTuple srcKey))
             {
                 continue;
             }
@@ -1816,14 +1816,14 @@ internal static partial class JetAsyncQueryExecutor
             untrackedIdentityMaps,
             cancellationToken);
 
-        HashSet<StructuralKey> seenTargetKeys = [];
+        HashSet<JetKeyTuple> seenTargetKeys = [];
         List<object?[]> distinctTargetKeyTuples = [];
-        List<(StructuralKey SourceKey, StructuralKey TargetKey, object JoinEntity, ValueBuffer JoinBuffer)> joinLinks = [];
+        List<(JetKeyTuple SourceKey, JetKeyTuple TargetKey, object JoinEntity, ValueBuffer JoinBuffer)> joinLinks = [];
 
         foreach ((object joinEntity, ValueBuffer joinBuffer) in joinRows)
         {
-            if (!TryExtractNonNullKey(joinSourceFkProps, joinBuffer, out StructuralKey srcKey)
-                || !TryExtractNonNullKey(joinTargetFkProps, joinBuffer, out StructuralKey tgtKey))
+            if (!TryExtractNonNullKey(joinSourceFkProps, joinBuffer, out JetKeyTuple srcKey)
+                || !TryExtractNonNullKey(joinTargetFkProps, joinBuffer, out JetKeyTuple tgtKey))
             {
                 continue;
             }
@@ -1862,10 +1862,10 @@ internal static partial class JetAsyncQueryExecutor
             candidateTargetRows = ApplyEntityQueryFilters(queryContext, plan, state, targetRoot, candidateTargetRows);
         }
 
-        Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)> targetByKey = [];
+        Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)> targetByKey = [];
         foreach ((object targetEntity, ValueBuffer targetBuffer) in candidateTargetRows)
         {
-            if (TryExtractNonNullKey(targetKeyProps, targetBuffer, out StructuralKey tgtKey))
+            if (TryExtractNonNullKey(targetKeyProps, targetBuffer, out JetKeyTuple tgtKey))
             {
                 targetByKey[tgtKey] = (targetEntity, targetBuffer);
             }
@@ -1873,7 +1873,7 @@ internal static partial class JetAsyncQueryExecutor
 
         Dictionary<object, List<(object TargetEntity, ValueBuffer TargetBuffer, object JoinEntity, ValueBuffer JoinBuffer)>> matchedByDeclaring =
             [with(ReferenceEqualityComparer.Instance)];
-        foreach ((StructuralKey srcKey, StructuralKey tgtKey, object joinEntity, ValueBuffer joinBuffer) in joinLinks)
+        foreach ((JetKeyTuple srcKey, JetKeyTuple tgtKey, object joinEntity, ValueBuffer joinBuffer) in joinLinks)
         {
             if (!declaringEntitiesByKey.TryGetValue(srcKey, out List<object>? declaringList)
                 || !targetByKey.TryGetValue(tgtKey, out (object Entity, ValueBuffer Buffer) targetEntry))
@@ -1993,11 +1993,11 @@ internal static partial class JetAsyncQueryExecutor
             return [];
         }
 
-        HashSet<StructuralKey> seenKeys = [];
+        HashSet<JetKeyTuple> seenKeys = [];
         List<object?[]> distinctKeyTuples = [];
         foreach ((_, ValueBuffer buffer) in declaringRows)
         {
-            if (TryExtractNonNullKey(sourceKeyProps, buffer, out StructuralKey key) && seenKeys.Add(key))
+            if (TryExtractNonNullKey(sourceKeyProps, buffer, out JetKeyTuple key) && seenKeys.Add(key))
             {
                 distinctKeyTuples.Add(key.Values);
             }
@@ -2021,7 +2021,7 @@ internal static partial class JetAsyncQueryExecutor
         QueryContext queryContext,
         JetQueryPlan plan,
         JetExecutionMaterializedState state,
-        Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType,
+        Dictionary<IEntityType, Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)>> existingTrackedByType,
         bool isTracking,
         List<(object Entity, ValueBuffer Buffer)> rootRowsForIncludes,
         HashSet<object> seenIncludeRoots)
@@ -2098,7 +2098,7 @@ internal static partial class JetAsyncQueryExecutor
         QueryContext queryContext,
         JetQueryPlan plan,
         JetExecutionMaterializedState state,
-        Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType)
+        Dictionary<IEntityType, Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)>> existingTrackedByType)
     {
         if (state.AlreadyTrackedEntities.Contains(candidateEntity))
         {
@@ -2122,13 +2122,13 @@ internal static partial class JetAsyncQueryExecutor
 
         IEntityType rootType = concreteType.GetRootType();
         IKey? primaryKey = rootType.FindPrimaryKey();
-        StructuralKey? extractedKey = null;
+        JetKeyTuple? extractedKey = null;
         if (primaryKey is not null)
         {
-            StructuralKey key = ExtractKey(primaryKey, buffer);
+            JetKeyTuple key = ExtractKey(primaryKey, buffer);
             extractedKey = key;
 
-            if (existingTrackedByType.TryGetValue(rootType, out Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>? trackedMap)
+            if (existingTrackedByType.TryGetValue(rootType, out Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)>? trackedMap)
                 && trackedMap.TryGetValue(key, out (object Entity, ValueBuffer Buffer) trackedEntry))
             {
                 state.PromotedEntities[candidateEntity] = trackedEntry.Entity;
@@ -2156,7 +2156,7 @@ internal static partial class JetAsyncQueryExecutor
                 && existingStateEntry is { EntityState: not EntityState.Detached, Entity: object stateManagerEntity })
 #pragma warning restore EF1001
             {
-                if (!existingTrackedByType.TryGetValue(rootType, out Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>? map))
+                if (!existingTrackedByType.TryGetValue(rootType, out Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)>? map))
                 {
                     map = [];
                     existingTrackedByType[rootType] = map;
@@ -2217,9 +2217,9 @@ internal static partial class JetAsyncQueryExecutor
         state.EntityBuffers[tracked] = buffer;
         state.EntityTypesByInstance[tracked] = concreteType;
         _ = state.AlreadyTrackedEntities.Add(tracked);
-        if (primaryKey is not null && extractedKey is StructuralKey resolvedKey)
+        if (primaryKey is not null && extractedKey is JetKeyTuple resolvedKey)
         {
-            if (!existingTrackedByType.TryGetValue(rootType, out Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>? map))
+            if (!existingTrackedByType.TryGetValue(rootType, out Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)>? map))
             {
                 map = [];
                 existingTrackedByType[rootType] = map;
@@ -2246,7 +2246,7 @@ internal static partial class JetAsyncQueryExecutor
         QueryContext queryContext,
         JetQueryPlan plan,
         JetExecutionMaterializedState state,
-        Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> existingTrackedByType)
+        Dictionary<IEntityType, Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)>> existingTrackedByType)
     {
         if (plan.QueryReferencedNavigations.Count == 0)
         {
@@ -2405,12 +2405,12 @@ internal static partial class JetAsyncQueryExecutor
         JetQueryPlan plan,
         JetExecutionMaterializedState state,
         bool deduplicateCandidates,
-        Dictionary<IEntityType, Dictionary<StructuralKey, object>> untrackedIdentityMaps)
+        Dictionary<IEntityType, Dictionary<JetKeyTuple, object>> untrackedIdentityMaps)
     {
         Func<QueryContext, ValueBuffer, object> untrackedMaterializer = plan.GetUntrackedMaterializer(queryContext, rootEntityType);
         IKey? primaryKey = rootEntityType.FindPrimaryKey();
 
-        Dictionary<StructuralKey, object>? untrackedMap = null;
+        Dictionary<JetKeyTuple, object>? untrackedMap = null;
         if (deduplicateCandidates
             && primaryKey is not null
             && !untrackedIdentityMaps.TryGetValue(rootEntityType, out untrackedMap))
@@ -2422,7 +2422,7 @@ internal static partial class JetAsyncQueryExecutor
         object entity;
         if (primaryKey is not null && untrackedMap is not null)
         {
-            StructuralKey key = ExtractKey(primaryKey, buffer);
+            JetKeyTuple key = ExtractKey(primaryKey, buffer);
             if (!untrackedMap.TryGetValue(key, out object? existing))
             {
                 existing = untrackedMaterializer(queryContext, buffer);
@@ -2467,7 +2467,7 @@ internal static partial class JetAsyncQueryExecutor
         JetQueryPlan plan,
         JetExecutionMaterializedState state,
         bool deduplicateCandidates,
-        Dictionary<IEntityType, Dictionary<StructuralKey, object>> untrackedIdentityMaps,
+        Dictionary<IEntityType, Dictionary<JetKeyTuple, object>> untrackedIdentityMaps,
         CancellationToken cancellationToken)
     {
         List<(object Entity, ValueBuffer Buffer)> loadedRows = [];
@@ -2565,7 +2565,7 @@ internal static partial class JetAsyncQueryExecutor
         Func<QueryContext, JetExecutionMaterializedState, IEnumerable<object>, IEnumerable<object>>? collectionFilter,
         JetQueryPlan? plan,
         JetExecutionMaterializedState state,
-        Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>>? existingTrackedByType,
+        Dictionary<IEntityType, Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)>>? existingTrackedByType,
         HashSet<(object Entity, INavigationBase Navigation)>? initializedCollections,
         bool isTracking)
     {
@@ -2617,10 +2617,10 @@ internal static partial class JetAsyncQueryExecutor
 
         if (navigation.IsOnDependent)
         {
-            Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)> principalByKey = [];
+            Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)> principalByKey = [];
             foreach ((object targetEntity, ValueBuffer targetBuffer) in candidateTargetRows)
             {
-                if (TryExtractNonNullKey(pkProperties, targetBuffer, out StructuralKey pk))
+                if (TryExtractNonNullKey(pkProperties, targetBuffer, out JetKeyTuple pk))
                 {
                     principalByKey[pk] = (targetEntity, targetBuffer);
                 }
@@ -2631,7 +2631,7 @@ internal static partial class JetAsyncQueryExecutor
 
             foreach ((object dependentEntity, ValueBuffer dependentBuffer) in declaringRows)
             {
-                if (!TryExtractNonNullKey(fkProperties, dependentBuffer, out StructuralKey fk)
+                if (!TryExtractNonNullKey(fkProperties, dependentBuffer, out JetKeyTuple fk)
                     || !principalByKey.TryGetValue(fk, out (object Entity, ValueBuffer Buffer) principalEntry))
                 {
                     continue;
@@ -2660,10 +2660,10 @@ internal static partial class JetAsyncQueryExecutor
         }
         else
         {
-            Dictionary<StructuralKey, object> principalByKey = [];
+            Dictionary<JetKeyTuple, object> principalByKey = [];
             foreach ((object declaringEntity, ValueBuffer declaringBuffer) in declaringRows)
             {
-                if (TryExtractNonNullKey(pkProperties, declaringBuffer, out StructuralKey pk))
+                if (TryExtractNonNullKey(pkProperties, declaringBuffer, out JetKeyTuple pk))
                 {
                     principalByKey[pk] = declaringEntity;
                 }
@@ -2672,7 +2672,7 @@ internal static partial class JetAsyncQueryExecutor
             Dictionary<object, List<(object Entity, ValueBuffer Buffer)>> childrenByPrincipal = [with(ReferenceEqualityComparer.Instance)];
             foreach ((object dependentEntity, ValueBuffer dependentBuffer) in candidateTargetRows)
             {
-                if (!TryExtractNonNullKey(fkProperties, dependentBuffer, out StructuralKey fk)
+                if (!TryExtractNonNullKey(fkProperties, dependentBuffer, out JetKeyTuple fk)
                     || !principalByKey.TryGetValue(fk, out object? principalEntity))
                 {
                     continue;
@@ -2810,7 +2810,7 @@ internal static partial class JetAsyncQueryExecutor
         }
     }
 
-    private static StructuralKey ExtractKey(IKey key, ValueBuffer buffer)
+    private static JetKeyTuple ExtractKey(IKey key, ValueBuffer buffer)
     {
         object?[] values = new object?[key.Properties.Count];
         for (int i = 0; i < key.Properties.Count; i++)
@@ -2818,7 +2818,7 @@ internal static partial class JetAsyncQueryExecutor
             values[i] = buffer[key.Properties[i].GetIndex()];
         }
 
-        return new StructuralKey(values);
+        return new JetKeyTuple(key.Properties, values);
     }
 
     private static bool EvaluateContains<TSource>(
@@ -2839,7 +2839,7 @@ internal static partial class JetAsyncQueryExecutor
         return false;
     }
 
-    private static bool TryExtractNonNullKey(IReadOnlyList<IProperty> properties, ValueBuffer buffer, out StructuralKey key)
+    private static bool TryExtractNonNullKey(IReadOnlyList<IProperty> properties, ValueBuffer buffer, out JetKeyTuple key)
     {
         object?[] values = new object?[properties.Count];
         for (int i = 0; i < properties.Count; i++)
@@ -2855,7 +2855,7 @@ internal static partial class JetAsyncQueryExecutor
             values[i] = val;
         }
 
-        key = new StructuralKey(values);
+        key = new JetKeyTuple(properties, values);
         return true;
     }
 
@@ -3017,43 +3017,6 @@ internal static partial class JetAsyncQueryExecutor
         }
 
         return default!;
-    }
-
-    private readonly struct StructuralKey(object?[] values) : IEquatable<StructuralKey>
-    {
-        public object?[] Values { get; } = values;
-
-        public bool Equals(StructuralKey other)
-        {
-            if (this.Values.Length != other.Values.Length)
-            {
-                return false;
-            }
-
-            for (int i = 0; i < this.Values.Length; i++)
-            {
-                if (!Equals(this.Values[i], other.Values[i]))
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        public override bool Equals(object? obj)
-            => obj is StructuralKey other && this.Equals(other);
-
-        public override int GetHashCode()
-        {
-            HashCode hash = default;
-            foreach (object? val in this.Values)
-            {
-                hash.Add(val);
-            }
-
-            return hash.ToHashCode();
-        }
     }
 
     private sealed record JetJoinKeyLoadSpec(
@@ -3257,7 +3220,7 @@ internal static partial class JetAsyncQueryExecutor
 
         public Dictionary<object, object> PromotedEntities { get; } = [with(ReferenceEqualityComparer.Instance)];
 
-        public Dictionary<IEntityType, Dictionary<StructuralKey, (object Entity, ValueBuffer Buffer)>> ProjectedTrackedEntities { get; } = [];
+        public Dictionary<IEntityType, Dictionary<JetKeyTuple, (object Entity, ValueBuffer Buffer)>> ProjectedTrackedEntities { get; } = [];
 
         public HashSet<object> AlreadyTrackedEntities { get; } = [with(ReferenceEqualityComparer.Instance)];
 
@@ -3471,7 +3434,9 @@ internal static partial class JetAsyncQueryExecutor
                     && StripQuotes(node.Arguments[3]) is LambdaExpression innerKeyLambda
                     && this.TryExtractMappedJoinKeys(node.Arguments[0], outerKeyLambda, out EntityQueryRootExpression? outerRoot, out List<IProperty>? outerKeyProps)
                     && this.TryExtractMappedJoinKeys(node.Arguments[1], innerKeyLambda, out EntityQueryRootExpression? innerRoot, out List<IProperty>? innerKeyProps)
-                    && outerKeyProps!.Count == innerKeyProps!.Count)
+                    && outerKeyProps!.Count == innerKeyProps!.Count
+                    && outerKeyProps.All(JetKeyTuple.HasDefaultComparer)
+                    && innerKeyProps.All(JetKeyTuple.HasDefaultComparer))
                 {
                     _ = this.Visit(node.Arguments[0]);
                     _ = this.Visit(node.Arguments[1]);

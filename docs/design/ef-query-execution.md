@@ -18,6 +18,12 @@ materialize surviving entity references and honor tracking and identity
 resolution. Scalar grouping retains only columns actually referenced by its
 keys, aggregates, predicates and joins.
 
+Scalar-only projections and supported aggregates also retain buffer execution
+when their model contains owned navigations or TPH inheritance. Derived roots
+retain their discriminator and query filters. Includes that cannot contribute
+to a scalar result do not load navigation graphs. Entity-valued shapes keep the
+complete materialization path, including owned references and automatic Includes.
+
 A single mapped-property `OrderBy`/`ThenBy` chain streams in admitted index order,
 including reverse and mixed directions. Residual predicates and paging retain
 their original operator positions. If no equivalent index order is available,
@@ -90,9 +96,12 @@ identity remain part of that comparison; keyless entity identity comparisons
 refuse. Explicit CLR reference comparisons and ordinary LINQ grouping retain
 their CLR semantics.
 
-Query identity maps and navigation-read key tuples still use ordinary object
-equality instead of the property's EF key comparer. Their consolidation and
-remaining query/navigation regressions remain open in plan I18.
+Query identity maps and navigation-read key tuples use ordered EF property key
+comparers and snapshot retained values. Navigation matching uses the principal
+key's comparers for both sides, including composite and binary keys. Native
+candidate pruning falls back to a scan when arbitrary configured equality cannot
+be represented by a native key lookup. Ordinary LINQ joins and explicit comparer
+overloads retain their requested CLR equality semantics.
 
 Supported single-table bulk mutations rent the writer before selecting buffers.
 They read the key, filter and setter columns, evaluate every assignment against
@@ -121,6 +130,10 @@ key lookups for later joins in a chain. Inner predicates remain residuals after
 join-key lookup. Outer joins retain null-extension behavior.
 Comparer overloads and constructed join keys with nullable components retain
 ordinary evaluation when exact-key candidate lookup cannot preserve equality.
+Explicit Includes do not prevent an otherwise safe root `Take` or terminal bound.
+The bound limits candidate root construction before loading the selected roots'
+relationships. Complete unbounded graph results and blocking operators retain
+their buffering requirements.
 
 Projected root and navigation reads retain key and relationship columns and skip
 unreferenced long values when the result does not require a complete entity.
@@ -227,6 +240,11 @@ Inheritance seed rows fill omitted discriminator values through the property's
 provider conversion. Decimal precision defaults use enum underlying and converter
 provider types, preserving full unsigned 64-bit values and integer-backed time
 values while honoring explicit precision and scale.
+Table-split owned seeds merge into their physical owner's seed row using the
+ownership's principal-key comparers, including nested owners, converted and
+composite keys. Conflicting shared values or owned seeds without a matching
+seeded owner refuse. Additive migration inserts missing physical seed rows and
+leaves existing rows unchanged.
 Literal defaults are normalized to the model property type before EF receives a
 generated value, including nullable and enum types. Model validation checks both
 that conversion and the property's model-to-provider conversion before opening a

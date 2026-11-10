@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -186,10 +187,10 @@ internal static partial class JetAsyncQueryExecutor
         {
             if (table.JoinLoadSpec is { } join && roots.TryGetValue(join.OuterPlan.RootId, out IReadOnlyList<ValueBuffer>? outer))
             {
-                HashSet<StructuralKey> keys = [];
+                HashSet<JetKeyTuple> keys = [];
                 foreach (ValueBuffer row in outer)
                 {
-                    if (TryExtractNonNullKey(join.OuterKeyProperties, row, out StructuralKey key))
+                    if (TryExtractNonNullKey(join.OuterKeyProperties, row, out JetKeyTuple key))
                     {
                         keys.Add(key);
                     }
@@ -249,7 +250,7 @@ internal static partial class JetAsyncQueryExecutor
         }
 
         Func<QueryContext, ValueBuffer, object> materializer = tracking ? plan.GetTrackedMaterializer(context, entityType) : plan.GetUntrackedMaterializer(context, entityType);
-        Dictionary<StructuralKey, object>? identities = behavior == QueryTrackingBehavior.NoTrackingWithIdentityResolution ? [] : null;
+        Dictionary<JetKeyTuple, object>? identities = behavior == QueryTrackingBehavior.NoTrackingWithIdentityResolution ? [] : null;
         IKey? key = entityType.FindPrimaryKey();
         await foreach (ValueBuffer buffer in source.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
@@ -257,7 +258,7 @@ internal static partial class JetAsyncQueryExecutor
             object entity;
             if (identities is not null && key is not null)
             {
-                StructuralKey identity = ExtractKey(key, buffer);
+                JetKeyTuple identity = ExtractKey(key, buffer);
                 if (!identities.TryGetValue(identity, out entity!))
                 {
                     entity = materializer(context, buffer);
