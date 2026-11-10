@@ -55,7 +55,7 @@ public sealed class JetSharedStreamSchemaReadTests
         await SeedAsync(options, ct);
         await using SchemaContext schema = new(options);
         await using SchemaContext peer = new(options);
-        using CancellationTokenSource cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
         stream.PauseNextCatalogRead = true;
         Task<bool> pending = schema.Database.EnsureCreatedAsync(cancel.Token);
         await stream.Paused.Task.WaitAsync(ct);
@@ -78,7 +78,7 @@ public sealed class JetSharedStreamSchemaReadTests
         await using (IAsyncEnumerator<SchemaRow> cursor = reader.Set<SchemaRow>().AsAsyncEnumerable().GetAsyncEnumerator(ct))
         {
             Assert.True(await cursor.MoveNextAsync());
-            using CancellationTokenSource cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
             Task<bool> pending = peer.Database.EnsureCreatedAsync(cancel.Token);
             Assert.False(pending.IsCompleted);
             await cancel.CancelAsync();
