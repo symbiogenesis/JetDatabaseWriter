@@ -126,6 +126,13 @@ public sealed class AccessWriterOptions : AccessOptions
     /// </summary>
     public bool UseTransactionalWrites { get; init; }
 
+    /// <summary>Copies these options with the connection's resolved password and lockfile policy.</summary>
+    /// <param name="password">The password resolved for this connection.</param>
+    /// <param name="useLockFile">Whether this connection maintains a lockfile.</param>
+    /// <returns>A detached options copy preserving every writer setting.</returns>
+    internal AccessWriterOptions WithConnectionSettings(ReadOnlyMemory<char> password, bool useLockFile)
+        => (AccessWriterOptions)this.CloneWithConnectionSettings(password, useLockFile);
+
     /// <summary>
     /// Checks the options a writer cannot work with. <c>OpenAsync</c> and
     /// <c>CreateDatabaseAsync</c> call it first, so a bad value fails before the

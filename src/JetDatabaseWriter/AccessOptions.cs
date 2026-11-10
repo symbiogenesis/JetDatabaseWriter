@@ -14,6 +14,8 @@ public abstract class AccessOptions(bool useByteRangeLocks)
 {
     internal const int DefaultLockTimeoutMilliseconds = 5_000;
     private const int LockFileIdentityMaxLength = 31;
+    private ReadOnlyMemory<char> password;
+    private bool useLockFile = true;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessOptions"/> class using a plain-text password.
@@ -28,7 +30,11 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     /// Gets the password for opening password-protected databases.
     /// Empty (the default) means no password is supplied.
     /// </summary>
-    public ReadOnlyMemory<char> Password { get; init; }
+    public ReadOnlyMemory<char> Password
+    {
+        get => this.password;
+        init => this.password = value;
+    }
 
     /// <summary>
     /// Gets the maximum password-hash iteration count permitted while opening
@@ -75,7 +81,11 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     /// attempts to remove an unused lockfile; other holders or permissions can retain it.
     /// Default: true.
     /// </summary>
-    public bool UseLockFile { get; init; } = true;
+    public bool UseLockFile
+    {
+        get => this.useLockFile;
+        init => this.useLockFile = value;
+    }
 
     /// <summary>
     /// Gets the user / security name written into this opener's slot in the
@@ -143,6 +153,18 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     /// use in-process rollback only and do not persist cross-open recovery journals.
     /// </summary>
     public IPersistentStreamRecoveryAdapter? PersistentStreamRecoveryAdapter { get; init; }
+
+    /// <summary>Copies every option while replacing only connection-specific settings.</summary>
+    /// <param name="password">The password resolved for this connection.</param>
+    /// <param name="useLockFile">Whether this connection maintains a lockfile.</param>
+    /// <returns>A shallow copy retaining the concrete option type and caller-supplied collaborators.</returns>
+    private protected AccessOptions CloneWithConnectionSettings(ReadOnlyMemory<char> password, bool useLockFile)
+    {
+        AccessOptions copy = (AccessOptions)this.MemberwiseClone();
+        copy.password = password;
+        copy.useLockFile = useLockFile;
+        return copy;
+    }
 
     internal static void ValidatePersistentStreamRecoveryAdapter(IPersistentStreamRecoveryAdapter? adapter)
     {

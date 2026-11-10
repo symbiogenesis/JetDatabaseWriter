@@ -210,6 +210,13 @@ public sealed class AccessReaderOptions : AccessOptions
     /// </summary>
     public uint? LinkedTextMaxMaterializedRows { get; init; }
 
+    /// <summary>Copies these options with the connection's resolved password and lockfile policy.</summary>
+    /// <param name="password">The password resolved for this connection.</param>
+    /// <param name="useLockFile">Whether this connection maintains a lockfile.</param>
+    /// <returns>A detached options copy preserving every reader setting.</returns>
+    internal AccessReaderOptions WithConnectionSettings(ReadOnlyMemory<char> password, bool useLockFile)
+        => (AccessReaderOptions)this.CloneWithConnectionSettings(password, useLockFile);
+
     /// <summary>
     /// Returns whether a reader opened with these options reads its pages
     /// through positional <c>RandomAccess</c> reads, which bypass the I/O gate

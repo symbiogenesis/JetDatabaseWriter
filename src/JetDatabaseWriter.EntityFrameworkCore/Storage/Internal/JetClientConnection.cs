@@ -27,7 +27,8 @@ public sealed class JetClientConnection : IJetClientConnection
 {
     private static readonly List<(WeakReference<JetClientConnection> Connection, SemaphoreSlim LifecycleGate)> LiveConnections = [];
     private static readonly Lock LiveConnectionsGate = new();
-    private static readonly bool DefaultWriterByteRangeLocks = new AccessWriterOptions().UseByteRangeLocks;
+    private static readonly AccessReaderOptions DefaultReaderOptions = new();
+    private static readonly AccessWriterOptions DefaultWriterOptions = new() { UseTransactionalWrites = true };
     private static readonly ConcurrentDictionary<Type, object> BoxedDefaultValues = [];
 
     private readonly SemaphoreSlim connectionGate = new(1, 1);
@@ -706,80 +707,20 @@ public sealed class JetClientConnection : IJetClientConnection
 
     internal AccessReaderOptions BuildReaderOptions()
     {
-        AccessReaderOptions? template = this.optionsExtension.ReaderOptions;
-        bool isStream = string.IsNullOrWhiteSpace(this.DatabasePath);
+        AccessReaderOptions template = this.optionsExtension.ReaderOptions ?? DefaultReaderOptions;
         ReadOnlyMemory<char> password = !string.IsNullOrEmpty(this.optionsExtension.Password)
             ? this.optionsExtension.Password.AsMemory()
-            : (template?.Password ?? ReadOnlyMemory<char>.Empty);
-        return new AccessReaderOptions
-        {
-            Password = password,
-            MaxEncryptionSpinCount = template?.MaxEncryptionSpinCount ?? 1_000_000,
-            MaxEncryptionInfoBytes = template?.MaxEncryptionInfoBytes ?? (1024 * 1024),
-            MaxTableDefinitionBytes = template?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024),
-            MaxSchemaTraversalBytes = template?.MaxSchemaTraversalBytes ?? (64 * 1024 * 1024),
-            UseLockFile = !isStream && (template?.UseLockFile ?? true),
-            LockFileUserName = template?.LockFileUserName,
-            LockFileMachineName = template?.LockFileMachineName,
-            UseByteRangeLocks = template?.UseByteRangeLocks ?? false,
-            LockTimeoutMilliseconds = template?.LockTimeoutMilliseconds ?? 5000,
-            MaxLongValueBytes = template?.MaxLongValueBytes ?? 0xFFFFFF,
-            MaxAttachmentContentBytes = template?.MaxAttachmentContentBytes ?? (64 * 1024 * 1024),
-            MaxAttachmentContentBytesPerOperation = template?.MaxAttachmentContentBytesPerOperation ?? (256L * 1024 * 1024),
-            MaxAttachmentDecodeWorkBytesPerOperation = template?.MaxAttachmentDecodeWorkBytesPerOperation ?? (2L * 1024 * 1024 * 1024),
-            MaxComplexDiscoveryEntries = template?.MaxComplexDiscoveryEntries ?? 65536,
-            MaxComplexItemIdentityEntriesPerOperation = template?.MaxComplexItemIdentityEntriesPerOperation ?? 1_048_576,
-            MaxTotalEncryptionSpinCount = template?.MaxTotalEncryptionSpinCount ?? 10_000_000,
-            PageCacheSize = template?.PageCacheSize ?? 256,
-            MaxActivePageLeases = template?.MaxActivePageLeases ?? 4096,
-            MaxIncludeMaterializedRowsPerOperation = template?.MaxIncludeMaterializedRowsPerOperation ?? 65536,
-            MaxIncludeMaterializedPayloadBytesPerOperation = template?.MaxIncludeMaterializedPayloadBytesPerOperation ?? (256L * 1024 * 1024),
-            DiagnosticsEnabled = template?.DiagnosticsEnabled ?? false,
-            PageReadOptimizationMode = template?.PageReadOptimizationMode ?? PageReadOptimizationMode.Auto,
-            ValidateOnOpen = template?.ValidateOnOpen ?? true,
-            StrictParsing = template?.StrictParsing ?? true,
-            FileAccess = template?.FileAccess ?? FileAccess.Read,
-            FileShare = template?.FileShare ?? FileShare.Read,
-            LinkedSourceResolver = template?.LinkedSourceResolver,
-            LinkedSourceMaxDepth = template?.LinkedSourceMaxDepth ?? 32,
-            LinkedSourcePasswordResolver = template?.LinkedSourcePasswordResolver,
-            LinkedTextMaxRecordLength = template?.LinkedTextMaxRecordLength ?? 1_048_576,
-            LinkedTextMaxFieldLength = template?.LinkedTextMaxFieldLength ?? 1_048_576,
-            LinkedTextMaxColumnCount = template?.LinkedTextMaxColumnCount ?? 255,
-            LinkedTextMaxSourceFileBytes = template?.LinkedTextMaxSourceFileBytes,
-            LinkedTextMaxMaterializedRows = template?.LinkedTextMaxMaterializedRows,
-        };
+            : template.Password;
+        return template.WithConnectionSettings(password, this.DatabasePath is not null && template.UseLockFile);
     }
 
     internal AccessWriterOptions BuildWriterOptions()
     {
-        AccessWriterOptions? template = this.optionsExtension.WriterOptions;
-        bool isStream = string.IsNullOrWhiteSpace(this.DatabasePath);
+        AccessWriterOptions template = this.optionsExtension.WriterOptions ?? DefaultWriterOptions;
         ReadOnlyMemory<char> password = !string.IsNullOrEmpty(this.optionsExtension.Password)
             ? this.optionsExtension.Password.AsMemory()
-            : (template?.Password ?? ReadOnlyMemory<char>.Empty);
-        return new AccessWriterOptions
-        {
-            Password = password,
-            MaxEncryptionSpinCount = template?.MaxEncryptionSpinCount ?? 1_000_000,
-            MaxEncryptionInfoBytes = template?.MaxEncryptionInfoBytes ?? (1024 * 1024),
-            MaxTableDefinitionBytes = template?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024),
-            MaxSchemaTraversalBytes = template?.MaxSchemaTraversalBytes ?? (64 * 1024 * 1024),
-            UseLockFile = !isStream && (template?.UseLockFile ?? true),
-            LockFileUserName = template?.LockFileUserName,
-            LockFileMachineName = template?.LockFileMachineName,
-            UseByteRangeLocks = template?.UseByteRangeLocks ?? DefaultWriterByteRangeLocks,
-            LockTimeoutMilliseconds = template?.LockTimeoutMilliseconds ?? 5000,
-            MaxLongValueBytes = template?.MaxLongValueBytes ?? 0xFFFFFF,
-            RespectExistingLockFile = template?.RespectExistingLockFile ?? true,
-            MaxTransactionPageBudget = template?.MaxTransactionPageBudget ?? 16_384,
-            PageCacheSize = template?.PageCacheSize ?? 256,
-            MaxSchemaRewriteRows = template?.MaxSchemaRewriteRows ?? 1_048_576,
-            MaxSchemaRewriteBytes = template?.MaxSchemaRewriteBytes ?? (256L * 1024 * 1024),
-            CalculatedExpressionCulture = template?.CalculatedExpressionCulture,
-            SecureEraseMode = template?.SecureEraseMode ?? SecureEraseMode.None,
-            UseTransactionalWrites = template?.UseTransactionalWrites ?? true,
-        };
+            : template.Password;
+        return template.WithConnectionSettings(password, this.DatabasePath is not null && template.UseLockFile);
     }
 
     private static SemaphoreSlim RegisterConnection(JetClientConnection connection)
