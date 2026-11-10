@@ -86,7 +86,7 @@ internal static class JetIndexSeekPlanner
                 IndexPlan? plan = IndexPlanner.TryPlan(
                     indexes,
                     seekable,
-                    candidate => CanEncodePlan(format, resolved.Definition, tableName, candidate));
+                    candidate => IndexQueryAdmission.CanEncodePlan(format, resolved.Definition, tableName, candidate));
                 if (plan is not null)
                 {
                     return reader.Services.Indexes.ReadIndexRowsAsObjectsAsync(
@@ -200,7 +200,7 @@ internal static class JetIndexSeekPlanner
         TableDef tableDef = resolved.Definition;
         string tableName = resolved.Entry.Name;
         IReadOnlyList<IndexMetadata> allIndexes = await writer.Services.Snapshots.ReadIndexMetadataSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
-        List<IndexMetadata> indexes = FilterSeekableIndexes(tableDef, allIndexes);
+        List<IndexMetadata> indexes = IndexQueryAdmission.FilterSeekableIndexes(tableDef, allIndexes);
         if (indexes.Count == 0)
         {
             return false;
@@ -214,7 +214,7 @@ internal static class JetIndexSeekPlanner
                 IndexPlan? plan = IndexPlanner.TryPlan(
                     indexes,
                     seekable,
-                    candidate => CanEncodePlan(format, tableDef, tableName, candidate));
+                    candidate => IndexQueryAdmission.CanEncodePlan(format, tableDef, tableName, candidate));
                 if (plan?.Index is { FirstDp: > 0, Columns.Count: > 0 })
                 {
                     await EnumerateActiveWriterIndexCriteriaAsync(
@@ -314,7 +314,7 @@ internal static class JetIndexSeekPlanner
         if (indexes is null)
         {
             IReadOnlyList<IndexMetadata> allIndexes = await writer.Services.Snapshots.ReadIndexMetadataSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
-            indexes = FilterSeekableIndexes(tableDef, allIndexes);
+            indexes = IndexQueryAdmission.FilterSeekableIndexes(tableDef, allIndexes);
         }
 
         IndexMetadata? chosenIndex = SelectPrefixMatchingIndex(indexes, keyColumnNames!);
@@ -323,7 +323,7 @@ internal static class JetIndexSeekPlanner
             return false;
         }
 
-        if (!CanEncodeMultiKeyTuples(format, tableDef, tableName, chosenIndex, providerTuples!))
+        if (!IndexQueryAdmission.CanSeekJoinKeys(format, tableDef, tableName, chosenIndex, providerTuples!))
         {
             return false;
         }
@@ -439,7 +439,7 @@ internal static class JetIndexSeekPlanner
         }
 
         IReadOnlyList<IndexMetadata> allIndexes = await writer.Services.Snapshots.ReadIndexMetadataSnapshotAsync(resolved.Entry.Name, cancellationToken).ConfigureAwait(false);
-        List<IndexMetadata> indexes = FilterSeekableIndexes(resolved.Definition, allIndexes);
+        List<IndexMetadata> indexes = IndexQueryAdmission.FilterSeekableIndexes(resolved.Definition, allIndexes);
         if (orderedProperties is { Count: > 0 }
             && SelectOrderedScanIndex(format, resolved.Definition, indexes, orderedProperties) is { } ordered)
         {
@@ -458,7 +458,7 @@ internal static class JetIndexSeekPlanner
         }
 
         RowCriteria seekable = BuildSeekableCriteria(conditions, parameters, resolved.Definition);
-        IndexPlan? plan = seekable.Count == 0 ? null : IndexPlanner.TryPlan(indexes, seekable, candidate => CanEncodePlan(format, resolved.Definition, resolved.Entry.Name, candidate));
+        IndexPlan? plan = seekable.Count == 0 ? null : IndexPlanner.TryPlan(indexes, seekable, candidate => IndexQueryAdmission.CanEncodePlan(format, resolved.Definition, resolved.Entry.Name, candidate));
         if (plan?.Index is { FirstDp: > 0, Columns.Count: > 0 })
         {
             return (ReadActiveWriterIndexCriteriaAsync(writer, resolved, plan.Index, plan.Criteria, wantedColumns, cancellationToken), false);
@@ -501,31 +501,6 @@ internal static class JetIndexSeekPlanner
         }
 
         return seekable;
-    }
-
-    private static List<IndexMetadata> FilterSeekableIndexes(TableDef tableDef, IReadOnlyList<IndexMetadata> indexes)
-    {
-        List<IndexMetadata> result = [];
-        foreach (IndexMetadata index in indexes)
-        {
-            bool supported = true;
-            foreach (IndexColumnReference key in index.Columns)
-            {
-                ColumnInfo? column = tableDef.Columns.FirstOrDefault(c => c.ColNum == key.ColumnNumber);
-                if (column is null || (column.Type is TextType or MemoType && !column.TextSortOrder.IsSupported))
-                {
-                    supported = false;
-                    break;
-                }
-            }
-
-            if (supported)
-            {
-                result.Add(index);
-            }
-        }
-
-        return result;
     }
 
     private static (IndexMetadata Index, bool Reverse)? SelectOrderedScanIndex(
@@ -673,44 +648,6 @@ internal static class JetIndexSeekPlanner
         }
 
         return true;
-    }
-
-    private static bool CanEncodeMultiKeyTuples(
-        JetFormat format,
-        TableDef tableDef,
-        string tableName,
-        IndexMetadata index,
-        List<object?[]> providerTuples)
-    {
-        foreach (object?[] key in providerTuples)
-        {
-            for (int ordinal = 0; ordinal < key.Length && ordinal < index.Columns.Count; ordinal++)
-            {
-                ColumnInfo? column = tableDef.Columns.FirstOrDefault(value => string.Equals(value.Name, index.Columns[ordinal].Name, StringComparison.OrdinalIgnoreCase));
-                if (column?.Type is TextType or MemoType
-                    && TextCollationFamily(column.TextSortOrder) != TextCollationFamily(format.DefaultTextSortOrder))
-                {
-                    return false;
-                }
-            }
-
-            if (!CanEncodePlan(format, tableDef, tableName, new IndexPlan(index, IndexQueryCriteria.KeyPrefix(key), key.Length)))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static int TextCollationFamily(JetDatabaseWriter.Indexes.Collation.TextSortOrder order)
-    {
-        if (order.Value == 0 || (order.HasVersion && order.Version == 0))
-        {
-            return 0;
-        }
-
-        return order.HasVersion ? 1 : 2;
     }
 
     private static async ValueTask<bool> EnumerateActiveWriterIndexCriteriaAsync(
@@ -890,11 +827,6 @@ internal static class JetIndexSeekPlanner
 
         return ColumnPredicate.EqualTo(columnName, value);
     }
-
-    private static bool CanEncodePlan(JetFormat format, TableDef definition, string tableName, IndexPlan plan)
-        => (plan.Criteria.Values is null || IndexKeyEncoder.CanEncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Values))
-            && (plan.Criteria.Lower is null || IndexKeyEncoder.CanEncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Lower.Values))
-            && (plan.Criteria.Upper is null || IndexKeyEncoder.CanEncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Upper.Values));
 
     private static IndexMetadata? SelectPrefixMatchingIndex(IReadOnlyList<IndexMetadata> indexes, string[] keyColumnNames)
     {

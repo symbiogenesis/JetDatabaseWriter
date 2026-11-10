@@ -58,21 +58,6 @@ internal sealed class IndexRowReader(
     private const int IndexCacheCapacity = 256;
     private readonly Dictionary<long, (TDefImage Image, IReadOnlyList<IndexMetadata> Indexes)> indexMetadata = [];
 
-    private static bool CanEncodePlan(JetFormat format, TableDef definition, string tableName, IndexPlan plan)
-        => (plan.Criteria.Values is null || IndexKeyEncoder.CanEncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Values))
-            && (plan.Criteria.Lower is null || IndexKeyEncoder.CanEncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Lower.Values))
-            && (plan.Criteria.Upper is null || IndexKeyEncoder.CanEncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Upper.Values));
-
-    private static int TextCollationFamily(JetDatabaseWriter.Indexes.Collation.TextSortOrder order)
-    {
-        if (order.Value == 0 || (order.HasVersion && order.Version == 0))
-        {
-            return 0;
-        }
-
-        return order.HasVersion ? 1 : 2;
-    }
-
     /// <summary>Gets a value indicating whether the database format uses index seeks (<see cref="JetFormat.SupportsIndexSeeks"/>).</summary>
     internal bool CanSeek => format.SupportsIndexSeeks;
 
@@ -329,27 +314,7 @@ internal sealed class IndexRowReader(
     {
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         IReadOnlyList<IndexMetadata> indexes = await this.ReadIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
-        var result = new List<IndexMetadata>();
-        foreach (IndexMetadata index in indexes)
-        {
-            bool supported = true;
-            foreach (IndexColumnReference key in index.Columns)
-            {
-                ColumnInfo? column = resolved.Definition.Columns.FirstOrDefault(c => c.ColNum == key.ColumnNumber);
-                if (column is null || (column.Type is TextType or MemoType && !column.TextSortOrder.IsSupported))
-                {
-                    supported = false;
-                    break;
-                }
-            }
-
-            if (supported)
-            {
-                result.Add(index);
-            }
-        }
-
-        return result;
+        return IndexQueryAdmission.FilterSeekableIndexes(resolved.Definition, indexes);
     }
 
     /// <summary>Checks join collation and every key before Include chooses an index seek.</summary>
@@ -367,27 +332,7 @@ internal sealed class IndexRowReader(
             return false;
         }
 
-        foreach (object?[] key in keys)
-        {
-            for (int ordinal = 0; ordinal < key.Length && ordinal < index.Columns.Count; ordinal++)
-            {
-                ColumnInfo? column = resolved.Definition.Columns.FirstOrDefault(value => string.Equals(value.Name, index.Columns[ordinal].Name, StringComparison.OrdinalIgnoreCase));
-                if (column?.Type is TextType or MemoType
-                    && TextCollationFamily(column.TextSortOrder) != TextCollationFamily(format.DefaultTextSortOrder))
-                {
-                    // Include matches by database collation. A differently collated
-                    // index cannot safely narrow its candidate rows.
-                    return false;
-                }
-            }
-
-            if (!CanEncodePlan(format, resolved.Definition, tableName, new IndexPlan(index, IndexQueryCriteria.KeyPrefix(key), key.Length)))
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return IndexQueryAdmission.CanSeekJoinKeys(format, resolved.Definition, tableName, index, keys);
     }
 
     /// <summary>
@@ -472,7 +417,7 @@ internal sealed class IndexRowReader(
         }
 
         IReadOnlyList<IndexMetadata> indexes = await this.ReadIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
-        return IndexPlanner.TryPlan(indexes, seekable, plan => CanEncodePlan(format, resolved.Definition, tableName, plan));
+        return IndexPlanner.TryPlan(indexes, seekable, plan => IndexQueryAdmission.CanEncodePlan(format, resolved.Definition, tableName, plan));
     }
 
     private async ValueTask<IReadOnlyList<IndexMetadata>> ReadIndexesAsync(ResolvedTable resolved, CancellationToken cancellationToken)
