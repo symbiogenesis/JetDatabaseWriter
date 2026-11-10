@@ -84,6 +84,8 @@ stream writers are reused; switching a peer connection retires idle writer
 state. Reader peers may coexist. Explicit transactions prevent another
 connection from taking over their writer. Schema creation releases its file
 writer when finished.
+The configured `leaveOpen` option applies to both direct streams and streams
+returned by a factory; owned streams close after their readers and writers.
 
 Cancellation before transaction completion enters the connection preserves the
 EF transaction handle and its savepoints for retry or rollback. Once completion

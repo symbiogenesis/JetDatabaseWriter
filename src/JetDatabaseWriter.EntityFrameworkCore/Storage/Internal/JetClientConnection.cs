@@ -666,9 +666,10 @@ public sealed class JetClientConnection : IJetClientConnection
                 {
                     await this.DisposeTransactionCoreAsync().ConfigureAwait(false);
                     await this.CloseReaderCoreAsync().ConfigureAwait(false);
-                    if (this.resolvedStream is not null && !this.optionsExtension.LeaveStreamOpen)
+                    Stream? stream = this.optionsExtension.DatabaseStream ?? this.resolvedStream;
+                    if (stream is not null && !this.optionsExtension.LeaveStreamOpen)
                     {
-                        await this.resolvedStream.DisposeAsync().ConfigureAwait(false);
+                        await stream.DisposeAsync().ConfigureAwait(false);
                         this.resolvedStream = null;
                     }
                 }
