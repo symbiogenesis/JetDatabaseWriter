@@ -1521,6 +1521,8 @@ internal static partial class JetAsyncQueryExecutor
     {
         Dictionary<IEntityType, Dictionary<StructuralKey, object>> untrackedIdentityMaps = [];
         HashSet<(object Entity, INavigationBase Navigation)> initializedCollections = [with(EntityNavigationPairComparer.Instance)];
+        Dictionary<(object Entity, INavigationBase Navigation), List<(object Entity, ValueBuffer Buffer)>> loadedOwnedNavigations =
+            [with(EntityNavigationPairComparer.Instance)];
 
         foreach (JetIncludeChain chain in plan.IncludeChains)
         {
@@ -1559,6 +1561,33 @@ internal static partial class JetAsyncQueryExecutor
 
                 var navigation = (INavigation)step.Navigation;
                 IEntityType targetRoot = navigation.TargetEntityType.GetRootType();
+                List<(object Entity, ValueBuffer Buffer)>? cachedOwnedTargets = null;
+                if (targetRoot.IsOwned() && step.CollectionFilter is null)
+                {
+                    // Shared include prefixes reuse the owned instances of this owner,
+                    // without resolving identities between distinct no-tracking owners.
+                    cachedOwnedTargets = [];
+                    List<(object Entity, ValueBuffer Buffer)> unloadedDeclaringRows = [];
+                    foreach ((object Entity, ValueBuffer Buffer) declaring in currentDeclaringRows)
+                    {
+                        if (loadedOwnedNavigations.TryGetValue((declaring.Entity, navigation), out List<(object Entity, ValueBuffer Buffer)>? cached))
+                        {
+                            cachedOwnedTargets.AddRange(cached);
+                        }
+                        else
+                        {
+                            unloadedDeclaringRows.Add(declaring);
+                        }
+                    }
+
+                    if (unloadedDeclaringRows.Count == 0)
+                    {
+                        currentDeclaringRows = cachedOwnedTargets;
+                        continue;
+                    }
+
+                    currentDeclaringRows = unloadedDeclaringRows;
+                }
 
                 IReadOnlyList<ValueBuffer> targetBuffers = await LoadRelatedValueBuffersAsync(
                     queryContext,
@@ -1581,7 +1610,7 @@ internal static partial class JetAsyncQueryExecutor
                     candidateTargetRows = ApplyEntityQueryFilters(queryContext, plan, state, targetRoot, candidateTargetRows);
                 }
 
-                currentDeclaringRows = FixupNavigationAndPromoteMatchedTargets(
+                List<(object Entity, ValueBuffer Buffer)> loadedTargets = FixupNavigationAndPromoteMatchedTargets(
                     queryContext,
                     navigation,
                     currentDeclaringRows,
@@ -1592,8 +1621,48 @@ internal static partial class JetAsyncQueryExecutor
                     existingTrackedByType,
                     initializedCollections,
                     isTracking);
+
+                if (cachedOwnedTargets is not null)
+                {
+                    foreach ((object declaringEntity, _) in currentDeclaringRows)
+                    {
+                        loadedOwnedNavigations[(declaringEntity, navigation)] = GetLoadedNavigationRows(navigation, declaringEntity, state);
+                    }
+
+                    cachedOwnedTargets.AddRange(loadedTargets);
+                    currentDeclaringRows = cachedOwnedTargets;
+                }
+                else
+                {
+                    currentDeclaringRows = loadedTargets;
+                }
             }
         }
+    }
+
+    private static List<(object Entity, ValueBuffer Buffer)> GetLoadedNavigationRows(
+        INavigation navigation,
+        object declaringEntity,
+        JetExecutionMaterializedState state)
+    {
+        List<(object Entity, ValueBuffer Buffer)> rows = [];
+        object? value = GetNavigationValue(navigation, declaringEntity);
+        if (navigation.IsCollection && value is IEnumerable collection)
+        {
+            foreach (object target in collection)
+            {
+                if (state.EntityBuffers.TryGetValue(target, out ValueBuffer buffer))
+                {
+                    rows.Add((target, buffer));
+                }
+            }
+        }
+        else if (value is not null && state.EntityBuffers.TryGetValue(value, out ValueBuffer buffer))
+        {
+            rows.Add((value, buffer));
+        }
+
+        return rows;
     }
 
     private static async ValueTask<List<(object Entity, ValueBuffer Buffer)>> LoadAndFixupSkipNavigationAsync(
@@ -3206,7 +3275,7 @@ internal static partial class JetAsyncQueryExecutor
             JetQueryPlanExtractor extractor = new(model);
             _ = extractor.Visit(query);
 
-            if (!extractor.ignoreAutoIncludes && !IsNonEntityTerminalQuery(query))
+            if (!IsNonEntityTerminalQuery(query))
             {
                 foreach (JetTableLoadPlan tablePlan in extractor.rootTables)
                 {
@@ -4163,7 +4232,7 @@ internal static partial class JetAsyncQueryExecutor
             foreach (INavigation nav in entityType.GetNavigations())
             {
                 bool isOwnedForward = !nav.IsOnDependent && nav.TargetEntityType.IsOwned();
-                if ((nav.IsEagerLoaded || isOwnedForward) && visited.Add(nav))
+                if ((isOwnedForward || (!this.ignoreAutoIncludes && nav.IsEagerLoaded)) && visited.Add(nav))
                 {
                     currentPath.Add(new JetIncludeStep(nav, collectionFilter: null));
                     this.includeChains.Add(new JetIncludeChain([.. currentPath]));
@@ -4174,7 +4243,7 @@ internal static partial class JetAsyncQueryExecutor
 
             foreach (ISkipNavigation skipNav in entityType.GetSkipNavigations())
             {
-                if (skipNav.IsEagerLoaded && visited.Add(skipNav))
+                if (!this.ignoreAutoIncludes && skipNav.IsEagerLoaded && visited.Add(skipNav))
                 {
                     currentPath.Add(new JetIncludeStep(skipNav, collectionFilter: null));
                     this.includeChains.Add(new JetIncludeChain([.. currentPath]));
